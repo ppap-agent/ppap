@@ -35,6 +35,7 @@ from ppap_core.fixtures import (
     USER_CAROL,
 )
 from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
 from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
@@ -512,6 +513,8 @@ class AuthStore:
         product_rule_version_id: str,
         engine_rule_id: str,
         rules: list | None = None,
+        audit_round_id: str | None = None,
+        conn=None,
     ) -> dict:
         if version.status != READY or not version.sha256:
             raise ValueError("not_ready")
@@ -528,15 +531,22 @@ class AuthStore:
             "product_rule_version_id": product_rule_version_id,
             "engine_rule_id": engine_rule_id,
             "rules": rules or [],
+            "audit_round_id": audit_round_id,
         }
-        with self._conn() as conn:
-            conn.execute(
+        owns = conn is None
+        ctx = self._conn() if owns else None
+        try:
+            target = ctx if owns else conn
+            target.execute(
                 """
-                INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
-                VALUES (%s, %s, 'audit.execute', %s, 'queued')
+                INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
+                VALUES (%s, %s, %s, 'audit.execute', %s, 'queued')
                 """,
-                (job_id, tenant_id, Jsonb(payload)),
+                (job_id, tenant_id, audit_round_id, Jsonb(payload)),
             )
+        finally:
+            if ctx is not None:
+                ctx.close()
         return {"id": job_id, "status": "queued", "payload": payload}
 
     def get_job(self, tenant_id: str, job_id: str) -> dict | None:
@@ -546,7 +556,7 @@ class AuthStore:
         with self._conn() as conn:
             row = conn.execute(
                 """
-                SELECT id, tenant_id, kind, payload, status, attempt, result
+                SELECT id, tenant_id, kind, payload, status, attempt, result, lease_owner
                 FROM engine.jobs
                 WHERE id = %s
                 """,
@@ -563,6 +573,7 @@ class AuthStore:
             "status": row[4],
             "attempt": row[5],
             "result": row[6],
+            "lease_owner": row[7],
         }
 
     def seed_rule_catalog(self, tenant_id: str, project_id: str) -> list[dict]:
@@ -950,3 +961,316 @@ class AuthStore:
                 """,
                 (status, matched_document_type, Jsonb(evidence), job_id, item_id, tenant_id),
             )
+
+    def _round_request_hash(self, draft: dict) -> str:
+        return snapshot_hash(
+            {
+                "draft_id": draft["id"],
+                "items": [
+                    {
+                        "file_version_id": item["file_version_id"],
+                        "role": item["role"],
+                        "sha256": item["sha256"],
+                        "product_rule_version_id": item["product_rule_version_id"],
+                        "engine_rule_id": item["engine_rule_id"],
+                        "bound_content_sha256": item["bound_content_sha256"],
+                    }
+                    for item in draft["items"]
+                ],
+            }
+        )
+
+    def _existing_round_by_key(self, tenant_id: str, idempotency_key: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM product.audit_rounds WHERE tenant_id = %s AND idempotency_key = %s",
+                (tenant_id, idempotency_key),
+            ).fetchone()
+        if not row:
+            return None
+        return {"id": str(row[0])}
+
+    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str) -> tuple[dict, bool]:
+        key = str(idempotency_key or "").strip()
+        if not key or len(key) > 128:
+            raise ValueError("invalid_idempotency_key")
+        draft = self.get_draft(principal, draft_id)
+        targets = [item for item in draft["items"] if item["role"] == "target"]
+        if not targets:
+            raise ValueError("target_required")
+        for item in targets:
+            if not item.get("product_rule_version_id") or not item.get("engine_rule_id"):
+                raise ValueError("rule_not_bound")
+            if not item.get("sha256"):
+                raise ValueError("not_ready")
+        for item in draft["items"]:
+            if not item.get("sha256"):
+                raise ValueError("not_ready")
+        request_hash = self._round_request_hash(draft)
+        existing = self._existing_round_by_key(principal.tenant_id, key)
+        if existing:
+            found = self.get_round(principal, existing["id"])
+            if found["request_hash"] != request_hash:
+                raise ValueError("idempotency_conflict")
+            return found, False
+        round_id = str(uuid.uuid4())
+        try:
+            with self._conn() as conn:
+                with conn.transaction():
+                    conn.execute(
+                        "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'round')",
+                        (round_id, principal.tenant_id),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO product.audit_rounds
+                            (id, tenant_id, created_by, draft_id, idempotency_key, request_hash, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (round_id, principal.tenant_id, principal.user_id, draft["id"], key, request_hash, ROUND_ACCEPTED),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO product.resource_grants (resource_id, user_id, capability)
+                        VALUES (%s, %s, 'read')
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (round_id, principal.user_id),
+                    )
+                    for position, item in enumerate(draft["items"]):
+                        conn.execute(
+                            """
+                            INSERT INTO product.round_inputs (
+                                id, round_id, tenant_id, file_id, file_version_id, role, sha256, original_filename,
+                                product_rule_version_id, engine_rule_id, bound_content_sha256, bound_check_count, position
+                            ) VALUES (
+                                gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s
+                            )
+                            """,
+                            (
+                                round_id, principal.tenant_id, item["file_id"], item["file_version_id"], item["role"],
+                                item["sha256"], item["original_filename"], item["product_rule_version_id"],
+                                item["engine_rule_id"], item["bound_content_sha256"], item["bound_check_count"], position,
+                            ),
+                        )
+                    for item in targets:
+                        version = self.get_version(item["file_id"], item["file_version_id"])
+                        if version is None:
+                            raise ValueError("not_ready")
+                        self.enqueue_audit(
+                            principal.tenant_id,
+                            version,
+                            document_type=item.get("matched_document_type") or item["engine_rule_id"],
+                            rule_profile="v2",
+                            product_rule_version_id=item["product_rule_version_id"],
+                            engine_rule_id=item["engine_rule_id"],
+                            audit_round_id=round_id,
+                            conn=conn,
+                        )
+        except UniqueViolation:
+            found = self._existing_round_by_key(principal.tenant_id, key)
+            if not found:
+                raise
+            body = self.get_round(principal, found["id"])
+            if body["request_hash"] != request_hash:
+                raise ValueError("idempotency_conflict")
+            return body, False
+        return self.get_round(principal, round_id), True
+
+    def get_round(self, principal: Principal, round_id: str) -> dict:
+        parsed = _as_uuid(round_id)
+        if not parsed:
+            raise KeyError("missing")
+        resource = self.resource(parsed)
+        grants = self.grants(parsed, principal.user_id) if resource else set()
+        if resource is None or resource.kind != "round":
+            raise KeyError("missing")
+        if resource.tenant_id != principal.tenant_id or not (grants & {"read", "review"}):
+            raise ValueError("access_denied")
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            round_row = conn.execute(
+                """
+                SELECT id, tenant_id, draft_id, idempotency_key, request_hash, status, current_result_id, created_at, updated_at
+                FROM product.audit_rounds
+                WHERE id = %s
+                """,
+                (parsed,),
+            ).fetchone()
+            inputs = conn.execute(
+                """
+                SELECT file_id, file_version_id, role, sha256, original_filename,
+                       product_rule_version_id, engine_rule_id, bound_content_sha256, bound_check_count
+                FROM product.round_inputs
+                WHERE round_id = %s
+                ORDER BY position
+                """,
+                (parsed,),
+            ).fetchall()
+            jobs = conn.execute(
+                """
+                SELECT id, kind, status, attempt, result
+                FROM engine.jobs
+                WHERE audit_round_id = %s
+                ORDER BY created_at
+                """,
+                (parsed,),
+            ).fetchall()
+            results = conn.execute(
+                """
+                SELECT id, job_id, attempt, file_version_id, sha256, product_rule_version_id, engine_rule_id, findings, created_at
+                FROM product.round_results
+                WHERE round_id = %s
+                ORDER BY created_at
+                """,
+                (parsed,),
+            ).fetchall()
+        if round_row is None:
+            raise KeyError("missing")
+        return {
+            "id": str(round_row["id"]),
+            "tenant_id": str(round_row["tenant_id"]),
+            "draft_id": str(round_row["draft_id"]),
+            "idempotency_key": round_row["idempotency_key"],
+            "request_hash": round_row["request_hash"],
+            "status": round_row["status"],
+            "current_result_id": str(round_row["current_result_id"]) if round_row["current_result_id"] else None,
+            "created_at": round_row["created_at"].isoformat(),
+            "updated_at": round_row["updated_at"].isoformat(),
+            "inputs": [
+                {
+                    "file_id": str(item["file_id"]),
+                    "file_version_id": str(item["file_version_id"]),
+                    "role": item["role"],
+                    "sha256": item["sha256"],
+                    "original_filename": item["original_filename"],
+                    "product_rule_version_id": str(item["product_rule_version_id"]) if item["product_rule_version_id"] else None,
+                    "engine_rule_id": item["engine_rule_id"],
+                    "bound_content_sha256": item["bound_content_sha256"],
+                    "bound_check_count": item["bound_check_count"],
+                }
+                for item in inputs
+            ],
+            "jobs": [
+                {
+                    "id": str(job["id"]),
+                    "kind": job["kind"],
+                    "status": job["status"],
+                    "attempt": job["attempt"],
+                    "result": job["result"] or {},
+                }
+                for job in jobs
+            ],
+            "results": [
+                {
+                    "id": str(row["id"]),
+                    "job_id": str(row["job_id"]),
+                    "attempt": row["attempt"],
+                    "file_version_id": str(row["file_version_id"]),
+                    "sha256": row["sha256"],
+                    "product_rule_version_id": row["product_rule_version_id"],
+                    "engine_rule_id": row["engine_rule_id"],
+                    "findings": row["findings"] or [],
+                    "created_at": row["created_at"].isoformat(),
+                }
+                for row in results
+            ],
+        }
+
+    def retry_round(self, principal: Principal, round_id: str) -> dict:
+        current = self.get_round(principal, round_id)
+        with self._conn() as conn:
+            with conn.transaction():
+                updated = conn.execute(
+                    """
+                    UPDATE engine.jobs
+                    SET status = 'queued', lease_owner = NULL, lease_until = NULL, updated_at = now()
+                    WHERE audit_round_id = %s AND tenant_id = %s AND status = 'failed'
+                    RETURNING id
+                    """,
+                    (current["id"], principal.tenant_id),
+                ).fetchall()
+                if updated:
+                    conn.execute(
+                        """
+                        UPDATE product.audit_rounds
+                        SET status = %s, updated_at = now()
+                        WHERE id = %s AND tenant_id = %s
+                        """,
+                        (ROUND_ACCEPTED, current["id"], principal.tenant_id),
+                    )
+        return self.get_round(principal, round_id)
+
+    def expire_job_lease(self, tenant_id: str, job_id: str) -> bool:
+        jid = _as_uuid(job_id)
+        if not jid:
+            raise ValueError("invalid_job")
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                UPDATE engine.jobs
+                SET lease_until = now() - interval '1 second', updated_at = now()
+                WHERE id = %s AND tenant_id = %s AND status = 'leased'
+                RETURNING id
+                """,
+                (jid, tenant_id),
+            ).fetchone()
+        return bool(row)
+
+    def forge_job_result(self, tenant_id: str, job_id: str, worker: str, attempt: int, result: dict) -> bool:
+        jid = _as_uuid(job_id)
+        if not jid:
+            raise ValueError("invalid_job")
+        with self._conn() as conn:
+            updated = conn.execute(
+                """
+                UPDATE engine.jobs
+                SET status = 'succeeded', result = %s, lease_until = NULL, updated_at = now()
+                WHERE id = %s AND tenant_id = %s AND lease_owner = %s AND attempt = %s AND status = 'leased'
+                """,
+                (Jsonb(result), jid, tenant_id, worker, attempt),
+            )
+        return updated.rowcount == 1
+
+    def claim_job(self, tenant_id: str, job_id: str, worker: str) -> dict | None:
+        jid = _as_uuid(job_id)
+        owner = str(worker or "").strip()
+        if not jid or not owner or len(owner) > 128:
+            raise ValueError("invalid_job")
+        with self._conn() as conn:
+            with conn.transaction():
+                row = conn.execute(
+                    """
+                    UPDATE engine.jobs
+                    SET status = 'leased',
+                        attempt = attempt + 1,
+                        lease_owner = %s,
+                        lease_until = now() + interval '15 minutes',
+                        updated_at = now()
+                    WHERE id = %s AND tenant_id = %s
+                      AND (
+                        status = 'queued'
+                        OR (status = 'leased' AND lease_until IS NOT NULL AND lease_until < now())
+                      )
+                    RETURNING id, attempt, lease_owner, status, audit_round_id, kind
+                    """,
+                    (owner, jid, tenant_id),
+                ).fetchone()
+                if not row:
+                    return None
+                if row[5] == "audit.execute" and row[4] is not None:
+                    conn.execute(
+                        """
+                        UPDATE product.audit_rounds
+                        SET status = %s, updated_at = now()
+                        WHERE id = %s AND tenant_id = %s AND status IN (%s, %s, %s)
+                        """,
+                        (ROUND_RUNNING, row[4], tenant_id, ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING),
+                    )
+        return {
+            "id": str(row[0]),
+            "attempt": row[1],
+            "lease_owner": row[2],
+            "status": row[3],
+        }

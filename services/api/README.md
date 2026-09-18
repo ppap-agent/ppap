@@ -4,7 +4,7 @@ The only public HTTP API for PPAP.
 
 Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy document or model work in request threads.
 
-## HTTP surface (#2 / #4 / #5 / #6 / #7)
+## HTTP surface (#2 / #4 / #5 / #6 / #7 / #8)
 
 - `GET /health` — process alive
 - `GET /ready` — PostgreSQL and object storage actually reachable
@@ -31,11 +31,15 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `POST /drafts` — editable audit draft; unknown `project_id` is 400, never a default catalog
 - `GET /drafts/{id}` / `PUT /drafts/{id}` — round-trip items with `target`/`reference` roles and optional explicit product rule bind
 - `POST /drafts/{id}/identify` — enqueue Worker identification; API does not parse bytes
+- `POST /drafts/{id}/accept` — freeze inputs and enqueue `audit.execute` in one PostgreSQL transaction; tenant+idempotency_key replay returns the same round, different request hash is 409
+- `GET /rounds/{id}` — same round identity and frozen inputs; does not enqueue work
+- `POST /rounds/{id}/retry` — requeue failed engine jobs for the same round; does not create a new round or drop prior results
 - `POST /isolated-dev/execute-audit` — isolated-dev only; enqueue Worker execution of a ready version
 - `GET /isolated-dev/jobs/{id}` — isolated-dev job status/result; cross-tenant 403
 - `POST /isolated-dev/rule-versions` — isolated-dev only; insert a new immutable snapshot (never updates old rows)
+- `POST /isolated-dev/claim-job` / `expire-job-lease` / `forge-job-result` — isolated-dev fencing helpers; not product routes
 
-Unready versions cannot be treated as originals. Object keys include version id and are never reused. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03. `verify-engine` is not S01 and not authorized corpus acceptance. `verify-drafts` is not S01; there is no accept/submit route and saving a draft does not create an audit round.
+Unready versions cannot be treated as originals. Object keys include version id and are never reused. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03. `verify-engine` is not S01 and not authorized corpus acceptance. `verify-drafts` is not S01; identification does not accept a round. `verify-rounds` is not S04 Live and does not claim exactly-once model or billing.
 
 ## Owns
 

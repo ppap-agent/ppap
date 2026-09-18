@@ -820,7 +820,6 @@ def verify_drafts() -> int:
         if saved.status_code != 200:
             raise RuntimeError("draft_replace_failed:" + str(saved.status_code))
         fetched = httpx.get(api + f"/drafts/{draft_id}", headers=headers(alice), timeout=10)
-        accept = httpx.post(api + f"/drafts/{draft_id}/accept", headers=headers(alice), timeout=10)
         identified = httpx.post(api + f"/drafts/{draft_id}/identify", headers=headers(alice), timeout=10)
         after_identify = wait_identified(alice, draft_id)
         kinds = []
@@ -888,7 +887,7 @@ def verify_drafts() -> int:
             and fetched.json()["accepted"] is False
             and [item["role"] for item in fetched.json()["items"]] == ["target", "target", "reference"]
         )
-        report["no_accept"] = accept.status_code == 404
+        report["no_accept"] = fetched.json()["accepted"] is False and identified.json().get("accepted") is False and "audit.execute" not in kinds
         report["identify"] = (
             identified.status_code == 202
             and identified.json().get("accepted") is False
@@ -945,9 +944,251 @@ def verify_drafts() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_rounds() -> int:
+    import httpx
+    from openpyxl import Workbook
+    from ppap_core.fixtures import CATALOG_PROJECT
+
+    env = child_env()
+    report = {"ok": False, "s01_audit": "NOT_PROVEN", "s04_live": "NOT_PROVEN"}
+    worker_stopped = False
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        def xlsx(name: str) -> bytes:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / name
+                Workbook().save(path)
+                return path.read_bytes()
+
+        def upload(cookie: str, filename: str, body: bytes) -> tuple[str, str, str]:
+            created = httpx.post(
+                api + "/files",
+                json={"original_filename": filename, "content_type": "application/octet-stream", "byte_size": len(body)},
+                headers=headers(cookie),
+                timeout=10,
+            )
+            file_id, version_id = created.json()["file_id"], created.json()["id"]
+            httpx.put(api + f"/files/{file_id}/versions/{version_id}/blob", content=body, headers=headers(cookie), timeout=10)
+            ready = httpx.post(api + f"/files/{file_id}/versions/{version_id}/finalize", headers=headers(cookie), timeout=10)
+            if created.status_code != 201 or ready.status_code != 200:
+                raise RuntimeError("upload_failed")
+            return file_id, version_id, ready.json()["sha256"]
+
+        def wait_round(cookie: str, round_id: str) -> dict:
+            deadline = time.time() + 90
+            latest = None
+            while time.time() < deadline:
+                latest = httpx.get(api + f"/rounds/{round_id}", headers=headers(cookie), timeout=10)
+                if latest.status_code == 200 and latest.json().get("status") in {"succeeded", "failed"}:
+                    return latest.json()
+                time.sleep(1)
+            return latest.json() if latest is not None and latest.status_code == 200 else {}
+
+        def bound_draft(cookie: str, target: tuple[str, str, str], ref: tuple[str, str, str], rule_id: str) -> str:
+            created = httpx.post(api + "/drafts", json={"project_id": CATALOG_PROJECT}, headers=headers(cookie), timeout=10)
+            saved = httpx.put(
+                api + f"/drafts/{created.json()['id']}",
+                json={
+                    "items": [
+                        {
+                            "file_id": target[0],
+                            "file_version_id": target[1],
+                            "role": "target",
+                            "product_rule_version_id": rule_id,
+                        },
+                        {"file_id": ref[0], "file_version_id": ref[1], "role": "reference"},
+                    ]
+                },
+                headers=headers(cookie),
+                timeout=10,
+            )
+            if created.status_code != 201 or saved.status_code != 200:
+                raise RuntimeError("draft_prepare_failed")
+            return created.json()["id"]
+
+        alice, carol = mint("alice"), mint("carol")
+        catalog = httpx.get(api + f"/rule-versions?project_id={CATALOG_PROJECT}", headers=headers(alice), timeout=10)
+        psw = next(item for item in catalog.json()["items"] if item["engine_rule_id"] == "零件提交保证书")
+        target = upload(alice, "PSW.xlsx", xlsx("PSW.xlsx"))
+        ref = upload(alice, "ref.xlsx", xlsx("ref.xlsx"))
+        draft_id = bound_draft(alice, target, ref, psw["id"])
+        first = httpx.post(
+            api + f"/drafts/{draft_id}/accept",
+            json={"idempotency_key": "k1"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        finished = wait_round(alice, first.json()["id"])
+        replay = httpx.post(
+            api + f"/drafts/{draft_id}/accept",
+            json={"idempotency_key": "k1"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        before_get = len(finished.get("jobs") or [])
+        fetched = httpx.get(api + f"/rounds/{first.json()['id']}", headers=headers(alice), timeout=10)
+        other = upload(alice, "other.xlsx", xlsx("other.xlsx"))
+        httpx.put(
+            api + f"/drafts/{draft_id}",
+            json={
+                "items": [
+                    {
+                        "file_id": other[0],
+                        "file_version_id": other[1],
+                        "role": "target",
+                        "product_rule_version_id": psw["id"],
+                    }
+                ]
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        conflict = httpx.post(
+            api + f"/drafts/{draft_id}/accept",
+            json={"idempotency_key": "k1"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        resubmit = httpx.post(
+            api + f"/drafts/{draft_id}/accept",
+            json={"idempotency_key": "k2"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        old_after = httpx.get(api + f"/rounds/{first.json()['id']}", headers=headers(alice), timeout=10)
+        retry = httpx.post(api + f"/rounds/{first.json()['id']}/retry", headers=headers(alice), timeout=10)
+        carol_denied = httpx.get(api + f"/rounds/{first.json()['id']}", headers=headers(carol), timeout=10)
+        stop_pid("worker")
+        worker_stopped = True
+        fence_draft = bound_draft(alice, target, ref, psw["id"])
+        fenced = httpx.post(
+            api + f"/drafts/{fence_draft}/accept",
+            json={"idempotency_key": "fence"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        job_id = (fenced.json().get("jobs") or [{}])[0].get("id")
+        stale_claim = httpx.post(
+            api + "/isolated-dev/claim-job",
+            json={"job_id": job_id, "worker": "stale-worker"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        httpx.post(api + "/isolated-dev/expire-job-lease", json={"job_id": job_id}, headers=headers(alice), timeout=10)
+        live_claim = httpx.post(
+            api + "/isolated-dev/claim-job",
+            json={"job_id": job_id, "worker": "live-worker"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        stale = httpx.post(
+            api + "/isolated-dev/forge-job-result",
+            json={"job_id": job_id, "worker": "stale-worker", "attempt": 1, "result": {"findings": [{"status": "PASS"}]}},
+            headers=headers(alice),
+            timeout=10,
+        )
+        httpx.post(api + "/isolated-dev/expire-job-lease", json={"job_id": job_id}, headers=headers(alice), timeout=10)
+        spawn("worker", [str(venv_python()), "-m", "ppap_worker.main"], env)
+        worker_stopped = False
+        recovered = wait_round(alice, fenced.json()["id"])
+        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+            html = response.read().decode()
+        first_findings = ((finished.get("results") or [{}])[0].get("findings") or [])
+        report["accept_atomic"] = (
+            first.status_code == 201
+            and first.json()["status"] in {"accepted", "running", "succeeded"}
+            and len(first.json()["jobs"]) == 1
+            and first.json()["jobs"][0]["kind"] == "audit.execute"
+            and [item["role"] for item in first.json()["inputs"]] == ["target", "reference"]
+            and first.json()["inputs"][0]["sha256"] == target[2]
+            and first.json()["inputs"][0]["product_rule_version_id"] == psw["id"]
+        )
+        report["idempotent"] = (
+            replay.status_code == 200
+            and replay.json()["id"] == first.json()["id"]
+            and len(replay.json()["jobs"]) == 1
+        )
+        report["conflict"] = conflict.status_code == 409 and conflict.json() == {"error": "idempotency_conflict"}
+        report["resubmit"] = (
+            resubmit.status_code == 201
+            and resubmit.json()["id"] != first.json()["id"]
+            and old_after.json()["id"] == first.json()["id"]
+            and old_after.json()["inputs"][0]["original_filename"] == "PSW.xlsx"
+        )
+        report["get_no_execute"] = fetched.status_code == 200 and len(fetched.json()["jobs"]) == before_get
+        report["complete"] = (
+            finished.get("id") == first.json()["id"]
+            and finished.get("status") == "succeeded"
+            and bool(first_findings)
+            and all(item.get("status") in {"PASS", "NG", "ERR"} for item in first_findings)
+        )
+        report["retry_keeps_history"] = (
+            retry.status_code == 200
+            and retry.json()["id"] == first.json()["id"]
+            and retry.json()["inputs"][0]["original_filename"] == "PSW.xlsx"
+            and len(retry.json()["results"]) == len(finished.get("results") or [])
+        )
+        report["fencing"] = (
+            fenced.status_code == 201
+            and stale_claim.status_code == 200
+            and stale_claim.json().get("attempt") == 1
+            and live_claim.status_code == 200
+            and live_claim.json().get("attempt") == 2
+            and stale.status_code == 409
+            and stale.json() == {"applied": False}
+            and recovered.get("id") == fenced.json()["id"]
+            and recovered.get("status") == "succeeded"
+            and recovered.get("jobs")
+            and recovered["jobs"][0]["attempt"] >= 3
+        )
+        report["carol_denied"] = carol_denied.status_code == 403 and carol_denied.json() == {"error": "access_denied"}
+        report["web_hooks"] = all(
+            marker in html
+            for marker in (
+                'data-testid="submit-audit"',
+                'data-testid="round-id"',
+                'data-testid="execution-state"',
+            )
+        )
+        report["ok"] = all(
+            report[key] is True
+            for key in (
+                "accept_atomic",
+                "idempotent",
+                "conflict",
+                "resubmit",
+                "get_no_execute",
+                "complete",
+                "retry_keeps_history",
+                "fencing",
+                "carol_denied",
+                "web_hooks",
+            )
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+        report["error_detail"] = str(exc)[:200]
+    finally:
+        if worker_stopped:
+            spawn("worker", [str(venv_python()), "-m", "ppap_worker.main"], env)
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -991,6 +1232,9 @@ def main() -> int:
     if args.command == "verify-drafts":
         reexec_in_venv()
         return verify_drafts()
+    if args.command == "verify-rounds":
+        reexec_in_venv()
+        return verify_rounds()
     reexec_in_venv()
     return verify()
 

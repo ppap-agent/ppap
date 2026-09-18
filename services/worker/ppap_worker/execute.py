@@ -7,6 +7,7 @@ from psycopg.types.json import Jsonb
 
 from ppap_core.files import READY, sha256_bytes
 from ppap_core.identify import classify_file
+from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
 
@@ -49,6 +50,20 @@ def load_ready_version(conn, tenant_id: str, file_id: str, version_id: str) -> d
     return record
 
 
+def mark_round_running(conn, tenant_id: str, payload: dict) -> None:
+    round_id = _as_uuid(payload.get("audit_round_id"))
+    if not round_id:
+        return
+    conn.execute(
+        """
+        UPDATE product.audit_rounds
+        SET status = %s, updated_at = now()
+        WHERE id = %s AND tenant_id = %s AND status IN (%s, %s, %s)
+        """,
+        (ROUND_RUNNING, round_id, tenant_id, ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING),
+    )
+
+
 def execute_claimed_job(settings: Settings, conn, job: dict, worker: str) -> None:
     from ppap_core.audit_run import findings_from_bytes
 
@@ -83,50 +98,100 @@ def execute_claimed_job(settings: Settings, conn, job: dict, worker: str) -> Non
         "findings": findings,
         "corpus": "NOT_PROVEN",
     }
-    updated = conn.execute(
-        """
-        UPDATE engine.jobs
-        SET status = 'succeeded',
-            result = %s,
-            lease_until = NULL,
-            updated_at = now()
-        WHERE id = %s AND lease_owner = %s AND attempt = %s AND status = 'leased'
-        """,
-        (Jsonb(result), job["id"], worker, job["attempt"]),
-    )
-    if updated.rowcount != 1:
-        return
-    conn.execute(
-        """
-        UPDATE engine.attempts
-        SET finished_at = now(), outcome = 'succeeded', diagnostic = %s
-        WHERE job_id = %s AND attempt = %s AND worker_id = %s
-        """,
-        (Jsonb({"findings": len(findings)}), job["id"], job["attempt"], worker),
-    )
+    result_id = str(uuid.uuid4())
+    round_id = _as_uuid(payload.get("audit_round_id"))
+    with conn.transaction():
+        updated = conn.execute(
+            """
+            UPDATE engine.jobs
+            SET status = 'succeeded',
+                result = %s,
+                lease_until = NULL,
+                updated_at = now()
+            WHERE id = %s AND lease_owner = %s AND attempt = %s AND status = 'leased'
+            """,
+            (Jsonb(result), job["id"], worker, job["attempt"]),
+        )
+        if updated.rowcount != 1:
+            return
+        conn.execute(
+            """
+            UPDATE engine.attempts
+            SET finished_at = now(), outcome = 'succeeded', diagnostic = %s
+            WHERE job_id = %s AND attempt = %s AND worker_id = %s
+            """,
+            (Jsonb({"findings": len(findings)}), job["id"], job["attempt"], worker),
+        )
+        if round_id:
+            conn.execute(
+                """
+                INSERT INTO product.round_results
+                    (id, round_id, tenant_id, job_id, attempt, file_version_id, sha256,
+                     product_rule_version_id, engine_rule_id, findings)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    result_id, round_id, job["tenant_id"], job["id"], job["attempt"], version_id, expected,
+                    payload.get("product_rule_version_id"), payload.get("engine_rule_id"), Jsonb(findings),
+                ),
+            )
+            _refresh_round_status(conn, job["tenant_id"], round_id, result_id)
 
 
 def fail_claimed_job(conn, job: dict, worker: str, code: str) -> None:
-    updated = conn.execute(
-        """
-        UPDATE engine.jobs
-        SET status = 'failed',
-            result = %s,
-            lease_until = NULL,
-            updated_at = now()
-        WHERE id = %s AND lease_owner = %s AND attempt = %s AND status = 'leased'
-        """,
-        (Jsonb({"error": code, "corpus": "NOT_PROVEN"}), job["id"], worker, job["attempt"]),
-    )
-    if updated.rowcount != 1:
-        return
+    payload = job["payload"] if isinstance(job.get("payload"), dict) else {}
+    round_id = _as_uuid(payload.get("audit_round_id"))
+    with conn.transaction():
+        updated = conn.execute(
+            """
+            UPDATE engine.jobs
+            SET status = 'failed',
+                result = %s,
+                lease_until = NULL,
+                updated_at = now()
+            WHERE id = %s AND lease_owner = %s AND attempt = %s AND status = 'leased'
+            """,
+            (Jsonb({"error": code, "corpus": "NOT_PROVEN"}), job["id"], worker, job["attempt"]),
+        )
+        if updated.rowcount != 1:
+            return
+        conn.execute(
+            """
+            UPDATE engine.attempts
+            SET finished_at = now(), outcome = 'failed', diagnostic = %s
+            WHERE job_id = %s AND attempt = %s AND worker_id = %s
+            """,
+            (Jsonb({"error": code}), job["id"], job["attempt"], worker),
+        )
+        if round_id:
+            _refresh_round_status(conn, job["tenant_id"], round_id, None)
+
+
+def _refresh_round_status(conn, tenant_id: str, round_id: str, result_id: str | None) -> None:
+    rows = conn.execute(
+        "SELECT status FROM engine.jobs WHERE audit_round_id = %s AND tenant_id = %s AND kind = 'audit.execute'",
+        (round_id, tenant_id),
+    ).fetchall()
+    statuses = {row[0] for row in rows}
+    if not statuses:
+        status = "accepted"
+    elif statuses <= {"succeeded"}:
+        status = "succeeded"
+    elif "failed" in statuses and not (statuses & {"queued", "leased"}):
+        status = "failed"
+    elif "leased" in statuses or "queued" in statuses:
+        status = "running" if "leased" in statuses else "accepted"
+    else:
+        status = "running"
     conn.execute(
         """
-        UPDATE engine.attempts
-        SET finished_at = now(), outcome = 'failed', diagnostic = %s
-        WHERE job_id = %s AND attempt = %s AND worker_id = %s
+        UPDATE product.audit_rounds
+        SET status = %s,
+            current_result_id = COALESCE(%s, current_result_id),
+            updated_at = now()
+        WHERE id = %s AND tenant_id = %s
         """,
-        (Jsonb({"error": code}), job["id"], job["attempt"], worker),
+        (status, result_id, round_id, tenant_id),
     )
 
 

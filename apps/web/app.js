@@ -17,6 +17,20 @@ function draftIdFromLocation() {
   return new URLSearchParams(window.location.search).get("draft") || "";
 }
 
+function roundIdFromLocation() {
+  return new URLSearchParams(window.location.search).get("round") || "";
+}
+
+function acceptKeyForDraft(draftId) {
+  const storageKey = `ppap-accept-${draftId}`;
+  let key = sessionStorage.getItem(storageKey);
+  if (!key) {
+    key = crypto.randomUUID();
+    sessionStorage.setItem(storageKey, key);
+  }
+  return key;
+}
+
 async function main() {
   const runtime = (await readJson("./runtime-config.json")).body;
   const config = (await readJson(`${runtime.api_url}/public-config`)).body;
@@ -44,6 +58,27 @@ async function main() {
   let fileId = fileIdFromLocation();
   let versionId = "";
   let draftId = draftIdFromLocation();
+  let roundId = roundIdFromLocation();
+  const renderRound = (round) => {
+    if (!round || !round.id) {
+      return;
+    }
+    roundId = round.id;
+    document.getElementById("round-id").textContent = round.id;
+    document.getElementById("execution-state").textContent = round.status || "";
+    const url = new URL(window.location.href);
+    url.searchParams.set("round", round.id);
+    window.history.replaceState({}, "", url);
+  };
+  const refreshRound = async () => {
+    if (!roundId) {
+      return;
+    }
+    const latest = await readJson(`${api}/rounds/${encodeURIComponent(roundId)}`);
+    if (latest.ok) {
+      renderRound(latest.body);
+    }
+  };
   const renderDraft = (draft) => {
     if (!draft || !draft.id) {
       return;
@@ -174,6 +209,26 @@ async function main() {
       renderDraft(latest.body);
     }
   });
+  document.getElementById("submit-audit").addEventListener("click", async () => {
+    const draft = await ensureDraft();
+    if (!draft) {
+      return;
+    }
+    const accepted = await readJson(`${api}/drafts/${encodeURIComponent(draft.id)}/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotency_key: acceptKeyForDraft(draft.id) }),
+    });
+    if (!accepted.ok) {
+      document.getElementById("access-denied").classList.toggle("hidden", accepted.status !== 401 && accepted.status !== 403);
+      return;
+    }
+    renderRound(accepted.body);
+  });
+  if (roundId) {
+    await refreshRound();
+  }
+  setInterval(refreshRound, 2000);
   const resourceId = resourceIdFromLocation();
   if (!resourceId) {
     return;

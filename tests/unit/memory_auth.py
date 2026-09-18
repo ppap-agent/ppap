@@ -18,6 +18,7 @@ from ppap_core.files import (
 )
 from ppap_core.fixtures import CATALOG_PROJECT, SUBJECTS
 from ppap_core.identity import Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
 from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
 
@@ -57,6 +58,10 @@ class MemoryAuthStore:
         self.rule_versions: dict[str, dict] = {}
         self.drafts: dict[str, dict] = {}
         self.draft_items: dict[str, list[dict]] = {}
+        self.rounds: dict[str, dict] = {}
+        self.round_inputs: dict[str, list[dict]] = {}
+        self.round_results: dict[str, list[dict]] = {}
+        self.round_keys: dict[tuple[str, str], str] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds))
@@ -226,6 +231,8 @@ class MemoryAuthStore:
         product_rule_version_id: str,
         engine_rule_id: str,
         rules: list | None = None,
+        audit_round_id: str | None = None,
+        conn=None,
     ) -> dict:
         if version.status != READY or not version.sha256:
             raise ValueError("not_ready")
@@ -242,10 +249,12 @@ class MemoryAuthStore:
             "product_rule_version_id": product_rule_version_id,
             "engine_rule_id": engine_rule_id,
             "rules": rules or [],
+            "audit_round_id": audit_round_id,
         }
         job = {
             "id": job_id,
             "tenant_id": tenant_id,
+            "audit_round_id": audit_round_id,
             "kind": "audit.execute",
             "payload": payload,
             "status": "queued",
@@ -512,3 +521,165 @@ class MemoryAuthStore:
                 item["match_evidence"] = evidence
                 item["identification_job_id"] = job_id
                 return
+
+    def _round_request_hash(self, draft: dict) -> str:
+        return snapshot_hash(
+            {
+                "draft_id": draft["id"],
+                "items": [
+                    {
+                        "file_version_id": item["file_version_id"],
+                        "role": item["role"],
+                        "sha256": item["sha256"],
+                        "product_rule_version_id": item["product_rule_version_id"],
+                        "engine_rule_id": item["engine_rule_id"],
+                        "bound_content_sha256": item["bound_content_sha256"],
+                    }
+                    for item in draft["items"]
+                ],
+            }
+        )
+
+    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str) -> tuple[dict, bool]:
+        key = str(idempotency_key or "").strip()
+        if not key or len(key) > 128:
+            raise ValueError("invalid_idempotency_key")
+        draft = self.get_draft(principal, draft_id)
+        targets = [item for item in draft["items"] if item["role"] == "target"]
+        if not targets:
+            raise ValueError("target_required")
+        for item in targets:
+            if not item.get("product_rule_version_id") or not item.get("engine_rule_id"):
+                raise ValueError("rule_not_bound")
+            if not item.get("sha256"):
+                raise ValueError("not_ready")
+        for item in draft["items"]:
+            if not item.get("sha256"):
+                raise ValueError("not_ready")
+        request_hash = self._round_request_hash(draft)
+        existing_id = self.round_keys.get((principal.tenant_id, key))
+        if existing_id:
+            found = self.get_round(principal, existing_id)
+            if found["request_hash"] != request_hash:
+                raise ValueError("idempotency_conflict")
+            return found, False
+        round_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        self.resources[round_id] = Resource(round_id, principal.tenant_id, "round")
+        self.grant_table.setdefault((round_id, principal.user_id), set()).add("read")
+        self.rounds[round_id] = {
+            "id": round_id,
+            "tenant_id": principal.tenant_id,
+            "draft_id": draft["id"],
+            "idempotency_key": key,
+            "request_hash": request_hash,
+            "status": ROUND_ACCEPTED,
+            "current_result_id": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.round_keys[(principal.tenant_id, key)] = round_id
+        self.round_inputs[round_id] = [
+            {
+                "file_id": item["file_id"],
+                "file_version_id": item["file_version_id"],
+                "role": item["role"],
+                "sha256": item["sha256"],
+                "original_filename": item["original_filename"],
+                "product_rule_version_id": item["product_rule_version_id"],
+                "engine_rule_id": item["engine_rule_id"],
+                "bound_content_sha256": item["bound_content_sha256"],
+                "bound_check_count": item["bound_check_count"],
+            }
+            for item in draft["items"]
+        ]
+        self.round_results[round_id] = []
+        for item in targets:
+            version = self.get_version(item["file_id"], item["file_version_id"])
+            self.enqueue_audit(
+                principal.tenant_id,
+                version,
+                document_type=item.get("matched_document_type") or item["engine_rule_id"],
+                rule_profile="v2",
+                product_rule_version_id=item["product_rule_version_id"],
+                engine_rule_id=item["engine_rule_id"],
+                audit_round_id=round_id,
+            )
+        return self.get_round(principal, round_id), True
+
+    def get_round(self, principal: Principal, round_id: str) -> dict:
+        resource = self.resource(round_id)
+        grants = self.grants(round_id, principal.user_id) if resource else set()
+        if resource is None or resource.kind != "round":
+            raise KeyError("missing")
+        if resource.tenant_id != principal.tenant_id or not (grants & {"read", "review"}):
+            raise ValueError("access_denied")
+        record = self.rounds[round_id]
+        jobs = [
+            {
+                "id": job["id"],
+                "kind": job["kind"],
+                "status": job["status"],
+                "attempt": job["attempt"],
+                "result": job.get("result") or {},
+            }
+            for job in self.jobs.values()
+            if job.get("audit_round_id") == round_id
+        ]
+        return {**record, "inputs": list(self.round_inputs.get(round_id, [])), "jobs": jobs, "results": list(self.round_results.get(round_id, []))}
+
+    def retry_round(self, principal: Principal, round_id: str) -> dict:
+        current = self.get_round(principal, round_id)
+        requeued = False
+        for job in self.jobs.values():
+            if job.get("audit_round_id") == current["id"] and job["status"] == "failed":
+                job["status"] = "queued"
+                job["lease_owner"] = None
+                job["lease_until"] = None
+                requeued = True
+        if requeued:
+            self.rounds[round_id]["status"] = ROUND_ACCEPTED
+        return self.get_round(principal, round_id)
+
+    def expire_job_lease(self, tenant_id: str, job_id: str) -> bool:
+        job = self.jobs.get(job_id)
+        if job is None or job.get("tenant_id") != tenant_id or job.get("status") != "leased":
+            return False
+        job["lease_until"] = "expired"
+        return True
+
+    def forge_job_result(self, tenant_id: str, job_id: str, worker: str, attempt: int, result: dict) -> bool:
+        job = self.jobs.get(job_id)
+        if job is None or job.get("tenant_id") != tenant_id:
+            return False
+        if job.get("status") != "leased" or job.get("lease_owner") != worker or job.get("attempt") != attempt:
+            return False
+        job["status"] = "succeeded"
+        job["result"] = result
+        return True
+
+    def claim_job(self, tenant_id: str, job_id: str, worker: str) -> dict | None:
+        owner = str(worker or "").strip()
+        if not owner or len(owner) > 128:
+            raise ValueError("invalid_job")
+        job = self.jobs.get(job_id)
+        if job is None or job.get("tenant_id") != tenant_id:
+            return None
+        status = job.get("status")
+        expired = job.get("lease_until") == "expired"
+        if status != "queued" and not (status == "leased" and expired):
+            return None
+        job["status"] = "leased"
+        job["attempt"] = int(job.get("attempt") or 0) + 1
+        job["lease_owner"] = owner
+        job["lease_until"] = "held"
+        round_id = job.get("audit_round_id")
+        if job.get("kind") == "audit.execute" and round_id and round_id in self.rounds:
+            if self.rounds[round_id]["status"] in {ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING}:
+                self.rounds[round_id]["status"] = ROUND_RUNNING
+        return {
+            "id": job_id,
+            "attempt": job["attempt"],
+            "lease_owner": owner,
+            "status": "leased",
+        }

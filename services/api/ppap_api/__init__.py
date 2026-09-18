@@ -77,7 +77,7 @@ def create_app(
             return JSONResponse({"error": "access_denied"}, status_code=403)
         if code == "access_denied":
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        if code in {"not_ready", "project_conflict"}:
+        if code in {"not_ready", "project_conflict", "idempotency_conflict"}:
             return JSONResponse({"error": code}, status_code=409)
         if code == "unknown_project":
             return JSONResponse({"error": "unknown_project"}, status_code=400)
@@ -397,6 +397,39 @@ def create_app(
             return draft_error(exc)
         return JSONResponse(queued, status_code=202)
 
+    @app.post("/drafts/{draft_id}/accept")
+    def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            accepted, created = store.accept_draft(principal, draft_id, str((body or {}).get("idempotency_key") or ""))
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(accepted, status_code=201 if created else 200)
+
+    @app.get("/rounds/{round_id}")
+    def rounds_get(round_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            body = store.get_round(principal, round_id)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(body)
+
+    @app.post("/rounds/{round_id}/retry")
+    def rounds_retry(round_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            body = store.retry_round(principal, round_id)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(body)
+
     @app.post("/isolated-dev/reap-staging")
     def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:
         if settings.profile != "isolated-dev":
@@ -470,6 +503,58 @@ def create_app(
             return JSONResponse({"error": "invalid_rule_version"}, status_code=400)
         published = store.publish_rule_version(principal.tenant_id, snapshot)
         return JSONResponse(published, status_code=201)
+
+    @app.post("/isolated-dev/claim-job")
+    def isolated_dev_claim_job(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            claimed = store.claim_job(
+                principal.tenant_id,
+                str(body.get("job_id") or ""),
+                str(body.get("worker") or ""),
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if claimed is None:
+            return JSONResponse({"claimed": False}, status_code=409)
+        return JSONResponse({"claimed": True, **claimed})
+
+    @app.post("/isolated-dev/expire-job-lease")
+    def isolated_dev_expire_lease(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            expired = store.expire_job_lease(principal.tenant_id, str(body.get("job_id") or ""))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"expired": expired})
+
+    @app.post("/isolated-dev/forge-job-result")
+    def isolated_dev_forge_result(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        result = body.get("result") if isinstance(body.get("result"), dict) else {}
+        try:
+            applied = store.forge_job_result(
+                principal.tenant_id,
+                str(body.get("job_id") or ""),
+                str(body.get("worker") or "stale"),
+                int(body.get("attempt") or 0),
+                result,
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc) or "invalid_job"}, status_code=400)
+        return JSONResponse({"applied": applied}, status_code=200 if applied else 409)
 
     @app.post("/isolated-dev/sessions")
     def isolated_dev_session(body: dict) -> JSONResponse:

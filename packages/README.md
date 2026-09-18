@@ -6,7 +6,7 @@ Current:
 
 | Package | Owns |
 |---|---|
-| `ppap_core` | typed settings, DB/object-store probes, Responses helpers, identity/file contracts, engine audit binding, draft identification, product rule snapshots |
+| `ppap_core` | typed settings, DB/object-store probes, Responses helpers, identity/file contracts, engine audit binding, draft identification, product rule snapshots, audit-round statuses |
 | `ppap_excel_audit_engine` | rule routing and checkers migrated from `ppap-agent` @ `53a5bd2b` |
 | `ppap_docops` | Excel/PDF/DOCX extraction and conversion utilities |
 | `ppap_pdf_to_excel` | PDF → workbook pipeline |

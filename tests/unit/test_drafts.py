@@ -137,7 +137,8 @@ class DraftHttpTests(unittest.TestCase):
         self.assertEqual(roles, ["target", "target", "reference"])
         self.assertTrue(all(item["identification_status"] == "pending" for item in fetched.json()["items"]))
         missing = self.client.post(f"/drafts/{draft_id}/accept", json={})
-        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(missing.status_code, 400)
+        self.assertEqual(missing.json()["error"], "invalid_idempotency_key")
         self.assertFalse(any(job["kind"] == "audit.execute" for job in self.store.jobs.values()))
 
     def test_unknown_project_fails_without_default_catalog(self):

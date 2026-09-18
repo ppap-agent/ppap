@@ -12,6 +12,7 @@ python tools/stack.py verify-auth   # object grants + OAuth start; not S02 live 
 python tools/stack.py verify-uploads  # immutable versions on PG/MinIO; not S03
 python tools/stack.py verify-engine   # in-repo checkers on a ready version; not S01/corpus
 python tools/stack.py verify-drafts   # editable drafts, roles, identify, rule versions; not S01
+python tools/stack.py verify-rounds   # accept, idempotency, fencing; not S04 Live
 ```
 
-`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面、#4 的身份/对象授权判定、#5 的文件版本/SSRF 边界、#6 的本仓检查器绑定和 #7 的草稿/识别/规则版本契约。`live/` 保存工具依赖与 oracle 示例。产品审核、真实 OAuth 登录与授权 corpus 仍由对应 Issues 交付。
+`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面、#4 的身份/对象授权判定、#5 的文件版本/SSRF 边界、#6 的本仓检查器绑定、#7 的草稿/识别/规则版本契约和 #8 的受理幂等与 fencing。`live/` 保存工具依赖与 oracle 示例。产品审核、真实 OAuth 登录与授权 corpus 仍由对应 Issues 交付。
