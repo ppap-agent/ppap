@@ -29,6 +29,8 @@
 - [引擎测试指南](https://github.com/ppap-agent/ppap-agent/blob/53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9/ppap_agent/tests/README.md) 指向 V2、POC 分组、跨格式测试和人工 oracle；文档报告路径是 manual_linegrid → pymupdf_find_tables → OCR，不能笼统称所有 PDF 路径 OCR-first。本轮尚未运行这套 corpus。
 - [lark_adaptor](https://github.com/ppap-agent/ppap-agent/blob/53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9/lark_adaptor/README.md) 是可选会话/群聊流程，复用同一审核执行路径，并非另一个独立审核算法。
 
+- 2026-09-18 的 GitHub `Push preflight` 首次用 `tenant_access_token/internal` 检查当前飞书凭据时，飞书返回 `10216: only self-built app is allowed`。这证明当前配置的 PPAP 飞书应用是**应用商店应用**而非企业自建应用；其完整运行鉴权需要 app_ticket → app_access_token → tenant_access_token/tenant_key 链，不能照搬自建应用 token 路径。readiness 只用 `app_ticket/resend` 验证 App ID/Secret，且会触发一次 app_ticket 推送事件。
+
 ## 需要纠正的权威冲突
 
 [hax 产品页](https://github.com/ppap-agent/hax/blob/0923f5acea380ddd09813621703777153a8c7971/products/ppap/README.md) 和 [V2 计划](https://github.com/ppap-agent/hax/blob/0923f5acea380ddd09813621703777153a8c7971/products/ppap/feishu-native-v2-plan.md) 仍包含“最终 ppap-host”和本地实施记录。最新用户决定已将终态改为本仓；这些资料继续证明旧契约和历史，不拥有新架构。未提交/不可读取的工作不能算目标能力已完成。

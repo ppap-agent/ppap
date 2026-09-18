@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Probe app credentials
+      - name: Probe store app credentials
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
@@ -26,23 +26,21 @@ jobs:
           : "${FEISHU_APP_ID:?missing FEISHU_APP_ID}"
           : "${FEISHU_APP_SECRET:?missing FEISHU_APP_SECRET}"
 
+          FEISHU_APP_ID="$(printf '%s' "$FEISHU_APP_ID" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
           response="$(mktemp)"
           trap 'rm -f "$response"' EXIT
 
-          curl --fail --silent --show-error             --connect-timeout 10             --max-time 60             -o "$response"             -H "Content-Type: application/json"             https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal             -d "$(jq -nc               --arg app_id "$FEISHU_APP_ID"               --arg app_secret "$FEISHU_APP_SECRET"               '{app_id:$app_id,app_secret:$app_secret}')"
+          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Content-Type: application/json" https://open.feishu.cn/open-apis/auth/v3/app_ticket/resend -d "$(jq -nc --arg app_id "$FEISHU_APP_ID" --arg app_secret "$FEISHU_APP_SECRET" '{app_id:$app_id,app_secret:$app_secret}')")"
 
-          if ! jq -e '
-            .code == 0
-            and (.tenant_access_token | type == "string" and length > 0)
-            and (.expire | type == "number" and . > 0)
-          ' "$response" >/dev/null; then
-            jq -c '{
-              code: (.code // null),
-              msg: (.msg // null),
-              expire: (.expire // null),
-              token_present: ((.tenant_access_token // "") | length > 0)
-            }' "$response"
+          if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+            echo "Feishu app credential probe: HTTP $http_status"
             exit 1
           fi
 
-          echo "Feishu app credentials: ready"
+          if ! jq -e '.code == 0' "$response" >/dev/null; then
+            jq -c '{code:(.code // null),msg:(.msg // null)}' "$response" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Feishu store app credentials: ready (app_ticket resend requested)"
