@@ -6,6 +6,7 @@ import uuid
 from psycopg.types.json import Jsonb
 
 from ppap_core.files import READY, sha256_bytes
+from ppap_core.identify import classify_file
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
 
@@ -126,4 +127,111 @@ def fail_claimed_job(conn, job: dict, worker: str, code: str) -> None:
         WHERE job_id = %s AND attempt = %s AND worker_id = %s
         """,
         (Jsonb({"error": code}), job["id"], job["attempt"], worker),
+    )
+
+
+def identify_claimed_job(settings: Settings, conn, job: dict, worker: str) -> None:
+    payload = job["payload"] if isinstance(job["payload"], dict) else {}
+    file_id = _as_uuid(payload.get("file_id"))
+    version_id = _as_uuid(payload.get("file_version_id"))
+    item_id = _as_uuid(payload.get("item_id"))
+    expected = str(payload.get("sha256") or "")
+    if not file_id or not version_id or not item_id or len(expected) != 64:
+        raise InputConflict("invalid_payload")
+    version = load_ready_version(conn, job["tenant_id"], file_id, version_id)
+    if version["sha256"] != expected:
+        raise InputConflict("sha256_mismatch")
+    body = S3Objects(settings).get(version["object_key"])
+    if sha256_bytes(body) != expected:
+        raise InputConflict("object_mutated")
+    identification = classify_file(str(payload.get("original_filename") or version["original_filename"]), body)
+    evidence = dict(identification.evidence)
+    evidence["file_version_id"] = version_id
+    evidence["sha256"] = expected
+    evidence["role"] = payload.get("role")
+    status = identification.status
+    matched = identification.matched_document_type
+    project_id = str(payload.get("project_id") or "").strip() or None
+    if project_id:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM product.rule_versions WHERE tenant_id = %s AND project_id = %s",
+            (job["tenant_id"], project_id),
+        ).fetchone()[0]
+        if int(count) == 0:
+            status = "unknown_project"
+            matched = identification.matched_document_type
+            evidence["reason"] = "unknown_project"
+            evidence["proposed_product_rule_version_id"] = None
+            evidence["proposed_engine_rule_id"] = None
+        elif identification.proposed_engine_rule_id:
+            row = conn.execute(
+                """
+                SELECT id, content_sha256, content
+                FROM product.rule_versions
+                WHERE tenant_id = %s AND project_id = %s AND engine_rule_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (job["tenant_id"], project_id, identification.proposed_engine_rule_id),
+            ).fetchone()
+            if row:
+                content = row[2] if isinstance(row[2], dict) else {}
+                checks = content.get("checks") if isinstance(content.get("checks"), list) else []
+                evidence["proposed_product_rule_version_id"] = str(row[0])
+                evidence["proposed_engine_rule_id"] = identification.proposed_engine_rule_id
+                evidence["proposed_content_sha256"] = row[1]
+                evidence["proposed_check_count"] = len(checks)
+            else:
+                evidence["proposed_product_rule_version_id"] = None
+                evidence["proposed_engine_rule_id"] = identification.proposed_engine_rule_id
+                evidence["no_rule_for_type"] = True
+    else:
+        evidence["proposed_product_rule_version_id"] = None
+        evidence["proposed_engine_rule_id"] = identification.proposed_engine_rule_id
+        evidence["default_project"] = False
+    result = {
+        "item_id": item_id,
+        "file_version_id": version_id,
+        "sha256": expected,
+        "identification_status": status,
+        "matched_document_type": matched,
+        "product_rule_version_id": payload.get("preserve_product_rule_version_id"),
+        "engine_rule_id": None,
+        "rule_profile": None,
+        "evidence": evidence,
+    }
+    updated_item = conn.execute(
+        """
+        UPDATE product.draft_items
+        SET identification_status = %s,
+            matched_document_type = %s,
+            match_evidence = %s,
+            identification_job_id = %s,
+            updated_at = now()
+        WHERE id = %s AND tenant_id = %s
+        """,
+        (status, matched, Jsonb(evidence), job["id"], item_id, job["tenant_id"]),
+    )
+    if updated_item.rowcount != 1:
+        raise InputConflict("item_not_found")
+    updated = conn.execute(
+        """
+        UPDATE engine.jobs
+        SET status = 'succeeded',
+            result = %s,
+            lease_until = NULL,
+            updated_at = now()
+        WHERE id = %s AND lease_owner = %s AND attempt = %s AND status = 'leased'
+        """,
+        (Jsonb(result), job["id"], worker, job["attempt"]),
+    )
+    if updated.rowcount != 1:
+        return
+    conn.execute(
+        """
+        UPDATE engine.attempts
+        SET finished_at = now(), outcome = 'succeeded', diagnostic = %s
+        WHERE job_id = %s AND attempt = %s AND worker_id = %s
+        """,
+        (Jsonb({"identification_status": status}), job["id"], job["attempt"], worker),
     )

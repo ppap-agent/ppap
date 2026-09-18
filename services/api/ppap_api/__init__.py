@@ -69,6 +69,20 @@ def create_app(
             return principal, JSONResponse({"error": "access_denied"}, status_code=403)
         return principal, None
 
+    def draft_error(exc: Exception) -> JSONResponse:
+        code = str(exc) or "invalid_draft"
+        if isinstance(exc, KeyError):
+            if code == "invalid_rule_version":
+                return JSONResponse({"error": code}, status_code=400)
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if code == "access_denied":
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if code in {"not_ready", "project_conflict"}:
+            return JSONResponse({"error": code}, status_code=409)
+        if code == "unknown_project":
+            return JSONResponse({"error": "unknown_project"}, status_code=400)
+        return JSONResponse({"error": code}, status_code=400)
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "alive"}
@@ -311,6 +325,78 @@ def create_app(
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         return JSONResponse(ready.public(), status_code=201)
 
+    @app.get("/rule-versions")
+    def rule_versions_list(request: Request, project_id: str = "") -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            versions = store.list_rule_versions(principal.tenant_id, project_id or None)
+        except ValueError as exc:
+            return draft_error(exc)
+        return JSONResponse({"items": versions})
+
+    @app.get("/rule-versions/{version_id}")
+    def rule_versions_get(version_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            version = store.get_rule_version(principal.tenant_id, version_id)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(version)
+
+    @app.post("/drafts")
+    def drafts_create(body: dict, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            draft = store.create_draft(
+                principal,
+                label=str(body.get("label") or ""),
+                project_id=body.get("project_id"),
+            )
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(draft, status_code=201)
+
+    @app.get("/drafts/{draft_id}")
+    def drafts_get(draft_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            draft = store.get_draft(principal, draft_id)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(draft)
+
+    @app.put("/drafts/{draft_id}")
+    def drafts_replace(draft_id: str, body: dict, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "invalid_draft"}, status_code=400)
+        try:
+            draft = store.replace_draft(principal, draft_id, body)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(draft)
+
+    @app.post("/drafts/{draft_id}/identify")
+    def drafts_identify(draft_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            queued = store.enqueue_identify(principal, draft_id)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(queued, status_code=202)
+
     @app.post("/isolated-dev/reap-staging")
     def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:
         if settings.profile != "isolated-dev":
@@ -362,6 +448,28 @@ def create_app(
         if job is None:
             return JSONResponse({"error": "not_found"}, status_code=404)
         return JSONResponse(job)
+
+    @app.post("/isolated-dev/rule-versions")
+    def isolated_dev_rule_versions(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        content = body.get("content")
+        if not isinstance(content, dict):
+            return JSONResponse({"error": "invalid_rule_version"}, status_code=400)
+        snapshot = {
+            "project_id": str(body.get("project_id") or ""),
+            "engine_rule_id": str(body.get("engine_rule_id") or ""),
+            "document_type": str(body.get("document_type") or body.get("engine_rule_id") or ""),
+            "label": str(body.get("label") or body.get("engine_rule_id") or ""),
+            "content": content,
+        }
+        if not snapshot["project_id"] or not snapshot["engine_rule_id"]:
+            return JSONResponse({"error": "invalid_rule_version"}, status_code=400)
+        published = store.publish_rule_version(principal.tenant_id, snapshot)
+        return JSONResponse(published, status_code=201)
 
     @app.post("/isolated-dev/sessions")
     def isolated_dev_session(body: dict) -> JSONResponse:

@@ -28,6 +28,25 @@
     <p>文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
     <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
     <p><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
+    <p>草稿 <code data-testid="audit-draft-id" id="audit-draft-id"></code></p>
+    <p>
+      资料角色
+      <select data-testid="item-role" id="item-role">
+        <option value="target">待审</option>
+        <option value="reference">参考</option>
+      </select>
+      <button type="button" id="add-to-draft">加入草稿</button>
+    </p>
+    <p>
+      规则
+      <select data-testid="rule-selector" id="rule-selector"></select>
+      <button type="button" id="bind-rule">绑定规则版本</button>
+    </p>
+    <p>产品规则版本 <code data-testid="rule-version" id="rule-version"></code></p>
+    <p>执行规则 <code data-testid="engine-rule-id" id="engine-rule-id"></code></p>
+    <p>识别 <code data-testid="identification-status" id="identification-status"></code></p>
+    <p><button type="button" id="identify-draft">识别资料</button></p>
+    <pre data-testid="draft-panel" id="draft-panel"></pre>
     <pre data-testid="resource-panel" id="resource-panel"></pre>
     <pre data-testid="capabilities" id="capabilities"></pre>
     <script src="./app.js"></script>

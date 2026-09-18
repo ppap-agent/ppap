@@ -9,7 +9,7 @@ from psycopg.types.json import Jsonb
 
 from ppap_core.db import connect
 from ppap_core.settings import load_settings
-from ppap_worker.execute import InputConflict, execute_claimed_job, fail_claimed_job
+from ppap_worker.execute import InputConflict, execute_claimed_job, fail_claimed_job, identify_claimed_job
 
 STOP = False
 
@@ -77,6 +77,13 @@ def run() -> None:
                     if job["kind"] == "audit.execute":
                         try:
                             execute_claimed_job(settings, conn, job, ident)
+                        except InputConflict as exc:
+                            fail_claimed_job(conn, job, ident, str(exc) or "input_conflict")
+                        except Exception:
+                            fail_claimed_job(conn, job, ident, "execution_failed")
+                    elif job["kind"] == "draft.identify":
+                        try:
+                            identify_claimed_job(settings, conn, job, ident)
                         except InputConflict as exc:
                             fail_claimed_job(conn, job, ident, str(exc) or "input_conflict")
                         except Exception:

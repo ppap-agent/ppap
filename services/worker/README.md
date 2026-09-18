@@ -2,7 +2,7 @@
 
 Asynchronous execution process for PPAP audits.
 
-Start with `python tools/stack.py up`. The worker is a separate process; stopping it must not block API `/health`. Isolated-dev claims `engine.jobs` and executes `audit.execute` against ready file versions. Product audit rounds remain #7/#8.
+Start with `python tools/stack.py up`. The worker is a separate process; stopping it must not block API `/health`. Isolated-dev claims `engine.jobs` and executes `audit.execute` against ready file versions, and `draft.identify` against draft items. Identification writes match evidence onto the product draft and never defaults a rule profile. Product audit rounds remain #8.
 
 ## Owns
 

@@ -740,9 +740,212 @@ def verify_engine() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_drafts() -> int:
+    import hashlib
+    import httpx
+    from openpyxl import Workbook
+    from ppap_core.fixtures import CATALOG_PROJECT
+
+    env = child_env()
+    report = {"ok": False, "s01_audit": "NOT_PROVEN"}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        def xlsx(name: str) -> tuple[bytes, str]:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / name
+                Workbook().save(path)
+                return path.read_bytes(), name
+
+        def upload(cookie: str, filename: str, body: bytes) -> tuple[str, str, str]:
+            created = httpx.post(
+                api + "/files",
+                json={"original_filename": filename, "content_type": "application/octet-stream", "byte_size": len(body)},
+                headers=headers(cookie),
+                timeout=10,
+            )
+            file_id, version_id = created.json()["file_id"], created.json()["id"]
+            httpx.put(api + f"/files/{file_id}/versions/{version_id}/blob", content=body, headers=headers(cookie), timeout=10)
+            ready = httpx.post(api + f"/files/{file_id}/versions/{version_id}/finalize", headers=headers(cookie), timeout=10)
+            if created.status_code != 201 or ready.status_code != 200:
+                raise RuntimeError("upload_failed")
+            return file_id, version_id, ready.json()["sha256"]
+
+        def wait_identified(cookie: str, draft_id: str) -> dict:
+            deadline = time.time() + 60
+            latest = None
+            while time.time() < deadline:
+                latest = httpx.get(api + f"/drafts/{draft_id}", headers=headers(cookie), timeout=10)
+                if latest.status_code == 200:
+                    items = latest.json().get("items") or []
+                    if items and all(item.get("identification_status") != "pending" for item in items):
+                        return latest.json()
+                time.sleep(1)
+            return latest.json() if latest is not None and latest.status_code == 200 else {}
+
+        alice, carol = mint("alice"), mint("carol")
+        catalog = httpx.get(api + f"/rule-versions?project_id={CATALOG_PROJECT}", headers=headers(alice), timeout=10)
+        psw = next(item for item in catalog.json()["items"] if item["engine_rule_id"] == "零件提交保证书")
+        target_body, _ = xlsx("PSW.xlsx")
+        other_body, _ = xlsx("control-plan.xlsx")
+        ref_body, _ = xlsx("ref.xlsx")
+        t1 = upload(alice, "PSW.xlsx", target_body)
+        t2 = upload(alice, "control-plan.xlsx", other_body)
+        r1 = upload(alice, "ref.xlsx", ref_body)
+        unknown = httpx.post(api + "/drafts", json={"project_id": "no-such-project"}, headers=headers(alice), timeout=10)
+        created = httpx.post(api + "/drafts", json={"label": "prep", "project_id": CATALOG_PROJECT}, headers=headers(alice), timeout=10)
+        draft_id = created.json()["id"]
+        saved = httpx.put(
+            api + f"/drafts/{draft_id}",
+            json={
+                "items": [
+                    {"file_id": t1[0], "file_version_id": t1[1], "role": "target", "product_rule_version_id": psw["id"]},
+                    {"file_id": t2[0], "file_version_id": t2[1], "role": "target"},
+                    {"file_id": r1[0], "file_version_id": r1[1], "role": "reference"},
+                ]
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        fetched = httpx.get(api + f"/drafts/{draft_id}", headers=headers(alice), timeout=10)
+        accept = httpx.post(api + f"/drafts/{draft_id}/accept", headers=headers(alice), timeout=10)
+        identified = httpx.post(api + f"/drafts/{draft_id}/identify", headers=headers(alice), timeout=10)
+        after_identify = wait_identified(alice, draft_id)
+        kinds = []
+        for job in identified.json().get("jobs") or []:
+            body = httpx.get(api + f"/isolated-dev/jobs/{job['id']}", headers=headers(alice), timeout=10)
+            kinds.append(body.json().get("kind"))
+        mutated = dict(psw["content"])
+        mutated["checks"] = [{"id": "rule_only_one", "description": "truncated"}]
+        published = httpx.post(
+            api + "/isolated-dev/rule-versions",
+            json={
+                "project_id": CATALOG_PROJECT,
+                "engine_rule_id": psw["engine_rule_id"],
+                "document_type": psw["document_type"],
+                "label": psw["label"],
+                "content": mutated,
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        after_publish = httpx.get(api + f"/drafts/{draft_id}", headers=headers(alice), timeout=10)
+        r2_body, _ = xlsx("ref-new.xlsx")
+        r2 = upload(alice, "ref-new.xlsx", r2_body)
+        changed_ref = httpx.put(
+            api + f"/drafts/{draft_id}",
+            json={
+                "items": [
+                    {"file_id": t1[0], "file_version_id": t1[1], "role": "target", "product_rule_version_id": psw["id"]},
+                    {"file_id": t2[0], "file_version_id": t2[1], "role": "target"},
+                    {"file_id": r2[0], "file_version_id": r2[1], "role": "reference"},
+                ]
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        txt_id = upload(alice, "notes.txt", b"not an audit file")
+        unsupported_draft = httpx.post(api + "/drafts", json={"project_id": CATALOG_PROJECT}, headers=headers(alice), timeout=10)
+        httpx.put(
+            api + f"/drafts/{unsupported_draft.json()['id']}",
+            json={"items": [{"file_id": txt_id[0], "file_version_id": txt_id[1], "role": "target"}]},
+            headers=headers(alice),
+            timeout=10,
+        )
+        httpx.post(api + f"/drafts/{unsupported_draft.json()['id']}/identify", headers=headers(alice), timeout=10)
+        unsupported = wait_identified(alice, unsupported_draft.json()["id"])
+        carol_denied = httpx.get(api + f"/drafts/{draft_id}", headers=headers(carol), timeout=10)
+        carol_rule = httpx.get(api + f"/rule-versions/{psw['id']}", headers=headers(carol), timeout=10)
+        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+            html = response.read().decode()
+        first = (after_identify.get("items") or [{}])[0]
+        published_ok = published.status_code == 201 and published.json()["id"] != psw["id"]
+        bound_unchanged = (
+            after_publish.status_code == 200
+            and after_publish.json()["items"][0]["product_rule_version_id"] == psw["id"]
+            and after_publish.json()["items"][0]["bound_content_sha256"] == psw["content_sha256"]
+            and after_publish.json()["items"][0]["bound_check_count"] == psw["check_count"]
+            and after_publish.json()["items"][0]["bound_content_sha256"] != published.json().get("content_sha256")
+        )
+        report["unknown_project"] = unknown.status_code == 400 and unknown.json() == {"error": "unknown_project"}
+        report["round_trip"] = (
+            created.status_code == 201
+            and saved.status_code == 200
+            and fetched.status_code == 200
+            and fetched.json()["items"] == saved.json()["items"]
+            and fetched.json()["accepted"] is False
+            and [item["role"] for item in fetched.json()["items"]] == ["target", "target", "reference"]
+        )
+        report["no_accept"] = accept.status_code == 404
+        report["identify"] = (
+            identified.status_code == 202
+            and identified.json().get("accepted") is False
+            and kinds == ["draft.identify", "draft.identify", "draft.identify"]
+            and first.get("identification_status") == "matched"
+            and first.get("matched_document_type") == "零件提交保证书"
+            and first.get("product_rule_version_id") == psw["id"]
+            and first.get("engine_rule_id") == "零件提交保证书"
+            and first.get("product_rule_version_id") != first.get("engine_rule_id")
+            and first.get("match_evidence", {}).get("rule_profile") is None
+            and hashlib.sha256(target_body).hexdigest() == first.get("sha256")
+        )
+        report["unsupported"] = (unsupported.get("items") or [{}])[0].get("identification_status") == "unsupported"
+        report["reference_change"] = (
+            changed_ref.status_code == 200
+            and changed_ref.json()["items"][0]["product_rule_version_id"] == psw["id"]
+            and changed_ref.json()["items"][2]["file_version_id"] == r2[1]
+        )
+        report["rule_history"] = published_ok and bound_unchanged
+        report["carol_denied"] = (
+            carol_denied.status_code == 403
+            and carol_denied.json() == {"error": "access_denied"}
+            and carol_rule.status_code == 403
+        )
+        report["web_hooks"] = all(
+            marker in html
+            for marker in (
+                'data-testid="audit-draft-id"',
+                'data-testid="item-role"',
+                'data-testid="rule-selector"',
+                'data-testid="rule-version"',
+                'data-testid="engine-rule-id"',
+                'data-testid="identification-status"',
+            )
+        )
+        report["ok"] = all(
+            report[key] is True
+            for key in (
+                "unknown_project",
+                "round_trip",
+                "no_accept",
+                "identify",
+                "unsupported",
+                "reference_change",
+                "rule_history",
+                "carol_denied",
+                "web_hooks",
+            )
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+        report["error_detail"] = str(exc)[:200]
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -783,6 +986,9 @@ def main() -> int:
     if args.command == "verify-engine":
         reexec_in_venv()
         return verify_engine()
+    if args.command == "verify-drafts":
+        reexec_in_venv()
+        return verify_drafts()
     reexec_in_venv()
     return verify()
 

@@ -15,6 +15,7 @@
 | P04 | `python tools/stack.py verify-auth` | 预存 session 的跨租户对象拒绝、同租户只读非复核、logout、飞书 OAuth 启动 URL；Web 含 access-denied/login hooks | 不是 S02 真实 OAuth 登录；app_ticket 接收与 Drive 授权仍缺公网回调 |
 | P05 | `python tools/stack.py verify-uploads` | 真实 PG/MinIO 上暂存→SHA-256 固化、同名新字节保留旧版本下载、跨租户拒绝、重复 finalize / 覆盖暂存、过期暂存回收、SSRF 拒绝；Web 含 upload/download hooks | 不是 S03 审核历史；不使用客户样本；不把 ETag 当 SHA-256 |
 | P06 | `python tools/stack.py verify-engine` | 本仓检查器由 Worker 对 ready 文件版本执行；输入绑定 SHA-256 与规则版本；结果项为 PASS/NG/ERR；跨租户 job 拒绝；缺授权 corpus 时 `corpus` 为 NOT_PROVEN | 不是 S01；不是 #3 支持矩阵；不把空结果当 PASS；OCR/模型质量另证 |
+| P07 | `python tools/stack.py verify-drafts` | 草稿可编辑多待审/参考版本；Worker 识别显示 matched/unsupported 等，不默认 profile；产品规则版本 ID 与 engine_rule_id 显式区分；未知 projectId 失败；跨租户草稿/文件/规则拒绝；规则新快照不改已绑定草稿；无受理端点 | 不是 S01；无 accept/submit；不是 #3 corpus；关闭页面不产生审核轮次 |
 | P01 | 每次 push 由 `Push preflight` 调用 `LLM readiness`；亦可手动运行 | GitHub Secrets `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 映射到 canonical LLM 配置后能完成一次 Responses 请求并返回 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
 | P02 | 每次 push 由 `Push preflight` 调用 `Feishu readiness`；亦可手动运行 | 当前商店应用的 App ID/Secret 能让飞书接受 `app_ticket/resend` 请求 | 会触发一次 app_ticket 推送；不证明 ticket 已被新系统接收、tenant token、用户 OAuth、Drive/Docs、评论写回或 Partner AI |
 
@@ -26,7 +27,9 @@ P01/P02 是彼此独立的 reusable 外部依赖探针。每次 push 的 `Push p
 
 `tools/live.py` 使用小型 `data-testid` 映射访问用户可见控件。这是候选测试适配，不是要求产品保持某个组件结构。目标 UI 落地时替换此处的控件映射，不改变 Story 的用户结果。缺选择器可能是适配错误，不能自动归咎产品。
 
-现有 hooks：build-revision、source-upload、prepare-audit、rule-selector、submit-audit、round-id、execution-state、rule-version、finding、finding-id、finding-status、evidence-state、view-evidence、evidence-panel、evidence-locator、evidence-source-sha256、next-action、download-original、document-version-id、access-denied、login-feishu、logout、current-user、review-reason、save-review、review-entry。
+现有 hooks：build-revision、source-upload、prepare-audit、rule-selector、item-role、audit-draft-id、identification-status、engine-rule-id、submit-audit、round-id、execution-state、rule-version、finding、finding-id、finding-status、evidence-state、view-evidence、evidence-panel、evidence-locator、evidence-source-sha256、next-action、download-original、document-version-id、access-denied、login-feishu、logout、current-user、review-reason、save-review、review-entry。
+
+`rule-selector` / `rule-version` / `identification-status` 现用于草稿准备；`submit-audit` 与 `round-id` 仍待 #8 受理，当前页面不得把保存草稿当成提交。
 
 显示值的候选映射是 completed 与 available/missing；它们不是新产品状态机的强制命名。可将真实 UI 状态映射成等价语义。列表顺序不决定结果；同一 case 中检查项集合由事先审阅 oracle 决定，不能任意减少集合。
 

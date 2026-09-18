@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ppap_core.db import connect
+from ppap_core.drafts import DRAFT_OPEN, IDENT_PENDING, ROLES
 from ppap_core.files import (
     FAILED,
     MAX_UPLOAD_BYTES,
@@ -23,6 +24,7 @@ from ppap_core.files import (
 )
 from ppap_core.fixtures import (
     APP_ID,
+    CATALOG_PROJECT,
     RESOURCE_A,
     RESOURCE_B,
     SUBJECTS,
@@ -33,6 +35,7 @@ from ppap_core.fixtures import (
     USER_CAROL,
 )
 from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
 
@@ -286,6 +289,8 @@ class AuthStore:
                         RESOURCE_B, USER_CAROL, RESOURCE_B, USER_CAROL,
                     ),
                 )
+        self.seed_rule_catalog(TENANT_A, CATALOG_PROJECT)
+        self.seed_rule_catalog(TENANT_B, CATALOG_PROJECT)
 
     def principal_for_fixture(self, name: str) -> Principal:
         spec = SUBJECTS[name]
@@ -559,3 +564,389 @@ class AuthStore:
             "attempt": row[5],
             "result": row[6],
         }
+
+    def seed_rule_catalog(self, tenant_id: str, project_id: str) -> list[dict]:
+        published = []
+        for snapshot in catalog_snapshots(project_id):
+            published.append(self.publish_rule_version(tenant_id, snapshot))
+        return published
+
+    def publish_rule_version(self, tenant_id: str, snapshot: dict) -> dict:
+        content = snapshot["content"]
+        digest = snapshot.get("content_sha256") or snapshot_hash(content)
+        engine_rule_id = str(snapshot["engine_rule_id"])
+        project_id = str(snapshot["project_id"])
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO product.rule_versions
+                    (id, tenant_id, project_id, engine_rule_id, document_type, label, content, content_sha256)
+                VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tenant_id, project_id, engine_rule_id, content_sha256)
+                DO UPDATE SET label = EXCLUDED.label
+                RETURNING id, tenant_id, project_id, engine_rule_id, document_type, label, content, content_sha256, created_at
+                """,
+                (
+                    tenant_id,
+                    project_id,
+                    engine_rule_id,
+                    str(snapshot["document_type"]),
+                    str(snapshot.get("label") or engine_rule_id),
+                    Jsonb(content),
+                    digest,
+                ),
+            ).fetchone()
+        return self._rule_public(row)
+
+    def _rule_public(self, row) -> dict:
+        content = row[6] if isinstance(row[6], dict) else {}
+        checks = content.get("checks") if isinstance(content.get("checks"), list) else []
+        return {
+            "id": str(row[0]),
+            "tenant_id": str(row[1]),
+            "project_id": row[2],
+            "engine_rule_id": row[3],
+            "document_type": row[4],
+            "label": row[5],
+            "content": content,
+            "content_sha256": row[7],
+            "check_count": len(checks),
+            "created_at": row[8].isoformat() if hasattr(row[8], "isoformat") else str(row[8]),
+        }
+
+    def list_rule_versions(self, tenant_id: str, project_id: str | None = None) -> list[dict]:
+        with self._conn() as conn:
+            if project_id:
+                rows = conn.execute(
+                    """
+                    SELECT id, tenant_id, project_id, engine_rule_id, document_type, label, content, content_sha256, created_at
+                    FROM product.rule_versions
+                    WHERE tenant_id = %s AND project_id = %s
+                    ORDER BY document_type, created_at
+                    """,
+                    (tenant_id, project_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, tenant_id, project_id, engine_rule_id, document_type, label, content, content_sha256, created_at
+                    FROM product.rule_versions
+                    WHERE tenant_id = %s
+                    ORDER BY project_id, document_type, created_at
+                    """,
+                    (tenant_id,),
+                ).fetchall()
+        return [self._rule_public(row) for row in rows]
+
+    def get_rule_version(self, tenant_id: str, version_id: str) -> dict:
+        vid = _as_uuid(version_id)
+        if not vid:
+            raise KeyError("invalid_rule_version")
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, tenant_id, project_id, engine_rule_id, document_type, label, content, content_sha256, created_at
+                FROM product.rule_versions
+                WHERE id = %s
+                """,
+                (vid,),
+            ).fetchone()
+        if row is None:
+            raise KeyError("invalid_rule_version")
+        if str(row[1]) != tenant_id:
+            raise ValueError("access_denied")
+        return self._rule_public(row)
+
+    def _project_exists(self, tenant_id: str, project_id: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM product.rule_versions WHERE tenant_id = %s AND project_id = %s LIMIT 1",
+                (tenant_id, project_id),
+            ).fetchone()
+        return bool(row)
+
+    def _require_known_project(self, tenant_id: str, project_id: str | None) -> str | None:
+        value = (project_id or "").strip() or None
+        if value and not self._project_exists(tenant_id, value):
+            raise ValueError("unknown_project")
+        return value
+
+    def create_draft(self, principal: Principal, *, label: str = "", project_id: str | None = None) -> dict:
+        known_project = self._require_known_project(principal.tenant_id, project_id)
+        draft_id = str(uuid.uuid4())
+        with self._conn() as conn:
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'draft')",
+                    (draft_id, principal.tenant_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, project_id, label)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, known_project, (label or "")[:255]),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO product.resource_grants (resource_id, user_id, capability)
+                    VALUES (%s, %s, 'read')
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (draft_id, principal.user_id),
+                )
+        return self.get_draft(principal, draft_id)
+
+    def get_draft(self, principal: Principal, draft_id: str) -> dict:
+        parsed = _as_uuid(draft_id)
+        if not parsed:
+            raise KeyError("missing")
+        resource = self.resource(parsed)
+        grants = self.grants(parsed, principal.user_id) if resource else set()
+        if resource is None or resource.kind != "draft":
+            raise KeyError("missing")
+        if resource.tenant_id != principal.tenant_id or not (grants & {"read", "review"}):
+            raise ValueError("access_denied")
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            draft = conn.execute(
+                """
+                SELECT id, tenant_id, status, project_id, label, created_at, updated_at
+                FROM product.audit_drafts
+                WHERE id = %s
+                """,
+                (parsed,),
+            ).fetchone()
+            items = conn.execute(
+                """
+                SELECT i.id, i.file_id, i.file_version_id, v.sha256, v.original_filename, i.role, i.position,
+                       i.identification_status, i.identification_job_id, i.matched_document_type,
+                       i.product_rule_version_id, i.engine_rule_id, i.bound_content_sha256, i.bound_check_count,
+                       i.match_evidence
+                FROM product.draft_items i
+                JOIN product.file_versions v ON v.id = i.file_version_id
+                WHERE i.draft_id = %s
+                ORDER BY i.position, i.created_at
+                """,
+                (parsed,),
+            ).fetchall()
+        if draft is None:
+            raise KeyError("missing")
+        return {
+            "id": str(draft["id"]),
+            "tenant_id": str(draft["tenant_id"]),
+            "status": draft["status"],
+            "project_id": draft["project_id"],
+            "label": draft["label"],
+            "accepted": False,
+            "created_at": draft["created_at"].isoformat(),
+            "updated_at": draft["updated_at"].isoformat(),
+            "items": [
+                {
+                    "id": str(item["id"]),
+                    "file_id": str(item["file_id"]),
+                    "file_version_id": str(item["file_version_id"]),
+                    "sha256": item["sha256"],
+                    "original_filename": item["original_filename"],
+                    "role": item["role"],
+                    "identification_status": item["identification_status"],
+                    "identification_job_id": str(item["identification_job_id"]) if item["identification_job_id"] else None,
+                    "matched_document_type": item["matched_document_type"],
+                    "product_rule_version_id": str(item["product_rule_version_id"]) if item["product_rule_version_id"] else None,
+                    "engine_rule_id": item["engine_rule_id"],
+                    "bound_content_sha256": item["bound_content_sha256"],
+                    "bound_check_count": item["bound_check_count"],
+                    "match_evidence": item["match_evidence"] or {},
+                }
+                for item in items
+            ],
+        }
+
+    def replace_draft(self, principal: Principal, draft_id: str, patch: dict) -> dict:
+        current = self.get_draft(principal, draft_id)
+        label = current["label"] if "label" not in patch else str(patch.get("label") or "")[:255]
+        if "project_id" in patch:
+            project_id = self._require_known_project(principal.tenant_id, patch.get("project_id"))
+        else:
+            project_id = current["project_id"]
+        incoming = patch["items"] if "items" in patch else None
+        if incoming is not None:
+            if not isinstance(incoming, list):
+                raise ValueError("invalid_items")
+            prepared = self._prepare_items(principal, current, project_id, incoming)
+        else:
+            prepared = None
+            if project_id != current["project_id"]:
+                for item in current["items"]:
+                    if item["product_rule_version_id"]:
+                        bound = self.get_rule_version(principal.tenant_id, item["product_rule_version_id"])
+                        if bound["project_id"] != project_id:
+                            raise ValueError("project_conflict")
+        with self._conn() as conn:
+            with conn.transaction():
+                conn.execute(
+                    """
+                    UPDATE product.audit_drafts
+                    SET label = %s, project_id = %s, updated_at = now()
+                    WHERE id = %s AND tenant_id = %s AND status = %s
+                    """,
+                    (label, project_id, current["id"], principal.tenant_id, DRAFT_OPEN),
+                )
+                if prepared is not None:
+                    conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (current["id"],))
+                    for position, item in enumerate(prepared):
+                        conn.execute(
+                            """
+                            INSERT INTO product.draft_items (
+                                id, draft_id, tenant_id, file_id, file_version_id, role, position,
+                                identification_status, identification_job_id, matched_document_type,
+                                product_rule_version_id, engine_rule_id, bound_content_sha256, bound_check_count,
+                                match_evidence
+                            ) VALUES (
+                                %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s,
+                                %s, %s, %s, %s,
+                                %s
+                            )
+                            """,
+                            (
+                                item["id"], current["id"], principal.tenant_id, item["file_id"], item["file_version_id"],
+                                item["role"], position,
+                                item["identification_status"], item["identification_job_id"], item["matched_document_type"],
+                                item["product_rule_version_id"], item["engine_rule_id"], item["bound_content_sha256"],
+                                item["bound_check_count"], Jsonb(item["match_evidence"]),
+                            ),
+                        )
+        return self.get_draft(principal, draft_id)
+
+    def _prepare_items(self, principal: Principal, current: dict, project_id: str | None, incoming: list) -> list[dict]:
+        previous = {(item["file_version_id"], item["role"]): item for item in current["items"]}
+        seen: set[str] = set()
+        prepared: list[dict] = []
+        for raw in incoming:
+            if not isinstance(raw, dict):
+                raise ValueError("invalid_items")
+            role = str(raw.get("role") or "")
+            if role not in ROLES:
+                raise ValueError("invalid_role")
+            version = self.get_version(str(raw.get("file_id") or ""), str(raw.get("file_version_id") or ""))
+            if version is None:
+                raise KeyError("missing_file")
+            if version.tenant_id != principal.tenant_id:
+                raise ValueError("access_denied")
+            resource = self.resource(version.file_id)
+            grants = self.grants(version.file_id, principal.user_id) if resource else set()
+            if resource is None or resource.kind != "file" or not (grants & {"read", "review"}):
+                raise ValueError("access_denied")
+            if version.status != READY or not version.sha256:
+                raise ValueError("not_ready")
+            if version.id in seen:
+                raise ValueError("duplicate_version")
+            seen.add(version.id)
+            kept = previous.get((version.id, role))
+            if "product_rule_version_id" in raw:
+                bound_id = raw.get("product_rule_version_id") or None
+            else:
+                bound_id = kept["product_rule_version_id"] if kept else None
+            engine_rule_id = None
+            bound_sha = None
+            bound_count = None
+            if bound_id:
+                rule = self.get_rule_version(principal.tenant_id, str(bound_id))
+                if project_id and rule["project_id"] != project_id:
+                    raise ValueError("project_conflict")
+                engine_rule_id = rule["engine_rule_id"]
+                bound_sha = rule["content_sha256"]
+                bound_count = rule["check_count"]
+                bound_id = rule["id"]
+            if kept:
+                ident_status = kept["identification_status"]
+                ident_job = kept["identification_job_id"]
+                matched = kept["matched_document_type"]
+                evidence = kept["match_evidence"]
+                item_id = kept["id"]
+            else:
+                ident_status = IDENT_PENDING
+                ident_job = None
+                matched = None
+                evidence = {}
+                item_id = str(uuid.uuid4())
+            prepared.append(
+                {
+                    "id": item_id,
+                    "file_id": version.file_id,
+                    "file_version_id": version.id,
+                    "role": role,
+                    "identification_status": ident_status,
+                    "identification_job_id": ident_job,
+                    "matched_document_type": matched,
+                    "product_rule_version_id": bound_id,
+                    "engine_rule_id": engine_rule_id,
+                    "bound_content_sha256": bound_sha,
+                    "bound_check_count": bound_count,
+                    "match_evidence": evidence or {},
+                }
+            )
+        return prepared
+
+    def enqueue_identify(self, principal: Principal, draft_id: str) -> dict:
+        draft = self.get_draft(principal, draft_id)
+        if draft["project_id"] and not self._project_exists(principal.tenant_id, draft["project_id"]):
+            raise ValueError("unknown_project")
+        jobs = []
+        with self._conn() as conn:
+            with conn.transaction():
+                for item in draft["items"]:
+                    job_id = str(uuid.uuid4())
+                    payload = {
+                        "draft_id": draft["id"],
+                        "item_id": item["id"],
+                        "file_id": item["file_id"],
+                        "file_version_id": item["file_version_id"],
+                        "sha256": item["sha256"],
+                        "original_filename": item["original_filename"],
+                        "role": item["role"],
+                        "project_id": draft["project_id"],
+                        "preserve_product_rule_version_id": item["product_rule_version_id"],
+                    }
+                    conn.execute(
+                        """
+                        INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
+                        VALUES (%s, %s, 'draft.identify', %s, 'queued')
+                        """,
+                        (job_id, principal.tenant_id, Jsonb(payload)),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE product.draft_items
+                        SET identification_job_id = %s, identification_status = %s, updated_at = now()
+                        WHERE id = %s AND tenant_id = %s
+                        """,
+                        (job_id, IDENT_PENDING, item["id"], principal.tenant_id),
+                    )
+                    jobs.append({"item_id": item["id"], "id": job_id, "status": "queued", "kind": "draft.identify"})
+        return {"draft_id": draft["id"], "jobs": jobs, "accepted": False}
+
+    def apply_identification(
+        self,
+        tenant_id: str,
+        item_id: str,
+        job_id: str,
+        *,
+        status: str,
+        matched_document_type: str | None,
+        evidence: dict,
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE product.draft_items
+                SET identification_status = %s,
+                    matched_document_type = %s,
+                    match_evidence = %s,
+                    identification_job_id = %s,
+                    updated_at = now()
+                WHERE id = %s AND tenant_id = %s
+                """,
+                (status, matched_document_type, Jsonb(evidence), job_id, item_id, tenant_id),
+            )

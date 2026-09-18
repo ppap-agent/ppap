@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from ppap_core.drafts import DRAFT_OPEN, IDENT_PENDING, ROLES
 from ppap_core.files import (
     FAILED,
     MAX_UPLOAD_BYTES,
@@ -15,8 +16,9 @@ from ppap_core.files import (
     sha256_bytes,
     version_object_key,
 )
-from ppap_core.fixtures import SUBJECTS
+from ppap_core.fixtures import CATALOG_PROJECT, SUBJECTS
 from ppap_core.identity import Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
 
 
@@ -52,6 +54,9 @@ class MemoryAuthStore:
         self.files: dict[str, dict[str, str]] = {}
         self.versions: dict[tuple[str, str], FileVersion] = {}
         self.jobs: dict[str, dict] = {}
+        self.rule_versions: dict[str, dict] = {}
+        self.drafts: dict[str, dict] = {}
+        self.draft_items: dict[str, list[dict]] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds))
@@ -106,6 +111,8 @@ class MemoryAuthStore:
         self.grant_table[(RESOURCE_A, USER_ALICE)] = {"read", "review"}
         self.grant_table[(RESOURCE_A, USER_BOB)] = {"read"}
         self.grant_table[(RESOURCE_B, USER_CAROL)] = {"read", "review"}
+        self.seed_rule_catalog(TENANT_A, CATALOG_PROJECT)
+        self.seed_rule_catalog(TENANT_B, CATALOG_PROJECT)
 
     def principal_for_fixture(self, name: str) -> Principal:
         spec = SUBJECTS[name]
@@ -236,7 +243,15 @@ class MemoryAuthStore:
             "engine_rule_id": engine_rule_id,
             "rules": rules or [],
         }
-        job = {"id": job_id, "kind": "audit.execute", "payload": payload, "status": "queued", "attempt": 0, "result": {}}
+        job = {
+            "id": job_id,
+            "tenant_id": tenant_id,
+            "kind": "audit.execute",
+            "payload": payload,
+            "status": "queued",
+            "attempt": 0,
+            "result": {},
+        }
         self.jobs[job_id] = job
         return {"id": job_id, "status": "queued", "payload": payload}
 
@@ -244,7 +259,256 @@ class MemoryAuthStore:
         job = self.jobs.get(job_id)
         if job is None:
             return None
-        version = self.versions.get((job["payload"]["file_id"], job["payload"]["file_version_id"]))
+        if job.get("tenant_id") and job["tenant_id"] != tenant_id:
+            raise ValueError("access_denied")
+        payload = job["payload"]
+        version = self.versions.get((payload["file_id"], payload["file_version_id"]))
         if version is None or version.tenant_id != tenant_id:
             raise ValueError("access_denied")
         return job
+
+    def seed_rule_catalog(self, tenant_id: str, project_id: str) -> list[dict]:
+        return [self.publish_rule_version(tenant_id, snapshot) for snapshot in catalog_snapshots(project_id)]
+
+    def publish_rule_version(self, tenant_id: str, snapshot: dict) -> dict:
+        content = snapshot["content"]
+        digest = snapshot.get("content_sha256") or snapshot_hash(content)
+        for existing in self.rule_versions.values():
+            if (
+                existing["tenant_id"] == tenant_id
+                and existing["project_id"] == snapshot["project_id"]
+                and existing["engine_rule_id"] == snapshot["engine_rule_id"]
+                and existing["content_sha256"] == digest
+            ):
+                return existing
+        checks = content.get("checks") if isinstance(content.get("checks"), list) else []
+        record = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "project_id": snapshot["project_id"],
+            "engine_rule_id": snapshot["engine_rule_id"],
+            "document_type": snapshot["document_type"],
+            "label": snapshot.get("label") or snapshot["engine_rule_id"],
+            "content": content,
+            "content_sha256": digest,
+            "check_count": len(checks),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.rule_versions[record["id"]] = record
+        return record
+
+    def list_rule_versions(self, tenant_id: str, project_id: str | None = None) -> list[dict]:
+        items = [item for item in self.rule_versions.values() if item["tenant_id"] == tenant_id]
+        if project_id:
+            items = [item for item in items if item["project_id"] == project_id]
+        return sorted(items, key=lambda item: (item["project_id"], item["document_type"], item["created_at"]))
+
+    def get_rule_version(self, tenant_id: str, version_id: str) -> dict:
+        record = self.rule_versions.get(version_id)
+        if record is None:
+            raise KeyError("invalid_rule_version")
+        if record["tenant_id"] != tenant_id:
+            raise ValueError("access_denied")
+        return record
+
+    def _project_exists(self, tenant_id: str, project_id: str) -> bool:
+        return any(item["tenant_id"] == tenant_id and item["project_id"] == project_id for item in self.rule_versions.values())
+
+    def _require_known_project(self, tenant_id: str, project_id: str | None) -> str | None:
+        value = (project_id or "").strip() or None
+        if value and not self._project_exists(tenant_id, value):
+            raise ValueError("unknown_project")
+        return value
+
+    def create_draft(self, principal: Principal, *, label: str = "", project_id: str | None = None) -> dict:
+        known_project = self._require_known_project(principal.tenant_id, project_id)
+        draft_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        self.resources[draft_id] = Resource(draft_id, principal.tenant_id, "draft")
+        self.grant_table.setdefault((draft_id, principal.user_id), set()).add("read")
+        self.drafts[draft_id] = {
+            "id": draft_id,
+            "tenant_id": principal.tenant_id,
+            "status": DRAFT_OPEN,
+            "project_id": known_project,
+            "label": (label or "")[:255],
+            "accepted": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.draft_items[draft_id] = []
+        return self.get_draft(principal, draft_id)
+
+    def get_draft(self, principal: Principal, draft_id: str) -> dict:
+        resource = self.resource(draft_id)
+        grants = self.grants(draft_id, principal.user_id) if resource else set()
+        if resource is None or resource.kind != "draft":
+            raise KeyError("missing")
+        if resource.tenant_id != principal.tenant_id or not (grants & {"read", "review"}):
+            raise ValueError("access_denied")
+        draft = self.drafts[draft_id]
+        items = []
+        for item in self.draft_items.get(draft_id, []):
+            version = self.versions[(item["file_id"], item["file_version_id"])]
+            items.append(
+                {
+                    **item,
+                    "sha256": version.sha256,
+                    "original_filename": version.original_filename,
+                }
+            )
+        return {**draft, "items": items}
+
+    def replace_draft(self, principal: Principal, draft_id: str, patch: dict) -> dict:
+        current = self.get_draft(principal, draft_id)
+        label = current["label"] if "label" not in patch else str(patch.get("label") or "")[:255]
+        if "project_id" in patch:
+            project_id = self._require_known_project(principal.tenant_id, patch.get("project_id"))
+        else:
+            project_id = current["project_id"]
+        if "items" in patch:
+            if not isinstance(patch["items"], list):
+                raise ValueError("invalid_items")
+            prepared = self._prepare_items(principal, current, project_id, patch["items"])
+            self.draft_items[draft_id] = prepared
+        elif project_id != current["project_id"]:
+            for item in current["items"]:
+                if item["product_rule_version_id"]:
+                    bound = self.get_rule_version(principal.tenant_id, item["product_rule_version_id"])
+                    if bound["project_id"] != project_id:
+                        raise ValueError("project_conflict")
+        self.drafts[draft_id] = {
+            **self.drafts[draft_id],
+            "label": label,
+            "project_id": project_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return self.get_draft(principal, draft_id)
+
+    def _prepare_items(self, principal: Principal, current: dict, project_id: str | None, incoming: list) -> list[dict]:
+        previous = {(item["file_version_id"], item["role"]): item for item in current["items"]}
+        seen: set[str] = set()
+        prepared: list[dict] = []
+        for raw in incoming:
+            if not isinstance(raw, dict):
+                raise ValueError("invalid_items")
+            role = str(raw.get("role") or "")
+            if role not in ROLES:
+                raise ValueError("invalid_role")
+            version = self.get_version(str(raw.get("file_id") or ""), str(raw.get("file_version_id") or ""))
+            if version is None:
+                raise KeyError("missing_file")
+            if version.tenant_id != principal.tenant_id:
+                raise ValueError("access_denied")
+            resource = self.resource(version.file_id)
+            grants = self.grants(version.file_id, principal.user_id) if resource else set()
+            if resource is None or resource.kind != "file" or not (grants & {"read", "review"}):
+                raise ValueError("access_denied")
+            if version.status != READY or not version.sha256:
+                raise ValueError("not_ready")
+            if version.id in seen:
+                raise ValueError("duplicate_version")
+            seen.add(version.id)
+            kept = previous.get((version.id, role))
+            if "product_rule_version_id" in raw:
+                bound_id = raw.get("product_rule_version_id") or None
+            else:
+                bound_id = kept["product_rule_version_id"] if kept else None
+            engine_rule_id = None
+            bound_sha = None
+            bound_count = None
+            if bound_id:
+                rule = self.get_rule_version(principal.tenant_id, str(bound_id))
+                if project_id and rule["project_id"] != project_id:
+                    raise ValueError("project_conflict")
+                engine_rule_id = rule["engine_rule_id"]
+                bound_sha = rule["content_sha256"]
+                bound_count = rule["check_count"]
+                bound_id = rule["id"]
+            if kept:
+                item = {
+                    "id": kept["id"],
+                    "identification_status": kept["identification_status"],
+                    "identification_job_id": kept["identification_job_id"],
+                    "matched_document_type": kept["matched_document_type"],
+                    "match_evidence": kept["match_evidence"],
+                }
+            else:
+                item = {
+                    "id": str(uuid.uuid4()),
+                    "identification_status": IDENT_PENDING,
+                    "identification_job_id": None,
+                    "matched_document_type": None,
+                    "match_evidence": {},
+                }
+            prepared.append(
+                {
+                    **item,
+                    "file_id": version.file_id,
+                    "file_version_id": version.id,
+                    "role": role,
+                    "product_rule_version_id": bound_id,
+                    "engine_rule_id": engine_rule_id,
+                    "bound_content_sha256": bound_sha,
+                    "bound_check_count": bound_count,
+                }
+            )
+        return prepared
+
+    def enqueue_identify(self, principal: Principal, draft_id: str) -> dict:
+        draft = self.get_draft(principal, draft_id)
+        if draft["project_id"] and not self._project_exists(principal.tenant_id, draft["project_id"]):
+            raise ValueError("unknown_project")
+        jobs = []
+        updated = []
+        for item in draft["items"]:
+            job_id = str(uuid.uuid4())
+            payload = {
+                "draft_id": draft["id"],
+                "item_id": item["id"],
+                "file_id": item["file_id"],
+                "file_version_id": item["file_version_id"],
+                "sha256": item["sha256"],
+                "original_filename": item["original_filename"],
+                "role": item["role"],
+                "project_id": draft["project_id"],
+                "preserve_product_rule_version_id": item["product_rule_version_id"],
+            }
+            self.jobs[job_id] = {
+                "id": job_id,
+                "tenant_id": principal.tenant_id,
+                "kind": "draft.identify",
+                "payload": payload,
+                "status": "queued",
+                "attempt": 0,
+                "result": {},
+            }
+            updated.append({**item, "identification_job_id": job_id, "identification_status": IDENT_PENDING})
+            jobs.append({"item_id": item["id"], "id": job_id, "status": "queued", "kind": "draft.identify"})
+        self.draft_items[draft_id] = [
+            {k: v for k, v in item.items() if k not in {"sha256", "original_filename"}} for item in updated
+        ]
+        return {"draft_id": draft["id"], "jobs": jobs, "accepted": False}
+
+    def apply_identification(
+        self,
+        tenant_id: str,
+        item_id: str,
+        job_id: str,
+        *,
+        status: str,
+        matched_document_type: str | None,
+        evidence: dict,
+    ) -> None:
+        for draft_id, items in self.draft_items.items():
+            draft = self.drafts.get(draft_id)
+            if not draft or draft["tenant_id"] != tenant_id:
+                continue
+            for item in items:
+                if item["id"] != item_id:
+                    continue
+                item["identification_status"] = status
+                item["matched_document_type"] = matched_document_type
+                item["match_evidence"] = evidence
+                item["identification_job_id"] = job_id
+                return

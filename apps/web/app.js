@@ -13,6 +13,10 @@ function fileIdFromLocation() {
   return new URLSearchParams(window.location.search).get("file") || "";
 }
 
+function draftIdFromLocation() {
+  return new URLSearchParams(window.location.search).get("draft") || "";
+}
+
 async function main() {
   const runtime = (await readJson("./runtime-config.json")).body;
   const config = (await readJson(`${runtime.api_url}/public-config`)).body;
@@ -38,6 +42,50 @@ async function main() {
     window.location.reload();
   });
   let fileId = fileIdFromLocation();
+  let versionId = "";
+  let draftId = draftIdFromLocation();
+  const renderDraft = (draft) => {
+    if (!draft || !draft.id) {
+      return;
+    }
+    draftId = draft.id;
+    document.getElementById("audit-draft-id").textContent = draft.id;
+    document.getElementById("draft-panel").textContent = JSON.stringify(draft, null, 2);
+    const first = (draft.items || [])[0] || {};
+    document.getElementById("rule-version").textContent = first.product_rule_version_id || "";
+    document.getElementById("engine-rule-id").textContent = first.engine_rule_id || "";
+    document.getElementById("identification-status").textContent = first.identification_status || "";
+    const url = new URL(window.location.href);
+    url.searchParams.set("draft", draft.id);
+    window.history.replaceState({}, "", url);
+  };
+  const ensureDraft = async () => {
+    if (draftId) {
+      const existing = await readJson(`${api}/drafts/${encodeURIComponent(draftId)}`);
+      if (existing.ok) {
+        renderDraft(existing.body);
+        return existing.body;
+      }
+    }
+    const created = await readJson(`${api}/drafts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: "isolated-dev" }) });
+    if (!created.ok) {
+      document.getElementById("access-denied").classList.toggle("hidden", created.status !== 401 && created.status !== 403);
+      return null;
+    }
+    renderDraft(created.body);
+    return created.body;
+  };
+  const catalog = await readJson(`${api}/rule-versions?project_id=isolated-dev`);
+  const selector = document.getElementById("rule-selector");
+  for (const item of catalog.body.items || []) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = `${item.label} (${item.engine_rule_id})`;
+    selector.appendChild(option);
+  }
+  if (draftId) {
+    await ensureDraft();
+  }
   document.getElementById("prepare-audit").addEventListener("click", async () => {
     const input = document.getElementById("source-upload");
     const file = input.files && input.files[0];
@@ -53,7 +101,7 @@ async function main() {
       return;
     }
     fileId = created.body.file_id;
-    const versionId = created.body.id;
+    versionId = created.body.id;
     const put = await fetch(`${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/blob`, {
       method: "PUT",
       credentials: "include",
@@ -73,6 +121,58 @@ async function main() {
     const url = new URL(window.location.href);
     url.searchParams.set("file", fileId);
     window.history.replaceState({}, "", url);
+  });
+  document.getElementById("add-to-draft").addEventListener("click", async () => {
+    if (!fileId || !versionId) {
+      return;
+    }
+    const draft = await ensureDraft();
+    if (!draft) {
+      return;
+    }
+    const role = document.getElementById("item-role").value;
+    const items = (draft.items || []).filter((item) => item.file_version_id !== versionId);
+    items.push({ file_id: fileId, file_version_id: versionId, role });
+    const saved = await readJson(`${api}/drafts/${encodeURIComponent(draft.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    if (saved.ok) {
+      renderDraft(saved.body);
+    }
+  });
+  document.getElementById("bind-rule").addEventListener("click", async () => {
+    const draft = await ensureDraft();
+    if (!draft) {
+      return;
+    }
+    const bound = document.getElementById("rule-selector").value;
+    const items = (draft.items || []).map((item, index) => ({
+      file_id: item.file_id,
+      file_version_id: item.file_version_id,
+      role: item.role,
+      product_rule_version_id: index === 0 && item.role === "target" ? bound : item.product_rule_version_id,
+    }));
+    const saved = await readJson(`${api}/drafts/${encodeURIComponent(draft.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    if (saved.ok) {
+      renderDraft(saved.body);
+    }
+  });
+  document.getElementById("identify-draft").addEventListener("click", async () => {
+    const draft = await ensureDraft();
+    if (!draft) {
+      return;
+    }
+    await readJson(`${api}/drafts/${encodeURIComponent(draft.id)}/identify`, { method: "POST" });
+    const latest = await readJson(`${api}/drafts/${encodeURIComponent(draft.id)}`);
+    if (latest.ok) {
+      renderDraft(latest.body);
+    }
   });
   const resourceId = resourceIdFromLocation();
   if (!resourceId) {

@@ -9,6 +9,7 @@ USER_CAROL = "00000000-0000-4000-8000-0000000000c3"
 RESOURCE_A = "00000000-0000-4000-8000-0000000000aa"
 RESOURCE_B = "00000000-0000-4000-8000-0000000000bb"
 APP_ID = "isolated-dev-feishu-app"
+CATALOG_PROJECT = "isolated-dev"
 
 SUBJECTS = {
     "alice": {"user_id": USER_ALICE, "tenant_id": TENANT_A, "tenant_key": "isolated-dev-a", "subject": "ou_alice"},
