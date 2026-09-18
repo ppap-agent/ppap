@@ -1,21 +1,11 @@
 # Tests
 
-Tests should prove product behavior and architecture boundaries, not only individual functions.
+用户验收合同在 [STORIES](../docs/STORIES.md)，证明范围和聚合规则在 [TESTING](../docs/TESTING.md)，环境和实际命令在 [DEVELOPMENT](../docs/DEVELOPMENT.md)。这里不复制另一套验收政策。
 
-Expected suites:
+当前已存在：`unit/test_live.py` 检验验收工具的误通过/误拒绝和安全失败；`live/` 保存工具依赖与 oracle 示例；`tools/live.py` 执行真实端点探针和首批浏览器子证明。
 
-- `product`: API/domain/idempotency/review/usage tests
-- `engine`: migrated checker and document-processing regressions
-- `integration`: API -> PostgreSQL -> worker -> result flow
-- `contract`: Feishu and Partner AI adapter contracts with safe fixtures/mocks
-- `migration`: source behavior parity and schema migration tests
-- `security`: role boundaries, object immutability, and no-browser-direct-backend checks
+```sh
+python -m unittest discover -s tests/unit -v
+```
 
-Critical regression assertions include:
-
-- duplicate submit does not create duplicate audit rounds
-- worker retry does not erase prior result/evidence
-- exact document-version checksum is preserved through audit
-- web has no direct engine/database/PostgREST dependency
-- API request path does not execute heavy OCR/audit work
-- Feishu and normal web create the same product-domain objects
+产品本身尚未实现。对应 Issues 必须随实现交付领域、数据库/Worker、引擎 corpus、迁移与安全测试；不能把工具自测当成产品回归。

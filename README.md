@@ -4,7 +4,7 @@
 
 > 打开一次审核，就知道审了什么、依据在哪里、结果是什么、下一步做什么。
 
-**当前状态：目标产品尚未实现。** 本仓已有架构文档；本轮建设接管上下文、路线图与验证工具。文档、工具自测和旧引擎可达都不等于新产品验收通过。
+**当前状态：目标产品尚未实现。** 本仓已建立接管文档、真实 Issue 路线图和首批可执行验收工具。工具自测、旧引擎可达或 Story 文本都不等于新产品验收通过。
 
 ## 从这里开始
 
@@ -15,7 +15,9 @@
 | 调查到了什么，什么仍未知 | [当前事实与来源](docs/CURRENT.md) |
 | 旧能力如何迁移 | [能力与数据归属](docs/INVENTORY.md)、[迁移原则](docs/MIGRATION.md) |
 | 为什么这样选技术 | [决策](docs/DECISIONS.md)、[外部方案比较](docs/RESEARCH.md) |
-| 下一步做什么 | [GitHub Issues](https://github.com/ppap-agent/ppap/issues)；按实际依赖推进，不以票数代表进展 |
+| 下一步做什么 | [Roadmap](docs/ROADMAP.md) 导航到真实 Issues；Issues 拥有实施状态 |
+| 怎样开发、配置与运行 | [开发指南](docs/DEVELOPMENT.md)、[配置示例](.env.example) |
+| 怎样证明用户结果 | [Live Stories](docs/STORIES.md)、[测试范围与命令](docs/TESTING.md) |
 | 历史结果怎样可信 | [数据约束](docs/DATA_MODEL.md) |
 | 密钥、授权与敏感数据 | [安全边界](docs/SECURITY.md) |
 

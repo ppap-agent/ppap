@@ -9,3 +9,8 @@ __pycache__/
 *.pyc
 .idea/
 .vscode/
+.local/
+.artifacts/
+.pytest_cache/
+playwright/.auth/
+test-results/
