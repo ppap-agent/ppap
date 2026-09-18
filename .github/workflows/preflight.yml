@@ -1,0 +1,21 @@
+name: Push preflight
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  llm:
+    uses: ./.github/workflows/llm-readiness.yml
+    secrets: inherit
+
+  feishu:
+    uses: ./.github/workflows/feishu-readiness.yml
+    secrets: inherit
+
+  verification:
+    needs: [llm, feishu]
+    uses: ./.github/workflows/verification-tools.yml

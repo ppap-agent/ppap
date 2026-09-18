@@ -1,10 +1,13 @@
 name: Verification tools (not product acceptance)
+
 on:
-  push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+
 permissions:
   contents: read
+
 jobs:
   tools:
     runs-on: ubuntu-24.04

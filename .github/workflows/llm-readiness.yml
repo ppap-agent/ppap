@@ -1,6 +1,14 @@
 name: LLM readiness
 
 on:
+  workflow_call:
+    secrets:
+      LLM_API_KEY:
+        required: true
+      LLM_BASE_URL:
+        required: true
+      LLM_MODEL:
+        required: true
   workflow_dispatch:
 
 permissions: {}

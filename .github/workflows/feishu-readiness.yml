@@ -1,6 +1,12 @@
 name: Feishu readiness
 
 on:
+  workflow_call:
+    secrets:
+      FEISHU_APP_ID:
+        required: true
+      FEISHU_APP_SECRET:
+        required: true
   workflow_dispatch:
 
 permissions: {}
