@@ -23,7 +23,7 @@
 
 终态是 `apps/web → services/api → PostgreSQL / 对象存储 → services/worker`。`packages` 是可复用库，`migrations` 管数据库变更，`deploy` 管运行交付，`tests` 管证明。Worker 不向浏览器暴露第二套产品 API。
 
-Core LLM 固定走 Responses-compatible API。当前 isolated-dev profile 默认 `LLM_BASE_URL=https://api.trustedtunnel.app/v1`、`LLM_MODEL=gpt-5.6-luna`，因此 Cursor 日常只需要 `LLM_API_KEY` 一个 core Secret；两项默认均可被环境覆盖。真实依赖可用性用 `python tools/llm_probe.py` 单次验证，不能把 probe 成功当作审核质量成功。
+Core LLM 固定走 Responses-compatible API。当前 isolated-dev profile 默认 `LLM_BASE_URL=https://api.trustedtunnel.app/v1`、`LLM_MODEL=gpt-5.6-luna`，因此 Cursor 日常只需要 `LLM_API_KEY` 一个 core Secret；两项默认均可被环境覆盖。LLM 与飞书环境可用性分别由两个手动 GitHub Actions probe 用 `curl + jq` 验证；它们彼此独立，不能把 readiness 成功当作产品验收成功。
 
 隔离开发的 PostgreSQL/对象存储使用仓库 defaults；飞书、Partner AI 和 legacy migration 都按 capability 接入，不是 core startup 前置。
 

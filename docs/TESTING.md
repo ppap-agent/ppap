@@ -11,9 +11,10 @@
 | G03 | `python tools/live.py history` | 对已有轮次固化同名新内容后，下载和结果仍为旧版本 | S3 条件写、并发 finalize、过期租约；#5 的真实存储/集成测试 |
 | G05-review | `python tools/live.py review` | 真实保存一次复核，重新访问可读，机器结果和原件不变 | 并发冲突、显式重审分轮和权限；#10 必须补齐 |
 | P00 | `python tools/live.py probe --url URL --expected-build SHA` | 真实只读端点返回预期构建身份 | 不是产品 Story，不执行审核 |
-| P01 | `python tools/llm_probe.py` | 一个真实 Responses-compatible endpoint 接受 configured model 并返回完成的 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
+| P01 | 手动运行 `LLM readiness` workflow | GitHub Secrets 中的 endpoint/key/model 能完成一次 Responses 请求并返回 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
+| P02 | 手动运行 `Feishu readiness` workflow | GitHub Secrets 中的 App ID/Secret 能从飞书换取 tenant access token | 不证明用户 OAuth、Drive/Docs 对象权限、评论写回或 Partner AI |
 
-P01 只发送固定无业务内容并执行一次顶层请求；失败后 runner 不自动重发制造成功。它禁止 redirect，输出不保存 API key、原始 provider response 或 response id。Base URL / Model 默认来自 isolated-dev profile，可由 `LLM_BASE_URL / LLM_MODEL` 覆盖。
+P01/P02 是彼此独立的手动外部依赖探针。P01 只发送固定无业务内容；P02 只换取应用级 tenant token。两者不 checkout 仓库、不安装 SDK、不自动 retry、不上传 artifact，也不把 secret/token/原始响应写入日志。
 
 这些是可执行的子证明/前置证明，不是十个 Stories 均已实现。当前目标应用尚无运行实现，UI driver 尚未与目标应用实测对齐；没有产品环境时命令应失败。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
 
@@ -31,7 +32,7 @@ P01 只发送固定无业务内容并执行一次顶层请求；失败后 runner
 
 产品 Live 每个运行输出 `PROVEN` 或 `NOT_PROVEN`，保存 gate/Story 内容摘要、目标构建、时间、运行 ID 和最小语义证据。依赖 probe 同样只对自己的边界给结果。绝不输出原件、session、用户名、深链或异常原文。
 
-产品子证明的 `PROVEN` 只证明表中该子集。最终接受要求：S01–S10 的所有必要子证明、支持矩阵和迁移/恢复条件都在同一发布候选及已核验环境下成立。任何必要项缺失、未执行、跳过或 NOT_PROVEN，完整产品都为 NOT_PROVEN。绝不能把 P00、P01 或工具自测汇总成产品成功。
+产品子证明的 `PROVEN` 只证明表中该子集。最终接受要求：S01–S10 的所有必要子证明、支持矩阵和迁移/恢复条件都在同一发布候选及已核验环境下成立。任何必要项缺失、未执行、跳过或 NOT_PROVEN，完整产品都为 NOT_PROVEN。绝不能把 P00、P01、P02 或工具自测汇总成产品成功。
 
 归因与结果分开：确证 DNS 失败可归 external_environment；超时、选择器不匹配、未配置或终态缺失默认 inconclusive，直到证据指出责任。新修复可新开 proof run，旧失败不得覆盖。
 

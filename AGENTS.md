@@ -17,7 +17,7 @@
 
 Core LLM 固定走 Responses-compatible API。canonical 配置是 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；isolated-dev 的 Base URL/Model 默认是 `https://api.trustedtunnel.app/v1` / `gpt-5.6-luna`，因此日常开发只需注入 API key。Cursor 把 Base URL/Model 也存为 Secret 可接受；这不改变它们是普通配置的语义。
 
-不要添加第二套 `OPENAI_*` authority，也不要增加 `LLM_PROTOCOL`。真实 LLM readiness 用 `python tools/llm_probe.py` 做一次最小 `/responses` 请求；P01 通过不等于审核质量通过。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
+不要添加第二套 `OPENAI_*` authority，也不要增加 `LLM_PROTOCOL`。真实外部 readiness 分别由手动 `LLM readiness` 与 `Feishu readiness` GitHub workflow 用 `curl + jq` 验证；它们彼此独立，成功不等于产品验收通过。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
 
 ## 开发与交付
 

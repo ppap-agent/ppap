@@ -1,0 +1,36 @@
+name: LLM readiness
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Probe Responses API
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${LLM_API_KEY:?missing LLM_API_KEY}"
+          : "${LLM_BASE_URL:?missing LLM_BASE_URL}"
+          : "${LLM_MODEL:?missing LLM_MODEL}"
+
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+
+          curl --fail --silent --show-error             --connect-timeout 10             --max-time 60             -o "$response"             -H "Authorization: Bearer $LLM_API_KEY"             -H "Content-Type: application/json"             "${LLM_BASE_URL%/}/responses"             -d "$(jq -nc --arg model "$LLM_MODEL"               '{model:$model,input:"Reply with exactly PPAP_READY."}')"
+
+          jq -e '
+            .object == "response"
+            and (.id | type == "string" and length > 0)
+            and (.output | type == "array")
+          ' "$response" >/dev/null
+
+          echo "LLM Responses API: ready"

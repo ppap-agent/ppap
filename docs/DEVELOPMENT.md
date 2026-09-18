@@ -33,23 +33,14 @@ MODEL_NAME
 
 这些 defaults 是当前团队开发 profile，不是 PPAP 产品定义，也不是生产 provider 承诺。生产部署必须在部署配置中显式确定其 endpoint/model；不得无意继承 isolated-dev provider。
 
-## LLM readiness proof
+## 外部环境 readiness
 
-有 API key 不等于模型依赖真的可用。仓库提供一个**一次请求**的协议探针：
+环境可用性由两个独立、手动触发的原生 GitHub Actions probe 拥有，不在应用或 Python 工具中维护第二套实现：
 
-```sh
-python tools/llm_probe.py
-```
+- [LLM readiness](../.github/workflows/llm-readiness.yml)：直接用 `curl + jq` 对 GitHub Secrets 中的 `LLM_API_KEY / LLM_BASE_URL / LLM_MODEL` 发一次 `/responses` 请求。它只证明当前 GitHub 配置的 endpoint、key、model 与 Responses envelope 可用。
+- [Feishu readiness](../.github/workflows/feishu-readiness.yml)：直接用 `curl + jq` 以 `FEISHU_APP_ID / FEISHU_APP_SECRET` 换取一次 `tenant_access_token`。它只证明应用凭据能被飞书接受，不证明用户 OAuth、Drive/Docs 权限或 Partner AI。
 
-它使用当前 `LLM_*` 配置向 `<LLM_BASE_URL>/responses` 发一个无业务数据的最小请求，验证：
-
-- endpoint 实际接受 Responses 协议；
-- configured model 能完成一次同步 Response；
-- 返回 envelope 是 `object=response`，有 response identity 与 output；
-- 不跟随 HTTP redirect，避免把 Authorization 带到另一个 endpoint；
-- 报告不保存 API key、原始 provider output 或 response id。
-
-输出只属于 **P01 dependency readiness**，不能证明 PPAP 审核正确、模型质量足够或任何用户 Story 完成。真实审核质量仍由 #3/#6 的 corpus/oracle 证明。
+两者均仅 `workflow_dispatch`，不 checkout 仓库、不安装 SDK、不上传 artifact、不自动 retry，也不参与普通 push/PR。探针成功不能替代 #3/#6 的审核 corpus，也不能替代 #4/#11 的飞书用户路径。
 
 ## Core 与 optional integrations
 
@@ -70,7 +61,7 @@ FEISHU_APP_SECRET   # Secret
 
 - 建立一个 typed settings owner；API 和 Worker 复用配置语义，不在模块中散落 `os.getenv`。
 - isolated-dev profile 可以给 Base URL / Model 和 core infrastructure 提供仓库 defaults；生产 deployment 显式提供实际 endpoint/model/credentials。
-- Core readiness 区分配置完整与真实 LLM P01 probe。不要只因字符串存在就声称模型 ready。
+- Core readiness 区分配置完整与外部 readiness probe。不要只因字符串存在就声称依赖 ready。
 - `/health` 只证明进程存活；`/ready` 证明 core dependencies 可用；飞书、Partner AI 等单独报告 capability readiness。
 - Web 只能获得明确允许公开的配置，绝不能打包 server Secret。
 - 可选 integration 缺配置不能让整个 API 启动失败，也不能触发 fake quota / fake provider fallback。
@@ -82,8 +73,7 @@ Python 3.11+ 可运行工具自测和依赖探针。浏览器检查另需 Playwr
 
 ```sh
 python -m unittest discover -s tests/unit -v
-python -m py_compile tools/live.py tools/legacy_engine_gate.py tools/llm_probe.py
-python tools/llm_probe.py
+python -m py_compile tools/live.py tools/legacy_engine_gate.py
 
 python -m pip install -r tests/live/requirements.txt
 python -m playwright install chromium
@@ -95,7 +85,7 @@ python tools/live.py review
 python tools/live.py isolation
 ```
 
-LLM probe 和 Live product gates 都会把结果写入 gitignored `.artifacts/`，缺配置/真实终态时返回 NOT_PROVEN，不用 mock 制造成功。
+Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu readiness 只在对应 GitHub Actions run 中给出成功/失败，不保存 provider token、模型原文或飞书 token。
 
 ## Live 验证变量
 
