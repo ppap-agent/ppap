@@ -1,0 +1,237 @@
+"""Identity and Feishu OAuth surface. Not an S02 live login proof."""
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+
+from fastapi.testclient import TestClient
+
+from ppap_core.feishu import AppTicket, Challenge, EncryptedEvent, parse_event, user_info, FeishuError
+from ppap_core.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
+from ppap_core.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
+from ppap_core.settings import Settings
+from ppap_api import create_app
+from tests.unit.memory_auth import MemoryAuthStore
+
+
+def _clean_env(**extra: str):
+    keep = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
+    }
+    keep.update(extra)
+    return patch.dict(os.environ, keep, clear=True)
+
+
+class DecisionTests(unittest.TestCase):
+    def test_identity_ignores_email(self):
+        key = identity_key("feishu", "cli_1", "tenant-a", "ou_1")
+        self.assertEqual(key, ("feishu", "cli_1", "tenant-a", "ou_1"))
+        with self.assertRaises(ValueError):
+            identity_key("feishu", "cli_1", "", "ou_1")
+
+    def test_cross_tenant_read_denied(self):
+        alice = Principal("u1", "t1", "feishu", "app", "tk1", "ou_1", "member")
+        other = Resource("r2", "t2", "fixture")
+        self.assertFalse(can_read(alice, other, {"read", "review"}))
+
+    def test_login_membership_is_not_review(self):
+        alice = Principal("u1", "t1", "feishu", "app", "tk1", "ou_1", "member")
+        resource = Resource("r1", "t1", "fixture")
+        self.assertTrue(can_read(alice, resource, {"read"}))
+        self.assertFalse(can_review(alice, resource, {"read"}))
+        self.assertTrue(can_review(alice, resource, {"read", "review"}))
+
+    def test_return_to_rejects_foreign_origin(self):
+        with _clean_env():
+            settings = Settings()
+        self.assertTrue(safe_return_to("http://127.0.0.1:4173/#/r", settings).startswith("http://127.0.0.1:4173"))
+        self.assertEqual(safe_return_to("https://evil.example/#/r", settings), "http://127.0.0.1:4173/")
+
+
+class FeishuParseTests(unittest.TestCase):
+    def test_challenge_and_ticket(self):
+        self.assertIsInstance(parse_event({"type": "url_verification", "challenge": "abc"}), Challenge)
+        self.assertIsInstance(parse_event({"header": {"event_type": "app_ticket"}, "event": {"app_ticket": "tik"}}), AppTicket)
+        self.assertIsInstance(parse_event({"encrypt": "blob"}), EncryptedEvent)
+
+    def test_user_info_requires_tenant_and_subject(self):
+        class Http:
+            def get(self, *args, **kwargs):
+                class R:
+                    status_code = 200
+                    def json(self):
+                        return {"data": {"email": "a@b.c", "name": "Ada"}}
+                return R()
+        with self.assertRaises(FeishuError):
+            user_info(Http(), "token")
+
+
+class HttpAuthTests(unittest.TestCase):
+    def setUp(self):
+        self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
+        self._env.start()
+        self.settings = Settings()
+        self.store = MemoryAuthStore(self.settings)
+        self.store.seed_isolated_dev()
+        self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
+
+    def tearDown(self):
+        self._env.stop()
+
+    def _cookie(self, subject: str) -> dict[str, str]:
+        self.client.cookies.clear()
+        response = self.client.post("/isolated-dev/sessions", json={"subject": subject})
+        self.assertEqual(response.status_code, 200)
+        raw = response.cookies.get("ppap_session")
+        self.client.cookies.clear()
+        return {"ppap_session": raw}
+
+    def test_me_and_logout(self):
+        cookies = self._cookie("alice")
+        me = self.client.get("/me", cookies=cookies)
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["identity"]["subject"], SUBJECTS["alice"]["subject"])
+        self.assertNotIn("email", str(me.json()).lower())
+        gone = self.client.post("/logout", cookies=cookies)
+        self.assertEqual(gone.status_code, 200)
+        self.assertEqual(self.client.get("/me", cookies=cookies).status_code, 401)
+
+    def test_object_grants_two_tenants(self):
+        alice = self._cookie("alice")
+        bob = self._cookie("bob")
+        carol = self._cookie("carol")
+        allowed = self.client.get("/resources/" + RESOURCE_A, cookies=alice)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertTrue(allowed.json()["review_allowed"])
+        member_only = self.client.get("/resources/" + RESOURCE_A, cookies=bob)
+        self.assertEqual(member_only.status_code, 200)
+        self.assertFalse(member_only.json()["review_allowed"])
+        denied = self.client.get("/resources/" + RESOURCE_A, cookies=carol)
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json(), {"error": "access_denied"})
+        self.assertNotIn("kind", denied.json())
+        other = self.client.get("/resources/" + RESOURCE_B, cookies=alice)
+        self.assertEqual(other.status_code, 403)
+
+    def test_oauth_state_and_off_origin_return(self):
+        from urllib.parse import parse_qs, urlparse
+        start = self.client.get("/login/feishu?return_to=https://evil.example/x", follow_redirects=False)
+        self.assertEqual(start.status_code, 302)
+        query = parse_qs(urlparse(start.headers["location"]).query)
+        self.assertEqual(query["client_id"], ["cli_test"])
+        self.assertTrue(query["state"][0])
+        self.assertIn("redirect_uri", query)
+        bad = self.client.get("/login/feishu/callback?code=x&state=forged", follow_redirects=False)
+        self.assertEqual(bad.status_code, 303)
+        self.assertTrue(bad.headers["location"].startswith("http://127.0.0.1:4173"))
+
+    def test_oauth_callback_binds_tenant_subject_not_email(self):
+        from urllib.parse import parse_qs, urlparse
+
+        class FakeHttp:
+            def post(self, url, **kwargs):
+                class R:
+                    status_code = 200
+
+                    def json(self):
+                        return {"code": 0, "access_token": "u-ada"}
+
+                return R()
+
+            def get(self, url, **kwargs):
+                class R:
+                    status_code = 200
+
+                    def json(self):
+                        return {
+                            "data": {
+                                "tenant_key": "tk-live",
+                                "open_id": "ou_ada",
+                                "name": "Ada",
+                                "email": "hidden@example.com",
+                            }
+                        }
+
+                return R()
+
+        client = TestClient(
+            create_app(
+                self.settings,
+                lambda _s: {"state": "ok"},
+                lambda _s: {"state": "ok"},
+                MemoryAuthStore(self.settings),
+                FakeHttp(),
+            )
+        )
+        dest = "http://127.0.0.1:4173/?resource=" + RESOURCE_A
+        start = client.get("/login/feishu", params={"return_to": dest}, follow_redirects=False)
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
+        self.assertEqual(done.status_code, 303)
+        self.assertEqual(done.headers["location"], dest)
+        raw = done.cookies.get("ppap_session")
+        self.assertTrue(raw)
+        me = client.get("/me", cookies={"ppap_session": raw})
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["identity"]["subject"], "ou_ada")
+        self.assertEqual(me.json()["identity"]["tenant_key"], "tk-live")
+        self.assertNotIn("email", str(me.json()).lower())
+        replay = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
+        self.assertEqual(replay.status_code, 303)
+        self.assertEqual(replay.headers["location"], "http://127.0.0.1:4173/")
+        self.assertFalse(replay.cookies.get("ppap_session"))
+
+    def test_login_disabled_without_feishu_credentials(self):
+        with _clean_env(PPAP_BUILD_SHA="a" * 40):
+            settings = Settings()
+        client = TestClient(
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+        )
+        self.assertEqual(client.get("/login/feishu").status_code, 409)
+
+    def test_unauthenticated_and_unknown_resource(self):
+        self.assertEqual(self.client.get("/me").status_code, 401)
+        self.assertEqual(self.client.get("/resources/" + RESOURCE_A).status_code, 401)
+        cookies = self._cookie("alice")
+        denied = self.client.get("/resources/not-a-uuid", cookies=cookies)
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json(), {"error": "access_denied"})
+
+    def test_event_challenge_and_ticket(self):
+        challenge = self.client.post("/integrations/feishu/events", json={"type": "url_verification", "challenge": "ping"})
+        self.assertEqual(challenge.json(), {"challenge": "ping"})
+        missing = self.client.get("/capabilities").json()["feishu"]
+        self.assertEqual(missing["app_ticket"], "missing")
+        ticket = self.client.post("/integrations/feishu/events", json={"header": {"event_type": "app_ticket"}, "event": {"app_ticket": "tik"}})
+        self.assertEqual(ticket.status_code, 200)
+        self.assertTrue(self.store.has_app_ticket("cli_test"))
+        self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "received")
+        encrypted = self.client.post("/integrations/feishu/events", json={"encrypt": "blob"})
+        self.assertEqual(encrypted.status_code, 400)
+
+    def test_production_hides_isolated_dev_mint(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_PG_API_PASSWORD="prod-api",
+            PPAP_PG_WORKER_PASSWORD="prod-worker",
+            PPAP_PG_MIGRATOR_PASSWORD="prod-migrator",
+            PPAP_PG_BOOTSTRAP_PASSWORD="prod-boot",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+        ):
+            settings = Settings()
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings)))
+        self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code, 404)
