@@ -11,12 +11,13 @@
 | G03 | `python tools/live.py history` | 对已有轮次固化同名新内容后，下载和结果仍为旧版本 | S3 条件写、并发 finalize、过期租约；#5 的真实存储/集成测试 |
 | G05-review | `python tools/live.py review` | 真实保存一次复核，重新访问可读，机器结果和原件不变 | 并发冲突、显式重审分轮和权限；#10 必须补齐 |
 | P00 | `python tools/live.py probe --url URL --expected-build SHA` | 真实只读端点返回预期构建身份 | 不是产品 Story，不执行审核 |
+| P03 | `python tools/stack.py verify` | 本机 isolated-dev 进程、`/health`、`/ready`（PG+对象存储）、版本身份、公开配置无密钥、Worker heartbeat | 不是用户 Story；不证明登录、审核、证据或飞书 |
 | P01 | 每次 push 由 `Push preflight` 调用 `LLM readiness`；亦可手动运行 | GitHub Secrets `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 映射到 canonical LLM 配置后能完成一次 Responses 请求并返回 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
 | P02 | 每次 push 由 `Push preflight` 调用 `Feishu readiness`；亦可手动运行 | 当前商店应用的 App ID/Secret 能让飞书接受 `app_ticket/resend` 请求 | 会触发一次 app_ticket 推送；不证明 ticket 已被新系统接收、tenant token、用户 OAuth、Drive/Docs、评论写回或 Partner AI |
 
 P01/P02 是彼此独立的 reusable 外部依赖探针。每次 push 的 `Push preflight` 并行调用两者，只有两者成功才继续 deterministic verification；它们也可单独手动运行。P01 只发送固定无业务内容；P02 只验证商店应用静态凭据并触发一次 app_ticket 重推。两者不 checkout 仓库、不安装 SDK、不自动 retry、不上传 artifact，也不把 secret/token/原始响应写入日志。
 
-这些是可执行的子证明/前置证明，不是十个 Stories 均已实现。当前目标应用尚无运行实现，UI driver 尚未与目标应用实测对齐；没有产品环境时命令应失败。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
+这些是可执行的子证明/前置证明，不是十个 Stories 均已实现。`stack.py` 已提供 isolated-dev API/Worker/PG/对象存储/本机 Web；UI driver 尚未与审核页面实测对齐。没有登录态、样本和 oracle 时 G01–G05 应失败。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
 
 ## UI driver 与 oracle
 

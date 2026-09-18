@@ -2,6 +2,16 @@
 
 The only public HTTP API for PPAP.
 
+Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy document or model work in request threads.
+
+## HTTP surface (#2)
+
+- `GET /health` — process alive
+- `GET /ready` — PostgreSQL and object storage actually reachable
+- `GET /version` — `git_sha`
+- `GET /public-config` — web-safe origin, profile, git sha; never secrets
+- `GET /capabilities` — optional integration flags (`configured` is not GitHub probe success)
+
 ## Owns
 
 - product authentication/session handling

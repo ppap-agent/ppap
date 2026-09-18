@@ -4,7 +4,7 @@
 
 > 打开一次审核，就知道审了什么、依据在哪里、结果是什么、下一步做什么。
 
-**当前状态：目标产品尚未实现。** 本仓已建立接管文档、真实 Issue 路线图和首批可执行验收工具。工具自测、依赖探针或 Story 文本都不等于新产品验收通过。
+**当前状态：[#2](https://github.com/ppap-agent/ppap/issues/2) 的 isolated-dev 运行栈已落地；审核产品 Stories 尚未实现。** 本仓有文档、真实 Issue 路线图、验收工具，以及可启动的 API / Worker / PostgreSQL / MinIO / 本机 Web。工具自测、依赖探针或 `stack verify` 都不等于用户 Story 通过。
 
 ## 从这里开始
 

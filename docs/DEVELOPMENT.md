@@ -1,6 +1,6 @@
 # 开发与真实验证入口
 
-先读根 AGENTS、当前 Issue 和它直接引用的权威。目标应用仍待实现；以下已有命令属于验收/依赖验证工具，不虚构 Product API/Web 的启动命令。运行栈由 [#2](https://github.com/ppap-agent/ppap/issues/2) 交付，业务状态见 [ROADMAP](ROADMAP.md)。
+先读根 AGENTS、当前 Issue 和它直接引用的权威。[#2](https://github.com/ppap-agent/ppap/issues/2) 的 isolated-dev 运行栈由 `python tools/stack.py` 启动。下面的 Live 命令仍是用户 Story 子证明；栈起来不等于审核验收通过。业务状态见 [ROADMAP](ROADMAP.md)。
 
 ## Core LLM 配置
 
@@ -69,11 +69,16 @@ FEISHU_APP_SECRET   # Secret
 
 ## 当前可执行命令
 
-Python 3.11+ 可运行工具自测和依赖探针。浏览器检查另需 Playwright 与 Chromium。
+Python 3.12 可运行工具自测、#2 运行栈和依赖探针。浏览器检查另需 Playwright 与 Chromium。isolated-dev 需要本机 PostgreSQL 16 二进制（`postgresql` 包）和可下载的 MinIO；不把 Docker 当作这台 Cloud VM 的启动前置。
 
 ```sh
+python tools/stack.py up
+python tools/stack.py verify
+python tools/stack.py restart
+python tools/stack.py down
+
 python -m unittest discover -s tests/unit -v
-python -m py_compile tools/live.py tools/legacy_engine_gate.py
+python -m py_compile tools/live.py tools/legacy_engine_gate.py tools/stack.py
 
 python -m pip install -r tests/live/requirements.txt
 python -m playwright install chromium
@@ -83,7 +88,12 @@ python tools/live.py audit
 python tools/live.py history
 python tools/live.py review
 python tools/live.py isolation
+python tools/live.py probe --url http://127.0.0.1:8080/version --expected-build "$(git rev-parse HEAD)"
 ```
+
+`stack.py up` 启动 127.0.0.1 上的 PostgreSQL、MinIO、API（8080）、Worker、Web（4173）。isolated-dev 的 `PPAP_WEB_URL` 就是 `http://127.0.0.1:4173`。Web 只拉 `/public-config`，没有 server Secret。Worker 可单独停掉而不让 API `/health` 失败；`/ready` 只证明 PostgreSQL 与对象存储，不要求 Worker 进程。
+
+`stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。它不是 G01–G05 或任何 Story。
 
 Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu readiness 只在对应 GitHub Actions run 中给出成功/失败，不保存 provider token、模型原文或飞书 token。
 
@@ -94,15 +104,15 @@ Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu read
 | 名称 | 使用方与用途 |
 |---|---|
 | PPAP_ENVIRONMENT | 安全的隔离环境标签 |
-| PPAP_WEB_URL | 目标隔离 Web 的实际入口 |
-| PPAP_BUILD_SHA | 本次部署的完整源码身份 |
+| PPAP_WEB_URL | 目标隔离 Web 的实际入口；本机 isolated-dev 为 `http://127.0.0.1:4173` |
+| PPAP_BUILD_SHA | 本次部署的完整源码身份；`stack.py` 默认写入 `git rev-parse HEAD` |
+| PPAP_VERSION_URL | 只读版本探针地址；本机 isolated-dev 为 `http://127.0.0.1:8080/version` |
 | PPAP_AUTH_STATE | 授权测试账号的 Playwright storage_state |
 | PPAP_OTHER_TENANT_STATE | 另一隔离租户状态，用于拒绝子证明 |
 | PPAP_SAMPLE / PPAP_ORACLE | 有权使用的真实原件和事先审阅的规则/证据期望 |
 | PPAP_EXISTING_ROUND_URL | 与 oracle 对应的已完成轮次 |
 | PPAP_REPLACEMENT_SAMPLE | 同名不同字节的授权原件 |
 | PPAP_LIVE_TIMEOUT_SECONDS | 单次 proof run 等待终态上限，不表示 SLA |
-| PPAP_VERSION_URL | 只读版本探针地址 |
 
 迁移期 `PPAP_LEGACY_*` 只由旧引擎对照工具使用。终态删除这些配置与 HTTP 依赖，而不是让它们变成正常启动要求。
 

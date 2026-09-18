@@ -2,6 +2,8 @@
 
 One PPAP product client for normal browser/PWA and Feishu H5.
 
+Isolated-dev currently serves `apps/web` on `http://127.0.0.1:4173` via `python tools/stack.py up`. That page reads `/public-config` and `/ready` only. It is the local `PPAP_WEB_URL`, not a completed audit UI and not a Story proof.
+
 ## Owns
 
 - product navigation and presentation

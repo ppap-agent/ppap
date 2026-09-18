@@ -2,6 +2,12 @@
 
 Reusable application and audit libraries live here. Exact package names may change during migration, but responsibilities must stay explicit.
 
+Current:
+
+| Package | Owns |
+|---|---|
+| `ppap_core` | typed settings, DB/object-store probes, Responses URL helpers, capability flags |
+
 Expected migration areas from `ppap-agent/ppap-agent`:
 
 | Target area | Current source concept |

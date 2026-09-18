@@ -23,5 +23,6 @@ jobs:
         run: git show --format= --check HEAD
       - name: Verify acceptance tools, not product behavior
         run: |
-          python -m py_compile tools/live.py tools/legacy_engine_gate.py
-          python -m unittest discover -s tests/unit -v
+          python -m py_compile tools/live.py tools/legacy_engine_gate.py tools/stack.py
+          python -m pip install -r requirements.txt
+          PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v

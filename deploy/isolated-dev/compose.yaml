@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16.10-bookworm
+    environment:
+      POSTGRES_USER: ppap
+      POSTGRES_PASSWORD: ppap_isolated_dev
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    command: ["postgres", "-c", "listen_addresses=*"]
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--address", ":9000"]
+    environment:
+      MINIO_ROOT_USER: ppap_isolated_dev
+      MINIO_ROOT_PASSWORD: ppap_isolated_dev
+    ports:
+      - "127.0.0.1:9000:9000"
