@@ -343,6 +343,19 @@ def create_app(
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         return JSONResponse(ready.public(), status_code=201)
 
+    @app.post("/isolated-dev/reap-staging")
+    def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        if not principal_of(request):
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            max_age = int(body.get("max_age_seconds", 86400))
+            reaped = store.reap_staging(max_age)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid_age"}, status_code=400)
+        return JSONResponse({"reaped": reaped})
+
     @app.post("/isolated-dev/sessions")
     def isolated_dev_session(body: dict) -> JSONResponse:
         if settings.profile != "isolated-dev":

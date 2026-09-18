@@ -1,10 +1,12 @@
 """Immutable file versions. Not an S03 Live Story proof."""
 from __future__ import annotations
 
+import io
 import os
 import socket
 import sys
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +15,7 @@ sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT
 
 from fastapi.testclient import TestClient
 
-from ppap_core.files import UnsafeSource, fetch_remote, original_filename, sha256_bytes
+from ppap_core.files import MAX_UPLOAD_BYTES, UnsafeSource, fetch_remote, original_filename, sha256_bytes
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from tests.unit.memory_auth import MemoryAuthStore
@@ -150,3 +152,68 @@ class FileHttpTests(unittest.TestCase):
     def test_unauthenticated_upload_rejected(self):
         self.client.cookies.clear()
         self.assertEqual(self.client.post("/files", json={"original_filename": "a.bin", "byte_size": 1}).status_code, 401)
+
+    def test_declared_size_and_extension_are_not_identity(self):
+        self._login("alice")
+        too_big = self.client.post(
+            "/files",
+            json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": MAX_UPLOAD_BYTES + 1},
+        )
+        self.assertEqual(too_big.status_code, 400)
+        payload = b"not-an-excel-workbook"
+        created = self.client.post(
+            "/files",
+            json={"original_filename": "report.xlsx", "content_type": "application/octet-stream", "byte_size": len(payload)},
+        )
+        file_id, vid = created.json()["file_id"], created.json()["id"]
+        self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=payload)
+        ready = self.client.post(f"/files/{file_id}/versions/{vid}/finalize")
+        self.assertEqual(ready.json()["content_type"], "application/octet-stream")
+        self.assertEqual(ready.json()["sha256"], sha256_bytes(payload))
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("inner.txt", "do-not-extract")
+        zipped_bytes = archive.getvalue()
+        zipped_meta = self.client.post(
+            "/files",
+            json={"original_filename": "bundle.zip", "content_type": "application/zip", "byte_size": len(zipped_bytes)},
+        )
+        zid, zvid = zipped_meta.json()["file_id"], zipped_meta.json()["id"]
+        self.client.put(f"/files/{zid}/versions/{zvid}/blob", content=zipped_bytes)
+        zready = self.client.post(f"/files/{zid}/versions/{zvid}/finalize")
+        downloaded = self.client.get(f"/files/{zid}/versions/{zvid}/download")
+        self.assertEqual(zready.json()["content_type"], "application/zip")
+        self.assertEqual(downloaded.content, zipped_bytes)
+
+    def test_wrong_sha_and_reap_leave_ready_history(self):
+        self._login("alice")
+        first = b"keep-me"
+        created = self.client.post(
+            "/files", json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": len(first)}
+        )
+        file_id, v1 = created.json()["file_id"], created.json()["id"]
+        self.client.put(f"/files/{file_id}/versions/{v1}/blob", content=first)
+        self.client.post(f"/files/{file_id}/versions/{v1}/finalize")
+        staging = self.client.post(
+            f"/files/{file_id}/versions",
+            json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": 4},
+        )
+        v2 = staging.json()["id"]
+        self.client.put(f"/files/{file_id}/versions/{v2}/blob", content=b"temp")
+        mismatch = self.client.post(
+            f"/files/{file_id}/versions/{v2}/finalize", json={"sha256": "0" * 64}
+        )
+        self.assertEqual(mismatch.status_code, 409)
+        self.assertEqual(mismatch.json()["error"], "sha256_mismatch")
+        leftover = self.client.post(
+            f"/files/{file_id}/versions",
+            json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": 1},
+        )
+        self.client.put(f"/files/{file_id}/versions/{leftover.json()['id']}/blob", content=b"x")
+        reaped = self.client.post("/isolated-dev/reap-staging", json={"max_age_seconds": 0})
+        self.assertEqual(reaped.status_code, 200)
+        self.assertGreaterEqual(reaped.json()["reaped"], 1)
+        old = self.client.get(f"/files/{file_id}/versions/{v1}/download")
+        self.assertEqual(old.content, first)
+        abandoned = self.client.get(f"/files/{file_id}/versions/{leftover.json()['id']}/download")
+        self.assertEqual(abandoned.status_code, 409)

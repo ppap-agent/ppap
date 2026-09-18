@@ -633,6 +633,16 @@ def verify_uploads() -> int:
         report["immutable_write"] = replay.status_code == 200 and overwrite.status_code == 409
         unsafe = httpx.post(api + "/files/from-url", json={"url": "http://127.0.0.1/secret"}, headers=headers(alice), timeout=10)
         report["ssrf_blocked"] = unsafe.status_code == 400
+        leftover = httpx.post(
+            api + f"/files/{file_id}/versions",
+            json={"original_filename": "report.xlsx", "content_type": "application/octet-stream", "byte_size": 1},
+            headers=headers(alice),
+            timeout=10,
+        )
+        httpx.put(api + f"/files/{file_id}/versions/{leftover.json()['id']}/blob", content=b"x", headers=headers(alice), timeout=10)
+        reaped = httpx.post(api + "/isolated-dev/reap-staging", json={"max_age_seconds": 0}, headers=headers(alice), timeout=10)
+        still = httpx.get(api + f"/files/{file_id}/versions/{v1}/download", headers=headers(alice), timeout=10)
+        report["staging_reaped"] = reaped.status_code == 200 and reaped.json().get("reaped", 0) >= 1 and still.content == first
         with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
             html = response.read().decode()
         report["web_hooks"] = all(
@@ -646,7 +656,7 @@ def verify_uploads() -> int:
         )
         report["ok"] = all(
             report[key] is True
-            for key in ("alice_upload", "history_preserved", "carol_denied", "immutable_write", "ssrf_blocked", "web_hooks")
+            for key in ("alice_upload", "history_preserved", "carol_denied", "immutable_write", "ssrf_blocked", "staging_reaped", "web_hooks")
         )
     except Exception as exc:
         report["error"] = type(exc).__name__

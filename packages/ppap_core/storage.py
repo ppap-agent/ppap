@@ -74,3 +74,6 @@ class S3Objects:
                 raise ObjectMissing() from exc
             raise
         return response["Body"].read()
+
+    def delete(self, key: str) -> None:
+        s3_client(self.settings).delete_object(Bucket=self.settings.s3_bucket, Key=key)

@@ -525,3 +525,23 @@ class AuthStore:
         if sha256_bytes(body) != version.sha256:
             raise ValueError("object_mutated")
         return body
+
+    def reap_staging(self, max_age_seconds: int) -> int:
+        if max_age_seconds < 0:
+            raise ValueError("invalid_age")
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                UPDATE product.file_versions
+                SET status = %s
+                WHERE status = %s AND created_at < now() - make_interval(secs => %s)
+                RETURNING object_key
+                """,
+                (FAILED, STAGING, max_age_seconds),
+            ).fetchall()
+        for row in rows:
+            try:
+                self.objects.delete(row[0])
+            except Exception:
+                continue
+        return len(rows)
