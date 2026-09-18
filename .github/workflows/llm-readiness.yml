@@ -36,11 +36,25 @@ jobs:
           response="$(mktemp)"
           trap 'rm -f "$response"' EXIT
 
-          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" "${LLM_BASE_URL%/}/responses" -d "$(jq -nc --arg model "$LLM_MODEL" '{model:$model,input:"Reply with exactly PPAP_READY."}')")"
+          payload="$(jq -nc --arg model "$LLM_MODEL" '{
+            model:$model,
+            input:[{
+              role:"user",
+              content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]
+            }],
+            max_output_tokens:16
+          }')"
+
+          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" "${LLM_BASE_URL%/}/responses" -d "$payload")"
 
           if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
             echo "LLM Responses API: HTTP $http_status"
-            jq -c '{error_type:(.error.type // null),error_code:(.error.code // null),error_param:(.error.param // null)}' "$response" 2>/dev/null || true
+            jq -c '{
+              code:(.code // .error.code // null),
+              type:(.type // .error.type // null),
+              param:(.param // .error.param // null),
+              message:((.message // .error.message // .detail // "") | tostring | .[0:160])
+            }' "$response" 2>/dev/null || true
             exit 1
           fi
 
