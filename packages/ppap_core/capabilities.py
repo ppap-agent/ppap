@@ -17,4 +17,5 @@ def report(settings: Settings) -> dict[str, dict[str, str]]:
         "feishu": _state(bool(settings.feishu_app_id.strip() and settings.feishu_app_secret.strip()), "issue_4"),
         "partner_ai": _state(bool(settings.partner_ai_endpoint.strip()), "issue_12"),
         "legacy_engine": _state(bool(settings.legacy_engine_url.strip()), "migration_only"),
+        "ocr": _state(False, "issue_6"),
     }

@@ -130,6 +130,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(caps["feishu"]["state"], "disabled")
         self.assertEqual(caps["partner_ai"]["state"], "disabled")
         self.assertEqual(caps["legacy_engine"]["state"], "disabled")
+        self.assertEqual(caps["ocr"]["state"], "disabled")
         self.assertEqual(caps["llm"]["state"], "disabled")
         self.assertFalse(llm_configured(self.settings))
         self.assertEqual(self.client.get("/health").status_code, 200)

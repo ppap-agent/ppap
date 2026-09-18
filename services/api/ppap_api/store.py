@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from ppap_core.db import connect
 from ppap_core.files import (
@@ -495,3 +496,66 @@ class AuthStore:
             except Exception:
                 continue
         return len(rows)
+
+    def enqueue_audit(
+        self,
+        tenant_id: str,
+        version: FileVersion,
+        *,
+        document_type: str,
+        rule_profile: str,
+        product_rule_version_id: str,
+        engine_rule_id: str,
+        rules: list | None = None,
+    ) -> dict:
+        if version.status != READY or not version.sha256:
+            raise ValueError("not_ready")
+        if version.tenant_id != tenant_id:
+            raise ValueError("access_denied")
+        job_id = str(uuid.uuid4())
+        payload = {
+            "file_id": version.file_id,
+            "file_version_id": version.id,
+            "sha256": version.sha256,
+            "original_filename": version.original_filename,
+            "document_type": document_type,
+            "rule_profile": rule_profile,
+            "product_rule_version_id": product_rule_version_id,
+            "engine_rule_id": engine_rule_id,
+            "rules": rules or [],
+        }
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
+                VALUES (%s, %s, 'audit.execute', %s, 'queued')
+                """,
+                (job_id, tenant_id, Jsonb(payload)),
+            )
+        return {"id": job_id, "status": "queued", "payload": payload}
+
+    def get_job(self, tenant_id: str, job_id: str) -> dict | None:
+        jid = _as_uuid(job_id)
+        if not jid:
+            return None
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, tenant_id, kind, payload, status, attempt, result
+                FROM engine.jobs
+                WHERE id = %s
+                """,
+                (jid,),
+            ).fetchone()
+        if row is None:
+            return None
+        if str(row[1]) != tenant_id:
+            raise ValueError("access_denied")
+        return {
+            "id": str(row[0]),
+            "kind": row[2],
+            "payload": row[3],
+            "status": row[4],
+            "attempt": row[5],
+            "result": row[6],
+        }

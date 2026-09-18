@@ -7,6 +7,8 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ppap_core.files import MAX_UPLOAD_BYTES
+
 ISOLATED_DEV_SECRET = "ppap_isolated_dev"
 ISOLATED_DEV_S3_ENDPOINT = "http://127.0.0.1:9000"
 
@@ -101,3 +103,78 @@ def load_settings() -> Settings:
 @lru_cache(maxsize=1)
 def cached_settings() -> Settings:
     return Settings()
+
+
+class EngineSettingsView:
+    """Projection of product Settings for migrated engine packages.
+
+    OPENAI_* / MODEL_NAME here are not environment authority. They only expose
+    already-loaded LLM_* values so copied checkers keep compiling until call
+    sites are rewritten. OCR has no silent public-provider default.
+    """
+
+    DEVELOPMENT = False
+    OPENAI_EXTRA_BODY_JSON = ""
+    OPENAI_TEMPERATURE = None
+    OPENAI_REASONING_EFFORT = None
+    OPENAI_TOP_P = None
+    OPENAI_PRESENCE_PENALTY = None
+    OPENAI_EMPTY_CHOICES_RETRIES = 2
+    OPENAI_EMPTY_CHOICES_RETRY_DELAY_SECONDS = 1.0
+    AI_RATE_LIMIT_PER_MINUTE = 60
+    OCR_ADAPTER_MODE = "auto"
+    OCR_REMOTE_URL = ""
+    OCR_LOCAL_OSS_DIR = ""
+    OCR_LOCAL_SQLITE_DB = ""
+    OCR_OPENAI_API_KEY = ""
+    OCR_OPENAI_BASE_URL = ""
+    OCR_MODEL_NAME = ""
+    PADDLE_OCR_URL = ""
+    PADDLE_TOKEN = ""
+    LEGACY_DOC_CONVERSION_ENABLED = False
+    ALLOWED_EXTENSIONS = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
+
+    def __init__(self, product: Settings) -> None:
+        self._product = product
+        self.MAX_FILE_SIZE = str(MAX_UPLOAD_BYTES)
+
+    @property
+    def OPENAI_API_KEY(self) -> str:
+        return self._product.llm_api_key
+
+    @property
+    def OPENAI_BASE_URL(self) -> str:
+        return self._product.llm_base_url
+
+    @property
+    def MODEL_NAME(self) -> str:
+        return self._product.llm_model
+
+    def get_ocr_adapter_mode(self) -> str:
+        mode = self.OCR_ADAPTER_MODE.strip().lower()
+        if mode in {"auto", "local", "remote"}:
+            return mode
+        raise ValueError(f"Invalid OCR_ADAPTER_MODE: {self.OCR_ADAPTER_MODE}")
+
+    def get_ocr_openai_api_key(self) -> str:
+        return (self.OCR_OPENAI_API_KEY or self._product.llm_api_key).strip()
+
+    def get_ocr_openai_base_url(self) -> str:
+        return (self.OCR_OPENAI_BASE_URL or self._product.llm_base_url).strip()
+
+    def get_ocr_model_name(self) -> str:
+        return (self.OCR_MODEL_NAME or self._product.llm_model).strip()
+
+    def get_ocr_paddle_url(self) -> str:
+        return self.PADDLE_OCR_URL.strip()
+
+    def get_ocr_paddle_token(self) -> str:
+        return self.PADDLE_TOKEN.strip()
+
+    def get_allowed_extensions(self) -> list[str]:
+        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",") if ext.strip()]
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> EngineSettingsView:
+    return EngineSettingsView(Settings())

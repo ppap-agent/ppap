@@ -324,6 +324,45 @@ def create_app(
             return JSONResponse({"error": "invalid_age"}, status_code=400)
         return JSONResponse({"reaped": reaped})
 
+    @app.post("/isolated-dev/execute-audit")
+    def isolated_dev_execute(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        principal, denied = require_file_read(request, str(body.get("file_id") or ""))
+        if denied:
+            return denied
+        version = store.get_version(str(body.get("file_id") or ""), str(body.get("version_id") or ""))
+        if version is None or principal is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        try:
+            job = store.enqueue_audit(
+                principal.tenant_id,
+                version,
+                document_type=str(body.get("document_type") or ""),
+                rule_profile=str(body.get("rule_profile") or "v2"),
+                product_rule_version_id=str(body.get("product_rule_version_id") or "unspecified"),
+                engine_rule_id=str(body.get("engine_rule_id") or body.get("document_type") or ""),
+                rules=body.get("rules") if isinstance(body.get("rules"), list) else [],
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse(job, status_code=202)
+
+    @app.get("/isolated-dev/jobs/{job_id}")
+    def isolated_dev_job(job_id: str, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            job = store.get_job(principal.tenant_id, job_id)
+        except ValueError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if job is None:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return JSONResponse(job)
+
     @app.post("/isolated-dev/sessions")
     def isolated_dev_session(body: dict) -> JSONResponse:
         if settings.profile != "isolated-dev":

@@ -51,6 +51,7 @@ class MemoryAuthStore:
         self.grant_table: dict[tuple[str, str], set[str]] = {}
         self.files: dict[str, dict[str, str]] = {}
         self.versions: dict[tuple[str, str], FileVersion] = {}
+        self.jobs: dict[str, dict] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds))
@@ -207,3 +208,43 @@ class MemoryAuthStore:
             self.objects.delete(version.object_key)
             count += 1
         return count
+
+    def enqueue_audit(
+        self,
+        tenant_id: str,
+        version: FileVersion,
+        *,
+        document_type: str,
+        rule_profile: str,
+        product_rule_version_id: str,
+        engine_rule_id: str,
+        rules: list | None = None,
+    ) -> dict:
+        if version.status != READY or not version.sha256:
+            raise ValueError("not_ready")
+        if version.tenant_id != tenant_id:
+            raise ValueError("access_denied")
+        job_id = str(uuid.uuid4())
+        payload = {
+            "file_id": version.file_id,
+            "file_version_id": version.id,
+            "sha256": version.sha256,
+            "original_filename": version.original_filename,
+            "document_type": document_type,
+            "rule_profile": rule_profile,
+            "product_rule_version_id": product_rule_version_id,
+            "engine_rule_id": engine_rule_id,
+            "rules": rules or [],
+        }
+        job = {"id": job_id, "kind": "audit.execute", "payload": payload, "status": "queued", "attempt": 0, "result": {}}
+        self.jobs[job_id] = job
+        return {"id": job_id, "status": "queued", "payload": payload}
+
+    def get_job(self, tenant_id: str, job_id: str) -> dict | None:
+        job = self.jobs.get(job_id)
+        if job is None:
+            return None
+        version = self.versions.get((job["payload"]["file_id"], job["payload"]["file_version_id"]))
+        if version is None or version.tenant_id != tenant_id:
+            raise ValueError("access_denied")
+        return job

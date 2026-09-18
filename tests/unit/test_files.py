@@ -217,3 +217,33 @@ class FileHttpTests(unittest.TestCase):
         self.assertEqual(old.content, first)
         abandoned = self.client.get(f"/files/{file_id}/versions/{leftover.json()['id']}/download")
         self.assertEqual(abandoned.status_code, 409)
+
+    def test_execute_audit_enqueues_ready_version_and_rejects_cross_tenant(self):
+        self._login("alice")
+        body = b"engine-input"
+        created = self.client.post(
+            "/files", json={"original_filename": "sample.xlsx", "content_type": "application/octet-stream", "byte_size": len(body)}
+        )
+        file_id, vid = created.json()["file_id"], created.json()["id"]
+        self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=body)
+        ready = self.client.post(f"/files/{file_id}/versions/{vid}/finalize")
+        queued = self.client.post(
+            "/isolated-dev/execute-audit",
+            json={
+                "file_id": file_id,
+                "version_id": vid,
+                "document_type": "零件提交保证书",
+                "product_rule_version_id": "test-psw-v1",
+                "engine_rule_id": "零件提交保证书",
+            },
+        )
+        self.assertEqual(queued.status_code, 202)
+        job_id = queued.json()["id"]
+        self.assertEqual(queued.json()["payload"]["sha256"], ready.json()["sha256"])
+        fetched = self.client.get(f"/isolated-dev/jobs/{job_id}")
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["status"], "queued")
+        self._login("carol")
+        denied = self.client.get(f"/isolated-dev/jobs/{job_id}")
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json(), {"error": "access_denied"})

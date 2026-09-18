@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 
 from ppap_core.db import connect
 from ppap_core.settings import load_settings
+from ppap_worker.execute import InputConflict, execute_claimed_job, fail_claimed_job
 
 STOP = False
 
@@ -39,36 +40,47 @@ def run() -> None:
                 """,
                 (ident, started, settings.git_sha),
             )
-            row = conn.execute(
+            claimed = conn.execute(
                 """
-                SELECT id FROM engine.jobs
-                WHERE status = 'queued' AND (lease_until IS NULL OR lease_until < now())
-                ORDER BY created_at
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-                """
+                UPDATE engine.jobs
+                SET status = 'leased',
+                    attempt = attempt + 1,
+                    lease_owner = %s,
+                    lease_until = now() + make_interval(secs => 900),
+                    updated_at = now()
+                WHERE id = (
+                    SELECT id FROM engine.jobs
+                    WHERE status = 'queued' AND (lease_until IS NULL OR lease_until < now())
+                    ORDER BY created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING id, tenant_id, kind, payload, attempt
+                """,
+                (ident,),
             ).fetchone()
-            if row:
-                conn.execute(
-                    """
-                    UPDATE engine.jobs
-                    SET status = 'leased',
-                        attempt = attempt + 1,
-                        lease_owner = %s,
-                        lease_until = now() + interval '30 seconds',
-                        updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (ident, row[0]),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO engine.attempts (id, job_id, attempt, worker_id, diagnostic)
-                    SELECT gen_random_uuid(), id, attempt, %s, %s
-                    FROM engine.jobs WHERE id = %s
-                    """,
-                    (ident, Jsonb({"note": "claimed; execution not implemented"}), row[0]),
-                )
+            if claimed:
+                    conn.execute(
+                        """
+                        INSERT INTO engine.attempts (id, job_id, attempt, worker_id, diagnostic)
+                        VALUES (gen_random_uuid(), %s, %s, %s, %s)
+                        """,
+                        (claimed[0], claimed[4], ident, Jsonb({"note": "claimed"})),
+                    )
+                    job = {
+                        "id": claimed[0],
+                        "tenant_id": str(claimed[1]),
+                        "kind": claimed[2],
+                        "payload": claimed[3],
+                        "attempt": claimed[4],
+                    }
+                    if job["kind"] == "audit.execute":
+                        try:
+                            execute_claimed_job(settings, conn, job, ident)
+                        except InputConflict as exc:
+                            fail_claimed_job(conn, job, ident, str(exc) or "input_conflict")
+                        except Exception:
+                            fail_claimed_job(conn, job, ident, "execution_failed")
             time.sleep(1)
 
 

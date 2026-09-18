@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -657,9 +658,91 @@ def verify_uploads() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_engine() -> int:
+    import hashlib
+    import httpx
+    from openpyxl import Workbook
+    from ppap_core.corpus import corpus_status
+
+    env = child_env()
+    report = {"ok": False, "corpus": corpus_status()["state"], "s01_audit": "NOT_PROVEN"}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.xlsx"
+            Workbook().save(path)
+            body = path.read_bytes()
+        digest = hashlib.sha256(body).hexdigest()
+        alice, carol = mint("alice"), mint("carol")
+        created = httpx.post(
+            api + "/files",
+            json={"original_filename": "sample.xlsx", "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "byte_size": len(body)},
+            headers=headers(alice),
+            timeout=10,
+        )
+        file_id, version_id = created.json()["file_id"], created.json()["id"]
+        httpx.put(api + f"/files/{file_id}/versions/{version_id}/blob", content=body, headers=headers(alice), timeout=10)
+        ready = httpx.post(api + f"/files/{file_id}/versions/{version_id}/finalize", headers=headers(alice), timeout=10)
+        queued = httpx.post(
+            api + "/isolated-dev/execute-audit",
+            json={
+                "file_id": file_id,
+                "version_id": version_id,
+                "document_type": "不是已登记的资料类型",
+                "product_rule_version_id": "isolated-dev:unregistered",
+                "engine_rule_id": "unregistered",
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        job_id = queued.json()["id"]
+        deadline = time.time() + 60
+        job = None
+        while time.time() < deadline:
+            job = httpx.get(api + f"/isolated-dev/jobs/{job_id}", headers=headers(alice), timeout=10)
+            if job.status_code == 200 and job.json().get("status") in {"succeeded", "failed"}:
+                break
+            time.sleep(1)
+        result = (job.json().get("result") or {}) if job is not None else {}
+        findings = result.get("findings") or []
+        denied = httpx.get(api + f"/isolated-dev/jobs/{job_id}", headers=headers(carol), timeout=10)
+        report["alice_execute"] = (
+            created.status_code == 201
+            and ready.status_code == 200
+            and ready.json().get("sha256") == digest
+            and queued.status_code == 202
+            and job is not None
+            and job.status_code == 200
+            and job.json().get("status") == "succeeded"
+            and result.get("sha256") == digest
+            and result.get("file_version_id") == version_id
+            and bool(findings)
+            and all(item.get("status") in {"PASS", "NG", "ERR"} for item in findings)
+            and any(item.get("status") == "ERR" for item in findings)
+        )
+        report["carol_denied"] = denied.status_code == 403 and denied.json() == {"error": "access_denied"}
+        report["corpus_unproven"] = report["corpus"] == "NOT_PROVEN"
+        report["ok"] = all(report[key] is True for key in ("alice_execute", "carol_denied", "corpus_unproven"))
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -697,6 +780,9 @@ def main() -> int:
     if args.command == "verify-uploads":
         reexec_in_venv()
         return verify_uploads()
+    if args.command == "verify-engine":
+        reexec_in_venv()
+        return verify_engine()
     reexec_in_venv()
     return verify()
 
