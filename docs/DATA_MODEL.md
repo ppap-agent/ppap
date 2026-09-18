@@ -1,106 +1,43 @@
-# Target Data Model
+# 数据所有权与不变量
 
-This document fixes ownership and lifecycle. Exact columns may evolve, but the separation between product truth and execution state is deliberate.
+这是目标语义约束，不是已建表清单。表名和物理拆分由实现决定；不得改变 [Northstar](NORTHSTAR.md) 的生命周期。
 
-## `product` schema
+| 事实 | 唯一拥有者 | 可保留的派生信息 |
+|---|---|---|
+| 用户、租户、外部身份及成员授权 | product | 外部身份映射，不复制链企云组织树 |
+| 资料、不可变文件版本 | product + 对象字节 | 来源 token、旧 ID、校验和、原始文件名 |
+| 草稿、目标/参考范围、规则版本 | product | 可编辑草稿；受理后的范围快照不可变 |
+| 审核轮次、结果、证据、人工复核 | product | 列表摘要可重建；历史判断不可静默覆盖 |
+| 任务、尝试、租约、运行诊断 | engine | 绑定固定输入和版本的执行快照、缓存 |
+| 实际使用事件 | product | 外部确认/账单投影；不把本地估算当已扣费 |
 
-Suggested core entities:
+## 从原件到历史结果
 
-| Entity | Purpose | Lifecycle |
-| --- | --- | --- |
-| `tenant` | Product tenant/account boundary | Durable |
-| `user` | Product user | Durable |
-| `identity` | External identity mapping such as Feishu/OIDC | Durable, provider-specific |
-| `document` | Logical document | Durable |
-| `document_version` | Exact immutable bytes used by audits | Append-only |
-| `rule_profile` | Versioned rule selection/configuration | Versioned |
-| `audit_round` | One accepted product audit request | Durable, idempotent |
-| `audit_result` | Result revision produced for an audit round | Append-only |
-| `audit_finding` | Rule-level PASS/NG/ERR and evidence | Append-only with result revision |
-| `review` | Human review/override commentary | Append-only |
-| `usage_event` | Local usage/cost/point history | Append-only |
+一个轮次可以有多个待审文件和参考文件。每个角色绑定确定的文件版本，每个待审文件绑定明确的规则版本。不能把资料集缩成单文件 `document_id`，也不能把所有参考文件显示为已通过。
 
-An audit round is a product concept. Its identity must not change because execution retries.
+原件 key 不覆盖，记录 SHA-256、大小、类型和来源。保留原文件名，因为旧匹配路径使用文件名/后缀。新解析策略若不再依赖文件名，须验证行为和迁移影响。外部 URL 不是永久文件身份，S3 ETag 也不自动等于内容 SHA-256。
 
-## `engine` schema
+上传先暂存，再验证字节并固化为 ready 版本。数据库事务不能原子包含 S3 上传；失败的暂存可回收，未 ready 对象不得受理。删除、保留期限与法定要求未确认前，不以全局不可删除代替数据治理；已引用历史不得静默失效。
 
-Suggested execution entities:
+```text
+审核轮次 -> 目标/参考版本集合 -> 对象 SHA-256
+         -> 规则内容/版本 -> 执行版本、模型/提示词与有效参数
+         -> job/attempt -> 结果版本 -> 检查项及来源 locator
+         -> 独立的人工复核记录
+```
 
-| Entity | Purpose | Lifecycle |
-| --- | --- | --- |
-| `job` | Durable unit of engine work linked to one audit round | Retryable |
-| `job_attempt` | One execution attempt | Append-only |
-| `worker_lease` or job lease fields | Claim owner and expiry | Ephemeral/recoverable |
-| `execution_event` | Optional operational trace/diagnostic events | Retention-controlled |
+## 受理与重试
 
-Do not put user review or the authoritative product result only in `engine`.
+幂等键至少按租户和操作分域。相同键和相同输入返回原轮次；相同键但输入不同明确冲突。唯一约束处理并发，不能只先 SELECT 再 INSERT。
 
-## Atomic acceptance
+创建轮次、冻结引用、创建执行工作在一个 PG 事务内完成。一次受理可对应多个内部任务；原子性不要求强行合并成一张任务表。
 
-Accepting an audit must create product truth and executable work in one database transaction:
+技术重试保持轮次及固定输入不变，新增尝试。过期 worker 的晚到结果通过 claim 代次/令牌被拒绝。结果、当前指针和终态更新在一个提交边界内，防止半份成功。产品明确的重审创建新轮次；已公布结果和人工决定不被下一次运行改写。
 
-~~~text
-BEGIN
-  verify idempotency key
-  create/read document_version
-  insert product.audit_round
-  insert engine.job linked to audit_round
-COMMIT
-~~~
+队列通常需要容忍至少一次执行。数据库租约不能保证外部模型调用或计费恰好一次。不确定远端结果先读回/对账；使用稳定业务关联与受支持的幂等接口，不盲目再次 POST。
 
-This avoids an accepted audit with no work, or a job with no product owner.
+## 授权与账单
 
-## Idempotency
+所有跨表关联须验证同租户及对象权限；UUID 不等于授权，登录不等于复核权限。租户协作、原件访问和外部 provider 授权分别判断。
 
-Product mutation endpoints use an idempotency key scoped at least by tenant + operation. A duplicate request returns the existing product object rather than creating a second audit round.
-
-## Result revision
-
-Worker retries must not overwrite previous evidence.
-
-~~~text
-audit_round A
-  engine job J
-    attempt 1 -> result revision 1 (ERR)
-    attempt 2 -> result revision 2 (PASS/NG findings)
-~~~
-
-The product may choose which revision is current, but history remains queryable.
-
-## Immutable file identity
-
-Each `document_version` records at least:
-
-- object key
-- SHA-256
-- byte size
-- MIME type / source format
-- source provider (`upload`, `feishu`, migration, etc.)
-- source file token/revision when available
-- created time and actor
-
-Recommended object-key shape:
-
-~~~text
-tenant/{tenant_id}/documents/{document_id}/{version_id}/original.ext
-~~~
-
-Object keys are never overwritten.
-
-## Evidence chain
-
-Every historical result must be traceable through:
-
-~~~text
-audit_round
- -> document_version
- -> immutable object key + SHA-256
- -> rule_profile version
- -> engine job + attempt
- -> engine build/git SHA
- -> audit_result revision
- -> audit_finding/evidence
- -> optional human review
-~~~
-
-If this chain is broken, the product cannot reliably explain what bytes and rules produced a historical result.
+用量分开保存实际观察、试用、待上报、外部确认和待对账。Partner AI 权益/结算仍由外部确认；旧表只是迁移历史证据，不成为新 runtime 依赖。不能根据本地 job completed 自动认定 charged。

@@ -1,86 +1,27 @@
-# Consolidation Migration
+# 迁移与退出
 
-## Principle
+目标是 [Northstar](NORTHSTAR.md)，来源与能力决定见 [INVENTORY](INVENTORY.md)。具体实现工作由 GitHub Issues 拥有，不在这里复制待办正文。
 
-Migration is capability-by-capability. Repositories are evidence sources, not deployment units to copy 1:1.
+## 最小正确迁移方式
 
-The final runtime must not depend on a legacy service just because its behavior has not yet been migrated. Temporary compatibility must be explicit, measured, and have an exit gate.
+先恢复可重放的行为证据和样本权限，再建立新产品身份、不可变版本与受理契约。引擎尽量先搬能力与测试，再改善实现；不逐行翻译 Java。UI 迁移的是用户能力，不是继承每个旧路由的内部形状。
 
-## Source-to-target map
+每次迁移记录确切来源提交、目标能力、对照输入、预期规则及差异。旧输出不是天然正确的 oracle；修正差异必须有业务依据，不能只因新测试失败改 expected。
 
-| Source | Target | What to carry forward | What not to carry forward |
-| --- | --- | --- | --- |
-| `ppap-web` | `apps/web` | PC UX, Feishu H5 behavior, product navigation, API expectations | Split product implementations and old backend coupling |
-| `ppap-host` | `services/api`, migrations, web reference | Product tables, InsForge migration lessons, PC decoupling tests | Browser-direct PostgREST/functions, TypeScript demo engine |
-| `ppap-agent` | `services/worker`, `packages`, `tests` | Audit engine, docops, OCR, PDF-to-Excel, vision, worker claim model, regression assets | Public engine task API as a browser dependency |
-| `ppap-uac` | API integration behavior | Feishu OAuth, Drive/export semantics, identity mapping evidence | Chain-enterprise org tree, PPAP-specific UAC fork, embedded secrets |
-| `ppap-biz` | API/data compatibility reference | Current file/audit/transformer contracts needed for cutover | Java file-audit/transformer runtime after cutover |
-| `ppap-foundation` | Compatibility reference | Only platform behavior still required by the product | Gateway/UAC/platform runtime dependency |
-| `hax` | Migration/ops evidence | Runtime facts, product decisions, cutover evidence | Runtime imports or secrets copied into code |
+## 历史映射
 
-## Phases
+保留有命名空间的旧 ID 到新对象映射，包含来源系统、租户、对象类型与原标识。不能把同名文件、相同 fileToken 或本地用户 ID 自动认定为同一内容/身份。
 
-### 0. Freeze contracts and security
+迁入历史先只读导出到隔离环境；校验租户归属、记录/对象数量、摘要、抽样结果、规则和原件引用。原始快照缺失的旧轮次明确标为不可核验，不重新抓当前内容冒充历史。
 
-- Record exact source branches/SHAs for each migrated behavior.
-- Inventory current user-visible endpoints, tables, file flows, Feishu scopes, and usage semantics.
-- Treat credentials found in source repositories as compromised material: rotate them and never copy defaults into this repo.
-- Define target acceptance tests before replacing a behavior.
+切换期间新增写入必须有明确的单一权威和捕获/重放方案。拒绝默认双写两套 ledger。回切不仅是改路由：新写入、外部评论和已确认用量分别处理。
 
-Exit gate: source behavior and target tests are traceable.
+## 退出一条旧路径的必要证据
 
-### 1. Establish one web product
+调用方和其它产品影响已查明；数据与原件已迁或保留可达；新契约/支持矩阵验证通过；旧链接可准确回访；最后旧读写已观测退出；恢复/回退路径实际演练。未知调用方按尚不可停处理。
 
-- Move the current PC product experience into `apps/web`.
-- Keep Feishu H5 as a platform mode, not a separate product state tree.
-- Route all product data through the new API contract, initially with mocks/adapters if required.
+同一主机、仓库或基础服务可能支持多个客户。终态不依赖旧服务，不等于本任务授权删除整个旧仓或关闭所有客户引擎。
 
-Exit gate: no new UI work is added to legacy `ppap-web`/`ppap-host` except production fixes during migration.
+## 完成范围
 
-### 2. Build Product API and `product` schema
-
-- Implement product identity projection, document versions, audit rounds, result reads, reviews, and usage ledger.
-- Add immutable object storage.
-- Remove browser-direct database/PostgREST/function access.
-
-Exit gate: web can complete product CRUD against the new API without Java platform dependencies.
-
-### 3. Move engine packages and worker
-
-- Move reusable audit packages from `ppap-agent` into `packages` with source SHA recorded.
-- Implement `services/worker` around the proven PostgreSQL claim/lease model.
-- Keep expensive recognition and conversion out of API handlers.
-- Preserve offline regression and customer-format tests.
-
-Exit gate: the same audit corpus produces accepted equivalent results through the new worker.
-
-### 4. Migrate Feishu adapter
-
-- Reuse the existing PPAP Feishu application identity.
-- Implement OAuth identity mapping and Drive/export reads in/behind Product API.
-- Persist exported files as immutable document versions before audit.
-- Do not introduce a second ledger or `lark_adaptor` mainline.
-
-Exit gate: Feishu and normal web create the same product objects and audit rounds.
-
-### 5. Shadow and cut over
-
-- Replay representative reads and writes against the new stack.
-- Compare product state, rule findings, evidence, and usage semantics.
-- Verify rollback before the first production canary.
-- Keep legacy system authoritative until explicit cutover gates pass.
-
-Exit gate: production traffic can run Web -> Product API -> Postgres/S3 -> Worker with no required Java hop.
-
-### 6. Retire legacy PPAP path
-
-After evidence and rollback windows are complete:
-
-- stop PPAP Java UAC/gateway/file-audit/transformer dependencies
-- stop the transition `ppap-host` runtime
-- freeze/archive legacy product forks as appropriate
-- keep `hax` operational evidence until replacement runbooks are complete
-
-## Migration rule
-
-Do not solve migration uncertainty by adding a permanent adapter layer. Every temporary dependency must have an owner, an observable use count, and a deletion condition.
+逐能力推进至：Web/PWA、身份/租户、资料准备、规则版本、持久执行、结果/证据、人工复核、飞书来源、用量、历史迁移、恢复发布、PPAP 路径退役。正式批准制度与额外飞书平台形态不自动加入范围。

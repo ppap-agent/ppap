@@ -1,94 +1,44 @@
-# Target Architecture
+# 目标架构
 
-## Goal
+产品语义见 [Northstar](NORTHSTAR.md)；实现事实见 [CURRENT](CURRENT.md)。本文件描述目标，不声称已经部署。
 
-PPAP is one product with one public API and one asynchronous execution plane. The architecture optimizes for fewer ownership boundaries, not for the smallest possible box count.
+```text
+同一 Web / PWA / 飞书客户端
+             |
+     services/api  产品 HTTP 边界
+        |                     |
+  PostgreSQL                对象存储
+ product + engine        不可变原件及派生产物
+        |                     |
+        +---- services/worker -+
+                    |
+              packages 检查能力
+                    |
+           可选旧 DOC 转换沙箱
+```
 
-## Components
+## 所有权
 
-### `apps/web`
+API 拥有身份、资料与规则选择、受理、结果读取、复核和用量视图。重解析、OCR、转换、长模型调用和规则检查由 Worker 执行。识别是产品能力，但重识别计算同样异步。
 
-One product client serves normal browser/PWA and Feishu H5 entry modes. Platform-specific behavior belongs behind adapters. Product routes, state, and API contracts stay shared.
+Worker 通过短数据库事务 claim 任务，事务外执行，凭当前 claim/attempt 身份提交结果。两种工作负载不是两个独立产品，可以分别扩副本，不承诺恰好两个操作系统进程。
 
-It owns user interaction only: preparing a data set, selecting document versions and rules, submitting an audit round, viewing findings/evidence, and recording human review.
+同一 PostgreSQL 数据库内 `product` 保存产品事实，`engine` 保存执行记录；不同角色实施权限。两 schema 不是第二套产品台账。具体约束见 [DATA_MODEL](DATA_MODEL.md)。
 
-### `services/api`
+对象存储拥有原件字节；产品数据库拥有对象版本和授权关联。派生工作簿、页面图像和 OCR 结果可缓存，但须指向原件版本、转换器版本和参数，不能冒充原件。API 可以签发短时、对象级传输能力；浏览器不获得存储管理权。预签名传输不是第二套业务 API。
 
-The Product API owns:
+库边界允许离线测试和客户运行方式复用。不要把 `packages` 再包装成隐藏的 HTTP 微服务。基础设施代理可处理 TLS、路由；产品授权不能依赖旧 Java 网关。
 
-- authentication and product sessions
-- tenant/user/identity projection
-- document metadata and immutable document versions
-- audit-round acceptance and idempotency
-- result queries and human review
-- usage queries and external usage synchronization state
-- Feishu OAuth/Drive adapter endpoints when needed
+## 渠道与执行策略
 
-It performs only bounded work. Expensive recognition is a worker job even if the UI calls the feature 'recognition'.
+飞书通过最小适配器提供身份、原件来源和必要的显式写回。保留当前应用身份；读取结果不隐式写评论。Partner AI 确认权益和计费，本地记录观察、待上报、确认、失败与待对账状态，不伪造余额。
 
-### `services/worker`
+规则检查、模型推断、文档抽取可换实现；输出必须满足相同的输入身份、覆盖与证据契约。引入 Agent/workflow 框架不能接管产品轮次身份。
 
-The worker owns:
+## 迁移期与终态
 
-- durable job claim/lease/retry
-- document preparation and format handling
-- OCR and PDF-to-Excel pipelines
-- DOCX structure extraction
-- audit rule execution
-- PASS / NG / ERR and evidence production
-- writing a new product result revision after successful execution
+隔离验证期间可以由明确的 legacy adapter 调用固定版本的旧引擎。它必须保存旧/新标识关联、处理不确定提交，并有退出 Issue。旧引擎证据只证明旧边界，不完成新 Worker 的 Story。
 
-The worker is not a second API product.
+终态引擎能力由本仓拥有，通过数据库工作队列执行，不依赖兄弟源码目录或旧 `/api/v1/tasks`。来源服务退役另外验收，尤其不能连带停掉其它客户或 FMEA/PQM/8D。
 
-### PostgreSQL
-
-One PostgreSQL cluster is used so product acceptance and job creation can be atomic.
-
-Two schemas preserve different lifecycles:
-
-- `product`: durable user-visible truth
-- `engine`: retryable execution state
-
-Separate database roles enforce the boundary. Schema names alone are not security.
-
-### Object storage
-
-One bucket is sufficient if object keys are immutable. Database records identify the exact audited bytes with object key, SHA-256, size, MIME type, and source metadata.
-
-Workers fetch objects through the object-store SDK or a short-lived signed URL. A localhost URL is never file identity.
-
-### Optional legacy DOC converter
-
-If Word 97-2003 `.doc` remains supported, LibreOffice stays outside both core processes in a network-disabled, resource-limited sandbox using local IPC. If `.doc` support is retired, this component disappears.
-
-## Main command flow
-
-~~~text
-1. Web uploads/chooses a source file.
-2. API stores an immutable document version and checksum.
-3. Web submits an audit command with an idempotency key.
-4. API transaction creates product.audit_round + engine.job.
-5. Worker claims engine.job.
-6. Worker prepares files and runs migrated audit packages.
-7. Worker appends product.audit_result + findings/evidence.
-8. Web reads product state through API.
-9. Human review appends a product review record.
-~~~
-
-## Integration boundary
-
-Feishu provides identity and file-source capabilities. The product maps a Feishu identity to its own `product.user` / `product.identity` records. A Feishu file is exported to immutable object storage before it becomes an auditable document version.
-
-Partner AI may answer entitlement or billing-adapter questions. It does not own audit rounds, results, or the local usage ledger.
-
-## Explicitly rejected runtime shapes
-
-- Browser -> PostgREST/database/function directly
-- Browser -> engine `/tasks`
-- API -> synchronous heavy audit call
-- API and worker in one process merely to reduce box count
-- product audit round and engine task as one mutable row
-- Feishu cloud content used as the historical file version
-- a second PPAP ledger for Feishu
-- permanent runtime calls to Java UAC/gateway/file-audit/transformer
-- `lark_adaptor` as a parallel main product
+继续支持 `.doc` 时保留受限转换进程；语言或容器数不应迫使我们取消必要的安全边界。其它新增服务须用当前负载、安全或恢复要求证明其价值。

@@ -1,56 +1,15 @@
-# Security Boundary
+# 安全与外部效果
 
-## Secrets
+安全保护实际边界，不通过增加审批层代替实现。
 
-Historical PPAP repositories contain or have contained real-shaped credentials and private runtime material. Never copy their defaults here.
+API、worker、迁移管理员分别使用最小权限数据库角色。业务关联检查租户与对象权限；外部身份使用 provider/app/tenant/subject 绑定，不按未经验证的邮箱自动合并。
 
-- Secrets enter through the deployment secret store or runtime environment.
-- `.env` is local-only; `.env.example` contains placeholders only.
-- Rotate any source credential before using an equivalent integration in the new stack.
-- Never place Feishu app secrets, Partner AI credentials, database passwords, private keys, kubeconfigs, or signed tokens in Git.
+对象 key 不覆盖，下载能力按对象和短期有效范围授予。用户可影响的 URL 下载需要 SSRF 边界、大小/时间限制、重定向检查和内容验证；只检查扩展名不足。未受信文档内容不得成为模型的工具指令或读取无关凭据的授权。
 
-## Database roles
+密钥只进入 gitignored 本地 `.env` 或部署 secret；示例只含空值。不要复述历史泄漏值。发现旧明文凭据记录变量和轮换需求，本次不主动轮换生产凭据。
 
-Use separate least-privilege roles.
+隔离测试可使用真实付费依赖，授权不等于共享外部租户的所有数据都变成测试数据。用测试对象验证，不发无关客户通知。保留最小脱敏证据，不提交 cookie、session、signed URL 或客户原文。
 
-### API role
+保留 `.doc` 能力时，转换器无网络、资源受限、通过受控 IPC。测试在隔离环境不能取消产品运行时的文档隔离。
 
-- CRUD on product tables required by product endpoints
-- create engine jobs through a narrow permission/function/insert contract
-- no permission to mutate worker lease/attempt internals arbitrarily
-
-### Worker role
-
-- claim/update engine jobs and attempts
-- read immutable product inputs needed for execution
-- append result revisions/findings through a controlled write path
-- no user/session administration
-
-Production administrative/migration credentials are separate from both.
-
-## Object storage
-
-- Object keys for audit originals are immutable.
-- Server components hold object-store credentials; browsers receive only product/API operations or narrowly scoped upload/download URLs.
-- Worker verifies expected object metadata/checksum where practical.
-- Historical audit identity is the stored object version/checksum, not a live Feishu URL.
-
-## Feishu
-
-Feishu tokens are integration credentials, not product identity storage. Persist only the minimum token/session material needed for the defined OAuth/Drive flow and protect it at rest.
-
-The product maps external identity to its own user/tenant records so Feishu does not become the only possible future identity model.
-
-## Legacy DOC conversion
-
-If `.doc` remains supported:
-
-- LibreOffice runs in a separate sandbox
-- no network access
-- bounded CPU/memory/time/output
-- local IPC only
-- converter failure produces an explicit engine diagnostic rather than compromising API availability
-
-## Browser trust boundary
-
-`apps/web` is untrusted. It never receives database admin keys, object-store admin credentials, Partner AI server credentials, or worker secrets.
+公开发布前另核对源码许可证、模型/文档库分发条件、规则及样本权利。私有接管仓并未自动获得开源许可。

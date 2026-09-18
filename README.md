@@ -1,94 +1,26 @@
 # PPAP
 
-Target consolidation repository for the PPAP document audit product.
+把两家公司遗留的产品、渠道和审核能力整合成一个可追溯的 PPAP 产品。
 
-This repository is the long-term home of the product runtime. The target is deliberately small: one web client, one public Product API, one asynchronous worker, one PostgreSQL cluster with two schemas, and one immutable object bucket. If legacy `.doc` support remains, a network-disabled LibreOffice converter is an additional sandbox, not a third product service.
+> 打开一次审核，就知道审了什么、依据在哪里、结果是什么、下一步做什么。
 
-## Target runtime
+**当前状态：目标产品尚未实现。** 本仓已有架构文档；本轮建设接管上下文、路线图与验证工具。文档、工具自测和旧引擎可达都不等于新产品验收通过。
 
-~~~text
-Browser / PWA / Feishu H5
-            |
-            v
-      services/api
-   (only public HTTP API)
-       |          |
-       |          +------> Object storage
-       |                    immutable originals
-       v
-    PostgreSQL
-  product + engine
-       |
-       v
- services/worker
- document preparation
- rule execution
- PASS / NG / ERR / evidence
-       |
-       +---- optional legacy DOC converter sandbox
-~~~
+## 从这里开始
 
-Two core processes are intentional:
+| 问题 | 唯一入口 |
+|---|---|
+| 产品承诺、术语与完成范围 | [Northstar](docs/NORTHSTAR.md) |
+| 代码在哪里、责任怎样分 | [架构](docs/ARCHITECTURE.md) |
+| 调查到了什么，什么仍未知 | [当前事实与来源](docs/CURRENT.md) |
+| 旧能力如何迁移 | [能力与数据归属](docs/INVENTORY.md)、[迁移原则](docs/MIGRATION.md) |
+| 为什么这样选技术 | [决策](docs/DECISIONS.md)、[外部方案比较](docs/RESEARCH.md) |
+| 下一步做什么 | [GitHub Issues](https://github.com/ppap-agent/ppap/issues)；按实际依赖推进，不以票数代表进展 |
+| 历史结果怎样可信 | [数据约束](docs/DATA_MODEL.md) |
+| 密钥、授权与敏感数据 | [安全边界](docs/SECURITY.md) |
 
-- `services/api` owns product commands and short request/response work.
-- `services/worker` owns long-running document preparation and audit execution.
+终态是 `apps/web → services/api → PostgreSQL / 对象存储 → services/worker`。`packages` 是可复用库，`migrations` 管数据库变更，`deploy` 管运行交付，`tests` 管证明。Worker 不向浏览器暴露第二套产品 API。
 
-The API does not call a public engine task service. It accepts a product command and creates durable engine work in PostgreSQL. The worker claims that work and executes the audit packages.
+`ppap-agent/ppap-agent` 是当前引擎与迁移来源，不是终态跨仓依赖。整合不等于立即关闭来源服务：客户安装、其它产品与旧链接须分别核验后退出。
 
-## Repository layout
-
-| Path | Responsibility | Must not become |
-| --- | --- | --- |
-| `apps/web` | One product UI for browser, PWA, and Feishu H5 | A direct database, object-store, or engine client |
-| `services/api` | Identity, document versions, audit rounds, result reads, reviews, usage | OCR, LibreOffice, PDF rendering, or long audit execution |
-| `services/worker` | Document preparation, OCR/PDF/DOCX work, rule execution, result production | A public user-facing HTTP service |
-| `packages` | Reusable product and audit libraries migrated from `ppap-agent` | Hidden network services |
-| `migrations` | Forward-only PostgreSQL schema changes for `product` and `engine` | Ad-hoc production SQL |
-| `deploy` | Runtime composition and deployment contracts | Product logic |
-| `tests` | Product, engine, and cross-boundary regression | A substitute for production evidence |
-| `docs` | Architecture, data model, security, migration, and durable decisions | Runtime secrets |
-
-## Hard architecture invariants
-
-1. `services/api` is the only public product HTTP API.
-2. `apps/web` never calls the engine, PostgreSQL, S3, PostgREST, or serverless database functions directly.
-3. `services/worker` is asynchronous. It claims durable work from PostgreSQL and does not serve end users.
-4. PostgreSQL has two responsibility boundaries: `product` for product truth and `engine` for execution state. They are not collapsed into one generic `tasks` table.
-5. Product acceptance and engine job creation happen in one database transaction.
-6. Uploaded and Feishu-exported originals are immutable object versions identified by object key and SHA-256.
-7. Audit results are append-only revisions. A retry may create a new engine attempt and result revision; it must not erase prior evidence.
-8. Feishu is an identity and file-source adapter. It is not a second PPAP product or a second ledger.
-9. Partner AI is a usage/entitlement adapter. Local usage events remain the product record.
-10. Legacy repositories are migration sources and behavioral references. The final runtime must not depend on their deployed services or source trees.
-
-## Source repositories
-
-| Repository | Use during consolidation | Final runtime dependency |
-| --- | --- | --- |
-| `ppap-agent/ppap-agent` | Audit packages, worker behavior, regression assets, deployment evidence | No. Its reusable code moves here before cutover. |
-| `ppap-agent/ppap-web` | Current PC and Feishu UI behavior | No |
-| `ppap-agent/ppap-host` | Transition InsForge schema/API experiments and PC migration evidence | No |
-| `ppap-agent/ppap-uac` | Current Feishu OAuth, Drive, and product orchestration behavior | No |
-| `ppap-agent/ppap-biz` | Current `file-audit` / `transformer` behavior and data contracts | No |
-| `ppap-agent/ppap-foundation` | Historical platform/UAC/gateway contracts needed for compatibility checks | No |
-| `ppap-agent/hax` | Product truth, runtime evidence, migration facts, and operations manuals | Not a runtime dependency |
-
-Product vocabulary remains defined in `hax/products/ppap/CONTEXT.md` until it is deliberately migrated here.
-
-## Read next
-
-- `docs/ARCHITECTURE.md` - process and responsibility boundaries
-- `docs/DATA_MODEL.md` - `product` and `engine` schemas and evidence chain
-- `docs/MIGRATION.md` - source-to-target migration sequence and exit gates
-- `docs/SECURITY.md` - secrets, roles, object integrity, and converter isolation
-- `docs/DECISIONS.md` - decisions that should not be reopened casually
-
-## Definition of the target state
-
-The consolidation is complete only when production user traffic follows:
-
-~~~text
-Web -> Product API -> PostgreSQL/Object Storage -> Worker
-~~~
-
-and no user-facing flow requires Java UAC, gateway, `file-audit`, `transformer`, a second PPAP ledger, a second Feishu app, direct PostgREST/function access from the browser, or the old engine HTTP task API.
+本仓保持私有。采用高质量开源工程标准，不代表已取得公开遗留代码、规则、样本或客户资料的许可。
