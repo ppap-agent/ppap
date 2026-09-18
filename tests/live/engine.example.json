@@ -1,0 +1,16 @@
+{
+  "engine_git_sha": "REPLACE_WITH_OBSERVED_FULL_COMMIT",
+  "max_wait_seconds": 300,
+  "poll_seconds": 3,
+  "files": [
+    {
+      "source_url_env": "PPAP_LIVE_SOURCE_URL",
+      "sha256": "REPLACE_WITH_IMMUTABLE_SOURCE_SHA256",
+      "rule_profile": "v3",
+      "rule_id": "REPLACE_WITH_CONFIRMED_ENGINE_RULE_ID",
+      "expected": [
+        {"classification": "REPLACE_FROM_REVIEWED_ORACLE", "item": "REPLACE_FROM_REVIEWED_ORACLE", "status": "NG", "require_locator": true}
+      ]
+    }
+  ]
+}
