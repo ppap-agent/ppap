@@ -74,6 +74,8 @@ Python 3.12 可运行工具自测、#2 运行栈和依赖探针。浏览器检�
 ```sh
 python tools/stack.py up
 python tools/stack.py verify
+python tools/stack.py seed-auth
+python tools/stack.py verify-auth
 python tools/stack.py restart
 python tools/stack.py down
 
@@ -93,7 +95,9 @@ python tools/live.py probe --url http://127.0.0.1:8080/version --expected-build 
 
 `stack.py up` 启动 127.0.0.1 上的 PostgreSQL、MinIO、API（8080）、Worker、Web（4173）。isolated-dev 的 `PPAP_WEB_URL` 就是 `http://127.0.0.1:4173`。Web 只拉 `/public-config`，没有 server Secret。Worker 可单独停掉而不让 API `/health` 失败；`/ready` 只证明 PostgreSQL 与对象存储，不要求 Worker 进程。
 
-`stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。它不是 G01–G05 或任何 Story。
+`stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。`seed-auth` / `verify-auth` 用 isolated-dev 预存 session 证明跨租户对象拒绝、同租户只读非复核、退出登录和飞书 OAuth 启动跳转；**不是 S02 真实浏览器登录**。两者都不是 G01–G05。
+
+飞书商店应用的 `app_ticket` 由 `POST /integrations/feishu/events` 接收。本机 127.0.0.1 不能作为飞书事件订阅或 OAuth redirect 的公网入口；未收到 ticket 时 capability 记 `app_ticket: missing`，不得假装已换取 app/tenant token。
 
 Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu readiness 只在对应 GitHub Actions run 中给出成功/失败，不保存 provider token、模型原文或飞书 token。
 

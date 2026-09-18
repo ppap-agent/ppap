@@ -485,9 +485,93 @@ def verify() -> int:
     return 0 if report["ok"] else 1
 
 
+def seed_auth() -> int:
+    import httpx
+
+    env = child_env()
+    destination = ROOT / ".local"
+    destination.mkdir(parents=True, exist_ok=True)
+    mapping = {"alice": destination / "auth.json", "carol": destination / "other-tenant-auth.json"}
+    files = {}
+    with httpx.Client(base_url=env["PPAP_PUBLIC_API_URL"].rstrip("/"), timeout=10) as client:
+        for subject, path in mapping.items():
+            response = client.post("/isolated-dev/sessions", json={"subject": subject})
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                print(json.dumps({"ok": False, "subject": subject, "http": response.status_code}))
+                return 1
+            path.write_text(json.dumps({
+                "cookies": [{
+                    "name": "ppap_session",
+                    "value": cookie,
+                    "domain": "127.0.0.1",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": False,
+                    "sameSite": "Lax",
+                }],
+                "origins": [],
+            }, indent=2) + "\n")
+            path.chmod(0o600)
+            files[subject] = str(path)
+    print(json.dumps({"ok": True, "files": files, "s02_login": "NOT_PROVEN"}))
+    return 0
+
+
+def verify_auth() -> int:
+    import httpx
+    from ppap_core.fixtures import RESOURCE_A
+
+    env = child_env()
+    report = {"ok": False, "s02_login": "NOT_PROVEN"}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        login = httpx.get(api + "/login/feishu", follow_redirects=False, timeout=10)
+        report["oauth_start"] = login.status_code == 302 and "accounts.feishu.cn" in login.headers.get("location", "")
+        alice = mint("alice")
+        bob = mint("bob")
+        carol = mint("carol")
+        allowed = httpx.get(api + "/resources/" + RESOURCE_A, cookies={"ppap_session": alice}, timeout=10)
+        member = httpx.get(api + "/resources/" + RESOURCE_A, cookies={"ppap_session": bob}, timeout=10)
+        denied = httpx.get(api + "/resources/" + RESOURCE_A, cookies={"ppap_session": carol}, timeout=10)
+        report["alice_read"] = allowed.status_code == 200 and allowed.json().get("review_allowed") is True
+        report["bob_read_not_review"] = member.status_code == 200 and member.json().get("review_allowed") is False
+        report["carol_denied"] = denied.status_code == 403 and denied.json() == {"error": "access_denied"}
+        logout = httpx.post(api + "/logout", cookies={"ppap_session": alice}, timeout=10)
+        me = httpx.get(api + "/me", cookies={"ppap_session": alice}, timeout=10)
+        report["logout"] = logout.status_code == 200 and me.status_code == 401
+        with urllib.request.urlopen(env["PPAP_WEB_URL"] + "?resource=" + RESOURCE_A, timeout=5) as response:
+            html = response.read().decode()
+        report["web_hooks"] = all(
+            marker in html
+            for marker in (
+                'data-testid="access-denied"',
+                'data-testid="login-feishu"',
+                'data-testid="current-user"',
+                'data-testid="logout"',
+            )
+        )
+        report["ok"] = all(
+            report[key] is True
+            for key in ("oauth_start", "alice_read", "bob_read_not_review", "carol_denied", "logout", "web_hooks")
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -516,6 +600,12 @@ def main() -> int:
         migrate(env)
         print(json.dumps({"status": "migrated"}))
         return 0
+    if args.command == "seed-auth":
+        reexec_in_venv()
+        return seed_auth()
+    if args.command == "verify-auth":
+        reexec_in_venv()
+        return verify_auth()
     reexec_in_venv()
     return verify()
 

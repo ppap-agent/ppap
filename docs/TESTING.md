@@ -12,6 +12,7 @@
 | G05-review | `python tools/live.py review` | 真实保存一次复核，重新访问可读，机器结果和原件不变 | 并发冲突、显式重审分轮和权限；#10 必须补齐 |
 | P00 | `python tools/live.py probe --url URL --expected-build SHA` | 真实只读端点返回预期构建身份 | 不是产品 Story，不执行审核 |
 | P03 | `python tools/stack.py verify` | 本机 isolated-dev 进程、`/health`、`/ready`（PG+对象存储）、版本身份、公开配置无密钥、Worker heartbeat | 不是用户 Story；不证明登录、审核、证据或飞书 |
+| P04 | `python tools/stack.py verify-auth` | 预存 session 的跨租户对象拒绝、同租户只读非复核、logout、飞书 OAuth 启动 URL；Web 含 access-denied/login hooks | 不是 S02 真实 OAuth 登录；app_ticket 接收与 Drive 授权仍缺公网回调 |
 | P01 | 每次 push 由 `Push preflight` 调用 `LLM readiness`；亦可手动运行 | GitHub Secrets `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 映射到 canonical LLM 配置后能完成一次 Responses 请求并返回 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
 | P02 | 每次 push 由 `Push preflight` 调用 `Feishu readiness`；亦可手动运行 | 当前商店应用的 App ID/Secret 能让飞书接受 `app_ticket/resend` 请求 | 会触发一次 app_ticket 推送；不证明 ticket 已被新系统接收、tenant token、用户 OAuth、Drive/Docs、评论写回或 Partner AI |
 
@@ -23,7 +24,7 @@ P01/P02 是彼此独立的 reusable 外部依赖探针。每次 push 的 `Push p
 
 `tools/live.py` 使用小型 `data-testid` 映射访问用户可见控件。这是候选测试适配，不是要求产品保持某个组件结构。目标 UI 落地时替换此处的控件映射，不改变 Story 的用户结果。缺选择器可能是适配错误，不能自动归咎产品。
 
-现有 hooks：build-revision、source-upload、prepare-audit、rule-selector、submit-audit、round-id、execution-state、rule-version、finding、finding-id、finding-status、evidence-state、view-evidence、evidence-panel、evidence-locator、evidence-source-sha256、next-action、download-original、document-version-id、access-denied、review-reason、save-review、review-entry。
+现有 hooks：build-revision、source-upload、prepare-audit、rule-selector、submit-audit、round-id、execution-state、rule-version、finding、finding-id、finding-status、evidence-state、view-evidence、evidence-panel、evidence-locator、evidence-source-sha256、next-action、download-original、document-version-id、access-denied、login-feishu、logout、current-user、review-reason、save-review、review-entry。
 
 显示值的候选映射是 completed 与 available/missing；它们不是新产品状态机的强制命名。可将真实 UI 状态映射成等价语义。列表顺序不决定结果；同一 case 中检查项集合由事先审阅 oracle 决定，不能任意减少集合。
 

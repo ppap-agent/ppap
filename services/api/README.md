@@ -4,13 +4,22 @@ The only public HTTP API for PPAP.
 
 Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy document or model work in request threads.
 
-## HTTP surface (#2)
+## HTTP surface (#2 / #4)
 
 - `GET /health` — process alive
 - `GET /ready` — PostgreSQL and object storage actually reachable
 - `GET /version` — `git_sha`
-- `GET /public-config` — web-safe origin, profile, git sha; never secrets
+- `GET /public-config` — web-safe origin, profile, git sha, login mode; never secrets
 - `GET /capabilities` — optional integration flags (`configured` is not GitHub probe success)
+- `GET /login/feishu` — redirect to Feishu authorize with one-time state
+- `GET /login/feishu/callback` — exchange code, bind provider/app/tenant/subject, set session cookie
+- `POST /integrations/feishu/events` — URL challenge and `app_ticket` (plaintext events)
+- `GET /me` — current session; 401 if missing/expired/revoked
+- `POST /logout` — revoke session
+- `GET /resources/{id}` — object read; 403 `access_denied` without leaking body
+- `POST /isolated-dev/sessions` — fixture sessions only when `PPAP_PROFILE=isolated-dev`; hidden in production
+
+Login membership is not review authorization. Identities are not merged by email. Isolated-dev fixture sessions are not S02.
 
 ## Owns
 
