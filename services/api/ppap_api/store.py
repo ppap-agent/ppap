@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ppap_core.db import connect
+from ppap_core.display import round_display
 from ppap_core.drafts import DRAFT_OPEN, IDENT_PENDING, ROLES
 from ppap_core.files import (
     FAILED,
@@ -1128,6 +1129,45 @@ class AuthStore:
             ).fetchall()
         if round_row is None:
             raise KeyError("missing")
+        inputs = [
+            {
+                "file_id": str(item["file_id"]),
+                "file_version_id": str(item["file_version_id"]),
+                "role": item["role"],
+                "sha256": item["sha256"],
+                "original_filename": item["original_filename"],
+                "product_rule_version_id": str(item["product_rule_version_id"]) if item["product_rule_version_id"] else None,
+                "engine_rule_id": item["engine_rule_id"],
+                "bound_content_sha256": item["bound_content_sha256"],
+                "bound_check_count": item["bound_check_count"],
+            }
+            for item in inputs
+        ]
+        jobs = [
+            {
+                "id": str(job["id"]),
+                "kind": job["kind"],
+                "status": job["status"],
+                "attempt": job["attempt"],
+                "result": job["result"] or {},
+            }
+            for job in jobs
+        ]
+        results = [
+            {
+                "id": str(row["id"]),
+                "job_id": str(row["job_id"]),
+                "attempt": row["attempt"],
+                "file_version_id": str(row["file_version_id"]),
+                "sha256": row["sha256"],
+                "product_rule_version_id": row["product_rule_version_id"],
+                "engine_rule_id": row["engine_rule_id"],
+                "findings": row["findings"] or [],
+                "created_at": row["created_at"].isoformat(),
+            }
+            for row in results
+        ]
+        display = round_display(round_row["status"], inputs, results)
         return {
             "id": str(round_row["id"]),
             "tenant_id": str(round_row["tenant_id"]),
@@ -1135,47 +1175,15 @@ class AuthStore:
             "idempotency_key": round_row["idempotency_key"],
             "request_hash": round_row["request_hash"],
             "status": round_row["status"],
+            "execution_state": display["execution_state"],
             "current_result_id": str(round_row["current_result_id"]) if round_row["current_result_id"] else None,
             "created_at": round_row["created_at"].isoformat(),
             "updated_at": round_row["updated_at"].isoformat(),
-            "inputs": [
-                {
-                    "file_id": str(item["file_id"]),
-                    "file_version_id": str(item["file_version_id"]),
-                    "role": item["role"],
-                    "sha256": item["sha256"],
-                    "original_filename": item["original_filename"],
-                    "product_rule_version_id": str(item["product_rule_version_id"]) if item["product_rule_version_id"] else None,
-                    "engine_rule_id": item["engine_rule_id"],
-                    "bound_content_sha256": item["bound_content_sha256"],
-                    "bound_check_count": item["bound_check_count"],
-                }
-                for item in inputs
-            ],
-            "jobs": [
-                {
-                    "id": str(job["id"]),
-                    "kind": job["kind"],
-                    "status": job["status"],
-                    "attempt": job["attempt"],
-                    "result": job["result"] or {},
-                }
-                for job in jobs
-            ],
-            "results": [
-                {
-                    "id": str(row["id"]),
-                    "job_id": str(row["job_id"]),
-                    "attempt": row["attempt"],
-                    "file_version_id": str(row["file_version_id"]),
-                    "sha256": row["sha256"],
-                    "product_rule_version_id": row["product_rule_version_id"],
-                    "engine_rule_id": row["engine_rule_id"],
-                    "findings": row["findings"] or [],
-                    "created_at": row["created_at"].isoformat(),
-                }
-                for row in results
-            ],
+            "inputs": inputs,
+            "jobs": jobs,
+            "results": results,
+            "visible_findings": display["visible_findings"],
+            "coverage": display["coverage"],
         }
 
     def retry_round(self, principal: Principal, round_id: str) -> dict:

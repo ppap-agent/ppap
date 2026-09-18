@@ -96,6 +96,9 @@ class RoundHttpTests(unittest.TestCase):
         first = self.client.post(f"/drafts/{draft_id}/accept", json={"idempotency_key": "k1"})
         self.assertEqual(first.status_code, 201)
         self.assertEqual(first.json()["status"], "accepted")
+        self.assertEqual(first.json()["execution_state"], "accepted")
+        self.assertEqual(first.json()["visible_findings"], [])
+        self.assertEqual(first.json()["coverage"]["reference_count"], 1)
         self.assertEqual(len(first.json()["jobs"]), 1)
         self.assertEqual(first.json()["jobs"][0]["kind"], "audit.execute")
         self.assertEqual([item["role"] for item in first.json()["inputs"]], ["target", "reference"])
@@ -150,13 +153,21 @@ class RoundHttpTests(unittest.TestCase):
         self.assertEqual(retry.status_code, 200)
         self.assertEqual(len(self.store.jobs), before)
         self.store.round_results[accepted.json()["id"]].append(
-            {"id": "kept", "job_id": accepted.json()["jobs"][0]["id"], "attempt": 1, "findings": [{"status": "NG"}]}
+            {
+                "id": "kept",
+                "job_id": accepted.json()["jobs"][0]["id"],
+                "attempt": 1,
+                "file_version_id": accepted.json()["inputs"][0]["file_version_id"],
+                "findings": [{"item": "kept-rule", "status": "NG"}],
+            }
         )
         self.store.jobs[accepted.json()["jobs"][0]["id"]]["status"] = "failed"
         retried = self.client.post(f"/rounds/{accepted.json()['id']}/retry")
         self.assertEqual(retried.status_code, 200)
         self.assertEqual(self.store.jobs[accepted.json()["jobs"][0]["id"]]["status"], "queued")
         self.assertEqual(retried.json()["results"][0]["id"], "kept")
+        self.assertEqual(retried.json()["visible_findings"][0]["id"], "kept-rule")
+        self.assertEqual(retried.json()["visible_findings"][0]["status"], "NG")
         self.assertEqual(retried.json()["inputs"][0]["original_filename"], "PSW.xlsx")
 
     def test_cross_tenant_round_denied_and_stale_complete_rejected(self):

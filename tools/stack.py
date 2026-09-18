@@ -1186,9 +1186,155 @@ def verify_rounds() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_web() -> int:
+    import hashlib
+    import httpx
+    from openpyxl import Workbook
+    from ppap_core.fixtures import CATALOG_PROJECT
+
+    env = child_env()
+    report = {"ok": False, "s01_audit": "NOT_PROVEN"}
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        report["error"] = "playwright_missing"
+        print(json.dumps(report, ensure_ascii=False))
+        return 1
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+        web = env["PPAP_WEB_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        def xlsx(name: str) -> bytes:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / name
+                Workbook().save(path)
+                return path.read_bytes()
+
+        def upload(cookie: str, filename: str, body: bytes) -> tuple[str, str, str]:
+            created = httpx.post(
+                api + "/files",
+                json={"original_filename": filename, "content_type": "application/octet-stream", "byte_size": len(body)},
+                headers=headers(cookie),
+                timeout=10,
+            )
+            file_id, version_id = created.json()["file_id"], created.json()["id"]
+            httpx.put(api + f"/files/{file_id}/versions/{version_id}/blob", content=body, headers=headers(cookie), timeout=10)
+            ready = httpx.post(api + f"/files/{file_id}/versions/{version_id}/finalize", headers=headers(cookie), timeout=10)
+            if created.status_code != 201 or ready.status_code != 200:
+                raise RuntimeError("upload_failed")
+            return file_id, version_id, ready.json()["sha256"]
+
+        alice, carol = mint("alice"), mint("carol")
+        catalog = httpx.get(api + f"/rule-versions?project_id={CATALOG_PROJECT}", headers=headers(alice), timeout=10)
+        psw = next(item for item in catalog.json()["items"] if item["engine_rule_id"] == "零件提交保证书")
+        body = xlsx("PSW.xlsx")
+        digest = hashlib.sha256(body).hexdigest()
+        target = upload(alice, "PSW.xlsx", body)
+        ref = upload(alice, "ref.xlsx", xlsx("ref.xlsx"))
+        created = httpx.post(api + "/drafts", json={"project_id": CATALOG_PROJECT}, headers=headers(alice), timeout=10)
+        httpx.put(
+            api + f"/drafts/{created.json()['id']}",
+            json={
+                "items": [
+                    {
+                        "file_id": target[0],
+                        "file_version_id": target[1],
+                        "role": "target",
+                        "product_rule_version_id": psw["id"],
+                    },
+                    {"file_id": ref[0], "file_version_id": ref[1], "role": "reference"},
+                ]
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        accepted = httpx.post(
+            api + f"/drafts/{created.json()['id']}/accept",
+            json={"idempotency_key": "web-audit"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        round_id = accepted.json()["id"]
+        deadline = time.time() + 90
+        latest = {}
+        while time.time() < deadline:
+            fetched = httpx.get(api + f"/rounds/{round_id}", headers=headers(alice), timeout=10)
+            if fetched.status_code == 200 and fetched.json().get("status") in {"succeeded", "failed"}:
+                latest = fetched.json()
+                break
+            time.sleep(1)
+        round_url = f"{web}/?round={round_id}"
+        with urllib.request.urlopen(web, timeout=5) as response:
+            html = response.read().decode()
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            def open_as(cookie: str, url: str):
+                context = browser.new_context()
+                context.add_cookies([{"name": "ppap_session", "value": cookie, "domain": "127.0.0.1", "path": "/"}])
+                page = context.new_page()
+                page.goto(url, wait_until="networkidle")
+                return context, page
+            first_ctx, page = open_as(alice, round_url)
+            page.wait_for_function("() => document.querySelector('[data-testid=execution-state]')?.textContent === 'completed'", timeout=30000)
+            round_shown = page.get_by_test_id("round-id").inner_text().strip()
+            findings = page.get_by_test_id("finding")
+            finding_count = findings.count()
+            statuses = []
+            for i in range(finding_count):
+                row = findings.nth(i)
+                statuses.append(row.get_by_test_id("finding-status").inner_text().strip())
+                if not row.get_by_test_id("next-action").inner_text().strip():
+                    raise RuntimeError("next_action_absent")
+            with page.expect_download() as event:
+                page.get_by_test_id("download-original").click()
+            download = event.value
+            downloaded = Path(download.path()).read_bytes()
+            coverage = page.get_by_test_id("coverage").inner_text()
+            first_ctx.close()
+            return_ctx, returned = open_as(alice, round_url)
+            returned.wait_for_function("() => document.querySelector('[data-testid=execution-state]')?.textContent === 'completed'", timeout=30000)
+            returned_id = returned.get_by_test_id("round-id").inner_text().strip()
+            return_ctx.close()
+            carol_ctx, foreign = open_as(carol, round_url)
+            foreign.wait_for_function("() => !document.querySelector('[data-testid=access-denied]').classList.contains('hidden')", timeout=15000)
+            carol_findings = foreign.get_by_test_id("finding").count()
+            carol_download = foreign.get_by_test_id("download-original").count()
+            carol_ctx.close()
+            browser.close()
+        report["leave_and_return"] = round_shown == round_id and returned_id == round_id
+        report["findings"] = (
+            finding_count > 0
+            and all(status in {"PASS", "NG", "ERR"} for status in statuses)
+            and latest.get("coverage", {}).get("reference_count") == 1
+            and "参考" in coverage
+            and "已审通过" in coverage
+        )
+        report["original"] = hashlib.sha256(downloaded).hexdigest() == digest == target[2]
+        report["carol_denied"] = carol_findings == 0 and carol_download == 0
+        report["pwa_manifest"] = 'rel="manifest"' in html and "manifest.webmanifest" in html
+        report["ok"] = all(
+            report[key] is True for key in ("leave_and_return", "findings", "original", "carol_denied", "pwa_manifest")
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+        report["error_detail"] = str(exc)[:200]
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds", "verify-web"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -1235,6 +1381,9 @@ def main() -> int:
     if args.command == "verify-rounds":
         reexec_in_venv()
         return verify_rounds()
+    if args.command == "verify-web":
+        reexec_in_venv()
+        return verify_web()
     reexec_in_venv()
     return verify()
 

@@ -59,13 +59,92 @@ async function main() {
   let versionId = "";
   let draftId = draftIdFromLocation();
   let roundId = roundIdFromLocation();
+  const denied = document.getElementById("access-denied");
+  const findingsEl = document.getElementById("findings");
+  const evidencePanel = document.getElementById("evidence-panel");
+  const showDenied = (on) => {
+    denied.classList.toggle("hidden", !on);
+    if (on) {
+      findingsEl.replaceChildren();
+      document.getElementById("original-slot").replaceChildren();
+    }
+  };
+  const showOriginal = (targetFileId, targetVersionId, sha256) => {
+    const slot = document.getElementById("original-slot");
+    slot.replaceChildren();
+    if (!targetFileId || !targetVersionId) {
+      return;
+    }
+    const link = document.createElement("a");
+    link.dataset.testid = "download-original";
+    link.id = "download-original";
+    link.textContent = "下载原件";
+    link.href = `${api}/files/${encodeURIComponent(targetFileId)}/versions/${encodeURIComponent(targetVersionId)}/download`;
+    slot.appendChild(link);
+    document.getElementById("document-version-id").textContent = targetVersionId;
+    document.getElementById("evidence-source-sha256").textContent = sha256 || "";
+  };
+  const renderFindings = (round) => {
+    findingsEl.replaceChildren();
+    evidencePanel.classList.add("hidden");
+    evidencePanel.hidden = true;
+    document.getElementById("evidence-locator").textContent = "";
+    const coverage = round.coverage || {};
+    document.getElementById("coverage").textContent =
+      `待审 ${coverage.target_count || 0} 份，参考 ${coverage.reference_count || 0} 份（参考不是已审通过），检查项 ${coverage.finding_count || 0}`;
+    for (const item of round.visible_findings || []) {
+      const row = document.createElement("li");
+      row.className = "finding";
+      row.dataset.testid = "finding";
+      const idEl = document.createElement("code");
+      idEl.dataset.testid = "finding-id";
+      idEl.textContent = item.id || "";
+      const statusEl = document.createElement("code");
+      statusEl.dataset.testid = "finding-status";
+      statusEl.textContent = item.status || "ERR";
+      const evidenceEl = document.createElement("code");
+      evidenceEl.dataset.testid = "evidence-state";
+      evidenceEl.textContent = item.evidence_state || "missing";
+      const nextEl = document.createElement("span");
+      nextEl.dataset.testid = "next-action";
+      nextEl.textContent = item.next_action || "记录复核意见（不改机器结果）";
+      row.append(idEl, document.createTextNode(" "), statusEl, document.createTextNode(" "), evidenceEl, document.createTextNode(" "), nextEl);
+      if (item.evidence_state === "available" && item.locator) {
+        const view = document.createElement("button");
+        view.type = "button";
+        view.dataset.testid = "view-evidence";
+        view.textContent = "查看证据";
+        view.addEventListener("click", () => {
+          evidencePanel.classList.remove("hidden");
+          evidencePanel.hidden = false;
+          document.getElementById("evidence-locator").textContent = item.locator;
+        });
+        row.appendChild(view);
+      } else {
+        const missing = document.createElement("span");
+        missing.textContent = " 证据缺失（不是模型建议）";
+        row.appendChild(missing);
+      }
+      findingsEl.appendChild(row);
+    }
+  };
   const renderRound = (round) => {
     if (!round || !round.id) {
       return;
     }
+    showDenied(false);
     roundId = round.id;
     document.getElementById("round-id").textContent = round.id;
-    document.getElementById("execution-state").textContent = round.status || "";
+    document.getElementById("execution-state").textContent = round.execution_state || round.status || "";
+    const target = (round.inputs || []).find((item) => item.role === "target") || {};
+    if (target.product_rule_version_id) {
+      document.getElementById("rule-version").textContent = target.product_rule_version_id;
+    }
+    if (target.engine_rule_id) {
+      document.getElementById("engine-rule-id").textContent = target.engine_rule_id;
+    }
+    showOriginal(target.file_id, target.file_version_id, target.sha256);
+    renderFindings(round);
     const url = new URL(window.location.href);
     url.searchParams.set("round", round.id);
     window.history.replaceState({}, "", url);
@@ -75,6 +154,10 @@ async function main() {
       return;
     }
     const latest = await readJson(`${api}/rounds/${encodeURIComponent(roundId)}`);
+    if (latest.status === 401 || latest.status === 403) {
+      showDenied(true);
+      return;
+    }
     if (latest.ok) {
       renderRound(latest.body);
     }
@@ -104,7 +187,7 @@ async function main() {
     }
     const created = await readJson(`${api}/drafts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: "isolated-dev" }) });
     if (!created.ok) {
-      document.getElementById("access-denied").classList.toggle("hidden", created.status !== 401 && created.status !== 403);
+      showDenied(created.status === 401 || created.status === 403);
       return null;
     }
     renderDraft(created.body);
@@ -132,7 +215,7 @@ async function main() {
       ? await readJson(`${api}/files/${encodeURIComponent(fileId)}/versions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) })
       : await readJson(`${api}/files`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) });
     if (!created.ok) {
-      document.getElementById("access-denied").classList.toggle("hidden", created.status !== 401 && created.status !== 403);
+      showDenied(created.status === 401 || created.status === 403);
       return;
     }
     fileId = created.body.file_id;
@@ -150,9 +233,7 @@ async function main() {
     if (!readyVersion.ok) {
       return;
     }
-    document.getElementById("document-version-id").textContent = readyVersion.body.id;
-    document.getElementById("evidence-source-sha256").textContent = readyVersion.body.sha256 || "";
-    document.getElementById("download-original").href = `${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/download`;
+    showOriginal(fileId, versionId, readyVersion.body.sha256 || "");
     const url = new URL(window.location.href);
     url.searchParams.set("file", fileId);
     window.history.replaceState({}, "", url);
@@ -220,7 +301,7 @@ async function main() {
       body: JSON.stringify({ idempotency_key: acceptKeyForDraft(draft.id) }),
     });
     if (!accepted.ok) {
-      document.getElementById("access-denied").classList.toggle("hidden", accepted.status !== 401 && accepted.status !== 403);
+      showDenied(accepted.status === 401 || accepted.status === 403);
       return;
     }
     renderRound(accepted.body);
@@ -234,13 +315,12 @@ async function main() {
     return;
   }
   const resource = await readJson(`${api}/resources/${encodeURIComponent(resourceId)}`);
-  const denied = document.getElementById("access-denied");
   if (resource.status === 401 || resource.status === 403) {
-    denied.classList.remove("hidden");
+    showDenied(true);
     document.getElementById("resource-panel").textContent = "";
     return;
   }
-  denied.classList.add("hidden");
+  showDenied(false);
   if (resource.ok) {
     document.getElementById("resource-panel").textContent = JSON.stringify(resource.body, null, 2);
   }

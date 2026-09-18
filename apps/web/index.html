@@ -4,15 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PPAP</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
     <style>
       body { font-family: sans-serif; margin: 2rem; max-width: 40rem; line-height: 1.5; }
       code { background: #f4f4f4; padding: 0.1rem 0.3rem; }
       .hidden { display: none; }
+      .finding { border: 1px solid #ddd; padding: 0.75rem; margin: 0.5rem 0; }
+      #findings { list-style: none; padding: 0; }
     </style>
   </head>
   <body>
     <h1>PPAP</h1>
-    <p>隔离开发 Web 入口。预存 session 只测授权与原件版本，不能证明 S02 真实登录或 S03 审核历史。</p>
+    <p>隔离开发 Web 入口。预存 session 只测授权与原件版本，不能证明 S02 真实登录或 S01 授权 corpus。</p>
     <p>构建 <code data-testid="build-revision" id="build-revision">loading</code></p>
     <p>核心依赖 <code data-testid="stack-state" id="stack-state">loading</code></p>
     <p>
@@ -27,7 +30,7 @@
     </p>
     <p>文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
     <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
-    <p><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
+    <p id="original-slot"><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
     <p>草稿 <code data-testid="audit-draft-id" id="audit-draft-id"></code></p>
     <p>
       资料角色
@@ -51,6 +54,11 @@
     </p>
     <p>轮次 <code data-testid="round-id" id="round-id"></code></p>
     <p>执行 <code data-testid="execution-state" id="execution-state"></code></p>
+    <p data-testid="coverage" id="coverage"></p>
+    <ul data-testid="findings" id="findings"></ul>
+    <div data-testid="evidence-panel" id="evidence-panel" class="hidden" hidden>
+      <p>证据位置 <code data-testid="evidence-locator" id="evidence-locator"></code></p>
+    </div>
     <pre data-testid="draft-panel" id="draft-panel"></pre>
     <pre data-testid="resource-panel" id="resource-panel"></pre>
     <pre data-testid="capabilities" id="capabilities"></pre>

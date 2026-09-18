@@ -2,7 +2,7 @@
 
 One PPAP product client for normal browser/PWA and Feishu H5.
 
-Isolated-dev currently serves `apps/web` on `http://127.0.0.1:4173` via `python tools/stack.py up`. The page reads `/public-config`, `/ready`, `/me`, optional `?resource=` / `?file=` / `?draft=` / `?round=`, can stage+finalize a local file, attach ready versions to an editable draft, and submit an idempotent accept that writes `round-id` / `execution-state`. Reloading `?round=` polls GET and does not create another round. Fixture sessions from `stack.py seed-auth` only prove object authorization, not S02. Upload/download hooks prove version identity on synthetic bytes, not S03. Draft/submit hooks are not S01 and not S04 Live.
+Isolated-dev currently serves `apps/web` on `http://127.0.0.1:4173` via `python tools/stack.py up`. The page reads `/public-config`, `/ready`, `/me`, optional `?resource=` / `?file=` / `?draft=` / `?round=`, can stage+finalize a local file, attach ready versions to an editable draft, submit an idempotent accept, and reopen the same round to see PASS/NG/ERR, coverage, and the frozen original. The web app manifest does not cache originals or credentials and does not promise offline audit. Fixture sessions from `stack.py seed-auth` only prove object authorization, not S02. Synthetic bytes are not S01.
 
 ## Owns
 

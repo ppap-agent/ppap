@@ -32,7 +32,7 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `GET /drafts/{id}` / `PUT /drafts/{id}` — round-trip items with `target`/`reference` roles and optional explicit product rule bind
 - `POST /drafts/{id}/identify` — enqueue Worker identification; API does not parse bytes
 - `POST /drafts/{id}/accept` — freeze inputs and enqueue `audit.execute` in one PostgreSQL transaction; tenant+idempotency_key replay returns the same round, different request hash is 409
-- `GET /rounds/{id}` — same round identity and frozen inputs; does not enqueue work
+- `GET /rounds/{id}` — same round identity, frozen inputs, `visible_findings` and `execution_state` for the Web; does not enqueue work
 - `POST /rounds/{id}/retry` — requeue failed engine jobs for the same round; does not create a new round or drop prior results
 - `POST /isolated-dev/execute-audit` — isolated-dev only; enqueue Worker execution of a ready version
 - `GET /isolated-dev/jobs/{id}` — isolated-dev job status/result; cross-tenant 403

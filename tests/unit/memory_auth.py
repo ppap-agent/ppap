@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from ppap_core.display import round_display
 from ppap_core.drafts import DRAFT_OPEN, IDENT_PENDING, ROLES
 from ppap_core.files import (
     FAILED,
@@ -626,7 +627,18 @@ class MemoryAuthStore:
             for job in self.jobs.values()
             if job.get("audit_round_id") == round_id
         ]
-        return {**record, "inputs": list(self.round_inputs.get(round_id, [])), "jobs": jobs, "results": list(self.round_results.get(round_id, []))}
+        inputs = list(self.round_inputs.get(round_id, []))
+        results = list(self.round_results.get(round_id, []))
+        display = round_display(record["status"], inputs, results)
+        return {
+            **record,
+            "execution_state": display["execution_state"],
+            "inputs": inputs,
+            "jobs": jobs,
+            "results": results,
+            "visible_findings": display["visible_findings"],
+            "coverage": display["coverage"],
+        }
 
     def retry_round(self, principal: Principal, round_id: str) -> dict:
         current = self.get_round(principal, round_id)
