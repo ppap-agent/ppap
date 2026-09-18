@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -1023,16 +1024,19 @@ def verify_rounds() -> int:
         target = upload(alice, "PSW.xlsx", xlsx("PSW.xlsx"))
         ref = upload(alice, "ref.xlsx", xlsx("ref.xlsx"))
         draft_id = bound_draft(alice, target, ref, psw["id"])
+        key1, key2, fence_key = "k1-" + uuid.uuid4().hex, "k2-" + uuid.uuid4().hex, "fence-" + uuid.uuid4().hex
         first = httpx.post(
             api + f"/drafts/{draft_id}/accept",
-            json={"idempotency_key": "k1"},
+            json={"idempotency_key": key1},
             headers=headers(alice),
             timeout=10,
         )
+        if first.status_code != 201 or "id" not in first.json():
+            raise RuntimeError("accept_failed:" + str(first.status_code))
         finished = wait_round(alice, first.json()["id"])
         replay = httpx.post(
             api + f"/drafts/{draft_id}/accept",
-            json={"idempotency_key": "k1"},
+            json={"idempotency_key": key1},
             headers=headers(alice),
             timeout=10,
         )
@@ -1056,13 +1060,13 @@ def verify_rounds() -> int:
         )
         conflict = httpx.post(
             api + f"/drafts/{draft_id}/accept",
-            json={"idempotency_key": "k1"},
+            json={"idempotency_key": key1},
             headers=headers(alice),
             timeout=10,
         )
         resubmit = httpx.post(
             api + f"/drafts/{draft_id}/accept",
-            json={"idempotency_key": "k2"},
+            json={"idempotency_key": key2},
             headers=headers(alice),
             timeout=10,
         )
@@ -1074,7 +1078,7 @@ def verify_rounds() -> int:
         fence_draft = bound_draft(alice, target, ref, psw["id"])
         fenced = httpx.post(
             api + f"/drafts/{fence_draft}/accept",
-            json={"idempotency_key": "fence"},
+            json={"idempotency_key": fence_key},
             headers=headers(alice),
             timeout=10,
         )
@@ -1260,7 +1264,7 @@ def verify_web() -> int:
         )
         accepted = httpx.post(
             api + f"/drafts/{created.json()['id']}/accept",
-            json={"idempotency_key": "web-audit"},
+            json={"idempotency_key": "web-" + uuid.uuid4().hex},
             headers=headers(alice),
             timeout=10,
         )
