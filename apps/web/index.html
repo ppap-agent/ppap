@@ -12,7 +12,7 @@
   </head>
   <body>
     <h1>PPAP</h1>
-    <p>隔离开发 Web 入口。飞书 OAuth 与对象授权属于 Issue #4；本页用预存 session 只测授权，不能证明 S02 真实登录。</p>
+    <p>隔离开发 Web 入口。预存 session 只测授权与原件版本，不能证明 S02 真实登录或 S03 审核历史。</p>
     <p>构建 <code data-testid="build-revision" id="build-revision">loading</code></p>
     <p>核心依赖 <code data-testid="stack-state" id="stack-state">loading</code></p>
     <p>
@@ -21,6 +21,13 @@
     </p>
     <p>当前身份 <code data-testid="current-user" id="current-user">anonymous</code></p>
     <p data-testid="access-denied" id="access-denied" class="hidden">access-denied</p>
+    <p>
+      <input data-testid="source-upload" id="source-upload" type="file" />
+      <button type="button" data-testid="prepare-audit" id="prepare-audit">固化版本</button>
+    </p>
+    <p>文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
+    <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
+    <p><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
     <pre data-testid="resource-panel" id="resource-panel"></pre>
     <pre data-testid="capabilities" id="capabilities"></pre>
     <script src="./app.js"></script>

@@ -8,6 +8,18 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 
 from ppap_core.db import connect
+from ppap_core.files import (
+    FAILED,
+    MAX_UPLOAD_BYTES,
+    READY,
+    STAGING,
+    FileVersion,
+    ObjectExists,
+    ObjectMissing,
+    original_filename,
+    sha256_bytes,
+    version_object_key,
+)
 from ppap_core.fixtures import (
     APP_ID,
     RESOURCE_A,
@@ -21,6 +33,7 @@ from ppap_core.fixtures import (
 )
 from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, identity_key, new_token, token_hash
 from ppap_core.settings import Settings
+from ppap_core.storage import S3Objects
 
 
 def _now() -> datetime:
@@ -35,8 +48,9 @@ def _as_uuid(value: str) -> str | None:
 
 
 class AuthStore:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, objects=None) -> None:
         self.settings = settings
+        self.objects = objects or S3Objects(settings)
 
     def _conn(self) -> psycopg.Connection:
         return connect(self.settings, "api")
@@ -284,3 +298,180 @@ class AuthStore:
             "member",
             name,
         )
+
+    def _version_from_row(self, row) -> FileVersion:
+        return FileVersion(
+            str(row[0]),
+            str(row[1]),
+            str(row[2]),
+            row[3],
+            row[4],
+            int(row[5]),
+            row[7],
+            row[8],
+            row[6],
+        )
+
+    def create_staging(
+        self,
+        principal: Principal,
+        filename: str,
+        content_type: str,
+        declared_size: int,
+        file_id: str | None = None,
+    ) -> FileVersion:
+        name = original_filename(filename)
+        declared = int(declared_size)
+        if declared < 0 or declared > MAX_UPLOAD_BYTES:
+            raise ValueError("invalid_size")
+        ctype = (content_type or "application/octet-stream").split(";")[0].strip() or "application/octet-stream"
+        if file_id:
+            parsed = _as_uuid(file_id)
+            if not parsed:
+                raise KeyError("missing")
+            resource = self.resource(parsed)
+            if resource is None or resource.kind != "file":
+                raise KeyError("missing")
+            fid = parsed
+            version_id = str(uuid.uuid4())
+            key = version_object_key(principal.tenant_id, fid, version_id)
+            with self._conn() as conn:
+                with conn.transaction():
+                    owner = conn.execute(
+                        "SELECT tenant_id FROM product.files WHERE id = %s",
+                        (fid,),
+                    ).fetchone()
+                    if not owner or str(owner[0]) != principal.tenant_id:
+                        raise KeyError("missing")
+                    conn.execute(
+                        """
+                        INSERT INTO product.file_versions
+                            (id, file_id, tenant_id, original_filename, content_type, byte_size, object_key, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING),
+                    )
+            return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
+        fid = str(uuid.uuid4())
+        version_id = str(uuid.uuid4())
+        key = version_object_key(principal.tenant_id, fid, version_id)
+        with self._conn() as conn:
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'file')",
+                    (fid, principal.tenant_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO product.files (id, tenant_id, created_by, original_filename)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (fid, principal.tenant_id, principal.user_id, name),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO product.file_versions
+                        (id, file_id, tenant_id, original_filename, content_type, byte_size, object_key, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO product.resource_grants (resource_id, user_id, capability)
+                    VALUES (%s, %s, 'read')
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (fid, principal.user_id),
+                )
+        return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
+
+    def get_version(self, file_id: str, version_id: str) -> FileVersion | None:
+        fid, vid = _as_uuid(file_id), _as_uuid(version_id)
+        if not fid or not vid:
+            return None
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status
+                FROM product.file_versions
+                WHERE file_id = %s AND id = %s
+                """,
+                (fid, vid),
+            ).fetchone()
+        return self._version_from_row(row) if row else None
+
+    def put_blob(self, version: FileVersion, body: bytes) -> FileVersion:
+        if version.status != STAGING:
+            raise ObjectExists()
+        if len(body) > MAX_UPLOAD_BYTES:
+            raise ValueError("invalid_size")
+        self.objects.put_exclusive(version.object_key, body, version.content_type)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE product.file_versions
+                SET byte_size = %s
+                WHERE id = %s AND file_id = %s AND status = %s
+                """,
+                (len(body), version.id, version.file_id, STAGING),
+            )
+        return FileVersion(
+            version.id,
+            version.file_id,
+            version.tenant_id,
+            version.original_filename,
+            version.content_type,
+            len(body),
+            version.object_key,
+            STAGING,
+            version.sha256,
+        )
+
+    def finalize_version(self, version: FileVersion, expected_sha256: str | None = None) -> FileVersion:
+        if version.status == READY:
+            if expected_sha256 and version.sha256 and expected_sha256 != version.sha256:
+                raise ValueError("sha256_conflict")
+            return version
+        if version.status != STAGING:
+            raise ValueError("not_staging")
+        try:
+            body = self.objects.get(version.object_key)
+        except ObjectMissing as exc:
+            raise ValueError("missing_object") from exc
+        digest = sha256_bytes(body)
+        if expected_sha256 and expected_sha256 != digest:
+            with self._conn() as conn:
+                conn.execute(
+                    """
+                    UPDATE product.file_versions
+                    SET status = %s, sha256 = %s, byte_size = %s
+                    WHERE id = %s AND status = %s
+                    """,
+                    (FAILED, digest, len(body), version.id, STAGING),
+                )
+            raise ValueError("sha256_mismatch")
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                UPDATE product.file_versions
+                SET status = %s, sha256 = %s, byte_size = %s, finalized_at = now()
+                WHERE id = %s AND status = %s
+                RETURNING id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status
+                """,
+                (READY, digest, len(body), version.id, STAGING),
+            ).fetchone()
+        if row:
+            return self._version_from_row(row)
+        current = self.get_version(version.file_id, version.id)
+        if current and current.status == READY and current.sha256 == digest:
+            return current
+        raise ValueError("finalize_conflict")
+
+    def version_bytes(self, version: FileVersion) -> bytes:
+        if version.status != READY or not version.sha256:
+            raise ValueError("not_ready")
+        body = self.objects.get(version.object_key)
+        if sha256_bytes(body) != version.sha256:
+            raise ValueError("object_mutated")
+        return body
