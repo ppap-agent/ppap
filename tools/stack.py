@@ -220,8 +220,8 @@ def install() -> None:
 
 def reexec_in_venv() -> None:
     install()
-    target = venv_python().resolve()
-    if Path(sys.executable).resolve() != target:
+    target = venv_python()
+    if Path(sys.prefix).resolve() != VENV.resolve():
         os.execv(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
