@@ -4,7 +4,7 @@
 
 > 打开一次审核，就知道审了什么、依据在哪里、结果是什么、下一步做什么。
 
-**当前状态：目标产品尚未实现。** 本仓已建立接管文档、真实 Issue 路线图和首批可执行验收工具。工具自测、旧引擎可达或 Story 文本都不等于新产品验收通过。
+**当前状态：目标产品尚未实现。** 本仓已建立接管文档、真实 Issue 路线图和首批可执行验收工具。工具自测、依赖探针或 Story 文本都不等于新产品验收通过。
 
 ## 从这里开始
 
@@ -23,7 +23,9 @@
 
 终态是 `apps/web → services/api → PostgreSQL / 对象存储 → services/worker`。`packages` 是可复用库，`migrations` 管数据库变更，`deploy` 管运行交付，`tests` 管证明。Worker 不向浏览器暴露第二套产品 API。
 
-Core 开发的目标配置面是 **1 个 Secret + 2 个显式 LLM 配置**：`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`。协议是 OpenAI-compatible，不绑定厂商。隔离开发的 PostgreSQL/对象存储使用仓库 defaults；飞书、Partner AI 和 legacy migration 都按 capability 接入，不是 core startup 前置。
+Core LLM 固定走 Responses-compatible API。当前 isolated-dev profile 默认 `LLM_BASE_URL=https://api.trustedtunnel.app/v1`、`LLM_MODEL=gpt-5.6-luna`，因此 Cursor 日常只需要 `LLM_API_KEY` 一个 core Secret；两项默认均可被环境覆盖。真实依赖可用性用 `python tools/llm_probe.py` 单次验证，不能把 probe 成功当作审核质量成功。
+
+隔离开发的 PostgreSQL/对象存储使用仓库 defaults；飞书、Partner AI 和 legacy migration 都按 capability 接入，不是 core startup 前置。
 
 `ppap-agent/ppap-agent` 是当前引擎与迁移来源，不是终态跨仓依赖。整合不等于立即关闭来源服务：客户安装、其它产品与旧链接须分别核验后退出。
 

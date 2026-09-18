@@ -10,9 +10,12 @@
 | G02-ui | `python tools/live.py isolation` | 同一对象的有权 UI 正例与另一租户 UI 拒绝 | OAuth 和直接 API/对象存储的授权不能由 UI 隐藏证明；#4 必须补齐 |
 | G03 | `python tools/live.py history` | 对已有轮次固化同名新内容后，下载和结果仍为旧版本 | S3 条件写、并发 finalize、过期租约；#5 的真实存储/集成测试 |
 | G05-review | `python tools/live.py review` | 真实保存一次复核，重新访问可读，机器结果和原件不变 | 并发冲突、显式重审分轮和权限；#10 必须补齐 |
-| P00 | `python tools/live.py probe --url URL --expected-build SHA` | 真实只读端点返回预期构建身份 | 不是任何产品 Story，不执行审核，不可以参与产品完成聚合 |
+| P00 | `python tools/live.py probe --url URL --expected-build SHA` | 真实只读端点返回预期构建身份 | 不是产品 Story，不执行审核 |
+| P01 | `python tools/llm_probe.py` | 一个真实 Responses-compatible endpoint 接受 configured model 并返回完成的 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
 
-这些是可执行的子证明，不是十个 Stories 均已实现。当前目标应用尚无运行实现，UI driver 尚未与目标应用实测对齐；没有产品环境时命令应失败。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
+P01 只发送固定无业务内容并执行一次顶层请求；失败后 runner 不自动重发制造成功。它禁止 redirect，输出不保存 API key、原始 provider response 或 response id。Base URL / Model 默认来自 isolated-dev profile，可由 `LLM_BASE_URL / LLM_MODEL` 覆盖。
+
+这些是可执行的子证明/前置证明，不是十个 Stories 均已实现。当前目标应用尚无运行实现，UI driver 尚未与目标应用实测对齐；没有产品环境时命令应失败。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
 
 ## UI driver 与 oracle
 
@@ -22,23 +25,16 @@
 
 显示值的候选映射是 completed 与 available/missing；它们不是新产品状态机的强制命名。可将真实 UI 状态映射成等价语义。列表顺序不决定结果；同一 case 中检查项集合由事先审阅 oracle 决定，不能任意减少集合。
 
-复制 [示例](../tests/live/oracle.example.json) 到 gitignored `.local/oracle.json`，替换成 #3 认可样本的真实原件摘要、规则版本、检查项和 locator。`authority` 指向审阅记录与版本。`locator: null` 明确要求 UI 告知定位缺失；字段不存在不是“没有证据”。示例不能直接作为成功 oracle。
+复制 [示例](../tests/live/oracle.example.json) 到 gitignored `.local/oracle.json`，替换成 #3 认可样本的真实原件摘要、规则版本、检查项和 locator。`authority` 指向审阅记录与版本。示例不能直接作为成功 oracle。
 
 ## 结果与失败
 
-每个运行输出 `PROVEN` 或 `NOT_PROVEN`，保存 gate/Story 内容摘要、目标构建、时间、运行 ID 和最小语义证据。绝不输出原件、session、用户名、深链或异常原文；浏览器状态和输出目录保持 gitignored。失败后测试记录可能残留，按隔离租户/运行范围对账，不自动删除历史。
+产品 Live 每个运行输出 `PROVEN` 或 `NOT_PROVEN`，保存 gate/Story 内容摘要、目标构建、时间、运行 ID 和最小语义证据。依赖 probe 同样只对自己的边界给结果。绝不输出原件、session、用户名、深链或异常原文。
 
-产品子证明的 `PROVEN` 只证明表中该子集。最终接受要求：S01–S10 的所有必要子证明、支持矩阵和迁移/恢复条件都在同一发布候选及已核验环境下成立。任何必要项缺失、未执行、跳过或 NOT_PROVEN，完整产品都为 NOT_PROVEN。绝不能把 P00 或工具自测汇总成产品成功。
+产品子证明的 `PROVEN` 只证明表中该子集。最终接受要求：S01–S10 的所有必要子证明、支持矩阵和迁移/恢复条件都在同一发布候选及已核验环境下成立。任何必要项缺失、未执行、跳过或 NOT_PROVEN，完整产品都为 NOT_PROVEN。绝不能把 P00、P01 或工具自测汇总成产品成功。
 
-归因与结果分开：确证本地 DNS 失败可归 external_environment；超时、选择器不匹配、未配置或终态缺失默认 inconclusive，直到证据指出责任。runner 不因失败重发顶层提交；产品内部重试由其自身契约控制。新修复可新开 proof run，旧失败不得覆盖。
+归因与结果分开：确证 DNS 失败可归 external_environment；超时、选择器不匹配、未配置或终态缺失默认 inconclusive，直到证据指出责任。新修复可新开 proof run，旧失败不得覆盖。
 
 ## 静态审阅记录
 
-审阅依据为本轮 NORTHSTAR（Git blob `6a40d79bf56810ecddf9c497aa38ad2cb36d7810`）、当前 #2–#16 的验收语义，以及 [Live Story](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/live-story-review) / [Live Gate](https://github.com/ronhuafeng/skills-release/tree/main/catalog/engineering/live-gate-review) 方法。
-
-- Story 用户语义自审：没有把执行成功当 PASS，没有引入正式批准或伪计费政策；每项有外部终态、范围和 proof budget。
-- gate 假通过反例：空/缺/重复检查项、未知状态、错误原件/locator、只有 completed、跨候选或仅前置成功不能完成所需证明。
-- gate 假拒绝反例：检查项顺序、隐式 HTTPS 端口不影响语义；DOM/字段映射不是永远唯一的证明表示。
-- 尚未接受为“已经验证的产品 gate”：UI 对接、真实 oracle、真实部署和必要子证明仍缺。`contract_status` 对目标用户语义可按该固定版本审阅，但本轮没有任何产品 Live 通过结论。Outcome-driving 改动后须重新审阅并重跑，旧摘要不能证明新候选。
-
-[工具自测](../tests/unit/test_live.py) 只检验 gate 自身的判定和安全失败，不模拟 PPAP 产品成功。Playwright 采用独立 browser context，参考 [官方身份文档](https://playwright.dev/python/docs/auth)；真实依赖正常开发费用已授权。
+审阅依据为本轮 NORTHSTAR、当前 #2–#16 的验收语义，以及 Live Story / Live Gate 方法。工具自测只检验 gate 自身的判定和安全失败，不模拟 PPAP 产品成功。真实依赖正常开发费用已授权。

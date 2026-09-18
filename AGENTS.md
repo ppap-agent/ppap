@@ -15,7 +15,9 @@
 
 ## 配置边界
 
-Core LLM 的 canonical 配置只有 `LLM_API_KEY`（Secret）、`LLM_BASE_URL` 和 `LLM_MODEL`；协议是 OpenAI-compatible，不假定 OpenAI 厂商。隔离开发 PostgreSQL/对象存储使用仓库安全 defaults。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。不要新增第二套 `OPENAI_*` 配置 authority；详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
+Core LLM 固定走 Responses-compatible API。canonical 配置是 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；isolated-dev 的 Base URL/Model 默认是 `https://api.trustedtunnel.app/v1` / `gpt-5.6-luna`，因此日常开发只需注入 API key。Cursor 把 Base URL/Model 也存为 Secret 可接受；这不改变它们是普通配置的语义。
+
+不要添加第二套 `OPENAI_*` authority，也不要增加 `LLM_PROTOCOL`。真实 LLM readiness 用 `python tools/llm_probe.py` 做一次最小 `/responses` 请求；P01 通过不等于审核质量通过。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
 
 ## 开发与交付
 
