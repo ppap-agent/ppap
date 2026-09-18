@@ -2,13 +2,65 @@
 
 先读根 AGENTS、当前 Issue 和它直接引用的权威。目标应用仍待实现；以下已有命令只属于验收工具，不虚构 Product API/Web 的启动命令。运行栈由 [#2](https://github.com/ppap-agent/ppap/issues/2) 交付，业务状态见 [ROADMAP](ROADMAP.md)。
 
+## 配置原则
+
+Core PPAP 的目标开发体验是：**一个 Secret + 两个显式 LLM 配置即可启动核心栈**。
+
+```text
+LLM_API_KEY   # Secret，必需
+LLM_BASE_URL  # Config，必需
+LLM_MODEL     # Config，必需
+```
+
+这里的协议边界是 OpenAI-compatible，不绑定 OpenAI 厂商，因此 Base URL 和 Model 不能由代码偷偷假定。只有 API key 是秘密；Base URL 和 Model 是普通运行配置。
+
+隔离开发环境的 PostgreSQL、S3-compatible object storage、内部开发账号/角色等由仓库提供安全且固定的 dev defaults。普通 Cursor/本地开发不应为了启动 core stack 再配置数据库或对象存储 Secrets。生产部署仍使用最小权限角色和部署 Secret。
+
+飞书、Partner AI、legacy engine、未来独立 OCR provider 都是按 capability 接入的外部依赖。缺少它们的凭据不得阻止 Core PPAP 启动；只有真正进入相应能力时才应明确报告 unavailable / NOT_PROVEN。
+
+当前 Cursor Cloud 若已经存在：
+
+```text
+OPENAI_API_KEY
+OPENAI_BASE_URL
+MODEL_NAME
+```
+
+请在环境侧一次性改名或映射为：
+
+```text
+LLM_API_KEY
+LLM_BASE_URL
+LLM_MODEL
+```
+
+不要在应用代码中长期维护两套名称，否则配置会重新出现双重 authority。
+
+飞书接入阶段使用：
+
+```text
+FEISHU_APP_ID       # 普通配置
+FEISHU_APP_SECRET   # Secret
+```
+
+用户 access/refresh token 是运行时身份数据，不是 Cloud Agent 的静态 Secret。
+
+## #2 实现时必须保持的配置边界
+
+- 建立一个 typed settings owner；API 和 Worker 复用配置语义，不在各模块散落 `os.getenv`。
+- Core readiness 只依赖真正的核心基础设施；可选 integration 的缺失通过 capability 状态暴露，而不是让整个 API 启动失败。
+- Web 只能获得明确允许公开的构建时/运行时配置，绝不能打包 server Secret。
+- `/health` 只证明进程存活；`/ready` 证明 core dependencies 可用；飞书、Partner AI 等单独报告 capability readiness。
+- 新增环境变量前先证明没有安全默认值、可靠推导值或已有 canonical owner。不要为了未来可能使用而预留变量。
+- 若未来出现第二种真正不兼容的 LLM 协议，再引入 provider abstraction；目前不要增加 `LLM_PROVIDER`、`LLM_VENDOR` 等重复选择器。
+
 ## 当前可执行命令
 
 Python 3.11+ 可运行工具自测和版本探针。浏览器检查另需 Playwright 与 Chromium。
 
 ```sh
 python -m unittest discover -s tests/unit -v
-python -m py_compile tools/live.py
+python -m py_compile tools/live.py tools/legacy_engine_gate.py
 python -m pip install -r tests/live/requirements.txt
 python -m playwright install chromium
 cp .env.example .env
@@ -20,11 +72,11 @@ python tools/live.py review
 python tools/live.py isolation
 ```
 
-缺配置会明确输出 NOT_PROVEN 并非零退出，不假装通过。每次运行有独立 `.artifacts/live/*.json`；该目录不进 Git，默认不录屏、不保存 raw traffic。各命令需要什么、能证明什么见 [TESTING](TESTING.md)。工具依赖版本是本轮可运行基线，不是未来产品语言选型。
+缺 Live 配置会明确输出 NOT_PROVEN 并非零退出，不假装通过。每次运行有独立 `.artifacts/live/*.json`；该目录不进 Git，默认不录屏、不保存 raw traffic。各命令需要什么、能证明什么见 [TESTING](TESTING.md)。工具依赖版本是本轮可运行基线，不是未来产品语言选型。
 
-## 环境变量
+## Live 验证变量
 
-`.env.example` 中 `PPAP_*` 是本次工具真实使用的配置。应用将来采用哪些变量由 #2 的实现决定，不把此处的建议名字当已存在应用配置。
+`.env.example` 中 `PPAP_*` 只服务当前 Live/migration 工具，不是 Core PPAP 的启动配置。
 
 | 名称 | 使用方与用途 |
 |---|---|
@@ -39,20 +91,19 @@ python tools/live.py isolation
 | PPAP_LIVE_TIMEOUT_SECONDS | 一次运行等待终态的上限，默认 300 秒；不表示产品 SLA，不触发重新提交 |
 | PPAP_VERSION_URL | 只读版本探针地址；其成功仅证明前置，不证明 PPAP 产品完成 |
 
-## 应用所需外部依赖
+迁移期 `PPAP_LEGACY_*` 只由旧引擎对照工具使用。终态删除这些配置与 HTTP 依赖，而不是让它们变成正常启动要求。
 
-真实数据库、对象存储、模型/OCR、身份和计费依赖由隔离部署提供。不要把本会话与用户机器视为同一文件系统。先检查现有安全配置，仅报告变量是否可用，不输出值。
+## 外部 capability 的加入时机
 
-| 依赖 | 配置内容 | 验证入口 / 缺失处理 |
+| 能力 | 什么时候需要配置 | Core 缺失时 |
 |---|---|---|
-| PostgreSQL | API、Worker、迁移角色各自连接参数 | #2/#8 的连接、权限、事务和故障测试；不以管理员连通证明运行角色正确 |
-| S3-compatible | endpoint、bucket、访问凭据和签名行为 | #5 真实上传/下载/不可变性；不假设所有 provider 相同 |
-| LLM / OCR | provider、model、endpoint、开发 key 和有效配置 | #3/#6 在受控 corpus 真调用；无 key 不自动改用伪模型 |
-| 飞书 | 现有 app、开发秘密、授权回调与用户 token 安全存储 | #4/#11 实际 OAuth/Drive；不要仅由 scope 文本断定用户有资料权限 |
-| Partner AI | 当前产品标识、测试租户、凭据、实际政策 | #12 的真实权益、用量和回执；不能用本地固定点数替代 |
-| 旧引擎过渡 | endpoint、鉴权和真实规则所属 projectId | 只作迁移对照；版本探针不提交任务，任务执行需明确测试输入；终态移除旧 HTTP 依赖 |
+| OpenAI-compatible LLM | 从首个真实审核开始：`LLM_API_KEY` + `LLM_BASE_URL` + `LLM_MODEL` | 审核能力不可用；其它无关管理/诊断路径不应假装成功 |
+| Feishu OAuth / Drive / Docs | #4/#11：`FEISHU_APP_ID` + `FEISHU_APP_SECRET` | Feishu capability disabled；普通 Web/Core 可用 |
+| Partner AI | #12 根据真实 API 契约再增加必要配置 | usage reconciliation capability disabled；不得伪造余额 |
+| 独立 OCR provider | 只有 #3 corpus 证明本地 parser/LibreOffice/multimodal LLM 不足时 | 不提前增加 Secret |
+| legacy engine | 仅迁移对照期间 | 不影响终态 Core；最终删除 |
 
-已有合法开发凭据可写到 gitignored `.env`；仓库只保留占位示例。不要从公开日志或历史泄漏值猜当前凭据，也不要为“修复安全”擅自轮换共享生产 key。
+已有合法开发凭据只写入 Cloud Secret 或 gitignored 本地 `.env`；仓库只保留空值和安全 dev defaults。不要从历史泄漏值猜当前凭据，也不要为“修复安全”擅自轮换共享生产 key。
 
 ## 一项工作的最短交付路径
 

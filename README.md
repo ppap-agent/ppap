@@ -23,6 +23,8 @@
 
 终态是 `apps/web → services/api → PostgreSQL / 对象存储 → services/worker`。`packages` 是可复用库，`migrations` 管数据库变更，`deploy` 管运行交付，`tests` 管证明。Worker 不向浏览器暴露第二套产品 API。
 
+Core 开发的目标配置面是 **1 个 Secret + 2 个显式 LLM 配置**：`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`。协议是 OpenAI-compatible，不绑定厂商。隔离开发的 PostgreSQL/对象存储使用仓库 defaults；飞书、Partner AI 和 legacy migration 都按 capability 接入，不是 core startup 前置。
+
 `ppap-agent/ppap-agent` 是当前引擎与迁移来源，不是终态跨仓依赖。整合不等于立即关闭来源服务：客户安装、其它产品与旧链接须分别核验后退出。
 
 本仓保持私有。采用高质量开源工程标准，不代表已取得公开遗留代码、规则、样本或客户资料的许可。

@@ -13,10 +13,14 @@
 
 产品轮次与执行尝试分离；受理和入队原子化；输入版本与规则绑定可追溯；机器结果与人工复核分别保存；所有数据访问执行租户与对象授权。详细语义只在 Northstar 和 DATA_MODEL 定义。
 
+## 配置边界
+
+Core LLM 的 canonical 配置只有 `LLM_API_KEY`（Secret）、`LLM_BASE_URL` 和 `LLM_MODEL`；协议是 OpenAI-compatible，不假定 OpenAI 厂商。隔离开发 PostgreSQL/对象存储使用仓库安全 defaults。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。不要新增第二套 `OPENAI_*` 配置 authority；详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
+
 ## 开发与交付
 
 先验证当前 Issue/PR，避免重复工作。一次提交一个可审查结果，验证后 commit & push；不得覆盖并发提交。更新直接相关文档，不增加说明旧说明的包装层。
 
-Live 验证使用授权的隔离环境和真实依赖，正常调用费用已获许可。隔离环境中的外部账号仍须属于测试范围。凭据只进 gitignored 本地配置，日志不保留 token 或客户内容。失败如实报告，不能重跑业务操作抹掉失败。
+Live 验证使用授权的隔离环境和真实依赖，正常调用费用已获许可。隔离环境中的外部账号仍须属于测试范围。凭据只进 gitignored 本地配置或 Runtime Secret，日志不保留 token 或客户内容。失败如实报告，不能重跑业务操作抹掉失败。
 
 目标尚无应用运行代码，不要编造启动命令或声称 E2E 已通过。工具、应用与发布各自报告验证范围；后续新增真实命令时同步对应目录说明。
