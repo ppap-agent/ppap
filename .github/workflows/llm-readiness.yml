@@ -34,19 +34,20 @@ jobs:
           LLM_MODEL="$(printf '%s' "$LLM_MODEL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
           response="$(mktemp)"
-          trap 'rm -f "$response"' EXIT
+          events="$(mktemp)"
+          trap 'rm -f "$response" "$events"' EXIT
 
           payload="$(jq -nc --arg model "$LLM_MODEL" '{
             model:$model,
             store:false,
+            stream:true,
             input:[{
               role:"user",
               content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]
-            }],
-            max_output_tokens:16
+            }]
           }')"
 
-          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" "${LLM_BASE_URL%/}/responses" -d "$payload")"
+          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" -H "Accept: text/event-stream" "${LLM_BASE_URL%/}/responses" -d "$payload")"
 
           if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
             echo "LLM Responses API: HTTP $http_status"
@@ -59,8 +60,12 @@ jobs:
             exit 1
           fi
 
-          if ! jq -e '.object == "response" and (.id | type == "string" and length > 0) and (.output | type == "array")' "$response" >/dev/null; then
-            jq -c '{object:(.object // null),status:(.status // null),output_type:(.output | type)}' "$response" 2>/dev/null || true
+          sed -n 's/^data: //p' "$response" |
+            jq -Rr 'fromjson? | .type? // empty' > "$events"
+
+          if ! grep -qx 'response.completed' "$events"; then
+            echo "LLM Responses API: completion event missing"
+            sort -u "$events" | paste -sd ',' - | sed 's/^/events=/'
             exit 1
           fi
 

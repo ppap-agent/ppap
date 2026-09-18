@@ -33,6 +33,8 @@
 
 - 2026-09-18 GitHub LLM readiness 对当前 TrustedTunnel `/responses` 的真实调用返回 `400: Store must be set to false`；因此 isolated-dev 的 Responses 请求必须显式 `store:false`。这是当前 provider 兼容事实，也符合审核内容不依赖 provider-side response persistence 的安全方向。
 
+- 同日下一次 TrustedTunnel readiness 在 `store:false` 后返回 `400: Stream must be set to true`；因此当前 gateway 的真实 Responses transport 是 `store:false + stream:true`。后续 probe 按官方 SSE `response.completed` 事件判定完成，不读取模型输出文本。
+
 ## 需要纠正的权威冲突
 
 [hax 产品页](https://github.com/ppap-agent/hax/blob/0923f5acea380ddd09813621703777153a8c7971/products/ppap/README.md) 和 [V2 计划](https://github.com/ppap-agent/hax/blob/0923f5acea380ddd09813621703777153a8c7971/products/ppap/feishu-native-v2-plan.md) 仍包含“最终 ppap-host”和本地实施记录。最新用户决定已将终态改为本仓；这些资料继续证明旧契约和历史，不拥有新架构。未提交/不可读取的工作不能算目标能力已完成。

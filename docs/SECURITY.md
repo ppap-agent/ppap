@@ -15,7 +15,7 @@ Secret 是泄漏后真正跨越信任边界的值；Cursor Cloud 把普通配置
 - `LLM_API_KEY`：Secret，isolated-dev 唯一必须外部注入的 core secret。
 - `LLM_BASE_URL`：普通配置，isolated-dev 默认 `https://api.trustedtunnel.app/v1`，可覆盖。
 - `LLM_MODEL`：普通配置，isolated-dev 默认 `gpt-5.6-luna`，可覆盖。
-- 协议固定为 Responses-compatible；endpoint 由 `<LLM_BASE_URL>/responses` 派生，不增加可漂移的 `LLM_PROTOCOL`。审核请求显式 `store:false`，不依赖 provider-side response storage。
+- 协议固定为 Responses-compatible；endpoint 由 `<LLM_BASE_URL>/responses` 派生，不增加可漂移的 `LLM_PROTOCOL`。审核请求显式 `store:false`，不依赖 provider-side response storage；当前 TrustedTunnel transport 使用 `stream:true`，流式验收只检查事件类型，不持久化模型文本。
 
 `FEISHU_APP_ID` 是普通配置，`FEISHU_APP_SECRET` 是飞书 capability Secret。用户 access/refresh token、session/cookie 是运行时身份数据，不是开发机静态 Secret。
 

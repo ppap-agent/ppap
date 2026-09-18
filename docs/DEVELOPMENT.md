@@ -17,7 +17,7 @@ LLM_MODEL=gpt-5.6-luna
 LLM_API_KEY
 ```
 
-应用最终应将请求发送到 `<LLM_BASE_URL>/responses`，并显式设置 `store:false`；真实 TrustedTunnel probe 已证明该 gateway 要求关闭 provider-side response storage。当前只有这一种真实协议，不增加 `LLM_PROTOCOL`、`LLM_PROVIDER` 或 `LLM_VENDOR`。只有出现第二种真实且不兼容的协议后才重新抽象。
+应用最终应将请求发送到 `<LLM_BASE_URL>/responses`，并显式设置 `store:false, stream:true`；真实 TrustedTunnel probe 已依次证明该 gateway 要求关闭 provider-side response storage 且只接受 streaming Responses。streaming 完成以官方 Responses SSE 的 `response.completed` 事件为准。当前只有这一种真实协议，不增加 `LLM_PROTOCOL`、`LLM_PROVIDER` 或 `LLM_VENDOR`。只有出现第二种真实且不兼容的协议后才重新抽象。
 
 Base URL 和 Model 是普通配置，不是秘密；但 Cursor Cloud 目前把所有环境项都存进 Secret store 也完全可接受。**存储机制不改变安全分类。** 如果 Cursor 已经注入 `LLM_BASE_URL` / `LLM_MODEL`，它们覆盖仓库 isolated-dev defaults。
 
