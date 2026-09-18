@@ -57,6 +57,6 @@ CREATE INDEX IF NOT EXISTS rule_versions_tenant_project_idx
 CREATE INDEX IF NOT EXISTS audit_drafts_tenant_idx ON product.audit_drafts (tenant_id, updated_at);
 CREATE INDEX IF NOT EXISTS draft_items_draft_idx ON product.draft_items (draft_id, position);
 
-GRANT SELECT, INSERT, UPDATE ON product.rule_versions, product.audit_drafts, product.draft_items TO ppap_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON product.rule_versions, product.audit_drafts, product.draft_items TO ppap_api;
 GRANT SELECT ON product.rule_versions, product.audit_drafts TO ppap_worker;
 GRANT SELECT, UPDATE ON product.draft_items TO ppap_worker;

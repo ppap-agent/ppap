@@ -817,6 +817,8 @@ def verify_drafts() -> int:
             headers=headers(alice),
             timeout=10,
         )
+        if saved.status_code != 200:
+            raise RuntimeError("draft_replace_failed:" + str(saved.status_code))
         fetched = httpx.get(api + f"/drafts/{draft_id}", headers=headers(alice), timeout=10)
         accept = httpx.post(api + f"/drafts/{draft_id}/accept", headers=headers(alice), timeout=10)
         identified = httpx.post(api + f"/drafts/{draft_id}/identify", headers=headers(alice), timeout=10)
