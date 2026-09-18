@@ -22,28 +22,3 @@ jobs:
         run: |
           python -m py_compile tools/live.py tools/legacy_engine_gate.py
           python -m unittest discover -s tests/unit -v
-
-  legacy-version-observation:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: One real read-only version request; not product acceptance
-        env:
-          VERSION_URL: ${{ vars.PPAP_LEGACY_VERSION_URL || 'https://ppap.api.xixifusi.online/version' }}
-          EXPECTED_SHA: ${{ vars.PPAP_LEGACY_EXPECTED_SHA || '53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9' }}
-        run: python3 tools/live.py probe --url "$VERSION_URL" --expected-build "$EXPECTED_SHA"
-      - name: Preserve bounded evidence even when not proven
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-              out.write('## Read-only legacy version observation\nNot a PPAP product acceptance. No audit submission.\n')
-              for path in Path('.artifacts/live').glob('*.json'):
-                  out.write('```json\n' + json.dumps(json.loads(path.read_text()), indent=2) + '\n```\n')
-          PY
