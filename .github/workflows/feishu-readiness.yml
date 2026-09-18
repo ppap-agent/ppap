@@ -31,10 +31,18 @@ jobs:
 
           curl --fail --silent --show-error             --connect-timeout 10             --max-time 60             -o "$response"             -H "Content-Type: application/json"             https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal             -d "$(jq -nc               --arg app_id "$FEISHU_APP_ID"               --arg app_secret "$FEISHU_APP_SECRET"               '{app_id:$app_id,app_secret:$app_secret}')"
 
-          jq -e '
+          if ! jq -e '
             .code == 0
             and (.tenant_access_token | type == "string" and length > 0)
             and (.expire | type == "number" and . > 0)
-          ' "$response" >/dev/null
+          ' "$response" >/dev/null; then
+            jq -c '{
+              code: (.code // null),
+              msg: (.msg // null),
+              expire: (.expire // null),
+              token_present: ((.tenant_access_token // "") | length > 0)
+            }' "$response"
+            exit 1
+          fi
 
           echo "Feishu app credentials: ready"

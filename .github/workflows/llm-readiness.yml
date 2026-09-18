@@ -3,11 +3,11 @@ name: LLM readiness
 on:
   workflow_call:
     secrets:
-      LLM_API_KEY:
+      OPENAI_API_KEY:
         required: true
-      LLM_BASE_URL:
+      OPENAI_BASE_URL:
         required: true
-      LLM_MODEL:
+      MODEL_NAME:
         required: true
   workflow_dispatch:
 
@@ -20,25 +20,32 @@ jobs:
     steps:
       - name: Probe Responses API
         env:
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          LLM_MODEL: ${{ secrets.MODEL_NAME }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${LLM_API_KEY:?missing LLM_API_KEY}"
-          : "${LLM_BASE_URL:?missing LLM_BASE_URL}"
-          : "${LLM_MODEL:?missing LLM_MODEL}"
+          : "${LLM_API_KEY:?missing OPENAI_API_KEY}"
+          : "${LLM_BASE_URL:?missing OPENAI_BASE_URL}"
+          : "${LLM_MODEL:?missing MODEL_NAME}"
 
           response="$(mktemp)"
           trap 'rm -f "$response"' EXIT
 
           curl --fail --silent --show-error             --connect-timeout 10             --max-time 60             -o "$response"             -H "Authorization: Bearer $LLM_API_KEY"             -H "Content-Type: application/json"             "${LLM_BASE_URL%/}/responses"             -d "$(jq -nc --arg model "$LLM_MODEL"               '{model:$model,input:"Reply with exactly PPAP_READY."}')"
 
-          jq -e '
+          if ! jq -e '
             .object == "response"
             and (.id | type == "string" and length > 0)
             and (.output | type == "array")
-          ' "$response" >/dev/null
+          ' "$response" >/dev/null; then
+            jq -c '{
+              object: (.object // null),
+              status: (.status // null),
+              output_type: (.output | type)
+            }' "$response"
+            exit 1
+          fi
 
           echo "LLM Responses API: ready"

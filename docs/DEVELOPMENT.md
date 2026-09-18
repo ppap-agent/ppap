@@ -37,10 +37,10 @@ MODEL_NAME
 
 环境可用性由两个独立的原生 GitHub Actions probe 拥有，不在应用或 Python 工具中维护第二套实现。每次 push 由 [`Push preflight`](../.github/workflows/preflight.yml) 并行调用两者；它们也保留 `workflow_dispatch` 供单独排查：
 
-- [LLM readiness](../.github/workflows/llm-readiness.yml)：直接用 `curl + jq` 对 GitHub Secrets 中的 `LLM_API_KEY / LLM_BASE_URL / LLM_MODEL` 发一次 `/responses` 请求。它只证明当前 GitHub 配置的 endpoint、key、model 与 Responses envelope 可用。
+- [LLM readiness](../.github/workflows/llm-readiness.yml)：直接用 `curl + jq` 对 GitHub Secrets 中现有的 `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 发一次 `/responses` 请求，并在 workflow 边界映射为 canonical `LLM_*` 语义。应用代码仍只认 `LLM_*`。它只证明当前 GitHub 配置的 endpoint、key、model 与 Responses envelope 可用。
 - [Feishu readiness](../.github/workflows/feishu-readiness.yml)：直接用 `curl + jq` 以 `FEISHU_APP_ID / FEISHU_APP_SECRET` 换取一次 `tenant_access_token`。它只证明应用凭据能被飞书接受，不证明用户 OAuth、Drive/Docs 权限或 Partner AI。
 
-两者都是 reusable workflow（`workflow_call`）并保留 `workflow_dispatch`。每次 push 的 `Push preflight` 必须等 LLM 与 Feishu 两者都成功后，才调用 deterministic verification。probe 本身不 checkout 仓库、不安装 SDK、不上传 artifact、不自动 retry。PR 的 deterministic verification 仍可独立运行，因为 PR 不应依赖仓库 Secrets。探针成功不能替代 #3/#6 的审核 corpus，也不能替代 #4/#11 的飞书用户路径。
+两者都是 reusable workflow（`workflow_call`）并保留 `workflow_dispatch`。每次 push 的 `Push preflight` 必须等 LLM 与 Feishu 两者都成功后，才调用 deterministic verification。probe 本身不 checkout 仓库、不安装 SDK、不上传 artifact、不自动 retry；失败只输出脱敏的协议字段，不输出 key/token/raw response。PR 的 deterministic verification 仍可独立运行，因为 PR 不应依赖仓库 Secrets。探针成功不能替代 #3/#6 的审核 corpus，也不能替代 #4/#11 的飞书用户路径。
 
 ## Core 与 optional integrations
 
