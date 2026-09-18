@@ -31,6 +31,8 @@
 
 - 2026-09-18 的 GitHub `Push preflight` 首次用 `tenant_access_token/internal` 检查当前飞书凭据时，飞书返回 `10216: only self-built app is allowed`。这证明当前配置的 PPAP 飞书应用是**应用商店应用**而非企业自建应用；其完整运行鉴权需要 app_ticket → app_access_token → tenant_access_token/tenant_key 链，不能照搬自建应用 token 路径。readiness 只用 `app_ticket/resend` 验证 App ID/Secret，且会触发一次 app_ticket 推送事件。
 
+- 2026-09-18 GitHub LLM readiness 对当前 TrustedTunnel `/responses` 的真实调用返回 `400: Store must be set to false`；因此 isolated-dev 的 Responses 请求必须显式 `store:false`。这是当前 provider 兼容事实，也符合审核内容不依赖 provider-side response persistence 的安全方向。
+
 ## 需要纠正的权威冲突
 
 [hax 产品页](https://github.com/ppap-agent/hax/blob/0923f5acea380ddd09813621703777153a8c7971/products/ppap/README.md) 和 [V2 计划](https://github.com/ppap-agent/hax/blob/0923f5acea380ddd09813621703777153a8c7971/products/ppap/feishu-native-v2-plan.md) 仍包含“最终 ppap-host”和本地实施记录。最新用户决定已将终态改为本仓；这些资料继续证明旧契约和历史，不拥有新架构。未提交/不可读取的工作不能算目标能力已完成。

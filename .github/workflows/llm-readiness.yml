@@ -38,6 +38,7 @@ jobs:
 
           payload="$(jq -nc --arg model "$LLM_MODEL" '{
             model:$model,
+            store:false,
             input:[{
               role:"user",
               content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]
