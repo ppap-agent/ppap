@@ -34,6 +34,9 @@ class MemoryObjects:
             raise ObjectMissing()
         return self.data[key]
 
+    def delete(self, key: str) -> None:
+        self.data.pop(key, None)
+
 
 class MemoryAuthStore:
     def __init__(self, settings: Settings | None = None, objects=None) -> None:
@@ -187,3 +190,20 @@ class MemoryAuthStore:
         if sha256_bytes(body) != current.sha256:
             raise ValueError("object_mutated")
         return body
+
+    def reap_staging(self, max_age_seconds: int) -> int:
+        if max_age_seconds < 0:
+            raise ValueError("invalid_age")
+        count = 0
+        for key, version in list(self.versions.items()):
+            if version.status != STAGING:
+                continue
+            if max_age_seconds > 0:
+                continue
+            self.versions[key] = FileVersion(
+                version.id, version.file_id, version.tenant_id, version.original_filename,
+                version.content_type, version.byte_size, version.object_key, FAILED, version.sha256,
+            )
+            self.objects.delete(version.object_key)
+            count += 1
+        return count
