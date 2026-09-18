@@ -19,6 +19,8 @@ Secret 是泄漏后真正跨越信任边界的值；Cursor Cloud 把普通配置
 
 `FEISHU_APP_ID` 是普通配置，`FEISHU_APP_SECRET` 是飞书 capability Secret。用户 access/refresh token、session/cookie 是运行时身份数据，不是开发机静态 Secret。
 
+`PPAP_GH_TOKEN` 是开发/Agent 访问 `ppap-agent` 组织仓库与 Issues 的 PAT Secret。同环境里的 `GITHUB_TOKEN` 是另一枚 PAT，当前没有同等组织仓权限，不能当组织访问凭据。两者都不是产品运行时身份，也不进入 Product API/Worker 的 typed settings。
+
 隔离开发 PostgreSQL、S3-compatible storage 和内部开发角色允许仓库固定 dev defaults；这些值只绑定隔离开发网络，生产不得继承。生产数据库/对象存储凭据由部署 Secret 注入并执行最小权限。
 
 LLM readiness 探针只发送固定无业务内容，禁止 HTTP redirect，不记录 API key、raw provider output 或 response id。它只证明一次依赖可用；不得被当作模型质量、审核准确性或用户 Story 证明。

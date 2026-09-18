@@ -17,7 +17,9 @@
 
 Core LLM 固定走 Responses-compatible API。canonical 配置是 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；isolated-dev 的 Base URL/Model 默认是 `https://api.trustedtunnel.app/v1` / `gpt-5.6-luna`，因此日常开发只需注入 API key。Cursor 把 Base URL/Model 也存为 Secret 可接受；这不改变它们是普通配置的语义。
 
-不要添加第二套 `OPENAI_*` authority，也不要增加 `LLM_PROTOCOL`。真实外部 readiness 由独立的 `LLM readiness` 与 `Feishu readiness` reusable workflow 用 `curl + jq` 验证；每次 push 的 `Push preflight` 必须等两者成功后才继续后续 verification。两者也可单独手动运行，成功不等于产品验收通过。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
+不要添加第二套 `OPENAI_*` authority，也不要增加 `LLM_PROTOCOL`。真实外部 readiness 由独立的 `LLM readiness` 与 `Feishu readiness` reusable workflow 用 `curl + jq` 验证；每次 push 的 `Push preflight` 必须等两者成功后才继续后续 verification。两者也可单独手动运行，成功不等于产品验收通过。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。
+
+读取 `ppap-agent` 组织 Issues 与来源仓实现时，使用 Runtime Secret `PPAP_GH_TOKEN`，不要用 `GITHUB_TOKEN`。后者是另一枚 PAT，当前看不到该组织私有仓。这不是产品启动配置。详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
 
 ## 开发与交付
 

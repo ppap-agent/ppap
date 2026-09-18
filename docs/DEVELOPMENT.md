@@ -57,6 +57,12 @@ FEISHU_APP_SECRET   # Secret
 
 用户 access/refresh token 是运行时身份数据，不是 Cloud Agent 的静态 Secret。
 
+## 仓库与 Issue 访问
+
+Cloud Agent / 开发机读取 `ppap-agent` 组织 Issues 和来源仓（对照实现）时，使用 Runtime Secret `PPAP_GH_TOKEN`。已核实它能列出该组织私有仓并读取本仓 Issues。
+
+`GITHUB_TOKEN` 是另一枚 fine-grained PAT，当前不能列出或读取该组织私有仓。不要用它拉 Issue 或参考实现。两者都不是 Product API/Worker 启动配置，也不进入应用 typed settings。GitHub Projects v2 目前组织与本仓均为空；缺的是项目板，不是 `PPAP_GH_TOKEN` 读 Issue 的能力。
+
 ## #2 实现时必须保持的配置边界
 
 - 建立一个 typed settings owner；API 和 Worker 复用配置语义，不在模块中散落 `os.getenv`。
