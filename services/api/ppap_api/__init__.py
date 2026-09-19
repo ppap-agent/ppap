@@ -24,7 +24,16 @@ from ppap_core.feishu import (
     refresh_user_token,
     user_info,
 )
-from ppap_core.files import MAX_UPLOAD_BYTES, ObjectExists, ObjectMissing, UnsafeSource, fetch_remote, original_filename
+from ppap_core.files import (
+    MAX_UPLOAD_BYTES,
+    ObjectExists,
+    ObjectMissing,
+    UnsafeSource,
+    attachment_content_disposition,
+    fetch_remote,
+    original_filename,
+    safe_content_type,
+)
 from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
 from ppap_core.settings import Settings, load_settings
@@ -316,12 +325,15 @@ def create_app(
             data = store.version_bytes(version)
         except (ValueError, ObjectMissing):
             return JSONResponse({"error": "not_ready"}, status_code=409)
-        filename = original_filename(version.original_filename)
+        try:
+            filename = original_filename(version.original_filename)
+        except ValueError:
+            filename = "download"
         return Response(
             content=data,
-            media_type=version.content_type or "application/octet-stream",
+            media_type=safe_content_type(version.content_type),
             headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": attachment_content_disposition(filename),
                 "X-Content-SHA256": version.sha256 or "",
             },
         )

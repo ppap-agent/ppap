@@ -24,7 +24,7 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `PUT /files/{id}/versions/{vid}/blob` — exclusive object write; second PUT is 409
 - `POST /files/{id}/versions/{vid}/finalize` — hash stored bytes as SHA-256; ready versions never change
 - `GET /files/{id}/versions/{vid}` — metadata; 403 `access_denied` without leaking body
-- `GET /files/{id}/versions/{vid}/download` — ready bytes only; staging is 409
+- `GET /files/{id}/versions/{vid}/download` — ready bytes only; staging is 409. Attachment headers use an ASCII `filename` plus UTF-8 `filename*`; invalid media types fall back to `application/octet-stream`.
 - `POST /isolated-dev/reap-staging` — isolated-dev only; marks expired staging `failed` and may delete those objects; never touches `ready` keys
 
 Unready versions cannot be treated as originals. Object keys include version id and are never reused. Concurrent PUT against the same staging key keeps one winner. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03.

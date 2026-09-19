@@ -13,6 +13,7 @@ from ppap_core.files import (
     ObjectExists,
     ObjectMissing,
     original_filename,
+    safe_content_type,
     sha256_bytes,
     version_object_key,
 )
@@ -165,7 +166,7 @@ class MemoryAuthStore:
         declared = int(declared_size)
         if declared < 0 or declared > MAX_UPLOAD_BYTES:
             raise ValueError("invalid_size")
-        ctype = (content_type or "application/octet-stream").split(";")[0].strip() or "application/octet-stream"
+        ctype = safe_content_type(content_type)
         if file_id:
             resource = self.resource(file_id)
             if resource is None or resource.kind != "file" or resource.tenant_id != principal.tenant_id:

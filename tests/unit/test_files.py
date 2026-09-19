@@ -9,14 +9,23 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
 
 from fastapi.testclient import TestClient
 
-from ppap_core.files import MAX_UPLOAD_BYTES, ObjectExists, UnsafeSource, fetch_remote, original_filename, sha256_bytes
+from ppap_core.files import (
+    MAX_UPLOAD_BYTES,
+    ObjectExists,
+    UnsafeSource,
+    attachment_content_disposition,
+    fetch_remote,
+    original_filename,
+    safe_content_type,
+    sha256_bytes,
+)
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from tests.unit.memory_auth import MemoryAuthStore
@@ -37,6 +46,23 @@ class FilenameTests(unittest.TestCase):
         self.assertEqual(original_filename("../secret/report.xlsx"), "report.xlsx")
         with self.assertRaises(ValueError):
             original_filename("..")
+
+    def test_strips_controls_and_keeps_unicode(self):
+        self.assertEqual(original_filename("报告.xlsx"), "报告.xlsx")
+        self.assertEqual(original_filename("report\r\n.xlsx"), "report.xlsx")
+        with self.assertRaises(ValueError):
+            original_filename("\x00\n")
+
+    def test_disposition_is_latin1_with_rfc5987(self):
+        header = attachment_content_disposition("报告.xlsx")
+        header.encode("latin-1")
+        self.assertIn('filename="__.xlsx"', header)
+        self.assertIn("filename*=UTF-8''" + quote("报告.xlsx", safe="!#$&+-.^_`|~"), header)
+        self.assertNotIn("\r", header)
+        self.assertNotIn("\n", header)
+        self.assertEqual(safe_content_type("application/pdf\r\nX-Injected: yes"), "application/octet-stream")
+        self.assertEqual(safe_content_type("application/zip; charset=binary"), "application/zip")
+        self.assertEqual(safe_content_type("not a type"), "application/octet-stream")
 
 
 class SsrfTests(unittest.TestCase):
@@ -306,6 +332,57 @@ class FileHttpTests(unittest.TestCase):
         self.assertEqual(old.content, first)
         abandoned = self.client.get(f"/files/{file_id}/versions/{leftover.json()['id']}/download")
         self.assertEqual(abandoned.status_code, 409)
+
+    def test_unicode_filename_download_uses_safe_headers(self):
+        self._login("alice")
+        body = b"unicode-original-bytes"
+        created = self.client.post(
+            "/files",
+            json={"original_filename": "报告.xlsx", "content_type": "application/vnd.ms-excel", "byte_size": len(body)},
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["original_filename"], "报告.xlsx")
+        file_id, vid = created.json()["file_id"], created.json()["id"]
+        self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=body)
+        self.client.post(f"/files/{file_id}/versions/{vid}/finalize")
+        downloaded = self.client.get(f"/files/{file_id}/versions/{vid}/download")
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.content, body)
+        disposition = downloaded.headers["content-disposition"]
+        disposition.encode("latin-1")
+        downloaded.headers["content-type"].encode("latin-1")
+        self.assertIn("filename*=UTF-8''" + quote("报告.xlsx", safe="!#$&+-.^_`|~"), disposition)
+        self.assertIn('filename="__.xlsx"', disposition)
+        self.assertEqual(downloaded.headers["x-content-sha256"], sha256_bytes(body))
+
+    def test_control_characters_in_metadata_do_not_break_download(self):
+        self._login("alice")
+        body = b"header-safe-bytes"
+        created = self.client.post(
+            "/files",
+            json={
+                "original_filename": "evil\r\nname.xlsx",
+                "content_type": "text/plain\r\nX-Injected: 1",
+                "byte_size": len(body),
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["original_filename"], "evilname.xlsx")
+        self.assertEqual(created.json()["content_type"], "application/octet-stream")
+        file_id, vid = created.json()["file_id"], created.json()["id"]
+        self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=body)
+        self.client.post(f"/files/{file_id}/versions/{vid}/finalize")
+        downloaded = self.client.get(f"/files/{file_id}/versions/{vid}/download")
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.content, body)
+        disposition = downloaded.headers["content-disposition"]
+        content_type = downloaded.headers["content-type"]
+        disposition.encode("latin-1")
+        content_type.encode("latin-1")
+        self.assertNotIn("\r", disposition)
+        self.assertNotIn("\n", disposition)
+        self.assertNotIn("X-Injected", content_type)
+        self.assertTrue(content_type.split(";")[0].strip().startswith("application/octet-stream"))
 
 
 class StagingRaceTests(unittest.TestCase):

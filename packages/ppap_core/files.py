@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 READY = "ready"
@@ -34,11 +35,42 @@ def version_object_key(tenant_id: str, file_id: str, version_id: str) -> str:
     return f"tenants/{tenant_id}/files/{file_id}/versions/{version_id}"
 
 
+_MEDIA_TYPE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+_ATTR_CHAR = "!#$&+-.^_`|~"
+
+
 def original_filename(name: str) -> str:
-    cleaned = Path(str(name).replace("\\", "/")).name.strip()
+    cleaned = Path(str(name).replace("\\", "/")).name
+    cleaned = "".join(ch for ch in cleaned if ch.isprintable() and ord(ch) >= 32)
+    cleaned = cleaned.strip()
     if not cleaned or cleaned in {".", ".."}:
         raise ValueError("invalid_filename")
     return cleaned[:255]
+
+
+def safe_content_type(value: str | None) -> str:
+    raw = str(value or "").split(";", 1)[0].strip()
+    if raw.isascii() and _MEDIA_TYPE.fullmatch(raw):
+        return raw
+    return "application/octet-stream"
+
+
+def _ascii_filename_fallback(name: str) -> str:
+    fallback = "".join(ch if 32 < ord(ch) < 127 and ch not in {'"', "\\"} else "_" for ch in name)
+    fallback = fallback.strip() or "download"
+    if fallback in {".", ".."}:
+        return "download"
+    return fallback[:255]
+
+
+def attachment_content_disposition(filename: str) -> str:
+    """ASCII filename plus RFC 5987 filename*; the whole header stays latin-1."""
+    try:
+        name = original_filename(filename)
+    except ValueError:
+        name = "download"
+    encoded = quote(name, safe=_ATTR_CHAR)
+    return f'attachment; filename="{_ascii_filename_fallback(name)}"; filename*=UTF-8\'\'{encoded}'
 
 
 def _ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -163,9 +195,9 @@ def _finish_fetch(result, max_bytes: int, parts) -> tuple[bytes, str, str]:
     if status >= 400:
         raise UnsafeSource("fetch_failed")
     body = _limited_body(result, max_bytes)
-    content_type = str(result.headers.get("content-type") or "application/octet-stream").split(";")[0].strip()
+    content_type = safe_content_type(result.headers.get("content-type"))
     name = original_filename(unquote(Path(parts.path).name or "download"))
-    return body, content_type or "application/octet-stream", name
+    return body, content_type, name
 
 
 def fetch_remote(url: str, http, max_bytes: int = MAX_UPLOAD_BYTES) -> tuple[bytes, str, str]:
