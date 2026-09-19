@@ -1,0 +1,5 @@
+# Public corpus fixtures are opaque bytes. PDF xref records are space-padded;
+# treating them as text makes `git show --check` fail on a valid file.
+tests/live/corpus/public/*.pdf binary
+tests/live/corpus/public/*.xlsx binary
+tests/live/corpus/public/*.docx binary
