@@ -46,6 +46,8 @@ jobs:
           python -c "import json; ident=json.load(open('dist/identity.json')); print(json.dumps(ident, indent=2)); assert set(ident['images'])=={'api','worker','web'}; assert all(ident['git_sha'] in tag for tag in ident['images'].values())"
           python tools/dev.py deploy
           python tools/dev.py test deploy
+          python tools/dev.py backup
+          python tools/dev.py test backup
           python tools/dev.py undeploy
 
 

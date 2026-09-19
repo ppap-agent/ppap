@@ -175,6 +175,30 @@ class DevToolingTests(unittest.TestCase):
         ))
         self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
 
+    def test_backup_restore_rollback_are_canonical_commands(self):
+        from tools.dev import _sql_ident, cmd_restore, cmd_rollback, latest_backup
+
+        source = (ROOT / "tools" / "dev.py").read_text()
+        self.assertIn('"backup"', source)
+        self.assertIn('"restore"', source)
+        self.assertIn('"rollback"', source)
+        self.assertEqual(_sql_ident("ppap"), "ppap")
+        with self.assertRaises(ValueError):
+            _sql_ident("ppap;drop")
+        self.assertEqual(cmd_restore([]), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = root / "20260101T000000Z"
+            new = root / "20260102T000000Z"
+            old.mkdir()
+            new.mkdir()
+            (old / "manifest.json").write_text("{}\n")
+            (new / "manifest.json").write_text("{}\n")
+            with patch("tools.dev.BACKUP_ROOT", root):
+                self.assertEqual(latest_backup(), new)
+            with patch("tools.dev.BACKUP_ROOT", root), patch("tools.dev.shutil.which", return_value="/usr/bin/docker"):
+                self.assertEqual(cmd_rollback(), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

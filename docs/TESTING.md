@@ -30,6 +30,7 @@ python tools/dev.py test pytest tests/corpus/v3_poc -q
 python tools/dev.py test pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 python tools/dev.py test schema
 python tools/dev.py test deploy
+python tools/dev.py test backup
 
 python tools/stack.py up
 python tools/stack.py verify

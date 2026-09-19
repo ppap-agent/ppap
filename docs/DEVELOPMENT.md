@@ -25,6 +25,9 @@ python tools/dev.py build
 python tools/dev.py deploy
 python tools/dev.py upgrade
 python tools/dev.py undeploy
+python tools/dev.py backup
+python tools/dev.py restore
+python tools/dev.py rollback
 python tools/dev.py migrate
 
 python tools/stack.py up
@@ -42,7 +45,7 @@ python tools/stack.py down
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`、`python tools/dev.py`。CI 调用与本地相同的 install/quality/test/build/migrate/deploy。后续若把 Ruff、Pyright 或 Vite 收进来，仍走这一入口，不另起流水线逻辑。#15 剩余：backup/restore/rollback。
+当前实现是 Python 3.12、单一 `pyproject.toml`、`python tools/dev.py`。CI 调用与本地相同的 install/quality/test/build/migrate/deploy/backup。后续若把 Ruff、Pyright 或 Vite 收进来，仍走这一入口，不另起流水线逻辑。#15 剩余：按 request / tenant / audit round / job / attempt 定位故障的结构化日志。
 
 ## 迁移工作
 

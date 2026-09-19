@@ -35,4 +35,4 @@ python tools/stack.py down
 
 Schema upgrade：`python tools/stack.py migrate && python tools/dev.py migrate && python tools/dev.py test schema`。
 
-Production compose：`PPAP_BUILD_IMAGES=1 python tools/dev.py deploy && python tools/dev.py test deploy && python tools/dev.py undeploy`。
+Production compose：`PPAP_BUILD_IMAGES=1 python tools/dev.py deploy && python tools/dev.py test deploy && python tools/dev.py backup && python tools/dev.py test backup && python tools/dev.py undeploy`。
