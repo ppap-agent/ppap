@@ -1,29 +1,25 @@
 # Web Client
 
-One PPAP product client for normal browser/PWA and Feishu H5.
-
-Isolated-dev currently serves `apps/web` on `http://127.0.0.1:4173` via `python tools/stack.py up`. The page reads `/public-config`, `/ready`, `/me`, optional `?resource=` / `?file=`, and can stage+finalize a local file. Fixture sessions from `stack.py seed-auth` only prove object authorization, not S02. Upload/download hooks prove version identity on synthetic bytes, not S03.
+浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。isolated-dev 通过 `python tools/stack.py up` 启动本地 Web。
 
 ## Owns
 
-- product navigation and presentation
-- document/data-set preparation UI
-- audit submission UI
-- findings/evidence/result UI
-- human review UI
-- usage/history UI
-- platform adapters for browser vs Feishu host capabilities
+- 产品导航和呈现
+- 文件/资料集准备
+- 审核提交和结果回访
+- 原文定位与下一步
+- 人工复核
+- 用量/历史视图
+- 浏览器与飞书宿主的小型平台适配
 
 ## Boundary
 
-The web client calls only the Product API.
+Web 只调用 Product API。它不能：
 
-It must not:
+- 调 Worker/旧 engine tasks API
+- 直接访问 PostgreSQL/PostgREST
+- 持有对象存储管理凭据
+- 建立飞书专属业务台账
+- 嵌入服务端 Feishu/Partner AI Secret
 
-- call engine `/tasks` or worker endpoints
-- access PostgreSQL/PostgREST directly
-- use object-store administrative credentials
-- duplicate a Feishu-only product ledger/state model
-- embed server-side Partner AI or Feishu secrets
-
-Prefer shared product routes/state with small platform adapters instead of rebuilding `app` and `pc` as two products.
+优先复用同一产品 route/state；只有真实宿主差异才增加平台适配。
