@@ -14,8 +14,8 @@ services:
   minio:
     image: ppap-minio:verify
     build:
-      context: .
-      dockerfile: deploy/minio/Dockerfile
+      context: minio
+      dockerfile: Dockerfile
     command: ["minio", "server", "/data", "--address", ":9000"]
     environment:
       MINIO_ROOT_USER: ${PPAP_S3_ACCESS_KEY}
