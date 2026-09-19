@@ -2,7 +2,11 @@
 
 浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。isolated-dev 通过 `python tools/stack.py up` 启动本地 Web。
 
-## Owns
+## 当前 main
+
+当前 Web 只应被理解为与已实现 API 能力对应的 isolated-dev 客户端表面。完整审核工作台由 #7 验收，飞书客户功能 parity 由 #11 验收。
+
+## 最终责任
 
 - 产品导航和呈现
 - 文件/资料集准备
@@ -10,16 +14,16 @@
 - 原文定位与下一步
 - 人工复核
 - 用量/历史视图
-- 浏览器与飞书宿主的小型平台适配
+- 浏览器与飞书宿主的必要平台适配
 
 ## Boundary
 
 Web 只调用 Product API。它不能：
 
-- 调 Worker/旧 engine tasks API
+- 调 Worker / legacy engine tasks API
 - 直接访问 PostgreSQL/PostgREST
 - 持有对象存储管理凭据
 - 建立飞书专属业务台账
-- 嵌入服务端 Feishu/Partner AI Secret
+- 嵌入服务端 Feishu / Partner AI Secret
 
-优先复用同一产品 route/state；只有真实宿主差异才增加平台适配。
+UI 可以在不降低 #11 baseline 客户能力的前提下重构；具体前端工具链见 [DEVELOPMENT](../../docs/DEVELOPMENT.md)。
