@@ -18,7 +18,10 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.paths import git_sha, pythonpath as shared_pythonpath
+
 LOCAL = ROOT / ".local" / "stack"
 BIN = ROOT / ".local" / "bin"
 VENV = ROOT / ".venv"
@@ -40,20 +43,7 @@ PROCESSES = ("postgres", "minio", "api", "worker", "web")
 
 
 def pythonpath() -> str:
-    parts = [
-        str(ROOT / "packages"),
-        str(ROOT / "packages" / "ppap_docops" / "src"),
-        str(ROOT / "packages" / "ppap_excel_audit_engine" / "src"),
-        str(ROOT / "packages" / "ppap_ocr_adapter" / "src"),
-        str(ROOT / "packages" / "ppap_pdf_to_excel" / "src"),
-        str(ROOT / "packages" / "ppap_vision" / "src"),
-        str(ROOT / "services" / "api"),
-        str(ROOT / "services" / "worker"),
-    ]
-    existing = os.environ.get("PYTHONPATH", "")
-    if existing:
-        parts.append(existing)
-    return os.pathsep.join(parts)
+    return shared_pythonpath()
 
 
 def map_llm_names(env: dict[str, str]) -> dict[str, str]:
@@ -67,18 +57,6 @@ def map_llm_names(env: dict[str, str]) -> dict[str, str]:
         if not out.get(dest) and out.get(src):
             out[dest] = out[src]
     return out
-
-
-def git_sha() -> str:
-    forced = os.environ.get("PPAP_BUILD_SHA", "").strip()
-    if forced:
-        return forced
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except subprocess.CalledProcessError:
-        return ""
 
 
 def child_env() -> dict[str, str]:
@@ -228,7 +206,7 @@ def install() -> None:
     download_minio()
     if not venv_python().exists():
         subprocess.check_call([sys.executable, "-m", "venv", str(VENV)])
-    subprocess.check_call([str(venv_python()), "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")])
+    subprocess.check_call([str(venv_python()), "-m", "pip", "install", "-q", "-e", str(ROOT) + "[dev]"])
 
 
 def reexec_in_venv() -> None:

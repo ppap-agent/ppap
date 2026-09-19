@@ -15,34 +15,30 @@
 
 ## 当前命令
 
+Canonical 入口是 `python tools/dev.py`。isolated-dev 进程仍由 `python tools/stack.py` 管理。
+
 ```sh
-python tools/stack.py install
+python tools/dev.py install
+python tools/dev.py quality
+python tools/dev.py test
+python tools/dev.py build
+
 python tools/stack.py up
 python tools/stack.py verify
 python tools/stack.py seed-auth
 python tools/stack.py verify-auth
 python tools/stack.py verify-uploads
 python tools/stack.py verify-audit
-
-python -m pip install -r requirements.txt
-PYTHONPATH=packages:packages/ppap_docops/src:packages/ppap_excel_audit_engine/src:packages/ppap_ocr_adapter/src:packages/ppap_pdf_to_excel/src:packages/ppap_vision/src:services/api:services/worker \
-  python -m unittest discover -s tests/unit -v
-python -m pytest tests/corpus/v2_assets --ftype excel -q
+python tools/stack.py down
 ```
+
+`python tools/dev.py test` 跑 unit。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产制品：`python tools/dev.py build` 写 `dist/identity.json` 与 `dist/web`；`PPAP_BUILD_IMAGES=1 python tools/dev.py build` 额外打 `ppap-api` / `ppap-worker` / `ppap-web` 镜像，标签为同一 Git revision。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 
-## #15 的目标工程工具链
+## 工程工具链
 
-为达到单仓、现代、易维护的生产工程质量，实施时优先收敛为：
-
-- Python 3.12，单一 `pyproject.toml` 项目入口与锁定依赖；
-- Ruff 负责格式与 lint；
-- 核心 API / product / worker 使用 Pyright；迁入旧 checker 可渐进纳入；
-- Web 延续 Vue 3 + TypeScript，迁到 Vite；使用一个带 lockfile 的前端 package manager；
-- CI 调用与本地相同的 canonical quality/test/build 命令。
-
-这些是工程实现方向，不是产品 Issue 的固定业务政策；若当前代码出现更简单且同等可维护的方案，可以在实现中调整。
+当前实现是 Python 3.12、单一 `pyproject.toml`、`python tools/dev.py`。CI 调用与本地相同的 install/quality/test/build。后续若把 Ruff、Pyright 或 Vite 收进来，仍走这一入口，不另起流水线逻辑。#15 剩余：schema upgrade 与实际 deploy/upgrade/backup/restore/rollback。
 
 ## 迁移工作
 

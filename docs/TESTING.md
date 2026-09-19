@@ -20,14 +20,14 @@
 ## 当前可运行入口
 
 ```sh
-PYTHONPATH=packages:packages/ppap_docops/src:packages/ppap_excel_audit_engine/src:packages/ppap_ocr_adapter/src:packages/ppap_pdf_to_excel/src:packages/ppap_vision/src:services/api:services/worker \
-  python -m unittest discover -s tests/unit -v
-
-python -m pytest tests/corpus/v2_assets --ftype excel -q
-python -m pytest tests/corpus/v2_assets --ftype pdf -q
-python -m pytest tests/corpus/v2_assets --ftype scanned -q
-python -m pytest tests/corpus/v3_poc -q
-python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+python tools/dev.py install
+python tools/dev.py quality
+python tools/dev.py test
+python tools/dev.py test pytest tests/corpus/v2_assets --ftype excel -q
+python tools/dev.py test pytest tests/corpus/v2_assets --ftype pdf -q
+python tools/dev.py test pytest tests/corpus/v2_assets --ftype scanned -q
+python tools/dev.py test pytest tests/corpus/v3_poc -q
+python tools/dev.py test pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 
 python tools/stack.py up
 python tools/stack.py verify
@@ -42,11 +42,11 @@ PSW 的 `.doc` 用例需要本机 LibreOffice，以及 Linux 上可执行的 `pp
 #7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开当前 round 冻结原件（或看到 locator-gap）、复核和显式重审：
 
 ```sh
-python -m pip install playwright
+python tools/dev.py install
+python -m pip install -e ".[e2e]"
 python -m playwright install chromium
 python tools/stack.py up
-PYTHONPATH=packages:packages/ppap_docops/src:packages/ppap_excel_audit_engine/src:packages/ppap_ocr_adapter/src:packages/ppap_pdf_to_excel/src:packages/ppap_vision/src:services/api:services/worker \
-  python -m unittest tests.e2e.test_web_audit
+python tools/dev.py test e2e
 python tools/stack.py down
 ```
 

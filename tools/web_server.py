@@ -2,8 +2,10 @@
 """Isolated-dev static web with baseline customer paths."""
 from __future__ import annotations
 
+import json
 import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 PAGE_ALIASES = {
@@ -54,7 +56,16 @@ class Handler(SimpleHTTPRequestHandler):
         return super().translate_path(aliased_path(path))
 
 
+def write_runtime_config(directory: str | Path | None = None) -> None:
+    api = os.environ.get("PPAP_PUBLIC_API_URL", "").strip()
+    if not api:
+        return
+    dest = Path(directory or os.getcwd()) / "runtime-config.json"
+    dest.write_text(json.dumps({"api_url": api.rstrip("/")}) + "\n")
+
+
 def serve(bind: str | None = None, port: int | None = None) -> None:
+    write_runtime_config()
     host = bind if bind is not None else os.environ.get("PPAP_WEB_BIND", "127.0.0.1")
     listen = int(port if port is not None else os.environ.get("PPAP_WEB_PORT", "4173"))
     ThreadingHTTPServer((host, listen), Handler).serve_forever()

@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.local
+.artifacts
+.cursor
+.pytest_cache
+dist
+node_modules
+tests
+docs
+assets
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+!.env.example

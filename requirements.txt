@@ -1,3 +1,4 @@
+# Pin dump matching pyproject.toml. Canonical install: python tools/dev.py install
 fastapi==0.115.8
 uvicorn==0.34.0
 pydantic==2.10.6
