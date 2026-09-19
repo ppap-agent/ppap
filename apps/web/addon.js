@@ -28,6 +28,15 @@ async function resolveHost() {
   if (window.__PPAP_DOCS_ADDON_HOST__) {
     return window.__PPAP_DOCS_ADDON_HOST__;
   }
+  let inHostFrame = false;
+  try {
+    inHostFrame = window.self !== window.top;
+  } catch {
+    inHostFrame = true;
+  }
+  if (!inHostFrame) {
+    throw hostUnavailableError();
+  }
   let Client = window.BlockitClient;
   if (!Client) {
     try {

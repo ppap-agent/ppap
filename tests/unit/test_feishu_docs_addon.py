@@ -293,5 +293,17 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(response.json()["error"], "invalid_host_code")
 
 
+class DocsAddonHostSdkTests(unittest.TestCase):
+    def test_vendor_blockit_client_is_present_and_iframe_gated(self):
+        vendor = (ROOT / "apps" / "web" / "block-docs-addon-api.js").read_text()
+        self.assertIn("export {\n", vendor)
+        self.assertIn("BlockitClient", vendor)
+        self.assertIn("@lark-opdev/block-docs-addon-api@0.0.11", vendor)
+        addon = (ROOT / "apps" / "web" / "addon.js").read_text()
+        self.assertIn("window.self !== window.top", addon)
+        self.assertIn("./block-docs-addon-api.js", addon)
+        self.assertIn("__PPAP_DOCS_ADDON_HOST__", addon)
+
+
 if __name__ == "__main__":
     unittest.main()
