@@ -85,6 +85,19 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.wait_for_selector("text=需修改")
                 browser.close()
 
+    def test_docs_addon_entry_reports_missing_host(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.set_viewport_size({"width": 560, "height": 600})
+            page.goto(f"{WEB}/addon.html")
+            page.wait_for_selector("text=当前环境不支持 docs-addon 登录")
+            expect(page.get_by_test_id("addon-history")).to_be_visible()
+            href = page.get_by_test_id("addon-history").get_attribute("href")
+            self.assertTrue(href == "./" or href.endswith("/"))
+            expect(page.get_by_test_id("addon-submit")).to_be_disabled()
+            browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()

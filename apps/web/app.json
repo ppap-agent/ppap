@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "appType": "docs-addon",
+  "blockTypeID": "blk_69eb1e6ab880ccc61d0520b2",
+  "projectName": "PPAP Audit",
+  "contributes": {
+    "topbar": {
+      "view": "addon.html",
+      "initialWidth": 560,
+      "initialHeight": 600
+    }
+  }
+}

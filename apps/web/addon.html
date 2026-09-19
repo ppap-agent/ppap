@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PPAP Audit</title>
+    <style>
+      html, body { margin: 0; height: 100%; }
+      body { font-family: sans-serif; font-size: 14px; line-height: 1.4; max-width: 560px; max-height: 600px; overflow: hidden; display: flex; flex-direction: column; }
+      header, footer { padding: 10px 12px; flex: 0 0 auto; }
+      header { border-bottom: 1px solid #eee; }
+      main { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 12px; }
+      footer { border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .hidden { display: none !important; }
+      .status { color: #6f7f95; }
+      .error { color: #c00; }
+      label.document { display: flex; gap: 8px; align-items: center; padding: 6px 0; cursor: pointer; }
+      .abnormal { margin-top: 12px; padding: 8px; background: #fff8e8; }
+      .quota { margin: 8px 0; padding: 8px; background: #f4f7fb; }
+      button, a { margin-right: 0.4rem; }
+      .status-PASS { color: #0a7; font-weight: 600; }
+      .status-NG { color: #c60; font-weight: 600; }
+      .status-ERR { color: #c00; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>PPAP Audit</strong>
+      <p class="status" data-testid="addon-status" id="addon-status">正在建立飞书登录态...</p>
+      <p>当前身份 <code data-testid="addon-user" id="addon-user">anonymous</code></p>
+    </header>
+    <main>
+      <p data-testid="addon-error" id="addon-error" class="error hidden"></p>
+      <p data-testid="addon-quota" id="addon-quota" class="quota hidden"></p>
+      <div data-testid="addon-documents" id="addon-documents"></div>
+      <div data-testid="addon-abnormal" id="addon-abnormal" class="hidden"></div>
+      <section data-testid="addon-round" id="addon-round" class="hidden">
+        <p>轮次 <code data-testid="addon-round-id" id="addon-round-id"></code></p>
+        <p>执行 <code data-testid="addon-round-execution" id="addon-round-execution"></code></p>
+        <div data-testid="addon-findings" id="addon-findings"></div>
+        <p><a data-testid="addon-open-round" id="addon-open-round" href="#">回访审核结果</a></p>
+        <button type="button" data-testid="addon-writeback" id="addon-writeback">写回当前文档</button>
+        <p data-testid="addon-writeback-result" id="addon-writeback-result"></p>
+      </section>
+    </main>
+    <footer>
+      <a data-testid="addon-history" id="addon-history" href="./">历史审核记录</a>
+      <button type="button" data-testid="addon-submit" id="addon-submit" disabled>开始识别</button>
+    </footer>
+    <script src="./addon.js"></script>
+  </body>
+</html>

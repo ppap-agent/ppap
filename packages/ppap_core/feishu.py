@@ -146,17 +146,32 @@ def _user_tokens(http, payload_body: dict) -> UserTokens:
     return UserTokens(str(token), refresh, access_expires, refresh_expires)
 
 
-def exchange_code(http, settings: Settings, code: str) -> UserTokens:
-    return _user_tokens(
-        http,
-        {
-            "grant_type": "authorization_code",
-            "client_id": settings.feishu_app_id,
-            "client_secret": settings.feishu_app_secret,
-            "code": code,
-            "redirect_uri": callback_url(settings),
-        },
-    )
+def exchange_code(http, settings: Settings, code: str, redirect_uri: str | None = None) -> UserTokens:
+    payload = {
+        "grant_type": "authorization_code",
+        "client_id": settings.feishu_app_id,
+        "client_secret": settings.feishu_app_secret,
+        "code": code,
+    }
+    uri = (redirect_uri or "").strip()
+    if uri:
+        payload["redirect_uri"] = uri
+    else:
+        payload["redirect_uri"] = callback_url(settings)
+    return _user_tokens(http, payload)
+
+
+def exchange_host_code(http, settings: Settings, code: str, redirect_uri: str | None = None) -> UserTokens:
+    payload = {
+        "grant_type": "authorization_code",
+        "client_id": settings.feishu_app_id,
+        "client_secret": settings.feishu_app_secret,
+        "code": code,
+    }
+    uri = (redirect_uri or "").strip()
+    if uri:
+        payload["redirect_uri"] = uri
+    return _user_tokens(http, payload)
 
 
 def refresh_user_token(http, settings: Settings, refresh_token: str) -> UserTokens:

@@ -5,7 +5,7 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `python tools/stack.py up` 启�
 ## 当前 main 已实现
 
 - `/health`、`/ready`、`/version`、`/public-config`
-- 飞书登录/回调、`/me`、`/logout`
+- 飞书登录/回调、docs-addon 宿主登录 `POST /login/feishu/host`、`/me`、`/logout`
 - 飞书 Drive/Docs 导入：`POST /integrations/feishu/files/import`（session 用户 token → meta → Drive 下载或云文档导出 → 普通 `file_version`）
 - 飞书文档关联文件：`GET /integrations/feishu/docs/links?file_token=`（扫描当前云文档 mention/超链接/附件，返回 token/type，不另建飞书文件台账）
 - 飞书提交：`POST /integrations/feishu/audits`（导入主文件/对比文件后走现有草稿受理，返回普通 round）

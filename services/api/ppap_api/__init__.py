@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, Request
@@ -18,9 +18,11 @@ from ppap_core.feishu import (
     EncryptedEvent,
     FeishuError,
     UnauthenticatedEvent,
+    UserTokens,
     accept_event,
     authorize_url,
     exchange_code,
+    exchange_host_code,
     refresh_user_token,
     user_info,
 )
@@ -209,6 +211,44 @@ def create_app(
         except FeishuError:
             return RedirectResponse(fallback, status_code=303)
         response = RedirectResponse(dest, status_code=303)
+        response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
+        return response
+
+    @app.post("/login/feishu/host")
+    def login_feishu_host(body: dict) -> JSONResponse:
+        code = str(body.get("code") or "").strip()
+        if not code:
+            return JSONResponse({"error": "invalid_host_code"}, status_code=400)
+        if code.startswith("isolated-dev:"):
+            if settings.profile != "isolated-dev":
+                return JSONResponse({"error": "invalid_host_code"}, status_code=400)
+            name = code.split(":", 1)[1]
+            if name not in SUBJECTS:
+                return JSONResponse({"error": "unknown_fixture"}, status_code=400)
+            store.seed_isolated_dev()
+            principal = store.principal_for_fixture(name)
+            now = datetime.now(timezone.utc)
+            tokens = UserTokens(
+                "user-access",
+                "user-refresh",
+                now + timedelta(hours=1),
+                now + timedelta(days=7),
+            )
+            raw = store.create_session(principal, tokens)
+            response = JSONResponse(principal.public())
+            response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
+            return response
+        if not settings.feishu_app_id or not settings.feishu_app_secret:
+            return JSONResponse({"error": "feishu_disabled"}, status_code=409)
+        redirect_uri = str(body.get("redirect_uri") or "").strip() or None
+        try:
+            tokens = exchange_host_code(http, settings, code, redirect_uri)
+            info = user_info(http, tokens.access_token)
+            principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
+            raw = store.create_session(principal, tokens)
+        except FeishuError:
+            return JSONResponse({"error": "feishu_host_login_failed"}, status_code=502)
+        response = JSONResponse(principal.public())
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
