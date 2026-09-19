@@ -90,12 +90,26 @@ class WebAuditLoopTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.set_viewport_size({"width": 560, "height": 600})
-            page.goto(f"{WEB}/addon.html")
+            page.goto(f"{WEB}/addon")
             page.wait_for_selector("text=当前环境不支持 docs-addon 登录")
             expect(page.get_by_test_id("addon-history")).to_be_visible()
             href = page.get_by_test_id("addon-history").get_attribute("href")
-            self.assertTrue(href and "audit-files.html" in href)
+            self.assertTrue(href and href.rstrip("/").endswith("audit-files"))
+            self.assertNotIn(".html", href)
             expect(page.get_by_test_id("addon-submit")).to_be_disabled()
+            browser.close()
+
+    def test_audit_files_path_loads_history_after_login(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(WEB)
+            page.get_by_test_id("isolated-dev-login").click()
+            page.wait_for_selector("text=ou_alice")
+            page.get_by_test_id("open-history").click()
+            page.wait_for_url("**/audit-files")
+            page.wait_for_selector('[data-testid="history-empty"], [data-testid="history-list"]')
+            self.assertTrue(page.url.rstrip("/").endswith("/audit-files"))
             browser.close()
 
 

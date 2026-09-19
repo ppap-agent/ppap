@@ -382,7 +382,7 @@ def start_apps(env: dict[str, str]) -> None:
     spawn("worker", [py, "-m", "ppap_worker.main"], env)
     spawn(
         "web",
-        [py, "-m", "http.server", env.get("PPAP_WEB_PORT", "4173"), "--bind", env.get("PPAP_WEB_BIND", "127.0.0.1")],
+        [py, str(ROOT / "tools" / "web_server.py")],
         env,
         cwd=WEB,
     )

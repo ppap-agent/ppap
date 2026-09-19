@@ -81,6 +81,48 @@ function waitForHostLogin(host) {
   });
 }
 
+function subjectOf(principal) {
+  return (principal && principal.identity && principal.identity.subject) || "anonymous";
+}
+
+async function existingSession(api) {
+  const me = await readJson(`${api}/me`);
+  if (me.ok && me.body && me.body.identity) {
+    return me.body;
+  }
+  return null;
+}
+
+async function loginWithHost(api, host) {
+  const code = await waitForHostLogin(host);
+  const logged = await readJson(`${api}/login/feishu/host`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!logged.ok) {
+    throw new Error("飞书登录失败，请重试");
+  }
+  return logged.body;
+}
+
+async function ensureSession(api, host) {
+  const current = await existingSession(api);
+  if (current) {
+    return current;
+  }
+  return loginWithHost(api, host);
+}
+
+async function authorizedJson(api, host, url, options = {}) {
+  let result = await readJson(url, options);
+  if (result.status === 401) {
+    await loginWithHost(api, host);
+    result = await readJson(url, options);
+  }
+  return result;
+}
+
 function isExcelFile(item) {
   const type = String(item.doc_type || item.type || "").toLowerCase();
   if (type !== "file") {
@@ -183,22 +225,18 @@ async function main() {
   }
 
   try {
-    const code = await waitForHostLogin(host);
-    const logged = await readJson(`${state.api}/login/feishu/host`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    if (!logged.ok) {
-      throw new Error("飞书登录失败，请重试");
-    }
-    document.getElementById("addon-user").textContent = logged.body.identity.subject;
+    const principal = await ensureSession(state.api, host);
+    document.getElementById("addon-user").textContent = subjectOf(principal);
     setStatus("正在加载文件列表...");
     state.fileToken = await host.documentToken();
     if (!state.fileToken) {
       throw new Error("缺少 fileToken，无法加载关联文件。");
     }
-    const links = await readJson(`${state.api}/integrations/feishu/docs/links?file_token=${encodeURIComponent(state.fileToken)}`);
+    const links = await authorizedJson(
+      state.api,
+      host,
+      `${state.api}/integrations/feishu/docs/links?file_token=${encodeURIComponent(state.fileToken)}`
+    );
     if (!links.ok) {
       throw new Error(links.body.error === "feishu_user_token_missing" ? "飞书登录失败，请重试" : "文件列表加载失败，请稍后重试。");
     }
@@ -207,7 +245,7 @@ async function main() {
     split.selectable.forEach((item) => selected.add(item.token));
     renderDocuments(split.selectable, selected);
     renderAbnormal(split.cloud, split.nonExcel);
-    const quota = await readJson(`${state.api}/integrations/feishu/usage/quota`);
+    const quota = await authorizedJson(state.api, host, `${state.api}/integrations/feishu/usage/quota`);
     state.quota = quota.body;
     const quotaNode = document.getElementById("addon-quota");
     quotaNode.textContent = quota.body.detailed_message || quota.body.message || "";
@@ -242,13 +280,35 @@ async function main() {
   });
   refreshSubmit();
 
+  async function writeCurrentDocument() {
+    if (!state.roundId || !state.fileToken) {
+      return;
+    }
+    const result = await authorizedJson(
+      state.api,
+      host,
+      `${state.api}/integrations/feishu/rounds/${encodeURIComponent(state.roundId)}/writeback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_token: state.fileToken }),
+      }
+    );
+    const node = document.getElementById("addon-writeback-result");
+    if (!result.ok) {
+      node.textContent = result.body.error || "写回失败";
+      return;
+    }
+    node.textContent = result.body.inserted ? "已写回当前文档" : "未写回";
+  }
+
   submit.addEventListener("click", async () => {
     if (submit.disabled) {
       return;
     }
     showError("");
     const tokens = Array.from(selected);
-    const rules = await readJson(`${state.api}/rules`);
+    const rules = await authorizedJson(state.api, host, `${state.api}/rules`);
     const ruleId = (rules.body.rules || [])[0] && (rules.body.rules || [])[0].id;
     if (!ruleId) {
       showError("没有可用规则");
@@ -256,7 +316,7 @@ async function main() {
     }
     submit.disabled = true;
     setStatus("正在发起审核...");
-    const created = await readJson(`${state.api}/integrations/feishu/audits`, {
+    const created = await authorizedJson(state.api, host, `${state.api}/integrations/feishu/audits`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -283,24 +343,14 @@ async function main() {
       return;
     }
     setStatus(round.body.execution === "completed" ? "审核完成" : "审核未完成");
+    if (round.body.execution === "completed") {
+      await writeCurrentDocument();
+    }
     refreshSubmit();
   });
 
-  writeback.addEventListener("click", async () => {
-    if (!state.roundId || !state.fileToken) {
-      return;
-    }
-    const result = await readJson(`${state.api}/integrations/feishu/rounds/${encodeURIComponent(state.roundId)}/writeback`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file_token: state.fileToken }),
-    });
-    const node = document.getElementById("addon-writeback-result");
-    if (!result.ok) {
-      node.textContent = result.body.error || "写回失败";
-      return;
-    }
-    node.textContent = result.body.inserted ? "已写回当前文档" : "未写回";
+  writeback.addEventListener("click", () => {
+    void writeCurrentDocument();
   });
 }
 

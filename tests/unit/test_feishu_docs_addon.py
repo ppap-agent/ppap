@@ -303,6 +303,13 @@ class DocsAddonHostSdkTests(unittest.TestCase):
         self.assertIn("window.self !== window.top", addon)
         self.assertIn("./block-docs-addon-api.js", addon)
         self.assertIn("__PPAP_DOCS_ADDON_HOST__", addon)
+        self.assertIn("${api}/me", addon)
+        self.assertIn("existingSession", addon)
+        self.assertIn("ensureSession", addon)
+        self.assertIn("writeCurrentDocument", addon)
+        html = (ROOT / "apps" / "web" / "addon.html").read_text()
+        self.assertIn('href="./audit-files"', html)
+        self.assertNotIn("audit-files.html", html)
 
 
 if __name__ == "__main__":
