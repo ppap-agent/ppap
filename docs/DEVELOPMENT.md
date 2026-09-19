@@ -34,6 +34,8 @@ python -m pip install -r requirements.txt
 PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
 ```
 
+随着 #3 迁移完成，corpus pytest 也直接从本仓运行。正常开发和 CI 不需要 clone/checkout `ppap-agent`。
+
 测试层级和 corpus 规则见 [TESTING](TESTING.md)。
 
 ## 外部 integrations
@@ -44,7 +46,7 @@ PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s 
 
 ## 迁移工作
 
-只有迁移 Issue 才读取 [INVENTORY](INVENTORY.md) / [MIGRATION](MIGRATION.md) 和来源仓。固定来源 Git revision 后优先运行来源仓已有 tests；先得到真实失败，再搬最少代码。
+只有迁移 Issue 才读取 [INVENTORY](INVENTORY.md) / [MIGRATION](MIGRATION.md) 和来源仓。来源 Git revision 只用于一次性定位待迁资产。仍有长期价值的 test/code/fixture/oracle 应迁入本仓，然后由本仓测试驱动后续实现；不要建立跨仓长期运行路径。
 
 ## 最短交付路径
 
