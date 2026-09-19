@@ -84,6 +84,7 @@ class MemoryAuthStore:
         self.jobs: dict[str, dict] = {}
         self.attempts: dict[tuple[str, int], dict] = {}
         self.idempotency: dict[tuple[str, str], str] = {}
+        self.usage_events: list[dict] = []
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, _now() + timedelta(seconds=ttl_seconds))
@@ -654,4 +655,62 @@ class MemoryAuthStore:
             "created_at": row.get("created_at"),
             "inputs": inputs,
             "findings": findings,
+        }
+
+    def record_usage_event(
+        self,
+        principal: Principal,
+        ai_item_id: str,
+        consumed_points: int,
+        is_free_trial: bool,
+        *,
+        trace_id: str | None = None,
+    ) -> dict:
+        item = str(ai_item_id or "").strip()
+        if not item:
+            raise ValueError("feishu_ai_item_missing")
+        points = int(consumed_points)
+        if points < 0:
+            raise ValueError("invalid_usage_points")
+        tid = str(trace_id or "").strip() or None
+        if tid:
+            for row in self.usage_events:
+                if row["tenant_id"] == principal.tenant_id and row["trace_id"] == tid:
+                    return dict(row)
+        event_id = str(uuid.uuid4())
+        row = {
+            "id": event_id,
+            "tenant_id": principal.tenant_id,
+            "user_id": principal.user_id,
+            "ai_item_id": item,
+            "consumed_points": points,
+            "is_free_trial": bool(is_free_trial),
+            "external_status": "none" if is_free_trial else "pending",
+            "external_record_id": None,
+            "trace_id": tid,
+        }
+        self.usage_events.append(row)
+        return dict(row)
+
+    def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
+        item = str(ai_item_id or "").strip()
+        total = 0
+        for row in self.usage_events:
+            if (
+                row["tenant_id"] == tenant_id
+                and row["ai_item_id"] == item
+                and row["is_free_trial"]
+                and row["external_status"] == "none"
+            ):
+                total += int(row["consumed_points"])
+        return total
+
+    def usage_event_public(self, row: dict) -> dict:
+        return {
+            "id": row["id"],
+            "ai_item_id": row["ai_item_id"],
+            "consumed_points": row["consumed_points"],
+            "is_free_trial": row["is_free_trial"],
+            "external_status": row["external_status"],
+            "trace_id": row["trace_id"],
         }

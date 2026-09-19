@@ -31,6 +31,13 @@ from ppap_core.feishu_drive import (
     UnsupportedDocType,
     import_drive_material,
 )
+from ppap_core.feishu_usage import (
+    FeishuUsageError,
+    quota_payload,
+    quota_unavailable,
+    query_tenant_ai_item,
+    remaining_trial_points,
+)
 from ppap_core.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
@@ -493,6 +500,49 @@ def create_app(
                 return mapped
             raise
         return JSONResponse(round_body, status_code=201)
+
+    @app.get("/integrations/feishu/usage/quota")
+    def feishu_usage_quota(request: Request, ai_item_id: str = "") -> JSONResponse:
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        item_id = (ai_item_id or settings.feishu_ai_item_id or "").strip()
+        if not item_id:
+            return JSONResponse({"error": "feishu_ai_item_missing"}, status_code=409)
+        consumed = store.trial_consumed_points(session.principal.tenant_id, item_id)
+        remaining = remaining_trial_points(settings.feishu_free_trial_quota_points, consumed)
+        try:
+            item = query_tenant_ai_item(http, session.access_token, item_id)
+        except FeishuUsageError:
+            body = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
+            body["remaining_trial_ai_points"] = remaining
+            return JSONResponse(body)
+        payload = quota_payload(item, remaining)
+        return JSONResponse(payload)
+
+    @app.post("/integrations/feishu/usage/events")
+    def feishu_usage_events(body: dict, request: Request) -> JSONResponse:
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        item_id = str(body.get("ai_item_id") or settings.feishu_ai_item_id or "").strip()
+        try:
+            points = int(body.get("consumed_points"))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid_usage_points"}, status_code=400)
+        is_free_trial = bool(body.get("is_free_trial"))
+        trace_id = str(body.get("trace_id") or "").strip() or None
+        try:
+            row = store.record_usage_event(
+                session.principal, item_id, points, is_free_trial, trace_id=trace_id
+            )
+        except ValueError as exc:
+            code = str(exc)
+            status = 409 if code == "feishu_ai_item_missing" else 400
+            return JSONResponse({"error": code}, status_code=status)
+        return JSONResponse(store.usage_event_public(row), status_code=201)
 
     @app.post("/isolated-dev/reap-staging")
     def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:

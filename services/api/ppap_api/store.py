@@ -1218,3 +1218,107 @@ class AuthStore:
                 for item in findings
             ],
         }
+
+    def record_usage_event(
+        self,
+        principal: Principal,
+        ai_item_id: str,
+        consumed_points: int,
+        is_free_trial: bool,
+        *,
+        trace_id: str | None = None,
+    ) -> dict:
+        item = str(ai_item_id or "").strip()
+        if not item:
+            raise ValueError("feishu_ai_item_missing")
+        points = int(consumed_points)
+        if points < 0:
+            raise ValueError("invalid_usage_points")
+        tid = str(trace_id or "").strip() or None
+        event_id = str(uuid.uuid4())
+        status = "none" if is_free_trial else "pending"
+        with self._conn() as conn:
+            if tid:
+                existing = conn.execute(
+                    """
+                    SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                           external_status, external_record_id, trace_id
+                    FROM product.usage_events
+                    WHERE tenant_id = %s AND trace_id = %s
+                    """,
+                    (principal.tenant_id, tid),
+                ).fetchone()
+                if existing:
+                    return self._usage_from_row(existing)
+            try:
+                row = conn.execute(
+                    """
+                    INSERT INTO product.usage_events (
+                        id, tenant_id, user_id, ai_item_id, consumed_points,
+                        is_free_trial, external_status, trace_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                              external_status, external_record_id, trace_id
+                    """,
+                    (
+                        event_id,
+                        principal.tenant_id,
+                        principal.user_id,
+                        item,
+                        points,
+                        bool(is_free_trial),
+                        status,
+                        tid,
+                    ),
+                ).fetchone()
+            except UniqueViolation:
+                row = conn.execute(
+                    """
+                    SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                           external_status, external_record_id, trace_id
+                    FROM product.usage_events
+                    WHERE tenant_id = %s AND trace_id = %s
+                    """,
+                    (principal.tenant_id, tid),
+                ).fetchone()
+        if not row:
+            raise RuntimeError("usage_event_insert_failed")
+        return self._usage_from_row(row)
+
+    def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
+        item = str(ai_item_id or "").strip()
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(consumed_points), 0)
+                FROM product.usage_events
+                WHERE tenant_id = %s AND ai_item_id = %s
+                  AND is_free_trial = true AND external_status = 'none'
+                """,
+                (tenant_id, item),
+            ).fetchone()
+        return int(row[0] if row else 0)
+
+    def usage_event_public(self, row: dict) -> dict:
+        return {
+            "id": row["id"],
+            "ai_item_id": row["ai_item_id"],
+            "consumed_points": row["consumed_points"],
+            "is_free_trial": row["is_free_trial"],
+            "external_status": row["external_status"],
+            "trace_id": row["trace_id"],
+        }
+
+    def _usage_from_row(self, row) -> dict:
+        return {
+            "id": str(row[0]),
+            "tenant_id": str(row[1]),
+            "user_id": str(row[2]),
+            "ai_item_id": row[3],
+            "consumed_points": int(row[4]),
+            "is_free_trial": bool(row[5]),
+            "external_status": row[6],
+            "external_record_id": row[7],
+            "trace_id": row[8],
+        }
