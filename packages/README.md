@@ -1,25 +1,13 @@
 # Packages
 
-Reusable application and audit libraries live here. Exact package names may change during migration, but responsibilities must stay explicit.
+`packages/` 只放当前应用真正复用的库。包是库，不是隐藏微服务。
 
-Current:
+当前：
 
 | Package | Owns |
 |---|---|
-| `ppap_core` | typed settings, DB/object-store probes, Responses URL helpers, capability flags |
+| `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型 |
 
-Expected migration areas from `ppap-agent/ppap-agent`:
+来自 `ppap-agent` 的检查器、DocOps、PDF、OCR、Vision 等能力**不预先整包迁入**。#3 的原生 corpus test 先暴露当前失败，#6 再迁入让该失败用例正确通过所需的最小代码和依赖。
 
-| Target area | Current source concept |
-| --- | --- |
-| `core` | shared contracts, settings, rule profiles, common types |
-| `engine` | orchestration contracts and audit execution boundary |
-| `docops` | document extraction/conversion/file utilities |
-| `excel-audit-engine` | plugin-style rule/checker runtime |
-| `ocr-adapter` | pluggable OCR providers |
-| `pdf-to-excel` | PDF -> workbook preparation pipeline |
-| `vision` | image/seal/signature processing |
-
-Packages are libraries, not hidden microservices. Network boundaries require an explicit architecture reason.
-
-Each migrated package must record its source repository commit and retain or improve the source regression tests.
+新增 package 必须有当前消费者和直接测试；没有真实需要时不为未来格式或 provider 预留 package/plugin 层。
