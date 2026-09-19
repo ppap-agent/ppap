@@ -118,7 +118,9 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
         self.assertIn("python tools/dev.py provision", compose)
+        self.assertIn("context: minio", compose)
         self.assertNotIn("minio/minio:", compose)
+        self.assertNotIn("context: deploy/minio", compose)
         dockerfile = (ROOT / "deploy" / "minio" / "Dockerfile").read_text()
         from tools.stack import MINIO_RELEASE, MINIO_SHA256
 
