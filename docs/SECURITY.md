@@ -1,34 +1,31 @@
-# 安全与外部效果
+# 安全边界
 
-安全保护实际边界，不通过增加审批层代替实现。
+安全文档只描述真正的信任边界，不复制配置默认值或测试状态。
 
-API、worker、迁移管理员分别使用最小权限数据库角色。业务关联检查租户与对象权限；外部身份使用 provider/app/tenant/subject 绑定，不按未经验证的邮箱自动合并。
+## 授权
 
-对象 key 不覆盖，下载能力按对象和短期有效范围授予。用户可影响的 URL 下载需要 SSRF 边界、大小/时间限制、重定向检查和内容验证；只检查扩展名不足。未受信文档内容不得成为模型的工具指令或读取无关凭据的授权。
+API、Worker 和迁移操作使用各自需要的最小权限。业务访问始终检查租户和对象权限；外部身份使用 provider/app/tenant/subject 绑定，不按未经验证的邮箱自动合并。
 
-## Secret 与配置
+登录不等于对象权限，也不等于人工复核权限。
 
-Secret 是泄漏后真正跨越信任边界的值；Cursor Cloud 把普通配置也存入 Runtime Secret 并不造成问题，**存储机制不改变安全分类**。
+## 文件与不可信输入
 
-当前 Core LLM：
+每个产品文件版本关联自己的存储对象/版本引用；后续上传不能重定向已引用历史版本。
 
-- `LLM_API_KEY`：Secret，isolated-dev 唯一必须外部注入的 core secret。
-- `LLM_BASE_URL`：普通配置，isolated-dev 默认 `https://api.trustedtunnel.app/v1`，可覆盖。
-- `LLM_MODEL`：普通配置，isolated-dev 默认 `gpt-5.6-luna`，可覆盖。
-- 协议固定为 Responses-compatible；endpoint 由 `<LLM_BASE_URL>/responses` 派生，不增加可漂移的 `LLM_PROTOCOL`。审核请求显式 `store:false`，不依赖 provider-side response storage；当前 TrustedTunnel transport 使用 `stream:true`，流式验收只检查事件类型，不持久化模型文本。
+用户可影响的 URL 导入必须限制协议、目标网络、重定向、响应大小和时间，避免 SSRF。文件扩展名不能作为内容安全判断。
 
-`FEISHU_APP_ID` 是普通配置，`FEISHU_APP_SECRET` 与 `FEISHU_VERIFICATION_TOKEN` 是飞书 capability Secret。用户 access/refresh token、session/cookie 是运行时身份数据，不是开发机静态 Secret。飞书事件必须通过当前应用的 Verification Token 校验并绑定 App ID 后才保存 `app_ticket`。
+文档内容是数据，不是授权。模型或解析器不能因为文档中的文本而获得工具、网络或无关凭据访问。继续支持 `.doc` 时，保留当前需求所需的受限转换边界。
 
-隔离开发 PostgreSQL、S3-compatible storage 和内部开发角色允许仓库固定 dev defaults；这些值只绑定隔离开发网络，生产不得继承。生产数据库/对象存储凭据由部署 Secret 注入并执行最小权限。
+## Secret
 
-LLM readiness 探针只发送固定无业务内容，禁止 HTTP redirect，不记录 API key、raw provider output 或 response id。它只证明一次依赖可用；不得被当作模型质量、审核准确性或用户 Story 证明。
+Secret 是泄漏后会跨越信任边界的值，例如 API key、app secret、verification token、session/cookie 和生产数据库/对象存储凭据。
 
-可选 integration Secret 缺失只禁用对应 capability，不得迫使 Core PPAP 使用假凭据或启动失败。LLM key 缺失时审核 capability 明确 unavailable；不得静默切换到另一个 endpoint/model。
+普通 endpoint、model、应用 ID 等是否为 Secret 由其实际安全性质决定，不由存储它的产品 UI 决定。canonical 配置字段和 defaults 见 typed Settings / `.env.example`，不在这里重复。
 
-密钥只进入 gitignored 本地 `.env`、Cloud Runtime Secret 或部署 Secret。不要复述历史泄漏值。发现旧明文凭据记录变量和轮换需求，本次不主动轮换共享生产 key。
+密钥只进入 gitignored 本地配置、GitHub Secrets 或部署 Secret；日志不输出 token、cookie、signed URL 或客户原文。
 
-隔离测试可使用真实付费依赖，授权不等于共享外部租户的所有数据都变成测试数据。用测试对象验证，不发无关客户通知。保留最小脱敏证据，不提交 cookie、session、signed URL 或客户原文。
+## 外部效果
 
-保留 `.doc` 能力时，转换器无网络、资源受限、通过受控 IPC。测试在隔离环境不能取消产品运行时的文档隔离。
+只有路径真正产生外部效果时才需要额外考虑幂等、未知结果和 readback。未知的非幂等结果不能盲目重试。
 
-公开发布前另核对源码许可证、模型/文档库分发条件、规则及样本权利。私有接管仓并未自动获得开源许可。
+LLM、飞书、Partner AI 等可选 integration 的可用性不应阻塞无关 Core 路径。它们的 readiness workflow 只诊断对应 integration，不代表产品质量。
