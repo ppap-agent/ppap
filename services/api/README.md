@@ -10,7 +10,7 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `GET /ready` — PostgreSQL and object storage actually reachable
 - `GET /version` — `git_sha`
 - `GET /public-config` — web-safe origin, profile, git sha; never secrets
-- `GET /capabilities` — optional integration flags (`configured` is not GitHub probe success)
+- `GET /capabilities` — optional integration flags (`configured` / `disabled` only; not GitHub probe success)
 
 ## Owns
 

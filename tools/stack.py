@@ -76,6 +76,8 @@ def git_sha() -> str:
 
 
 def child_env() -> dict[str, str]:
+    from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL
+
     env = map_llm_names(dict(os.environ))
     sha = git_sha()
     env["PYTHONPATH"] = pythonpath()
@@ -85,6 +87,11 @@ def child_env() -> dict[str, str]:
     env["PPAP_VERSION_URL"] = env.get("PPAP_VERSION_URL") or "http://127.0.0.1:8080/version"
     env["PPAP_PUBLIC_API_URL"] = env.get("PPAP_PUBLIC_API_URL") or "http://127.0.0.1:8080"
     env["PPAP_ENVIRONMENT"] = env.get("PPAP_ENVIRONMENT") or "isolated-dev"
+    if env["PPAP_PROFILE"] != "production":
+        if not str(env.get("LLM_BASE_URL") or "").strip():
+            env["LLM_BASE_URL"] = ISOLATED_DEV_LLM_BASE_URL
+        if not str(env.get("LLM_MODEL") or "").strip():
+            env["LLM_MODEL"] = ISOLATED_DEV_LLM_MODEL
     return env
 
 

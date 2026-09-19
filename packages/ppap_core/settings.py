@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ISOLATED_DEV_SECRET = "ppap_isolated_dev"
 ISOLATED_DEV_S3_ENDPOINT = "http://127.0.0.1:9000"
+ISOLATED_DEV_LLM_BASE_URL = "https://api.trustedtunnel.app/v1"  # pragma: allowlist secret
+ISOLATED_DEV_LLM_MODEL = "gpt-5.6-luna"  # pragma: allowlist secret
 
 
 class Settings(BaseSettings):
@@ -54,6 +56,10 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
         if self.profile != "production":
+            if not self.llm_base_url.strip():
+                self.llm_base_url = ISOLATED_DEV_LLM_BASE_URL
+            if not self.llm_model.strip():
+                self.llm_model = ISOLATED_DEV_LLM_MODEL
             return self
         isolated_values = {
             self.pg_api_password,

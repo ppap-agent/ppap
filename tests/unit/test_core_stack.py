@@ -14,9 +14,9 @@ from pydantic import ValidationError
 
 from ppap_core.capabilities import report
 from ppap_core.llm import llm_configured, responses_url
-from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
+from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL, ISOLATED_DEV_SECRET, Settings
 from ppap_api import create_app
-from tools.stack import map_llm_names
+from tools.stack import child_env, map_llm_names
 
 
 def _clean_env(**extra: str):
@@ -37,13 +37,30 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
         self.assertEqual(settings.s3_endpoint, "http://127.0.0.1:9000")
         self.assertEqual(settings.llm_api_key, "")
+        self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
+        self.assertFalse(llm_configured(settings))
+
+    def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
+        with _clean_env(LLM_API_KEY="sk-test"):
+            settings = Settings()
+            env = child_env()
+        self.assertEqual(settings.llm_api_key, "sk-test")
+        self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
+        self.assertTrue(llm_configured(settings))
+        self.assertEqual(env["LLM_BASE_URL"], ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(env["LLM_MODEL"], ISOLATED_DEV_LLM_MODEL)
 
     def test_openai_names_are_not_application_authority(self):
         with _clean_env(OPENAI_API_KEY="from-openai", OPENAI_BASE_URL="https://example.invalid/v1", MODEL_NAME="hidden"):
             settings = Settings()
         self.assertEqual(settings.llm_api_key, "")
-        self.assertEqual(settings.llm_base_url, "")
-        self.assertEqual(settings.llm_model, "")
+        self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
+        self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
+        self.assertNotEqual(settings.llm_base_url, "https://example.invalid/v1")
+        self.assertNotEqual(settings.llm_model, "hidden")
+        self.assertFalse(llm_configured(settings))
 
     def test_environment_side_mapping_fills_llm_names(self):
         mapped = map_llm_names({
@@ -134,8 +151,19 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertFalse(llm_configured(self.settings))
         self.assertEqual(self.client.get("/health").status_code, 200)
 
-    def test_feishu_present_is_configured_not_proven(self):
-        with _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret"):
+    def test_configured_capabilities_do_not_claim_readiness_proof(self):
+        with _clean_env(
+            LLM_API_KEY="sk-test",
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            PPAP_PARTNER_AI_ENDPOINT="https://example.invalid",
+        ):
             settings = Settings()
-        self.assertEqual(report(settings)["feishu"]["state"], "configured")
-        self.assertEqual(report(settings)["feishu"]["ready_proven_by"], "issue_4")
+        caps = report(settings)
+        self.assertEqual(caps["llm"]["state"], "configured")
+        self.assertEqual(caps["feishu"]["state"], "configured")
+        self.assertEqual(caps["partner_ai"]["state"], "configured")
+        self.assertEqual(caps["legacy_engine"]["state"], "disabled")
+        for body in caps.values():
+            self.assertEqual(set(body), {"state"})
+            self.assertNotIn("ready_proven_by", body)
