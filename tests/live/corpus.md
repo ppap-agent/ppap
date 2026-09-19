@@ -15,11 +15,11 @@ python tools/live.py audit
 | Class | Where | Rights | What it can prove |
 |---|---|---|---|
 | Public format fixtures | [public/](corpus/public/) recorded in [catalog.json](corpus/catalog.json) | Authored here; no customer content; shippable | Bytes exist and SHA-256 matches. Not a human PPAP oracle. |
-| Controlled business corpus | Authorized checkout of `ppap-agent` @ `53a5bd2b` `assets/` and human PASS/NG tables | Not licensed for this product repo; set `PPAP_CORPUS_ROOT` locally | Same inputs for old-engine comparison and later in-repo checkers. Absent here → `NOT_PROVEN`. |
+| Controlled business corpus | Authorized checkout of `ppap-agent` @ `53a5bd2b` (`assets/v2.0plus`, POC grouped samples, PSW `psw.doc`, plus the 4.8 CSV and POC statistics workbook) | Isolated replay only; do not copy bytes into this git tree. Set `PPAP_CORPUS_ROOT`. Not `assets/nio_live` live-fetch, not superseded `assets/V2.0测试`. | Same inputs for old-engine comparison and later in-repo checkers. Named tables without a checkout stay `NOT_PROVEN`. |
 
 Source guide (read-only): [ppap_agent/tests/README.md @53a5bd2b](https://github.com/ppap-agent/ppap-agent/blob/53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9/ppap_agent/tests/README.md).
 
-Human oracles live in those source tables (V2 4.8 CSV, POC statistics xlsx, PSW review). They are not `engine.example.json` expected rows. Revising an oracle needs a recorded `oracle_revisions[]` row with a reason; do not edit expected values so a new implementation passes. File presence under `PPAP_CORPUS_ROOT` is not that review.
+Human oracles are the V2 4.8 CSV, POC statistics xlsx, and PSW fixture review at that commit. They are not `engine.example.json` expected rows. Product owner authorized those tables for isolated replay on 2026-09-19 (`oracle_revisions`). Revising an oracle still needs a new `oracle_revisions[]` row with a reason; do not edit expected values so a new implementation passes. Named authority without the checkout bytes remains `NOT_PROVEN`.
 
 ## Promised formats
 
@@ -45,8 +45,8 @@ Docling stays a candidate until the same authorized files and human oracle produ
 ## Local controlled replay
 
 ```sh
-export PPAP_CORPUS_ROOT=/absolute/path/to/authorized/ppap-agent
+export PPAP_CORPUS_ROOT=/absolute/path/to/ppap-agent@53a5bd2b
 python tools/live.py corpus
 ```
 
-The catalog still will not mark `human_review` PROVEN until a review record is written into `catalog.json` by someone who may grant that oracle. Presence of files is not authority.
+On an authorized Cloud VM the checkout can live in gitignored `.local/ppap-agent`. `live.py corpus` then checks those bytes; CI without `PPAP_CORPUS_ROOT` still reports `business_oracle_not_proven`. Do not add the originals to this repository.

@@ -143,8 +143,10 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(by_format["scanned"]["human_oracle"], "NOT_PROVEN")
         self.assertEqual(by_format["cross_file"]["replay"], "NOT_PROVEN")
         self.assertEqual(catalog["source_commit"], "53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9")
-        self.assertEqual(catalog["oracle_revisions"], [])
+        self.assertTrue(catalog["oracle_revisions"])
+        self.assertTrue(all(row.get("reason") for row in catalog["oracle_revisions"]))
         self.assertTrue(all(suite.get("rule_version") for suite in catalog["controlled_suites"]))
+        self.assertTrue(human_oracle_authority("human-tables:ppap-agent@53a5bd2b"))
         self.assertFalse(human_oracle_authority("EXAMPLE_ONLY_replace"))
         self.assertFalse(human_oracle_authority("legacy_engine_batch"))
         self.assertFalse(human_oracle_authority("engine_output"))
@@ -195,19 +197,51 @@ class CorpusTests(unittest.TestCase):
             self.assertEqual(report["controlled_corpus"], "NOT_PROVEN")
             self.assertEqual(report["matrix"][0]["controlled_sample"], "NOT_PROVEN")
 
-    def test_local_checkout_without_review_is_not_an_oracle(self):
+    def test_empty_dataset_dirs_are_not_samples(self):
         catalog = load_corpus_catalog()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for suite in catalog["controlled_suites"]:
                 (root / suite["dataset_root"]).mkdir(parents=True, exist_ok=True)
             report = evaluate_corpus(catalog, corpus_root=str(root))
-        self.assertEqual(report["controlled_corpus"], "PROVEN")
+        self.assertEqual(report["controlled_corpus"], "NOT_PROVEN")
         self.assertEqual(report["business_oracle"], "NOT_PROVEN")
         for row in report["matrix"]:
-            self.assertEqual(row["controlled_sample"], "present")
+            self.assertEqual(row["controlled_sample"], "absent")
             self.assertEqual(row["human_oracle"], "NOT_PROVEN")
             self.assertEqual(row["replay"], "NOT_PROVEN")
+
+    def test_named_human_tables_without_bytes_are_not_proven(self):
+        catalog = load_corpus_catalog()
+        self.assertTrue(human_oracle_authority(catalog["controlled_suites"][0]["oracle_authority"]))
+        report = evaluate_corpus(catalog, corpus_root=None)
+        self.assertEqual(report["business_oracle"], "NOT_PROVEN")
+        self.assertEqual(report["controlled_corpus"], "NOT_PROVEN")
+
+    def test_authorized_checkout_with_sample_bytes_is_replay_ready(self):
+        catalog = load_corpus_catalog()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "assets" / "v2.0plus" / "target.xlsx").parent.mkdir(parents=True)
+            (root / "assets" / "v2.0plus" / "target.xlsx").write_bytes(b"PK\x03\x04")
+            (root / "assets" / "v2.0plus" / "target.pdf").write_bytes(b"%PDF-1.4\n")
+            csv_path = root / "assets" / "全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+            csv_path.write_text("id,status\n", encoding="utf-8")
+            poc = root / "assets" / "poc测试" / "POC测试样本" / "bundle"
+            poc.mkdir(parents=True)
+            (poc / "target.xlsx").write_bytes(b"PK\x03\x04")
+            stats = root / "assets" / "poc测试" / "poc-测试数据统计表.xlsx"
+            stats.write_bytes(b"PK\x03\x04")
+            doc = root / "ppap_agent" / "tests" / "fixtures" / "legacy_doc" / "psw.doc"
+            doc.parent.mkdir(parents=True)
+            doc.write_bytes(b"DOC")
+            report = evaluate_corpus(catalog, corpus_root=str(root))
+        self.assertEqual(report["controlled_corpus"], "PROVEN")
+        self.assertEqual(report["business_oracle"], "PROVEN")
+        for row in report["matrix"]:
+            self.assertEqual(row["controlled_sample"], "present")
+            self.assertEqual(row["human_oracle"], "reviewed")
+            self.assertEqual(row["replay"], "ready")
 
     def test_oracle_revision_requires_reason(self):
         catalog = load_corpus_catalog()

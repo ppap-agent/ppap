@@ -176,6 +176,34 @@ def _format_row(fmt: str) -> dict[str, str]:
     }
 
 
+CONTROLLED_SAMPLE_SUFFIXES = {".xlsx", ".xls", ".xlsm", ".pdf", ".docx", ".doc"}
+
+
+def controlled_suite_present(root: Path, suite: dict) -> bool:
+    relative = str(suite.get("dataset_root") or "")
+    if not relative or ".." in Path(relative).parts:
+        return False
+    dataset = root / relative
+    if not dataset.exists():
+        return False
+    required = []
+    oracle_rel = str(suite.get("oracle_path") or "").strip()
+    if oracle_rel:
+        required.append(oracle_rel)
+    extra = suite.get("required_paths")
+    if isinstance(extra, list):
+        required.extend(str(item) for item in extra)
+    for item in required:
+        if not item or ".." in Path(item).parts or not (root / item).is_file():
+            return False
+    if dataset.is_file():
+        return dataset.suffix.lower() in CONTROLLED_SAMPLE_SUFFIXES
+    for path in dataset.rglob("*"):
+        if path.is_file() and path.suffix.lower() in CONTROLLED_SAMPLE_SUFFIXES:
+            return True
+    return False
+
+
 def evaluate_corpus(catalog: dict | None = None, corpus_root: str | None = None) -> dict:
     data = catalog if catalog is not None else load_corpus_catalog()
     raw_root = corpus_root if corpus_root is not None else os.getenv("PPAP_CORPUS_ROOT", "")
@@ -215,8 +243,7 @@ def evaluate_corpus(catalog: dict | None = None, corpus_root: str | None = None)
         relative = str(suite.get("dataset_root") or "")
         if not relative or ".." in Path(relative).parts:
             raise NotProven("invalid_corpus_catalog")
-        local = (root / relative) if root is not None else None
-        present = bool(local and local.exists())
+        present = bool(root is not None and controlled_suite_present(root, suite))
         oracle_ok = human_oracle_authority(str(suite.get("oracle_authority") or ""))
         for fmt in formats:
             if root is None:
@@ -225,9 +252,8 @@ def evaluate_corpus(catalog: dict | None = None, corpus_root: str | None = None)
                 matrix[fmt]["controlled_sample"] = "present"
             else:
                 matrix[fmt]["controlled_sample"] = "absent"
-            if oracle_ok:
-                matrix[fmt]["human_oracle"] = "reviewed"
             if present and oracle_ok:
+                matrix[fmt]["human_oracle"] = "reviewed"
                 matrix[fmt]["replay"] = "ready"
     business = all(row["human_oracle"] == "reviewed" for row in matrix.values())
     candidates = data.get("document_candidates") if isinstance(data.get("document_candidates"), list) else []
