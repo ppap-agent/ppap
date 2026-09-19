@@ -1,12 +1,6 @@
 name: Feishu readiness
 
 on:
-  workflow_call:
-    secrets:
-      FEISHU_APP_ID:
-        required: true
-      FEISHU_APP_SECRET:
-        required: true
   workflow_dispatch:
 
 permissions: {}
@@ -25,22 +19,10 @@ jobs:
           set -euo pipefail
           : "${FEISHU_APP_ID:?missing FEISHU_APP_ID}"
           : "${FEISHU_APP_SECRET:?missing FEISHU_APP_SECRET}"
-
           FEISHU_APP_ID="$(printf '%s' "$FEISHU_APP_ID" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-
           response="$(mktemp)"
           trap 'rm -f "$response"' EXIT
-
           http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Content-Type: application/json" https://open.feishu.cn/open-apis/auth/v3/app_ticket/resend -d "$(jq -nc --arg app_id "$FEISHU_APP_ID" --arg app_secret "$FEISHU_APP_SECRET" '{app_id:$app_id,app_secret:$app_secret}')")"
-
-          if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
-            echo "Feishu app credential probe: HTTP $http_status"
-            exit 1
-          fi
-
-          if ! jq -e '.code == 0' "$response" >/dev/null; then
-            jq -c '{code:(.code // null),msg:(.msg // null)}' "$response" 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "Feishu store app credentials: ready (app_ticket resend requested)"
+          [[ "$http_status" =~ ^2[0-9][0-9]$ ]] || { echo "Feishu app credential probe: HTTP $http_status"; exit 1; }
+          jq -e '.code == 0' "$response" >/dev/null || { jq -c '{code:(.code // null),msg:(.msg // null)}' "$response" 2>/dev/null || true; exit 1; }
+          echo "Feishu store app credentials: ready"
