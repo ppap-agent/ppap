@@ -7,6 +7,7 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `python tools/stack.py up` 启�
 - `/health`、`/ready`、`/version`、`/public-config`
 - 飞书登录/回调、`/me`、`/logout`
 - 飞书 Drive/Docs 导入：`POST /integrations/feishu/files/import`（session 用户 token → meta → Drive 下载或云文档导出 → 普通 `file_version`）
+- 飞书文档关联文件：`GET /integrations/feishu/docs/links?file_token=`（扫描当前云文档 mention/超链接/附件，返回 token/type，不另建飞书文件台账）
 - 飞书提交：`POST /integrations/feishu/audits`（导入主文件/对比文件后走现有草稿受理，返回普通 round）
 - 飞书用量：`GET /integrations/feishu/usage/quota`（Partner AI 功能/额度 + 本地已入账试用点数）；`POST /integrations/feishu/usage/events`（记录试用入账或待外部确认的用量）；`POST /integrations/feishu/usage/events/{id}/report`（试用跳过上报；pending 事件经 credential/apply + usage_records/report 后才标 `confirmed`，不把本地 job 完成当成已扣费）
 - 飞书写回：`POST /integrations/feishu/rounds/{round_id}/writeback`（把普通 round 的 PASS/NG 履历插回源文档并附 Web 回访链接；ERR 不写回；不另建飞书履历台账）

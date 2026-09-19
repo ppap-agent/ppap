@@ -43,6 +43,10 @@ class PermanentFailure(Exception):
     pass
 
 
+class FeishuDocLinksError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class FetchPlan:
     doc_type: str
@@ -510,3 +514,181 @@ def import_drive_material(
         raise ValueError("too_large")
     filename = _choose_filename(header_name, meta.name, plan.doc_type, "drive_" + meta.token)
     return ImportedMaterial(data, filename, content_type, plan.doc_type, meta.token)
+
+
+_FEISHU_HOST = re.compile(r"(?:feishu\.cn|larksuite\.com)", re.I)
+_DOC_URL_TOKEN = re.compile(
+    r"/(docx|sheet|bitable|file|doc)/([^/?#]+)",
+    re.I,
+)
+_TEXT_KEYS = (
+    "text",
+    "heading1",
+    "heading2",
+    "heading3",
+    "heading4",
+    "heading5",
+    "heading6",
+    "heading7",
+    "heading8",
+    "heading9",
+    "bullet",
+    "ordered",
+    "quote",
+)
+
+
+def extract_doc_token_from_url(url: str) -> tuple[str, str] | None:
+    raw = (url or "").strip()
+    if not raw or not _FEISHU_HOST.search(raw):
+        return None
+    match = _DOC_URL_TOKEN.search(raw)
+    if not match:
+        return None
+    return match.group(2), match.group(1).lower()
+
+
+def _block_elements(block: dict) -> list:
+    for key in _TEXT_KEYS:
+        node = block.get(key)
+        if isinstance(node, dict) and isinstance(node.get("elements"), list):
+            return node["elements"]
+    return []
+
+
+def _element_link_url(element: dict) -> str:
+    link = element.get("link")
+    if isinstance(link, dict):
+        href = str(link.get("url") or "").strip()
+        if href:
+            return href
+    text_run = element.get("text_run")
+    if isinstance(text_run, dict):
+        style = text_run.get("text_element_style")
+        if isinstance(style, dict) and isinstance(style.get("link"), dict):
+            href = str(style["link"].get("url") or "").strip()
+            if href:
+                return href
+        href = str(text_run.get("url") or "").strip()
+        if href:
+            return href
+    return str(element.get("url") or "").strip()
+
+
+def _collect_block_links(block: dict) -> list[dict[str, str]]:
+    found: list[dict[str, str]] = []
+    file_node = block.get("file")
+    if isinstance(file_node, dict):
+        token = str(file_node.get("token") or "").strip()
+        if token:
+            found.append(
+                {
+                    "token": token,
+                    "name": str(file_node.get("name") or "").strip(),
+                    "url": str(file_node.get("url") or "").strip(),
+                    "doc_type": "file",
+                }
+            )
+    for element in _block_elements(block):
+        if not isinstance(element, dict):
+            continue
+        mention = element.get("mention_doc")
+        if isinstance(mention, dict):
+            token = str(mention.get("token") or "").strip()
+            url = str(mention.get("url") or "").strip()
+            if token and _FEISHU_HOST.search(url):
+                hinted = extract_doc_token_from_url(url)
+                found.append(
+                    {
+                        "token": token,
+                        "name": str(mention.get("title") or mention.get("name") or "").strip(),
+                        "url": url,
+                        "doc_type": (hinted[1] if hinted else "")
+                        or str(mention.get("obj_type") or mention.get("type") or "").strip(),
+                    }
+                )
+            continue
+        href = _element_link_url(element)
+        extracted = extract_doc_token_from_url(href)
+        if extracted:
+            token, doc_type = extracted
+            found.append({"token": token, "name": "", "url": href, "doc_type": doc_type})
+    return found
+
+
+def _resolve_link_type(http, access_token: str, item: dict[str, str]) -> dict[str, str]:
+    hinted = (item.get("doc_type") or "").strip()
+    try:
+        meta = get_file_meta(http, access_token, item["token"], hinted or None)
+    except FeishuMetaError:
+        if hinted and hinted != "folder":
+            item["doc_type"] = hinted
+        return item
+    if meta.doc_type == "folder":
+        item["doc_type"] = "folder"
+        return item
+    item["doc_type"] = meta.doc_type
+    if not item.get("name"):
+        item["name"] = meta.name
+    return item
+
+
+def _fetch_docx_blocks(http, access_token: str, file_token: str) -> list:
+    items: list = []
+    page_token = ""
+    for _ in range(20):
+        params = {"page_size": 500}
+        if page_token:
+            params["page_token"] = page_token
+        try:
+            response = http.get(
+                docx_blocks_url(file_token),
+                params=params,
+                headers=_auth_headers(access_token),
+                timeout=20,
+            )
+            body = _response_json(response)
+        except Exception as exc:
+            raise FeishuDocLinksError("feishu_doc_links_failed") from exc
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status < 200 or status >= 300:
+            raise FeishuDocLinksError("feishu_doc_links_failed")
+        if body.get("code") not in (0, None):
+            return items
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        page_items = data.get("items") if isinstance(data.get("items"), list) else []
+        items.extend(page_items)
+        if not data.get("has_more"):
+            break
+        page_token = str(data.get("page_token") or "").strip()
+        if not page_token:
+            break
+    return items
+
+
+def list_doc_links(http, access_token: str, file_token: str) -> list[dict[str, str]]:
+    token = (file_token or "").strip()
+    if not token or "/" in token or ".." in token:
+        raise ValueError("invalid_file_token")
+    items = _fetch_docx_blocks(http, access_token, token)
+    collected: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for block in items:
+        if not isinstance(block, dict):
+            continue
+        for link in _collect_block_links(block):
+            if link["token"] in seen:
+                continue
+            seen.add(link["token"])
+            resolved = _resolve_link_type(http, access_token, link)
+            if resolved.get("doc_type") == "folder":
+                continue
+            collected.append(
+                {
+                    "token": resolved["token"],
+                    "name": resolved.get("name") or resolved["token"],
+                    "url": resolved.get("url") or "",
+                    "doc_type": resolved.get("doc_type") or "",
+                }
+            )
+    return collected

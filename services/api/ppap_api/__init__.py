@@ -25,11 +25,13 @@ from ppap_core.feishu import (
     user_info,
 )
 from ppap_core.feishu_drive import (
+    FeishuDocLinksError,
     FeishuExportError,
     FeishuMetaError,
     PermanentFailure,
     UnsupportedDocType,
     import_drive_material,
+    list_doc_links,
 )
 from ppap_core.feishu_usage import (
     FeishuUsageError,
@@ -507,6 +509,36 @@ def create_app(
                 return mapped
             raise
         return JSONResponse(round_body, status_code=201)
+
+    @app.get("/integrations/feishu/docs/links")
+    def feishu_doc_links(request: Request, file_token: str = "") -> JSONResponse:
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        try:
+            links = list_doc_links(http, session.access_token, file_token)
+        except ValueError as exc:
+            if str(exc) == "invalid_file_token":
+                return JSONResponse({"error": "invalid_file_token"}, status_code=400)
+            raise
+        except FeishuDocLinksError:
+            return JSONResponse({"error": "feishu_doc_links_failed"}, status_code=502)
+        return JSONResponse(
+            {
+                "doc_links": [
+                    {
+                        "token": item["token"],
+                        "name": item["name"],
+                        "doc_type": item["doc_type"],
+                        "type": item["doc_type"],
+                        "url": item["url"],
+                    }
+                    for item in links
+                ]
+            }
+        )
 
     @app.get("/integrations/feishu/usage/quota")
     def feishu_usage_quota(request: Request, ai_item_id: str = "") -> JSONResponse:
