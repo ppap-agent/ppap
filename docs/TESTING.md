@@ -2,46 +2,53 @@
 
 测试保护当前行为，不维护第二套产品状态或“证明台账”。
 
-## 原则
+## Engine migration baseline
 
-- **logic/unit**：完整覆盖稳定规则和数据不变量。
-- **integration**：覆盖数据库、对象存储、Worker、授权等关键边界。
-- **E2E / external**：只为少数真实用户路径或真实外部效果使用。
-- 测试断言稳定性质，不冻结当前文件数量、目录 hash、服务清单或已经删除功能的“持续不存在”。
-- Git 中的 fixture/oracle 由 Git 版本化，不再维护 hash manifest 或 oracle registry。
+Canonical source baseline：
 
-## 默认资产权限
+`ppap-agent@53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9`
 
-`ppap-agent` GitHub 组织中的测试、样本、配置和我们可访问的远程环境默认可直接用于本项目测试，除非之后明确排除。不要因为“业务数据”“旧环境”或“来源仓”标签额外等待许可确认。
+使用该 revision 的 V2 4.8、POC grouped、PSW cross-format corpus 与人工 expected。已观察结果：
 
-## 普通 CI
+| Suite | Baseline |
+|---|---|
+| V2 Excel | 78 passed |
+| V2 PDF | 66 passed / 19 failed |
+| V2 scanned | 1 failed |
+| POC grouped | 27 passed |
+| PSW | 已运行部分 5 passed；DOC 在有 LibreOffice 的环境按同 revision 结果补齐 baseline |
+
+#3 的迁移验收是**逐 case / 逐规则结果与 baseline 一致，不新增 migration regression**。baseline 原本失败的 PDF/scanned case 可以继续失败；算法优化以后单独进行，不属于迁移完成条件。
+
+迁入后，本仓的 pytest / fixture / oracle 成为 canonical regression，CI 不再 checkout `ppap-agent`。
+
+## Feishu parity baseline
+
+#11 以以下固定提交的客户可见行为为迁移下限：
+
+- `ppap-web@557a2aeab3e5f5e68d8e8cf47593ca172da733d7`
+- `ppap-uac@fbe912faf1894fe018ea88c20e46a57842468623`
+- `ppap-biz@7570d966f178cde9c841600be485c43109d92019`
+- `ppap-host@c32b46a0a0d4f252a1677e8abce53a210b3c6d28`
+- `hax@0923f5acea380ddd09813621703777153a8c7971`
+
+验收看业务 capability parity，不要求像素级 UI 相同。
+
+## 测试层级
+
+- **logic/unit**：稳定规则和数据不变量。
+- **corpus regression**：完整 engine parity。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。
+- **E2E**：少量完整客户路径。#7 至少一条完整 Web 审核闭环；#11 至少一条飞书来源进入同一审核闭环。
+
+规则排列组合留在低层，不复制到 E2E。
+
+## 当前 CI
 
 ```sh
 PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
 ```
 
-GitHub Actions 在 push / pull request 上直接运行本仓测试。终态 CI 不 checkout `ppap-agent`。
+随着 #3/#15 推进，CI 增加 canonical corpus、integration、E2E、lint/typecheck 和 production build。它们都是普通测试/构建步骤，不增加 Pxx/Gxx、PROVEN/NOT_PROVEN 或 evidence JSON。
 
-## Corpus / 检查能力迁移
-
-#3 把仍有价值的 pytest、helper、fixture 和人工 expected 迁入本仓。可以按内聚测试域一次迁入，不需要人为拆成一个 case 一个 PR。
-
-#6 以**尽快让本仓 corpus 回归可用**为目标迁实现：
-- 已经工作的内聚 engine/package 可以整体迁入，如果这比逐条重写更快；
-- 迁入后由本仓测试约束，再删除没有当前消费者的代码；
-- 不为了迁移整洁度修改人工 expected；
-- PDF/DOC/OCR/Vision 等只要属于客户实际路径且已有可用资产，就直接利用，不需要先证明“为什么可以用”。
-
-## 本地/远程集成
-
-本地 isolated-dev：
-
-```sh
-python tools/stack.py up
-python tools/stack.py verify
-python tools/stack.py verify-auth
-python tools/stack.py verify-uploads
-python tools/stack.py down
-```
-
-组织内现有可访问远程环境也可以直接用于相关 integration / E2E 验证。只保留真实安全边界和非幂等外部效果的必要 readback；不增加 PROVEN/NOT_PROVEN、evidence JSON 或额外 gate taxonomy。
+组织内现有测试、样本、配置和可访问远程环境默认可以直接用于测试。
