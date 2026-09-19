@@ -25,8 +25,10 @@ class WebAuditLoopTests(unittest.TestCase):
     def test_submit_leave_return_review_and_resubmit(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "report.xlsx"
+            reference = Path(tmp) / "context.pdf"
             newer = Path(tmp) / "report-v2.xlsx"
             target.write_bytes(b"browser-target-v1")
+            reference.write_bytes(b"browser-reference")
             newer.write_bytes(b"browser-target-v2")
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
@@ -38,6 +40,9 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.get_by_test_id("source-upload").set_input_files(str(target))
                 page.get_by_test_id("prepare-audit").click()
                 page.wait_for_function("() => document.getElementById('document-version-id').textContent.length > 0")
+                page.get_by_test_id("reference-upload").set_input_files(str(reference))
+                page.get_by_test_id("prepare-reference").click()
+                page.wait_for_function("() => document.getElementById('draft-items').textContent.includes('context.pdf')")
                 page.get_by_test_id("save-draft").click()
                 page.wait_for_function("() => document.getElementById('draft-id').textContent.length > 0")
                 page.get_by_test_id("submit-audit").click()
@@ -48,13 +53,17 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.goto(f"{WEB}/?round={round_id}")
                 page.wait_for_selector('[data-testid="finding-status"]')
                 expect(page.get_by_test_id("finding-status").first).to_have_text("PASS")
+                coverage = page.get_by_test_id("coverage-panel").inner_text()
+                self.assertIn("report.xlsx", coverage)
+                self.assertIn("context.pdf", coverage)
                 original = page.get_by_test_id("open-original")
                 gap = page.get_by_test_id("locator-gap")
                 if original.count() == 0:
                     expect(gap).to_be_visible()
                 else:
                     expect(gap).to_be_hidden()
-                    href = original.first.get_attribute("href")
+                    target_link = page.locator('[data-testid="open-original"]', has_text="report.xlsx")
+                    href = target_link.get_attribute("href")
                     self.assertTrue(href)
                     downloaded = page.request.get(href)
                     self.assertEqual(downloaded.status, 200)
