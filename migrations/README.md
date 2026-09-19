@@ -5,7 +5,11 @@ One PostgreSQL cluster, two responsibility schemas:
 - `product`: product truth and user-visible history
 - `engine`: execution queue, attempts, leases, and diagnostics
 
-Migrations are forward-only and reviewed with the application change that needs them. Apply with `python tools/stack.py migrate` or `python tools/stack.py up`.
+Migrations are forward-only and reviewed with the application change that needs them.
+
+Canonical apply: `python tools/dev.py migrate`（对已配置的 PostgreSQL 执行 pending SQL）。isolated-dev 空库需要先有进程和角色：`python tools/stack.py migrate` 或 `python tools/stack.py up`。
+
+Empty → latest 与 previous → latest 的运行验证：`python tools/dev.py test schema`。
 
 Rules:
 

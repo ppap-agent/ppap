@@ -53,6 +53,8 @@ def cmd_test(argv: list[str]) -> int:
         return run([sys.executable, "-m", "pytest", *args])
     if argv[:1] == ["e2e"]:
         return run([sys.executable, "-m", "unittest", "tests.e2e.test_web_audit", "-v"])
+    if argv[:1] == ["schema"]:
+        return run([sys.executable, "-m", "unittest", "tests.schema.test_upgrade", "-v"])
     targets = argv or ["discover", "-s", "tests/unit", "-v"]
     return run([sys.executable, "-m", "unittest", *targets])
 
@@ -98,6 +100,34 @@ def _docker_build(sha: str) -> dict[str, str]:
     return images
 
 
+def _product_pythonpath() -> None:
+    for part in pythonpath("").split(os.pathsep):
+        if part and part not in sys.path:
+            sys.path.insert(0, part)
+
+
+def cmd_migrate() -> int:
+    _product_pythonpath()
+    import psycopg
+
+    from ppap_core.settings import Settings
+    from tools.migrate import apply_migrations, latest_version
+
+    settings = Settings()
+    dsn = (
+        f"postgresql://{settings.pg_migrator_user}:{settings.pg_migrator_password}"
+        f"@{settings.pg_host}:{settings.pg_port}/{settings.pg_database}"
+    )
+    try:
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            applied = apply_migrations(conn)
+    except Exception as exc:
+        print(f"migrate failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"status": "migrated", "applied": applied, "latest": latest_version()}))
+    return 0
+
+
 def cmd_build() -> int:
     sha = git_sha() or "unknown"
     _copy_web(sha)
@@ -115,7 +145,7 @@ def cmd_build() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "quality", "test", "build"])
+    parser.add_argument("command", choices=["install", "quality", "test", "build", "migrate"])
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     rest = list(args.args)
@@ -127,6 +157,8 @@ def main() -> int:
         return cmd_quality()
     if args.command == "test":
         return cmd_test(rest)
+    if args.command == "migrate":
+        return cmd_migrate()
     return cmd_build()
 
 

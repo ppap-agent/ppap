@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT)]
 
 from tools.dev import cmd_build, cmd_quality
+from tools.migrate import latest_version, migration_versions, previous_version
 from tools.paths import PYTHONPATH_PARTS, git_sha, pythonpath
 from tools.stack import pythonpath as stack_pythonpath
 from tools.web_server import write_runtime_config
@@ -27,6 +28,14 @@ class DevToolingTests(unittest.TestCase):
     def test_quality_compiles_canonical_tools(self):
         with patch.dict(os.environ, {"PPAP_BUILD_SHA": "a" * 40}):
             self.assertEqual(cmd_quality(), 0)
+
+    def test_migrations_are_ordered_sql_files(self):
+        versions = migration_versions()
+        self.assertGreaterEqual(len(versions), 2)
+        self.assertEqual(versions, sorted(versions))
+        self.assertEqual(previous_version(), versions[-2])
+        self.assertEqual(latest_version(), versions[-1])
+        self.assertTrue((ROOT / "migrations" / latest_version()).is_file())
 
     def test_build_writes_identity_and_web_for_the_git_revision(self):
         sha = "b" * 40

@@ -22,6 +22,7 @@ python tools/dev.py install
 python tools/dev.py quality
 python tools/dev.py test
 python tools/dev.py build
+python tools/dev.py migrate
 
 python tools/stack.py up
 python tools/stack.py verify
@@ -32,13 +33,13 @@ python tools/stack.py verify-audit
 python tools/stack.py down
 ```
 
-`python tools/dev.py test` 跑 unit。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产制品：`python tools/dev.py build` 写 `dist/identity.json` 与 `dist/web`；`PPAP_BUILD_IMAGES=1 python tools/dev.py build` 额外打 `ppap-api` / `ppap-worker` / `ppap-web` 镜像，标签为同一 Git revision。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+`python tools/dev.py test` 跑 unit。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产制品：`python tools/dev.py build` 写 `dist/identity.json` 与 `dist/web`；`PPAP_BUILD_IMAGES=1 python tools/dev.py build` 额外打 `ppap-api` / `ppap-worker` / `ppap-web` 镜像，标签为同一 Git revision。`python tools/dev.py migrate` 把配置的 PostgreSQL 从当前 schema 升到 latest（不对 isolated-dev 集群做 bootstrap；本地空库用 `python tools/stack.py migrate`）。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`、`python tools/dev.py`。CI 调用与本地相同的 install/quality/test/build。后续若把 Ruff、Pyright 或 Vite 收进来，仍走这一入口，不另起流水线逻辑。#15 剩余：schema upgrade 与实际 deploy/upgrade/backup/restore/rollback。
+当前实现是 Python 3.12、单一 `pyproject.toml`、`python tools/dev.py`。CI 调用与本地相同的 install/quality/test/build/migrate。后续若把 Ruff、Pyright 或 Vite 收进来，仍走这一入口，不另起流水线逻辑。#15 剩余：实际 deploy/upgrade/backup/restore/rollback。
 
 ## 迁移工作
 

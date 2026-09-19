@@ -26,7 +26,6 @@ LOCAL = ROOT / ".local" / "stack"
 BIN = ROOT / ".local" / "bin"
 VENV = ROOT / ".venv"
 WEB = ROOT / "apps" / "web"
-MIGRATIONS = ROOT / "migrations"
 PGDATA = LOCAL / "pgdata"
 MINIO_DATA = LOCAL / "minio"
 LOGS = LOCAL / "logs"
@@ -300,30 +299,15 @@ def migrate(env: dict[str, str]) -> None:
 
     sys.path[:0] = [str(ROOT / "packages")]
     from ppap_core.settings import Settings
+    from tools.migrate import apply_migrations
 
     settings = Settings()
     user = env.get("PPAP_PG_MIGRATOR_USER", settings.pg_migrator_user)
     password = env.get("PPAP_PG_MIGRATOR_PASSWORD", settings.pg_migrator_password)
-    dsn = (
-        f"postgresql://{user}:{password}@{settings.pg_host}:{settings.pg_port}/{settings.pg_database}"
-    )
+    database = env.get("PPAP_PG_DATABASE", settings.pg_database)
+    dsn = f"postgresql://{user}:{password}@{settings.pg_host}:{settings.pg_port}/{database}"
     with psycopg.connect(dsn, autocommit=True) as conn:
-        conn.execute("CREATE SCHEMA IF NOT EXISTS product")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS product.schema_migrations (
-                version text PRIMARY KEY,
-                applied_at timestamptz NOT NULL DEFAULT now()
-            )
-            """
-        )
-        applied = {row[0] for row in conn.execute("SELECT version FROM product.schema_migrations")}
-        for path in sorted(MIGRATIONS.glob("*.sql")):
-            version = path.name
-            if version in applied:
-                continue
-            conn.execute(path.read_text())
-            conn.execute("INSERT INTO product.schema_migrations (version) VALUES (%s)", (version,))
+        apply_migrations(conn)
 
 
 def start_minio(env: dict[str, str]) -> None:
