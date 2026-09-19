@@ -521,7 +521,7 @@ def seed_auth() -> int:
             }, indent=2) + "\n")
             path.chmod(0o600)
             files[subject] = str(path)
-    print(json.dumps({"ok": True, "files": files, "s02_login": "NOT_PROVEN"}))
+    print(json.dumps({"ok": True, "files": files}))
     return 0
 
 
@@ -530,7 +530,7 @@ def verify_auth() -> int:
     from ppap_core.fixtures import RESOURCE_A
 
     env = child_env()
-    report = {"ok": False, "s02_login": "NOT_PROVEN"}
+    report = {"ok": False}
     try:
         api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
 
@@ -581,7 +581,7 @@ def verify_uploads() -> int:
     import httpx
 
     env = child_env()
-    report = {"ok": False, "s03_history": "NOT_PROVEN"}
+    report = {"ok": False}
     try:
         api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
 
