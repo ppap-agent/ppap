@@ -15,6 +15,7 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `python tools/stack.py up` 启�
 - 文件/版本：创建版本、写入 blob、finalize、读取 metadata、download
 - isolated-dev fixture session 与 staging cleanup
 - 审核草稿、规则选择、受理入队、轮次读取、人工复核、显式重审
+- 审核历史：`GET /rounds`（当前主体可读取的 round 摘要，供 docs-addon / Web 回访，不另建飞书履历台账）
 
 文件历史由 `file_version_id` 和其存储对象引用确定。当前 finalize 会计算 SHA-256 checksum 作为辅助完整性/比较信息；checksum 不是产品版本 identity。
 

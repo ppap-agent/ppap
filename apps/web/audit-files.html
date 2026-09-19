@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PPAP 历史审核记录</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; max-width: 46rem; line-height: 1.5; }
+      .hidden { display: none; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid #eee; text-align: left; padding: 0.4rem 0.2rem; }
+      .error { color: #c00; }
+    </style>
+  </head>
+  <body>
+    <h1>历史审核记录</h1>
+    <p><a href="./">返回工作台</a></p>
+    <p data-testid="history-error" id="history-error" class="error hidden"></p>
+    <p data-testid="history-empty" id="history-empty" class="hidden">暂无审核记录</p>
+    <table data-testid="history-list" id="history-list" class="hidden">
+      <thead>
+        <tr><th>文件</th><th>规则</th><th>执行</th><th>回访</th></tr>
+      </thead>
+      <tbody data-testid="history-rows" id="history-rows"></tbody>
+    </table>
+    <script src="./audit-files.js"></script>
+  </body>
+</html>

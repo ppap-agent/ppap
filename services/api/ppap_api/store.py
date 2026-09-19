@@ -755,6 +755,33 @@ class AuthStore:
         with self._conn() as conn:
             return self._round_public(conn, parsed)
 
+    def list_rounds(self, principal: Principal, limit: int = 50) -> list[dict]:
+        try:
+            cap = max(1, min(int(limit), 50))
+        except (TypeError, ValueError):
+            cap = 50
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.id
+                FROM product.audit_rounds r
+                JOIN product.resource_grants g
+                    ON g.resource_id = r.id AND g.user_id = %s
+                    AND g.capability IN ('read', 'review')
+                WHERE r.tenant_id = %s
+                GROUP BY r.id, r.created_at
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT %s
+                """,
+                (principal.user_id, principal.tenant_id, cap),
+            ).fetchall()
+            items = []
+            for row in rows:
+                item = self._round_history(conn, row[0])
+                if item:
+                    items.append(item)
+            return items
+
     def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
         rid, fid, vid = _as_uuid(round_id), _as_uuid(file_id), _as_uuid(version_id)
         if not rid or not fid or not vid:
@@ -1152,6 +1179,35 @@ class AuthStore:
                 }
                 for item in items
             ],
+        }
+
+    def _round_history(self, conn, round_id) -> dict | None:
+        row = conn.execute(
+            """
+            SELECT id, execution, rule_version_id, rule_title, predecessor_id, created_at
+            FROM product.audit_rounds WHERE id = %s
+            """,
+            (round_id,),
+        ).fetchone()
+        if not row:
+            return None
+        inputs = conn.execute(
+            """
+            SELECT i.role, fv.original_filename
+            FROM product.round_inputs i
+            JOIN product.file_versions fv ON fv.id = i.file_version_id
+            WHERE i.round_id = %s
+            ORDER BY i.role, fv.original_filename
+            """,
+            (round_id,),
+        ).fetchall()
+        return {
+            "id": str(row[0]),
+            "execution": row[1],
+            "rule": {"id": str(row[2]), "title": row[3]},
+            "predecessor_id": str(row[4]) if row[4] else None,
+            "created_at": row[5].isoformat() if row[5] is not None else None,
+            "inputs": [{"role": item[0], "original_filename": item[1]} for item in inputs],
         }
 
     def _round_public(self, conn, round_id: str) -> dict | None:

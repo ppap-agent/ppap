@@ -385,6 +385,34 @@ class MemoryAuthStore:
             return None
         return self._round_public(round_id)
 
+    def list_rounds(self, principal: Principal, limit: int = 50) -> list[dict]:
+        try:
+            cap = max(1, min(int(limit), 50))
+        except (TypeError, ValueError):
+            cap = 50
+        items: list[dict] = []
+        for round_id in reversed(list(self.rounds)):
+            resource = self.resources.get(round_id)
+            if resource is None or not can_read(principal, resource, self.grants(round_id, principal.user_id)):
+                continue
+            body = self._round_public(round_id)
+            items.append(
+                {
+                    "id": body["id"],
+                    "execution": body["execution"],
+                    "rule": body["rule"],
+                    "predecessor_id": body.get("predecessor_id"),
+                    "created_at": body.get("created_at"),
+                    "inputs": [
+                        {"role": item["role"], "original_filename": item["original_filename"]}
+                        for item in body.get("inputs") or []
+                    ],
+                }
+            )
+            if len(items) >= cap:
+                break
+        return items
+
     def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
         if round_id not in self.rounds:
             return None

@@ -370,6 +370,33 @@ class AuditFlowTests(unittest.TestCase):
         self.assertTrue(any("context.pdf" in row for row in body["coverage"]["unchecked"]))
         self.assertFalse(body["coverage"]["locator_gap"])
 
+    def test_round_history_lists_authorized_rounds_only(self):
+        self.assertEqual(self.client.get("/rounds").status_code, 401)
+        self._login("alice")
+        empty = self.client.get("/rounds")
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(empty.json()["rounds"], [])
+        target = self._upload("report.xlsx", b"target-bytes")
+        draft = self.client.post("/drafts").json()["id"]
+        self.client.put(
+            f"/drafts/{draft}",
+            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+        )
+        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "history-1"}).json()["id"]
+        listed = self.client.get("/rounds").json()["rounds"]
+        self.assertEqual([row["id"] for row in listed], [round_id])
+        self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
+        self.assertNotIn("findings", listed[0])
+        self._login("carol")
+        other = self.client.get("/rounds")
+        self.assertEqual(other.status_code, 200)
+        self.assertEqual(other.json()["rounds"], [])
+        self._login("bob")
+        self.assertEqual(self.client.get("/rounds").json()["rounds"], [])
+        self.store.grant_table[(round_id, USER_BOB)] = {"read"}
+        bob_list = self.client.get("/rounds").json()["rounds"]
+        self.assertEqual([row["id"] for row in bob_list], [round_id])
+
 
 class PresenceEvaluationTests(unittest.TestCase):
     def test_presence_does_not_import_engine(self):
@@ -410,3 +437,14 @@ class WebHookTests(unittest.TestCase):
         js = (ROOT / "apps" / "web" / "app.js").read_text()
         self.assertNotIn("filter((item) => item.role !== role)", js)
         self.assertIn("item.role === role && item.original_filename === file.name", js)
+
+
+class AuditHistoryPageTests(unittest.TestCase):
+    def test_history_page_hooks_exist(self):
+        html = (ROOT / "apps" / "web" / "audit-files.html").read_text()
+        js = (ROOT / "apps" / "web" / "audit-files.js").read_text()
+        for marker in ('data-testid="history-list"', 'data-testid="history-empty"'):
+            self.assertIn(marker, html)
+        self.assertIn("./?round=", js)
+        addon = (ROOT / "apps" / "web" / "addon.html").read_text()
+        self.assertIn("audit-files.html", addon)
