@@ -24,6 +24,13 @@ from ppap_core.feishu import (
     refresh_user_token,
     user_info,
 )
+from ppap_core.feishu_drive import (
+    FeishuExportError,
+    FeishuMetaError,
+    PermanentFailure,
+    UnsupportedDocType,
+    import_drive_material,
+)
 from ppap_core.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
@@ -76,7 +83,7 @@ def create_app(
         expose_headers=["Content-Disposition", "X-Content-SHA256"],
     )
 
-    def principal_of(request: Request):
+    def session_of(request: Request):
         raw = request.cookies.get(SESSION_COOKIE, "")
         if not raw:
             return None
@@ -91,11 +98,15 @@ def create_app(
                 store.revoke_session(raw)
                 return None
             store.update_provider_auth(raw, tokens)
-            return session.principal
+            return store.load_session(raw)
         if session.provider_auth_dead(now):
             store.revoke_session(raw)
             return None
-        return session.principal
+        return session
+
+    def principal_of(request: Request):
+        session = session_of(request)
+        return session.principal if session else None
 
     def require_file_read(request: Request, file_id: str):
         principal = principal_of(request)
@@ -353,6 +364,43 @@ def create_app(
         except UnsafeSource as exc:
             return JSONResponse({"error": str(exc) or "unsafe_source"}, status_code=400)
         except (ValueError, ObjectExists, ObjectMissing):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        return JSONResponse(ready.public(), status_code=201)
+
+    @app.post("/integrations/feishu/files/import")
+    def feishu_files_import(body: dict, request: Request) -> JSONResponse:
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        file_token = str(body.get("file_token") or "").strip()
+        doc_type = str(body.get("doc_type") or "").strip() or None
+        if not file_token:
+            return JSONResponse({"error": "invalid_file_token"}, status_code=400)
+        try:
+            imported = import_drive_material(http, session.access_token, file_token, doc_type)
+            version = store.create_staging(
+                session.principal, imported.filename, imported.content_type, len(imported.data)
+            )
+            store.put_blob(version, imported.data)
+            ready = store.finalize_version(version)
+        except UnsupportedDocType:
+            return JSONResponse({"error": "unsupported_doc_type"}, status_code=400)
+        except FeishuMetaError:
+            return JSONResponse({"error": "feishu_meta_failed"}, status_code=502)
+        except PermanentFailure as exc:
+            return JSONResponse({"error": "feishu_download_failed", "message": str(exc)}, status_code=502)
+        except FeishuExportError:
+            return JSONResponse({"error": "feishu_export_failed"}, status_code=502)
+        except ValueError as exc:
+            code = str(exc)
+            if code == "too_large":
+                return JSONResponse({"error": "too_large"}, status_code=413)
+            if code == "invalid_file_token":
+                return JSONResponse({"error": "invalid_file_token"}, status_code=400)
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        except (ObjectExists, ObjectMissing):
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         return JSONResponse(ready.public(), status_code=201)
 
