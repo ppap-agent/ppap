@@ -29,7 +29,7 @@ jobs:
 
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -44,6 +44,9 @@ jobs:
           python tools/dev.py install
           python tools/dev.py build
           python -c "import json; ident=json.load(open('dist/identity.json')); print(json.dumps(ident, indent=2)); assert set(ident['images'])=={'api','worker','web'}; assert all(ident['git_sha'] in tag for tag in ident['images'].values())"
+          python tools/dev.py deploy
+          python tools/dev.py test deploy
+          python tools/dev.py undeploy
 
 
   e2e:

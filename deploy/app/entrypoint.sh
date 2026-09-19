@@ -1,5 +1,8 @@
 #!/bin/sh
 set -e
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
 if [ "$PPAP_SERVICE" = "worker" ]; then
   exec python -m ppap_worker.main
 fi

@@ -34,3 +34,5 @@ python tools/stack.py down
 #7 / #11 浏览器 E2E：`python tools/dev.py test e2e`（需 Playwright 与 `python tools/stack.py up`）。
 
 Schema upgrade：`python tools/stack.py migrate && python tools/dev.py migrate && python tools/dev.py test schema`。
+
+Production compose：`PPAP_BUILD_IMAGES=1 python tools/dev.py deploy && python tools/dev.py test deploy && python tools/dev.py undeploy`。

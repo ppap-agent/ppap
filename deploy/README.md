@@ -44,6 +44,17 @@ API `GET /version` 与 Worker heartbeat 读取 `PPAP_BUILD_SHA`。Web 进程在 
 
 ## Production deploy
 
-真正的 production deploy、upgrade、backup、restore、rollback 命令仍由 #15 后续交付并验收。命令存在并实际运行之前，不在本文件编造 production runbook。
+Canonical 入口：
+
+```sh
+PPAP_BUILD_IMAGES=1 python tools/dev.py deploy
+python tools/dev.py test deploy
+python tools/dev.py upgrade
+python tools/dev.py undeploy
+```
+
+`deploy` / `upgrade` 用同一 Git revision 的 `ppap-api` / `ppap-worker` / `ppap-web` 镜像启动 `deploy/compose.yaml`。Secret 从 `deploy/compose.env.example`（或覆盖的 env file）注入，禁止 isolated-dev 口令与 `http://127.0.0.1:9000`。`init` 容器执行 `python tools/dev.py provision`（建角色/库、apply SQL、确保对象桶），然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
+
+该 Compose 里的 MinIO 只是验证用的 S3 兼容端点，不是 production 许可证决定。真实生产应注入自有 PostgreSQL 与对象存储。当前不含 `.doc` converter sandbox，也不含 backup/restore/rollback。
 
 终态不得把 `ppap-host`、Java PPAP 服务或独立部署的 `ppap-agent` HTTP 作为永久 runtime dependency。

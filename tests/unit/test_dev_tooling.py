@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT)]
+sys.path[:0] = [str(ROOT), str(ROOT / "packages")]
 
 from tools.dev import cmd_build, cmd_quality
 from tools.migrate import latest_version, migration_versions, previous_version
@@ -104,6 +104,20 @@ class DevToolingTests(unittest.TestCase):
             self.assertIn(f"PPAP_BUILD_SHA={sha}", first)
             self.assertIn("PPAP_SERVICE=api", first)
             self.assertIn("PPAP_SERVICE=worker", run.call_args_list[1].args[0])
+
+    def test_compose_fixture_is_production_and_not_isolated_dev(self):
+        from ppap_core.settings import ISOLATED_DEV_S3_ENDPOINT, ISOLATED_DEV_SECRET
+
+        env_text = (ROOT / "deploy" / "compose.env.example").read_text()
+        compose = (ROOT / "deploy" / "compose.yaml").read_text()
+        self.assertNotIn(ISOLATED_DEV_SECRET, env_text)
+        self.assertNotIn(ISOLATED_DEV_S3_ENDPOINT, env_text)
+        self.assertIn("PPAP_PROFILE=production", env_text)
+        self.assertIn("http://minio:9000", env_text)
+        self.assertIn("ppap-api:${PPAP_BUILD_SHA}", compose)
+        self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
+        self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
+        self.assertIn("python tools/dev.py provision", compose)
 
 
 if __name__ == "__main__":

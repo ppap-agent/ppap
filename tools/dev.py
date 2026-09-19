@@ -8,6 +8,9 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +27,8 @@ IMAGE_BUILDS = (
     ("worker", "deploy/app/Dockerfile", ("PPAP_SERVICE=worker",)),
     ("web", "deploy/web/Dockerfile", ()),
 )
+COMPOSE_FILE = ROOT / "deploy" / "compose.yaml"
+COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 
 
 def run(command: list[str], *, extra_env: dict[str, str] | None = None, cwd: Path | None = None) -> int:
@@ -55,6 +60,8 @@ def cmd_test(argv: list[str]) -> int:
         return run([sys.executable, "-m", "unittest", "tests.e2e.test_web_audit", "-v"])
     if argv[:1] == ["schema"]:
         return run([sys.executable, "-m", "unittest", "tests.schema.test_upgrade", "-v"])
+    if argv[:1] == ["deploy"]:
+        return run([sys.executable, "-m", "unittest", "tests.deploy.test_runtime", "-v"])
     targets = argv or ["discover", "-s", "tests/unit", "-v"]
     return run([sys.executable, "-m", "unittest", *targets])
 
@@ -106,6 +113,34 @@ def _product_pythonpath() -> None:
             sys.path.insert(0, part)
 
 
+def cmd_bootstrap() -> int:
+    _product_pythonpath()
+    from tools.bootstrap import bootstrap_roles
+
+    try:
+        bootstrap_roles(dict(os.environ))
+    except Exception as exc:
+        print(f"bootstrap failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"status": "bootstrapped"}))
+    return 0
+
+
+def _ensure_bucket() -> None:
+    from ppap_core.settings import Settings
+    from ppap_core.storage import ensure_bucket
+
+    last: Exception | None = None
+    for _ in range(20):
+        try:
+            ensure_bucket(Settings())
+            return
+        except Exception as exc:
+            last = exc
+            time.sleep(1)
+    raise RuntimeError(f"object store unavailable: {last}")
+
+
 def cmd_migrate() -> int:
     _product_pythonpath()
     import psycopg
@@ -128,6 +163,22 @@ def cmd_migrate() -> int:
     return 0
 
 
+def cmd_provision() -> int:
+    code = cmd_bootstrap()
+    if code != 0:
+        return code
+    code = cmd_migrate()
+    if code != 0:
+        return code
+    try:
+        _ensure_bucket()
+    except Exception as exc:
+        print(f"provision failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"status": "provisioned"}))
+    return 0
+
+
 def cmd_build() -> int:
     sha = git_sha() or "unknown"
     _copy_web(sha)
@@ -138,14 +189,96 @@ def cmd_build() -> int:
         "web": "dist/web",
         "images": images,
     }
-    identity = _write_identity(payload)
+    _write_identity(payload)
     print(json.dumps({"status": "built", "identity": "dist/identity.json", **payload}))
     return 0
 
 
+def _compose(sha: str, *args: str) -> int:
+    env = dict(os.environ)
+    env["PPAP_BUILD_SHA"] = sha
+    env["PYTHONPATH"] = pythonpath(env.get("PYTHONPATH", ""))
+    return subprocess.call(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(COMPOSE_FILE),
+            "--env-file",
+            str(COMPOSE_ENV),
+            *args,
+        ],
+        cwd=str(ROOT),
+        env=env,
+    )
+
+
+def _wait_http(url: str, *, timeout: int = 60) -> dict:
+    deadline = time.time() + timeout
+    last = ""
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                body = response.read().decode()
+                if response.status == 200:
+                    try:
+                        return json.loads(body)
+                    except json.JSONDecodeError:
+                        return {"body": body, "status": response.status}
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last = str(exc)
+        time.sleep(1)
+    raise TimeoutError(f"timeout waiting for {url}: {last}")
+
+
+def cmd_deploy() -> int:
+    if not shutil.which("docker"):
+        print("deploy failed: docker is required", file=sys.stderr)
+        return 1
+    sha = git_sha() or "unknown"
+    os.environ["PPAP_BUILD_IMAGES"] = "1"
+    os.environ["PPAP_BUILD_SHA"] = sha
+    if cmd_build() != 0:
+        return 1
+    code = _compose(sha, "up", "-d", "--wait", "--wait-timeout", "120")
+    if code != 0:
+        _compose(sha, "logs")
+        return code
+    try:
+        version = _wait_http("http://127.0.0.1:8080/version")
+        health = _wait_http("http://127.0.0.1:8080/health")
+        ready = _wait_http("http://127.0.0.1:8080/ready", timeout=90)
+    except Exception as exc:
+        _compose(sha, "logs")
+        print(f"deploy failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"status": "deployed", "git_sha": sha, "version": version, "health": health, "ready": ready}))
+    if version.get("git_sha") != sha:
+        print(f"deploy failed: /version git_sha {version.get('git_sha')!r} != {sha!r}", file=sys.stderr)
+        return 1
+    if health.get("status") != "alive":
+        print(f"deploy failed: /health {health!r}", file=sys.stderr)
+        return 1
+    if ready.get("status") != "ready":
+        print(f"deploy failed: /ready {ready!r}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_undeploy() -> int:
+    if not shutil.which("docker"):
+        print("undeploy failed: docker is required", file=sys.stderr)
+        return 1
+    sha = git_sha() or os.environ.get("PPAP_BUILD_SHA") or "unknown"
+    return _compose(sha, "down", "-v", "--remove-orphans")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "quality", "test", "build", "migrate"])
+    parser.add_argument(
+        "command",
+        choices=["install", "quality", "test", "build", "bootstrap", "migrate", "provision", "deploy", "upgrade", "undeploy"],
+    )
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     rest = list(args.args)
@@ -157,8 +290,16 @@ def main() -> int:
         return cmd_quality()
     if args.command == "test":
         return cmd_test(rest)
+    if args.command == "bootstrap":
+        return cmd_bootstrap()
     if args.command == "migrate":
         return cmd_migrate()
+    if args.command == "provision":
+        return cmd_provision()
+    if args.command == "deploy" or args.command == "upgrade":
+        return cmd_deploy()
+    if args.command == "undeploy":
+        return cmd_undeploy()
     return cmd_build()
 
 

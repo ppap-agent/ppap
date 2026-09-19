@@ -263,35 +263,9 @@ def start_postgres(env: dict[str, str]) -> None:
 
 
 def bootstrap_roles(env: dict[str, str]) -> None:
-    import psycopg
-    from psycopg import sql
+    from tools.bootstrap import bootstrap_roles as apply_bootstrap
 
-    secret = env.get("PPAP_PG_API_PASSWORD", "ppap_isolated_dev")
-    roles = {
-        env.get("PPAP_PG_MIGRATOR_USER", "ppap_migrator"): env.get("PPAP_PG_MIGRATOR_PASSWORD", secret),
-        env.get("PPAP_PG_API_USER", "ppap_api"): env.get("PPAP_PG_API_PASSWORD", secret),
-        env.get("PPAP_PG_WORKER_USER", "ppap_worker"): env.get("PPAP_PG_WORKER_PASSWORD", secret),
-    }
-    user = env.get("PPAP_PG_BOOTSTRAP_USER", "ppap")
-    password = env.get("PPAP_PG_BOOTSTRAP_PASSWORD", "ppap_isolated_dev")
-    host = env.get("PPAP_PG_HOST", "127.0.0.1")
-    port = env.get("PPAP_PG_PORT", "5432")
-    database = env.get("PPAP_PG_DATABASE", "ppap")
-    migrator = env.get("PPAP_PG_MIGRATOR_USER", "ppap_migrator")
-    with psycopg.connect(f"postgresql://{user}:{password}@{host}:{port}/postgres", autocommit=True) as conn:
-        for role, role_password in roles.items():
-            exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-            if exists:
-                conn.execute(
-                    sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(role_password))
-                )
-            else:
-                conn.execute(
-                    sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(role_password))
-                )
-        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database,)).fetchone()
-        if not exists:
-            conn.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(database), sql.Identifier(migrator)))
+    apply_bootstrap(env)
 
 
 def migrate(env: dict[str, str]) -> None:
