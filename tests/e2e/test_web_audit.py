@@ -108,7 +108,19 @@ class WebAuditLoopTests(unittest.TestCase):
             page.wait_for_selector("text=ou_alice")
             page.get_by_test_id("open-history").click()
             page.wait_for_url("**/audit-files")
-            page.wait_for_selector('[data-testid="history-empty"], [data-testid="history-list"]')
+            page.wait_for_function(
+                """() => ['history-list', 'history-empty', 'history-error'].some((id) => {
+                  const node = document.getElementById(id);
+                  return Boolean(node && !node.classList.contains('hidden'));
+                })"""
+            )
+            error = page.get_by_test_id("history-error")
+            if error.is_visible():
+                self.fail(error.inner_text())
+            visible = page.locator('[data-testid="history-list"]:not(.hidden)').or_(
+                page.locator('[data-testid="history-empty"]:not(.hidden)')
+            )
+            expect(visible).to_be_visible()
             self.assertTrue(page.url.rstrip("/").endswith("/audit-files"))
             browser.close()
 
