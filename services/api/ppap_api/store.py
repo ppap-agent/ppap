@@ -689,6 +689,17 @@ class AuthStore:
                     conn, principal, key, source_draft_id=parsed, predecessor_id=None, rule_version_id=None, items=None
                 )
 
+    def round_by_idempotency(self, principal: Principal, idempotency_key: str) -> dict | None:
+        key = normalize_idempotency_key(idempotency_key)
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM product.audit_rounds WHERE tenant_id = %s AND idempotency_key = %s",
+                (principal.tenant_id, key),
+            ).fetchone()
+            if not row:
+                return None
+            return self._round_public(conn, str(row[0]))
+
     def resubmit_round(
         self,
         principal: Principal,

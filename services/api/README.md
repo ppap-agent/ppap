@@ -7,6 +7,7 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `python tools/stack.py up` 启�
 - `/health`、`/ready`、`/version`、`/public-config`
 - 飞书登录/回调、`/me`、`/logout`
 - 飞书 Drive/Docs 导入：`POST /integrations/feishu/files/import`（session 用户 token → meta → Drive 下载或云文档导出 → 普通 `file_version`）
+- 飞书提交：`POST /integrations/feishu/audits`（导入主文件/对比文件后走现有草稿受理，返回普通 round）
 - 对象授权读取 `/resources/{id}`
 - 文件/版本：创建版本、写入 blob、finalize、读取 metadata、download
 - isolated-dev fixture session 与 staging cleanup

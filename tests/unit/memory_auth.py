@@ -345,6 +345,13 @@ class MemoryAuthStore:
         key = normalize_idempotency_key(idempotency_key)
         return self._accept(principal, key, source_draft_id=draft_id, predecessor_id=None, rule_version_id=None, items=None)
 
+    def round_by_idempotency(self, principal: Principal, idempotency_key: str) -> dict | None:
+        key = normalize_idempotency_key(idempotency_key)
+        existing_id = self.idempotency.get((principal.tenant_id, key))
+        if not existing_id:
+            return None
+        return self._round_public(existing_id)
+
     def resubmit_round(
         self,
         principal: Principal,

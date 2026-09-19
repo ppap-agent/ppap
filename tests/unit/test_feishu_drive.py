@@ -131,8 +131,8 @@ class _DriveMock:
             "sheet-token": {"doc_type": "sheet", "title": "cloud-sheet"},
             "folder-token": {"doc_type": "folder", "title": "a-folder"},
         }
-        self.drive_bytes = { "xlsx-token": b"target-bytes" }
-        self.export_bytes = { "sheet-token": b"exported-xlsx" }
+        self.drive_bytes = {"xlsx-token": b"target-bytes"}
+        self.export_bytes = {"sheet-token": b"exported-xlsx"}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -336,6 +336,77 @@ class FeishuImportTests(unittest.TestCase):
         )
         self.assertEqual(material.data, b"target-bytes")
         self.assertEqual(self.feishu.drive_attempts, 3)
+
+    def test_initiate_imports_compare_files_into_common_round(self):
+        self._login_feishu_user("alice")
+        first = self.client.post(
+            "/integrations/feishu/audits",
+            json={
+                "file_token": "xlsx-token",
+                "doc_type": "file",
+                "compare_file_tokens": ["sheet-token"],
+                "rule_version_id": RULE_A,
+                "idempotency_key": "feishu-initiate-1",
+            },
+        )
+        self.assertEqual(first.status_code, 201)
+        body = first.json()
+        roles = {row["role"]: row["original_filename"] for row in body["inputs"]}
+        self.assertEqual(roles["target"], "report.xlsx")
+        self.assertEqual(roles["reference"], "cloud-sheet.xlsx")
+        self.assertTrue(any(row["role"] == "target" for row in body["inputs"]))
+        downloads_before = self.feishu.drive_attempts
+        export_posts = sum(
+            1 for method, url in self.feishu.calls if method == "POST" and url.endswith("/drive/v1/export_tasks")
+        )
+        self.assertEqual(export_posts, 1)
+        replay = self.client.post(
+            "/integrations/feishu/audits",
+            json={
+                "file_token": "xlsx-token",
+                "doc_type": "file",
+                "compare_file_tokens": "sheet-token",
+                "rule_version_id": RULE_A,
+                "idempotency_key": "feishu-initiate-1",
+            },
+        )
+        self.assertEqual(replay.status_code, 201)
+        self.assertEqual(replay.json()["id"], body["id"])
+        self.assertEqual(self.feishu.drive_attempts, downloads_before)
+        claimed = self.store.claim_job("test-worker")
+        self.assertIsNotNone(claimed)
+        process_claimed(self.store, claimed, "test-worker")
+        round_id = body["id"]
+        done = self.client.get(f"/rounds/{round_id}").json()
+        self.assertEqual(done["execution"], "completed")
+        target = next(row for row in done["inputs"] if row["role"] == "target")
+        original = self.client.get(
+            f"/rounds/{round_id}/files/{target['file_id']}/versions/{target['file_version_id']}/download"
+        )
+        self.assertEqual(original.content, b"target-bytes")
+        self._login_fixture("carol")
+        denied = self.client.get(f"/rounds/{round_id}")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_initiate_requires_rule_and_user_token(self):
+        self._login_feishu_user("alice")
+        missing_rule = self.client.post(
+            "/integrations/feishu/audits",
+            json={"file_token": "xlsx-token", "idempotency_key": "k"},
+        )
+        self.assertEqual(missing_rule.status_code, 400)
+        self.assertEqual(missing_rule.json()["error"], "rule_required")
+        self._login_fixture("alice")
+        fixture = self.client.post(
+            "/integrations/feishu/audits",
+            json={
+                "file_token": "xlsx-token",
+                "rule_version_id": RULE_A,
+                "idempotency_key": "k2",
+            },
+        )
+        self.assertEqual(fixture.status_code, 409)
+        self.assertEqual(fixture.json()["error"], "feishu_user_token_missing")
 
 
 if __name__ == "__main__":
