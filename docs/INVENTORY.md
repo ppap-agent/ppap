@@ -4,21 +4,16 @@
 
 本页只帮助快速找到现成能力，不是权限审批清单。
 
-| 能力 | 可利用来源 | 迁移方向 |
+| 能力 | 固定来源 / baseline | 迁移方向 |
 |---|---|---|
-| 身份/租户/授权 | UAC、现有飞书应用、相关配置和环境 | 迁入 PPAP 所需身份和对象授权 |
-| 文件与历史原件 | Java AuditFile、UAC source、Python audit_files、host documents、可访问存储/环境 | 收敛到 product file/file_version |
-| 草稿/资料角色 | 旧 context_only/group 语义、现有 UI/接口 | 迁用户能力，不复制无消费者内部模型 |
-| 规则、测试、识别 | `ppap-agent` tests/assets/packages | pytest/fixture/oracle 先归本仓；现成内聚实现可按速度整体迁入 |
-| 审核执行 | `ppap-agent` tasks/claim、相关 worker/config | 迁可工作的执行能力；终态删除旧 HTTP/跨仓依赖 |
-| Web/飞书入口 | ppap-web、UAC、host、hax、飞书相关环境 | 收敛到同一 Product API / Web |
-| 用量/外部权益 | hax/host、Partner AI 相关配置和可访问环境 | 迁实际业务事件和当前外部确认路径 |
-| 历史迁移 | UAC/Java/Agent/host 数据与可访问环境 | 直接利用现有数据源完成映射和迁移 |
-| 部署/恢复 | 各旧运行方式、配置、远程环境 | 复用可工作的部署知识，收敛到本仓 |
-| lark_adaptor | `ppap-agent/lark_adaptor` | 仅当客户路径实际需要时迁相关能力 |
+| 审核引擎、规则、测试、DocOps/PDF/OCR/Vision | `ppap-agent@53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9` | #3 整体迁入当前 PPAP 需要的资产，保持测试结果 parity |
+| 飞书前端 | `ppap-web@557a2aeab3e5f5e68d8e8cf47593ca172da733d7` | #11 迁入/现代化，现有客户任务不减少 |
+| 飞书身份、提交、用量 | `ppap-uac@fbe912faf1894fe018ea88c20e46a57842468623` | #11 收敛到 Product API / 同一租户与 usage 模型 |
+| Java PPAP/file-audit/transformer | `ppap-biz@7570d966f178cde9c841600be485c43109d92019` | #11 保持当前客户能力，终态不保留 PPAP Java 产品链 |
+| Host slice | `ppap-host@c32b46a0a0d4f252a1677e8abce53a210b3c6d28` | 可复用已工作的 Web/hosting 资产，不保留第二套台账 |
+| 产品行为与现网运行知识 | `hax@0923f5acea380ddd09813621703777153a8c7971` | 作为迁移下限和现网操作来源，不成为终态 runtime |
+| 当前远程环境/数据源 | 组织内现有可访问环境 | 直接用于开发、集成、切换和按需数据操作 |
 
-## 使用方式
+当前不建设通用历史审核迁移：试用用户可重新导入文件和规则；未来有具体客户需求时按实际数据处理。
 
-迁移一个能力时，先找现成可工作的资产并直接复用。不要先假设某份配置、样本或远程环境不能用，也不要为了“重新证明”而延迟客户路径。
-
-`ppap-agent` 是明确 sunset 目标；其它组织内资产可以作为迁移来源使用。迁入后本仓拥有当前实现和测试。
+迁入后本仓拥有当前代码、测试、配置和运行入口；来源仓只保留历史价值或其它非 PPAP 消费者。
