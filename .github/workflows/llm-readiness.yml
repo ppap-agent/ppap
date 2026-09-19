@@ -1,14 +1,6 @@
 name: LLM readiness
 
 on:
-  workflow_call:
-    secrets:
-      OPENAI_API_KEY:
-        required: true
-      OPENAI_BASE_URL:
-        required: true
-      MODEL_NAME:
-        required: true
   workflow_dispatch:
 
 permissions: {}
@@ -29,44 +21,14 @@ jobs:
           : "${LLM_API_KEY:?missing OPENAI_API_KEY}"
           : "${LLM_BASE_URL:?missing OPENAI_BASE_URL}"
           : "${LLM_MODEL:?missing MODEL_NAME}"
-
           LLM_BASE_URL="$(printf '%s' "$LLM_BASE_URL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           LLM_MODEL="$(printf '%s' "$LLM_MODEL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-
           response="$(mktemp)"
           events="$(mktemp)"
           trap 'rm -f "$response" "$events"' EXIT
-
-          payload="$(jq -nc --arg model "$LLM_MODEL" '{
-            model:$model,
-            store:false,
-            stream:true,
-            input:[{
-              role:"user",
-              content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]
-            }]
-          }')"
-
+          payload="$(jq -nc --arg model "$LLM_MODEL" '{model:$model,store:false,stream:true,input:[{role:"user",content:[{type:"input_text",text:"Reply with exactly PPAP_READY."}]}]}')"
           http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 --output "$response" --write-out '%{http_code}' -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" -H "Accept: text/event-stream" "${LLM_BASE_URL%/}/responses" -d "$payload")"
-
-          if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
-            echo "LLM Responses API: HTTP $http_status"
-            jq -c '{
-              code:(.code // .error.code // null),
-              type:(.type // .error.type // null),
-              param:(.param // .error.param // null),
-              message:((.message // .error.message // .detail // "") | tostring | .[0:160])
-            }' "$response" 2>/dev/null || true
-            exit 1
-          fi
-
-          sed -n 's/^data: //p' "$response" |
-            jq -Rr 'fromjson? | .type? // empty' > "$events"
-
-          if ! grep -qx 'response.completed' "$events"; then
-            echo "LLM Responses API: completion event missing"
-            sort -u "$events" | paste -sd ',' - | sed 's/^/events=/'
-            exit 1
-          fi
-
+          [[ "$http_status" =~ ^2[0-9][0-9]$ ]] || { echo "LLM Responses API: HTTP $http_status"; exit 1; }
+          sed -n 's/^data: //p' "$response" | jq -Rr 'fromjson? | .type? // empty' > "$events"
+          grep -qx 'response.completed' "$events" || { echo "LLM Responses API: completion event missing"; exit 1; }
           echo "LLM Responses API: ready"
