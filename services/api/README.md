@@ -9,6 +9,7 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `python tools/stack.py up` 启�
 - 飞书 Drive/Docs 导入：`POST /integrations/feishu/files/import`（session 用户 token → meta → Drive 下载或云文档导出 → 普通 `file_version`）
 - 飞书提交：`POST /integrations/feishu/audits`（导入主文件/对比文件后走现有草稿受理，返回普通 round）
 - 飞书用量：`GET /integrations/feishu/usage/quota`（Partner AI 功能/额度 + 本地已入账试用点数）；`POST /integrations/feishu/usage/events`（记录试用入账或待外部确认的用量，不把本地 job 完成当成已扣费）
+- 飞书写回：`POST /integrations/feishu/rounds/{round_id}/writeback`（把普通 round 的 PASS/NG 履历插回源文档并附 Web 回访链接；ERR 不写回；不另建飞书履历台账）
 - 对象授权读取 `/resources/{id}`
 - 文件/版本：创建版本、写入 blob、finalize、读取 metadata、download
 - isolated-dev fixture session 与 staging cleanup

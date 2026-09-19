@@ -1,0 +1,282 @@
+"""Write common round findings back into the source Feishu doc. Not a second ledger."""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+
+from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NG, PASS, TARGET
+from ppap_core.feishu_drive import OPEN_API
+
+COMPLETED_STATUSES = {PASS, NG, ERR}
+
+
+class FeishuWritebackError(Exception):
+    pass
+
+
+def docx_children_url(document_id: str) -> str:
+    return OPEN_API + "/docx/v1/documents/" + document_id + "/blocks/" + document_id + "/children"
+
+
+def drive_comments_url(file_token: str) -> str:
+    return OPEN_API + "/drive/v1/files/" + file_token + "/comments?file_type=docx"
+
+
+def round_return_url(web_url: str, round_id: str) -> str:
+    base = (web_url or "").rstrip("/")
+    return base + "/?round=" + round_id
+
+
+def _filename_of(finding: dict) -> str:
+    locator = finding.get("locator") if isinstance(finding.get("locator"), dict) else {}
+    name = str(locator.get("filename") or finding.get("item") or "").strip()
+    return name
+
+
+def _target_names(round_body: dict) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in round_body.get("inputs") or []:
+        if not isinstance(item, dict) or item.get("role") != TARGET:
+            continue
+        name = str(item.get("original_filename") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _group_findings(round_body: dict) -> list[tuple[str, list[dict]]]:
+    findings = [row for row in (round_body.get("findings") or []) if isinstance(row, dict)]
+    names = _target_names(round_body)
+    if not names:
+        return [("审核", findings)] if findings else []
+    groups: list[tuple[str, list[dict]]] = []
+    for name in names:
+        rows = [row for row in findings if _filename_of(row) == name]
+        groups.append((name, rows))
+    return groups
+
+
+def writeback_state(round_body: dict) -> str:
+    if not isinstance(round_body, dict) or round_body.get("execution") != EXEC_COMPLETED:
+        return "round_incomplete"
+    findings = [row for row in (round_body.get("findings") or []) if isinstance(row, dict)]
+    if not findings:
+        return "round_incomplete"
+    statuses = {str(row.get("status") or "") for row in findings}
+    if not statuses.issubset(COMPLETED_STATUSES) or not statuses.issubset(FINDING_STATUSES):
+        return "round_incomplete"
+    if ERR in statuses:
+        return "round_has_errors"
+    return "ready"
+
+
+def _audit_clock(round_body: dict, now: datetime | None = None) -> str:
+    stamp = now or datetime.now(timezone.utc)
+    raw = round_body.get("created_at")
+    if isinstance(raw, datetime):
+        stamp = raw
+    elif isinstance(raw, str) and raw:
+        try:
+            stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    if stamp.tzinfo is not None:
+        stamp = stamp.astimezone(timezone.utc)
+    return stamp.strftime("%Y 年 %m 月 %d 日 %H:%M")
+
+
+def history_text(round_body: dict, return_url: str = "", *, now: datetime | None = None) -> str:
+    lines = ["审核时间：" + _audit_clock(round_body, now), ""]
+    index = 1
+    for name, rows in _group_findings(round_body):
+        lines.append("**审核内容" + str(index) + "：" + name + "**")
+        lines.append("")
+        ng_rows = [row for row in rows if row.get("status") == NG]
+        if ng_rows:
+            lines.append("总结：")
+            for row in ng_rows:
+                item = str(row.get("item") or "").strip()
+                suggestions = str(row.get("suggestions") or "").strip()
+                if suggestions:
+                    lines.append((item or name) + " : " + suggestions)
+        else:
+            lines.append("审核结果：PASS")
+        lines.append("")
+        index += 1
+    url = (return_url or "").strip()
+    if url:
+        lines.append("回访：" + url)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def comment_text(round_body: dict) -> str:
+    names = set(_target_names(round_body))
+    lines: list[str] = []
+    for row in round_body.get("findings") or []:
+        if not isinstance(row, dict) or row.get("status") != NG:
+            continue
+        if names and _filename_of(row) not in names:
+            continue
+        suggestions = str(row.get("suggestions") or "").strip()
+        item = str(row.get("item") or "").strip()
+        if not suggestions:
+            continue
+        if not lines:
+            lines.append("总结：")
+        lines.append((item or _filename_of(row)) + "：" + suggestions)
+    return "\n".join(lines) if lines else ""
+
+
+def _text_run(content: str, **style: object) -> dict:
+    run: dict[str, object] = {"content": content}
+    if style:
+        run["text_element_style"] = style
+    return {"text_run": run}
+
+
+def _heading2(content: str) -> dict:
+    return {"block_type": 4, "heading2": {"elements": [_text_run(content)]}}
+
+
+def _heading3(content: str) -> dict:
+    return {"block_type": 5, "heading3": {"elements": [_text_run(content)]}}
+
+
+def _text(content: str, *, background: bool = False) -> dict:
+    style = {"background_color": 3} if background else {}
+    block = {"block_type": 2, "text": {"elements": [_text_run(content, **style)]}}
+    return block
+
+
+def _bullet(content: str) -> dict:
+    return {"block_type": 12, "bullet": {"elements": [_text_run(content)]}}
+
+
+def structured_blocks(content: str) -> list[dict]:
+    children: list[dict] = []
+    lines = (content or "").split("\n")
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        if not line:
+            index += 1
+            continue
+        if line.startswith("审核时间："):
+            children.append(_heading2(line))
+            index += 1
+            continue
+        if line.startswith("**审核内容") and line.endswith("**"):
+            children.append(_heading3(line[2:-2]))
+            index += 1
+            continue
+        if line == "总结：":
+            children.append(_text(line, background=True))
+            index += 1
+            while index < len(lines):
+                item = lines[index].strip()
+                if not item:
+                    index += 1
+                    break
+                children.append(_bullet(item))
+                index += 1
+            continue
+        children.append(_text(line))
+        index += 1
+    return children
+
+
+def _response_json(response) -> dict:
+    parser = getattr(response, "json", None)
+    if callable(parser):
+        try:
+            payload = parser()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text.strip():
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+    return {}
+
+
+def _ok(response) -> bool:
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status < 200 or status >= 300:
+        return False
+    body = _response_json(response)
+    return body.get("code") in (0, None)
+
+
+def insert_history(http, access_token: str, document_id: str, content: str) -> None:
+    children = structured_blocks(content)
+    if not children:
+        raise FeishuWritebackError("feishu_writeback_failed")
+    try:
+        response = http.post(
+            docx_children_url(document_id),
+            headers={
+                "Authorization": "Bearer " + access_token,
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={"index": 0, "children": children},
+            timeout=20,
+        )
+    except Exception as exc:
+        raise FeishuWritebackError("feishu_writeback_failed") from exc
+    if not _ok(response):
+        raise FeishuWritebackError("feishu_writeback_failed")
+
+
+def add_file_comment(http, access_token: str, file_token: str, content: str) -> bool:
+    body = {
+        "reply_list": {
+            "replies": [
+                {
+                    "content": {
+                        "elements": [{"type": "text_run", "text_run": {"text": content}}],
+                    }
+                }
+            ]
+        }
+    }
+    try:
+        response = http.post(
+            drive_comments_url(file_token),
+            headers={
+                "Authorization": "Bearer " + access_token,
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json=body,
+            timeout=20,
+        )
+    except Exception:
+        return False
+    return _ok(response)
+
+
+def write_round_history(
+    http,
+    access_token: str,
+    file_token: str,
+    round_body: dict,
+    return_url: str,
+) -> dict[str, object]:
+    token = (file_token or "").strip()
+    if not token or "/" in token or ".." in token:
+        raise FeishuWritebackError("invalid_file_token")
+    state = writeback_state(round_body)
+    if state != "ready":
+        raise FeishuWritebackError(state)
+    text = history_text(round_body, return_url)
+    insert_history(http, access_token, token, text)
+    comment = comment_text(round_body)
+    commented = bool(comment) and add_file_comment(http, access_token, token, comment)
+    return {"inserted": True, "commented": commented, "file_token": token}

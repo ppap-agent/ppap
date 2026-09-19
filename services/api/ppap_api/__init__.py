@@ -38,6 +38,11 @@ from ppap_core.feishu_usage import (
     query_tenant_ai_item,
     remaining_trial_points,
 )
+from ppap_core.feishu_writeback import (
+    FeishuWritebackError,
+    round_return_url,
+    write_round_history,
+)
 from ppap_core.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
@@ -543,6 +548,37 @@ def create_app(
             status = 409 if code == "feishu_ai_item_missing" else 400
             return JSONResponse({"error": code}, status_code=status)
         return JSONResponse(store.usage_event_public(row), status_code=201)
+
+    @app.post("/integrations/feishu/rounds/{round_id}/writeback")
+    def feishu_round_writeback(round_id: str, body: dict, request: Request) -> JSONResponse:
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        resource = store.resource(round_id)
+        grants = store.grants(round_id, session.principal.user_id) if resource else set()
+        if resource is None or not can_read(session.principal, resource, grants):
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        round_body = store.get_round(round_id)
+        if round_body is None:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        file_token = str(body.get("file_token") or "").strip()
+        return_url = round_return_url(settings.canonical_web_url(), round_body["id"])
+        try:
+            result = write_round_history(
+                http, session.access_token, file_token, round_body, return_url
+            )
+        except FeishuWritebackError as exc:
+            code = str(exc)
+            if code == "invalid_file_token":
+                return JSONResponse({"error": code}, status_code=400)
+            if code in {"round_incomplete", "round_has_errors"}:
+                return JSONResponse({"error": code}, status_code=409)
+            return JSONResponse({"error": "feishu_writeback_failed"}, status_code=502)
+        result["round_id"] = round_body["id"]
+        result["return_url"] = return_url
+        return JSONResponse(result)
 
     @app.post("/isolated-dev/reap-staging")
     def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:
