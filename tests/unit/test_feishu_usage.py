@@ -17,7 +17,7 @@ sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT
 from fastapi.testclient import TestClient
 
 from ppap_core.feishu import UserTokens
-from ppap_core.feishu_usage import quota_sufficient, remaining_trial_points
+from ppap_core.feishu_usage import audit_usage_points, quota_sufficient, remaining_trial_points, split_trial_and_partner
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
@@ -48,6 +48,13 @@ class QuotaSemanticsTests(unittest.TestCase):
         self.assertEqual(remaining_trial_points(10000, 0), 10000)
         self.assertEqual(remaining_trial_points(10000, 4000), 6000)
         self.assertEqual(remaining_trial_points(10000, 20000), 0)
+
+    def test_audit_usage_splits_trial_then_partner(self):
+        self.assertEqual(audit_usage_points(2), 1000)
+        self.assertEqual(split_trial_and_partner(10000, 500), [(500, True)])
+        self.assertEqual(split_trial_and_partner(0, 500), [(500, False)])
+        self.assertEqual(split_trial_and_partner(200, 500), [(200, True), (300, False)])
+        self.assertEqual(split_trial_and_partner(10, 0), [])
 
 
 class _PartnerMock:

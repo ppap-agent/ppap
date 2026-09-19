@@ -37,11 +37,13 @@ from ppap_core.feishu_drive import (
 )
 from ppap_core.feishu_usage import (
     FeishuUsageError,
+    audit_usage_points,
     quota_payload,
     quota_unavailable,
     query_tenant_ai_item,
     remaining_trial_points,
     report_partner_usage,
+    split_trial_and_partner,
     tenant_access_token,
 )
 from ppap_core.feishu_writeback import (
@@ -479,6 +481,22 @@ def create_app(
                 tokens.append(token)
         return tokens
 
+    def observe_feishu_audit_usage(principal, round_id: str, file_count: int) -> None:
+        item_id = (settings.feishu_ai_item_id or "").strip()
+        if not item_id:
+            return
+        points = audit_usage_points(file_count)
+        if points <= 0:
+            return
+        consumed = store.trial_consumed_points(principal.tenant_id, item_id)
+        remaining = remaining_trial_points(settings.feishu_free_trial_quota_points, consumed)
+        try:
+            for index, (slice_points, is_trial) in enumerate(split_trial_and_partner(remaining, points)):
+                trace = round_id if index == 0 else round_id + ":partner"
+                store.record_usage_event(principal, item_id, slice_points, is_trial, trace_id=trace)
+        except (ValueError, TypeError):
+            return
+
     @app.post("/integrations/feishu/files/import")
     def feishu_files_import(body: dict, request: Request) -> JSONResponse:
         session = session_of(request)
@@ -548,6 +566,7 @@ def create_app(
             if mapped:
                 return mapped
             raise
+        observe_feishu_audit_usage(session.principal, round_body["id"], len(items))
         return JSONResponse(round_body, status_code=201)
 
     @app.get("/integrations/feishu/docs/links")

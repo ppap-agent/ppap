@@ -256,6 +256,73 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertIn(f"/?round={round_id}", writeback.json()["return_url"])
         self.assertTrue(any("/drive/v1/files/xlsx-token/download" in url for _method, url in self.feishu.calls))
 
+    def test_feishu_audit_records_trial_usage_once_per_round(self):
+        logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
+        self.assertEqual(logged.status_code, 200)
+        before = self.client.get("/integrations/feishu/usage/quota").json()
+        self.assertEqual(before["remaining_trial_ai_points"], 10000)
+        submitted = self.client.post(
+            "/integrations/feishu/audits",
+            json={
+                "file_token": "xlsx-token",
+                "doc_type": "file",
+                "rule_version_id": RULE_A,
+                "idempotency_key": "addon-usage-1",
+            },
+        )
+        self.assertEqual(submitted.status_code, 201)
+        after = self.client.get("/integrations/feishu/usage/quota").json()
+        self.assertEqual(after["remaining_trial_ai_points"], 9500)
+        replay = self.client.post(
+            "/integrations/feishu/audits",
+            json={
+                "file_token": "xlsx-token",
+                "doc_type": "file",
+                "rule_version_id": RULE_A,
+                "idempotency_key": "addon-usage-1",
+            },
+        )
+        self.assertEqual(replay.status_code, 201)
+        self.assertEqual(replay.json()["id"], submitted.json()["id"])
+        still = self.client.get("/integrations/feishu/usage/quota").json()
+        self.assertEqual(still["remaining_trial_ai_points"], 9500)
+        events = [
+            row
+            for row in self.store.usage_events
+            if row["trace_id"] == submitted.json()["id"]
+        ]
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0]["is_free_trial"])
+        self.assertEqual(events[0]["consumed_points"], 500)
+        self.assertEqual(events[0]["external_status"], "none")
+
+    def test_feishu_audit_splits_remaining_trial_then_pending_partner(self):
+        logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
+        self.assertEqual(logged.status_code, 200)
+        principal = self.store.principal_for_fixture("alice")
+        self.store.record_usage_event(principal, "ai-item-1", 9800, True, trace_id="pre-trial")
+        submitted = self.client.post(
+            "/integrations/feishu/audits",
+            json={
+                "file_token": "xlsx-token",
+                "doc_type": "file",
+                "rule_version_id": RULE_A,
+                "idempotency_key": "addon-usage-split",
+            },
+        )
+        self.assertEqual(submitted.status_code, 201)
+        round_id = submitted.json()["id"]
+        trial = [row for row in self.store.usage_events if row["trace_id"] == round_id]
+        partner = [row for row in self.store.usage_events if row["trace_id"] == round_id + ":partner"]
+        self.assertEqual(trial[0]["consumed_points"], 200)
+        self.assertTrue(trial[0]["is_free_trial"])
+        self.assertEqual(trial[0]["external_status"], "none")
+        self.assertEqual(partner[0]["consumed_points"], 300)
+        self.assertFalse(partner[0]["is_free_trial"])
+        self.assertEqual(partner[0]["external_status"], "pending")
+        quota = self.client.get("/integrations/feishu/usage/quota").json()
+        self.assertEqual(quota["remaining_trial_ai_points"], 0)
+
     def test_empty_code_and_isolated_dev_fixture_host_login(self):
         missing = self.client.post("/login/feishu/host", json={})
         self.assertEqual(missing.status_code, 400)

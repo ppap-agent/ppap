@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ppap_core.feishu_drive import OPEN_API
 
 DEFAULT_FREE_TRIAL_QUOTA_POINTS = 10000
+AUDIT_COST_PER_FILE = 500
 TRIAL_UNREPORTED = "none"
 PARTNER_PENDING = "pending"
 PARTNER_CONFIRMED = "confirmed"
@@ -23,6 +24,23 @@ def quota_sufficient(enabled: bool | None, user_quota: int | None) -> bool:
 
 def remaining_trial_points(free_quota: int, consumed: int) -> int:
     return max(0, int(free_quota) - max(0, int(consumed)))
+
+
+def audit_usage_points(file_count: int) -> int:
+    return max(0, int(file_count)) * AUDIT_COST_PER_FILE
+
+
+def split_trial_and_partner(remaining_trial: int, points: int) -> list[tuple[int, bool]]:
+    """Split one audit into trial (unreported) then partner-pending slices."""
+    need = max(0, int(points))
+    if need == 0:
+        return []
+    remaining = max(0, int(remaining_trial))
+    if remaining >= need:
+        return [(need, True)]
+    if remaining <= 0:
+        return [(need, False)]
+    return [(remaining, True), (need - remaining, False)]
 
 
 def quota_messages(
