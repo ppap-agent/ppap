@@ -1,20 +1,10 @@
 # 开发
 
-普通工作只需要当前 owning Issue、相关源码和最近测试。目标是尽快完成迁移和开发，让客户尽早使用。
+普通工作只需要当前 owning Issue、相关源码和最近测试。Issue 表达验收结果，不表达实施顺序。
 
-## 当前工作组织
+组织内资产的默认使用规则见 [AGENTS.md](../AGENTS.md)，这里不重复权限政策。
 
-剩余工作由四个大 Issue 拥有：#3 engine parity、#7 核心产品闭环、#11 飞书 parity、#15 生产交付/sunset。
-
-Issue 表达验收结果，不表达实施顺序。允许并行开发，也允许一个 PR 同时推进多个 Issue；不要为了依赖图把可以并行的工作串行化。
-
-## 可直接使用的资产
-
-`ppap-agent` GitHub 组织中的仓库内容、配置、文档、测试数据，以及我们可以访问的远程环境，默认已经授权用于本项目开发、迁移、测试和交付，除非产品负责人以后明确说某项不能用。
-
-可以直接读取和迁移现有实现、配置、脚本、fixture、oracle、测试和可访问环境。不要为“这些资产能不能用”增加默认审批或 evidence 流程。
-
-## 配置
+## 当前配置
 
 应用配置的 executable authority 是 typed Settings 和 [`.env.example`](../.env.example)。
 
@@ -37,16 +27,26 @@ python -m pip install -r requirements.txt
 PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
 ```
 
-#15 的终态工程基线会把项目入口收敛到 Python 3.12 + `pyproject.toml + uv.lock`、Ruff、核心 Pyright，以及 Vue 3 + TypeScript + Vite + pnpm lockfile；这些是生产交付验收，不要求迁移第一步先重构所有旧 checker。
+这些是当前 `main` 的真实入口。新的 canonical 命令只有在实现合入后才替换这里。
+
+## #15 的目标工程工具链
+
+为达到单仓、现代、易维护的生产工程质量，实施时优先收敛为：
+
+- Python 3.12，单一 `pyproject.toml` 项目入口与锁定依赖；
+- Ruff 负责格式与 lint；
+- 核心 API / product / worker 使用 Pyright；迁入旧 checker 可渐进纳入；
+- Web 延续 Vue 3 + TypeScript，迁到 Vite；使用一个带 lockfile 的前端 package manager；
+- CI 调用与本地相同的 canonical quality/test/build 命令。
+
+这些是工程实现方向，不是产品 Issue 的固定业务政策；若当前代码出现更简单且同等可维护的方案，可以在实现中调整。
 
 ## 迁移工作
 
 选择迁移粒度时以**最快形成稳定客户路径且降低终态上下文**为准。一个 package/能力域整体迁入更快时就整体迁入；迁入后立即把 tests/config 归本仓并删除跨仓长期依赖和无消费者代码。
 
-Engine migration 以 [TESTING](TESTING.md) 的固定 baseline parity 为准；不要把旧算法已有 failure 变成迁移 blocker。
+Engine migration 的具体 baseline 见 #3；飞书 capability baseline 见 #11。不要把旧算法已有 failure 变成迁移 blocker。
 
 ## 最短交付路径
 
 当前 Issue → 复用/迁入现成资产 → 跑 baseline/当前测试 → 修新增 regression 或产品缺口 → 必要真实环境验证 → 当前 PR → 尽快打通客户路径。
-
-实施状态只更新 Issue/PR，不另建 roadmap、运行台账或 proof registry。
