@@ -17,7 +17,7 @@ Secret 是泄漏后真正跨越信任边界的值；Cursor Cloud 把普通配置
 - `LLM_MODEL`：普通配置，isolated-dev 默认 `gpt-5.6-luna`，可覆盖。
 - 协议固定为 Responses-compatible；endpoint 由 `<LLM_BASE_URL>/responses` 派生，不增加可漂移的 `LLM_PROTOCOL`。审核请求显式 `store:false`，不依赖 provider-side response storage；当前 TrustedTunnel transport 使用 `stream:true`，流式验收只检查事件类型，不持久化模型文本。
 
-`FEISHU_APP_ID` 是普通配置，`FEISHU_APP_SECRET` 是飞书 capability Secret。用户 access/refresh token、session/cookie 是运行时身份数据，不是开发机静态 Secret。
+`FEISHU_APP_ID` 是普通配置，`FEISHU_APP_SECRET` 与 `FEISHU_VERIFICATION_TOKEN` 是飞书 capability Secret。用户 access/refresh token、session/cookie 是运行时身份数据，不是开发机静态 Secret。飞书事件必须通过当前应用的 Verification Token 校验并绑定 App ID 后才保存 `app_ticket`。
 
 隔离开发 PostgreSQL、S3-compatible storage 和内部开发角色允许仓库固定 dev defaults；这些值只绑定隔离开发网络，生产不得继承。生产数据库/对象存储凭据由部署 Secret 注入并执行最小权限。
 

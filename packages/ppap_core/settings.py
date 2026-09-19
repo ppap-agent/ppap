@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
+    feishu_verification_token: str = Field(default="", alias="FEISHU_VERIFICATION_TOKEN")
     partner_ai_endpoint: str = Field(default="", alias="PPAP_PARTNER_AI_ENDPOINT")
     legacy_engine_url: str = Field(default="", alias="PPAP_LEGACY_ENGINE_URL")
 
@@ -51,6 +52,7 @@ class Settings(BaseSettings):
     public_api_url: str = Field(default="http://127.0.0.1:8080", alias="PPAP_PUBLIC_API_URL")
     web_bind: str = Field(default="127.0.0.1", alias="PPAP_WEB_BIND")
     web_port: int = Field(default=4173, alias="PPAP_WEB_PORT")
+    web_url: str = Field(default="", alias="PPAP_WEB_URL")
     worker_id: str = Field(default="", alias="PPAP_WORKER_ID")
 
     @model_validator(mode="after")
@@ -73,6 +75,8 @@ class Settings(BaseSettings):
             raise ValueError("production must not inherit isolated-dev credentials or object-storage endpoint")
         if not self.llm_base_url.strip() or not self.llm_model.strip():
             raise ValueError("production must set LLM_BASE_URL and LLM_MODEL explicitly")
+        if not self.web_url.strip():
+            raise ValueError("production must set PPAP_WEB_URL explicitly")
         return self
 
     def dsn(self, role: Literal["api", "worker", "migrator", "bootstrap"]) -> str:
@@ -88,9 +92,19 @@ class Settings(BaseSettings):
             "?connect_timeout=5"
         )
 
+    def canonical_web_url(self) -> str:
+        explicit = self.web_url.strip().rstrip("/")
+        if explicit:
+            return explicit
+        return f"http://127.0.0.1:{self.web_port}"
+
     def web_origins(self) -> list[str]:
-        port = self.web_port
-        return [f"http://127.0.0.1:{port}", f"http://localhost:{port}"]
+        origins = [self.canonical_web_url()]
+        if self.profile != "production":
+            for extra in (f"http://127.0.0.1:{self.web_port}", f"http://localhost:{self.web_port}"):
+                if extra not in origins:
+                    origins.append(extra)
+        return origins
 
     def public_config(self) -> dict[str, str]:
         return {
