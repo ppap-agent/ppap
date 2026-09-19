@@ -8,6 +8,6 @@
 |---|---|
 | `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型 |
 
-来自 `ppap-agent` 的检查器、DocOps、PDF、OCR、Vision 等能力**不预先整包迁入**。#3 的原生 corpus test 先暴露当前失败，#6 再迁入让该失败用例正确通过所需的最小代码和依赖。
+`ppap-agent` 是待 sunset 的迁移来源，不是 package dependency。#3 先把仍有价值的回归测试、fixture、oracle 和必要 test helper 迁入本仓；这些本仓测试暴露真实失败后，#6 再迁入让失败用例正确通过所需的最小检查/解析代码。
 
-新增 package 必须有当前消费者和直接测试；没有真实需要时不为未来格式或 provider 预留 package/plugin 层。
+新增 package 必须有本仓当前消费者和直接测试。没有真实失败或当前需求时，不为未来格式、OCR/provider 或 Agent/workflow 预留 package/plugin 层。迁入一个能力后，不保留指向 `ppap-agent` 的跨仓 import、运行时源码路径或 CI checkout。

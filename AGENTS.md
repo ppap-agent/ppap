@@ -5,10 +5,12 @@
 ## 权威
 
 - 产品目标：Northstar 与当前 owning Issue。
-- 当前行为：源码、数据库约束和测试。
+- 当前行为：本仓源码、数据库约束和测试。
 - 配置：typed Settings 与 [`.env.example`](.env.example)。
 - 当前工作状态：GitHub Issues / 当前 PR。
 - 历史调查和旧实现留在 Git history、已关闭 Issue 和来源仓，不作为普通开发必读。
+
+`ppap-agent` 是待 sunset 的一次性迁移来源，不是当前 authority。不要新增对它的 runtime、CI、test、fixture、oracle 或开发期 checkout 依赖。仍有产品价值的代码和测试资产应迁入本仓后由本仓维护。
 
 一个事实只保留一个当前 owner。不要为已有 authority 再建立 roadmap、evidence registry、manifest、兼容包装层或第二套状态台账。
 

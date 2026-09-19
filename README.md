@@ -27,4 +27,4 @@ apps/web -> services/api -> PostgreSQL / object storage -> services/worker -> pa
 
 `packages` 是可复用库，不再包装成第二个产品 HTTP 层。飞书、Partner AI、外部 LLM 等按 capability 接入；无关的可选集成不可用时，不阻塞 Core 开发和测试。
 
-`ppap-agent/ppap-agent` 等来源仓只在当前迁移/回归任务需要时读取。来源服务是否退役由真实消费者决定，不由仓库名字或旧架构推断。
+`ppap` 将成为 PPAP 唯一当前工程仓。`ppap-agent` 只用于一次性迁移仍有价值的代码、pytest、fixture 和 oracle；迁入后由本仓维护，CI/开发/运行不再依赖旧仓。满足迁移和消费者退出条件后 sunset `ppap-agent`。
