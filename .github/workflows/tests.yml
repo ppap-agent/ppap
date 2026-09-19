@@ -1,15 +1,15 @@
-name: Verification tools (not product acceptance)
+name: Tests
 
 on:
+  push:
   pull_request:
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  tools:
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -21,8 +21,8 @@ jobs:
           python-version: '3.12'
       - name: Check commit whitespace
         run: git show --format= --check HEAD
-      - name: Verify acceptance tools, not product behavior
+      - name: Run unit tests
         run: |
-          python -m py_compile tools/live.py tools/legacy_engine_gate.py tools/stack.py
           python -m pip install -r requirements.txt
+          python -m py_compile tools/stack.py
           PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v

@@ -1,32 +1,30 @@
 # PPAP
 
-把两家公司遗留的产品、渠道和审核能力整合成一个可追溯的 PPAP 产品。
+把遗留的 PPAP 产品、渠道和审核能力收敛为一个可维护的产品。
 
-> 打开一次审核，就知道审了什么、依据在哪里、结果是什么、下一步做什么。
-
-**当前状态：[#2](https://github.com/ppap-agent/ppap/issues/2) 的 isolated-dev 运行栈已落地；审核产品 Stories 尚未实现。** 本仓有文档、真实 Issue 路线图、验收工具，以及可启动的 API / Worker / PostgreSQL / MinIO / 本机 Web。工具自测、依赖探针或 `stack verify` 都不等于用户 Story 通过。
+> 打开一次审核，就知道审了什么、结果是什么、原始依据在哪里、下一步做什么。
 
 ## 从这里开始
 
-| 问题 | 唯一入口 |
+| 需要了解 | 当前入口 |
 |---|---|
-| 产品承诺、术语与完成范围 | [Northstar](docs/NORTHSTAR.md) |
-| 代码在哪里、责任怎样分 | [架构](docs/ARCHITECTURE.md) |
-| 调查到了什么，什么仍未知 | [当前事实与来源](docs/CURRENT.md) |
-| 旧能力如何迁移 | [能力与数据归属](docs/INVENTORY.md)、[迁移原则](docs/MIGRATION.md) |
-| 为什么这样选技术 | [决策](docs/DECISIONS.md)、[外部方案比较](docs/RESEARCH.md) |
-| 下一步做什么 | [Roadmap](docs/ROADMAP.md) 导航到真实 Issues；Issues 拥有实施状态 |
-| 怎样开发、配置与运行 | [开发指南](docs/DEVELOPMENT.md)、[配置示例](.env.example) |
-| 怎样证明用户结果 | [Live Stories](docs/STORIES.md)、[测试范围与命令](docs/TESTING.md) |
-| 历史结果怎样可信 | [数据约束](docs/DATA_MODEL.md) |
-| 密钥、授权与敏感数据 | [安全边界](docs/SECURITY.md) |
+| 产品目标和术语 | [Northstar](docs/NORTHSTAR.md) |
+| 代码与运行边界 | [Architecture](docs/ARCHITECTURE.md) |
+| 数据不变量 | [Data model](docs/DATA_MODEL.md) |
+| 开发、配置、运行 | [Development](docs/DEVELOPMENT.md)、[.env.example](.env.example) |
+| 测试 | [Testing](docs/TESTING.md) |
+| 安全边界 | [Security](docs/SECURITY.md) |
+| 当前工作 | [GitHub Issues](https://github.com/ppap-agent/ppap/issues) |
+| 仅迁移任务需要的来源信息 | [Inventory](docs/INVENTORY.md)、[Migration](docs/MIGRATION.md) |
 
-终态是 `apps/web → services/api → PostgreSQL / 对象存储 → services/worker`。`packages` 是可复用库，`migrations` 管数据库变更，`deploy` 管运行交付，`tests` 管证明。Worker 不向浏览器暴露第二套产品 API。
+当前实现事实以 `main` 上的源码和测试为准，不维护另一份“当前状态”文档。
 
-Core LLM 固定走 Responses-compatible API。当前 isolated-dev profile 默认 `LLM_BASE_URL=https://api.trustedtunnel.app/v1`、`LLM_MODEL=gpt-5.6-luna`，因此 Cursor 日常只需要 `LLM_API_KEY` 一个 core Secret；两项默认均可被环境覆盖。LLM 与飞书环境可用性分别由两个独立 reusable GitHub Actions probe 用 `curl + jq` 验证；每次 push 的 `Push preflight` 必须等两者成功后才继续 deterministic verification。不能把 readiness 成功当作产品验收成功。
+主要运行路径是：
 
-隔离开发的 PostgreSQL/对象存储使用仓库 defaults；飞书、Partner AI 和 legacy migration 都按 capability 接入，不是 core startup 前置。
+```text
+apps/web -> services/api -> PostgreSQL / object storage -> services/worker -> packages
+```
 
-`ppap-agent/ppap-agent` 是当前引擎与迁移来源，不是终态跨仓依赖。整合不等于立即关闭来源服务：客户安装、其它产品与旧链接须分别核验后退出。
+`packages` 是可复用库，不再包装成第二个产品 HTTP 层。飞书、Partner AI、外部 LLM 等按 capability 接入；无关的可选集成不可用时，不阻塞 Core 开发和测试。
 
-本仓保持私有。采用高质量开源工程标准，不代表已取得公开遗留代码、规则、样本或客户资料的许可。
+`ppap-agent/ppap-agent` 等来源仓只在当前迁移/回归任务需要时读取。来源服务是否退役由真实消费者决定，不由仓库名字或旧架构推断。

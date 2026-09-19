@@ -1,55 +1,32 @@
 # Product API
 
-The only public HTTP API for PPAP.
+PPAP 唯一公开 HTTP API。使用 `python tools/stack.py up` 启动 isolated-dev；重文档处理和长模型调用不在请求线程执行。
 
-Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy document or model work in request threads.
+## 当前主要表面
 
-## HTTP surface (#2 / #4 / #5)
+- `/health`、`/ready`、`/version`、`/public-config`
+- 飞书登录/回调、`/me`、`/logout`
+- 对象授权读取 `/resources/{id}`
+- 文件/版本：创建版本、写入 blob、finalize、读取 metadata、download
+- isolated-dev fixture session 与 staging cleanup 仅用于本地开发
 
-- `GET /health` — process alive
-- `GET /ready` — PostgreSQL and object storage actually reachable
-- `GET /version` — `git_sha`
-- `GET /public-config` — web-safe origin, profile, git sha, login mode; never secrets
-- `GET /capabilities` — optional integration flags (`configured` / `disabled` only; not GitHub probe success)
-- `GET /login/feishu` — redirect to Feishu authorize with one-time state
-- `GET /login/feishu/callback` — exchange code, bind provider/app/tenant/subject, set session cookie
-- `POST /integrations/feishu/events` — URL challenge and authenticated `app_ticket`
-- `GET /me` — current session; 401 if missing/expired/revoked
-- `POST /logout` — revoke session
-- `GET /resources/{id}` — object read; 403 `access_denied` without leaking body
-- `POST /isolated-dev/sessions` — fixture sessions only when `PPAP_PROFILE=isolated-dev`; hidden in production
-
-- `POST /files` — create a staging version (creator gets `read`, not review)
-- `POST /files/{id}/versions` — another staging version of the same file
-- `PUT /files/{id}/versions/{vid}/blob` — exclusive object write; second PUT is 409
-- `POST /files/{id}/versions/{vid}/finalize` — hash stored bytes as SHA-256; ready versions never change
-- `GET /files/{id}/versions/{vid}` — metadata; 403 `access_denied` without leaking body
-- `GET /files/{id}/versions/{vid}/download` — ready bytes only; staging is 409. Attachment headers use an ASCII `filename` plus UTF-8 `filename*`; invalid media types fall back to `application/octet-stream`.
-- `POST /isolated-dev/reap-staging` — isolated-dev only; marks expired staging `failed` and may delete those objects; never touches `ready` keys
-
-Unready versions cannot be treated as originals. Object keys include version id and are never reused. Concurrent PUT against the same staging key keeps one winner. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03.
+文件历史由 `file_version_id` 和其存储对象引用确定。新上传创建新版本，旧版本不会被重定向。当前实现会在 finalize 时计算 SHA-256 checksum，并在下载响应中提供它；这是辅助完整性/比较信息，不是产品版本 identity。
 
 ## Owns
 
-- product authentication/session handling
-- tenant/user/external identity projection
-- document metadata and immutable version registration
+- product authentication/session
+- tenant/user/object authorization
+- file metadata/version registration
 - audit-round acceptance and idempotency
-- result, evidence, and history reads
+- result/history reads
 - human review writes
-- usage ledger queries and adapter synchronization
-- Feishu OAuth/Drive integration endpoints required by the product
+- usage queries and external adapters
+- product-required Feishu endpoints
 
 ## Does not own
 
-- OCR
-- LibreOffice
-- heavy PDF rendering/conversion
+- OCR / LibreOffice / heavy PDF conversion
 - long LLM/audit execution
-- engine lease/retry mechanics
+- Worker lease/retry mechanics
 
-## Submission contract
-
-An accepted audit request creates the product audit round and initial engine job in one PostgreSQL transaction. The API does not synchronously call a public engine task service.
-
-Any feature named 'recognition' that performs expensive document work is submitted as worker work; only cheap metadata validation belongs in request handlers.
+受理审核时，产品轮次和初始执行工作在一个 PostgreSQL 事务内创建。任何需要重解析的 recognition 工作都提交给 Worker；请求线程只做必要的轻量校验。

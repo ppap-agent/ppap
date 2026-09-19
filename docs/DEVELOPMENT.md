@@ -1,143 +1,51 @@
-# 开发与真实验证入口
+# 开发
 
-先读根 AGENTS、当前 Issue 和它直接引用的权威。[#2](https://github.com/ppap-agent/ppap/issues/2) 的 isolated-dev 运行栈由 `python tools/stack.py` 启动。下面的 Live 命令仍是用户 Story 子证明；栈起来不等于审核验收通过。业务状态见 [ROADMAP](ROADMAP.md)。
+普通工作只需要当前 Issue、相关源码和最近测试。不要先读历史调查、旧路线图或关闭的 PR。
 
-## Core LLM 配置
+## 配置
 
-PPAP 的当前 LLM 边界是 **Responses-compatible API**，不是 Chat Completions，也不绑定 OpenAI 厂商。当前 isolated-dev profile 有两个可覆盖的仓库默认值：
+应用配置的 executable authority 是 typed Settings 和 [`.env.example`](../.env.example)。API 与 Worker 复用同一语义；不要在文档里维护第二份默认值表。
 
-```text
-LLM_BASE_URL=https://api.trustedtunnel.app/v1
-LLM_MODEL=gpt-5.6-luna
-```
+规则：
 
-因此普通 Cursor Cloud / 本地 isolated-dev 启动只要求一个 Secret：
+- Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
+- 可选 capability 缺配置只影响该 capability，不阻止 Core 启动和无关测试。
+- 生产配置显式提供实际 endpoint/credentials，不依赖 isolated-dev defaults。
+- 新增配置项前先确认它代表独立运行决策，而不是可从现有 authority 推导的内部细节。
 
-```text
-LLM_API_KEY
-```
-
-应用最终应将请求发送到 `<LLM_BASE_URL>/responses`，并显式设置 `store:false, stream:true`；真实 TrustedTunnel probe 已依次证明该 gateway 要求关闭 provider-side response storage 且只接受 streaming Responses。streaming 完成以官方 Responses SSE 的 `response.completed` 事件为准。当前只有这一种真实协议，不增加 `LLM_PROTOCOL`、`LLM_PROVIDER` 或 `LLM_VENDOR`。只有出现第二种真实且不兼容的协议后才重新抽象。
-
-Base URL 和 Model 是普通配置，不是秘密；但 Cursor Cloud 目前把所有环境项都存进 Secret store 也完全可接受。**存储机制不改变安全分类。** 如果 Cursor 已经注入 `LLM_BASE_URL` / `LLM_MODEL`，它们覆盖仓库 isolated-dev defaults。
-
-当前 Cursor 若仍使用历史名称：
-
-```text
-OPENAI_API_KEY
-OPENAI_BASE_URL
-MODEL_NAME
-```
-
-环境侧应一次性改名/映射为 `LLM_API_KEY / LLM_BASE_URL / LLM_MODEL`。应用代码不维护两套 env authority。因为 Base URL / Model 已有当前 isolated-dev defaults，实际必须迁移的只有 API key 名称。
-
-这些 defaults 是当前团队开发 profile，不是 PPAP 产品定义，也不是生产 provider 承诺。生产部署必须在部署配置中显式确定其 endpoint/model；不得无意继承 isolated-dev provider。
-
-## 外部环境 readiness
-
-环境可用性由两个独立的原生 GitHub Actions probe 拥有，不在应用或 Python 工具中维护第二套实现。每次 push 由 [`Push preflight`](../.github/workflows/preflight.yml) 并行调用两者；它们也保留 `workflow_dispatch` 供单独排查：
-
-- [LLM readiness](../.github/workflows/llm-readiness.yml)：直接用 `curl + jq` 对 GitHub Secrets 中现有的 `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 发一次 `/responses` 请求；Base URL 与 Model 在请求前会去掉首尾空白，并在 workflow 边界映射为 canonical `LLM_*` 语义。应用代码仍只认 `LLM_*`。它只证明当前 GitHub 配置的 endpoint、key、model 与 Responses envelope 可用。
-- [Feishu readiness](../.github/workflows/feishu-readiness.yml)：当前真实 App 已由飞书错误码确认是**应用商店应用**。probe 用 `FEISHU_APP_ID / FEISHU_APP_SECRET` 调 `app_ticket/resend`，只证明商店应用凭据被飞书接受；该调用会触发一次 app_ticket 推送事件。它不证明 app_ticket 已被当前新系统接收，也不证明 app_access_token / tenant_access_token、用户 OAuth、Drive/Docs 权限或 Partner AI。
-
-两者都是 reusable workflow（`workflow_call`）并保留 `workflow_dispatch`。每次 push 的 `Push preflight` 必须等 LLM 与 Feishu 两者都成功后，才调用 deterministic verification。probe 本身不 checkout 仓库、不安装 SDK、不上传 artifact、不自动 retry；失败只输出脱敏的协议字段，不输出 key/token/raw response。PR 的 deterministic verification 仍可独立运行，因为 PR 不应依赖仓库 Secrets。探针成功不能替代 #3/#6 的审核 corpus，也不能替代 #4/#11 的飞书用户路径。
-
-## Core 与 optional integrations
-
-隔离开发环境的 PostgreSQL、S3-compatible object storage、内部开发账号/角色由仓库提供安全 dev defaults。普通 Cursor/本地开发不应为了启动 core stack 再配置数据库或对象存储 Secrets。生产仍使用最小权限角色和部署 Secret。
-
-飞书、Partner AI、legacy engine、未来独立 OCR provider 都是按 capability 接入的外部依赖。缺少它们的凭据不得阻止 Core PPAP 启动；只有进入相应能力时才明确报告 unavailable / NOT_PROVEN。
-
-飞书接入阶段使用：
-
-```text
-FEISHU_APP_ID                 # 普通配置
-FEISHU_APP_SECRET             # Secret
-FEISHU_VERIFICATION_TOKEN     # 事件真实性校验；接收 app_ticket 时必需，不是 Core 启动条件
-```
-
-用户 access/refresh token 是运行时身份数据，不是 Cloud Agent 的静态 Secret。商店应用事件用飞书 Verification Token 校验，并绑定当前配置的 App ID 后才持久化 `app_ticket`；未通过校验的调用不得把 capability 写成 `received`。
-
-`PPAP_WEB_URL` 由 typed Settings 拥有，供 CORS 与 OAuth `return_to` 使用。isolated-dev 默认 `http://127.0.0.1:4173`，并继续接受同端口 localhost；生产必须显式给出实际对外 Web origin，不得继承 127.0.0.1。Live 工具读取同一个变量，不另建 redirect/origin 框架。
-
-## #2 实现时必须保持的配置边界
-
-- 建立一个 typed settings owner；API 和 Worker 复用配置语义，不在模块中散落 `os.getenv`。
-- isolated-dev profile 可以给 Base URL / Model 和 core infrastructure 提供仓库 defaults；生产 deployment 显式提供实际 endpoint/model/credentials。
-- Core readiness 区分配置完整与外部 readiness probe。不要只因字符串存在就声称依赖 ready。
-- `/health` 只证明进程存活；`/ready` 证明 core dependencies 可用；飞书、Partner AI 等单独报告 capability readiness。
-- Web 只能获得明确允许公开的配置，绝不能打包 server Secret。
-- 可选 integration 缺配置不能让整个 API 启动失败，也不能触发 fake quota / fake provider fallback。
-- 新增环境变量前先证明没有安全 default、可靠推导值或已有 canonical owner。
-
-## 当前可执行命令
-
-Python 3.12 可运行工具自测、#2 运行栈和依赖探针。浏览器检查另需 Playwright 与 Chromium。isolated-dev 需要本机 PostgreSQL 16 二进制（`postgresql` 包）和可下载的 MinIO；不把 Docker 当作这台 Cloud VM 的启动前置。
+## isolated-dev
 
 ```sh
+python tools/stack.py install
 python tools/stack.py up
 python tools/stack.py verify
 python tools/stack.py seed-auth
 python tools/stack.py verify-auth
 python tools/stack.py verify-uploads
-python tools/stack.py restart
 python tools/stack.py down
-
-python -m unittest discover -s tests/unit -v
-python -m py_compile tools/live.py tools/legacy_engine_gate.py tools/stack.py
-
-python -m pip install -r tests/live/requirements.txt
-python -m playwright install chromium
-cp .env.example .env
-set -a; . ./.env; set +a
-python tools/live.py audit
-python tools/live.py history
-python tools/live.py review
-python tools/live.py isolation
-python tools/live.py probe --url http://127.0.0.1:8080/version --expected-build "$(git rev-parse HEAD)"
 ```
 
-`stack.py up` 启动 127.0.0.1 上的 PostgreSQL、MinIO、API（8080）、Worker、Web（4173）。isolated-dev 的 `PPAP_WEB_URL` 默认就是 `http://127.0.0.1:4173`。Web 只拉 `/public-config`，没有 server Secret。Worker 可单独停掉而不让 API `/health` 失败；`/ready` 只证明 PostgreSQL 与对象存储，不要求 Worker 进程。
+`stack.py` 启动本地 PostgreSQL、对象存储、API、Worker 和 Web。`verify-*` 是直接集成检查，不是产品 Story 状态系统。
 
-`stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。`seed-auth` / `verify-auth` 用 isolated-dev 预存 session 证明跨租户对象拒绝、同租户只读非复核、退出登录和飞书 OAuth 启动跳转；**不是 S02 真实浏览器登录**。`verify-uploads` 在本机 PG/MinIO 上证明不可变文件版本、同版本并发条件写与跨租户下载拒绝；**不是 S03 审核历史**。这些都不是 G01–G05。
+## 测试
 
-飞书商店应用的 `app_ticket` 由 `POST /integrations/feishu/events` 接收，须带上与配置一致的 Verification Token 且 `app_id` 匹配当前应用。本机 127.0.0.1 不能作为飞书事件订阅或 OAuth redirect 的公网入口；未收到经校验的 ticket 时 capability 记 `app_ticket: missing`，不得假装已换取 app/tenant token。OAuth session 绑定飞书 access/refresh 有效期：access 过期则续期，refresh 失败或过期则会话失效。
+```sh
+python -m pip install -r requirements.txt
+PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
+```
 
-Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu readiness 只在对应 GitHub Actions run 中给出成功/失败，不保存 provider token、模型原文或飞书 token。
+测试层级和 corpus 规则见 [TESTING](TESTING.md)。
 
-## Live 验证变量
+## 外部 integrations
 
-`.env.example` 中多数 `PPAP_*` 只服务当前 Live/migration 工具。例外：`PPAP_PROFILE`、`PPAP_BUILD_SHA`、`PPAP_PUBLIC_API_URL`、`PPAP_WEB_URL` 由应用 Settings 拥有。
+[LLM readiness](../.github/workflows/llm-readiness.yml) 与 [Feishu readiness](../.github/workflows/feishu-readiness.yml) 是手动诊断 workflow。普通 push/PR CI 不依赖它们。
 
-| 名称 | 使用方与用途 |
-|---|---|
-| PPAP_ENVIRONMENT | 安全的隔离环境标签 |
-| PPAP_WEB_URL | 产品 Web 的 canonical origin（CORS / OAuth return_to / Live 入口）；本机 isolated-dev 为 `http://127.0.0.1:4173` |
-| PPAP_BUILD_SHA | 本次部署的完整源码身份；`stack.py` 默认写入 `git rev-parse HEAD` |
-| PPAP_VERSION_URL | 只读版本探针地址；本机 isolated-dev 为 `http://127.0.0.1:8080/version` |
-| PPAP_AUTH_STATE | 授权测试账号的 Playwright storage_state |
-| PPAP_OTHER_TENANT_STATE | 另一隔离租户状态，用于拒绝子证明 |
-| PPAP_SAMPLE / PPAP_ORACLE | 有权使用的真实原件和事先审阅的规则/证据期望 |
-| PPAP_EXISTING_ROUND_URL | 与 oracle 对应的已完成轮次 |
-| PPAP_REPLACEMENT_SAMPLE | 同名不同字节的授权原件 |
-| PPAP_LIVE_TIMEOUT_SECONDS | 单次 proof run 等待终态上限，不表示 SLA |
+如果当前任务涉及真实 OAuth、Drive/Docs、Partner AI 或其它非幂等外部写操作，再为那个边界做最小 integration test/readback。不要为了未来可能使用而提前增加 provider abstraction、Secret 或重试状态机。
 
-迁移期 `PPAP_LEGACY_*` 只由旧引擎对照工具使用。终态删除这些配置与 HTTP 依赖，而不是让它们变成正常启动要求。
+## 迁移工作
 
-## 外部 capability 的加入时机
+只有迁移 Issue 才读取 [INVENTORY](INVENTORY.md) / [MIGRATION](MIGRATION.md) 和来源仓。固定来源 Git revision 后优先运行来源仓已有 tests；先得到真实失败，再搬最少代码。
 
-| 能力 | 什么时候需要配置 | Core 缺失时 |
-|---|---|---|
-| Responses-compatible LLM | isolated-dev 只需 `LLM_API_KEY`；Base URL/Model 有可覆盖 defaults | 审核能力不可用；其它无关路径不得假装审核成功 |
-| Feishu OAuth / Drive / Docs | #4/#11：`FEISHU_APP_ID` + `FEISHU_APP_SECRET`；接收事件另需 `FEISHU_VERIFICATION_TOKEN` | Feishu capability disabled；普通 Web/Core 可用 |
-| Partner AI | #12 根据真实 API 契约再增加必要配置 | usage reconciliation disabled；不得伪造余额 |
-| 独立 OCR provider | 只有 #3 corpus 证明现有解析/多模态路径不足时 | 不提前增加 Secret |
-| legacy engine | 仅迁移对照期间 | 不影响终态 Core；最终删除 |
+## 最短交付路径
 
-已有合法开发凭据只写入 Cloud Secret 或 gitignored 本地 `.env`；仓库只保留安全 isolated-dev defaults 和空 Secret。不要从历史泄漏值猜当前凭据。
-
-## 一项工作的最短交付路径
-
-检查当前 Issue/PR → 读相关源码/权威 → 实现一个可验收结果 → 运行最近测试及需要的 Live Gate → 更新直接相关文档 → commit & push → 回读 Issue/提交与证据。语义变更同时审阅 Story；只调整 UI 选择器不得改弱断言。
-
-构建、静态检查、工具自测、依赖 readiness、产品 Live 分别报告。无法取得外部账号或环境时，保留明确阻塞和复跑命令，继续不依赖该阻塞的工作。
+当前 Issue → 局部代码 → 最近测试 → 必要的边界测试 → 当前 PR。实施状态只更新 Issue/PR，不另建运行台账。
