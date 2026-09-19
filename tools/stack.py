@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+"""Isolated-dev process supervisor for PostgreSQL, MinIO, API, worker, and local web."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+LOCAL = ROOT / ".local" / "stack"
+BIN = ROOT / ".local" / "bin"
+VENV = ROOT / ".venv"
+WEB = ROOT / "apps" / "web"
+MIGRATIONS = ROOT / "migrations"
+PGDATA = LOCAL / "pgdata"
+MINIO_DATA = LOCAL / "minio"
+LOGS = LOCAL / "logs"
+PIDS = LOCAL / "pids"
+
+MINIO_RELEASE = "RELEASE.2025-09-07T16-13-09Z"
+MINIO_URL = (
+    "https://github.com/minio/minio/releases/download/"
+    f"{MINIO_RELEASE}/minio.linux-amd64.{MINIO_RELEASE}"
+)
+MINIO_SHA256 = "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f"
+
+PROCESSES = ("postgres", "minio", "api", "worker", "web")
+
+
+def pythonpath() -> str:
+    parts = [
+        str(ROOT / "packages"),
+        str(ROOT / "services" / "api"),
+        str(ROOT / "services" / "worker"),
+    ]
+    existing = os.environ.get("PYTHONPATH", "")
+    if existing:
+        parts.append(existing)
+    return os.pathsep.join(parts)
+
+
+def map_llm_names(env: dict[str, str]) -> dict[str, str]:
+    """Environment-side mapping only. Application settings still read LLM_*."""
+    out = dict(env)
+    for dest, src in (
+        ("LLM_API_KEY", "OPENAI_API_KEY"),
+        ("LLM_BASE_URL", "OPENAI_BASE_URL"),
+        ("LLM_MODEL", "MODEL_NAME"),
+    ):
+        if not out.get(dest) and out.get(src):
+            out[dest] = out[src]
+    return out
+
+
+def git_sha() -> str:
+    forced = os.environ.get("PPAP_BUILD_SHA", "").strip()
+    if forced:
+        return forced
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def child_env() -> dict[str, str]:
+    from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL
+
+    env = map_llm_names(dict(os.environ))
+    sha = git_sha()
+    env["PYTHONPATH"] = pythonpath()
+    env["PPAP_PROFILE"] = env.get("PPAP_PROFILE") or "isolated-dev"
+    env["PPAP_BUILD_SHA"] = sha
+    env["PPAP_WEB_URL"] = env.get("PPAP_WEB_URL") or "http://127.0.0.1:4173"
+    env["PPAP_VERSION_URL"] = env.get("PPAP_VERSION_URL") or "http://127.0.0.1:8080/version"
+    env["PPAP_PUBLIC_API_URL"] = env.get("PPAP_PUBLIC_API_URL") or "http://127.0.0.1:8080"
+    env["PPAP_ENVIRONMENT"] = env.get("PPAP_ENVIRONMENT") or "isolated-dev"
+    if env["PPAP_PROFILE"] != "production":
+        if not str(env.get("LLM_BASE_URL") or "").strip():
+            env["LLM_BASE_URL"] = ISOLATED_DEV_LLM_BASE_URL
+        if not str(env.get("LLM_MODEL") or "").strip():
+            env["LLM_MODEL"] = ISOLATED_DEV_LLM_MODEL
+    return env
+
+
+def pg_bin(name: str) -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    for version in ("16", "17", "15"):
+        candidate = Path(f"/usr/lib/postgresql/{version}/bin/{name}")
+        if candidate.exists():
+            return str(candidate)
+    raise SystemExit(f"missing PostgreSQL binary {name}; install postgresql")
+
+
+def venv_python() -> Path:
+    return VENV / "bin" / "python"
+
+
+def ensure_dirs() -> None:
+    for path in (LOCAL, BIN, LOGS, PIDS, MINIO_DATA, WEB):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def pid_path(name: str) -> Path:
+    return PIDS / f"{name}.pid"
+
+
+def log_path(name: str) -> Path:
+    return LOGS / f"{name}.log"
+
+
+def read_pid(name: str) -> int | None:
+    path = pid_path(name)
+    if not path.exists():
+        return None
+    try:
+        pid = int(path.read_text().strip())
+    except ValueError:
+        return None
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        path.unlink(missing_ok=True)
+        return None
+    return pid
+
+
+def write_pid(name: str, pid: int) -> None:
+    pid_path(name).write_text(str(pid) + "\n")
+
+
+def port_open(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.3)
+        return sock.connect_ex((host, port)) == 0
+
+
+def wait_port(host: str, port: int, timeout: float = 30) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if port_open(host, port):
+            return
+        time.sleep(0.2)
+    raise SystemExit(f"timeout waiting for {host}:{port}")
+
+
+def spawn(name: str, command: list[str], env: dict[str, str], cwd: Path | None = None) -> None:
+    if read_pid(name):
+        return
+    log = log_path(name).open("ab")
+    proc = subprocess.Popen(
+        command,
+        cwd=str(cwd or ROOT),
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    write_pid(name, proc.pid)
+
+
+def stop_pid(name: str) -> None:
+    pid = read_pid(name)
+    if not pid:
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pid_path(name).unlink(missing_ok=True)
+        return
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+        time.sleep(0.2)
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    pid_path(name).unlink(missing_ok=True)
+
+
+def download_minio() -> Path:
+    dest = BIN / "minio"
+    if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == MINIO_SHA256:
+        dest.chmod(0o755)
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".partial")
+    with urllib.request.urlopen(MINIO_URL, timeout=120) as response, tmp.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+    digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
+    if digest != MINIO_SHA256:
+        tmp.unlink(missing_ok=True)
+        raise SystemExit("minio checksum mismatch")
+    tmp.replace(dest)
+    dest.chmod(0o755)
+    return dest
+
+
+def install() -> None:
+    ensure_dirs()
+    pg_bin("postgres")
+    pg_bin("initdb")
+    download_minio()
+    if not venv_python().exists():
+        subprocess.check_call([sys.executable, "-m", "venv", str(VENV)])
+    subprocess.check_call([str(venv_python()), "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")])
+
+
+def reexec_in_venv() -> None:
+    install()
+    target = venv_python()
+    if Path(sys.prefix).resolve() != VENV.resolve():
+        os.execv(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+def init_postgres(env: dict[str, str]) -> None:
+    if (PGDATA / "PG_VERSION").exists():
+        return
+    password_file = LOCAL / "pg.pw"
+    password_file.write_text(env.get("PPAP_PG_BOOTSTRAP_PASSWORD", "ppap_isolated_dev"))
+    password_file.chmod(0o600)
+    subprocess.check_call(
+        [
+            pg_bin("initdb"),
+            "-D",
+            str(PGDATA),
+            "--locale=C",
+            "--encoding=UTF8",
+            "--username",
+            env.get("PPAP_PG_BOOTSTRAP_USER", "ppap"),
+            "--pwfile",
+            str(password_file),
+            "--auth=scram-sha-256",
+        ],
+        cwd=ROOT,
+    )
+    (PGDATA / "postgresql.conf").write_text(
+        "listen_addresses = '127.0.0.1'\n"
+        "port = 5432\n"
+        "unix_socket_directories = '{sockets}'\n"
+        "password_encryption = scram-sha-256\n".format(sockets=LOCAL / "pg_run")
+    )
+    (LOCAL / "pg_run").mkdir(parents=True, exist_ok=True)
+    (PGDATA / "pg_hba.conf").write_text(
+        "local all all scram-sha-256\n"
+        "host all all 127.0.0.1/32 scram-sha-256\n"
+        "host all all ::1/128 scram-sha-256\n"
+    )
+
+
+def start_postgres(env: dict[str, str]) -> None:
+    init_postgres(env)
+    (LOCAL / "pg_run").mkdir(parents=True, exist_ok=True)
+    if not read_pid("postgres"):
+        spawn(
+            "postgres",
+            [pg_bin("postgres"), "-D", str(PGDATA)],
+            env,
+        )
+    wait_port("127.0.0.1", int(env.get("PPAP_PG_PORT", "5432")))
+
+
+def bootstrap_roles(env: dict[str, str]) -> None:
+    import psycopg
+    from psycopg import sql
+
+    secret = env.get("PPAP_PG_API_PASSWORD", "ppap_isolated_dev")
+    roles = {
+        env.get("PPAP_PG_MIGRATOR_USER", "ppap_migrator"): env.get("PPAP_PG_MIGRATOR_PASSWORD", secret),
+        env.get("PPAP_PG_API_USER", "ppap_api"): env.get("PPAP_PG_API_PASSWORD", secret),
+        env.get("PPAP_PG_WORKER_USER", "ppap_worker"): env.get("PPAP_PG_WORKER_PASSWORD", secret),
+    }
+    user = env.get("PPAP_PG_BOOTSTRAP_USER", "ppap")
+    password = env.get("PPAP_PG_BOOTSTRAP_PASSWORD", "ppap_isolated_dev")
+    host = env.get("PPAP_PG_HOST", "127.0.0.1")
+    port = env.get("PPAP_PG_PORT", "5432")
+    database = env.get("PPAP_PG_DATABASE", "ppap")
+    migrator = env.get("PPAP_PG_MIGRATOR_USER", "ppap_migrator")
+    with psycopg.connect(f"postgresql://{user}:{password}@{host}:{port}/postgres", autocommit=True) as conn:
+        for role, role_password in roles.items():
+            exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+            if exists:
+                conn.execute(
+                    sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(role_password))
+                )
+            else:
+                conn.execute(
+                    sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(role_password))
+                )
+        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database,)).fetchone()
+        if not exists:
+            conn.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(database), sql.Identifier(migrator)))
+
+
+def migrate(env: dict[str, str]) -> None:
+    import psycopg
+
+    sys.path[:0] = [str(ROOT / "packages")]
+    from ppap_core.settings import Settings
+
+    settings = Settings()
+    user = env.get("PPAP_PG_MIGRATOR_USER", settings.pg_migrator_user)
+    password = env.get("PPAP_PG_MIGRATOR_PASSWORD", settings.pg_migrator_password)
+    dsn = (
+        f"postgresql://{user}:{password}@{settings.pg_host}:{settings.pg_port}/{settings.pg_database}"
+    )
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("CREATE SCHEMA IF NOT EXISTS product")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product.schema_migrations (
+                version text PRIMARY KEY,
+                applied_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+        applied = {row[0] for row in conn.execute("SELECT version FROM product.schema_migrations")}
+        for path in sorted(MIGRATIONS.glob("*.sql")):
+            version = path.name
+            if version in applied:
+                continue
+            conn.execute(path.read_text())
+            conn.execute("INSERT INTO product.schema_migrations (version) VALUES (%s)", (version,))
+
+
+def start_minio(env: dict[str, str]) -> None:
+    minio = download_minio()
+    child = dict(env)
+    child["MINIO_ROOT_USER"] = env.get("PPAP_S3_ACCESS_KEY", "ppap_isolated_dev")
+    child["MINIO_ROOT_PASSWORD"] = env.get("PPAP_S3_SECRET_KEY", "ppap_isolated_dev")
+    spawn(
+        "minio",
+        [str(minio), "server", str(MINIO_DATA), "--address", "127.0.0.1:9000", "--quiet"],
+        child,
+    )
+    wait_port("127.0.0.1", 9000)
+    sys.path[:0] = [str(ROOT / "packages")]
+    from ppap_core.settings import Settings
+    from ppap_core.storage import ensure_bucket
+
+    ensure_bucket(Settings())
+
+
+def write_web_runtime(env: dict[str, str]) -> None:
+    payload = {"api_url": env.get("PPAP_PUBLIC_API_URL", "http://127.0.0.1:8080").rstrip("/")}
+    (WEB / "runtime-config.json").write_text(json.dumps(payload) + "\n")
+
+
+def start_apps(env: dict[str, str]) -> None:
+    py = str(venv_python())
+    write_web_runtime(env)
+    spawn(
+        "api",
+        [py, "-m", "uvicorn", "ppap_api:app", "--host", env.get("PPAP_API_BIND", "127.0.0.1"), "--port", env.get("PPAP_API_PORT", "8080")],
+        env,
+    )
+    spawn("worker", [py, "-m", "ppap_worker.main"], env)
+    spawn(
+        "web",
+        [py, "-m", "http.server", env.get("PPAP_WEB_PORT", "4173"), "--bind", env.get("PPAP_WEB_BIND", "127.0.0.1")],
+        env,
+        cwd=WEB,
+    )
+    wait_port("127.0.0.1", int(env.get("PPAP_API_PORT", "8080")))
+    wait_port("127.0.0.1", int(env.get("PPAP_WEB_PORT", "4173")))
+
+
+def up() -> None:
+    reexec_in_venv()
+    env = child_env()
+    if port_open("127.0.0.1", 5432) and not read_pid("postgres"):
+        raise SystemExit("127.0.0.1:5432 is already in use; stop the other PostgreSQL or set PPAP_PG_PORT")
+    start_postgres(env)
+    os.environ.update({k: v for k, v in env.items() if k.startswith(("PPAP_", "LLM_", "PYTHONPATH"))})
+    bootstrap_roles(env)
+    migrate(env)
+    start_minio(env)
+    start_apps(env)
+    print(json.dumps({
+        "status": "started",
+        "web": env["PPAP_WEB_URL"],
+        "api": env["PPAP_PUBLIC_API_URL"],
+        "version": env["PPAP_VERSION_URL"],
+        "git_sha": env["PPAP_BUILD_SHA"],
+    }))
+
+
+def down() -> None:
+    for name in reversed(PROCESSES):
+        if name == "postgres" and read_pid("postgres"):
+            try:
+                subprocess.call(
+                    [pg_bin("pg_ctl"), "-D", str(PGDATA), "-m", "fast", "stop"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except SystemExit:
+                pass
+        stop_pid(name)
+    print(json.dumps({"status": "stopped"}))
+
+
+def restart() -> None:
+    down()
+    up()
+
+
+def status() -> dict[str, object]:
+    return {name: ("running" if read_pid(name) else "stopped") for name in PROCESSES}
+
+
+def http_json(url: str) -> tuple[int, dict]:
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = json.loads(response.read().decode())
+            return response.status, body
+    except urllib.error.HTTPError as exc:
+        body = json.loads(exc.read().decode()) if exc.fp else {}
+        return exc.code, body
+
+
+def verify() -> int:
+    env = child_env()
+    report = {
+        "processes": status(),
+        "health": None,
+        "ready": None,
+        "version": None,
+        "public_config": None,
+        "web": None,
+        "worker_heartbeat": None,
+        "ok": False,
+    }
+    try:
+        code, health = http_json(env["PPAP_PUBLIC_API_URL"].rstrip("/") + "/health")
+        report["health"] = {"http": code, "status": health.get("status")}
+        code, ready = http_json(env["PPAP_PUBLIC_API_URL"].rstrip("/") + "/ready")
+        report["ready"] = {"http": code, "status": ready.get("status"), "postgres": ready.get("postgres"), "object_storage": ready.get("object_storage")}
+        code, version = http_json(env["PPAP_VERSION_URL"])
+        report["version"] = {"http": code, "git_sha": version.get("git_sha")}
+        code, public = http_json(env["PPAP_PUBLIC_API_URL"].rstrip("/") + "/public-config")
+        secret_like = [key for key in public if any(part in key.lower() for part in ("secret", "password", "token", "api_key", "access_key"))]
+        report["public_config"] = {"http": code, "keys": sorted(public), "secret_fields": secret_like}
+        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+            html = response.read().decode()
+            report["web"] = {"http": response.status, "has_build_hook": 'data-testid="build-revision"' in html}
+        import psycopg
+        from ppap_core.settings import Settings
+        settings = Settings()
+        row = None
+        deadline = time.time() + 12
+        while time.time() < deadline and not row:
+            with psycopg.connect(settings.dsn("api"), autocommit=True) as conn:
+                row = conn.execute(
+                    "SELECT worker_id FROM engine.worker_heartbeats WHERE last_seen_at > now() - interval '10 seconds' LIMIT 1"
+                ).fetchone()
+            if not row:
+                time.sleep(0.4)
+        report["worker_heartbeat"] = bool(row)
+        report["ok"] = (
+            report["processes"] == {name: "running" for name in PROCESSES}
+            and report["health"]["status"] == "alive"
+            and report["ready"]["status"] == "ready"
+            and report["version"]["git_sha"] == env["PPAP_BUILD_SHA"]
+            and not secret_like
+            and report["web"]["has_build_hook"]
+            and report["worker_heartbeat"] is True
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate"])
+    args = parser.parse_args()
+    if args.command == "install":
+        install()
+        print(json.dumps({"status": "installed"}))
+        return 0
+    if args.command == "up":
+        reexec_in_venv()
+        up()
+        return 0
+    if args.command == "down":
+        down()
+        return 0
+    if args.command == "restart":
+        reexec_in_venv()
+        restart()
+        return 0
+    if args.command == "status":
+        print(json.dumps(status()))
+        return 0
+    if args.command == "migrate":
+        reexec_in_venv()
+        env = child_env()
+        start_postgres(env)
+        os.environ.update({k: v for k, v in env.items() if k.startswith(("PPAP_", "LLM_", "PYTHONPATH"))})
+        bootstrap_roles(env)
+        migrate(env)
+        print(json.dumps({"status": "migrated"}))
+        return 0
+    reexec_in_venv()
+    return verify()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

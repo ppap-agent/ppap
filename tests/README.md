@@ -5,7 +5,8 @@
 当前已存在：`unit/test_live.py` 检验验收工具的误通过/误拒绝和安全失败；`live/` 保存工具依赖与 oracle 示例；`tools/live.py` 执行真实端点探针和首批浏览器子证明。
 
 ```sh
-python -m unittest discover -s tests/unit -v
+PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
+python tools/stack.py verify   # requires a running isolated-dev stack; not a Story
 ```
 
-产品本身尚未实现。对应 Issues 必须随实现交付领域、数据库/Worker、引擎 corpus、迁移与安全测试；不能把工具自测当成产品回归。
+`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面。`live/` 保存工具依赖与 oracle 示例。产品审核、授权与 corpus 仍由对应 Issues 交付。

@@ -2,6 +2,8 @@
 
 Asynchronous execution process for PPAP audits.
 
+Start with `python tools/stack.py up`. The worker is a separate process; stopping it must not block API `/health`. Isolated-dev currently heartbeats and claims `engine.jobs`; rule execution is later Issues.
+
 ## Owns
 
 - PostgreSQL job claim/lease/retry

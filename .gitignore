@@ -10,6 +10,7 @@ __pycache__/
 .idea/
 .vscode/
 .local/
+apps/web/runtime-config.json
 .artifacts/
 .pytest_cache/
 playwright/.auth/

@@ -25,4 +25,4 @@ Core LLM 固定走 Responses-compatible API。canonical 配置是 `LLM_API_KEY`�
 
 Live 验证使用授权的隔离环境和真实依赖，正常调用费用已获许可。隔离环境中的外部账号仍须属于测试范围。凭据只进 gitignored 本地配置或 Runtime Secret，日志不保留 token 或客户内容。失败如实报告，不能重跑业务操作抹掉失败。
 
-目标尚无应用运行代码，不要编造启动命令或声称 E2E 已通过。工具、应用与发布各自报告验证范围；后续新增真实命令时同步对应目录说明。
+目标应用已有 isolated-dev 启动路径，见 [DEVELOPMENT](docs/DEVELOPMENT.md) 的 `python tools/stack.py`。不要声称 Live Stories 或 E2E 已通过。工具、应用与发布各自报告验证范围。

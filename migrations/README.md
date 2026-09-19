@@ -5,7 +5,7 @@ One PostgreSQL cluster, two responsibility schemas:
 - `product`: product truth and user-visible history
 - `engine`: execution queue, attempts, leases, and diagnostics
 
-Migrations are forward-only and reviewed with the application change that needs them.
+Migrations are forward-only and reviewed with the application change that needs them. Apply with `python tools/stack.py migrate` or `python tools/stack.py up`.
 
 Rules:
 
