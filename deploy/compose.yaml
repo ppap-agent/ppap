@@ -42,11 +42,25 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    env_file:
-      - compose.env.example
     environment:
+      PPAP_PROFILE: production
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
       PPAP_SERVICE: api
+      PPAP_PG_HOST: postgres
+      PPAP_PG_PORT: "5432"
+      PPAP_PG_DATABASE: ${PPAP_PG_DATABASE}
+      PPAP_PG_API_USER: ${PPAP_PG_API_USER}
+      PPAP_PG_API_PASSWORD: ${PPAP_PG_API_PASSWORD}
+      PPAP_S3_ENDPOINT: ${PPAP_S3_ENDPOINT}
+      PPAP_S3_REGION: ${PPAP_S3_REGION}
+      PPAP_S3_BUCKET: ${PPAP_S3_BUCKET}
+      PPAP_S3_ACCESS_KEY: ${PPAP_S3_ACCESS_KEY}
+      PPAP_S3_SECRET_KEY: ${PPAP_S3_SECRET_KEY}
+      PPAP_WEB_URL: ${PPAP_WEB_URL}
+      PPAP_PUBLIC_API_URL: ${PPAP_PUBLIC_API_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -67,11 +81,24 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    env_file:
-      - compose.env.example
     environment:
+      PPAP_PROFILE: production
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
       PPAP_SERVICE: worker
+      PPAP_PG_HOST: postgres
+      PPAP_PG_PORT: "5432"
+      PPAP_PG_DATABASE: ${PPAP_PG_DATABASE}
+      PPAP_PG_WORKER_USER: ${PPAP_PG_WORKER_USER}
+      PPAP_PG_WORKER_PASSWORD: ${PPAP_PG_WORKER_PASSWORD}
+      PPAP_S3_ENDPOINT: ${PPAP_S3_ENDPOINT}
+      PPAP_S3_REGION: ${PPAP_S3_REGION}
+      PPAP_S3_BUCKET: ${PPAP_S3_BUCKET}
+      PPAP_S3_ACCESS_KEY: ${PPAP_S3_ACCESS_KEY}
+      PPAP_S3_SECRET_KEY: ${PPAP_S3_SECRET_KEY}
+      PPAP_WEB_URL: ${PPAP_WEB_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY:-}
 
   web:
     image: ppap-web:${PPAP_BUILD_SHA}

@@ -77,6 +77,42 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 Settings()
 
+    def test_production_api_does_not_need_bootstrap_or_peer_db_secrets(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_SERVICE="api",
+            PPAP_PG_API_PASSWORD="prod-api",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
+        ):
+            settings = Settings()
+        self.assertEqual(settings.pg_api_password, "prod-api")
+        self.assertEqual(settings.pg_worker_password, ISOLATED_DEV_SECRET)
+        self.assertEqual(settings.pg_migrator_password, ISOLATED_DEV_SECRET)
+        self.assertEqual(settings.pg_bootstrap_password, ISOLATED_DEV_SECRET)
+
+    def test_production_worker_does_not_need_bootstrap_or_peer_db_secrets(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_SERVICE="worker",
+            PPAP_PG_WORKER_PASSWORD="prod-worker",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
+        ):
+            settings = Settings()
+        self.assertEqual(settings.pg_worker_password, "prod-worker")
+        self.assertEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
+        self.assertEqual(settings.pg_migrator_password, ISOLATED_DEV_SECRET)
+        self.assertEqual(settings.pg_bootstrap_password, ISOLATED_DEV_SECRET)
+
     def test_production_requires_explicit_llm_endpoint(self):
         with _clean_env(
             PPAP_PROFILE="production",

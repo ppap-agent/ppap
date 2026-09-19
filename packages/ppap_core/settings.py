@@ -13,6 +13,10 @@ ISOLATED_DEV_LLM_BASE_URL = "https://api.trustedtunnel.app/v1"  # pragma: allowl
 ISOLATED_DEV_LLM_MODEL = "gpt-5.6-luna"  # pragma: allowlist secret
 
 
+def _held_production_secret(value: str) -> bool:
+    return bool(value.strip()) and value != ISOLATED_DEV_SECRET
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", populate_by_name=True, case_sensitive=True, env_file=None)
 
@@ -104,11 +108,16 @@ class Settings(BaseSettings):
                 self.llm_model = ISOLATED_DEV_LLM_MODEL
             self._fill_checker_llm_from_product()
             return self
-        isolated_values = {
+        role_passwords = (
             self.pg_api_password,
             self.pg_worker_password,
             self.pg_migrator_password,
             self.pg_bootstrap_password,
+        )
+        held_roles = tuple(value for value in role_passwords if _held_production_secret(value))
+        if not held_roles:
+            raise ValueError("production must set the PostgreSQL password for this process")
+        isolated_values = {
             self.s3_access_key,
             self.s3_secret_key,
         }

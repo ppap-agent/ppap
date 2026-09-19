@@ -20,6 +20,25 @@ from tools.stack import pythonpath as stack_pythonpath
 from tools.web_server import write_runtime_config
 
 
+def _compose_services(compose: str) -> dict[str, str]:
+    services: dict[str, list[str]] = {}
+    current = ""
+    in_services = False
+    for line in compose.splitlines():
+        if line.startswith("services:"):
+            in_services = True
+            continue
+        if not in_services:
+            continue
+        if line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":"):
+            current = line.strip().rstrip(":")
+            services[current] = []
+            continue
+        if current:
+            services[current].append(line)
+    return {name: "\n".join(body) for name, body in services.items()}
+
+
 class DevToolingTests(unittest.TestCase):
     def test_pythonpath_is_shared_with_stack(self):
         self.assertEqual(pythonpath(), stack_pythonpath())
@@ -118,9 +137,6 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
         self.assertIn("python tools/dev.py provision", compose)
-        self.assertGreaterEqual(compose.count("compose.env.example"), 3)
-        self.assertIn("env_file:", compose)
-        self.assertIn("PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}", compose)
         self.assertIn("context: minio", compose)
         self.assertNotIn("minio/minio:", compose)
         self.assertNotIn("context: deploy/minio", compose)
@@ -129,6 +145,19 @@ class DevToolingTests(unittest.TestCase):
 
         self.assertIn(MINIO_RELEASE, dockerfile)
         self.assertIn(MINIO_SHA256, dockerfile)
+
+        services = _compose_services(compose)
+        self.assertIn("compose.env.example", services["init"])
+        self.assertNotIn("env_file:", services["api"])
+        self.assertNotIn("env_file:", services["worker"])
+        self.assertIn("PPAP_PG_API_PASSWORD", services["api"])
+        self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["api"])
+        self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", services["api"])
+        self.assertNotIn("PPAP_PG_WORKER_PASSWORD", services["api"])
+        self.assertIn("PPAP_PG_WORKER_PASSWORD", services["worker"])
+        self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["worker"])
+        self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", services["worker"])
+        self.assertNotIn("PPAP_PG_API_PASSWORD", services["worker"])
 
         parsed: dict[str, str] = {}
         for line in env_text.splitlines():
@@ -140,10 +169,10 @@ class DevToolingTests(unittest.TestCase):
         with patch.dict(os.environ, parsed, clear=False):
             settings = Settings()
         self.assertEqual(settings.profile, "production")
-        self.assertNotEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
-        self.assertNotEqual(settings.pg_worker_password, ISOLATED_DEV_SECRET)
-        self.assertNotEqual(settings.pg_migrator_password, ISOLATED_DEV_SECRET)
-        self.assertNotEqual(settings.pg_bootstrap_password, ISOLATED_DEV_SECRET)
+        self.assertTrue(all(
+            getattr(settings, name) != ISOLATED_DEV_SECRET
+            for name in ("pg_api_password", "pg_worker_password", "pg_migrator_password", "pg_bootstrap_password")
+        ))
         self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
 
 
