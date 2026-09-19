@@ -24,10 +24,12 @@ python tools/stack.py verify-auth
 python tools/stack.py verify-uploads
 
 python -m pip install -r requirements.txt
-PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
+PYTHONPATH=packages:packages/ppap_docops/src:packages/ppap_excel_audit_engine/src:packages/ppap_ocr_adapter/src:packages/ppap_pdf_to_excel/src:packages/ppap_vision/src:services/api:services/worker \
+  python -m unittest discover -s tests/unit -v
+python -m pytest tests/corpus/v2_assets --ftype excel -q
 ```
 
-这些是当前 `main` 的真实入口。新的 canonical 命令只有在实现合入后才替换这里。
+完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 
 ## #15 的目标工程工具链
 

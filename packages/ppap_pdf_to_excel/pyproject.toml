@@ -1,0 +1,23 @@
+[project]
+name = "ppap-pdf-to-excel"
+version = "0.1.0"
+description = "PPAP PDF to Excel pipeline (OCR first, geometry fallback)"
+requires-python = "==3.12.*"
+dependencies = [
+    "ppap-core",
+    "ppap-docops",
+    "ppap-ocr-adapter",
+    "openpyxl>=3.1.2",
+]
+
+[tool.uv.sources]
+ppap-core = { workspace = true }
+ppap-docops = { workspace = true }
+ppap-ocr-adapter = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppap_pdf_to_excel"]

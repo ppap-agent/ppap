@@ -6,7 +6,7 @@ isolated-dev 使用 `python tools/stack.py up` 启动。Worker 是独立进程�
 
 ## 当前 main
 
-当前 Worker 已有 heartbeat 和 `engine.jobs` 的基础执行/claim 边界。完整审核检查能力由 #3 从现有 `ppap-agent` 资产迁入；当前实现事实以源码和测试为准。
+当前 Worker 已有 heartbeat、`engine.jobs` claim，以及 `kind=audit` 时调用本仓 `ppap_excel_audit_engine.app_runtime.run_audit_engine`。产品轮次写回与 Web 闭环仍由 #7 拥有；当前实现事实以源码和测试为准。
 
 ## 最终责任
 

@@ -22,6 +22,19 @@ def worker_id(explicit: str) -> str:
     return explicit or f"{socket.gethostname()}-{os.getpid()}"
 
 
+def run_claimed_job(kind: str, payload: dict) -> dict:
+    """Execute one claimed job with in-repo checkers. Non-audit kinds stay no-ops."""
+    if kind != "audit":
+        return {"note": "claimed; execution not implemented"}
+    from ppap_excel_audit_engine.app_runtime import run_audit_engine
+
+    results = run_audit_engine(payload.get("audit") or payload, payload.get("rule") or {})
+    return {
+        "note": "in-repo engine",
+        "results": [result.model_dump() for result in results],
+    }
+
+
 def run() -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -41,7 +54,7 @@ def run() -> None:
             )
             row = conn.execute(
                 """
-                SELECT id FROM engine.jobs
+                SELECT id, kind, payload FROM engine.jobs
                 WHERE status = 'queued' AND (lease_until IS NULL OR lease_until < now())
                 ORDER BY created_at
                 FOR UPDATE SKIP LOCKED
@@ -61,13 +74,14 @@ def run() -> None:
                     """,
                     (ident, row[0]),
                 )
+                diagnostic = run_claimed_job(row[1], row[2] or {})
                 conn.execute(
                     """
                     INSERT INTO engine.attempts (id, job_id, attempt, worker_id, diagnostic)
                     SELECT gen_random_uuid(), id, attempt, %s, %s
                     FROM engine.jobs WHERE id = %s
                     """,
-                    (ident, Jsonb({"note": "claimed; execution not implemented"}), row[0]),
+                    (ident, Jsonb(diagnostic), row[0]),
                 )
             time.sleep(1)
 

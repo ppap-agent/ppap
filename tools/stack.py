@@ -41,6 +41,11 @@ PROCESSES = ("postgres", "minio", "api", "worker", "web")
 def pythonpath() -> str:
     parts = [
         str(ROOT / "packages"),
+        str(ROOT / "packages" / "ppap_docops" / "src"),
+        str(ROOT / "packages" / "ppap_excel_audit_engine" / "src"),
+        str(ROOT / "packages" / "ppap_ocr_adapter" / "src"),
+        str(ROOT / "packages" / "ppap_pdf_to_excel" / "src"),
+        str(ROOT / "packages" / "ppap_vision" / "src"),
         str(ROOT / "services" / "api"),
         str(ROOT / "services" / "worker"),
     ]

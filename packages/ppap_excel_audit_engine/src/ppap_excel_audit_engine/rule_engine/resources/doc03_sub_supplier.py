@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+from ..contracts import (
+    ColumnModel,
+    RuleResource,
+    RuleResourceModel,
+    SectionModel,
+    SheetModel,
+    index_rule_resource,
+)
+
+_DOC03_RESOURCE_MODEL = RuleResourceModel(
+    sheets=(
+        SheetModel(
+            canonical_name="主表",
+            include_keywords=("主表", "清单", "总成", "电机"),
+            exclude_keywords=(
+                "更新履历",
+                "修订历史",
+                "版本",
+                "说明",
+                "template",
+                "模板",
+                "备注",
+            ),
+            match_mode="contains",
+            visible_only=False,
+        ),
+    ),
+    sections=(
+        SectionModel(
+            canonical_name="主数据区",
+            sheet_name="主表",
+            header_anchors=(
+                "序号",
+                "零件号",
+                "单件重量",
+                "材料执行标准",
+                "材料类型",
+                "材料牌号",
+                "材料规格/尺寸",
+                "材料供应商名称",
+                "通过何种质量管理体系认证",
+                "自制",
+                "外协-国产",
+                "外协-进口",
+                "领用件",
+                "完成PPAP",
+            ),
+            row_anchors=("零件号", "序号", "自制"),
+            direction="down",
+            header_hit=2,
+            header_search_max_row=20,
+            header_search_max_col=80,
+            header_compact_match=True,
+            column_band=2,
+            # PDF linegrid outputs can contain large blank row gaps and
+            # multiple table blocks in one sheet.
+            row_stop_on_first_blank=False,
+            row_max_blank_streak=128,
+            row_stop_markers=(
+                "注：",
+                "note:",
+                "供应商负责工程师签字",
+                "理想汽车材料工程师签字",
+                "supplier authorized signature",
+                "material engineer signature",
+                "design engineer signature",
+                "ptc engineer signature",
+            ),
+        ),
+    ),
+    columns=(
+        ColumnModel(
+            canonical_name="序号",
+            section_name="主数据区",
+            aliases=("序号", "no."),
+            missing_tokens=("", "none", "null"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="零件号",
+            section_name="主数据区",
+            aliases=(
+                "零件/分部件零件号",
+                "零件/部件零件号",
+                "零件/部件号",
+                "零件号",
+                "part/componentnumber",
+                "partnumber",
+            ),
+            missing_tokens=("", "/", "-", "—", "－", "none", "nan", "na"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="单件重量",
+            section_name="主数据区",
+            aliases=("单件重量",),
+            missing_tokens=("", "-", "—", "－", "na", "n/a", "none", "null"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="材料执行标准",
+            section_name="主数据区",
+            aliases=(
+                "材料执行标准",
+                "材料标准",
+                "材料执行标准materialspecification",
+                "材料执行标准materialspec",
+                "材料执行标准materialstandard",
+                "材料标准materialspecification",
+            ),
+            missing_tokens=("", "-", "—", "－", "none", "null"),
+            filled_tokens=("/", "na", "n/a"),
+        ),
+        ColumnModel(
+            canonical_name="材料类型",
+            section_name="主数据区",
+            aliases=("材料类型", "材料分类"),
+            missing_tokens=("", "-", "—", "－", "none", "null"),
+            filled_tokens=("/", "na", "n/a"),
+        ),
+        ColumnModel(
+            canonical_name="材料牌号",
+            section_name="主数据区",
+            aliases=("材料牌号",),
+            missing_tokens=("", "-", "—", "－", "none", "null"),
+            filled_tokens=("/", "na", "n/a"),
+        ),
+        ColumnModel(
+            canonical_name="材料规格/尺寸",
+            section_name="主数据区",
+            aliases=(
+                "材料规格/尺寸",
+                "材料规格尺寸",
+                "材料规格/尺寸materialclass",
+                "材料规格/尺寸materialspecification/size",
+                "材料规格尺寸materialspecification/size",
+                "材料规格尺寸materialspec/size",
+            ),
+            missing_tokens=("", "-", "—", "－", "none", "null"),
+            filled_tokens=("/", "na", "n/a"),
+        ),
+        ColumnModel(
+            canonical_name="材料供应商名称",
+            section_name="主数据区",
+            aliases=(
+                "材料供应商名称",
+                "材料供应商名称（包括生产地点）",
+                "材料供应商名称(包括生产地点)",
+                "材料供应商名称包括生产地点",
+                "材料供应商名称suppliername(includingmanufacturinglocation)",
+                "材料供应商名称包括生产地点suppliername",
+                "材料供应商名称(包括生产地点）rawmaterialsuppliername",
+                "材料供应商名称(包括生产地点）rawmaterialsuppliername(productionlocation)",
+                "材料供应商",
+            ),
+            missing_tokens=("", "-", "—", "－", "none", "null"),
+            filled_tokens=("/", "na", "n/a"),
+        ),
+        ColumnModel(
+            canonical_name="通过何种质量管理体系认证",
+            section_name="主数据区",
+            aliases=(
+                "通过何种质量管理体系认证",
+                "通过何种质量体系认证",
+                "通过何种质量管理体系认证qmspassed",
+                "通过何种质量体系认证qmspassed",
+                "质量管理体系认证qmspassed",
+            ),
+            missing_tokens=("", "-", "—", "－", "none", "null"),
+            filled_tokens=("/", "na", "n/a"),
+        ),
+        ColumnModel(
+            canonical_name="自制",
+            section_name="主数据区",
+            aliases=("自制",),
+            missing_tokens=("", "none", "null"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="外协-国产",
+            section_name="主数据区",
+            aliases=("外协-国产", "国产local", "国产"),
+            missing_tokens=("", "none", "null"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="外协-进口",
+            section_name="主数据区",
+            aliases=("外协-进口", "进口import", "进口"),
+            missing_tokens=("", "none", "null"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="领用件",
+            section_name="主数据区",
+            aliases=("领用件",),
+            missing_tokens=("", "none", "null"),
+            filled_tokens=(),
+        ),
+        ColumnModel(
+            canonical_name="完成PPAP",
+            section_name="主数据区",
+            aliases=("完成PPAP",),
+            missing_tokens=("", "none", "null"),
+            filled_tokens=(),
+        ),
+    ),
+)
+
+_DOC03_RESOURCE_VIEW: RuleResource = index_rule_resource(_DOC03_RESOURCE_MODEL)
+
+
+def get_doc03_resource_view() -> RuleResource:
+    return _DOC03_RESOURCE_VIEW

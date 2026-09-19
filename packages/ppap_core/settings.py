@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal, Self
+from typing import ClassVar, Literal, Optional, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +55,44 @@ class Settings(BaseSettings):
     web_url: str = Field(default="", alias="PPAP_WEB_URL")
     worker_id: str = Field(default="", alias="PPAP_WORKER_ID")
 
+    # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
+    DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"
+    DEFAULT_OCR_MODEL_NAME: ClassVar[str] = "google/gemma-3-27b-it:free"
+    APP_NAME: str = "PPAP"
+    APP_VERSION: str = "0.1.0"
+    APP_GIT_SHA: str = "unknown"
+    DEBUG: bool = True
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "text"
+    DEVELOPMENT: bool = False
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""
+    MODEL_NAME: str = ""
+    OPENAI_EXTRA_BODY_JSON: str = ""
+    OPENAI_REASONING_EFFORT: Optional[str] = None
+    OPENAI_TEMPERATURE: Optional[float] = None
+    OPENAI_TOP_P: Optional[float] = None
+    OPENAI_PRESENCE_PENALTY: Optional[float] = None
+    AI_RATE_LIMIT_PER_MINUTE: int = 60
+    MAX_PARALLEL_WORKERS: int = 7
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_HOST: str = ""
+    MAX_FILE_SIZE: str = "100MB"
+    ALLOWED_EXTENSIONS: str = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
+    LEGACY_DOC_CONVERSION_ENABLED: bool = False
+    OCR_ADAPTER_MODE: str = "auto"
+    OCR_ENGINE: str = "easyocr"
+    OCR_LANGUAGES: str = "ch_sim,en"
+    OCR_REMOTE_URL: str = ""
+    OCR_OPENAI_API_KEY: str = ""
+    OCR_OPENAI_BASE_URL: str = ""
+    OCR_MODEL_NAME: str = ""
+    OCR_LOCAL_OSS_DIR: str = ""
+    OCR_LOCAL_SQLITE_DB: str = ""
+    PADDLE_OCR_URL: str = ""
+    PADDLE_TOKEN: str = ""
+
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
         if self.profile != "production":
@@ -62,6 +100,7 @@ class Settings(BaseSettings):
                 self.llm_base_url = ISOLATED_DEV_LLM_BASE_URL
             if not self.llm_model.strip():
                 self.llm_model = ISOLATED_DEV_LLM_MODEL
+            self._fill_checker_llm_from_product()
             return self
         isolated_values = {
             self.pg_api_password,
@@ -77,7 +116,43 @@ class Settings(BaseSettings):
             raise ValueError("production must set LLM_BASE_URL and LLM_MODEL explicitly")
         if not self.web_url.strip():
             raise ValueError("production must set PPAP_WEB_URL explicitly")
+        self._fill_checker_llm_from_product()
         return self
+
+    def _fill_checker_llm_from_product(self) -> None:
+        if not self.OPENAI_API_KEY.strip():
+            self.OPENAI_API_KEY = self.llm_api_key
+        if not self.OPENAI_BASE_URL.strip():
+            self.OPENAI_BASE_URL = self.llm_base_url
+        if not self.MODEL_NAME.strip():
+            self.MODEL_NAME = self.llm_model
+
+    def get_allowed_extensions(self) -> list[str]:
+        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
+
+    def get_ocr_languages(self) -> list[str]:
+        return [lang.strip() for lang in self.OCR_LANGUAGES.split(",")]
+
+    def get_ocr_adapter_mode(self) -> str:
+        mode = self.OCR_ADAPTER_MODE.strip().lower()
+        if mode in {"auto", "local", "remote"}:
+            return mode
+        raise ValueError(f"Invalid OCR_ADAPTER_MODE: {self.OCR_ADAPTER_MODE}")
+
+    def get_ocr_openai_api_key(self) -> str:
+        return (self.OCR_OPENAI_API_KEY or self.OPENAI_API_KEY).strip()
+
+    def get_ocr_openai_base_url(self) -> str:
+        return (self.OCR_OPENAI_BASE_URL or self.OPENAI_BASE_URL or self.DEFAULT_OCR_OPENAI_BASE_URL).strip()
+
+    def get_ocr_model_name(self) -> str:
+        return (self.OCR_MODEL_NAME or self.MODEL_NAME or self.DEFAULT_OCR_MODEL_NAME).strip()
+
+    def get_ocr_paddle_url(self) -> str:
+        return self.PADDLE_OCR_URL.strip()
+
+    def get_ocr_paddle_token(self) -> str:
+        return self.PADDLE_TOKEN.strip()
 
     def dsn(self, role: Literal["api", "worker", "migrator", "bootstrap"]) -> str:
         user, password = {
@@ -121,3 +196,6 @@ def load_settings() -> Settings:
 @lru_cache(maxsize=1)
 def cached_settings() -> Settings:
     return Settings()
+
+
+get_settings = cached_settings

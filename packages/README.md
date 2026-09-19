@@ -6,7 +6,14 @@
 
 | Package | Owns |
 |---|---|
-| `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型 |
+| `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型、审核 contracts/types |
+| `ppap_docops` | 文档抽取、转换、文件工具 |
+| `ppap_excel_audit_engine` | 规则检查器与 worker audit runtime |
+| `ppap_pdf_to_excel` | PDF → Excel |
+| `ppap_ocr_adapter` | OCR providers |
+| `ppap_vision` | 图像、印章/签名检测 |
+
+Worker 调用 `ppap_excel_audit_engine.app_runtime.run_audit_engine`。#7 Web 闭环与 #11 飞书 parity 仍由对应 Issue 拥有，不因这些包存在而视为已完成。
 
 审核引擎和完整 regression 资产的迁移合同由 #3 拥有；具体 legacy baseline 不在本文件重复。
 

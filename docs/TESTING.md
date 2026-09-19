@@ -20,7 +20,14 @@
 ## 当前可运行入口
 
 ```sh
-PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
+PYTHONPATH=packages:packages/ppap_docops/src:packages/ppap_excel_audit_engine/src:packages/ppap_ocr_adapter/src:packages/ppap_pdf_to_excel/src:packages/ppap_vision/src:services/api:services/worker \
+  python -m unittest discover -s tests/unit -v
+
+python -m pytest tests/corpus/v2_assets --ftype excel -q
+python -m pytest tests/corpus/v2_assets --ftype pdf -q
+python -m pytest tests/corpus/v2_assets --ftype scanned -q
+python -m pytest tests/corpus/v3_poc -q
+python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 
 python tools/stack.py up
 python tools/stack.py verify
@@ -29,6 +36,8 @@ python tools/stack.py verify-uploads
 python tools/stack.py down
 ```
 
-随着 #3/#7/#11/#15 实现，canonical corpus、integration、E2E、quality checks 和 production build 命令在本文件补充真实入口。没有实际命令前不预写“已支持”的测试流程。
+PSW 的 `.doc` 用例需要本机 LibreOffice，以及 Linux 上可执行的 `ppap-local-converter-sandbox`（由 `packages/ppap_docops/native/legacy_doc_sandbox.c` 编译）。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
+
+随着 #7/#11/#15 实现，integration、E2E、quality checks 和 production build 命令在本文件补充真实入口。没有实际命令前不预写“已支持”的测试流程。
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。

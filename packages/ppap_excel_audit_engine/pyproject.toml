@@ -1,0 +1,28 @@
+[project]
+name = "ppap-excel-audit-engine"
+version = "0.1.0"
+description = "PPAP Excel Audit Engine - plugin style checker runtime"
+requires-python = "==3.12.*"
+dependencies = [
+    "ppap-core",
+    "ppap-docops",
+    "ppap-pdf-to-excel",
+    "ppap-vision",
+    "openai",
+    "pandas",
+    "openpyxl",
+    "Pillow",
+]
+
+[tool.uv.sources]
+ppap-core = { workspace = true }
+ppap-docops = { workspace = true }
+ppap-pdf-to-excel = { workspace = true }
+ppap-vision = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppap_excel_audit_engine"]
