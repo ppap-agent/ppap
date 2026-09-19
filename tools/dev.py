@@ -293,7 +293,7 @@ def _pause_app(sha: str) -> int:
 
 
 def _resume_app(sha: str) -> int:
-    code = _compose(sha, "start", *APP_SERVICES)
+    code = _compose(sha, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "90", *APP_SERVICES)
     if code != 0:
         return code
     try:

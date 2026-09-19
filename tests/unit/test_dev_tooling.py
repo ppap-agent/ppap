@@ -182,6 +182,7 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn('"backup"', source)
         self.assertIn('"restore"', source)
         self.assertIn('"rollback"', source)
+        self.assertIn("--no-deps", source)
         self.assertEqual(_sql_ident("ppap"), "ppap")
         with self.assertRaises(ValueError):
             _sql_ident("ppap;drop")
