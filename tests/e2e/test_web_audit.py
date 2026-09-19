@@ -48,6 +48,17 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.goto(f"{WEB}/?round={round_id}")
                 page.wait_for_selector('[data-testid="finding-status"]')
                 expect(page.get_by_test_id("finding-status").first).to_have_text("PASS")
+                original = page.get_by_test_id("open-original")
+                gap = page.get_by_test_id("locator-gap")
+                if original.count() == 0:
+                    expect(gap).to_be_visible()
+                else:
+                    expect(gap).to_be_hidden()
+                    href = original.first.get_attribute("href")
+                    self.assertTrue(href)
+                    downloaded = page.request.get(href)
+                    self.assertEqual(downloaded.status, 200)
+                    self.assertEqual(downloaded.body(), b"browser-target-v1")
                 page.get_by_test_id("review-judgment").fill("需修改")
                 page.get_by_test_id("review-rationale").fill("尺寸缺失")
                 page.get_by_test_id("review-next").fill("补传")

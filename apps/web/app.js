@@ -85,43 +85,58 @@ function renderRound(api, round) {
   }
 }
 
-async function uploadVersion(api, inputId, role, state) {
-  const input = document.getElementById(inputId);
-  const file = input.files && input.files[0];
-  if (!file) {
-    return;
-  }
-  const fileKey = role === "target" ? "targetFileId" : "referenceFileId";
-  const existingId = state[fileKey];
+async function uploadOneFile(api, file, role, state) {
+  const existing = state.items.find((item) => item.role === role && item.original_filename === file.name);
+  const existingId = existing ? existing.file_id : "";
   const meta = { original_filename: file.name, content_type: file.type || "application/octet-stream", byte_size: file.size };
   const created = existingId
     ? await readJson(`${api}/files/${encodeURIComponent(existingId)}/versions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) })
     : await readJson(`${api}/files`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) });
   if (!created.ok) {
     showDenied(created.status === 401 || created.status === 403);
-    return;
+    return false;
   }
-  state[fileKey] = created.body.file_id;
-  state.fileId = created.body.file_id;
+  const fileId = created.body.file_id;
   const versionId = created.body.id;
-  const put = await fetch(`${api}/files/${encodeURIComponent(state.fileId)}/versions/${encodeURIComponent(versionId)}/blob`, {
+  const put = await fetch(`${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/blob`, {
     method: "PUT",
     credentials: "include",
     headers: { "Content-Type": file.type || "application/octet-stream" },
     body: file,
   });
   if (!put.ok) {
-    return;
+    return false;
   }
-  const readyVersion = await readJson(`${api}/files/${encodeURIComponent(state.fileId)}/versions/${encodeURIComponent(versionId)}/finalize`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const readyVersion = await readJson(`${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/finalize`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   if (!readyVersion.ok) {
-    return;
+    return false;
   }
+  const next = { file_version_id: readyVersion.body.id, role, file_id: fileId, original_filename: file.name };
+  if (existing) {
+    state.items = state.items.map((item) => (item === existing ? next : item));
+  } else {
+    state.items.push(next);
+  }
+  state.fileId = fileId;
   document.getElementById("document-version-id").textContent = readyVersion.body.id;
   document.getElementById("evidence-source-sha256").textContent = readyVersion.body.sha256 || "";
-  document.getElementById("download-original").href = `${api}/files/${encodeURIComponent(state.fileId)}/versions/${encodeURIComponent(versionId)}/download`;
-  state.items = state.items.filter((item) => item.role !== role);
-  state.items.push({ file_version_id: readyVersion.body.id, role, file_id: state.fileId, original_filename: file.name });
+  document.getElementById("download-original").href = `${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/download`;
+  return true;
+}
+
+async function uploadVersion(api, inputId, role, state) {
+  const input = document.getElementById(inputId);
+  const files = Array.from(input.files || []);
+  if (!files.length) {
+    return;
+  }
+  for (const file of files) {
+    const ok = await uploadOneFile(api, file, role, state);
+    if (!ok) {
+      return;
+    }
+  }
+  input.value = "";
   renderDraftItems(state.items);
   setQuery({ file: state.fileId, draft: state.draftId, round: params().get("round") });
 }
@@ -206,7 +221,7 @@ async function main() {
     window.location.reload();
   });
 
-  const state = { fileId: fileIdFromLocation(), targetFileId: fileIdFromLocation(), referenceFileId: "", draftId: params().get("draft") || "", items: [], roundId: params().get("round") || "" };
+  const state = { fileId: fileIdFromLocation(), draftId: params().get("draft") || "", items: [], roundId: params().get("round") || "" };
   if (me.ok) {
     const rules = await readJson(`${api}/rules`);
     const select = document.getElementById("rule-select");
@@ -226,10 +241,6 @@ async function main() {
           file_id: item.file_id,
           original_filename: item.original_filename,
         }));
-        state.items.forEach((item) => {
-          if (item.role === "target") state.targetFileId = item.file_id;
-          if (item.role === "reference") state.referenceFileId = item.file_id;
-        });
         renderDraftItems(state.items);
         if (draft.body.rule && draft.body.rule.id) {
           select.value = draft.body.rule.id;

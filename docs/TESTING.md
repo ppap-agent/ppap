@@ -39,7 +39,7 @@ python tools/stack.py down
 
 PSW 的 `.doc` 用例需要本机 LibreOffice，以及 Linux 上可执行的 `ppap-local-converter-sandbox`（由 `packages/ppap_docops/native/legacy_doc_sandbox.c` 编译）。需要 Paddle 的 PDF 转换优先使用 `tests/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
-#7 的代表性浏览器 E2E：
+#7 的代表性浏览器 E2E 覆盖提交、离开后回访、打开当前 round 冻结原件（或看到 locator-gap）、复核和显式重审：
 
 ```sh
 python -m pip install playwright

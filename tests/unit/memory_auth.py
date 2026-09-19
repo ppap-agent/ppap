@@ -428,14 +428,25 @@ class MemoryAuthStore:
         return RoundWork(round_id, row["tenant_id"], row["rule_title"], row["rule_body"], inputs, row.get("result_attempt"))
 
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
-        queued = [job for job in self.jobs.values() if job["status"] == "queued"]
-        queued.sort(key=lambda job: job["created"])
-        if not queued:
+        now = _now()
+        eligible = [
+            job
+            for job in self.jobs.values()
+            if job["status"] == "queued"
+            or (
+                job["status"] == "leased"
+                and job.get("lease_until") is not None
+                and job["lease_until"] < now
+            )
+        ]
+        eligible.sort(key=lambda job: job["created"])
+        if not eligible:
             return None
-        job = queued[0]
+        job = eligible[0]
         job["status"] = "leased"
         job["attempt"] += 1
         job["lease_owner"] = worker_ident
+        job["lease_until"] = now + timedelta(seconds=30)
         payload = job["payload"]
         round_id = payload.get("round_id") if isinstance(payload, dict) else None
         if round_id and round_id in self.rounds and self.rounds[round_id]["execution"] in {EXEC_QUEUED, EXEC_RUNNING, EXEC_FAILED}:
@@ -560,6 +571,7 @@ class MemoryAuthStore:
             "attempt": 0,
             "created": len(self.jobs),
             "lease_owner": None,
+            "lease_until": None,
         }
         self.idempotency[(principal.tenant_id, key)] = round_id
         if source_draft_id:

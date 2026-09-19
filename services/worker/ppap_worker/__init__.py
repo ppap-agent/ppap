@@ -6,12 +6,19 @@ import socket
 import tempfile
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 from ppap_api.store import AuthStore
-from ppap_core.audits import KIND_ENGINE, evaluate_round, findings_from_engine_results
+from ppap_core.audits import (
+    KIND_ENGINE,
+    TARGET,
+    evaluate_round,
+    findings_from_engine_results,
+    unused_reference_note,
+)
+from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
 from ppap_core.db import connect
 from ppap_core.settings import load_settings
+from ppap_core.types import PpapDocumentType
 
 STOP = False
 
@@ -40,48 +47,116 @@ def run_claimed_job(kind: str, payload: dict) -> dict:
     }
 
 
+def _rule_input(work) -> RuleInput:
+    body = work.rule_body or {}
+    return RuleInput(
+        rule_id=str(body.get("rule_id") or work.round_id),
+        rule_profile=body.get("rule_profile") or "v2",
+        type=body.get("type") or "",
+        rules=list(body.get("rules") or []),
+        customers=list(body.get("customers") or []),
+        models=list(body.get("models") or []),
+        parts=list(body.get("parts") or []),
+    )
+
+
+def _audit_input(item, path: str) -> AuditInput:
+    return AuditInput(
+        audit_id=item.file_version_id,
+        file_url=path,
+        file_metadata={"original_filename": item.filename, "role": item.role},
+        project_id="default",
+    )
+
+
+def _doc_type_key(audit: AuditInput) -> str | None:
+    from ppap_excel_audit_engine.contract_mapper import infer_document_type
+
+    inferred = infer_document_type(audit)
+    if inferred is None or inferred is PpapDocumentType.UNKNOWN:
+        return None
+    return inferred.get_type_name()
+
+
+def _write_temp(item, data: bytes) -> str:
+    suffix = Path(item.filename).suffix or ".bin"
+    handle = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        handle.write(data)
+        return handle.name
+    finally:
+        handle.close()
+
+
 def engine_runner(work, store: AuthStore):
     from ppap_excel_audit_engine.app_runtime import run_audit_engine
 
-    targets = [item for item in work.inputs if item.role == "target"]
+    targets = [item for item in work.inputs if item.role == TARGET]
+    references = [item for item in work.inputs if item.role != TARGET]
     if not targets:
         raise ValueError("target_required")
-    first = targets[0]
-    version = store.get_version(first.file_id, first.file_version_id)
-    if version is None:
-        raise ValueError("missing_file")
-    data = store.version_bytes(version)
-    suffix = Path(first.filename).suffix or ".bin"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
-        handle.write(data)
-        path = handle.name
+
+    temps: list[str] = []
     try:
-        body = work.rule_body or {}
-        audit = SimpleNamespace(
-            audit_id=work.round_id,
-            file_url=path,
-            customer=None,
-            model=None,
-            part=None,
-            content=None,
-            file_metadata={"original_filename": first.filename},
-            project_id="default",
+        audits_by_version: dict[str, AuditInput] = {}
+        by_audit_id: dict[str, AuditInput] = {}
+        by_doc_type: dict[str, list[AuditInput]] = {}
+        reference_notes: list[str] = []
+        for item in work.inputs:
+            version = store.get_version(item.file_id, item.file_version_id)
+            if version is None:
+                if item.role == TARGET:
+                    raise ValueError("missing_file")
+                reference_notes.append(unused_reference_note(item.filename, "无法加载"))
+                continue
+            data = store.version_bytes(version)
+            path = _write_temp(item, data)
+            temps.append(path)
+            audit = _audit_input(item, path)
+            audits_by_version[item.file_version_id] = audit
+            by_audit_id[item.file_version_id] = audit
+            type_key = _doc_type_key(audit)
+            if type_key:
+                by_doc_type.setdefault(type_key, []).append(audit)
+            if item.role != TARGET:
+                if type_key:
+                    reference_notes.append(unused_reference_note(item.filename))
+                else:
+                    reference_notes.append(unused_reference_note(item.filename, "未能识别文档类型，未作为待审完整检查"))
+
+        rule = _rule_input(work)
+        group_context = GroupContextInput(
+            task_group_id=work.round_id,
+            by_audit_id=by_audit_id,
+            by_doc_type=by_doc_type,
+            rules_by_id={rule.rule_id: rule},
         )
-        rule = SimpleNamespace(
-            rule_id=str(body.get("rule_id") or work.round_id),
-            rule_profile=body.get("rule_profile") or "v2",
-            type=body.get("type") or "",
-            rules=list(body.get("rules") or []),
-            customers=list(body.get("customers") or []),
-            models=list(body.get("models") or []),
-            parts=list(body.get("parts") or []),
-        )
-        results = run_audit_engine(audit, rule)
-        mapped = findings_from_engine_results(results)
-        mapped["note"] = "in-repo engine"
-        return mapped
+        findings: list[dict] = []
+        checked: list[str] = []
+        locator_gap = False
+        for target in targets:
+            audit = audits_by_version[target.file_version_id]
+            results = run_audit_engine(audit, rule, group_context=group_context)
+            mapped = findings_from_engine_results(results, item_key_prefix=target.file_version_id)
+            findings.extend(mapped["findings"])
+            checked.append(target.filename)
+            locator_gap = locator_gap or bool((mapped.get("coverage") or {}).get("locator_gap"))
+        if not findings:
+            from ppap_core.audits import execution_error_result
+
+            return execution_error_result("empty_engine_result")
+        return {
+            "findings": findings,
+            "coverage": {
+                "checked": checked,
+                "unchecked": reference_notes,
+                "locator_gap": locator_gap,
+            },
+            "note": "in-repo engine",
+        }
     finally:
-        Path(path).unlink(missing_ok=True)
+        for path in temps:
+            Path(path).unlink(missing_ok=True)
 
 
 def process_claimed(store: AuthStore, claimed, ident: str) -> dict:

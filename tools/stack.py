@@ -848,6 +848,10 @@ def verify_audit() -> int:
         round_id = first.json()["id"]
         body = wait_round(alice, round_id)
         report["worker_completed"] = body.get("execution") == "completed" and {row["status"] for row in body.get("findings", [])} == {"PASS"}
+        report["multi_file_coverage"] = (
+            "report.xlsx" in (body.get("coverage") or {}).get("checked", [])
+            and any("context.pdf" in row for row in (body.get("coverage") or {}).get("unchecked", []))
+        )
         locator = next(row["locator"] for row in body["findings"] if row["locator"] and row["locator"].get("kind") == "file_version")
         original = httpx.get(
             api + f"/rounds/{round_id}/files/{locator['file_id']}/versions/{locator['file_version_id']}/download",
@@ -855,12 +859,89 @@ def verify_audit() -> int:
             timeout=10,
         )
         report["open_original"] = original.content in {b"audit-target-v1", b"audit-reference"}
-        carol_denied = httpx.get(api + f"/rounds/{round_id}", headers=headers(carol), timeout=10)
-        report["carol_denied"] = carol_denied.status_code == 403 and b"audit-target-v1" not in carol_denied.content
         import psycopg
+        from ppap_api.store import AuthStore
+        from ppap_core.audits import ClaimedJob
         from ppap_core.settings import Settings
 
-        with psycopg.connect(Settings().dsn("api"), autocommit=True) as conn:
+        stop_pid("worker")
+        lease_target = upload(alice, "lease.xlsx", b"lease-target")
+        lease_draft = httpx.post(api + "/drafts", headers=headers(alice), timeout=10)
+        httpx.put(
+            api + f"/drafts/{lease_draft.json()['id']}",
+            json={"rule_version_id": rule_id, "items": [{"file_version_id": lease_target["id"], "role": "target"}]},
+            headers=headers(alice),
+            timeout=10,
+        )
+        lease_accept = httpx.post(
+            api + f"/drafts/{lease_draft.json()['id']}/accept",
+            json={"idempotency_key": "isolated-dev-lease-retry"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        lease_round = lease_accept.json()["id"]
+        settings = Settings()
+        with psycopg.connect(settings.dsn("api"), autocommit=True) as conn:
+            job = conn.execute(
+                "SELECT id FROM engine.jobs WHERE audit_round_id = %s",
+                (lease_round,),
+            ).fetchone()
+            conn.execute(
+                """
+                UPDATE engine.jobs
+                SET status = 'leased',
+                    attempt = 1,
+                    lease_owner = 'crashed-worker',
+                    lease_until = now() - interval '1 second',
+                    updated_at = now()
+                WHERE id = %s
+                """,
+                (job[0],),
+            )
+            conn.execute(
+                """
+                INSERT INTO engine.attempts (id, job_id, attempt, worker_id, diagnostic)
+                VALUES (gen_random_uuid(), %s, 1, 'crashed-worker', '{}'::jsonb)
+                """,
+                (job[0],),
+            )
+            conn.execute(
+                "UPDATE product.audit_rounds SET execution = 'running' WHERE id = %s",
+                (lease_round,),
+            )
+        spawn("worker", [str(venv_python()), "-m", "ppap_worker.main"], env)
+        lease_body = wait_round(alice, lease_round)
+        late = AuthStore(settings, role="worker").complete_job(
+            ClaimedJob(str(job[0]), "audit", {"round_id": lease_round}, 1, lease_round),
+            "crashed-worker",
+            {
+                "findings": [
+                    {
+                        "item_key": "target:" + lease_target["id"],
+                        "classification": "资料",
+                        "item": "待审文件版本已就绪",
+                        "priority": "P0",
+                        "status": "ERR",
+                        "suggestions": "late-attempt-1",
+                        "locator": None,
+                    }
+                ],
+                "coverage": {"checked": [], "unchecked": [], "locator_gap": True},
+            },
+        )
+        after_late = httpx.get(api + f"/rounds/{lease_round}", headers=headers(alice), timeout=10).json()
+        report["lease_reclaim"] = (
+            lease_accept.status_code == 201
+            and lease_body.get("execution") == "completed"
+            and lease_body.get("result_attempt") == 2
+            and late is False
+            and after_late.get("result_attempt") == 2
+            and {row["status"] for row in after_late.get("findings", [])} == {"PASS"}
+            and all(row.get("suggestions") != "late-attempt-1" for row in after_late.get("findings", []))
+        )
+        carol_denied = httpx.get(api + f"/rounds/{round_id}", headers=headers(carol), timeout=10)
+        report["carol_denied"] = carol_denied.status_code == 403 and b"audit-target-v1" not in carol_denied.content
+        with psycopg.connect(settings.dsn("api"), autocommit=True) as conn:
             conn.execute(
                 """
                 INSERT INTO product.resource_grants (resource_id, user_id, capability)
@@ -935,6 +1016,7 @@ def verify_audit() -> int:
                 'data-testid="save-review"',
                 'data-testid="resubmit-audit"',
                 'data-testid="locator-gap"',
+                'type="file" multiple',
             )
         )
         report["ok"] = all(
@@ -943,7 +1025,9 @@ def verify_audit() -> int:
                 "draft_open",
                 "accept_idempotent",
                 "worker_completed",
+                "multi_file_coverage",
                 "open_original",
+                "lease_reclaim",
                 "carol_denied",
                 "bob_read_not_review",
                 "review",

@@ -838,7 +838,10 @@ class AuthStore:
                 row = conn.execute(
                     """
                     SELECT id, kind, payload FROM engine.jobs
-                    WHERE status = 'queued' AND (lease_until IS NULL OR lease_until < now())
+                    WHERE (
+                        (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
+                        OR (status = 'leased' AND lease_until IS NOT NULL AND lease_until < now())
+                    )
                     ORDER BY created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1

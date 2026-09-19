@@ -128,14 +128,14 @@ def _presence_finding(item: RoundInput) -> dict[str, Any]:
     }
 
 
+def unused_reference_note(filename: str, detail: str = "未作为待审完整检查") -> str:
+    return f"{filename}（参考，{detail}）"
+
+
 def evaluate_presence(work: RoundWork) -> dict[str, Any]:
     findings = [_presence_finding(item) for item in work.inputs]
     checked = [item.filename for item in work.inputs if item.role == TARGET]
-    unchecked = [
-        f"{item.filename}（参考，未作为待审完整检查）"
-        for item in work.inputs
-        if item.role == REFERENCE
-    ]
+    unchecked = [unused_reference_note(item.filename) for item in work.inputs if item.role == REFERENCE]
     locator_gap = any(row.get("locator") is None for row in findings)
     return {
         "findings": findings,
@@ -160,10 +160,11 @@ def execution_error_result(code: str) -> dict[str, Any]:
     }
 
 
-def findings_from_engine_results(results: list[Any]) -> dict[str, Any]:
+def findings_from_engine_results(results: list[Any], *, item_key_prefix: str = "") -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     checked: list[str] = []
     locator_gap = False
+    prefix = f"{item_key_prefix}:" if item_key_prefix else ""
     for index, result in enumerate(results, start=1):
         status = getattr(result, "status", ERR)
         if status not in FINDING_STATUSES:
@@ -179,7 +180,7 @@ def findings_from_engine_results(results: list[Any]) -> dict[str, Any]:
             locator_gap = True
         findings.append(
             {
-                "item_key": f"engine:{index}",
+                "item_key": f"{prefix}engine:{index}",
                 "classification": str(getattr(result, "classification", "")),
                 "item": str(getattr(result, "item", "")),
                 "priority": str(getattr(result, "priority", "")),
@@ -189,7 +190,11 @@ def findings_from_engine_results(results: list[Any]) -> dict[str, Any]:
             }
         )
     if not findings:
-        return execution_error_result("empty_engine_result")
+        empty = execution_error_result("empty_engine_result")
+        if prefix:
+            for row in empty["findings"]:
+                row["item_key"] = f"{prefix}{row['item_key']}"
+        return empty
     return {
         "findings": findings,
         "coverage": {"checked": checked, "unchecked": [], "locator_gap": locator_gap},

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -301,6 +302,74 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(body["findings"][0]["status"], "PASS")
         self.assertEqual(stale_write.round_id, round_id)
 
+    def test_expired_leased_job_is_reclaimed_and_late_attempt_is_rejected(self):
+        self._login("alice")
+        target = self._upload("report.xlsx", b"target-bytes")
+        draft = self.client.post("/drafts").json()["id"]
+        self.client.put(
+            f"/drafts/{draft}",
+            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+        )
+        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "reclaim"}).json()["id"]
+        first = self.store.claim_job("w1")
+        self.assertEqual(first.attempt, 1)
+        self.assertIsNone(self.store.claim_job("w2"))
+        self.store.jobs[first.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        second = self.store.claim_job("w2")
+        self.assertIsNotNone(second)
+        self.assertEqual(second.id, first.id)
+        self.assertEqual(second.attempt, 2)
+        rejected = self.store.complete_job(
+            first,
+            "w1",
+            {
+                "findings": [
+                    {
+                        "item_key": "target:" + target["id"],
+                        "classification": "资料",
+                        "item": "待审文件版本已就绪",
+                        "priority": "P0",
+                        "status": "ERR",
+                        "suggestions": "late-attempt-1",
+                        "locator": None,
+                    }
+                ],
+                "coverage": {"checked": [], "unchecked": [], "locator_gap": True},
+            },
+        )
+        self.assertFalse(rejected)
+        process_claimed(self.store, second, "w2")
+        body = self.client.get(f"/rounds/{round_id}").json()
+        self.assertEqual(body["result_attempt"], 2)
+        self.assertEqual(body["findings"][0]["status"], "PASS")
+        self.assertNotEqual(body["findings"][0]["suggestions"], "late-attempt-1")
+
+    def test_accept_keeps_every_target_and_reference(self):
+        self._login("alice")
+        first = self._upload("a.xlsx", b"one")
+        second = self._upload("b.xlsx", b"two")
+        reference = self._upload("context.pdf", b"ref")
+        draft = self.client.post("/drafts").json()["id"]
+        self.client.put(
+            f"/drafts/{draft}",
+            json={
+                "rule_version_id": RULE_A,
+                "items": [
+                    {"file_version_id": first["id"], "role": "target"},
+                    {"file_version_id": second["id"], "role": "target"},
+                    {"file_version_id": reference["id"], "role": "reference"},
+                ],
+            },
+        )
+        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "multi"}).json()["id"]
+        self._finish_worker()
+        body = self.client.get(f"/rounds/{round_id}").json()
+        keys = {row["item_key"] for row in body["findings"]}
+        self.assertEqual(keys, {f"target:{first['id']}", f"target:{second['id']}", f"reference:{reference['id']}"})
+        self.assertEqual(sorted(body["coverage"]["checked"]), ["a.xlsx", "b.xlsx"])
+        self.assertTrue(any("context.pdf" in row for row in body["coverage"]["unchecked"]))
+        self.assertFalse(body["coverage"]["locator_gap"])
+
 
 class PresenceEvaluationTests(unittest.TestCase):
     def test_presence_does_not_import_engine(self):
@@ -334,5 +403,10 @@ class WebHookTests(unittest.TestCase):
             'data-testid="save-review"',
             'data-testid="resubmit-audit"',
             'data-testid="isolated-dev-login"',
+            'id="source-upload"',
+            "multiple",
         ):
             self.assertIn(marker, html)
+        js = (ROOT / "apps" / "web" / "app.js").read_text()
+        self.assertNotIn("filter((item) => item.role !== role)", js)
+        self.assertIn("item.role === role && item.original_filename === file.name", js)
