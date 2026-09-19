@@ -106,7 +106,7 @@ class DevToolingTests(unittest.TestCase):
             self.assertIn("PPAP_SERVICE=worker", run.call_args_list[1].args[0])
 
     def test_compose_fixture_is_production_and_not_isolated_dev(self):
-        from ppap_core.settings import ISOLATED_DEV_S3_ENDPOINT, ISOLATED_DEV_SECRET
+        from ppap_core.settings import ISOLATED_DEV_S3_ENDPOINT, ISOLATED_DEV_SECRET, Settings
 
         env_text = (ROOT / "deploy" / "compose.env.example").read_text()
         compose = (ROOT / "deploy" / "compose.yaml").read_text()
@@ -118,6 +118,9 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
         self.assertIn("python tools/dev.py provision", compose)
+        self.assertGreaterEqual(compose.count("compose.env.example"), 3)
+        self.assertIn("env_file:", compose)
+        self.assertIn("PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}", compose)
         self.assertIn("context: minio", compose)
         self.assertNotIn("minio/minio:", compose)
         self.assertNotIn("context: deploy/minio", compose)
@@ -126,6 +129,22 @@ class DevToolingTests(unittest.TestCase):
 
         self.assertIn(MINIO_RELEASE, dockerfile)
         self.assertIn(MINIO_SHA256, dockerfile)
+
+        parsed: dict[str, str] = {}
+        for line in env_text.splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, _, value = raw.partition("=")
+            parsed[key] = value
+        with patch.dict(os.environ, parsed, clear=False):
+            settings = Settings()
+        self.assertEqual(settings.profile, "production")
+        self.assertNotEqual(settings.pg_api_password, ISOLATED_DEV_SECRET)
+        self.assertNotEqual(settings.pg_worker_password, ISOLATED_DEV_SECRET)
+        self.assertNotEqual(settings.pg_migrator_password, ISOLATED_DEV_SECRET)
+        self.assertNotEqual(settings.pg_bootstrap_password, ISOLATED_DEV_SECRET)
+        self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
 
 
 if __name__ == "__main__":
