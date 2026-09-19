@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +11,9 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 _DEFAULT_V2_ROOT = _REPO / "assets" / "v2.0plus"
 _DEFAULT_V2_CSV = _REPO / "assets" / "全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+_DEFAULT_OCR_CACHE = _REPO / "tests" / "fixtures" / "ocr_cache"
 
-# Known source-engine failures. Not a second oracle: expected CSV/XLSX is unchanged.
+# Same V2 cases that failed on ppap-agent@53a5bd2b. Not a second oracle: expected CSV is unchanged.
 BASELINE_XFAIL_IDS = frozenset(
     {
         "PV试验报告2024-07-03 13.35.pdf",
@@ -34,9 +36,14 @@ BASELINE_XFAIL_IDS = frozenset(
         "SHF03-25021669-QC-15 阻燃性 试验报告 4.pdf",
         "W02管路PV试验报告2025052803_QFZ.pdf",
         "零部件DPV试验报告20231226.pdf",
-        "19-BLANC尾-生产控制计划.pdf",
     }
 )
+
+
+def pytest_configure(config: Any) -> None:
+    """Use the in-repo OCR conversion cache unless the caller already pointed elsewhere."""
+    if not (os.environ.get("OCR_LOCAL_OSS_DIR") or "").strip():
+        os.environ["OCR_LOCAL_OSS_DIR"] = str(_DEFAULT_OCR_CACHE)
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -72,7 +79,7 @@ def pytest_collection_modifyitems(items: Any) -> None:
         if any(case_id in item.nodeid for case_id in BASELINE_XFAIL_IDS):
             item.add_marker(
                 pytest.mark.xfail(
-                    reason="source engine may fail the same case; not a migration regression",
+                    reason="ppap-agent@53a5bd2b baseline failure; not a migration regression",
                     strict=False,
                 )
             )

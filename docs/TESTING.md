@@ -36,7 +36,7 @@ python tools/stack.py verify-uploads
 python tools/stack.py down
 ```
 
-PSW 的 `.doc` 用例需要本机 LibreOffice，以及 Linux 上可执行的 `ppap-local-converter-sandbox`（由 `packages/ppap_docops/native/legacy_doc_sandbox.c` 编译）。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
+PSW 的 `.doc` 用例需要本机 LibreOffice，以及 Linux 上可执行的 `ppap-local-converter-sandbox`（由 `packages/ppap_docops/native/legacy_doc_sandbox.c` 编译）。需要 Paddle 的 PDF 转换优先使用 `tests/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
 随着 #7/#11/#15 实现，integration、E2E、quality checks 和 production build 命令在本文件补充真实入口。没有实际命令前不预写“已支持”的测试流程。
 
