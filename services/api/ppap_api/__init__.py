@@ -441,6 +441,24 @@ def create_app(
             return draft_error(exc)
         return JSONResponse(updated)
 
+    @app.get("/usage")
+    def usage_list(request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        return JSONResponse(store.list_usage(principal))
+
+    @app.post("/usage/{event_id}/reconcile")
+    def usage_reconcile(event_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            body = store.reconcile_usage(principal, event_id)
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(body)
+
     @app.post("/isolated-dev/reap-staging")
     def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:
         if settings.profile != "isolated-dev":

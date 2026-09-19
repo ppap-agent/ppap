@@ -38,6 +38,14 @@ from ppap_core.fixtures import (
 from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, identity_key, new_token, token_hash
 from ppap_core.reviews import REVIEW_JUDGMENTS, REVIEW_NOTED
 from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
+from ppap_core.usage import (
+    USAGE_KIND_AUDIT_ROUND,
+    USAGE_OBSERVED,
+    USAGE_RECONCILING,
+    USAGE_UNKNOWN,
+    business_key_for_round,
+    public_usage,
+)
 from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
@@ -1070,6 +1078,22 @@ class AuthStore:
                             audit_round_id=round_id,
                             conn=conn,
                         )
+                    conn.execute(
+                        """
+                        INSERT INTO product.usage_events
+                            (id, tenant_id, round_id, kind, state, business_key, detail)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            principal.tenant_id,
+                            round_id,
+                            USAGE_KIND_AUDIT_ROUND,
+                            USAGE_OBSERVED,
+                            business_key_for_round(round_id),
+                            "accept",
+                        ),
+                    )
         except UniqueViolation:
             found = self._existing_round_by_key(principal.tenant_id, key)
             if not found:
@@ -1186,6 +1210,7 @@ class AuthStore:
             "visible_findings": display["visible_findings"],
             "coverage": display["coverage"],
             "reviews": self._reviews_for_round(parsed),
+            "usage": self._usage_for_round(parsed),
         }
 
     def _reviews_for_round(self, round_id: str) -> list[dict]:
@@ -1214,6 +1239,95 @@ class AuthStore:
             }
             for row in rows
         ]
+
+    def _stamp(self, value) -> str:
+        return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+    def _usage_public(self, row: dict) -> dict:
+        return public_usage(
+            {
+                "id": str(row["id"]),
+                "round_id": str(row["round_id"]),
+                "kind": row["kind"],
+                "state": row["state"],
+                "business_key": row["business_key"],
+                "external_ref": row["external_ref"],
+                "detail": row["detail"],
+                "created_at": self._stamp(row["created_at"]),
+                "updated_at": self._stamp(row["updated_at"]),
+            }
+        )
+
+    def _usage_for_round(self, round_id: str) -> dict | None:
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            row = conn.execute(
+                """
+                SELECT id, round_id, kind, state, business_key, external_ref, detail, created_at, updated_at
+                FROM product.usage_events
+                WHERE round_id = %s
+                """,
+                (round_id,),
+            ).fetchone()
+        return self._usage_public(row) if row else None
+
+    def list_usage(self, principal: Principal) -> dict:
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            rows = conn.execute(
+                """
+                SELECT id, round_id, kind, state, business_key, external_ref, detail, created_at, updated_at
+                FROM product.usage_events
+                WHERE tenant_id = %s
+                ORDER BY created_at
+                """,
+                (principal.tenant_id,),
+            ).fetchall()
+        return {
+            "items": [self._usage_public(row) for row in rows],
+            "partner_ai": "disabled" if not self.settings.partner_ai_endpoint.strip() else "contract_unconfirmed",
+        }
+
+    def reconcile_usage(self, principal: Principal, event_id: str) -> dict:
+        parsed = _as_uuid(event_id)
+        if not parsed:
+            raise KeyError("missing")
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            row = conn.execute(
+                """
+                SELECT id, tenant_id, round_id, kind, state, business_key, external_ref, detail, created_at, updated_at
+                FROM product.usage_events
+                WHERE id = %s
+                """,
+                (parsed,),
+            ).fetchone()
+        if row is None:
+            raise KeyError("missing")
+        if str(row["tenant_id"]) != principal.tenant_id:
+            raise ValueError("access_denied")
+        if row["state"] == "confirmed":
+            return self._usage_public(row)
+        detail = (
+            "partner_unavailable"
+            if not self.settings.partner_ai_endpoint.strip()
+            else "partner_contract_unconfirmed"
+        )
+        next_state = USAGE_RECONCILING if not self.settings.partner_ai_endpoint.strip() else USAGE_UNKNOWN
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            updated = conn.execute(
+                """
+                UPDATE product.usage_events
+                SET state = %s, detail = %s, updated_at = now()
+                WHERE id = %s AND tenant_id = %s AND business_key = %s AND state <> 'confirmed'
+                RETURNING id, round_id, kind, state, business_key, external_ref, detail, created_at, updated_at
+                """,
+                (next_state, detail, parsed, principal.tenant_id, row["business_key"]),
+            ).fetchone()
+        if updated is None:
+            raise ValueError("access_denied")
+        return self._usage_public(updated)
 
     def save_review(self, principal: Principal, round_id: str, body: dict) -> dict:
         current = self.get_round(principal, round_id)

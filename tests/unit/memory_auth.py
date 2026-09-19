@@ -21,6 +21,14 @@ from ppap_core.fixtures import CATALOG_PROJECT, SUBJECTS
 from ppap_core.identity import Principal, Resource, identity_key, new_token, token_hash
 from ppap_core.reviews import REVIEW_JUDGMENTS, REVIEW_NOTED
 from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
+from ppap_core.usage import (
+    USAGE_KIND_AUDIT_ROUND,
+    USAGE_OBSERVED,
+    USAGE_RECONCILING,
+    USAGE_UNKNOWN,
+    business_key_for_round,
+    public_usage,
+)
 from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
 
@@ -65,6 +73,7 @@ class MemoryAuthStore:
         self.round_results: dict[str, list[dict]] = {}
         self.round_keys: dict[tuple[str, str], str] = {}
         self.reviews: dict[str, list[dict]] = {}
+        self.usage_events: dict[str, dict] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds))
@@ -608,6 +617,19 @@ class MemoryAuthStore:
                 engine_rule_id=item["engine_rule_id"],
                 audit_round_id=round_id,
             )
+        now = datetime.now(timezone.utc).isoformat()
+        self.usage_events[round_id] = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": principal.tenant_id,
+            "round_id": round_id,
+            "kind": USAGE_KIND_AUDIT_ROUND,
+            "state": USAGE_OBSERVED,
+            "business_key": business_key_for_round(round_id),
+            "external_ref": None,
+            "detail": "accept",
+            "created_at": now,
+            "updated_at": now,
+        }
         return self.get_round(principal, round_id), True
 
     def get_round(self, principal: Principal, round_id: str) -> dict:
@@ -641,6 +663,7 @@ class MemoryAuthStore:
             "visible_findings": display["visible_findings"],
             "coverage": display["coverage"],
             "reviews": list(self.reviews.get(round_id, [])),
+            "usage": public_usage(self.usage_events[round_id]) if round_id in self.usage_events else None,
         }
 
     def save_review(self, principal: Principal, round_id: str, body: dict) -> dict:
@@ -684,6 +707,33 @@ class MemoryAuthStore:
             existing["version"] = int(existing["version"]) + 1
             existing["updated_at"] = now
         return self.get_round(principal, current["id"])
+
+    def list_usage(self, principal: Principal) -> dict:
+        items = [
+            public_usage(row)
+            for row in self.usage_events.values()
+            if row["tenant_id"] == principal.tenant_id
+        ]
+        items.sort(key=lambda item: item["created_at"])
+        partner = "disabled" if not self.settings.partner_ai_endpoint.strip() else "contract_unconfirmed"
+        return {"items": items, "partner_ai": partner}
+
+    def reconcile_usage(self, principal: Principal, event_id: str) -> dict:
+        row = next((item for item in self.usage_events.values() if item["id"] == event_id), None)
+        if row is None:
+            raise KeyError("missing")
+        if row["tenant_id"] != principal.tenant_id:
+            raise ValueError("access_denied")
+        if row["state"] == "confirmed":
+            return public_usage(row)
+        row["state"] = USAGE_RECONCILING if not self.settings.partner_ai_endpoint.strip() else USAGE_UNKNOWN
+        row["detail"] = (
+            "partner_unavailable"
+            if not self.settings.partner_ai_endpoint.strip()
+            else "partner_contract_unconfirmed"
+        )
+        row["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return public_usage(row)
 
     def retry_round(self, principal: Principal, round_id: str) -> dict:
         current = self.get_round(principal, round_id)

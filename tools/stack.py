@@ -1535,9 +1535,192 @@ def verify_reviews() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_usage() -> int:
+    import httpx
+    from openpyxl import Workbook
+    from ppap_core.fixtures import CATALOG_PROJECT
+
+    env = child_env()
+    report = {"ok": False, "s07_live": "NOT_PROVEN"}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+        web = env["PPAP_WEB_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        def xlsx(name: str) -> bytes:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / name
+                Workbook().save(path)
+                return path.read_bytes()
+
+        def upload(cookie: str, filename: str, body: bytes) -> tuple[str, str, str]:
+            created = httpx.post(
+                api + "/files",
+                json={"original_filename": filename, "content_type": "application/octet-stream", "byte_size": len(body)},
+                headers=headers(cookie),
+                timeout=10,
+            )
+            file_id, version_id = created.json()["file_id"], created.json()["id"]
+            httpx.put(api + f"/files/{file_id}/versions/{version_id}/blob", content=body, headers=headers(cookie), timeout=10)
+            ready = httpx.post(api + f"/files/{file_id}/versions/{version_id}/finalize", headers=headers(cookie), timeout=10)
+            return file_id, version_id, ready.json()["sha256"]
+
+        alice, bob, carol = mint("alice"), mint("bob"), mint("carol")
+        catalog = httpx.get(api + f"/rule-versions?project_id={CATALOG_PROJECT}", headers=headers(alice), timeout=10)
+        psw = next(item for item in catalog.json()["items"] if item["engine_rule_id"] == "零件提交保证书")
+        target = upload(alice, "PSW.xlsx", xlsx("PSW.xlsx"))
+        created = httpx.post(api + "/drafts", json={"project_id": CATALOG_PROJECT}, headers=headers(alice), timeout=10)
+        httpx.put(
+            api + f"/drafts/{created.json()['id']}",
+            json={
+                "items": [
+                    {
+                        "file_id": target[0],
+                        "file_version_id": target[1],
+                        "role": "target",
+                        "product_rule_version_id": psw["id"],
+                    }
+                ]
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        accepted = httpx.post(
+            api + f"/drafts/{created.json()['id']}/accept",
+            json={"idempotency_key": "usage-" + uuid.uuid4().hex},
+            headers=headers(alice),
+            timeout=10,
+        )
+        round_id = accepted.json()["id"]
+        deadline = time.time() + 90
+        latest = {}
+        while time.time() < deadline:
+            fetched_round = httpx.get(api + f"/rounds/{round_id}", headers=headers(alice), timeout=10)
+            if fetched_round.status_code == 200 and fetched_round.json().get("status") in {"succeeded", "failed"}:
+                latest = fetched_round.json()
+                break
+            time.sleep(1)
+        listed = httpx.get(api + "/usage", headers=headers(alice), timeout=10)
+        replay = httpx.post(
+            api + f"/drafts/{created.json()['id']}/accept",
+            json={"idempotency_key": accepted.json()["idempotency_key"]},
+            headers=headers(alice),
+            timeout=10,
+        )
+        retry = httpx.post(api + f"/rounds/{round_id}/retry", headers=headers(alice), timeout=10)
+        after_retry = httpx.get(api + "/usage", headers=headers(alice), timeout=10)
+        event = listed.json()["items"][0]
+        blob = json.dumps(listed.json())
+        reconcile = httpx.post(
+            api + f"/usage/{event['id']}/reconcile",
+            json={"state": "confirmed", "amount": 500},
+            headers=headers(alice),
+            timeout=10,
+        )
+        again = httpx.post(api + f"/usage/{event['id']}/reconcile", headers=headers(alice), timeout=10)
+        resubmit = httpx.post(
+            api + f"/drafts/{created.json()['id']}/accept",
+            json={"idempotency_key": "usage-new-" + uuid.uuid4().hex},
+            headers=headers(alice),
+            timeout=10,
+        )
+        after_new = httpx.get(api + "/usage", headers=headers(alice), timeout=10)
+        bob_list = httpx.get(api + "/usage", headers=headers(bob), timeout=10)
+        carol_list = httpx.get(api + "/usage", headers=headers(carol), timeout=10)
+        carol_reconcile = httpx.post(
+            api + f"/usage/{event['id']}/reconcile",
+            headers=headers(carol),
+            timeout=10,
+        )
+        forge = httpx.post(api + "/usage", json={"amount": 500, "charged": True}, headers=headers(alice), timeout=10)
+        with urllib.request.urlopen(web, timeout=5) as response:
+            html = response.read().decode()
+        round_url = f"{web}/?round={round_id}"
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            raise RuntimeError("playwright_missing")
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            context = browser.new_context()
+            context.add_cookies([{"name": "ppap_session", "value": alice, "domain": "127.0.0.1", "path": "/"}])
+            page = context.new_page()
+            page.goto(round_url, wait_until="networkidle")
+            page.wait_for_function(
+                "() => ['observed', 'reconciling'].includes(document.querySelector('[data-testid=usage-state]')?.textContent)",
+                timeout=15000,
+            )
+            entry_count = page.get_by_test_id("usage-entry").count()
+            state_text = page.get_by_test_id("usage-state").inner_text().strip()
+            context.close()
+            browser.close()
+        report["observed"] = (
+            accepted.status_code == 201
+            and listed.status_code == 200
+            and len(listed.json()["items"]) == 1
+            and event["round_id"] == round_id
+            and event["state"] == "observed"
+            and event["charged"] is False
+            and "amount" not in event
+            and listed.json()["partner_ai"] == "disabled"
+            and "balance" not in blob
+            and "quota" not in blob
+            and "10000" not in blob
+            and latest.get("status") in {"succeeded", "failed"}
+            and latest.get("usage", {}).get("charged") is False
+        )
+        report["no_duplicate"] = (
+            replay.status_code == 200
+            and retry.status_code == 200
+            and len(after_retry.json()["items"]) == 1
+            and forge.status_code in {404, 405, 422}
+        )
+        report["reconcile"] = (
+            reconcile.status_code == 200
+            and reconcile.json()["id"] == event["id"]
+            and reconcile.json()["business_key"] == event["business_key"]
+            and reconcile.json()["state"] == "reconciling"
+            and reconcile.json()["charged"] is False
+            and again.json()["id"] == event["id"]
+        )
+        report["resubmit_independent"] = (
+            resubmit.status_code == 201
+            and len(after_new.json()["items"]) == 2
+            and {item["round_id"] for item in after_new.json()["items"]} == {round_id, resubmit.json()["id"]}
+        )
+        report["tenant_scope"] = (
+            bob_list.status_code == 200
+            and {item["round_id"] for item in bob_list.json()["items"]} == {round_id, resubmit.json()["id"]}
+            and carol_list.status_code == 200
+            and carol_list.json()["items"] == []
+            and carol_reconcile.status_code == 403
+        )
+        report["web_hooks"] = all(
+            marker in html for marker in ('data-testid="usage-list"', 'data-testid="usage-state"')
+        ) and entry_count >= 1 and state_text in {"observed", "reconciling"}
+        report["ok"] = all(
+            report[key] is True
+            for key in ("observed", "no_duplicate", "reconcile", "resubmit_independent", "tenant_scope", "web_hooks")
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+        report["error_detail"] = str(exc)[:200]
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds", "verify-web", "verify-reviews"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds", "verify-web", "verify-reviews", "verify-usage"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -1590,6 +1773,9 @@ def main() -> int:
     if args.command == "verify-reviews":
         reexec_in_venv()
         return verify_reviews()
+    if args.command == "verify-usage":
+        reexec_in_venv()
+        return verify_usage()
     reexec_in_venv()
     return verify()
 

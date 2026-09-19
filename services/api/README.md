@@ -4,7 +4,7 @@ The only public HTTP API for PPAP.
 
 Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy document or model work in request threads.
 
-## HTTP surface (#2 / #4 / #5 / #6 / #7 / #8 / #9 / #10)
+## HTTP surface (#2 / #4 / #5 / #6 / #7 / #8 / #9 / #10 / #12)
 
 - `GET /health` — process alive
 - `GET /ready` — PostgreSQL and object storage actually reachable
@@ -34,12 +34,14 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `POST /drafts/{id}/accept` — freeze inputs and enqueue `audit.execute` in one PostgreSQL transaction; tenant+idempotency_key replay returns the same round, different request hash is 409
 - `GET /rounds/{id}` — same round identity, frozen inputs, `visible_findings` and `execution_state` for the Web; does not enqueue work
 - `POST /rounds/{id}/reviews` — human note on a round; actor is the session user; snapshot of `current_result_id`; `expected_version` required to update; does not mutate findings; stale version is 409 `review_conflict`
+- `GET /usage` — tenant-scoped usage events; observations only; no fabricated balance
+- `POST /usage/{id}/reconcile` — retry lookup with the same `business_key`; Partner AI unavailable stays `reconciling`, never auto-`confirmed`
 - `POST /isolated-dev/execute-audit` — isolated-dev only; enqueue Worker execution of a ready version
 - `GET /isolated-dev/jobs/{id}` — isolated-dev job status/result; cross-tenant 403
 - `POST /isolated-dev/rule-versions` — isolated-dev only; insert a new immutable snapshot (never updates old rows)
 - `POST /isolated-dev/claim-job` / `expire-job-lease` / `forge-job-result` — isolated-dev fencing helpers; not product routes
 
-Unready versions cannot be treated as originals. Object keys include version id and are never reused. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03. `verify-engine` is not S01 and not authorized corpus acceptance. `verify-drafts` is not S01; identification does not accept a round. `verify-rounds` is not S04 Live and does not claim exactly-once model or billing.
+Unready versions cannot be treated as originals. Object keys include version id and are never reused. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03. `verify-engine` is not S01 and not authorized corpus acceptance. `verify-drafts` is not S01; identification does not accept a round. `verify-rounds` is not S04 Live and does not claim exactly-once model or billing. `verify-reviews` is not S05. `verify-usage` is not S07 and does not invent a Partner AI billing contract.
 
 ## Owns
 

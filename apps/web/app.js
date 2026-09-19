@@ -62,12 +62,15 @@ async function main() {
   const denied = document.getElementById("access-denied");
   const findingsEl = document.getElementById("findings");
   const reviewsEl = document.getElementById("reviews");
+  const usageListEl = document.getElementById("usage-list");
   const evidencePanel = document.getElementById("evidence-panel");
   const showDenied = (on) => {
     denied.classList.toggle("hidden", !on);
     if (on) {
       findingsEl.replaceChildren();
       reviewsEl.replaceChildren();
+      usageListEl.replaceChildren();
+      document.getElementById("usage-state").textContent = "";
       document.getElementById("original-slot").replaceChildren();
     }
   };
@@ -142,6 +145,23 @@ async function main() {
       reviewsEl.appendChild(row);
     }
   };
+  const renderUsage = (items, roundUsage) => {
+    usageListEl.replaceChildren();
+    document.getElementById("usage-state").textContent = (roundUsage && roundUsage.state) || "";
+    for (const item of items || []) {
+      const row = document.createElement("li");
+      row.dataset.testid = "usage-entry";
+      row.textContent = `${item.state} ${item.business_key} charged=${item.charged}`;
+      usageListEl.appendChild(row);
+    }
+  };
+  const refreshUsage = async () => {
+    const listed = await readJson(`${api}/usage`);
+    if (!listed.ok) {
+      return [];
+    }
+    return listed.body.items || [];
+  };
   const renderRound = (round) => {
     if (!round || !round.id) {
       return;
@@ -160,6 +180,7 @@ async function main() {
     showOriginal(target.file_id, target.file_version_id, target.sha256);
     renderFindings(round);
     renderReviews(round);
+    refreshUsage().then((items) => renderUsage(items, round.usage));
     const url = new URL(window.location.href);
     url.searchParams.set("round", round.id);
     window.history.replaceState({}, "", url);
@@ -361,6 +382,9 @@ async function main() {
     }
     renderRound(saved.body);
   });
+  if (me.ok && !roundId) {
+    renderUsage(await refreshUsage(), null);
+  }
   if (roundId) {
     await refreshRound();
   }
