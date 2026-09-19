@@ -631,6 +631,95 @@ def verify_uploads() -> int:
         replay = httpx.post(api + f"/files/{file_id}/versions/{v1}/finalize", headers=headers(alice), timeout=10)
         overwrite = httpx.put(api + f"/files/{file_id}/versions/{v1}/blob", content=b"nope", headers=headers(alice), timeout=10)
         report["immutable_write"] = replay.status_code == 200 and overwrite.status_code == 409
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ppap_core.files import ObjectExists, version_object_key
+        from ppap_core.fixtures import TENANT_A
+        from ppap_core.settings import Settings
+        from ppap_core.storage import S3Objects
+
+        race_a, race_b = b"minio-winner-a", b"minio-loser--b"
+        raced = httpx.post(
+            api + "/files",
+            json={
+                "original_filename": "race.bin",
+                "content_type": "application/octet-stream",
+                "byte_size": len(race_a),
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        race_file, race_vid = raced.json()["file_id"], raced.json()["id"]
+        objects = S3Objects(Settings())
+        race_key = version_object_key(TENANT_A, race_file, race_vid)
+        minio_outcomes: list[bytes | str] = []
+
+        def exclusive_put(payload: bytes) -> None:
+            try:
+                objects.put_exclusive(race_key, payload, "application/octet-stream")
+                minio_outcomes.append(payload)
+            except ObjectExists:
+                minio_outcomes.append("exists")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(exclusive_put, (race_a, race_b)))
+        minio_winners = [item for item in minio_outcomes if item != "exists"]
+        race_ready = httpx.post(
+            api + f"/files/{race_file}/versions/{race_vid}/finalize",
+            headers=headers(alice),
+            timeout=10,
+        )
+        race_download = httpx.get(
+            api + f"/files/{race_file}/versions/{race_vid}/download",
+            headers=headers(alice),
+            timeout=10,
+        )
+        http_meta = httpx.post(
+            api + "/files",
+            json={
+                "original_filename": "race-http.bin",
+                "content_type": "application/octet-stream",
+                "byte_size": len(race_a),
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        http_file, http_vid = http_meta.json()["file_id"], http_meta.json()["id"]
+
+        def http_put(payload: bytes):
+            return httpx.put(
+                api + f"/files/{http_file}/versions/{http_vid}/blob",
+                content=payload,
+                headers=headers(alice),
+                timeout=10,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            http_results = list(pool.map(http_put, (race_a, race_b)))
+        http_ready = httpx.post(
+            api + f"/files/{http_file}/versions/{http_vid}/finalize",
+            headers=headers(alice),
+            timeout=10,
+        )
+        http_download = httpx.get(
+            api + f"/files/{http_file}/versions/{http_vid}/download",
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["concurrent_put"] = (
+            raced.status_code == 201
+            and len(minio_winners) == 1
+            and minio_outcomes.count("exists") == 1
+            and sorted(item.status_code for item in http_results) == [200, 409]
+        )
+        report["concurrent_winner"] = (
+            race_ready.status_code == 200
+            and race_download.content == minio_winners[0]
+            and race_ready.json().get("sha256") == hashlib.sha256(race_download.content).hexdigest()
+            and http_ready.status_code == 200
+            and http_download.content in {race_a, race_b}
+            and http_ready.json().get("sha256") == hashlib.sha256(http_download.content).hexdigest()
+        )
         unsafe = httpx.post(api + "/files/from-url", json={"url": "http://127.0.0.1/secret"}, headers=headers(alice), timeout=10)
         report["ssrf_blocked"] = unsafe.status_code == 400
         leftover = httpx.post(
@@ -656,7 +745,17 @@ def verify_uploads() -> int:
         )
         report["ok"] = all(
             report[key] is True
-            for key in ("alice_upload", "history_preserved", "carol_denied", "immutable_write", "ssrf_blocked", "staging_reaped", "web_hooks")
+            for key in (
+                "alice_upload",
+                "history_preserved",
+                "carol_denied",
+                "immutable_write",
+                "concurrent_put",
+                "concurrent_winner",
+                "ssrf_blocked",
+                "staging_reaped",
+                "web_hooks",
+            )
         )
     except Exception as exc:
         report["error"] = type(exc).__name__

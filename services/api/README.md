@@ -27,7 +27,7 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `GET /files/{id}/versions/{vid}/download` — ready bytes only; staging is 409
 - `POST /isolated-dev/reap-staging` — isolated-dev only; marks expired staging `failed` and may delete those objects; never touches `ready` keys
 
-Unready versions cannot be treated as originals. Object keys include version id and are never reused. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03.
+Unready versions cannot be treated as originals. Object keys include version id and are never reused. Concurrent PUT against the same staging key keeps one winner. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03.
 
 ## Owns
 

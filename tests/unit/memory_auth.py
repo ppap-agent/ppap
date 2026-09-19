@@ -186,16 +186,22 @@ class MemoryAuthStore:
         return self.versions.get((file_id, version_id))
 
     def put_blob(self, version: FileVersion, body: bytes) -> FileVersion:
-        if version.status != STAGING:
+        current = self.versions.get((version.file_id, version.id))
+        if current is None or current.status != STAGING:
             raise ObjectExists()
         if len(body) > MAX_UPLOAD_BYTES:
             raise ValueError("invalid_size")
-        self.objects.put_exclusive(version.object_key, body, version.content_type)
+        self.objects.put_exclusive(current.object_key, body, current.content_type)
+        claimed = self.versions.get((version.file_id, version.id))
+        if claimed is None or claimed.status != STAGING:
+            if claimed is None or claimed.status != READY:
+                self.objects.delete(current.object_key)
+            raise ObjectExists()
         updated = FileVersion(
-            version.id, version.file_id, version.tenant_id, version.original_filename,
-            version.content_type, len(body), version.object_key, STAGING, version.sha256,
+            claimed.id, claimed.file_id, claimed.tenant_id, claimed.original_filename,
+            claimed.content_type, len(body), claimed.object_key, STAGING, claimed.sha256,
         )
-        self.versions[(version.file_id, version.id)] = updated
+        self.versions[(claimed.file_id, claimed.id)] = updated
         return updated
 
     def finalize_version(self, version: FileVersion, expected_sha256: str | None = None) -> FileVersion:

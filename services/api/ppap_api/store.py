@@ -456,27 +456,29 @@ class AuthStore:
             raise ObjectExists()
         if len(body) > MAX_UPLOAD_BYTES:
             raise ValueError("invalid_size")
-        self.objects.put_exclusive(version.object_key, body, version.content_type)
+        current = self.get_version(version.file_id, version.id)
+        if current is None or current.status != STAGING:
+            raise ObjectExists()
+        self.objects.put_exclusive(current.object_key, body, current.content_type)
         with self._conn() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
                 UPDATE product.file_versions
                 SET byte_size = %s
                 WHERE id = %s AND file_id = %s AND status = %s
+                RETURNING id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status
                 """,
-                (len(body), version.id, version.file_id, STAGING),
-            )
-        return FileVersion(
-            version.id,
-            version.file_id,
-            version.tenant_id,
-            version.original_filename,
-            version.content_type,
-            len(body),
-            version.object_key,
-            STAGING,
-            version.sha256,
-        )
+                (len(body), current.id, current.file_id, STAGING),
+            ).fetchone()
+        if row is None:
+            latest = self.get_version(version.file_id, version.id)
+            if latest is None or latest.status != READY:
+                try:
+                    self.objects.delete(current.object_key)
+                except Exception:
+                    pass
+            raise ObjectExists()
+        return self._version_from_row(row)
 
     def finalize_version(self, version: FileVersion, expected_sha256: str | None = None) -> FileVersion:
         if version.status == READY:

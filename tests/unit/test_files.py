@@ -9,13 +9,14 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
 
 from fastapi.testclient import TestClient
 
-from ppap_core.files import MAX_UPLOAD_BYTES, UnsafeSource, fetch_remote, original_filename, sha256_bytes
+from ppap_core.files import MAX_UPLOAD_BYTES, ObjectExists, UnsafeSource, fetch_remote, original_filename, sha256_bytes
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from tests.unit.memory_auth import MemoryAuthStore
@@ -51,6 +52,12 @@ class SsrfTests(unittest.TestCase):
         with self.assertRaises(UnsafeSource):
             fetch_remote("http://user:pass@example.com/x", Http())
 
+    def _public_dns(self, ip: str = "8.8.8.8", port: int = 80):
+        return patch(
+            "ppap_core.files.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port))],
+        )
+
     def test_rejects_redirect(self):
         class Http:
             def get(self, *args, **kwargs):
@@ -60,10 +67,92 @@ class SsrfTests(unittest.TestCase):
                     content = b""
                 return R()
 
-        with patch("ppap_core.files.host_blocked", return_value=False):
-            with patch("ppap_core.files.socket.getaddrinfo", return_value=[(socket.AF_INET, 0, 0, "", ("8.8.8.8", 80))]):
-                with self.assertRaises(UnsafeSource):
-                    fetch_remote("https://example.invalid/x", Http())
+        with self._public_dns("8.8.8.8", 443):
+            with self.assertRaises(UnsafeSource):
+                fetch_remote("https://example.invalid/x", Http())
+
+    def test_connects_to_resolved_ip_with_original_host_header(self):
+        class Http:
+            def __init__(self):
+                self.url = ""
+                self.headers: dict[str, str] = {}
+                self.extensions = None
+
+            def get(self, url, **kwargs):
+                self.url = url
+                self.headers = kwargs.get("headers") or {}
+                self.extensions = kwargs.get("extensions")
+
+                class R:
+                    status_code = 200
+                    headers = {"content-type": "text/plain"}
+                    content = b"hello"
+
+                return R()
+
+        http = Http()
+        with self._public_dns("8.8.8.8", 443):
+            body, ctype, name = fetch_remote("https://example.invalid/file.bin", http)
+        self.assertEqual(body, b"hello")
+        self.assertEqual(ctype, "text/plain")
+        self.assertEqual(name, "file.bin")
+        host = urlsplit(http.url).hostname
+        self.assertEqual(host, "8.8.8.8")
+        self.assertEqual(http.headers.get("Host"), "example.invalid")
+        self.assertEqual((http.extensions or {}).get("sni_hostname"), "example.invalid")
+
+    def test_rejects_when_any_resolved_address_is_private(self):
+        class Http:
+            def get(self, *args, **kwargs):
+                raise AssertionError("must_not_fetch")
+
+        infos = [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("8.8.8.8", 80)),
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", 80)),
+        ]
+        with patch("ppap_core.files.socket.getaddrinfo", return_value=infos):
+            with self.assertRaises(UnsafeSource):
+                fetch_remote("http://rebind.example/x", Http())
+
+    def test_content_body_too_large(self):
+        class Http:
+            def get(self, *args, **kwargs):
+                class R:
+                    status_code = 200
+                    headers = {}
+                    content = b"z" * 20
+
+                return R()
+
+        with self._public_dns():
+            with self.assertRaises(UnsafeSource) as ctx:
+                fetch_remote("http://example.invalid/x", Http(), max_bytes=5)
+        self.assertEqual(str(ctx.exception), "too_large")
+
+    def test_streaming_enforces_byte_limit(self):
+        class Http:
+            def stream(self, method, url, **kwargs):
+                class R:
+                    status_code = 200
+                    headers = {"content-type": "application/octet-stream"}
+
+                    def iter_bytes(self):
+                        yield b"x" * 8
+                        yield b"y" * 8
+
+                class CM:
+                    def __enter__(self):
+                        return R()
+
+                    def __exit__(self, *args):
+                        return False
+
+                return CM()
+
+        with self._public_dns():
+            with self.assertRaises(UnsafeSource) as ctx:
+                fetch_remote("http://example.invalid/x", Http(), max_bytes=10)
+        self.assertEqual(str(ctx.exception), "too_large")
 
 
 class FileHttpTests(unittest.TestCase):
@@ -217,3 +306,53 @@ class FileHttpTests(unittest.TestCase):
         self.assertEqual(old.content, first)
         abandoned = self.client.get(f"/files/{file_id}/versions/{leftover.json()['id']}/download")
         self.assertEqual(abandoned.status_code, 409)
+
+
+class StagingRaceTests(unittest.TestCase):
+    def setUp(self):
+        self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
+        self._env.start()
+        self.store = MemoryAuthStore(Settings())
+        self.store.seed_isolated_dev()
+        self.principal = self.store.principal_for_fixture("alice")
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_stale_put_after_reap_does_not_write_or_succeed(self):
+        version = self.store.create_staging(self.principal, "a.bin", "application/octet-stream", 4)
+        self.assertEqual(self.store.reap_staging(0), 1)
+        with self.assertRaises(ObjectExists):
+            self.store.put_blob(version, b"data")
+        self.assertNotIn(version.object_key, self.store.objects.data)
+        self.assertEqual(self.store.get_version(version.file_id, version.id).status, "failed")
+
+    def test_reap_during_object_write_deletes_orphan_and_fails(self):
+        version = self.store.create_staging(self.principal, "a.bin", "application/octet-stream", 4)
+        inner = self.store.objects
+        store = self.store
+
+        class ReapOnPut:
+            def put_exclusive(self, key, body, content_type):
+                inner.put_exclusive(key, body, content_type)
+                store.reap_staging(0)
+
+            def get(self, key):
+                return inner.get(key)
+
+            def delete(self, key):
+                inner.delete(key)
+
+        self.store.objects = ReapOnPut()
+        with self.assertRaises(ObjectExists):
+            self.store.put_blob(version, b"data")
+        self.assertNotIn(version.object_key, inner.data)
+        self.assertEqual(self.store.get_version(version.file_id, version.id).status, "failed")
+
+    def test_second_staging_put_does_not_overwrite_bytes(self):
+        version = self.store.create_staging(self.principal, "a.bin", "application/octet-stream", 3)
+        first = self.store.put_blob(version, b"aaa")
+        self.assertEqual(first.status, "staging")
+        with self.assertRaises(ObjectExists):
+            self.store.put_blob(version, b"bbb")
+        self.assertEqual(self.store.objects.get(version.object_key), b"aaa")
