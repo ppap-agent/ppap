@@ -79,6 +79,185 @@ def normalized_findings(rows: list[dict]) -> list[dict]:
     return sorted(rows, key=lambda row: row["id"])
 
 
+REQUIRED_PROMISED_FORMATS = ("xlsx", "pdf", "docx", "doc", "scanned", "cross_file")
+DIFFERENCE_KINDS = (
+    "equivalent",
+    "conversion_loss",
+    "rule_logic_defect",
+    "approved_format_difference",
+)
+CORPUS_CATALOG = ROOT / "tests" / "live" / "corpus" / "catalog.json"
+PUBLIC_FIXTURE_PREFIX = "tests/live/corpus/public/"
+
+
+def human_oracle_authority(authority: str) -> bool:
+    text = (authority or "").strip()
+    if not text or text.startswith("EXAMPLE_ONLY"):
+        return False
+    lowered = text.lower()
+    if any(token in lowered for token in ("legacy_engine", "engine_output", "generated_oracle")):
+        return False
+    if lowered in {"auto", "generated", "not_proven"}:
+        return False
+    if text in {"NOT_A_BUSINESS_ORACLE", "NOT_PROVEN"}:
+        return False
+    return True
+
+
+def classify_difference(reference: dict, observed: dict) -> str:
+    """Label a comparison. Never writes or updates an oracle."""
+    ref_fields = dict(reference.get("key_fields") or {})
+    obs_fields = dict(observed.get("key_fields") or {})
+    field_mismatches = [key for key in sorted(set(ref_fields) | set(obs_fields)) if ref_fields.get(key) != obs_fields.get(key)]
+    ref_status = list(reference.get("statuses") or [])
+    obs_status = list(observed.get("statuses") or [])
+    status_mismatches = tuple(index + 1 for index, (left, right) in enumerate(zip(ref_status, obs_status)) if left != right)
+    coverage_changed = len(ref_status) != len(obs_status)
+    diagnostics = list(observed.get("conversion_diagnostics") or [])
+    allowed = set(observed.get("allowed_format_rule_differences") or reference.get("allowed_format_rule_differences") or [])
+    if not field_mismatches and not status_mismatches and not coverage_changed:
+        return "equivalent"
+    if diagnostics or field_mismatches:
+        return "conversion_loss"
+    if not coverage_changed and status_mismatches and set(status_mismatches) <= allowed:
+        return "approved_format_difference"
+    return "rule_logic_defect"
+
+
+def public_fixture_format_matches(path: Path, fmt: str) -> bool:
+    header = path.read_bytes()[:8]
+    if fmt == "pdf":
+        return header.startswith(b"%PDF")
+    if fmt in {"xlsx", "docx"}:
+        return header.startswith(b"PK\x03\x04")
+    return False
+
+
+def load_corpus_catalog(path: Path | None = None) -> dict:
+    catalog_path = path or CORPUS_CATALOG
+    try:
+        data = json.loads(catalog_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise NotProven("corpus_catalog_unavailable") from exc
+    if not isinstance(data, dict):
+        raise NotProven("invalid_corpus_catalog")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(data.get("source_commit") or "")):
+        raise NotProven("invalid_corpus_catalog")
+    rights = data.get("rights_policy")
+    if not isinstance(rights, dict) or not rights.get("public_fixtures") or not rights.get("controlled_business"):
+        raise NotProven("invalid_corpus_catalog")
+    promised = data.get("promised_formats")
+    if list(promised or []) != list(REQUIRED_PROMISED_FORMATS):
+        raise NotProven("corpus_promise_changed")
+    kinds = data.get("difference_kinds")
+    if list(kinds or []) != list(DIFFERENCE_KINDS):
+        raise NotProven("invalid_difference_kinds")
+    fixtures = data.get("public_fixtures")
+    suites = data.get("controlled_suites")
+    if not isinstance(fixtures, list) or not fixtures or not isinstance(suites, list) or not suites:
+        raise NotProven("invalid_corpus_catalog")
+    revisions = data.get("oracle_revisions", [])
+    if not isinstance(revisions, list):
+        raise NotProven("invalid_corpus_catalog")
+    for row in revisions:
+        if not isinstance(row, dict) or not str(row.get("reason") or "").strip():
+            raise NotProven("oracle_revision_missing_reason")
+    return data
+
+
+def _format_row(fmt: str) -> dict[str, str]:
+    return {
+        "format": fmt,
+        "promised": "yes",
+        "public_fixture": "absent",
+        "controlled_sample": "NOT_PROVEN",
+        "human_oracle": "NOT_PROVEN",
+        "replay": "NOT_PROVEN",
+    }
+
+
+def evaluate_corpus(catalog: dict | None = None, corpus_root: str | None = None) -> dict:
+    data = catalog if catalog is not None else load_corpus_catalog()
+    raw_root = corpus_root if corpus_root is not None else os.getenv("PPAP_CORPUS_ROOT", "")
+    root = Path(raw_root.strip()) if str(raw_root or "").strip() else None
+    matrix = {fmt: _format_row(fmt) for fmt in REQUIRED_PROMISED_FORMATS}
+    public_ok = True
+    covered_public: set[str] = set()
+    for fixture in data["public_fixtures"]:
+        if not isinstance(fixture, dict):
+            raise NotProven("invalid_corpus_catalog")
+        fmt = str(fixture.get("format") or "")
+        relative = str(fixture.get("path") or "")
+        if ".." in Path(relative).parts or not relative.startswith(PUBLIC_FIXTURE_PREFIX):
+            raise NotProven("invalid_corpus_catalog")
+        path = ROOT / relative
+        expected = str(fixture.get("source_sha256") or "")
+        if fmt not in matrix or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise NotProven("invalid_corpus_catalog")
+        if fixture.get("oracle_kind") != "format_identity" or human_oracle_authority(str(fixture.get("oracle_authority") or "")):
+            raise NotProven("public_fixture_cannot_be_business_oracle")
+        if not path.is_file() or digest(path) != expected or not public_fixture_format_matches(path, fmt):
+            public_ok = False
+            matrix[fmt]["public_fixture"] = "mismatch"
+            continue
+        matrix[fmt]["public_fixture"] = "present"
+        covered_public.add(fmt)
+    for suite in data["controlled_suites"]:
+        if not isinstance(suite, dict):
+            raise NotProven("invalid_corpus_catalog")
+        formats = suite.get("formats")
+        if not isinstance(formats, list) or not formats or any(fmt not in matrix for fmt in formats):
+            raise NotProven("invalid_corpus_catalog")
+        if suite.get("oracle_kind") != "human":
+            raise NotProven("controlled_suite_oracle_must_be_human")
+        if not str(suite.get("rule_version") or "").strip() or not str(suite.get("role") or "").strip():
+            raise NotProven("invalid_corpus_catalog")
+        relative = str(suite.get("dataset_root") or "")
+        if not relative or ".." in Path(relative).parts:
+            raise NotProven("invalid_corpus_catalog")
+        local = (root / relative) if root is not None else None
+        present = bool(local and local.exists())
+        oracle_ok = human_oracle_authority(str(suite.get("oracle_authority") or ""))
+        for fmt in formats:
+            if root is None:
+                pass
+            elif present:
+                matrix[fmt]["controlled_sample"] = "present"
+            else:
+                matrix[fmt]["controlled_sample"] = "absent"
+            if oracle_ok:
+                matrix[fmt]["human_oracle"] = "reviewed"
+            if present and oracle_ok:
+                matrix[fmt]["replay"] = "ready"
+    business = all(row["human_oracle"] == "reviewed" for row in matrix.values())
+    candidates = data.get("document_candidates") if isinstance(data.get("document_candidates"), list) else []
+    docling = "NOT_PROVEN"
+    for row in candidates:
+        if isinstance(row, dict) and row.get("id") == "docling":
+            docling = str(row.get("status") or "NOT_PROVEN")
+    return {
+        "catalog_sha256": digest(CORPUS_CATALOG),
+        "source_commit": data.get("source_commit"),
+        "public_fixtures": "PROVEN" if public_ok and {"xlsx", "pdf", "docx"} <= covered_public else "NOT_PROVEN",
+        "controlled_corpus": "PROVEN" if root and root.exists() and all(row["controlled_sample"] == "present" for row in matrix.values()) else "NOT_PROVEN",
+        "business_oracle": "PROVEN" if business else "NOT_PROVEN",
+        "docling_comparison": docling if docling in {"PROVEN", "NOT_PROVEN"} else "NOT_PROVEN",
+        "legacy_engine_replay": (data.get("legacy_engine_replay") or {}).get("command"),
+        "product_replay": (data.get("product_replay") or {}).get("command"),
+        "difference_kinds": list(DIFFERENCE_KINDS),
+        "matrix": [matrix[fmt] for fmt in REQUIRED_PROMISED_FORMATS],
+    }
+
+
+def corpus_check(evidence: dict) -> None:
+    report = evaluate_corpus()
+    evidence.update(report)
+    if report["public_fixtures"] != "PROVEN":
+        raise NotProven("public_fixture_mismatch")
+    if report["business_oracle"] != "PROVEN":
+        raise NotProven("business_oracle_not_proven")
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         raise NotProven("probe_redirect_not_allowed")
@@ -250,14 +429,14 @@ def ui_check(mode: str, evidence: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["probe", "audit", "history", "review", "isolation"])
+    parser.add_argument("mode", choices=["probe", "audit", "history", "review", "isolation", "corpus"])
     parser.add_argument("--url", default="")
     parser.add_argument("--expected-build", default="")
     parser.add_argument("--output-dir", default=str(ROOT / ".artifacts" / "live"))
     args = parser.parse_args()
-    gates = {"audit": "G01", "isolation": "G02-ui", "history": "G03", "review": "G05-review", "probe": "P00"}
+    gates = {"audit": "G01", "isolation": "G02-ui", "history": "G03", "review": "G05-review", "probe": "P00", "corpus": "P07"}
     report = {
-        "gate": gates[args.mode], "kind": "prerequisite" if args.mode == "probe" else "product_child_proof",
+        "gate": gates[args.mode], "kind": "prerequisite" if args.mode in {"probe", "corpus"} else "product_child_proof",
         "run_id": uuid.uuid4().hex, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "candidate_sha": os.getenv("PPAP_BUILD_SHA", "") if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", os.getenv("PPAP_BUILD_SHA", "")) else None, "gate_sha256": digest(Path(__file__)),
         "story_sha256": digest(ROOT / "docs" / "STORIES.md"),
@@ -274,9 +453,11 @@ def main() -> int:
             report["evidence"]["endpoint_sha256"] = hashlib.sha256(url.encode()).hexdigest()
             report["evidence"]["http_invocations"] = 1
             report["evidence"].update(probe(url, args.expected_build))
+        elif args.mode == "corpus":
+            corpus_check(report["evidence"])
         else:
             ui_check(args.mode, report["evidence"])
-        report.update(outcome="PROVEN", attribution=None, cleanup="test_records_retained" if args.mode != "probe" else "not_applicable")
+        report.update(outcome="PROVEN", attribution=None, cleanup="test_records_retained" if args.mode not in {"probe", "corpus"} else "not_applicable")
     except NotProven as exc:
         report.update(reason=exc.code, attribution=exc.attribution)
     except Exception as exc:
@@ -284,6 +465,8 @@ def main() -> int:
         report["reason"] = "execution_not_proven:" + type(exc).__name__
     if report["evidence"].get("submit_invocations") or report["evidence"].get("review_invocations"):
         report["cleanup"] = "test_records_may_exist"
+    if args.mode in {"probe", "corpus"}:
+        report["cleanup"] = "not_applicable"
     report["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     destination = Path(args.output_dir)
     destination.mkdir(parents=True, exist_ok=True)

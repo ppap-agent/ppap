@@ -8,7 +8,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.live import NotProven, check_findings, origin, probe, required, same_origin, normalized_findings, NoRedirect
+from tools.live import (
+    NotProven,
+    check_findings,
+    classify_difference,
+    evaluate_corpus,
+    human_oracle_authority,
+    load_corpus_catalog,
+    origin,
+    probe,
+    required,
+    same_origin,
+    normalized_findings,
+    NoRedirect,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -110,6 +123,129 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(record["kind"], "product_child_proof")
             self.assertNotIn("submit_invocations", record["evidence"])
             self.assertEqual(record["reason"], "missing_configuration:PPAP_WEB_URL")
+
+
+class CorpusTests(unittest.TestCase):
+    def test_catalog_keeps_promised_formats_and_public_hashes(self):
+        catalog = load_corpus_catalog()
+        report = evaluate_corpus(catalog)
+        self.assertEqual(report["public_fixtures"], "PROVEN")
+        self.assertEqual(report["business_oracle"], "NOT_PROVEN")
+        self.assertEqual(report["controlled_corpus"], "NOT_PROVEN")
+        self.assertEqual(report["docling_comparison"], "NOT_PROVEN")
+        formats = [row["format"] for row in report["matrix"]]
+        self.assertEqual(formats, ["xlsx", "pdf", "docx", "doc", "scanned", "cross_file"])
+        by_format = {row["format"]: row for row in report["matrix"]}
+        self.assertEqual(by_format["xlsx"]["public_fixture"], "present")
+        self.assertEqual(by_format["pdf"]["public_fixture"], "present")
+        self.assertEqual(by_format["docx"]["public_fixture"], "present")
+        self.assertEqual(by_format["doc"]["public_fixture"], "absent")
+        self.assertEqual(by_format["scanned"]["human_oracle"], "NOT_PROVEN")
+        self.assertEqual(by_format["cross_file"]["replay"], "NOT_PROVEN")
+        self.assertEqual(catalog["source_commit"], "53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9")
+        self.assertEqual(catalog["oracle_revisions"], [])
+        self.assertTrue(all(suite.get("rule_version") for suite in catalog["controlled_suites"]))
+        self.assertFalse(human_oracle_authority("EXAMPLE_ONLY_replace"))
+        self.assertFalse(human_oracle_authority("legacy_engine_batch"))
+        self.assertFalse(human_oracle_authority("engine_output"))
+        self.assertFalse(human_oracle_authority("NOT_A_BUSINESS_ORACLE"))
+
+    def test_shrinking_promised_formats_is_rejected(self):
+        catalog = load_corpus_catalog()
+        catalog["promised_formats"] = ["xlsx", "pdf"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog.json"
+            path.write_text(json.dumps(catalog))
+            with self.assertRaises(NotProven) as ctx:
+                load_corpus_catalog(path)
+            self.assertEqual(ctx.exception.code, "corpus_promise_changed")
+
+    def test_engine_output_is_not_an_oracle(self):
+        self.assertFalse(human_oracle_authority("legacy_engine"))
+        catalog = load_corpus_catalog()
+        catalog["public_fixtures"][0]["oracle_authority"] = "reviewed-record-2026-09-19"
+        with self.assertRaises(NotProven) as ctx:
+            evaluate_corpus(catalog)
+        self.assertEqual(ctx.exception.code, "public_fixture_cannot_be_business_oracle")
+
+    def test_difference_classes(self):
+        base = {"key_fields": {"part": "A", "weight": "1"}, "statuses": ["PASS", "PASS"]}
+        self.assertEqual(classify_difference(base, dict(base)), "equivalent")
+        lost = {"key_fields": {"part": "A", "weight": ""}, "statuses": ["NG", "NG"], "conversion_diagnostics": ["structure.insufficient"]}
+        self.assertEqual(classify_difference(base, lost), "conversion_loss")
+        allowed = {"key_fields": dict(base["key_fields"]), "statuses": ["PASS", "NG"], "allowed_format_rule_differences": [2]}
+        self.assertEqual(classify_difference(base, allowed), "approved_format_difference")
+        regression = {"key_fields": dict(base["key_fields"]), "statuses": ["NG", "PASS"]}
+        self.assertEqual(classify_difference(base, regression), "rule_logic_defect")
+        coverage = {"key_fields": dict(base["key_fields"]), "statuses": ["PASS"]}
+        self.assertEqual(classify_difference(base, coverage), "rule_logic_defect")
+
+    def test_empty_corpus_root_does_not_scan_cwd(self):
+        catalog = load_corpus_catalog()
+        with tempfile.TemporaryDirectory() as directory:
+            decoy = Path(directory)
+            (decoy / "assets" / "v2.0plus").mkdir(parents=True)
+            previous = os.getcwd()
+            try:
+                os.chdir(decoy)
+                with patch.dict(os.environ, {"PPAP_CORPUS_ROOT": ""}, clear=False):
+                    report = evaluate_corpus(catalog)
+            finally:
+                os.chdir(previous)
+            self.assertEqual(report["controlled_corpus"], "NOT_PROVEN")
+            self.assertEqual(report["matrix"][0]["controlled_sample"], "NOT_PROVEN")
+
+    def test_local_checkout_without_review_is_not_an_oracle(self):
+        catalog = load_corpus_catalog()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for suite in catalog["controlled_suites"]:
+                (root / suite["dataset_root"]).mkdir(parents=True, exist_ok=True)
+            report = evaluate_corpus(catalog, corpus_root=str(root))
+        self.assertEqual(report["controlled_corpus"], "PROVEN")
+        self.assertEqual(report["business_oracle"], "NOT_PROVEN")
+        for row in report["matrix"]:
+            self.assertEqual(row["controlled_sample"], "present")
+            self.assertEqual(row["human_oracle"], "NOT_PROVEN")
+            self.assertEqual(row["replay"], "NOT_PROVEN")
+
+    def test_oracle_revision_requires_reason(self):
+        catalog = load_corpus_catalog()
+        catalog["oracle_revisions"] = [{"reviewer": "unspecified"}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog.json"
+            path.write_text(json.dumps(catalog))
+            with self.assertRaises(NotProven) as ctx:
+                load_corpus_catalog(path)
+            self.assertEqual(ctx.exception.code, "oracle_revision_missing_reason")
+
+    def test_controlled_suite_cannot_use_engine_oracle(self):
+        catalog = load_corpus_catalog()
+        catalog["controlled_suites"][0]["oracle_kind"] = "legacy_engine"
+        with self.assertRaises(NotProven) as ctx:
+            evaluate_corpus(catalog)
+        self.assertEqual(ctx.exception.code, "controlled_suite_oracle_must_be_human")
+
+    def test_corpus_cli_reports_matrix_without_claiming_business_oracle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "tools/live.py", "corpus", "--output-dir", directory],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            self.assertEqual(result.returncode, 1)
+            records = list(Path(directory).glob("*.json"))
+            self.assertEqual(len(records), 1)
+            record = json.loads(records[0].read_text())
+            self.assertEqual(record["gate"], "P07")
+            self.assertEqual(record["kind"], "prerequisite")
+            self.assertEqual(record["outcome"], "NOT_PROVEN")
+            self.assertEqual(record["reason"], "business_oracle_not_proven")
+            self.assertEqual(record["cleanup"], "not_applicable")
+            self.assertEqual(record["evidence"]["public_fixtures"], "PROVEN")
+            self.assertEqual(len(record["evidence"]["matrix"]), 6)
 
 
 if __name__ == "__main__": unittest.main()

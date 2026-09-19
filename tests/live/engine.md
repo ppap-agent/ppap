@@ -21,4 +21,4 @@ python tools/legacy_engine_gate.py --case .local/engine.json
 
 27 项工具自测覆盖空/漏/重复项、错误构建/身份、规则变化、源摘要不符、超时不得重发和异常脱敏。它们使用替身测试验证器本身，不是业务验收。本轮真实命令只到配置检查：缺授权引擎配置，分析/任务调用均为 0，结果 NOT_PROVEN。实际安全记录见 [本轮运行](../../docs/evidence/engine-gate-2026-09-18.json)。
 
-下一步由 #3/#6 提供真实 corpus、oracle 和部署配置并运行；新引擎内迁后可删除旧 HTTP 验证路径，不能让这个迁移工具变成产品运行依赖。
+下一步由授权的 `PPAP_CORPUS_ROOT` 与写入 catalog 的人工审阅记录提供真实 oracle 后再跑；比较命令不变。新引擎内迁后可删除旧 HTTP 验证路径，不能让这个迁移工具变成产品运行依赖，也不能把它的输出写回 oracle。

@@ -6,6 +6,8 @@
 
 这里的产品 oracle 是占位示例，必须换成有审阅来源的真实样本期望。不要把当前执行结果自动保存成 oracle。正常真实依赖费用已授权；缺环境或产品路径时保留 NOT_PROVEN。
 
+样本身份、分发权限和支持矩阵见 [corpus.md](corpus.md)。`python tools/live.py corpus` 始终列出承诺格式；公开 fixture 只证明字节身份。受控业务 corpus 不得提交到本仓。
+
 [本轮实际验证记录](../../docs/evidence/context-2026-09-18.md) 区分工具自测与未证明的 Live 结果。[工具 CI](../../.github/workflows/verification-tools.yml) 只运行验证器自测；[独立旧引擎 preflight](../../.github/workflows/legacy-preflight.yml) 只执行真实版本读取。普通 push 必须通过 LLM/Feishu readiness 后才继续 deterministic verification；PR 的无 Secrets 工具检查仍独立运行。
 
 迁移期需要直接验证旧引擎时，使用 [旧引擎契约验证](engine.md)；不要把其结果算成新产品 Story。

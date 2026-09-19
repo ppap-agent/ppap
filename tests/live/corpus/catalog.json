@@ -1,0 +1,116 @@
+{
+  "issue": "#3",
+  "source_repository": "https://github.com/ppap-agent/ppap-agent",
+  "source_commit": "53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9",
+  "source_guide": "ppap_agent/tests/README.md",
+  "rights_policy": {
+    "public_fixtures": "Authored in this repository. No customer content. Not a reviewed PPAP business oracle. Safe to ship in the product repo.",
+    "controlled_business": "ppap-agent assets/ and human PASS/NG tables. Distribution rights are not granted to this product repo. Do not copy those bytes here. Replay from an authorized local checkout via PPAP_CORPUS_ROOT."
+  },
+  "promised_formats": ["xlsx", "pdf", "docx", "doc", "scanned", "cross_file"],
+  "difference_kinds": [
+    "equivalent",
+    "conversion_loss",
+    "rule_logic_defect",
+    "approved_format_difference"
+  ],
+  "oracle_revisions": [],
+  "document_candidates": [
+    {
+      "id": "current_parser_stack",
+      "status": "NOT_PROVEN",
+      "license": "NOT_PROVEN",
+      "runtime": "NOT_PROVEN",
+      "per_rule_locator_diff": "NOT_PROVEN",
+      "note": "Existing Excel/PDF/DOCX/DOC path from the source guide. Rule and locator correctness wait on the controlled corpus."
+    },
+    {
+      "id": "docling",
+      "status": "NOT_PROVEN",
+      "license": "NOT_PROVEN",
+      "runtime": "NOT_PROVEN",
+      "per_rule_locator_diff": "NOT_PROVEN",
+      "note": "Preferred experiment candidate in docs/RESEARCH.md. No authorized real-load comparison on this corpus; do not invent a benchmark."
+    }
+  ],
+  "public_fixtures": [
+    {
+      "id": "public-xlsx-target",
+      "path": "tests/live/corpus/public/target.xlsx",
+      "format": "xlsx",
+      "role": "target",
+      "source_sha256": "3d0804d60c27d948d5253f272d06c993b0b0ee958f8b027277ba77931e394dac",
+      "oracle_kind": "format_identity",
+      "oracle_authority": "NOT_A_BUSINESS_ORACLE",
+      "human_review": "NOT_PROVEN"
+    },
+    {
+      "id": "public-pdf-target",
+      "path": "tests/live/corpus/public/target.pdf",
+      "format": "pdf",
+      "role": "target",
+      "source_sha256": "d1fa479098cdf4b2c6a4f8336a2f7f27ec503bc29088d7119ed08cee0d8ec32f",
+      "oracle_kind": "format_identity",
+      "oracle_authority": "NOT_A_BUSINESS_ORACLE",
+      "human_review": "NOT_PROVEN"
+    },
+    {
+      "id": "public-docx-target",
+      "path": "tests/live/corpus/public/target.docx",
+      "format": "docx",
+      "role": "target",
+      "source_sha256": "a78ec63b5e071bc0fb022d7b439a6e4abce4e6aada81feb1e1993f23bef58bdc",
+      "oracle_kind": "format_identity",
+      "oracle_authority": "NOT_A_BUSINESS_ORACLE",
+      "human_review": "NOT_PROVEN"
+    }
+  ],
+  "controlled_suites": [
+    {
+      "id": "v2-assets-4.8",
+      "formats": ["xlsx", "pdf", "scanned"],
+      "role": "target",
+      "dataset_root": "assets/v2.0plus",
+      "oracle_path": "assets/全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv",
+      "rule_version": "v2-assets-4.8",
+      "oracle_kind": "human",
+      "oracle_authority": "NOT_PROVEN",
+      "distribution": "not_licensed_for_this_repository",
+      "replay": "uv run pytest ppap_agent/tests/v2_assets/test_v2_assets.py --ftype {excel|pdf|scanned} --v2-dataset-root assets/v2.0plus --v2-expected-csv \"assets/全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv\"",
+      "note": "Human PASS/NG long table. Old engine output is comparison only."
+    },
+    {
+      "id": "v3-poc-grouped",
+      "formats": ["xlsx", "pdf", "cross_file"],
+      "role": "target_and_reference",
+      "dataset_root": "assets/poc测试/POC测试样本",
+      "oracle_path": "assets/poc测试/poc-测试数据统计表.xlsx",
+      "rule_version": "v3-poc-grouped seq=1,8,9,10,11",
+      "oracle_kind": "human",
+      "oracle_authority": "NOT_PROVEN",
+      "distribution": "not_licensed_for_this_repository",
+      "replay": "uv run pytest ppap_agent/tests/v3_poc/test_poc_assets_grouped.py",
+      "note": "Human PASS/NG only; GroupContext seq 1/8/9/10/11. Report scripts are not a second oracle."
+    },
+    {
+      "id": "psw-cross-format",
+      "formats": ["xlsx", "pdf", "docx", "doc"],
+      "role": "target",
+      "dataset_root": "ppap_agent/tests",
+      "rule_version": "psw-cross-format",
+      "oracle_kind": "human",
+      "oracle_authority": "NOT_PROVEN",
+      "distribution": "not_licensed_for_this_repository",
+      "replay": "PYTHONPATH=ppap_agent uv run --package ppap-agent pytest ppap_agent/tests/unit/test_psw_cross_format_regression.py ppap_agent/tests/integration/test_psw_cross_format_audit.py",
+      "note": "Paired XLSX/PDF and DOC/DOCX. Classify conversion_loss vs rule_logic_defect vs approved_format_difference. DOC needs local LibreOffice; missing runtime is NOT_PROVEN, not skip-as-pass."
+    }
+  ],
+  "legacy_engine_replay": {
+    "command": "python tools/legacy_engine_gate.py --case .local/engine.json",
+    "note": "Compares a reviewed case to the old HTTP engine. Never write that output back as oracle."
+  },
+  "product_replay": {
+    "command": "python tools/live.py audit",
+    "note": "Requires PPAP_SAMPLE and a reviewed .local/oracle.json. tests/live/oracle.example.json is EXAMPLE_ONLY and cannot succeed."
+  }
+}

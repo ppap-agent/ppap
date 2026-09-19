@@ -95,11 +95,13 @@ python tools/live.py history
 python tools/live.py review
 python tools/live.py isolation
 python tools/live.py probe --url http://127.0.0.1:8080/version --expected-build "$(git rev-parse HEAD)"
+python tools/live.py corpus
+python tools/legacy_engine_gate.py --case .local/engine.json
 ```
 
 `stack.py up` 启动 127.0.0.1 上的 PostgreSQL、MinIO、API（8080）、Worker、Web（4173）。isolated-dev 的 `PPAP_WEB_URL` 默认就是 `http://127.0.0.1:4173`。Web 只拉 `/public-config`，没有 server Secret。Worker 可单独停掉而不让 API `/health` 失败；`/ready` 只证明 PostgreSQL 与对象存储，不要求 Worker 进程。
 
-`stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。`seed-auth` / `verify-auth` 用 isolated-dev 预存 session 证明跨租户对象拒绝、同租户只读非复核、退出登录和飞书 OAuth 启动跳转；**不是 S02 真实浏览器登录**。`verify-uploads` 在本机 PG/MinIO 上证明不可变文件版本、同版本并发条件写与跨租户下载拒绝；**不是 S03 审核历史**。这些都不是 G01–G05。
+`stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。`seed-auth` / `verify-auth` 用 isolated-dev 预存 session 证明跨租户对象拒绝、同租户只读非复核、退出登录和飞书 OAuth 启动跳转；**不是 S02 真实浏览器登录**。`verify-uploads` 在本机 PG/MinIO 上证明不可变文件版本、同版本并发条件写与跨租户下载拒绝；**不是 S03 审核历史**。`live.py corpus` 证明公开 fixture 身份和支持矩阵完整列出；受控样本与人工 oracle 未授权时为 **NOT_PROVEN**，不能当成 S01。这些都不是 G01–G05。
 
 飞书商店应用的 `app_ticket` 由 `POST /integrations/feishu/events` 接收，须带上与配置一致的 Verification Token 且 `app_id` 匹配当前应用。本机 127.0.0.1 不能作为飞书事件订阅或 OAuth redirect 的公网入口；未收到经校验的 ticket 时 capability 记 `app_ticket: missing`，不得假装已换取 app/tenant token。OAuth session 绑定飞书 access/refresh 有效期：access 过期则续期，refresh 失败或过期则会话失效。
 
@@ -118,6 +120,7 @@ Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu read
 | PPAP_AUTH_STATE | 授权测试账号的 Playwright storage_state |
 | PPAP_OTHER_TENANT_STATE | 另一隔离租户状态，用于拒绝子证明 |
 | PPAP_SAMPLE / PPAP_ORACLE | 有权使用的真实原件和事先审阅的规则/证据期望 |
+| PPAP_CORPUS_ROOT | 授权的 ppap-agent 受控 corpus 根目录；未设置时 P07 对受控样本记 NOT_PROVEN |
 | PPAP_EXISTING_ROUND_URL | 与 oracle 对应的已完成轮次 |
 | PPAP_REPLACEMENT_SAMPLE | 同名不同字节的授权原件 |
 | PPAP_LIVE_TIMEOUT_SECONDS | 单次 proof run 等待终态上限，不表示 SLA |
