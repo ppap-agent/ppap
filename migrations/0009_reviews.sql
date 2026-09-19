@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS product.reviews (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES product.tenants (id),
     round_id uuid NOT NULL REFERENCES product.audit_rounds (id) ON DELETE RESTRICT,
+    result_id uuid REFERENCES product.round_results (id) ON DELETE RESTRICT,
     actor_user_id uuid NOT NULL REFERENCES product.users (id),
     judgment text NOT NULL,
     reason text NOT NULL,

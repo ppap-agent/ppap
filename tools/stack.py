@@ -1344,7 +1344,14 @@ def verify_reviews() -> int:
     env = child_env()
     report = {"ok": False, "s05_live": "NOT_PROVEN"}
     try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        report["error"] = "playwright_missing"
+        print(json.dumps(report, ensure_ascii=False))
+        return 1
+    try:
         api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+        web = env["PPAP_WEB_URL"].rstrip("/")
 
         def mint(subject: str) -> str:
             response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
@@ -1400,22 +1407,34 @@ def verify_reviews() -> int:
             headers=headers(alice),
             timeout=10,
         )
-        machine = accepted.json().get("results")
+        round_id = accepted.json()["id"]
+        latest = {}
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            fetched_round = httpx.get(api + f"/rounds/{round_id}", headers=headers(alice), timeout=10)
+            if fetched_round.status_code == 200 and fetched_round.json().get("status") in {"succeeded", "failed"}:
+                latest = fetched_round.json()
+                break
+            time.sleep(1)
+        if not latest:
+            raise RuntimeError("round_not_finished")
+        machine = latest.get("results")
         saved = httpx.post(
-            api + f"/rounds/{accepted.json()['id']}/reviews",
+            api + f"/rounds/{round_id}/reviews",
             json={"judgment": "questioned", "reason": "need check", "next_action": "核对原件"},
             headers=headers(alice),
             timeout=10,
         )
-        fetched = httpx.get(api + f"/rounds/{accepted.json()['id']}", headers=headers(alice), timeout=10)
+        alice_again = mint("alice")
+        fetched = httpx.get(api + f"/rounds/{round_id}", headers=headers(alice_again), timeout=10)
         conflict = httpx.post(
-            api + f"/rounds/{accepted.json()['id']}/reviews",
+            api + f"/rounds/{round_id}/reviews",
             json={"judgment": "noted", "reason": "updated", "next_action": "keep watching", "expected_version": 1},
             headers=headers(alice),
             timeout=10,
         )
         stale = httpx.post(
-            api + f"/rounds/{accepted.json()['id']}/reviews",
+            api + f"/rounds/{round_id}/reviews",
             json={"judgment": "noted", "reason": "stale", "next_action": "none", "expected_version": 1},
             headers=headers(alice),
             timeout=10,
@@ -1426,25 +1445,71 @@ def verify_reviews() -> int:
             headers=headers(alice),
             timeout=10,
         )
-        old = httpx.get(api + f"/rounds/{accepted.json()['id']}", headers=headers(alice), timeout=10)
+        old = httpx.get(api + f"/rounds/{round_id}", headers=headers(alice), timeout=10)
         carol_denied = httpx.post(
-            api + f"/rounds/{accepted.json()['id']}/reviews",
+            api + f"/rounds/{round_id}/reviews",
             json={"judgment": "noted", "reason": "no", "next_action": "none"},
             headers=headers(carol),
             timeout=10,
         )
-        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+        with urllib.request.urlopen(web, timeout=5) as response:
             html = response.read().decode()
+        note = "browser-review-" + uuid.uuid4().hex
+        round_url = f"{web}/?round={round_id}"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            context = browser.new_context()
+            context.add_cookies([{"name": "ppap_session", "value": alice, "domain": "127.0.0.1", "path": "/"}])
+            page = context.new_page()
+            page.goto(round_url, wait_until="networkidle")
+            page.wait_for_function(
+                "() => document.querySelector('[data-testid=round-id]')?.textContent?.length > 0",
+                timeout=30000,
+            )
+            before_findings = [
+                page.get_by_test_id("finding").nth(i).get_by_test_id("finding-status").inner_text().strip()
+                for i in range(page.get_by_test_id("finding").count())
+            ]
+            page.get_by_test_id("review-reason").fill(note)
+            page.get_by_test_id("save-review").click()
+            page.wait_for_function(
+                "text => [...document.querySelectorAll('[data-testid=review-entry]')].some(el => el.textContent.includes(text))",
+                arg=note,
+                timeout=15000,
+            )
+            after_findings = [
+                page.get_by_test_id("finding").nth(i).get_by_test_id("finding-status").inner_text().strip()
+                for i in range(page.get_by_test_id("finding").count())
+            ]
+            context.close()
+            returned_ctx = browser.new_context()
+            returned_ctx.add_cookies([{"name": "ppap_session", "value": alice, "domain": "127.0.0.1", "path": "/"}])
+            returned = returned_ctx.new_page()
+            returned.goto(round_url, wait_until="networkidle")
+            returned.wait_for_function(
+                "text => [...document.querySelectorAll('[data-testid=review-entry]')].some(el => el.textContent.includes(text))",
+                arg=note,
+                timeout=15000,
+            )
+            returned_findings = [
+                returned.get_by_test_id("finding").nth(i).get_by_test_id("finding-status").inner_text().strip()
+                for i in range(returned.get_by_test_id("finding").count())
+            ]
+            returned_ctx.close()
+            browser.close()
+        bound = saved.json()["reviews"][0].get("result_id")
         report["saved"] = (
             saved.status_code == 200
             and saved.json()["results"] == machine
             and saved.json()["reviews"][0]["reason"] == "need check"
             and fetched.json()["reviews"][0]["judgment"] == "questioned"
+            and bound == latest.get("current_result_id")
+            and bound is not None
         )
         report["conflict"] = conflict.status_code == 200 and stale.status_code == 409 and stale.json() == {"error": "review_conflict"}
         report["resubmit_independent"] = (
             resubmit.status_code == 201
-            and resubmit.json()["id"] != accepted.json()["id"]
+            and resubmit.json()["id"] != round_id
             and resubmit.json()["reviews"] == []
             and old.json()["reviews"][0]["reason"] == "updated"
             and old.json()["results"] == machine
@@ -1452,9 +1517,17 @@ def verify_reviews() -> int:
         report["carol_denied"] = carol_denied.status_code == 403
         report["web_hooks"] = all(
             marker in html
-            for marker in ('data-testid="review-reason"', 'data-testid="save-review"')
+            for marker in ('data-testid="review-reason"', 'data-testid="save-review"', 'data-testid="review-conflict"')
         )
-        report["ok"] = all(report[key] is True for key in ("saved", "conflict", "resubmit_independent", "carol_denied", "web_hooks"))
+        report["browser_save_return"] = (
+            before_findings == after_findings == returned_findings
+            and all(status in {"PASS", "NG", "ERR"} for status in returned_findings)
+            and bool(returned_findings)
+        )
+        report["ok"] = all(
+            report[key] is True
+            for key in ("saved", "conflict", "resubmit_independent", "carol_denied", "web_hooks", "browser_save_return")
+        )
     except Exception as exc:
         report["error"] = type(exc).__name__
         report["error_detail"] = str(exc)[:200]

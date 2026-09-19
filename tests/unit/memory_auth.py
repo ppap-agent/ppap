@@ -659,10 +659,12 @@ class MemoryAuthStore:
         now = datetime.now(timezone.utc).isoformat()
         items = self.reviews.setdefault(current["id"], [])
         existing = next((item for item in items if item["actor_user_id"] == principal.user_id), None)
+        result_id = current.get("current_result_id")
         if existing is None:
             items.append(
                 {
                     "id": str(uuid.uuid4()),
+                    "result_id": result_id,
                     "actor_user_id": principal.user_id,
                     "judgment": judgment,
                     "reason": reason,
@@ -678,6 +680,7 @@ class MemoryAuthStore:
             existing["judgment"] = judgment
             existing["reason"] = reason
             existing["next_action"] = next_step
+            existing["result_id"] = result_id
             existing["version"] = int(existing["version"]) + 1
             existing["updated_at"] = now
         return self.get_round(principal, current["id"])

@@ -18,7 +18,7 @@
 | P07 | `python tools/stack.py verify-drafts` | 草稿可编辑多待审/参考版本；Worker 识别显示 matched/unsupported 等，不默认 profile；产品规则版本 ID 与 engine_rule_id 显式区分；未知 projectId 失败；跨租户草稿/文件/规则拒绝；规则新快照不改已绑定草稿；识别不入队 `audit.execute` | 不是 S01；受理/幂等/fencing 由 P08；不是 #3 corpus |
 | P08 | `python tools/stack.py verify-rounds` | 一次受理冻结目标/参考/规则版本并原子入队；同租户同键同请求返回同一轮次，同键不同请求 409；GET 不重新执行；技术重试保留原输入与结果；过期租约可回收且旧 Worker 晚到提交被拒绝；跨租户读轮次拒绝；Web 含 submit-audit/round-id/execution-state | 不是 S04 Live（无用户终态页+完整故障注入联合证明）；不声称模型/计费恰好一次；不是 S01 |
 | P09 | `python tools/stack.py verify-web` | isolated-dev 浏览器：提交后离开并 `?round=` 回访同一轮；逐项 PASS/NG/ERR 与执行状态分离；参考文件不显示为已审通过；下载冻结原件 SHA 一致；跨租户看不到检查项和原件；manifest 存在且不启用离线原件缓存 | 不是 S01；无授权 corpus/oracle；不是 S02 真实 OAuth；PWA 安装/更新/无障碍完整矩阵仍缺 |
-| P10 | `python tools/stack.py verify-reviews` | 复核写入独立记录；刷新可读；不改机器 results；同 actor 并发 version 冲突 409；新轮次不继承旧复核；跨租户拒绝；Web 含 review-reason/save-review | 不是 S05 Live；不是正式签批；同租户无 review grant 的完整矩阵仍可在后续补 |
+| P10 | `python tools/stack.py verify-reviews` | 复核写入独立记录并绑定当时 `result_id`；新 session 回访可读；不改机器 results；同 actor 并发 version 冲突 409；新轮次不继承旧复核；跨租户拒绝；浏览器保存后离开再 `?round=` 回访仍见本人记录且检查项不变 | 不是 S05 Live；不是正式签批；同租户无 review grant 的完整矩阵仍可在后续补 |
 | P01 | 每次 push 由 `Push preflight` 调用 `LLM readiness`；亦可手动运行 | GitHub Secrets `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 映射到 canonical LLM 配置后能完成一次 Responses 请求并返回 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
 | P02 | 每次 push 由 `Push preflight` 调用 `Feishu readiness`；亦可手动运行 | 当前商店应用的 App ID/Secret 能让飞书接受 `app_ticket/resend` 请求 | 会触发一次 app_ticket 推送；不证明 ticket 已被新系统接收、tenant token、用户 OAuth、Drive/Docs、评论写回或 Partner AI |
 
@@ -30,7 +30,7 @@ P01/P02 是彼此独立的 reusable 外部依赖探针。每次 push 的 `Push p
 
 `tools/live.py` 使用小型 `data-testid` 映射访问用户可见控件。这是候选测试适配，不是要求产品保持某个组件结构。目标 UI 落地时替换此处的控件映射，不改变 Story 的用户结果。缺选择器可能是适配错误，不能自动归咎产品。
 
-现有 hooks：build-revision、source-upload、prepare-audit、rule-selector、item-role、audit-draft-id、identification-status、engine-rule-id、submit-audit、round-id、execution-state、rule-version、finding、finding-id、finding-status、evidence-state、view-evidence、evidence-panel、evidence-locator、evidence-source-sha256、next-action、download-original、document-version-id、access-denied、login-feishu、logout、current-user、review-reason、save-review、review-entry。
+现有 hooks：build-revision、source-upload、prepare-audit、rule-selector、item-role、audit-draft-id、identification-status、engine-rule-id、submit-audit、round-id、execution-state、rule-version、finding、finding-id、finding-status、evidence-state、view-evidence、evidence-panel、evidence-locator、evidence-source-sha256、next-action、download-original、document-version-id、access-denied、login-feishu、logout、current-user、review-reason、save-review、review-entry、review-conflict。
 
 `rule-selector` / `rule-version` / `identification-status` 现用于草稿准备；`submit-audit`、`round-id` 与 `execution-state` 用于受理与回访；`finding*` / `evidence-*` / `next-action` 用于 #9 结果审阅。保存草稿仍不是提交。S01 仍要求授权样本与 Live oracle。
 

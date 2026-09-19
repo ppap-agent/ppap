@@ -1193,7 +1193,7 @@ class AuthStore:
             conn.row_factory = dict_row
             rows = conn.execute(
                 """
-                SELECT id, actor_user_id, judgment, reason, next_action, version, created_at, updated_at
+                SELECT id, result_id, actor_user_id, judgment, reason, next_action, version, created_at, updated_at
                 FROM product.reviews
                 WHERE round_id = %s
                 ORDER BY updated_at
@@ -1203,6 +1203,7 @@ class AuthStore:
         return [
             {
                 "id": str(row["id"]),
+                "result_id": str(row["result_id"]) if row["result_id"] else None,
                 "actor_user_id": str(row["actor_user_id"]),
                 "judgment": row["judgment"],
                 "reason": row["reason"],
@@ -1227,6 +1228,7 @@ class AuthStore:
         if not reason or not next_step:
             raise ValueError("invalid_review")
         expected = (body or {}).get("expected_version")
+        result_id = current.get("current_result_id")
         try:
             with self._conn() as conn:
                 conn.row_factory = dict_row
@@ -1242,10 +1244,19 @@ class AuthStore:
                     conn.execute(
                         """
                         INSERT INTO product.reviews
-                            (id, tenant_id, round_id, actor_user_id, judgment, reason, next_action, version)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
+                            (id, tenant_id, round_id, result_id, actor_user_id, judgment, reason, next_action, version)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
                         """,
-                        (review_id, principal.tenant_id, current["id"], principal.user_id, judgment, reason, next_step),
+                        (
+                            review_id,
+                            principal.tenant_id,
+                            current["id"],
+                            result_id,
+                            principal.user_id,
+                            judgment,
+                            reason,
+                            next_step,
+                        ),
                     )
                 else:
                     try:
@@ -1257,11 +1268,12 @@ class AuthStore:
                     updated = conn.execute(
                         """
                         UPDATE product.reviews
-                        SET judgment = %s, reason = %s, next_action = %s, version = version + 1, updated_at = now()
+                        SET judgment = %s, reason = %s, next_action = %s, result_id = %s,
+                            version = version + 1, updated_at = now()
                         WHERE id = %s AND version = %s
                         RETURNING id
                         """,
-                        (judgment, reason, next_step, existing["id"], existing["version"]),
+                        (judgment, reason, next_step, result_id, existing["id"], existing["version"]),
                     ).fetchone()
                     if updated is None:
                         raise ValueError("review_conflict")

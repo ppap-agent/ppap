@@ -136,6 +136,9 @@ async function main() {
       const row = document.createElement("li");
       row.dataset.testid = "review-entry";
       row.textContent = `${item.judgment}: ${item.reason} → ${item.next_action}`;
+      if (item.result_id) {
+        row.dataset.resultId = item.result_id;
+      }
       reviewsEl.appendChild(row);
     }
   };
@@ -318,10 +321,13 @@ async function main() {
     }
     renderRound(accepted.body);
   });
+  const conflictEl = document.getElementById("review-conflict");
+  const showConflict = (on) => conflictEl.classList.toggle("hidden", !on);
   document.getElementById("save-review").addEventListener("click", async () => {
     if (!roundId) {
       return;
     }
+    showConflict(false);
     const latest = await readJson(`${api}/rounds/${encodeURIComponent(roundId)}`);
     if (!latest.ok) {
       showDenied(latest.status === 401 || latest.status === 403);
@@ -345,6 +351,10 @@ async function main() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (saved.status === 409) {
+      showConflict(true);
+      return;
+    }
     if (!saved.ok) {
       showDenied(saved.status === 401 || saved.status === 403);
       return;

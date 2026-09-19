@@ -17,4 +17,4 @@ python tools/stack.py verify-web      # browser return visit + findings; not S01
 python tools/stack.py verify-reviews  # human review notes; not S05 / not approval
 ```
 
-`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面、#4 的身份/对象授权判定、#5 的文件版本/SSRF 边界、#6 的本仓检查器绑定、#7 的草稿/识别/规则版本契约、#8 的受理幂等与 fencing，以及 #9 的可见结果映射。`live/` 保存工具依赖与 oracle 示例。产品审核、真实 OAuth 登录与授权 corpus 仍由对应 Issues 交付。
+`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面、#4 的身份/对象授权判定、#5 的文件版本/SSRF 边界、#6 的本仓检查器绑定、#7 的草稿/识别/规则版本契约、#8 的受理幂等与 fencing、#9 的可见结果映射，以及 #10 的独立复核记录。`live/` 保存工具依赖与 oracle 示例。产品审核、真实 OAuth 登录与授权 corpus 仍由对应 Issues 交付。

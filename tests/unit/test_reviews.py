@@ -103,8 +103,14 @@ class ReviewHttpTests(unittest.TestCase):
         self.assertEqual(saved.json()["reviews"][0]["reason"], "need a second look")
         self.assertEqual(saved.json()["reviews"][0]["actor_user_id"], USER_ALICE)
         self.assertNotEqual(saved.json()["reviews"][0]["actor_user_id"], USER_BOB)
+        self.assertEqual(saved.json()["reviews"][0]["result_id"], accepted.get("current_result_id"))
         fetched = self.client.get(f"/rounds/{accepted['id']}")
         self.assertEqual(fetched.json()["reviews"][0]["judgment"], "questioned")
+        self.client.post("/logout")
+        self._login("alice")
+        after_login = self.client.get(f"/rounds/{accepted['id']}")
+        self.assertEqual(after_login.json()["reviews"][0]["reason"], "need a second look")
+        self.assertEqual(after_login.json()["results"], machine)
         conflict = self.client.post(
             f"/rounds/{accepted['id']}/reviews",
             json={"judgment": "noted", "reason": "overwrite", "next_action": "none", "expected_version": 1},
@@ -128,6 +134,21 @@ class ReviewHttpTests(unittest.TestCase):
             json={"judgment": "noted", "reason": "bob", "next_action": "none"},
         )
         self.assertEqual(denied.status_code, 403)
+        self._login("bob")
+        self.store.grant_table.setdefault((accepted["id"], USER_BOB), set()).update({"read", "review"})
+        other = self.client.post(
+            f"/rounds/{accepted['id']}/reviews",
+            json={"judgment": "action_required", "reason": "bob note", "next_action": "补图"},
+        )
+        self.assertEqual(other.status_code, 200)
+        reasons = {item["reason"] for item in other.json()["reviews"]}
+        self.assertEqual(reasons, {"overwrite", "bob note"})
+        self._login("alice")
+        still_alice = self.client.get(f"/rounds/{accepted['id']}")
+        self.assertEqual(
+            next(item["reason"] for item in still_alice.json()["reviews"] if item["actor_user_id"] == USER_ALICE),
+            "overwrite",
+        )
         self._login("carol")
         hidden = self.client.get(f"/rounds/{accepted['id']}")
         self.assertEqual(hidden.status_code, 403)
