@@ -77,7 +77,7 @@ def create_app(
             return JSONResponse({"error": "access_denied"}, status_code=403)
         if code == "access_denied":
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        if code in {"not_ready", "project_conflict", "idempotency_conflict"}:
+        if code in {"not_ready", "project_conflict", "idempotency_conflict", "review_conflict"}:
             return JSONResponse({"error": code}, status_code=409)
         if code == "unknown_project":
             return JSONResponse({"error": "unknown_project"}, status_code=400)
@@ -429,6 +429,17 @@ def create_app(
         except (KeyError, ValueError) as exc:
             return draft_error(exc)
         return JSONResponse(body)
+
+    @app.post("/rounds/{round_id}/reviews")
+    def rounds_review(round_id: str, body: dict, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            updated = store.save_review(principal, round_id, body or {})
+        except (KeyError, ValueError) as exc:
+            return draft_error(exc)
+        return JSONResponse(updated)
 
     @app.post("/isolated-dev/reap-staging")
     def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:

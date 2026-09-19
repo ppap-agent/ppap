@@ -1336,9 +1336,135 @@ def verify_web() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_reviews() -> int:
+    import httpx
+    from openpyxl import Workbook
+    from ppap_core.fixtures import CATALOG_PROJECT
+
+    env = child_env()
+    report = {"ok": False, "s05_live": "NOT_PROVEN"}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        def xlsx(name: str) -> bytes:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / name
+                Workbook().save(path)
+                return path.read_bytes()
+
+        def upload(cookie: str, filename: str, body: bytes) -> tuple[str, str, str]:
+            created = httpx.post(
+                api + "/files",
+                json={"original_filename": filename, "content_type": "application/octet-stream", "byte_size": len(body)},
+                headers=headers(cookie),
+                timeout=10,
+            )
+            file_id, version_id = created.json()["file_id"], created.json()["id"]
+            httpx.put(api + f"/files/{file_id}/versions/{version_id}/blob", content=body, headers=headers(cookie), timeout=10)
+            ready = httpx.post(api + f"/files/{file_id}/versions/{version_id}/finalize", headers=headers(cookie), timeout=10)
+            return file_id, version_id, ready.json()["sha256"]
+
+        alice, carol = mint("alice"), mint("carol")
+        catalog = httpx.get(api + f"/rule-versions?project_id={CATALOG_PROJECT}", headers=headers(alice), timeout=10)
+        psw = next(item for item in catalog.json()["items"] if item["engine_rule_id"] == "零件提交保证书")
+        target = upload(alice, "PSW.xlsx", xlsx("PSW.xlsx"))
+        created = httpx.post(api + "/drafts", json={"project_id": CATALOG_PROJECT}, headers=headers(alice), timeout=10)
+        httpx.put(
+            api + f"/drafts/{created.json()['id']}",
+            json={
+                "items": [
+                    {
+                        "file_id": target[0],
+                        "file_version_id": target[1],
+                        "role": "target",
+                        "product_rule_version_id": psw["id"],
+                    }
+                ]
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        accepted = httpx.post(
+            api + f"/drafts/{created.json()['id']}/accept",
+            json={"idempotency_key": "review-" + uuid.uuid4().hex},
+            headers=headers(alice),
+            timeout=10,
+        )
+        machine = accepted.json().get("results")
+        saved = httpx.post(
+            api + f"/rounds/{accepted.json()['id']}/reviews",
+            json={"judgment": "questioned", "reason": "need check", "next_action": "核对原件"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        fetched = httpx.get(api + f"/rounds/{accepted.json()['id']}", headers=headers(alice), timeout=10)
+        conflict = httpx.post(
+            api + f"/rounds/{accepted.json()['id']}/reviews",
+            json={"judgment": "noted", "reason": "updated", "next_action": "keep watching", "expected_version": 1},
+            headers=headers(alice),
+            timeout=10,
+        )
+        stale = httpx.post(
+            api + f"/rounds/{accepted.json()['id']}/reviews",
+            json={"judgment": "noted", "reason": "stale", "next_action": "none", "expected_version": 1},
+            headers=headers(alice),
+            timeout=10,
+        )
+        resubmit = httpx.post(
+            api + f"/drafts/{created.json()['id']}/accept",
+            json={"idempotency_key": "resubmit-" + uuid.uuid4().hex},
+            headers=headers(alice),
+            timeout=10,
+        )
+        old = httpx.get(api + f"/rounds/{accepted.json()['id']}", headers=headers(alice), timeout=10)
+        carol_denied = httpx.post(
+            api + f"/rounds/{accepted.json()['id']}/reviews",
+            json={"judgment": "noted", "reason": "no", "next_action": "none"},
+            headers=headers(carol),
+            timeout=10,
+        )
+        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+            html = response.read().decode()
+        report["saved"] = (
+            saved.status_code == 200
+            and saved.json()["results"] == machine
+            and saved.json()["reviews"][0]["reason"] == "need check"
+            and fetched.json()["reviews"][0]["judgment"] == "questioned"
+        )
+        report["conflict"] = conflict.status_code == 200 and stale.status_code == 409 and stale.json() == {"error": "review_conflict"}
+        report["resubmit_independent"] = (
+            resubmit.status_code == 201
+            and resubmit.json()["id"] != accepted.json()["id"]
+            and resubmit.json()["reviews"] == []
+            and old.json()["reviews"][0]["reason"] == "updated"
+            and old.json()["results"] == machine
+        )
+        report["carol_denied"] = carol_denied.status_code == 403
+        report["web_hooks"] = all(
+            marker in html
+            for marker in ('data-testid="review-reason"', 'data-testid="save-review"')
+        )
+        report["ok"] = all(report[key] is True for key in ("saved", "conflict", "resubmit_independent", "carol_denied", "web_hooks"))
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+        report["error_detail"] = str(exc)[:200]
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds", "verify-web"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-engine", "verify-drafts", "verify-rounds", "verify-web", "verify-reviews"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -1388,6 +1514,9 @@ def main() -> int:
     if args.command == "verify-web":
         reexec_in_venv()
         return verify_web()
+    if args.command == "verify-reviews":
+        reexec_in_venv()
+        return verify_reviews()
     reexec_in_venv()
     return verify()
 

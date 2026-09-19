@@ -36,6 +36,7 @@ from ppap_core.fixtures import (
     USER_CAROL,
 )
 from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.reviews import REVIEW_JUDGMENTS, REVIEW_NOTED
 from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
 from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
@@ -1033,10 +1034,10 @@ class AuthStore:
                     conn.execute(
                         """
                         INSERT INTO product.resource_grants (resource_id, user_id, capability)
-                        VALUES (%s, %s, 'read')
+                        VALUES (%s, %s, 'read'), (%s, %s, 'review')
                         ON CONFLICT DO NOTHING
                         """,
-                        (round_id, principal.user_id),
+                        (round_id, principal.user_id, round_id, principal.user_id),
                     )
                     for position, item in enumerate(draft["items"]):
                         conn.execute(
@@ -1184,7 +1185,89 @@ class AuthStore:
             "results": results,
             "visible_findings": display["visible_findings"],
             "coverage": display["coverage"],
+            "reviews": self._reviews_for_round(parsed),
         }
+
+    def _reviews_for_round(self, round_id: str) -> list[dict]:
+        with self._conn() as conn:
+            conn.row_factory = dict_row
+            rows = conn.execute(
+                """
+                SELECT id, actor_user_id, judgment, reason, next_action, version, created_at, updated_at
+                FROM product.reviews
+                WHERE round_id = %s
+                ORDER BY updated_at
+                """,
+                (round_id,),
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "actor_user_id": str(row["actor_user_id"]),
+                "judgment": row["judgment"],
+                "reason": row["reason"],
+                "next_action": row["next_action"],
+                "version": row["version"],
+                "created_at": row["created_at"].isoformat(),
+                "updated_at": row["updated_at"].isoformat(),
+            }
+            for row in rows
+        ]
+
+    def save_review(self, principal: Principal, round_id: str, body: dict) -> dict:
+        current = self.get_round(principal, round_id)
+        grants = self.grants(current["id"], principal.user_id)
+        if "review" not in grants:
+            raise ValueError("access_denied")
+        judgment = str((body or {}).get("judgment") or REVIEW_NOTED).strip()
+        if judgment not in REVIEW_JUDGMENTS:
+            raise ValueError("invalid_judgment")
+        reason = str((body or {}).get("reason") or "").strip()
+        next_step = str((body or {}).get("next_action") or "").strip()
+        if not reason or not next_step:
+            raise ValueError("invalid_review")
+        expected = (body or {}).get("expected_version")
+        try:
+            with self._conn() as conn:
+                conn.row_factory = dict_row
+                existing = conn.execute(
+                    """
+                    SELECT id, version FROM product.reviews
+                    WHERE round_id = %s AND actor_user_id = %s
+                    """,
+                    (current["id"], principal.user_id),
+                ).fetchone()
+                if existing is None:
+                    review_id = str(uuid.uuid4())
+                    conn.execute(
+                        """
+                        INSERT INTO product.reviews
+                            (id, tenant_id, round_id, actor_user_id, judgment, reason, next_action, version)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
+                        """,
+                        (review_id, principal.tenant_id, current["id"], principal.user_id, judgment, reason, next_step),
+                    )
+                else:
+                    try:
+                        expected_version = int(expected)
+                    except (TypeError, ValueError):
+                        raise ValueError("review_conflict")
+                    if expected_version != int(existing["version"]):
+                        raise ValueError("review_conflict")
+                    updated = conn.execute(
+                        """
+                        UPDATE product.reviews
+                        SET judgment = %s, reason = %s, next_action = %s, version = version + 1, updated_at = now()
+                        WHERE id = %s AND version = %s
+                        RETURNING id
+                        """,
+                        (judgment, reason, next_step, existing["id"], existing["version"]),
+                    ).fetchone()
+                    if updated is None:
+                        raise ValueError("review_conflict")
+        except UniqueViolation:
+            raise ValueError("review_conflict")
+        return self.get_round(principal, current["id"])
 
     def retry_round(self, principal: Principal, round_id: str) -> dict:
         current = self.get_round(principal, round_id)

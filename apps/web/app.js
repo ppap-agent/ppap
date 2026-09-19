@@ -61,11 +61,13 @@ async function main() {
   let roundId = roundIdFromLocation();
   const denied = document.getElementById("access-denied");
   const findingsEl = document.getElementById("findings");
+  const reviewsEl = document.getElementById("reviews");
   const evidencePanel = document.getElementById("evidence-panel");
   const showDenied = (on) => {
     denied.classList.toggle("hidden", !on);
     if (on) {
       findingsEl.replaceChildren();
+      reviewsEl.replaceChildren();
       document.getElementById("original-slot").replaceChildren();
     }
   };
@@ -128,6 +130,15 @@ async function main() {
       findingsEl.appendChild(row);
     }
   };
+  const renderReviews = (round) => {
+    reviewsEl.replaceChildren();
+    for (const item of round.reviews || []) {
+      const row = document.createElement("li");
+      row.dataset.testid = "review-entry";
+      row.textContent = `${item.judgment}: ${item.reason} → ${item.next_action}`;
+      reviewsEl.appendChild(row);
+    }
+  };
   const renderRound = (round) => {
     if (!round || !round.id) {
       return;
@@ -145,6 +156,7 @@ async function main() {
     }
     showOriginal(target.file_id, target.file_version_id, target.sha256);
     renderFindings(round);
+    renderReviews(round);
     const url = new URL(window.location.href);
     url.searchParams.set("round", round.id);
     window.history.replaceState({}, "", url);
@@ -305,6 +317,39 @@ async function main() {
       return;
     }
     renderRound(accepted.body);
+  });
+  document.getElementById("save-review").addEventListener("click", async () => {
+    if (!roundId) {
+      return;
+    }
+    const latest = await readJson(`${api}/rounds/${encodeURIComponent(roundId)}`);
+    if (!latest.ok) {
+      showDenied(latest.status === 401 || latest.status === 403);
+      return;
+    }
+    const mine = (latest.body.reviews || []).find((item) => item.actor_user_id === me.body.user_id);
+    const reason = document.getElementById("review-reason").value.trim();
+    if (!reason) {
+      return;
+    }
+    const payload = {
+      judgment: "noted",
+      reason,
+      next_action: "记录复核意见（不改机器结果）",
+    };
+    if (mine) {
+      payload.expected_version = mine.version;
+    }
+    const saved = await readJson(`${api}/rounds/${encodeURIComponent(roundId)}/reviews`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!saved.ok) {
+      showDenied(saved.status === 401 || saved.status === 403);
+      return;
+    }
+    renderRound(saved.body);
   });
   if (roundId) {
     await refreshRound();

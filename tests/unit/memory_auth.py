@@ -19,6 +19,7 @@ from ppap_core.files import (
 )
 from ppap_core.fixtures import CATALOG_PROJECT, SUBJECTS
 from ppap_core.identity import Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.reviews import REVIEW_JUDGMENTS, REVIEW_NOTED
 from ppap_core.rounds import ROUND_ACCEPTED, ROUND_FAILED, ROUND_RUNNING
 from ppap_core.rules import catalog_snapshots, snapshot_hash
 from ppap_core.settings import Settings
@@ -63,6 +64,7 @@ class MemoryAuthStore:
         self.round_inputs: dict[str, list[dict]] = {}
         self.round_results: dict[str, list[dict]] = {}
         self.round_keys: dict[tuple[str, str], str] = {}
+        self.reviews: dict[str, list[dict]] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds))
@@ -567,7 +569,7 @@ class MemoryAuthStore:
         round_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         self.resources[round_id] = Resource(round_id, principal.tenant_id, "round")
-        self.grant_table.setdefault((round_id, principal.user_id), set()).add("read")
+        self.grant_table.setdefault((round_id, principal.user_id), set()).update({"read", "review"})
         self.rounds[round_id] = {
             "id": round_id,
             "tenant_id": principal.tenant_id,
@@ -638,7 +640,47 @@ class MemoryAuthStore:
             "results": results,
             "visible_findings": display["visible_findings"],
             "coverage": display["coverage"],
+            "reviews": list(self.reviews.get(round_id, [])),
         }
+
+    def save_review(self, principal: Principal, round_id: str, body: dict) -> dict:
+        current = self.get_round(principal, round_id)
+        grants = self.grants(current["id"], principal.user_id)
+        if "review" not in grants:
+            raise ValueError("access_denied")
+        judgment = str((body or {}).get("judgment") or REVIEW_NOTED).strip()
+        if judgment not in REVIEW_JUDGMENTS:
+            raise ValueError("invalid_judgment")
+        reason = str((body or {}).get("reason") or "").strip()
+        next_step = str((body or {}).get("next_action") or "").strip()
+        if not reason or not next_step:
+            raise ValueError("invalid_review")
+        expected = (body or {}).get("expected_version")
+        now = datetime.now(timezone.utc).isoformat()
+        items = self.reviews.setdefault(current["id"], [])
+        existing = next((item for item in items if item["actor_user_id"] == principal.user_id), None)
+        if existing is None:
+            items.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "actor_user_id": principal.user_id,
+                    "judgment": judgment,
+                    "reason": reason,
+                    "next_action": next_step,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+        else:
+            if expected is None or int(expected) != int(existing["version"]):
+                raise ValueError("review_conflict")
+            existing["judgment"] = judgment
+            existing["reason"] = reason
+            existing["next_action"] = next_step
+            existing["version"] = int(existing["version"]) + 1
+            existing["updated_at"] = now
+        return self.get_round(principal, current["id"])
 
     def retry_round(self, principal: Principal, round_id: str) -> dict:
         current = self.get_round(principal, round_id)
