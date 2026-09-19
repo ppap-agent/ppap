@@ -16,4 +16,4 @@ python tools/stack.py verify-uploads
 python tools/stack.py down
 ```
 
-`unit/` 覆盖当前代码的不变量和回归。外部 provider 或浏览器 E2E 只有在对应当前功能需要时才添加；不要先建设通用 live gate、PROVEN/NOT_PROVEN 报告或 evidence registry。
+#3 的受控 corpus 不在本目录。固定 revision 与原生 pytest 命令见 [TESTING](../docs/TESTING.md) 和 [ppap-agent pytest](../.github/workflows/ppap-agent-pytest.yml)。不要把 `ppap-agent` `assets/` 提交到本仓。

@@ -44,7 +44,7 @@ PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s 
 
 ## 迁移工作
 
-只有迁移 Issue 才读取 [INVENTORY](INVENTORY.md) / [MIGRATION](MIGRATION.md) 和来源仓。固定来源 Git revision 后优先运行来源仓已有 tests；先得到真实失败，再搬最少代码。
+只有迁移 Issue 才读取 [INVENTORY](INVENTORY.md) / [MIGRATION](MIGRATION.md) 和来源仓。固定来源 Git revision 后优先运行来源仓已有 tests（#3：[ppap-agent pytest](../.github/workflows/ppap-agent-pytest.yml)）；先得到真实失败，再搬最少代码。
 
 ## 最短交付路径
 

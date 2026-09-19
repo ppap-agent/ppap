@@ -34,7 +34,25 @@ python tools/stack.py down
 
 ## Corpus / 引擎迁移
 
-#3 使用固定 `ppap-agent` revision 中已有的 V2 4.8、POC grouped、PSW cross-format pytest 和人工 expected。直接 checkout 固定 revision 并运行原生 tests；失败就是迁移输入，不另建 corpus runner。
+#3 固定 `ppap-agent@53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9`。GitHub Actions [ppap-agent pytest](../.github/workflows/ppap-agent-pytest.yml) 只 checkout 该 revision、安装 uv、跑已有 pytest。结果是普通 PASS / FAIL / 未执行；失败就是 #6 的迁移输入。不要另建 corpus runner、evidence JSON、hash manifest 或 oracle registry。
+
+本地（不要把 `assets/` 复制进本仓）：
+
+```sh
+git clone https://github.com/ppap-agent/ppap-agent.git
+git -C ppap-agent checkout 53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9
+cd ppap-agent
+uv sync --frozen --dev --package ppap-agent
+
+SUITE_CSV="assets/全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+uv run --frozen --package ppap-agent pytest ppap_agent/tests/v2_assets/test_v2_assets.py --ftype excel -q --v2-dataset-root assets/v2.0plus --v2-expected-csv "$SUITE_CSV"
+uv run --frozen --package ppap-agent pytest ppap_agent/tests/v2_assets/test_v2_assets.py --ftype pdf -q --v2-dataset-root assets/v2.0plus --v2-expected-csv "$SUITE_CSV"
+uv run --frozen --package ppap-agent pytest ppap_agent/tests/v2_assets/test_v2_assets.py --ftype scanned -q --v2-dataset-root assets/v2.0plus --v2-expected-csv "$SUITE_CSV"
+uv run --frozen --package ppap-agent pytest ppap_agent/tests/v3_poc/test_poc_assets_grouped.py -q
+PYTHONPATH=ppap_agent uv run --frozen --package ppap-agent pytest ppap_agent/tests/unit/test_psw_cross_format_regression.py ppap_agent/tests/integration/test_psw_cross_format_audit.py -q
+```
+
+五个入口都要跑。DOC 需要本机 LibreOffice；缺依赖记未执行/失败，不能从集合里拿掉后宣称支持。CI 读私有来源仓需要 `PPAP_GH_TOKEN`（对 `ppap-agent/ppap-agent` contents:read）；没有这个 Secret 时 checkout 失败，五个入口都是未执行。
 
 #6 每次从一个真实失败测试出发，只迁入让当前支持用例通过所需的最小代码。
 

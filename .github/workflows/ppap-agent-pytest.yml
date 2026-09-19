@@ -1,0 +1,115 @@
+# Native pytest from the pinned ppap-agent revision. Failures are migration
+# input for #6. Do not wrap this in a second proof/oracle/evidence runner.
+name: ppap-agent pytest
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PPAP_AGENT_REPO: ppap-agent/ppap-agent
+  PPAP_AGENT_SHA: 53a5bd2b00adaf7332602bbdbe3cfa82817ebbb9
+
+concurrency:
+  group: ppap-agent-pytest-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: v2-excel
+            name: V2 4.8 excel
+            extra: ""
+            command: >-
+              uv run --frozen --package ppap-agent pytest
+              ppap_agent/tests/v2_assets/test_v2_assets.py
+              --ftype excel -q
+              --v2-dataset-root assets/v2.0plus
+              --v2-expected-csv "assets/全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+          - id: v2-pdf
+            name: V2 4.8 pdf
+            extra: ""
+            command: >-
+              uv run --frozen --package ppap-agent pytest
+              ppap_agent/tests/v2_assets/test_v2_assets.py
+              --ftype pdf -q
+              --v2-dataset-root assets/v2.0plus
+              --v2-expected-csv "assets/全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+          - id: v2-scanned
+            name: V2 4.8 scanned
+            extra: ""
+            command: >-
+              uv run --frozen --package ppap-agent pytest
+              ppap_agent/tests/v2_assets/test_v2_assets.py
+              --ftype scanned -q
+              --v2-dataset-root assets/v2.0plus
+              --v2-expected-csv "assets/全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
+          - id: v3-poc
+            name: V3 POC grouped
+            extra: ""
+            command: >-
+              uv run --frozen --package ppap-agent pytest
+              ppap_agent/tests/v3_poc/test_poc_assets_grouped.py -q
+          - id: psw-cross-format
+            name: PSW cross-format
+            extra: libreoffice
+            command: >-
+              PYTHONPATH=ppap_agent uv run --frozen --package ppap-agent pytest
+              ppap_agent/tests/unit/test_psw_cross_format_regression.py
+              ppap_agent/tests/integration/test_psw_cross_format_audit.py -q
+
+    steps:
+      - name: Checkout ppap-agent pin
+        id: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.PPAP_AGENT_REPO }}
+          ref: ${{ env.PPAP_AGENT_SHA }}
+          persist-credentials: false
+          token: ${{ secrets.PPAP_GH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --dev --package ppap-agent
+
+      - name: Install LibreOffice for DOC
+        if: matrix.extra == 'libreoffice'
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libreoffice-writer
+          command -v soffice
+
+      - name: Run native pytest
+        id: pytest
+        run: ${{ matrix.command }}
+
+      - name: Record PASS or FAIL
+        if: always()
+        run: |
+          if [ "${{ steps.pytest.outcome }}" = "success" ]; then
+            result=PASS
+          elif [ "${{ steps.pytest.outcome }}" = "skipped" ] || [ "${{ steps.checkout.outcome }}" != "success" ]; then
+            result="未执行"
+          else
+            result=FAIL
+          fi
+          echo "| ${{ matrix.name }} | $result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "$result"
