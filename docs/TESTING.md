@@ -13,6 +13,7 @@
 | P00 | `python tools/live.py probe --url URL --expected-build SHA` | 真实只读端点返回预期构建身份 | 不是产品 Story，不执行审核 |
 | P03 | `python tools/stack.py verify` | 本机 isolated-dev 进程、`/health`、`/ready`（PG+对象存储）、版本身份、公开配置无密钥、Worker heartbeat | 不是用户 Story；不证明登录、审核、证据或飞书 |
 | P04 | `python tools/stack.py verify-auth` | 预存 session 的跨租户对象拒绝、同租户只读非复核、logout、飞书 OAuth 启动 URL；Web 含 access-denied/login hooks | 不是 S02 真实 OAuth 登录；app_ticket 接收与 Drive 授权仍缺公网回调 |
+| P05 | `python tools/stack.py verify-uploads` | 真实 PG/MinIO 上暂存→SHA-256 固化、同名新字节保留旧版本下载、跨租户拒绝、重复 finalize / 覆盖暂存、同版本并发条件写一胜一拒且下载胜出字节、过期暂存回收、SSRF 拒绝；Web 含 upload/download hooks | 不是 S03 审核历史；不使用客户样本；不把 ETag 当 SHA-256 |
 | P01 | 每次 push 由 `Push preflight` 调用 `LLM readiness`；亦可手动运行 | GitHub Secrets `OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME` 映射到 canonical LLM 配置后能完成一次 Responses 请求并返回 Response envelope | 不证明模型质量、规则准确性、OCR、审核结果或任何用户 Story |
 | P02 | 每次 push 由 `Push preflight` 调用 `Feishu readiness`；亦可手动运行 | 当前商店应用的 App ID/Secret 能让飞书接受 `app_ticket/resend` 请求 | 会触发一次 app_ticket 推送；不证明 ticket 已被新系统接收、tenant token、用户 OAuth、Drive/Docs、评论写回或 Partner AI |
 

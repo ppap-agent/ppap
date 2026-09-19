@@ -9,6 +9,10 @@ function resourceIdFromLocation() {
   return params.get("resource") || "";
 }
 
+function fileIdFromLocation() {
+  return new URLSearchParams(window.location.search).get("file") || "";
+}
+
 async function main() {
   const runtime = (await readJson("./runtime-config.json")).body;
   const config = (await readJson(`${runtime.api_url}/public-config`)).body;
@@ -32,6 +36,43 @@ async function main() {
   document.getElementById("logout").addEventListener("click", async () => {
     await readJson(`${api}/logout`, { method: "POST" });
     window.location.reload();
+  });
+  let fileId = fileIdFromLocation();
+  document.getElementById("prepare-audit").addEventListener("click", async () => {
+    const input = document.getElementById("source-upload");
+    const file = input.files && input.files[0];
+    if (!file) {
+      return;
+    }
+    const meta = { original_filename: file.name, content_type: file.type || "application/octet-stream", byte_size: file.size };
+    const created = fileId
+      ? await readJson(`${api}/files/${encodeURIComponent(fileId)}/versions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) })
+      : await readJson(`${api}/files`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) });
+    if (!created.ok) {
+      document.getElementById("access-denied").classList.toggle("hidden", created.status !== 401 && created.status !== 403);
+      return;
+    }
+    fileId = created.body.file_id;
+    const versionId = created.body.id;
+    const put = await fetch(`${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/blob`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    if (!put.ok) {
+      return;
+    }
+    const readyVersion = await readJson(`${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/finalize`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    if (!readyVersion.ok) {
+      return;
+    }
+    document.getElementById("document-version-id").textContent = readyVersion.body.id;
+    document.getElementById("evidence-source-sha256").textContent = readyVersion.body.sha256 || "";
+    document.getElementById("download-original").href = `${api}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/download`;
+    const url = new URL(window.location.href);
+    url.searchParams.set("file", fileId);
+    window.history.replaceState({}, "", url);
   });
   const resourceId = resourceIdFromLocation();
   if (!resourceId) {

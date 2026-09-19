@@ -2,7 +2,7 @@
 
 One PPAP product client for normal browser/PWA and Feishu H5.
 
-Isolated-dev currently serves `apps/web` on `http://127.0.0.1:4173` via `python tools/stack.py up`. The page reads `/public-config`, `/ready`, `/me`, and optional `?resource=`. Login starts Feishu OAuth on the Product API. Fixture sessions from `stack.py seed-auth` only prove object authorization, not S02.
+Isolated-dev currently serves `apps/web` on `http://127.0.0.1:4173` via `python tools/stack.py up`. The page reads `/public-config`, `/ready`, `/me`, optional `?resource=` / `?file=`, and can stage+finalize a local file. Fixture sessions from `stack.py seed-auth` only prove object authorization, not S02. Upload/download hooks prove version identity on synthetic bytes, not S03.
 
 ## Owns
 

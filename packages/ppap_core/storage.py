@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import boto3
 from botocore.client import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
+from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_core.settings import Settings
 
 
@@ -32,3 +33,47 @@ def ensure_bucket(settings: Settings) -> None:
         client.head_bucket(Bucket=settings.s3_bucket)
     except ClientError:
         client.create_bucket(Bucket=settings.s3_bucket)
+
+
+class S3Objects:
+    """Exclusive object writes. Unique version keys are the product identity; If-None-Match is extra."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def put_exclusive(self, key: str, body: bytes, content_type: str) -> None:
+        client = s3_client(self.settings)
+        bucket = self.settings.s3_bucket
+        try:
+            client.put_object(
+                Bucket=bucket, Key=key, Body=body, ContentType=content_type, IfNoneMatch="*"
+            )
+            return
+        except ParamValidationError:
+            pass
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"PreconditionFailed", "412"}:
+                raise ObjectExists() from exc
+            raise
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            if str(exc.response.get("Error", {}).get("Code", "")) not in {"404", "NoSuchKey", "NotFound"}:
+                raise
+        else:
+            raise ObjectExists()
+        client.put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
+
+    def get(self, key: str) -> bytes:
+        try:
+            response = s3_client(self.settings).get_object(Bucket=self.settings.s3_bucket, Key=key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                raise ObjectMissing() from exc
+            raise
+        return response["Body"].read()
+
+    def delete(self, key: str) -> None:
+        s3_client(self.settings).delete_object(Bucket=self.settings.s3_bucket, Key=key)

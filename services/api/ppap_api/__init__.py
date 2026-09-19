@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from ppap_core.capabilities import report as capability_report
 from ppap_core.db import postgres_ready
@@ -22,6 +23,16 @@ from ppap_core.feishu import (
     exchange_code,
     refresh_user_token,
     user_info,
+)
+from ppap_core.files import (
+    MAX_UPLOAD_BYTES,
+    ObjectExists,
+    ObjectMissing,
+    UnsafeSource,
+    attachment_content_disposition,
+    fetch_remote,
+    original_filename,
+    safe_content_type,
 )
 from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
@@ -59,8 +70,9 @@ def create_app(
         CORSMiddleware,
         allow_origins=settings.web_origins(),
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["Accept", "Content-Type"],
+        expose_headers=["Content-Disposition", "X-Content-SHA256"],
     )
 
     def principal_of(request: Request):
@@ -83,6 +95,16 @@ def create_app(
             store.revoke_session(raw)
             return None
         return session.principal
+
+    def require_file_read(request: Request, file_id: str):
+        principal = principal_of(request)
+        if not principal:
+            return None, JSONResponse({"error": "unauthenticated"}, status_code=401)
+        resource = store.resource(file_id)
+        grants = store.grants(file_id, principal.user_id) if resource else set()
+        if resource is None or resource.kind != "file" or not can_read(principal, resource, grants):
+            return principal, JSONResponse({"error": "access_denied"}, status_code=403)
+        return principal, None
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -193,6 +215,158 @@ def create_app(
             "kind": resource.kind,
             "review_allowed": can_review(principal, resource, grants),
         })
+
+    @app.post("/files")
+    def files_create(body: dict, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            version = store.create_staging(
+                principal,
+                str(body.get("original_filename") or ""),
+                str(body.get("content_type") or "application/octet-stream"),
+                int(body.get("byte_size") or 0),
+            )
+        except (ValueError, TypeError):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        return JSONResponse(version.public(), status_code=201)
+
+    @app.post("/files/{file_id}/versions")
+    def files_new_version(file_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        try:
+            version = store.create_staging(
+                principal,
+                str(body.get("original_filename") or ""),
+                str(body.get("content_type") or "application/octet-stream"),
+                int(body.get("byte_size") or 0),
+                file_id=file_id,
+            )
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except (ValueError, TypeError):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        return JSONResponse(version.public(), status_code=201)
+
+    @app.put("/files/{file_id}/versions/{version_id}/blob")
+    async def files_blob(file_id: str, version_id: str, request: Request):
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        version = store.get_version(file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                return JSONResponse({"error": "too_large"}, status_code=413)
+            chunks.append(chunk)
+        try:
+            updated = store.put_blob(version, b"".join(chunks))
+        except ObjectExists:
+            return JSONResponse({"error": "object_exists"}, status_code=409)
+        except ValueError:
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        return JSONResponse(updated.public())
+
+    @app.post("/files/{file_id}/versions/{version_id}/finalize")
+    async def files_finalize(file_id: str, version_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        version = store.get_version(file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        raw = await request.body()
+        payload = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                payload = parsed
+        expected = payload.get("sha256")
+        expected = str(expected) if expected else None
+        try:
+            ready = store.finalize_version(version, expected)
+        except ObjectMissing:
+            return JSONResponse({"error": "missing_object"}, status_code=409)
+        except ValueError as exc:
+            code = str(exc)
+            status = 409 if code in {"sha256_mismatch", "sha256_conflict", "finalize_conflict", "not_staging", "missing_object"} else 400
+            return JSONResponse({"error": code}, status_code=status)
+        return JSONResponse(ready.public())
+
+    @app.get("/files/{file_id}/versions/{version_id}")
+    def files_version_get(file_id: str, version_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        version = store.get_version(file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        return JSONResponse(version.public())
+
+    @app.get("/files/{file_id}/versions/{version_id}/download")
+    def files_download(file_id: str, version_id: str, request: Request):
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        version = store.get_version(file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        try:
+            data = store.version_bytes(version)
+        except (ValueError, ObjectMissing):
+            return JSONResponse({"error": "not_ready"}, status_code=409)
+        try:
+            filename = original_filename(version.original_filename)
+        except ValueError:
+            filename = "download"
+        return Response(
+            content=data,
+            media_type=safe_content_type(version.content_type),
+            headers={
+                "Content-Disposition": attachment_content_disposition(filename),
+                "X-Content-SHA256": version.sha256 or "",
+            },
+        )
+
+    @app.post("/files/from-url")
+    def files_from_url(body: dict, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        url = str(body.get("url") or "")
+        try:
+            data, content_type, name = fetch_remote(url, http, MAX_UPLOAD_BYTES)
+            version = store.create_staging(principal, name, content_type, len(data))
+            store.put_blob(version, data)
+            ready = store.finalize_version(version)
+        except UnsafeSource as exc:
+            return JSONResponse({"error": str(exc) or "unsafe_source"}, status_code=400)
+        except (ValueError, ObjectExists, ObjectMissing):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        return JSONResponse(ready.public(), status_code=201)
+
+    @app.post("/isolated-dev/reap-staging")
+    def isolated_dev_reap(body: dict, request: Request) -> JSONResponse:
+        if settings.profile != "isolated-dev":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        if not principal_of(request):
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            max_age = int(body.get("max_age_seconds", 86400))
+            reaped = store.reap_staging(max_age)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid_age"}, status_code=400)
+        return JSONResponse({"reaped": reaped})
 
     @app.post("/isolated-dev/sessions")
     def isolated_dev_session(body: dict) -> JSONResponse:

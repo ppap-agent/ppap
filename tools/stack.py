@@ -576,9 +576,196 @@ def verify_auth() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_uploads() -> int:
+    import hashlib
+    import httpx
+
+    env = child_env()
+    report = {"ok": False, "s03_history": "NOT_PROVEN"}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        alice, carol = mint("alice"), mint("carol")
+        first, second = b"ppap-version-a", b"ppap-version-b"
+        created = httpx.post(
+            api + "/files",
+            json={"original_filename": "report.xlsx", "content_type": "application/octet-stream", "byte_size": len(first)},
+            headers=headers(alice),
+            timeout=10,
+        )
+        file_id, v1 = created.json()["file_id"], created.json()["id"]
+        put = httpx.put(api + f"/files/{file_id}/versions/{v1}/blob", content=first, headers=headers(alice), timeout=10)
+        ready = httpx.post(api + f"/files/{file_id}/versions/{v1}/finalize", headers=headers(alice), timeout=10)
+        download = httpx.get(api + f"/files/{file_id}/versions/{v1}/download", headers=headers(alice), timeout=10)
+        report["alice_upload"] = (
+            created.status_code == 201
+            and put.status_code == 200
+            and ready.status_code == 200
+            and download.content == first
+            and ready.json().get("sha256") == hashlib.sha256(first).hexdigest()
+        )
+        extra = httpx.post(
+            api + f"/files/{file_id}/versions",
+            json={"original_filename": "report.xlsx", "content_type": "application/octet-stream", "byte_size": len(second)},
+            headers=headers(alice),
+            timeout=10,
+        )
+        v2 = extra.json()["id"]
+        httpx.put(api + f"/files/{file_id}/versions/{v2}/blob", content=second, headers=headers(alice), timeout=10)
+        later = httpx.post(api + f"/files/{file_id}/versions/{v2}/finalize", headers=headers(alice), timeout=10)
+        old = httpx.get(api + f"/files/{file_id}/versions/{v1}/download", headers=headers(alice), timeout=10)
+        new = httpx.get(api + f"/files/{file_id}/versions/{v2}/download", headers=headers(alice), timeout=10)
+        report["history_preserved"] = old.content == first and new.content == second and later.json().get("sha256") == hashlib.sha256(second).hexdigest()
+        denied = httpx.get(api + f"/files/{file_id}/versions/{v1}/download", headers=headers(carol), timeout=10)
+        report["carol_denied"] = denied.status_code == 403 and denied.json() == {"error": "access_denied"} and first not in denied.content
+        replay = httpx.post(api + f"/files/{file_id}/versions/{v1}/finalize", headers=headers(alice), timeout=10)
+        overwrite = httpx.put(api + f"/files/{file_id}/versions/{v1}/blob", content=b"nope", headers=headers(alice), timeout=10)
+        report["immutable_write"] = replay.status_code == 200 and overwrite.status_code == 409
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ppap_core.files import ObjectExists, version_object_key
+        from ppap_core.fixtures import TENANT_A
+        from ppap_core.settings import Settings
+        from ppap_core.storage import S3Objects
+
+        race_a, race_b = b"minio-winner-a", b"minio-loser--b"
+        raced = httpx.post(
+            api + "/files",
+            json={
+                "original_filename": "race.bin",
+                "content_type": "application/octet-stream",
+                "byte_size": len(race_a),
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        race_file, race_vid = raced.json()["file_id"], raced.json()["id"]
+        objects = S3Objects(Settings())
+        race_key = version_object_key(TENANT_A, race_file, race_vid)
+        minio_outcomes: list[bytes | str] = []
+
+        def exclusive_put(payload: bytes) -> None:
+            try:
+                objects.put_exclusive(race_key, payload, "application/octet-stream")
+                minio_outcomes.append(payload)
+            except ObjectExists:
+                minio_outcomes.append("exists")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(exclusive_put, (race_a, race_b)))
+        minio_winners = [item for item in minio_outcomes if item != "exists"]
+        race_ready = httpx.post(
+            api + f"/files/{race_file}/versions/{race_vid}/finalize",
+            headers=headers(alice),
+            timeout=10,
+        )
+        race_download = httpx.get(
+            api + f"/files/{race_file}/versions/{race_vid}/download",
+            headers=headers(alice),
+            timeout=10,
+        )
+        http_meta = httpx.post(
+            api + "/files",
+            json={
+                "original_filename": "race-http.bin",
+                "content_type": "application/octet-stream",
+                "byte_size": len(race_a),
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        http_file, http_vid = http_meta.json()["file_id"], http_meta.json()["id"]
+
+        def http_put(payload: bytes):
+            return httpx.put(
+                api + f"/files/{http_file}/versions/{http_vid}/blob",
+                content=payload,
+                headers=headers(alice),
+                timeout=10,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            http_results = list(pool.map(http_put, (race_a, race_b)))
+        http_ready = httpx.post(
+            api + f"/files/{http_file}/versions/{http_vid}/finalize",
+            headers=headers(alice),
+            timeout=10,
+        )
+        http_download = httpx.get(
+            api + f"/files/{http_file}/versions/{http_vid}/download",
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["concurrent_put"] = (
+            raced.status_code == 201
+            and len(minio_winners) == 1
+            and minio_outcomes.count("exists") == 1
+            and sorted(item.status_code for item in http_results) == [200, 409]
+        )
+        report["concurrent_winner"] = (
+            race_ready.status_code == 200
+            and race_download.content == minio_winners[0]
+            and race_ready.json().get("sha256") == hashlib.sha256(race_download.content).hexdigest()
+            and http_ready.status_code == 200
+            and http_download.content in {race_a, race_b}
+            and http_ready.json().get("sha256") == hashlib.sha256(http_download.content).hexdigest()
+        )
+        unsafe = httpx.post(api + "/files/from-url", json={"url": "http://127.0.0.1/secret"}, headers=headers(alice), timeout=10)
+        report["ssrf_blocked"] = unsafe.status_code == 400
+        leftover = httpx.post(
+            api + f"/files/{file_id}/versions",
+            json={"original_filename": "report.xlsx", "content_type": "application/octet-stream", "byte_size": 1},
+            headers=headers(alice),
+            timeout=10,
+        )
+        httpx.put(api + f"/files/{file_id}/versions/{leftover.json()['id']}/blob", content=b"x", headers=headers(alice), timeout=10)
+        reaped = httpx.post(api + "/isolated-dev/reap-staging", json={"max_age_seconds": 0}, headers=headers(alice), timeout=10)
+        still = httpx.get(api + f"/files/{file_id}/versions/{v1}/download", headers=headers(alice), timeout=10)
+        report["staging_reaped"] = reaped.status_code == 200 and reaped.json().get("reaped", 0) >= 1 and still.content == first
+        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+            html = response.read().decode()
+        report["web_hooks"] = all(
+            marker in html
+            for marker in (
+                'data-testid="source-upload"',
+                'data-testid="prepare-audit"',
+                'data-testid="document-version-id"',
+                'data-testid="download-original"',
+            )
+        )
+        report["ok"] = all(
+            report[key] is True
+            for key in (
+                "alice_upload",
+                "history_preserved",
+                "carol_denied",
+                "immutable_write",
+                "concurrent_put",
+                "concurrent_winner",
+                "ssrf_blocked",
+                "staging_reaped",
+                "web_hooks",
+            )
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -613,6 +800,9 @@ def main() -> int:
     if args.command == "verify-auth":
         reexec_in_venv()
         return verify_auth()
+    if args.command == "verify-uploads":
+        reexec_in_venv()
+        return verify_uploads()
     reexec_in_venv()
     return verify()
 

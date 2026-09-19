@@ -4,7 +4,7 @@ The only public HTTP API for PPAP.
 
 Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy document or model work in request threads.
 
-## HTTP surface (#2 / #4)
+## HTTP surface (#2 / #4 / #5)
 
 - `GET /health` — process alive
 - `GET /ready` — PostgreSQL and object storage actually reachable
@@ -19,7 +19,15 @@ Start the isolated-dev process with `python tools/stack.py up`. Do not run heavy
 - `GET /resources/{id}` — object read; 403 `access_denied` without leaking body
 - `POST /isolated-dev/sessions` — fixture sessions only when `PPAP_PROFILE=isolated-dev`; hidden in production
 
-Login membership is not review authorization. Identities are not merged by email. Isolated-dev fixture sessions are not S02.
+- `POST /files` — create a staging version (creator gets `read`, not review)
+- `POST /files/{id}/versions` — another staging version of the same file
+- `PUT /files/{id}/versions/{vid}/blob` — exclusive object write; second PUT is 409
+- `POST /files/{id}/versions/{vid}/finalize` — hash stored bytes as SHA-256; ready versions never change
+- `GET /files/{id}/versions/{vid}` — metadata; 403 `access_denied` without leaking body
+- `GET /files/{id}/versions/{vid}/download` — ready bytes only; staging is 409. Attachment headers use an ASCII `filename` plus UTF-8 `filename*`; invalid media types fall back to `application/octet-stream`.
+- `POST /isolated-dev/reap-staging` — isolated-dev only; marks expired staging `failed` and may delete those objects; never touches `ready` keys
+
+Unready versions cannot be treated as originals. Object keys include version id and are never reused. Concurrent PUT against the same staging key keeps one winner. Failed or expired staging can be reaped; `ready` objects are not deleted by that path. Isolated-dev fixture sessions are not S02. Synthetic bytes in `verify-uploads` are not S03.
 
 ## Owns
 
