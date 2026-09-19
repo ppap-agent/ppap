@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, Request
@@ -9,7 +10,19 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from ppap_core.capabilities import report as capability_report
 from ppap_core.db import postgres_ready
-from ppap_core.feishu import AppTicket, Challenge, EncryptedEvent, FeishuError, authorize_url, exchange_code, parse_event, user_info
+from ppap_core.feishu import (
+    AppMismatch,
+    AppTicket,
+    Challenge,
+    EncryptedEvent,
+    FeishuError,
+    UnauthenticatedEvent,
+    accept_event,
+    authorize_url,
+    exchange_code,
+    refresh_user_token,
+    user_info,
+)
 from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
 from ppap_core.settings import Settings, load_settings
@@ -54,7 +67,22 @@ def create_app(
         raw = request.cookies.get(SESSION_COOKIE, "")
         if not raw:
             return None
-        return store.principal_from_token(raw)
+        session = store.load_session(raw)
+        if not session:
+            return None
+        now = datetime.now(timezone.utc)
+        if session.needs_refresh(now):
+            try:
+                tokens = refresh_user_token(http, settings, session.refresh_token)
+            except FeishuError:
+                store.revoke_session(raw)
+                return None
+            store.update_provider_auth(raw, tokens)
+            return session.principal
+        if session.provider_auth_dead(now):
+            store.revoke_session(raw)
+            return None
+        return session.principal
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -95,12 +123,16 @@ def create_app(
 
     @app.post("/integrations/feishu/events")
     def feishu_events(body: dict) -> JSONResponse:
-        parsed = parse_event(body)
+        parsed = accept_event(settings, body)
         if isinstance(parsed, Challenge):
             return JSONResponse({"challenge": parsed.value})
-        if isinstance(parsed, AppTicket) and settings.feishu_app_id:
+        if isinstance(parsed, AppTicket):
             store.save_app_ticket(settings.feishu_app_id, parsed.value)
             return JSONResponse({"ok": True})
+        if isinstance(parsed, UnauthenticatedEvent):
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if isinstance(parsed, AppMismatch):
+            return JSONResponse({"error": "app_mismatch"}, status_code=403)
         if isinstance(parsed, EncryptedEvent):
             return JSONResponse({"error": "encrypted_event_not_configured"}, status_code=400)
         return JSONResponse({"error": "ignored"}, status_code=400)
@@ -116,14 +148,14 @@ def create_app(
     @app.get("/login/feishu/callback")
     def login_feishu_callback(code: str = "", state: str = "", error: str = "") -> RedirectResponse:
         dest = store.consume_state(state) if state else None
-        fallback = settings.web_origins()[0] + "/"
+        fallback = settings.canonical_web_url() + "/"
         if error or not code or not dest:
             return RedirectResponse(fallback, status_code=303)
         try:
-            token = exchange_code(http, settings, code)
-            info = user_info(http, token)
+            tokens = exchange_code(http, settings, code)
+            info = user_info(http, tokens.access_token)
             principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
-            raw = store.create_session(principal)
+            raw = store.create_session(principal, tokens)
         except FeishuError:
             return RedirectResponse(fallback, status_code=303)
         response = RedirectResponse(dest, status_code=303)

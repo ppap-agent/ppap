@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
+from ppap_core.identity import constant_time_equal
 from ppap_core.settings import Settings
 
 AUTHORIZE_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
@@ -31,6 +33,24 @@ class UnknownEvent:
     pass
 
 
+@dataclass(frozen=True)
+class UnauthenticatedEvent:
+    pass
+
+
+@dataclass(frozen=True)
+class AppMismatch:
+    pass
+
+
+@dataclass(frozen=True)
+class UserTokens:
+    access_token: str
+    refresh_token: str
+    access_expires_at: datetime
+    refresh_expires_at: datetime
+
+
 def callback_url(settings: Settings) -> str:
     return settings.public_api_url.rstrip("/") + "/login/feishu/callback"
 
@@ -43,6 +63,19 @@ def authorize_url(settings: Settings, state: str) -> str:
         "state": state,
     }
     return AUTHORIZE_URL + "?" + urlencode(params)
+
+
+def event_token(body: dict) -> str:
+    header = body.get("header") if isinstance(body.get("header"), dict) else {}
+    token = header.get("token") or body.get("token") or ""
+    return token.strip() if isinstance(token, str) else ""
+
+
+def event_app_id(body: dict) -> str:
+    header = body.get("header") if isinstance(body.get("header"), dict) else {}
+    event = body.get("event") if isinstance(body.get("event"), dict) else {}
+    app_id = header.get("app_id") or event.get("app_id") or ""
+    return app_id.strip() if isinstance(app_id, str) else ""
 
 
 def parse_event(body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownEvent:
@@ -63,20 +96,39 @@ def parse_event(body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownE
     return UnknownEvent()
 
 
+def accept_event(
+    settings: Settings, body: dict
+) -> Challenge | AppTicket | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
+    """Feishu Verification Token plus app_id binding. Not a generic webhook framework."""
+    parsed = parse_event(body)
+    if isinstance(parsed, (EncryptedEvent, UnknownEvent)):
+        return parsed
+    expected = settings.feishu_verification_token.strip()
+    got = event_token(body)
+    if not expected or not got or not constant_time_equal(got, expected):
+        return UnauthenticatedEvent()
+    if isinstance(parsed, AppTicket):
+        app_id = event_app_id(body)
+        if not app_id or app_id != settings.feishu_app_id:
+            return AppMismatch()
+    return parsed
+
+
 class FeishuError(Exception):
     pass
 
 
-def exchange_code(http, settings: Settings, code: str) -> str:
+def _seconds(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _user_tokens(http, payload_body: dict) -> UserTokens:
     response = http.post(
         TOKEN_URL,
-        json={
-            "grant_type": "authorization_code",
-            "client_id": settings.feishu_app_id,
-            "client_secret": settings.feishu_app_secret,
-            "code": code,
-            "redirect_uri": callback_url(settings),
-        },
+        json=payload_body,
         headers={"Content-Type": "application/json; charset=utf-8"},
         timeout=20,
     )
@@ -84,7 +136,41 @@ def exchange_code(http, settings: Settings, code: str) -> str:
     token = payload.get("access_token")
     if response.status_code >= 400 or payload.get("code") not in (0, None) or not token:
         raise FeishuError("token_exchange_failed")
-    return token
+    now = datetime.now(timezone.utc)
+    access_expires = now + timedelta(seconds=_seconds(payload.get("expires_in")))
+    refresh = payload.get("refresh_token") if isinstance(payload.get("refresh_token"), str) else ""
+    if refresh:
+        refresh_expires = now + timedelta(seconds=_seconds(payload.get("refresh_token_expires_in")))
+    else:
+        refresh_expires = access_expires
+    return UserTokens(str(token), refresh, access_expires, refresh_expires)
+
+
+def exchange_code(http, settings: Settings, code: str) -> UserTokens:
+    return _user_tokens(
+        http,
+        {
+            "grant_type": "authorization_code",
+            "client_id": settings.feishu_app_id,
+            "client_secret": settings.feishu_app_secret,
+            "code": code,
+            "redirect_uri": callback_url(settings),
+        },
+    )
+
+
+def refresh_user_token(http, settings: Settings, refresh_token: str) -> UserTokens:
+    if not refresh_token:
+        raise FeishuError("refresh_token_missing")
+    return _user_tokens(
+        http,
+        {
+            "grant_type": "refresh_token",
+            "client_id": settings.feishu_app_id,
+            "client_secret": settings.feishu_app_secret,
+            "refresh_token": refresh_token,
+        },
+    )
 
 
 def user_info(http, user_access_token: str) -> dict[str, str]:

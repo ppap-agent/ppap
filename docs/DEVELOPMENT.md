@@ -51,11 +51,14 @@ MODEL_NAME
 飞书接入阶段使用：
 
 ```text
-FEISHU_APP_ID       # 普通配置
-FEISHU_APP_SECRET   # Secret
+FEISHU_APP_ID                 # 普通配置
+FEISHU_APP_SECRET             # Secret
+FEISHU_VERIFICATION_TOKEN     # 事件真实性校验；接收 app_ticket 时必需，不是 Core 启动条件
 ```
 
-用户 access/refresh token 是运行时身份数据，不是 Cloud Agent 的静态 Secret。
+用户 access/refresh token 是运行时身份数据，不是 Cloud Agent 的静态 Secret。商店应用事件用飞书 Verification Token 校验，并绑定当前配置的 App ID 后才持久化 `app_ticket`；未通过校验的调用不得把 capability 写成 `received`。
+
+`PPAP_WEB_URL` 由 typed Settings 拥有，供 CORS 与 OAuth `return_to` 使用。isolated-dev 默认 `http://127.0.0.1:4173`，并继续接受同端口 localhost；生产必须显式给出实际对外 Web origin，不得继承 127.0.0.1。Live 工具读取同一个变量，不另建 redirect/origin 框架。
 
 ## #2 实现时必须保持的配置边界
 
@@ -93,22 +96,22 @@ python tools/live.py isolation
 python tools/live.py probe --url http://127.0.0.1:8080/version --expected-build "$(git rev-parse HEAD)"
 ```
 
-`stack.py up` 启动 127.0.0.1 上的 PostgreSQL、MinIO、API（8080）、Worker、Web（4173）。isolated-dev 的 `PPAP_WEB_URL` 就是 `http://127.0.0.1:4173`。Web 只拉 `/public-config`，没有 server Secret。Worker 可单独停掉而不让 API `/health` 失败；`/ready` 只证明 PostgreSQL 与对象存储，不要求 Worker 进程。
+`stack.py up` 启动 127.0.0.1 上的 PostgreSQL、MinIO、API（8080）、Worker、Web（4173）。isolated-dev 的 `PPAP_WEB_URL` 默认就是 `http://127.0.0.1:4173`。Web 只拉 `/public-config`，没有 server Secret。Worker 可单独停掉而不让 API `/health` 失败；`/ready` 只证明 PostgreSQL 与对象存储，不要求 Worker 进程。
 
 `stack verify` 只证明进程、`/health`、`/ready`、版本身份、公开配置无密钥、Worker heartbeat。`seed-auth` / `verify-auth` 用 isolated-dev 预存 session 证明跨租户对象拒绝、同租户只读非复核、退出登录和飞书 OAuth 启动跳转；**不是 S02 真实浏览器登录**。两者都不是 G01–G05。
 
-飞书商店应用的 `app_ticket` 由 `POST /integrations/feishu/events` 接收。本机 127.0.0.1 不能作为飞书事件订阅或 OAuth redirect 的公网入口；未收到 ticket 时 capability 记 `app_ticket: missing`，不得假装已换取 app/tenant token。
+飞书商店应用的 `app_ticket` 由 `POST /integrations/feishu/events` 接收，须带上与配置一致的 Verification Token 且 `app_id` 匹配当前应用。本机 127.0.0.1 不能作为飞书事件订阅或 OAuth redirect 的公网入口；未收到经校验的 ticket 时 capability 记 `app_ticket: missing`，不得假装已换取 app/tenant token。OAuth session 绑定飞书 access/refresh 有效期：access 过期则续期，refresh 失败或过期则会话失效。
 
 Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu readiness 只在对应 GitHub Actions run 中给出成功/失败，不保存 provider token、模型原文或飞书 token。
 
 ## Live 验证变量
 
-`.env.example` 中 `PPAP_*` 只服务当前 Live/migration 工具，不是 Core PPAP 的启动配置。
+`.env.example` 中多数 `PPAP_*` 只服务当前 Live/migration 工具。例外：`PPAP_PROFILE`、`PPAP_BUILD_SHA`、`PPAP_PUBLIC_API_URL`、`PPAP_WEB_URL` 由应用 Settings 拥有。
 
 | 名称 | 使用方与用途 |
 |---|---|
 | PPAP_ENVIRONMENT | 安全的隔离环境标签 |
-| PPAP_WEB_URL | 目标隔离 Web 的实际入口；本机 isolated-dev 为 `http://127.0.0.1:4173` |
+| PPAP_WEB_URL | 产品 Web 的 canonical origin（CORS / OAuth return_to / Live 入口）；本机 isolated-dev 为 `http://127.0.0.1:4173` |
 | PPAP_BUILD_SHA | 本次部署的完整源码身份；`stack.py` 默认写入 `git rev-parse HEAD` |
 | PPAP_VERSION_URL | 只读版本探针地址；本机 isolated-dev 为 `http://127.0.0.1:8080/version` |
 | PPAP_AUTH_STATE | 授权测试账号的 Playwright storage_state |
@@ -125,7 +128,7 @@ Live product gates 会把证据写入 gitignored `.artifacts/`。LLM/Feishu read
 | 能力 | 什么时候需要配置 | Core 缺失时 |
 |---|---|---|
 | Responses-compatible LLM | isolated-dev 只需 `LLM_API_KEY`；Base URL/Model 有可覆盖 defaults | 审核能力不可用；其它无关路径不得假装审核成功 |
-| Feishu OAuth / Drive / Docs | #4/#11：`FEISHU_APP_ID` + `FEISHU_APP_SECRET` | Feishu capability disabled；普通 Web/Core 可用 |
+| Feishu OAuth / Drive / Docs | #4/#11：`FEISHU_APP_ID` + `FEISHU_APP_SECRET`；接收事件另需 `FEISHU_VERIFICATION_TOKEN` | Feishu capability disabled；普通 Web/Core 可用 |
 | Partner AI | #12 根据真实 API 契约再增加必要配置 | usage reconciliation disabled；不得伪造余额 |
 | 独立 OCR provider | 只有 #3 corpus 证明现有解析/多模态路径不足时 | 不提前增加 Secret |
 | legacy engine | 仅迁移对照期间 | 不影响终态 Core；最终删除 |

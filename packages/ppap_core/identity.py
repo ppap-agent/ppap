@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import urlsplit
 
 from ppap_core.settings import Settings
@@ -47,7 +48,7 @@ def same_origin(url: str, allowed: list[str]) -> bool:
 
 
 def safe_return_to(candidate: str, settings: Settings) -> str:
-    default = settings.web_origins()[0] + "/"
+    default = settings.canonical_web_url() + "/"
     if not candidate.strip():
         return default
     if not same_origin(candidate, settings.web_origins()):
@@ -79,6 +80,32 @@ class Principal:
                 "subject": self.subject,
             },
         }
+
+
+@dataclass(frozen=True)
+class Session:
+    principal: Principal
+    expires_at: datetime
+    access_token: str = ""
+    refresh_token: str = ""
+    access_expires_at: datetime | None = None
+    refresh_expires_at: datetime | None = None
+
+    def needs_refresh(self, at: datetime) -> bool:
+        if self.access_expires_at is None:
+            return False
+        if self.access_expires_at > at:
+            return False
+        if not self.refresh_token:
+            return False
+        return self.refresh_expires_at is None or self.refresh_expires_at > at
+
+    def provider_auth_dead(self, at: datetime) -> bool:
+        if self.access_expires_at is None:
+            return False
+        if self.access_expires_at > at:
+            return False
+        return not self.needs_refresh(at)
 
 
 @dataclass(frozen=True)

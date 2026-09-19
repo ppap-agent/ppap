@@ -89,6 +89,23 @@ class SettingsTests(unittest.TestCase):
             PPAP_S3_ENDPOINT="https://objects.example.internal",
             LLM_BASE_URL="",
             LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
+        ):
+            with self.assertRaises(ValidationError):
+                Settings()
+
+    def test_production_requires_explicit_web_url(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_PG_API_PASSWORD="prod-api",
+            PPAP_PG_WORKER_PASSWORD="prod-worker",
+            PPAP_PG_MIGRATOR_PASSWORD="prod-migrator",
+            PPAP_PG_BOOTSTRAP_PASSWORD="prod-boot",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
         ):
             with self.assertRaises(ValidationError):
                 Settings()

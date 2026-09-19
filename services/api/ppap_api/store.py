@@ -19,7 +19,8 @@ from ppap_core.fixtures import (
     USER_BOB,
     USER_CAROL,
 )
-from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, identity_key, new_token, token_hash
+from ppap_core.feishu import UserTokens
+from ppap_core.identity import PROVIDER_FEISHU, Principal, Resource, Session, identity_key, new_token, token_hash
 from ppap_core.settings import Settings
 
 
@@ -145,24 +146,44 @@ class AuthStore:
                     str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, "member", display_name
                 )
 
-    def create_session(self, principal: Principal, ttl_seconds: int = 43200) -> str:
+    def create_session(self, principal: Principal, tokens: UserTokens | None = None, ttl_seconds: int = 43200) -> str:
         raw = new_token()
+        now = _now()
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        access_token = refresh_token = None
+        access_expires_at = refresh_expires_at = None
+        if tokens is not None:
+            access_token = tokens.access_token
+            refresh_token = tokens.refresh_token or None
+            access_expires_at = tokens.access_expires_at
+            refresh_expires_at = tokens.refresh_expires_at
+            bound = tokens.refresh_expires_at if tokens.refresh_token else tokens.access_expires_at
+            if bound < expires_at:
+                expires_at = bound
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO product.sessions (token_hash, user_id, tenant_id, expires_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO product.sessions (
+                    token_hash, user_id, tenant_id, expires_at,
+                    access_token, refresh_token, access_expires_at, refresh_expires_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (token_hash(raw), principal.user_id, principal.tenant_id, _now() + timedelta(seconds=ttl_seconds)),
+                (
+                    token_hash(raw), principal.user_id, principal.tenant_id, expires_at,
+                    access_token, refresh_token, access_expires_at, refresh_expires_at,
+                ),
             )
         return raw
 
-    def principal_from_token(self, raw: str) -> Principal | None:
+    def load_session(self, raw: str) -> Session | None:
         with self._conn() as conn:
             conn.row_factory = dict_row
             row = conn.execute(
                 """
-                SELECT s.user_id, s.tenant_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
+                SELECT s.user_id, s.tenant_id, s.expires_at, s.access_token, s.refresh_token,
+                       s.access_expires_at, s.refresh_expires_at,
+                       i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
                 FROM product.sessions s
                 JOIN product.tenants t ON t.id = s.tenant_id
                 JOIN product.identities i ON i.user_id = s.user_id
@@ -175,7 +196,7 @@ class AuthStore:
             ).fetchone()
         if not row:
             return None
-        return Principal(
+        principal = Principal(
             str(row["user_id"]),
             str(row["tenant_id"]),
             row["provider"],
@@ -185,6 +206,35 @@ class AuthStore:
             row["role"],
             row["display_name"],
         )
+        return Session(
+            principal,
+            row["expires_at"],
+            row["access_token"] or "",
+            row["refresh_token"] or "",
+            row["access_expires_at"],
+            row["refresh_expires_at"],
+        )
+
+    def principal_from_token(self, raw: str) -> Principal | None:
+        session = self.load_session(raw)
+        return session.principal if session else None
+
+    def update_provider_auth(self, raw: str, tokens: UserTokens) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE product.sessions
+                SET access_token = %s, refresh_token = %s, access_expires_at = %s, refresh_expires_at = %s
+                WHERE token_hash = %s AND revoked_at IS NULL
+                """,
+                (
+                    tokens.access_token,
+                    tokens.refresh_token or None,
+                    tokens.access_expires_at,
+                    tokens.refresh_expires_at,
+                    token_hash(raw),
+                ),
+            )
 
     def revoke_session(self, raw: str) -> None:
         with self._conn() as conn:

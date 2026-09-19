@@ -38,7 +38,11 @@ CREATE TABLE IF NOT EXISTS product.sessions (
     tenant_id uuid NOT NULL REFERENCES product.tenants (id),
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    revoked_at timestamptz
+    revoked_at timestamptz,
+    access_token text,
+    refresh_token text,
+    access_expires_at timestamptz,
+    refresh_expires_at timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS product.oauth_states (

@@ -18,7 +18,7 @@
 
 P01/P02 是彼此独立的 reusable 外部依赖探针。每次 push 的 `Push preflight` 并行调用两者，只有两者成功才继续 deterministic verification；它们也可单独手动运行。P01 只发送固定无业务内容；P02 只验证商店应用静态凭据并触发一次 app_ticket 重推。两者不 checkout 仓库、不安装 SDK、不自动 retry、不上传 artifact，也不把 secret/token/原始响应写入日志。
 
-这些是可执行的子证明/前置证明，不是十个 Stories 均已实现。`stack.py` 已提供 isolated-dev API/Worker/PG/对象存储/本机 Web；UI driver 尚未与审核页面实测对齐。没有登录态、样本和 oracle 时 G01–G05 应失败。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
+这些是可执行的子证明/前置证明，不是十个 Stories 均已实现。`stack.py` 已提供 isolated-dev API/Worker/PG/对象存储/本机 Web；UI driver 尚未与审核页面实测对齐。没有登录态、样本和 oracle 时 G01–G05 应失败。S02 的真实浏览器 OAuth 需要飞书可回调的公网 Web/API origin；事件真实性与 OAuth 过期/续期/失效由 `tests/unit/test_identity.py` 证明，不能把 P04 预存 session 算成 S02。S04 故障注入、S06 飞书、S07 外部账单、S08 数据迁移、S09 恢复和 S10 交付的完整 runner 由对应 Issues 随产品实现交付，不用假脚本提前填“已覆盖”。
 
 ## UI driver 与 oracle
 

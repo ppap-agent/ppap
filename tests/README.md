@@ -11,4 +11,4 @@ python tools/stack.py seed-auth     # writes gitignored fixture sessions; not S0
 python tools/stack.py verify-auth   # object grants + OAuth start; not S02 live login
 ```
 
-`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面和 #4 的身份/对象授权判定。`live/` 保存工具依赖与 oracle 示例。产品审核、真实 OAuth 登录与 corpus 仍由对应 Issues 交付。
+`unit/` 检验验收工具误通过/误拒绝，以及 #2 的 settings/HTTP 表面和 #4 的身份/对象授权、事件真实性与 OAuth 过期/续期判定。`live/` 保存工具依赖与 oracle 示例。产品审核、真实 OAuth 登录与 corpus 仍由对应 Issues 交付。

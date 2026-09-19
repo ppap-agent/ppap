@@ -12,7 +12,17 @@ sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT
 
 from fastapi.testclient import TestClient
 
-from ppap_core.feishu import AppTicket, Challenge, EncryptedEvent, parse_event, user_info, FeishuError
+from ppap_core.feishu import (
+    AppMismatch,
+    AppTicket,
+    Challenge,
+    EncryptedEvent,
+    UnauthenticatedEvent,
+    accept_event,
+    parse_event,
+    user_info,
+    FeishuError,
+)
 from ppap_core.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
 from ppap_core.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
 from ppap_core.settings import Settings
@@ -55,12 +65,60 @@ class DecisionTests(unittest.TestCase):
         self.assertTrue(safe_return_to("http://127.0.0.1:4173/#/r", settings).startswith("http://127.0.0.1:4173"))
         self.assertEqual(safe_return_to("https://evil.example/#/r", settings), "http://127.0.0.1:4173/")
 
+    def test_public_web_origin_is_canonical_return_and_cors(self):
+        with _clean_env(PPAP_WEB_URL="https://ppap.example"):
+            settings = Settings()
+        dest = "https://ppap.example/?resource=abc"
+        self.assertEqual(safe_return_to(dest, settings), dest)
+        self.assertEqual(safe_return_to("https://evil.example/#/r", settings), "https://ppap.example/")
+        self.assertEqual(settings.canonical_web_url(), "https://ppap.example")
+        self.assertIn("https://ppap.example", settings.web_origins())
+        self.assertIn("http://127.0.0.1:4173", settings.web_origins())
+
+    def test_production_web_origin_is_explicit(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_PG_API_PASSWORD="prod-api",
+            PPAP_PG_WORKER_PASSWORD="prod-worker",
+            PPAP_PG_MIGRATOR_PASSWORD="prod-migrator",
+            PPAP_PG_BOOTSTRAP_PASSWORD="prod-boot",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
+        ):
+            settings = Settings()
+        self.assertEqual(settings.web_origins(), ["https://app.example"])
+        self.assertEqual(safe_return_to("http://127.0.0.1:4173/", settings), "https://app.example/")
+
 
 class FeishuParseTests(unittest.TestCase):
     def test_challenge_and_ticket(self):
         self.assertIsInstance(parse_event({"type": "url_verification", "challenge": "abc"}), Challenge)
         self.assertIsInstance(parse_event({"header": {"event_type": "app_ticket"}, "event": {"app_ticket": "tik"}}), AppTicket)
         self.assertIsInstance(parse_event({"encrypt": "blob"}), EncryptedEvent)
+
+    def test_accept_event_requires_verification_token_and_app(self):
+        with _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", FEISHU_VERIFICATION_TOKEN="verify-test"):
+            settings = Settings()
+        ticket = {
+            "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_test"},
+            "event": {"app_ticket": "tik", "app_id": "cli_test"},
+        }
+        self.assertIsInstance(accept_event(settings, ticket), AppTicket)
+        self.assertIsInstance(accept_event(settings, {**ticket, "header": {**ticket["header"], "token": "nope"}}), UnauthenticatedEvent)
+        missing_token = {"header": {"event_type": "app_ticket", "app_id": "cli_test"}, "event": {"app_ticket": "tik"}}
+        self.assertIsInstance(accept_event(settings, missing_token), UnauthenticatedEvent)
+        other_app = {
+            "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_other"},
+            "event": {"app_ticket": "tik", "app_id": "cli_other"},
+        }
+        self.assertIsInstance(accept_event(settings, other_app), AppMismatch)
+        with _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret"):
+            bare = Settings()
+        self.assertIsInstance(accept_event(bare, ticket), UnauthenticatedEvent)
 
     def test_user_info_requires_tenant_and_subject(self):
         class Http:
@@ -76,7 +134,12 @@ class FeishuParseTests(unittest.TestCase):
 
 class HttpAuthTests(unittest.TestCase):
     def setUp(self):
-        self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
+        self._env = _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_BUILD_SHA="a" * 40,
+        )
         self._env.start()
         self.settings = Settings()
         self.store = MemoryAuthStore(self.settings)
@@ -142,7 +205,13 @@ class HttpAuthTests(unittest.TestCase):
                     status_code = 200
 
                     def json(self):
-                        return {"code": 0, "access_token": "u-ada"}
+                        return {
+                            "code": 0,
+                            "access_token": "u-ada",
+                            "refresh_token": "ur-ada",
+                            "expires_in": 7200,
+                            "refresh_token_expires_in": 2592000,
+                        }
 
                 return R()
 
@@ -206,16 +275,52 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(denied.json(), {"error": "access_denied"})
 
     def test_event_challenge_and_ticket(self):
-        challenge = self.client.post("/integrations/feishu/events", json={"type": "url_verification", "challenge": "ping"})
+        challenge = self.client.post(
+            "/integrations/feishu/events",
+            json={"type": "url_verification", "challenge": "ping", "token": "verify-test"},
+        )
         self.assertEqual(challenge.json(), {"challenge": "ping"})
         missing = self.client.get("/capabilities").json()["feishu"]
         self.assertEqual(missing["app_ticket"], "missing")
-        ticket = self.client.post("/integrations/feishu/events", json={"header": {"event_type": "app_ticket"}, "event": {"app_ticket": "tik"}})
+        ticket = self.client.post(
+            "/integrations/feishu/events",
+            json={
+                "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_test"},
+                "event": {"app_ticket": "tik", "app_id": "cli_test"},
+            },
+        )
         self.assertEqual(ticket.status_code, 200)
         self.assertTrue(self.store.has_app_ticket("cli_test"))
         self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "received")
         encrypted = self.client.post("/integrations/feishu/events", json={"encrypt": "blob"})
         self.assertEqual(encrypted.status_code, 400)
+
+    def test_unverified_event_cannot_mark_ticket_received(self):
+        forged = {
+            "header": {"event_type": "app_ticket", "app_id": "cli_test"},
+            "event": {"app_ticket": "forged", "app_id": "cli_test"},
+        }
+        denied = self.client.post("/integrations/feishu/events", json=forged)
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "missing")
+        self.assertFalse(self.store.has_app_ticket("cli_test"))
+        wrong = self.client.post(
+            "/integrations/feishu/events",
+            json={
+                "header": {"event_type": "app_ticket", "token": "nope", "app_id": "cli_test"},
+                "event": {"app_ticket": "forged", "app_id": "cli_test"},
+            },
+        )
+        self.assertEqual(wrong.status_code, 401)
+        mismatch = self.client.post(
+            "/integrations/feishu/events",
+            json={
+                "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_other"},
+                "event": {"app_ticket": "tik", "app_id": "cli_other"},
+            },
+        )
+        self.assertEqual(mismatch.status_code, 403)
+        self.assertEqual(self.client.get("/capabilities").json()["feishu"]["app_ticket"], "missing")
 
     def test_production_hides_isolated_dev_mint(self):
         with _clean_env(
@@ -229,9 +334,129 @@ class HttpAuthTests(unittest.TestCase):
             PPAP_S3_ENDPOINT="https://objects.example.internal",
             LLM_BASE_URL="https://llm.example",
             LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
             FEISHU_APP_ID="cli_test",
             FEISHU_APP_SECRET="secret",
         ):
             settings = Settings()
         client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings)))
         self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code, 404)
+
+    def _oauth_client(self, http, settings=None):
+        settings = settings or self.settings
+        return TestClient(
+            create_app(
+                settings,
+                lambda _s: {"state": "ok"},
+                lambda _s: {"state": "ok"},
+                MemoryAuthStore(settings),
+                http,
+            )
+        )
+
+    def _complete_login(self, client, return_to="http://127.0.0.1:4173/"):
+        from urllib.parse import parse_qs, urlparse
+
+        start = client.get("/login/feishu", params={"return_to": return_to}, follow_redirects=False)
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
+        self.assertEqual(done.status_code, 303)
+        raw = done.cookies.get("ppap_session")
+        self.assertTrue(raw)
+        return done, raw
+
+    def test_oauth_refresh_renews_expired_access(self):
+        http = _TokenHttp(expires_in=0, refresh_expires_in=2592000)
+        client = self._oauth_client(http)
+        _done, raw = self._complete_login(client)
+        self.assertIn("authorization_code", http.grants)
+        me = client.get("/me", cookies={"ppap_session": raw})
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["identity"]["subject"], "ou_ada")
+        self.assertIn("refresh_token", http.grants)
+
+    def test_oauth_invalid_refresh_revokes_session(self):
+        http = _TokenHttp(expires_in=0, refresh_expires_in=2592000, fail_refresh=True)
+        client = self._oauth_client(http)
+        _done, raw = self._complete_login(client)
+        me = client.get("/me", cookies={"ppap_session": raw})
+        self.assertEqual(me.status_code, 401)
+        again = client.get("/me", cookies={"ppap_session": raw})
+        self.assertEqual(again.status_code, 401)
+
+    def test_oauth_expired_refresh_cannot_continue(self):
+        http = _TokenHttp(expires_in=0, refresh_expires_in=0)
+        client = self._oauth_client(http)
+        _done, raw = self._complete_login(client)
+        me = client.get("/me", cookies={"ppap_session": raw})
+        self.assertEqual(me.status_code, 401)
+        self.assertNotIn("refresh_token", http.grants)
+
+    def test_public_web_return_to_survives_oauth(self):
+        from urllib.parse import parse_qs, urlparse
+
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_WEB_URL="https://ppap.example",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        http = _TokenHttp()
+        client = self._oauth_client(http, settings)
+        dest = "https://ppap.example/?resource=" + RESOURCE_A
+        start = client.get("/login/feishu", params={"return_to": dest}, follow_redirects=False)
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
+        self.assertEqual(done.status_code, 303)
+        self.assertEqual(done.headers["location"], dest)
+
+
+class _Resp:
+    def __init__(self, payload, status=200):
+        self.status_code = status
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _TokenHttp:
+    def __init__(self, expires_in=7200, refresh_expires_in=2592000, fail_refresh=False):
+        self.expires_in = expires_in
+        self.refresh_expires_in = refresh_expires_in
+        self.fail_refresh = fail_refresh
+        self.grants: list[str] = []
+
+    def post(self, url, **kwargs):
+        body = kwargs.get("json") or {}
+        grant = str(body.get("grant_type") or "")
+        self.grants.append(grant)
+        if grant == "refresh_token":
+            if self.fail_refresh:
+                return _Resp({"code": 99991663, "msg": "invalid refresh token"})
+            return _Resp({
+                "code": 0,
+                "access_token": "u-new",
+                "refresh_token": "ur-new",
+                "expires_in": 7200,
+                "refresh_token_expires_in": self.refresh_expires_in,
+            })
+        return _Resp({
+            "code": 0,
+            "access_token": "u-ada",
+            "refresh_token": "ur-ada",
+            "expires_in": self.expires_in,
+            "refresh_token_expires_in": self.refresh_expires_in,
+        })
+
+    def get(self, url, **kwargs):
+        return _Resp({
+            "data": {
+                "tenant_key": "tk-live",
+                "open_id": "ou_ada",
+                "name": "Ada",
+                "email": "hidden@example.com",
+            }
+        })
