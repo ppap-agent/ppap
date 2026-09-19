@@ -14,6 +14,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -812,6 +813,9 @@ def verify_audit() -> int:
             raise RuntimeError("worker_timeout")
 
         alice, bob, carol = mint("alice"), mint("bob"), mint("carol")
+        submit_key = "isolated-dev-submit-" + str(uuid.uuid4())
+        lease_key = "isolated-dev-lease-retry-" + str(uuid.uuid4())
+        resubmit_key = "isolated-dev-resubmit-" + str(uuid.uuid4())
         rules = httpx.get(api + "/rules", headers=headers(alice), timeout=10)
         rule_id = rules.json()["rules"][0]["id"]
         target = upload(alice, "report.xlsx", b"audit-target-v1")
@@ -832,13 +836,13 @@ def verify_audit() -> int:
         report["draft_open"] = draft.status_code == 201 and saved.json().get("status") == "open"
         first = httpx.post(
             api + f"/drafts/{draft.json()['id']}/accept",
-            json={"idempotency_key": "isolated-dev-submit"},
+            json={"idempotency_key": submit_key},
             headers=headers(alice),
             timeout=10,
         )
         replay = httpx.post(
             api + f"/drafts/{draft.json()['id']}/accept",
-            json={"idempotency_key": "isolated-dev-submit"},
+            json={"idempotency_key": submit_key},
             headers=headers(alice),
             timeout=10,
         )
@@ -875,13 +879,13 @@ def verify_audit() -> int:
         )
         lease_accept = httpx.post(
             api + f"/drafts/{lease_draft.json()['id']}/accept",
-            json={"idempotency_key": "isolated-dev-lease-retry"},
+            json={"idempotency_key": lease_key},
             headers=headers(alice),
             timeout=10,
         )
         lease_round = lease_accept.json()["id"]
         settings = Settings()
-        with psycopg.connect(settings.dsn("api"), autocommit=True) as conn:
+        with psycopg.connect(settings.dsn("worker"), autocommit=True) as conn:
             job = conn.execute(
                 "SELECT id FROM engine.jobs WHERE audit_round_id = %s",
                 (lease_round,),
@@ -986,7 +990,7 @@ def verify_audit() -> int:
         newer = upload(alice, "report.xlsx", b"audit-target-v2", file_id=target["file_id"])
         resubmit = httpx.post(
             api + f"/rounds/{round_id}/resubmit",
-            json={"idempotency_key": "isolated-dev-resubmit", "items": [{"file_version_id": newer["id"], "role": "target"}]},
+            json={"idempotency_key": resubmit_key, "items": [{"file_version_id": newer["id"], "role": "target"}]},
             headers=headers(alice),
             timeout=10,
         )
