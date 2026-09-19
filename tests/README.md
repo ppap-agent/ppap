@@ -26,7 +26,8 @@ python tools/stack.py up
 python tools/stack.py verify
 python tools/stack.py verify-auth
 python tools/stack.py verify-uploads
+python tools/stack.py verify-audit
 python tools/stack.py down
 ```
 
-#7/#11 的 E2E 入口在真实实现合入后补到这里。
+#7 浏览器 E2E：`python -m unittest tests.e2e.test_web_audit`（需 Playwright 与 `python tools/stack.py up`）。#11 的入口在真实实现合入后补到这里。

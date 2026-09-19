@@ -39,6 +39,7 @@ from ppap_core.identity import SESSION_COOKIE, can_read, can_review, new_token, 
 from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
 from ppap_api.store import AuthStore
+from ppap_api.audit_routes import register_audit_routes
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -382,6 +383,7 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
+    register_audit_routes(app, store, principal_of)
     return app
 
 

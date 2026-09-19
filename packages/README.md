@@ -13,7 +13,7 @@
 | `ppap_ocr_adapter` | OCR providers |
 | `ppap_vision` | 图像、印章/签名检测 |
 
-Worker 调用 `ppap_excel_audit_engine.app_runtime.run_audit_engine`。#7 Web 闭环与 #11 飞书 parity 仍由对应 Issue 拥有，不因这些包存在而视为已完成。
+Worker 调用 `ppap_excel_audit_engine.app_runtime.run_audit_engine`。#11 飞书 parity 仍由对应 Issue 拥有。
 
 审核引擎和完整 regression 资产的迁移合同由 #3 拥有；具体 legacy baseline 不在本文件重复。
 

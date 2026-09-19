@@ -22,6 +22,7 @@ python tools/stack.py verify
 python tools/stack.py seed-auth
 python tools/stack.py verify-auth
 python tools/stack.py verify-uploads
+python tools/stack.py verify-audit
 
 python -m pip install -r requirements.txt
 PYTHONPATH=packages:packages/ppap_docops/src:packages/ppap_excel_audit_engine/src:packages/ppap_ocr_adapter/src:packages/ppap_pdf_to_excel/src:packages/ppap_vision/src:services/api:services/worker \

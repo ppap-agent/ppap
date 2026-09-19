@@ -9,12 +9,13 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `python tools/stack.py up` 启�
 - 对象授权读取 `/resources/{id}`
 - 文件/版本：创建版本、写入 blob、finalize、读取 metadata、download
 - isolated-dev fixture session 与 staging cleanup
+- 审核草稿、规则选择、受理入队、轮次读取、人工复核、显式重审
 
 文件历史由 `file_version_id` 和其存储对象引用确定。当前 finalize 会计算 SHA-256 checksum 作为辅助完整性/比较信息；checksum 不是产品版本 identity。
 
 ## 模块责任边界
 
-随着 #7 / #11 实现，Product API 负责：
+随着 #11 实现，Product API 仍将负责：
 
 - product authentication/session
 - tenant/user/object authorization

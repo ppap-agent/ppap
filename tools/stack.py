@@ -768,9 +768,198 @@ def verify_uploads() -> int:
     return 0 if report["ok"] else 1
 
 
+def verify_audit() -> int:
+    import httpx
+    from ppap_core.fixtures import USER_BOB
+
+    env = child_env()
+    report = {"ok": False}
+    try:
+        api = env["PPAP_PUBLIC_API_URL"].rstrip("/")
+
+        def mint(subject: str) -> str:
+            response = httpx.post(api + "/isolated-dev/sessions", json={"subject": subject}, timeout=10)
+            cookie = response.cookies.get("ppap_session")
+            if response.status_code != 200 or not cookie:
+                raise RuntimeError("fixture_session_failed")
+            return cookie
+
+        def headers(cookie: str) -> dict[str, str]:
+            return {"Cookie": "ppap_session=" + cookie}
+
+        def upload(cookie: str, name: str, payload: bytes, file_id: str | None = None) -> dict:
+            meta = {"original_filename": name, "content_type": "application/octet-stream", "byte_size": len(payload)}
+            created = httpx.post(
+                api + (f"/files/{file_id}/versions" if file_id else "/files"),
+                json=meta,
+                headers=headers(cookie),
+                timeout=10,
+            )
+            fid, vid = created.json()["file_id"], created.json()["id"]
+            httpx.put(api + f"/files/{fid}/versions/{vid}/blob", content=payload, headers=headers(cookie), timeout=10)
+            ready = httpx.post(api + f"/files/{fid}/versions/{vid}/finalize", headers=headers(cookie), timeout=10)
+            return ready.json()
+
+        def wait_round(cookie: str, round_id: str) -> dict:
+            deadline = time.time() + 20
+            body = {}
+            while time.time() < deadline:
+                response = httpx.get(api + f"/rounds/{round_id}", headers=headers(cookie), timeout=10)
+                body = response.json()
+                if response.status_code == 200 and body.get("execution") in {"completed", "failed"}:
+                    return body
+                time.sleep(0.25)
+            raise RuntimeError("worker_timeout")
+
+        alice, bob, carol = mint("alice"), mint("bob"), mint("carol")
+        rules = httpx.get(api + "/rules", headers=headers(alice), timeout=10)
+        rule_id = rules.json()["rules"][0]["id"]
+        target = upload(alice, "report.xlsx", b"audit-target-v1")
+        reference = upload(alice, "context.pdf", b"audit-reference")
+        draft = httpx.post(api + "/drafts", headers=headers(alice), timeout=10)
+        saved = httpx.put(
+            api + f"/drafts/{draft.json()['id']}",
+            json={
+                "rule_version_id": rule_id,
+                "items": [
+                    {"file_version_id": target["id"], "role": "target"},
+                    {"file_version_id": reference["id"], "role": "reference"},
+                ],
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["draft_open"] = draft.status_code == 201 and saved.json().get("status") == "open"
+        first = httpx.post(
+            api + f"/drafts/{draft.json()['id']}/accept",
+            json={"idempotency_key": "isolated-dev-submit"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        replay = httpx.post(
+            api + f"/drafts/{draft.json()['id']}/accept",
+            json={"idempotency_key": "isolated-dev-submit"},
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["accept_idempotent"] = (
+            first.status_code == 201 and replay.status_code == 201 and first.json()["id"] == replay.json()["id"]
+        )
+        round_id = first.json()["id"]
+        body = wait_round(alice, round_id)
+        report["worker_completed"] = body.get("execution") == "completed" and {row["status"] for row in body.get("findings", [])} == {"PASS"}
+        locator = next(row["locator"] for row in body["findings"] if row["locator"] and row["locator"].get("kind") == "file_version")
+        original = httpx.get(
+            api + f"/rounds/{round_id}/files/{locator['file_id']}/versions/{locator['file_version_id']}/download",
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["open_original"] = original.content in {b"audit-target-v1", b"audit-reference"}
+        carol_denied = httpx.get(api + f"/rounds/{round_id}", headers=headers(carol), timeout=10)
+        report["carol_denied"] = carol_denied.status_code == 403 and b"audit-target-v1" not in carol_denied.content
+        import psycopg
+        from ppap_core.settings import Settings
+
+        with psycopg.connect(Settings().dsn("api"), autocommit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO product.resource_grants (resource_id, user_id, capability)
+                VALUES (%s, %s, 'read')
+                ON CONFLICT DO NOTHING
+                """,
+                (round_id, USER_BOB),
+            )
+        bob_read = httpx.get(api + f"/rounds/{round_id}", headers=headers(bob), timeout=10)
+        bob_review = httpx.put(
+            api + f"/rounds/{round_id}/reviews",
+            json={"item_key": body["findings"][0]["item_key"], "judgment": "nope", "rationale": "", "next_step": "", "version": 0},
+            headers=headers(bob),
+            timeout=10,
+        )
+        report["bob_read_not_review"] = bob_read.status_code == 200 and bob_review.status_code == 403
+        review = httpx.put(
+            api + f"/rounds/{round_id}/reviews",
+            json={
+                "item_key": body["findings"][0]["item_key"],
+                "judgment": "需修改",
+                "rationale": "补充尺寸",
+                "next_step": "重传",
+                "version": 0,
+            },
+            headers=headers(alice),
+            timeout=10,
+        )
+        machine = review.json()["findings"][0]["status"]
+        conflict = httpx.put(
+            api + f"/rounds/{round_id}/reviews",
+            json={"item_key": body["findings"][0]["item_key"], "judgment": "覆盖", "rationale": "", "next_step": "", "version": 0},
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["review"] = (
+            review.status_code == 200
+            and machine == "PASS"
+            and review.json()["findings"][0]["review"]["judgment"] == "需修改"
+            and conflict.status_code == 409
+        )
+        newer = upload(alice, "report.xlsx", b"audit-target-v2", file_id=target["file_id"])
+        resubmit = httpx.post(
+            api + f"/rounds/{round_id}/resubmit",
+            json={"idempotency_key": "isolated-dev-resubmit", "items": [{"file_version_id": newer["id"], "role": "target"}]},
+            headers=headers(alice),
+            timeout=10,
+        )
+        new_id = resubmit.json()["id"]
+        new_body = wait_round(alice, new_id)
+        old = httpx.get(api + f"/rounds/{round_id}", headers=headers(alice), timeout=10).json()
+        old_file = httpx.get(
+            api + f"/rounds/{round_id}/files/{target['file_id']}/versions/{target['id']}/download",
+            headers=headers(alice),
+            timeout=10,
+        )
+        report["resubmit"] = (
+            resubmit.status_code == 201
+            and new_id != round_id
+            and new_body.get("predecessor_id") == round_id
+            and old["findings"][0]["review"]["judgment"] == "需修改"
+            and old_file.content == b"audit-target-v1"
+        )
+        with urllib.request.urlopen(env["PPAP_WEB_URL"], timeout=5) as response:
+            html = response.read().decode()
+        report["web_hooks"] = all(
+            marker in html
+            for marker in (
+                'data-testid="submit-audit"',
+                'data-testid="round-id"',
+                'data-testid="findings"',
+                'data-testid="save-review"',
+                'data-testid="resubmit-audit"',
+                'data-testid="locator-gap"',
+            )
+        )
+        report["ok"] = all(
+            report[key] is True
+            for key in (
+                "draft_open",
+                "accept_idempotent",
+                "worker_completed",
+                "open_original",
+                "carol_denied",
+                "bob_read_not_review",
+                "review",
+                "resubmit",
+                "web_hooks",
+            )
+        )
+    except Exception as exc:
+        report["error"] = type(exc).__name__ + ":" + str(exc)
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if report["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads"])
+    parser.add_argument("command", choices=["install", "up", "down", "restart", "status", "verify", "migrate", "seed-auth", "verify-auth", "verify-uploads", "verify-audit"])
     args = parser.parse_args()
     if args.command == "install":
         install()
@@ -808,6 +997,9 @@ def main() -> int:
     if args.command == "verify-uploads":
         reexec_in_venv()
         return verify_uploads()
+    if args.command == "verify-audit":
+        reexec_in_venv()
+        return verify_audit()
     reexec_in_venv()
     return verify()
 
