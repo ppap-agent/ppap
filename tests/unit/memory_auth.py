@@ -102,6 +102,10 @@ class MemoryAuthStore:
     def has_app_ticket(self, app_id: str) -> bool:
         return app_id in self.tickets
 
+    def app_ticket(self, app_id: str) -> str | None:
+        ticket = self.tickets.get(app_id)
+        return str(ticket) if ticket else None
+
     def upsert_feishu_identity(self, tenant_key: str, subject: str, display_name: str = "") -> Principal:
         key = identity_key("feishu", self.settings.feishu_app_id, tenant_key, subject)
         existing = self.identities.get(key)
@@ -712,5 +716,37 @@ class MemoryAuthStore:
             "consumed_points": row["consumed_points"],
             "is_free_trial": row["is_free_trial"],
             "external_status": row["external_status"],
+            "external_record_id": row.get("external_record_id"),
             "trace_id": row["trace_id"],
         }
+
+    def usage_event(self, principal: Principal, event_id: str) -> dict | None:
+        for row in self.usage_events:
+            if row["id"] == event_id and row["tenant_id"] == principal.tenant_id:
+                return dict(row)
+        return None
+
+    def ensure_usage_trace_id(self, principal: Principal, event_id: str) -> dict:
+        row = self.usage_event(principal, event_id)
+        if row is None:
+            raise KeyError("access_denied")
+        if row.get("trace_id"):
+            return row
+        trace = uuid.uuid4().hex
+        for item in self.usage_events:
+            if item["id"] == event_id and item["tenant_id"] == principal.tenant_id:
+                item["trace_id"] = trace
+                return dict(item)
+        raise KeyError("access_denied")
+
+    def settle_usage_external(
+        self, principal: Principal, event_id: str, status: str, record_id: str | None = None
+    ) -> dict:
+        if status not in {"pending", "confirmed", "failed"}:
+            raise ValueError("invalid_external_status")
+        for item in self.usage_events:
+            if item["id"] == event_id and item["tenant_id"] == principal.tenant_id and not item["is_free_trial"]:
+                item["external_status"] = status
+                item["external_record_id"] = record_id
+                return dict(item)
+        raise KeyError("access_denied")

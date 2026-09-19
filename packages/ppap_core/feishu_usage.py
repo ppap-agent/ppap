@@ -132,3 +132,103 @@ def quota_unavailable(message: str, detailed: str) -> dict[str, object]:
         "detailed_message": detailed,
         "remaining_trial_ai_points": 0,
     }
+
+
+TENANT_ACCESS_TOKEN_URL = OPEN_API + "/auth/v3/tenant_access_token"
+CREDENTIAL_APPLY_URL = OPEN_API + "/partner_ai/v1/credential/apply"
+USAGE_REPORT_URL = OPEN_API + "/partner_ai/v1/usage_records/report"
+
+
+def _ok(response) -> bool:
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status < 200 or status >= 300:
+        return False
+    body = _response_json(response)
+    return body.get("code") in (0, None)
+
+
+def tenant_access_token(http, app_id: str, app_secret: str, app_ticket: str) -> str:
+    ticket = (app_ticket or "").strip()
+    if not ticket:
+        raise FeishuUsageError("feishu_app_ticket_missing")
+    try:
+        response = http.post(
+            TENANT_ACCESS_TOKEN_URL,
+            json={"app_id": app_id, "app_secret": app_secret, "app_ticket": ticket},
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=20,
+        )
+        body = _response_json(response)
+    except Exception as exc:
+        raise FeishuUsageError("feishu_tenant_token_failed") from exc
+    token = str(body.get("tenant_access_token") or "").strip()
+    if not _ok(response) or not token:
+        raise FeishuUsageError("feishu_tenant_token_failed")
+    return token
+
+
+def apply_report_credential(http, user_token: str, ai_item_id: str, trace_id: str) -> str:
+    try:
+        response = http.post(
+            CREDENTIAL_APPLY_URL,
+            json={"ai_item_id": ai_item_id, "trace_id": trace_id},
+            headers={
+                "Authorization": "Bearer " + user_token,
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            timeout=20,
+        )
+        body = _response_json(response)
+    except Exception as exc:
+        raise FeishuUsageError("feishu_usage_report_failed") from exc
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    token = str(data.get("token") or data.get("report_token") or "").strip()
+    if not _ok(response) or not token:
+        raise FeishuUsageError("feishu_usage_report_failed")
+    return token
+
+
+def report_usage_record(
+    http, tenant_token: str, report_token: str, ai_item_id: str, trace_id: str, points: int
+) -> str:
+    payload = {
+        "report_token": report_token,
+        "record": {
+            "ai_item_id": ai_item_id,
+            "trace_id": trace_id,
+            "usage_amount": {"type": "fixed", "credit": int(points)},
+        },
+    }
+    try:
+        response = http.post(
+            USAGE_REPORT_URL,
+            json=payload,
+            headers={
+                "Authorization": "Bearer " + tenant_token,
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            timeout=20,
+        )
+        body = _response_json(response)
+    except Exception as exc:
+        raise FeishuUsageError("feishu_usage_report_failed") from exc
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    record_id = str(data.get("id") or "").strip()
+    if not _ok(response) or not record_id:
+        raise FeishuUsageError("feishu_usage_report_failed")
+    return record_id
+
+
+def report_partner_usage(http, user_token: str, tenant_token: str, event: dict) -> str:
+    trace_id = str(event.get("trace_id") or "").strip()
+    if not trace_id:
+        raise FeishuUsageError("invalid_trace_id")
+    report_token = apply_report_credential(http, user_token, event["ai_item_id"], trace_id)
+    return report_usage_record(
+        http,
+        tenant_token,
+        report_token,
+        event["ai_item_id"],
+        trace_id,
+        int(event["consumed_points"]),
+    )

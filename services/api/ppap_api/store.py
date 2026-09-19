@@ -131,6 +131,14 @@ class AuthStore:
             ).fetchone()
         return bool(row)
 
+    def app_ticket(self, app_id: str) -> str | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT ticket FROM product.app_tickets WHERE provider = %s AND app_id = %s",
+                (PROVIDER_FEISHU, app_id),
+            ).fetchone()
+        return str(row[0]) if row and row[0] else None
+
     def upsert_feishu_identity(self, tenant_key: str, subject: str, display_name: str = "") -> Principal:
         provider, app_id, tenant_key, subject = identity_key(
             PROVIDER_FEISHU, self.settings.feishu_app_id, tenant_key, subject
@@ -1307,8 +1315,67 @@ class AuthStore:
             "consumed_points": row["consumed_points"],
             "is_free_trial": row["is_free_trial"],
             "external_status": row["external_status"],
+            "external_record_id": row.get("external_record_id"),
             "trace_id": row["trace_id"],
         }
+
+    def usage_event(self, principal: Principal, event_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                       external_status, external_record_id, trace_id
+                FROM product.usage_events
+                WHERE id = %s AND tenant_id = %s
+                """,
+                (event_id, principal.tenant_id),
+            ).fetchone()
+        return self._usage_from_row(row) if row else None
+
+    def ensure_usage_trace_id(self, principal: Principal, event_id: str) -> dict:
+        row = self.usage_event(principal, event_id)
+        if row is None:
+            raise KeyError("access_denied")
+        if row.get("trace_id"):
+            return row
+        trace = uuid.uuid4().hex
+        with self._conn() as conn:
+            updated = conn.execute(
+                """
+                UPDATE product.usage_events
+                SET trace_id = %s
+                WHERE id = %s AND tenant_id = %s AND trace_id IS NULL
+                RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                          external_status, external_record_id, trace_id
+                """,
+                (trace, event_id, principal.tenant_id),
+            ).fetchone()
+        if updated:
+            return self._usage_from_row(updated)
+        again = self.usage_event(principal, event_id)
+        if again is None:
+            raise KeyError("access_denied")
+        return again
+
+    def settle_usage_external(
+        self, principal: Principal, event_id: str, status: str, record_id: str | None = None
+    ) -> dict:
+        if status not in {"pending", "confirmed", "failed"}:
+            raise ValueError("invalid_external_status")
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                UPDATE product.usage_events
+                SET external_status = %s, external_record_id = %s
+                WHERE id = %s AND tenant_id = %s AND is_free_trial = false
+                RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                          external_status, external_record_id, trace_id
+                """,
+                (status, record_id, event_id, principal.tenant_id),
+            ).fetchone()
+        if not row:
+            raise KeyError("access_denied")
+        return self._usage_from_row(row)
 
     def _usage_from_row(self, row) -> dict:
         return {

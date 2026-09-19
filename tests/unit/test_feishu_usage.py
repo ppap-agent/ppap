@@ -1,6 +1,7 @@
 """Partner AI quota check and usage observations. Mocked HTTP only."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -53,12 +54,22 @@ class _PartnerMock:
     def __init__(self):
         self.item = {"enabled": True, "user_quota": 80, "ai_package_purchased": True}
         self.fail = False
+        self.fail_report = False
+        self.calls: list[tuple[str, str]] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
-        if request.headers.get("authorization") != "Bearer user-access":
-            return httpx.Response(401, json={"code": 99991663, "msg": "unauthorized"})
-        if request.method.upper() == "GET" and "/partner_ai/v1/tenant_ai_items/" in url:
+        method = request.method.upper()
+        auth = request.headers.get("authorization", "")
+        self.calls.append((method, url))
+        if method == "POST" and url.endswith("/auth/v3/tenant_access_token"):
+            body = json.loads(request.content.decode())
+            if body.get("app_id") != "cli_test" or body.get("app_ticket") != "tik":
+                return httpx.Response(401, json={"code": 1, "msg": "bad ticket"})
+            return httpx.Response(200, json={"code": 0, "tenant_access_token": "tenant-access"})
+        if method == "GET" and "/partner_ai/v1/tenant_ai_items/" in url:
+            if auth != "Bearer user-access":
+                return httpx.Response(401, json={"code": 99991663, "msg": "unauthorized"})
             if self.fail:
                 return httpx.Response(500, json={"code": 1, "msg": "down"})
             item_id = url.rsplit("/", 1)[-1]
@@ -66,6 +77,19 @@ class _PartnerMock:
                 200,
                 json={"code": 0, "data": {"tenant_ai_item": {"id": item_id, **self.item}}},
             )
+        if method == "POST" and url.endswith("/partner_ai/v1/credential/apply"):
+            if auth != "Bearer user-access":
+                return httpx.Response(401, json={"code": 99991663, "msg": "unauthorized"})
+            return httpx.Response(200, json={"code": 0, "data": {"token": "report-tik", "expired_at": 1800}})
+        if method == "POST" and url.endswith("/partner_ai/v1/usage_records/report"):
+            if auth != "Bearer tenant-access":
+                return httpx.Response(401, json={"code": 99991663, "msg": "unauthorized"})
+            if self.fail_report:
+                return httpx.Response(500, json={"code": 1, "msg": "report down"})
+            payload = json.loads(request.content.decode())
+            if payload.get("report_token") != "report-tik":
+                return httpx.Response(400, json={"code": 1, "msg": "bad report token"})
+            return httpx.Response(200, json={"code": 0, "data": {"id": "fs-rec-1"}})
         return httpx.Response(404, json={"code": 1, "msg": "unmocked"})
 
 
@@ -175,6 +199,64 @@ class FeishuUsageTests(unittest.TestCase):
         response = self.client.get("/integrations/feishu/usage/quota")
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "feishu_user_token_missing")
+
+    def test_trial_report_is_skipped_without_partner_http(self):
+        self._login_feishu_user("alice")
+        self.store.save_app_ticket("cli_test", "tik")
+        created = self.client.post(
+            "/integrations/feishu/usage/events",
+            json={"consumed_points": 100, "is_free_trial": True, "trace_id": "trial-skip"},
+        ).json()
+        self.partner.calls.clear()
+        response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["skipped"])
+        self.assertEqual(response.json()["external_status"], "none")
+        self.assertEqual(response.json()["skip_reason"], "消费在赠送额度内")
+        self.assertEqual(self.partner.calls, [])
+
+    def test_pending_report_confirms_only_after_feishu_record_id(self):
+        self._login_feishu_user("alice")
+        missing = self.client.post(
+            "/integrations/feishu/usage/events",
+            json={"consumed_points": 50, "is_free_trial": False, "trace_id": "partner-report"},
+        ).json()
+        blocked = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["error"], "feishu_app_ticket_missing")
+        self.assertEqual(self.store.usage_event(self.store.principal_for_fixture("alice"), missing["id"])["external_status"], "pending")
+
+        self.store.save_app_ticket("cli_test", "tik")
+        confirmed = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertFalse(confirmed.json()["skipped"])
+        self.assertEqual(confirmed.json()["external_status"], "confirmed")
+        self.assertEqual(confirmed.json()["external_record_id"], "fs-rec-1")
+        self.assertTrue(any(url.endswith("/partner_ai/v1/credential/apply") for _method, url in self.partner.calls))
+        self.assertTrue(any(url.endswith("/partner_ai/v1/usage_records/report") for _method, url in self.partner.calls))
+        replay = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        self.assertEqual(replay.json()["external_record_id"], "fs-rec-1")
+        reports = [url for _method, url in self.partner.calls if url.endswith("/usage_records/report")]
+        self.assertEqual(len(reports), 1)
+
+        self._login_feishu_user("carol")
+        denied = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_report_failure_stays_unconfirmed(self):
+        self._login_feishu_user("alice")
+        self.store.save_app_ticket("cli_test", "tik")
+        self.partner.fail_report = True
+        created = self.client.post(
+            "/integrations/feishu/usage/events",
+            json={"consumed_points": 9, "is_free_trial": False, "trace_id": "partner-fail"},
+        ).json()
+        response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"], "feishu_usage_report_failed")
+        row = self.store.usage_event(self.store.principal_for_fixture("alice"), created["id"])
+        self.assertEqual(row["external_status"], "failed")
+        self.assertIsNone(row["external_record_id"])
 
 
 if __name__ == "__main__":

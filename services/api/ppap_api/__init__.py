@@ -37,6 +37,8 @@ from ppap_core.feishu_usage import (
     quota_unavailable,
     query_tenant_ai_item,
     remaining_trial_points,
+    report_partner_usage,
+    tenant_access_token,
 )
 from ppap_core.feishu_writeback import (
     FeishuWritebackError,
@@ -548,6 +550,49 @@ def create_app(
             status = 409 if code == "feishu_ai_item_missing" else 400
             return JSONResponse({"error": code}, status_code=status)
         return JSONResponse(store.usage_event_public(row), status_code=201)
+
+    @app.post("/integrations/feishu/usage/events/{event_id}/report")
+    def feishu_usage_report(event_id: str, request: Request) -> JSONResponse:
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        row = store.usage_event(session.principal, event_id)
+        if row is None:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        public = store.usage_event_public(row)
+        if row["is_free_trial"]:
+            public["skipped"] = True
+            public["skip_reason"] = "消费在赠送额度内"
+            return JSONResponse(public)
+        if row["external_status"] == "confirmed" and row.get("external_record_id"):
+            public["skipped"] = False
+            return JSONResponse(public)
+        ticket = store.app_ticket(settings.feishu_app_id)
+        if not ticket:
+            return JSONResponse({"error": "feishu_app_ticket_missing"}, status_code=409)
+        try:
+            row = store.ensure_usage_trace_id(session.principal, event_id)
+            tenant_token = tenant_access_token(
+                http, settings.feishu_app_id, settings.feishu_app_secret, ticket
+            )
+            record_id = report_partner_usage(http, session.access_token, tenant_token, row)
+            settled = store.settle_usage_external(session.principal, event_id, "confirmed", record_id)
+        except FeishuUsageError as exc:
+            code = str(exc)
+            if code == "feishu_app_ticket_missing":
+                return JSONResponse({"error": code}, status_code=409)
+            try:
+                store.settle_usage_external(session.principal, event_id, "failed")
+            except KeyError:
+                pass
+            return JSONResponse({"error": "feishu_usage_report_failed"}, status_code=502)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        body = store.usage_event_public(settled)
+        body["skipped"] = False
+        return JSONResponse(body)
 
     @app.post("/integrations/feishu/rounds/{round_id}/writeback")
     def feishu_round_writeback(round_id: str, body: dict, request: Request) -> JSONResponse:
