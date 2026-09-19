@@ -55,6 +55,6 @@ python tools/dev.py undeploy
 
 `deploy` / `upgrade` 用同一 Git revision 的 `ppap-api` / `ppap-worker` / `ppap-web` 镜像启动 `deploy/compose.yaml`。Secret 从 `deploy/compose.env.example`（或覆盖的 env file）注入，禁止 isolated-dev 口令与 `http://127.0.0.1:9000`。`init` 容器执行 `python tools/dev.py provision`（建角色/库、apply SQL、确保对象桶），然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
 
-该 Compose 里的 MinIO 只是验证用的 S3 兼容端点，不是 production 许可证决定。真实生产应注入自有 PostgreSQL 与对象存储。当前不含 `.doc` converter sandbox，也不含 backup/restore/rollback。
+该 Compose 里的对象存储是用与 isolated-dev 相同校验和的 MinIO 二进制本地构建的验证端点，不是从 Docker Hub 拉 `minio/minio`，也不是 production 许可证决定。真实生产应注入自有 PostgreSQL 与对象存储。当前不含 `.doc` converter sandbox，也不含 backup/restore/rollback。
 
 终态不得把 `ppap-host`、Java PPAP 服务或独立部署的 `ppap-agent` HTTP 作为永久 runtime dependency。

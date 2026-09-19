@@ -240,7 +240,7 @@ def cmd_deploy() -> int:
     os.environ["PPAP_BUILD_SHA"] = sha
     if cmd_build() != 0:
         return 1
-    code = _compose(sha, "up", "-d", "--wait", "--wait-timeout", "120")
+    code = _compose(sha, "up", "-d", "--build", "--wait", "--wait-timeout", "180")
     if code != 0:
         _compose(sha, "logs")
         return code
