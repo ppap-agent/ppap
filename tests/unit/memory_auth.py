@@ -492,7 +492,7 @@ class MemoryAuthStore:
         if round_id and round_id in self.rounds and self.rounds[round_id]["execution"] in {EXEC_QUEUED, EXEC_RUNNING, EXEC_FAILED}:
             self.rounds[round_id]["execution"] = EXEC_RUNNING
         self.attempts[(job["id"], job["attempt"])] = {"worker_id": worker_ident, "diagnostic": {}}
-        return ClaimedJob(job["id"], job["kind"], payload, job["attempt"], round_id)
+        return ClaimedJob(job["id"], job["kind"], payload, job["attempt"], round_id, job.get("tenant_id"))
 
     def complete_job(self, claimed: ClaimedJob, worker_ident: str, result: dict, outcome: str = "succeeded") -> bool:
         job = self.jobs.get(claimed.id)
@@ -612,6 +612,7 @@ class MemoryAuthStore:
             "created": len(self.jobs),
             "lease_owner": None,
             "lease_until": None,
+            "tenant_id": principal.tenant_id,
         }
         self.idempotency[(principal.tenant_id, key)] = round_id
         if source_draft_id:

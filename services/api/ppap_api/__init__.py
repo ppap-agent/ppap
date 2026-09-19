@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
@@ -63,6 +65,7 @@ from ppap_core.files import (
 )
 from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
+from ppap_core.logs import QUIET_PATHS, bind, configure as configure_logs, emit, new_request_id, reset, round_id_from_path
 from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
 from ppap_api.store import AuthStore
@@ -100,8 +103,9 @@ def create_app(
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT"],
         allow_headers=["Accept", "Content-Type"],
-        expose_headers=["Content-Disposition", "X-Content-SHA256"],
+        expose_headers=["Content-Disposition", "X-Content-SHA256", "X-Request-ID"],
     )
+    configure_logs(settings)
 
     def session_of(request: Request):
         raw = request.cookies.get(SESSION_COOKIE, "")
@@ -127,6 +131,36 @@ def create_app(
     def principal_of(request: Request):
         session = session_of(request)
         return session.principal if session else None
+
+    @app.middleware("http")
+    async def observe_request(request: Request, call_next):
+        request_id = new_request_id(request.headers.get("x-request-id", ""))
+        path = request.url.path
+        tokens = bind(request_id=request_id, round_id=round_id_from_path(path))
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+            principal = principal_of(request)
+            if principal:
+                tokens.extend(bind(tenant_id=principal.tenant_id))
+            if path not in QUIET_PATHS:
+                level = (
+                    logging.INFO
+                    if settings.profile == "production" or str(settings.LOG_FORMAT).strip().lower() == "json"
+                    else logging.DEBUG
+                )
+                emit(
+                    "http_request",
+                    level=level,
+                    method=request.method,
+                    path=path,
+                    status=response.status_code,
+                    ms=int((time.perf_counter() - started) * 1000),
+                )
+            response.headers["x-request-id"] = request_id
+            return response
+        finally:
+            reset(tokens)
 
     def require_file_read(request: Request, file_id: str):
         principal = principal_of(request)

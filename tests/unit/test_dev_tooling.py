@@ -132,7 +132,7 @@ class DevToolingTests(unittest.TestCase):
         self.assertNotIn(ISOLATED_DEV_SECRET, env_text)
         self.assertNotIn(ISOLATED_DEV_S3_ENDPOINT, env_text)
         self.assertIn("PPAP_PROFILE=production", env_text)
-        self.assertIn("http://minio:9000", env_text)
+        self.assertIn("LOG_FORMAT=json", env_text)
         self.assertIn("ppap-api:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
@@ -158,6 +158,8 @@ class DevToolingTests(unittest.TestCase):
         self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["worker"])
         self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", services["worker"])
         self.assertNotIn("PPAP_PG_API_PASSWORD", services["worker"])
+        self.assertIn("LOG_FORMAT: json", services["api"])
+        self.assertIn("LOG_FORMAT: json", services["worker"])
 
         parsed: dict[str, str] = {}
         for line in env_text.splitlines():

@@ -883,7 +883,7 @@ class AuthStore:
             with conn.transaction():
                 row = conn.execute(
                     """
-                    SELECT id, kind, payload FROM engine.jobs
+                    SELECT id, kind, payload, tenant_id FROM engine.jobs
                     WHERE (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
                         OR (status = 'leased' AND lease_until IS NOT NULL AND lease_until < now())
@@ -917,6 +917,7 @@ class AuthStore:
                 )
                 payload = updated[1] or {}
                 round_id = payload.get("round_id") if isinstance(payload, dict) else None
+                tenant_id = row[3]
                 if round_id:
                     conn.execute(
                         """
@@ -926,7 +927,14 @@ class AuthStore:
                         """,
                         (EXEC_RUNNING, round_id, EXEC_QUEUED, EXEC_RUNNING, EXEC_FAILED),
                     )
-                return ClaimedJob(str(row[0]), row[1], payload, int(updated[0]), str(round_id) if round_id else None)
+                return ClaimedJob(
+                    str(row[0]),
+                    row[1],
+                    payload,
+                    int(updated[0]),
+                    str(round_id) if round_id else None,
+                    str(tenant_id) if tenant_id else None,
+                )
 
     def complete_job(self, claimed: ClaimedJob, worker_ident: str, result: dict, outcome: str = "succeeded") -> bool:
         coverage = result.get("coverage") or {}

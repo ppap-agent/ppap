@@ -17,6 +17,7 @@ from ppap_core.audits import (
 )
 from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
 from ppap_core.db import connect
+from ppap_core.logs import bind, configure as configure_logs, emit, reset
 from ppap_core.settings import load_settings
 from ppap_core.types import PpapDocumentType
 
@@ -160,34 +161,51 @@ def engine_runner(work, store: AuthStore):
 
 
 def process_claimed(store: AuthStore, claimed, ident: str) -> dict:
-    if claimed.kind != "audit" or not claimed.round_id:
-        diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
-        store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, "succeeded")
-        return diagnostic
-    work = store.round_work(claimed.round_id)
-    if work is None:
-        result = {"note": "missing_round", "findings": [], "coverage": {}}
-        store.complete_job(claimed, ident, result, "failed")
-        return result
-    runner = (lambda current: engine_runner(current, store)) if work.rule_kind() == KIND_ENGINE else None
+    tokens = bind(
+        job_id=claimed.id,
+        attempt=claimed.attempt,
+        round_id=claimed.round_id,
+        tenant_id=claimed.tenant_id,
+    )
+    emit("job_claimed", kind=claimed.kind)
     try:
-        result = evaluate_round(work, engine_runner=runner)
-        result["note"] = result.get("note") or "round_audit"
-        store.complete_job(claimed, ident, result, "succeeded")
-        return result
-    except Exception:
-        from ppap_core.audits import execution_error_result
+        if claimed.kind != "audit" or not claimed.round_id:
+            diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
+            store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, "succeeded")
+            emit("job_completed", outcome="succeeded", note=diagnostic.get("note"))
+            return diagnostic
+        work = store.round_work(claimed.round_id)
+        if work is None:
+            result = {"note": "missing_round", "findings": [], "coverage": {}}
+            store.complete_job(claimed, ident, result, "failed")
+            emit("job_completed", outcome="failed", note="missing_round")
+            return result
+        if work.tenant_id:
+            tokens.extend(bind(tenant_id=work.tenant_id))
+        runner = (lambda current: engine_runner(current, store)) if work.rule_kind() == KIND_ENGINE else None
+        try:
+            result = evaluate_round(work, engine_runner=runner)
+            result["note"] = result.get("note") or "round_audit"
+            store.complete_job(claimed, ident, result, "succeeded")
+            emit("job_completed", outcome="succeeded", note=result.get("note"))
+            return result
+        except Exception:
+            from ppap_core.audits import execution_error_result
 
-        result = execution_error_result("engine_error")
-        result["note"] = "round_audit_error"
-        store.complete_job(claimed, ident, result, "succeeded")
-        return result
+            result = execution_error_result("engine_error")
+            result["note"] = "round_audit_error"
+            store.complete_job(claimed, ident, result, "succeeded")
+            emit("job_completed", outcome="succeeded", note="round_audit_error", error_type="engine_error")
+            return result
+    finally:
+        reset(tokens)
 
 
 def run() -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     settings = load_settings()
+    configure_logs(settings)
     ident = worker_id(settings.worker_id)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     store = AuthStore(settings, role="worker")

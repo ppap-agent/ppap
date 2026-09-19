@@ -61,6 +61,8 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LOG_FORMAT: json
+      LOG_LEVEL: INFO
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -99,6 +101,8 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LOG_FORMAT: json
+      LOG_LEVEL: INFO
 
   web:
     image: ppap-web:${PPAP_BUILD_SHA}

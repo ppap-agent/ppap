@@ -93,6 +93,7 @@ class ClaimedJob:
     payload: dict[str, Any]
     attempt: int
     round_id: str | None = None
+    tenant_id: str | None = None
 
 
 def _presence_finding(item: RoundInput) -> dict[str, Any]:

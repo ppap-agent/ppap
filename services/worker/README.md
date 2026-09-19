@@ -6,7 +6,7 @@ isolated-dev 使用 `python tools/stack.py up` 启动。Worker 是独立进程�
 
 ## 当前 main
 
-当前 Worker 已有 heartbeat、`engine.jobs` claim（含过期 `leased` 重试，同一 round 只增加 attempt）、`kind=audit` 时对本轮全部待审文件调用本仓 `run_audit_engine`（参考文件进入 #3 group context，未完整检查的参考写入 coverage），以及产品轮次 findings 写回（presence 规则不调用 engine）。飞书入口仍由 #11 拥有。
+当前 Worker 已有 heartbeat、`engine.jobs` claim（含过期 `leased` 重试，同一 round 只增加 attempt）、`kind=audit` 时对本轮全部待审文件调用本仓 `run_audit_engine`（参考文件进入 #3 group context，未完整检查的参考写入 coverage），以及产品轮次 findings 写回（presence 规则不调用 engine）。claim/complete 的 JSON 日志带 `job_id` / `attempt` / `round_id` / `tenant_id`，不记录 findings 正文。飞书入口仍由 #11 拥有。
 
 ## 最终责任
 

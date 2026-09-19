@@ -61,6 +61,8 @@ python tools/dev.py undeploy
 
 `backup` 在短暂停下 API/Worker/Web 后，把当前 compose PostgreSQL（`ppap`）和 MinIO `/data` 写到 `dist/backups/<UTC stamp>/`（`postgres.sql`、`objects.tar.gz`、`manifest.json`），再恢复进程并要求 `/ready`。`restore` 按指定目录 drop/create 数据库并覆盖对象存储；`rollback` 恢复最新一份 backup。这是当前可执行的生产数据回退路径，不是异地备份策略。
 
+API 与 Worker 在 production 下向 stderr 写 JSON 行，字段包括 `request_id` / `tenant_id` / `round_id` / `job_id` / `attempt` 以及 HTTP method/path/status 或 job outcome。不记录 token 或客户内容。`GET /health` `/ready` `/version` `/public-config` 不打 INFO。响应带头 `X-Request-ID`。
+
 该 Compose 里的对象存储是用与 isolated-dev 相同校验和的 MinIO 二进制本地构建的验证端点，不是从 Docker Hub 拉 `minio/minio`，也不是 production 许可证决定。真实生产应注入自有 PostgreSQL 与对象存储。当前不含 `.doc` converter sandbox。
 
 终态不得把 `ppap-host`、Java PPAP 服务或独立部署的 `ppap-agent` HTTP 作为永久 runtime dependency。
