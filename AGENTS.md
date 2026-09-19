@@ -1,28 +1,30 @@
 # PPAP 工作入口
 
-本仓是最终产品运行仓。先读 [Northstar](docs/NORTHSTAR.md) 和当前 Issue，再按改动读取 [架构](docs/ARCHITECTURE.md)、局部代码及对应测试。不要默认重读公司历史。
+本仓是最终产品运行仓。开始一项工作时，先读**当前 Issue、直接相关源码和测试**。只有改动产品语义时读 [Northstar](docs/NORTHSTAR.md) / [DATA_MODEL](docs/DATA_MODEL.md)；改架构或安全边界时再读对应文档；只有迁移任务才读 [INVENTORY](docs/INVENTORY.md) / [MIGRATION](docs/MIGRATION.md)。
 
-## 权威与自主决策
+## 权威
 
-- 产品应做什么：Northstar 与已接受的产品决定。现在实现了什么：确切源码与测试。某环境实际怎样运行：对应时间、版本、路径的运行证据。三者不能互相替代。
-- 当前调查基线和未知项在 [CURRENT](docs/CURRENT.md)；迁移来源在 [INVENTORY](docs/INVENTORY.md)。来源仓只读；本仓可自主实现和改进。
-- 可以重新选择语言、框架和内部结构；记录实质取舍。不要为迁就实现而降低验收标准，也不要把未经确认的新业务政策藏进代码。
-- 一个事实只在其拥有者处维护，其它文档链接它。实施状态在 Issues；测试输出不是另一套台账。
+- 产品目标：Northstar 与当前 owning Issue。
+- 当前行为：源码、数据库约束和测试。
+- 配置：typed Settings 与 [`.env.example`](.env.example)。
+- 当前工作状态：GitHub Issues / 当前 PR。
+- 历史调查和旧实现留在 Git history、已关闭 Issue 和来源仓，不作为普通开发必读。
+
+一个事实只保留一个当前 owner。不要为已有 authority 再建立 roadmap、evidence registry、manifest、兼容包装层或第二套状态台账。
 
 ## 必须保持
 
-产品轮次与执行尝试分离；受理和入队原子化；输入版本与规则绑定可追溯；机器结果与人工复核分别保存；所有数据访问执行租户与对象授权。详细语义只在 Northstar 和 DATA_MODEL 定义。
+- 所有数据访问执行租户与对象授权。
+- 审核轮次与执行尝试分离；显式重审才创建新轮次。
+- 受理与入队保持原子边界，晚到 Worker 不能覆盖当前结果。
+- 历史轮次引用明确的文件版本和规则版本。
+- 机器结果与人工复核分别保存，未知/空结果不能变成 PASS。
+- 外部非幂等操作遇到未知结果时先读回/对账，不盲目重试。
 
-## 配置边界
+## 开发方式
 
-Core LLM 固定走 Responses-compatible API。canonical 配置是 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；isolated-dev 的 Base URL/Model 默认是 `https://api.trustedtunnel.app/v1` / `gpt-5.6-luna`，因此日常开发只需注入 API key。Cursor 把 Base URL/Model 也存为 Secret 可接受；这不改变它们是普通配置的语义。
+优先走最短正确路径：修改局部源码 → 跑最近的 unit/integration test → 必要时跑一个真实外部边界测试。没有当前消费者或当前失败，不增加抽象、配置、gate 或服务。
 
-不要添加第二套 `OPENAI_*` authority，也不要增加 `LLM_PROTOCOL`。真实外部 readiness 由独立的 `LLM readiness` 与 `Feishu readiness` reusable workflow 用 `curl + jq` 验证；每次 push 的 `Push preflight` 必须等两者成功后才继续后续 verification。两者也可单独手动运行，成功不等于产品验收通过。Feishu、Partner AI、legacy engine 等是可选 capability，缺配置不能阻止 core stack 启动。详细规则见 [DEVELOPMENT](docs/DEVELOPMENT.md)。
+外部 LLM、飞书、Partner AI 等按 capability 使用；它们的临时不可用不能阻塞无关 Core 测试。凭据只进入 gitignored 本地配置或运行时 Secret，日志不保留 token、cookie 或客户原文。
 
-## 开发与交付
-
-先验证当前 Issue/PR，避免重复工作。一次提交一个可审查结果，验证后 commit & push；不得覆盖并发提交。更新直接相关文档，不增加说明旧说明的包装层。
-
-Live 验证使用授权的隔离环境和真实依赖，正常调用费用已获许可。隔离环境中的外部账号仍须属于测试范围。凭据只进 gitignored 本地配置或 Runtime Secret，日志不保留 token 或客户内容。失败如实报告，不能重跑业务操作抹掉失败。
-
-目标应用已有 isolated-dev 启动路径，见 [DEVELOPMENT](docs/DEVELOPMENT.md) 的 `python tools/stack.py`。不要声称 Live Stories 或 E2E 已通过。工具、应用与发布各自报告验证范围。
+开发命令见 [DEVELOPMENT](docs/DEVELOPMENT.md)，测试策略见 [TESTING](docs/TESTING.md)。
