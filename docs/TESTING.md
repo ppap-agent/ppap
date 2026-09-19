@@ -16,7 +16,7 @@
 PYTHONPATH=packages:services/api:services/worker python -m unittest discover -s tests/unit -v
 ```
 
-GitHub Actions 在 push / pull request 上直接运行这组测试。Core CI 不依赖 LLM、飞书或其它可选外部 provider 的在线状态。
+GitHub Actions 在 push / pull request 上直接运行本仓测试。Core CI 不依赖 LLM、飞书、`ppap-agent` 或其它可选外部 provider 的在线状态。
 
 ## 本地集成检查
 
@@ -34,9 +34,11 @@ python tools/stack.py down
 
 ## Corpus / 引擎迁移
 
-#3 使用固定 `ppap-agent` revision 中已有的 V2 4.8、POC grouped、PSW cross-format pytest 和人工 expected。直接 checkout 固定 revision 并运行原生 tests；失败就是迁移输入，不另建 corpus runner。
+#3 把 `ppap-agent` 中仍属于 PPAP 产品的 V2 4.8、POC grouped、PSW cross-format pytest、必要 helper、fixture 和人工 expected **一次性迁入本仓**。迁移后，本仓 test tree 是唯一当前 authority，GitHub Actions 不再 checkout 旧仓。
 
-#6 每次从一个真实失败测试出发，只迁入让当前支持用例通过所需的最小代码。
+没有具体访问/分发限制的长期测试资产优先随测试进入本仓。若某个具体文件确有真实限制，只对该文件采用合适的存储/权限方案，不把整个 corpus 外置成架构前提。
+
+#6 只从本仓 corpus test 的真实失败出发，迁入让当前支持用例通过所需的最小实现。
 
 ## 外部系统
 
