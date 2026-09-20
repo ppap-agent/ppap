@@ -42,3 +42,6 @@ GRANT SELECT ON engine.worker_heartbeats TO ppap_api;
 GRANT SELECT, INSERT, UPDATE ON engine.jobs TO ppap_worker;
 GRANT SELECT, INSERT, UPDATE ON engine.attempts TO ppap_worker;
 GRANT SELECT, INSERT, UPDATE ON engine.worker_heartbeats TO ppap_worker;
+
+INSERT INTO product.schema_migrations (version) VALUES ('0002_engine_queue.sql')
+ON CONFLICT DO NOTHING;

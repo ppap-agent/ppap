@@ -1,24 +1,23 @@
-"""Canonical install/quality/test/build entry."""
+"""Deploy contracts: compose interpolation, bake tags, nginx aliases, SQL migrations."""
 from __future__ import annotations
 
-import json
 import os
 import re
-import sys
-import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT), str(ROOT / "packages")]
+SILO_IMAGE = (
+    "docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z"
+    "@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46"
+)
+SILO_RELEASE = "RELEASE.2026-09-16T00-00-00Z"
 
-from tools.dev import cmd_build, cmd_quality
-from tools.migrate import latest_version, migration_versions, previous_version
-from tools.paths import PYTHONPATH_PARTS, git_sha, pythonpath
-from tools.stack import pythonpath as stack_pythonpath
-from tools.web_server import write_runtime_config
+
+def migration_files() -> list[Path]:
+    return sorted(path for path in (ROOT / "migrations").glob("*.sql") if path.name[:4].isdigit())
 
 
 def _compose_services(compose: str) -> dict[str, str]:
@@ -92,50 +91,22 @@ def _interpolated_environment(body: str, values: dict[str, str]) -> dict[str, st
     return {key: _interpolate(raw, values) for key, raw in _service_environment(body).items()}
 
 
-class DevToolingTests(unittest.TestCase):
-    def test_pythonpath_is_shared_with_stack(self):
-        self.assertEqual(pythonpath(), stack_pythonpath())
-        self.assertTrue(any(str(path).endswith("ppap_excel_audit_engine/src") for path in PYTHONPATH_PARTS))
-
-    def test_quality_compiles_canonical_tools(self):
-        with patch.dict(os.environ, {"PPAP_BUILD_SHA": "a" * 40}):
-            self.assertEqual(cmd_quality(), 0)
+class DeployContractTests(unittest.TestCase):
+    def test_tools_orchestration_directory_is_gone(self):
+        self.assertFalse((ROOT / "tools").exists())
 
     def test_migrations_are_ordered_sql_files(self):
-        versions = migration_versions()
+        versions = [path.name for path in migration_files()]
         self.assertGreaterEqual(len(versions), 2)
         self.assertEqual(versions, sorted(versions))
-        self.assertEqual(previous_version(), versions[-2])
-        self.assertEqual(latest_version(), versions[-1])
-        self.assertTrue((ROOT / "migrations" / latest_version()).is_file())
-
-    def test_build_writes_identity_and_web_for_the_git_revision(self):
-        sha = "b" * 40
-        with tempfile.TemporaryDirectory() as tmp:
-            dist = Path(tmp) / "dist"
-            with patch("tools.dev.DIST", dist), patch("tools.dev.git_sha", return_value=sha):
-                self.assertEqual(cmd_build(), 0)
-            identity = json.loads((dist / "identity.json").read_text())
-            self.assertEqual(identity["git_sha"], sha)
-            self.assertEqual(identity["images"], {})
-            self.assertTrue((dist / "web" / "index.html").is_file())
-            self.assertTrue((dist / "web" / "addon.html").is_file())
-            self.assertTrue((dist / "web" / "audit-files.html").is_file())
-            self.assertTrue((dist / "web" / "usage.html").is_file())
-            self.assertTrue((dist / "web" / "product-api.js").is_file())
-            self.assertEqual(json.loads((dist / "web" / "build-identity.json").read_text())["git_sha"], sha)
-            self.assertFalse((dist / "web" / "runtime-config.json").exists())
-
-    def test_web_runtime_config_comes_from_public_api_url(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            dest = Path(tmp)
-            with patch.dict(os.environ, {"PPAP_PUBLIC_API_URL": "https://api.example/"}):
-                write_runtime_config(dest)
-            self.assertEqual(json.loads((dest / "runtime-config.json").read_text())["api_url"], "https://api.example")
-
-    def test_forced_build_sha_wins(self):
-        with patch.dict(os.environ, {"PPAP_BUILD_SHA": "c" * 40}):
-            self.assertEqual(git_sha(), "c" * 40)
+        apply = (ROOT / "migrations" / "apply.sql").read_text()
+        for name in versions:
+            self.assertIn(f"\\ir {name}", apply)
+            self.assertIn(
+                f"INSERT INTO product.schema_migrations (version) VALUES ('{name}')",
+                (ROOT / "migrations" / name).read_text(),
+            )
+        self.assertTrue((ROOT / "migrations" / "bootstrap.sql").is_file())
 
     def test_requirements_match_pyproject_pins(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
@@ -156,28 +127,40 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("ppap_core*", cfg["include"])
         self.assertIn("ppap_excel_audit_engine*", cfg["include"])
 
-    def test_build_records_image_tags_for_the_same_revision(self):
-        sha = "d" * 40
-        with tempfile.TemporaryDirectory() as tmp:
-            dist = Path(tmp) / "dist"
-            with (
-                patch("tools.dev.DIST", dist),
-                patch("tools.dev.git_sha", return_value=sha),
-                patch.dict(os.environ, {"PPAP_BUILD_IMAGES": "1"}),
-                patch("tools.dev.shutil.which", return_value="/usr/bin/docker"),
-                patch("tools.dev.run", return_value=0) as run,
-            ):
-                self.assertEqual(cmd_build(), 0)
-            identity = json.loads((dist / "identity.json").read_text())
-            self.assertEqual(
-                identity["images"],
-                {"api": f"ppap-api:{sha}", "worker": f"ppap-worker:{sha}", "web": f"ppap-web:{sha}"},
-            )
-            self.assertEqual(run.call_count, 3)
-            first = run.call_args_list[0].args[0]
-            self.assertIn(f"PPAP_BUILD_SHA={sha}", first)
-            self.assertIn("PPAP_SERVICE=api", first)
-            self.assertIn("PPAP_SERVICE=worker", run.call_args_list[1].args[0])
+    def test_bake_tags_api_worker_web_with_the_same_sha(self):
+        bake = (ROOT / "docker-bake.hcl").read_text()
+        self.assertIn('targets = ["api", "worker", "web"]', bake)
+        self.assertIn("ppap-api:${PPAP_BUILD_SHA}", bake)
+        self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", bake)
+        self.assertIn("ppap-web:${PPAP_BUILD_SHA}", bake)
+        self.assertIn("PPAP_SERVICE   = \"api\"", bake)
+        self.assertIn("PPAP_SERVICE   = \"worker\"", bake)
+        app = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
+        self.assertNotIn("COPY tools", app)
+        self.assertNotIn("postgresql-client", app)
+        web = (ROOT / "deploy" / "web" / "Dockerfile").read_text()
+        self.assertIn("FROM nginx:1.27-alpine", web)
+        self.assertNotIn("web_server.py", web)
+        self.assertIn("build-identity.json", web)
+
+    def test_nginx_aliases_match_baseline_customer_entries(self):
+        conf = (ROOT / "deploy" / "web" / "nginx.conf").read_text()
+        self.assertIn("listen 4173", conf)
+        self.assertIn("location = /audit-files", conf)
+        self.assertIn("try_files /audit-files.html =404", conf)
+        self.assertIn("location = /addon", conf)
+        self.assertIn("try_files /addon.html =404", conf)
+        self.assertIn("location = /usage", conf)
+        self.assertIn("try_files /usage.html =404", conf)
+        self.assertIn("return 301 /audit-files$is_args$args", conf)
+        self.assertIn("try_files $uri $uri/ =404", conf)
+        entry = (ROOT / "deploy" / "web" / "entrypoint.sh").read_text()
+        self.assertIn("runtime-config.json", entry)
+        self.assertIn("PPAP_PUBLIC_API_URL", entry)
+
+    def test_web_entrypoint_writes_runtime_config_from_public_api_url(self):
+        script = (ROOT / "deploy" / "web" / "entrypoint.sh").read_text()
+        self.assertIn('printf \'{"api_url":"%s"}\\n\' "$api"', script)
 
     def test_compose_fixture_is_production_and_not_isolated_dev(self):
         from ppap_core.settings import ISOLATED_DEV_S3_ENDPOINT, ISOLATED_DEV_SECRET, Settings
@@ -191,15 +174,12 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("ppap-api:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
-        self.assertIn("python tools/dev.py provision", compose)
+        self.assertIn("bootstrap.sql", compose)
+        self.assertIn("apply.sql", compose)
+        self.assertNotIn("python tools/", compose)
         self.assertNotIn("minio/minio:", compose)
         self.assertNotIn("ppap-minio:", compose)
-        self.assertNotIn("context: minio", compose)
         self.assertFalse((ROOT / "deploy" / "minio" / "Dockerfile").exists())
-        app_dockerfile = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
-        self.assertIn("postgresql-client", app_dockerfile)
-        from tools.stack import SILO_ARCHIVE_SHA256, SILO_IMAGE, SILO_RELEASE
-
         self.assertIn(SILO_IMAGE, compose)
         self.assertIn(SILO_RELEASE, compose)
         self.assertIn('command: ["server", "/data", "--console-address", ":9001"]', compose)
@@ -209,12 +189,15 @@ class DevToolingTests(unittest.TestCase):
         isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
         self.assertIn(SILO_IMAGE, isolated)
         self.assertNotIn("minio/minio:", isolated)
-        self.assertEqual(len(SILO_ARCHIVE_SHA256), 64)
+        self.assertIn("init-db", isolated)
+        self.assertIn("ppap-api:", isolated)
 
         services = _compose_services(compose)
         self.assertIn("silo", services)
         self.assertNotIn("minio", services)
-        self.assertIn("${PPAP_COMPOSE_ENV_FILE:-compose.env.example}", services["init"])
+        self.assertIn("init-db", services)
+        self.assertIn("init-bucket", services)
+        self.assertNotIn("init", services)
         self.assertNotIn("env_file:", services["api"])
         self.assertNotIn("env_file:", services["worker"])
         self.assertIn("PPAP_PG_HOST: ${PPAP_PG_HOST}", services["api"])
@@ -237,6 +220,9 @@ class DevToolingTests(unittest.TestCase):
         self.assertNotIn("PPAP_PG_API_PASSWORD", services["worker"])
         self.assertIn("LOG_FORMAT: json", services["api"])
         self.assertIn("LOG_FORMAT: json", services["worker"])
+        self.assertIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["init-db"])
+        self.assertIn("PPAP_PG_MIGRATOR_PASSWORD", services["init-db"])
+        self.assertNotIn("PPAP_PG_API_PASSWORD", services["init-bucket"])
 
         parsed: dict[str, str] = {}
         for line in env_text.splitlines():
@@ -254,29 +240,6 @@ class DevToolingTests(unittest.TestCase):
         ))
         self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
         self.assertEqual(parsed["PPAP_S3_ENDPOINT"], "http://silo:9000")
-
-    def test_compose_selects_explicit_env_file_for_init_and_runtime(self):
-        from tools.dev import _compose, _compose_envfile, compose_env_file, compose_file, take_compose_env_args
-
-        fixture = (ROOT / "deploy" / "compose.env.example").resolve()
-        self.assertEqual(compose_env_file(), fixture)
-        with tempfile.TemporaryDirectory() as tmp:
-            selected = Path(tmp) / "production.env"
-            selected.write_text(fixture.read_text() + "PPAP_WEB_URL=https://app.example\n", encoding="utf-8")
-            with patch.dict(os.environ, {"PPAP_COMPOSE_ENV": str(selected)}, clear=False):
-                self.assertEqual(compose_env_file(), selected.resolve())
-                self.assertEqual(_compose_envfile()["PPAP_WEB_URL"], "https://app.example")
-                leftover = take_compose_env_args(["--env-file", str(selected), "dist/backups/x"])
-                self.assertEqual(leftover, ["dist/backups/x"])
-                with patch("tools.dev.subprocess.call", return_value=0) as call:
-                    self.assertEqual(_compose("deadbeef", "up", "-d"), 0)
-                    cmd = call.call_args.args[0]
-                    env = call.call_args.kwargs["env"]
-                self.assertEqual(cmd[cmd.index("--env-file") + 1], str(selected.resolve()))
-                self.assertEqual(cmd[cmd.index("-f") + 1], str(compose_file()))
-                self.assertNotEqual(Path(cmd[cmd.index("--env-file") + 1]), fixture)
-                self.assertEqual(env["PPAP_COMPOSE_ENV_FILE"], str(selected.resolve()))
-        self.assertEqual(compose_env_file(), fixture)
 
     def test_selected_env_drives_pg_host_and_feishu_without_init_secrets(self):
         compose = (ROOT / "deploy" / "compose.yaml").read_text()
@@ -309,6 +272,7 @@ class DevToolingTests(unittest.TestCase):
 
         api = _interpolated_environment(services["api"], selected)
         worker = _interpolated_environment(services["worker"], selected)
+        init_db = _interpolated_environment(services["init-db"], selected)
         self.assertEqual(api["PPAP_PG_HOST"], "db.example.internal")
         self.assertEqual(api["PPAP_PG_PORT"], "6543")
         self.assertEqual(worker["PPAP_PG_HOST"], "db.example.internal")
@@ -320,6 +284,9 @@ class DevToolingTests(unittest.TestCase):
         self.assertEqual(api["FEISHU_VERIFICATION_TOKEN"], "verify-prod")
         self.assertEqual(api["FEISHU_AI_ITEM_ID"], "item-prod")
         self.assertEqual(api["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "2500")
+        self.assertEqual(init_db["PGHOST"], "db.example.internal")
+        self.assertEqual(init_db["PGPASSWORD"], "boot-secret")
+        self.assertEqual(init_db["PPAP_PG_MIGRATOR_PASSWORD"], "mig-secret")
         self.assertNotIn("FEISHU_APP_ID", worker)
         self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", api)
         self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", api)
@@ -330,43 +297,8 @@ class DevToolingTests(unittest.TestCase):
         self.assertNotIn("FEISHU_APP_SECRET", worker)
         self.assertNotIn("PADDLE_TOKEN", api)
         self.assertNotIn("OCR_OPENAI_API_KEY", api)
-
-        self.assertIn("${PPAP_COMPOSE_ENV_FILE:-compose.env.example}", services["init"])
-        self.assertNotIn("PPAP_PG_HOST:", services["init"])
         self.assertEqual(selected["PPAP_PG_HOST"], api["PPAP_PG_HOST"])
         self.assertEqual(selected["PPAP_PG_PORT"], worker["PPAP_PG_PORT"])
-        self.assertEqual(selected["PPAP_PG_BOOTSTRAP_PASSWORD"], "boot-secret")
-        self.assertEqual(selected["PPAP_PG_MIGRATOR_PASSWORD"], "mig-secret")
-
-    def test_backup_restore_rollback_are_canonical_commands(self):
-        from tools.dev import _sql_ident, cmd_restore, cmd_rollback, latest_backup
-
-        source = (ROOT / "tools" / "dev.py").read_text()
-        self.assertIn('"backup"', source)
-        self.assertIn('"restore"', source)
-        self.assertIn('"rollback"', source)
-        self.assertIn("--no-deps", source)
-        self.assertIn('OBJECT_STORE_SERVICE = "silo"', source)
-        self.assertIn('OBJECT_STORE_VOLUME = "silo-data"', source)
-        self.assertIn('f"{OBJECT_STORE_VOLUME}:/data"', source)
-        self.assertNotIn('exec", "-T", "minio"', source)
-        self.assertNotIn('exec", "-T", "silo", "tar"', source)
-        self.assertEqual(_sql_ident("ppap"), "ppap")
-        with self.assertRaises(ValueError):
-            _sql_ident("ppap;drop")
-        self.assertEqual(cmd_restore([]), 1)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            old = root / "20260101T000000Z"
-            new = root / "20260102T000000Z"
-            old.mkdir()
-            new.mkdir()
-            (old / "manifest.json").write_text("{}\n")
-            (new / "manifest.json").write_text("{}\n")
-            with patch("tools.dev.BACKUP_ROOT", root):
-                self.assertEqual(latest_backup(), new)
-            with patch("tools.dev.BACKUP_ROOT", root), patch("tools.dev.shutil.which", return_value="/usr/bin/docker"):
-                self.assertEqual(cmd_rollback(), 1)
 
 
 if __name__ == "__main__":

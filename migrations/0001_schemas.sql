@@ -19,3 +19,6 @@ CREATE TABLE IF NOT EXISTS product.schema_migrations (
 );
 
 GRANT SELECT ON product.schema_migrations TO ppap_api;
+
+INSERT INTO product.schema_migrations (version) VALUES ('0001_schemas.sql')
+ON CONFLICT DO NOTHING;

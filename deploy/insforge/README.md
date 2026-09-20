@@ -36,10 +36,12 @@ InsForge PostgreSQL cluster
 `PPAP_PG_HOST=postgres` on `insforge-network`. Bootstrap user/password are InsForge `POSTGRES_USER` / `POSTGRES_PASSWORD`. Then:
 
 ```sh
-python tools/dev.py deploy --compose-file deploy/insforge/compose.yaml --env-file deploy/insforge/env.example
+export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+docker buildx bake
+docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example up -d --wait
 ```
 
-Fill secrets in a gitignored env file first. `init` is the only process that reads bootstrap/migrator credentials and runs `python tools/dev.py provision`. This overlay does not start PostgreSQL; it joins the existing InsForge network.
+Fill secrets in a gitignored env file first. `init-db` is the only process that reads bootstrap/migrator credentials and runs `psql` against `migrations/bootstrap.sql` and `migrations/apply.sql`. This overlay does not start PostgreSQL; it joins the existing InsForge network.
 
 Do not import `ppap-host` schemas (`ppap_documents` / `ppap_jobs` / `ppap_findings`).
 
@@ -64,13 +66,13 @@ Set the same service env as the JSON specs (`--env-set`). Worker must stay `ingr
 
 PPAP keeps its S3 abstraction (`PPAP_S3_*`). Phase 1 keeps a dedicated [PGSTY Silo](https://github.com/pgsty/silo) for PPAP objects because the InsForge S3 gateway is a subset (default ~50MB uploads, no versioning). The compose service is the pinned classic image `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z` (not `:latest`, not distroless). Objects live on the named volume `ppap-silo-data`, not the container writable layer. Silo still reads `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`. InsForge storage backup does not include those objects.
 
-`python tools/dev.py undeploy --compose-file deploy/insforge/compose.yaml` stops PPAP services and does **not** pass `-v`. The named object volume stays. Verification `deploy/compose.yaml` may still wipe volumes so CI can start clean.
+`docker compose -f deploy/insforge/compose.yaml down` stops PPAP services **without `-v`**. The named object volume stays. Verification `deploy/compose.yaml` may still wipe volumes so CI can start clean.
 
 If InsForge Model Gateway speaks the current OpenAI-compatible contract, point `LLM_BASE_URL` at it. OCR and other special providers stay as they are unless that contract actually matches.
 
 ## Backup and restore
 
-InsForge cluster backup and PPAP object backup are separate. `python tools/dev.py backup --compose-file deploy/insforge/compose.yaml --env-file …` dumps the `ppap` database through the init image against `PPAP_PG_HOST` (no compose `postgres` service) and archives Silo `/data` by mounting `silo-data` into that same init image (`tar` is not in the ubi-micro Silo image). Restore/rollback use the same split. Changing a compute image or env recreates the container and discards its filesystem; durable state stays in PostgreSQL and object storage.
+InsForge cluster backup and PPAP object backup are separate. Dump the `ppap` database with `pg_dump` through the `init-db` image against `PPAP_PG_HOST` (no compose `postgres` service) and archive Silo `/data` by mounting `silo-data` into that same postgres image (`tar` is not in the ubi-micro Silo image). Restore uses the same split. Changing a compute image or env recreates the container and discards its filesystem; durable state stays in PostgreSQL and object storage.
 
 ## Web
 

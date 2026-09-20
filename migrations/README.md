@@ -7,9 +7,16 @@ One PostgreSQL cluster, two responsibility schemas:
 
 Migrations are forward-only and reviewed with the application change that needs them.
 
-Canonical apply: `python tools/dev.py migrate`（对已配置的 PostgreSQL 执行 pending SQL）。isolated-dev 空库需要先有进程和角色：`python tools/stack.py migrate` 或 `python tools/stack.py up`。
+Apply with `psql`. Empty cluster:
 
-Empty → latest 与 previous → latest 的运行验证：`python tools/dev.py test schema`。
+```sh
+psql -d postgres -v ON_ERROR_STOP=1 -f migrations/bootstrap.sql
+psql -d ppap -v ON_ERROR_STOP=1 -f migrations/apply.sql
+```
+
+`bootstrap.sql` creates least-privilege roles (`ppap_migrator`, `ppap_api`, `ppap_worker`) and the application database from `PPAP_PG_*` environment variables. `apply.sql` `\ir`s the numbered files in order. Each numbered file records itself in `product.schema_migrations` and is safe to re-run.
+
+Compose `init-db` runs the same two `psql` invocations. Empty → latest 与 previous → latest 的运行验证：`python -m unittest tests.schema.test_upgrade -v`（需要 isolated-dev postgres）。
 
 Rules:
 

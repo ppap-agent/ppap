@@ -1,4 +1,4 @@
-# Pin dump matching pyproject.toml. Canonical install: python tools/dev.py install
+# Pin dump matching pyproject.toml. Canonical install: python -m pip install -e ".[dev]"
 fastapi==0.115.8
 uvicorn==0.34.0
 pydantic==2.10.6

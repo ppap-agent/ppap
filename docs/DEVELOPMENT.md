@@ -10,8 +10,8 @@
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
 - 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
-- 生产 compose 默认注入 `deploy/compose.env.example`（CI fixture）。真实部署把填好密钥的文件交给同一入口：`PPAP_COMPOSE_ENV=.env python tools/dev.py deploy` 或 `python tools/dev.py deploy --env-file .env`。`init` 读取整份选定文件；API/Worker 只插值各自拥有的字段（含选定的 `PPAP_PG_HOST`/`PPAP_PG_PORT`，以及 API 的飞书变量），不含 bootstrap/migrator 或对方角色口令。
-- 把 API/Worker 接到已有的 self-hosted InsForge PostgreSQL 时，改用 `python tools/dev.py deploy --compose-file deploy/insforge/compose.yaml --env-file deploy/insforge/env.example`。该 overlay 不启动 postgres，加入外部 `insforge-network`。Custom Compute 规格在 `deploy/insforge/compute/`。
+- 生产 compose 用 Docker Compose 的 `--env-file` 注入。CI fixture 是 `deploy/compose.env.example`。真实部署把填好密钥的文件交给同一个 `--env-file`。`init-db` 读取 bootstrap/migrator 口令并用 `psql` 执行 `migrations/bootstrap.sql` 与 `migrations/apply.sql`；`init-bucket` 用 Silo `mcli` 确保对象桶。API/Worker 只插值各自拥有的字段（含选定的 `PPAP_PG_HOST`/`PPAP_PG_PORT`，以及 API 的飞书变量），不含 bootstrap/migrator 或对方角色口令。
+- 把 API/Worker 接到已有的 self-hosted InsForge PostgreSQL 时，用 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example up -d`。该 overlay 不启动 postgres，加入外部 `insforge-network`。Custom Compute 规格在 `deploy/insforge/compute/`。
 - `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。
@@ -19,37 +19,30 @@
 
 ## 当前命令
 
-Canonical 入口是 `python tools/dev.py`。isolated-dev 进程仍由 `python tools/stack.py` 管理。
+Local 与 CI 使用同一组 native 工具：pip、unittest/pytest、git、compileall、Docker Buildx bake、Docker Compose、psql。
 
 ```sh
-python tools/dev.py install
-python tools/dev.py quality
-python tools/dev.py test
-python tools/dev.py build
-python tools/dev.py deploy
-python tools/dev.py upgrade
-python tools/dev.py undeploy
-python tools/dev.py backup
-python tools/dev.py restore
-python tools/dev.py rollback
-python tools/dev.py migrate
+python -m pip install -e ".[dev]"
+git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
+python -m compileall -q packages services tests
+python -m unittest discover -s tests/unit -v
 
-python tools/stack.py up
-python tools/stack.py verify
-python tools/stack.py seed-auth
-python tools/stack.py verify-auth
-python tools/stack.py verify-uploads
-python tools/stack.py verify-audit
-python tools/stack.py down
+export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+docker buildx bake
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
+
+docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-`python tools/dev.py test` 跑 unit。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产制品：`python tools/dev.py build` 写 `dist/identity.json` 与 `dist/web`；`PPAP_BUILD_IMAGES=1 python tools/dev.py build` 额外打 `ppap-api` / `ppap-worker` / `ppap-web` 镜像，标签为同一 Git revision。`python tools/dev.py migrate` 把配置的 PostgreSQL 从当前 schema 升到 latest（不对 isolated-dev 集群做 bootstrap；本地空库用 `python tools/stack.py migrate`）。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。schema 由 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`、`python tools/dev.py`。CI 调用与本地相同的 install/quality/test/build/migrate/deploy/backup。后续若把 Ruff、Pyright 或 Vite 收进来，仍走这一入口，不另起流水线逻辑。#15 剩余：客户入口切到新主路径之后再 sunset `ppap-agent`；compose 验证不等于客户 cut-over。
+当前实现是 Python 3.12、单一 `pyproject.toml`。质量检查是 `git show --check` 与 `compileall`；测试是 unittest / pytest；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。#15 剩余：客户入口切到新主路径之后再 sunset `ppap-agent`；compose 验证不等于客户 cut-over。
 
 ## 迁移工作
 

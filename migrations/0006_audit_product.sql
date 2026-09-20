@@ -109,3 +109,6 @@ GRANT SELECT ON
 TO ppap_worker;
 GRANT UPDATE ON product.audit_rounds TO ppap_worker;
 GRANT INSERT, UPDATE ON product.findings TO ppap_worker;
+
+INSERT INTO product.schema_migrations (version) VALUES ('0006_audit_product.sql')
+ON CONFLICT DO NOTHING;

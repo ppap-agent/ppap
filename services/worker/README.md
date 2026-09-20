@@ -2,7 +2,7 @@
 
 PPAP 的异步执行进程。
 
-isolated-dev 使用 `python tools/stack.py up` 启动。Worker 是独立进程；停止 Worker 不应让 API `/health` 失败。
+isolated-dev 使用 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动。Worker 是独立进程；停止 Worker 不应让 API `/health` 失败。
 
 ## 当前 main
 

@@ -90,3 +90,6 @@ GRANT SELECT, INSERT, UPDATE ON
     product.resources,
     product.resource_grants
 TO ppap_api;
+
+INSERT INTO product.schema_migrations (version) VALUES ('0003_identity.sql')
+ON CONFLICT DO NOTHING;

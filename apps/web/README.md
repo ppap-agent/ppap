@@ -1,6 +1,6 @@
 # Web Client
 
-浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。isolated-dev 通过 `python tools/stack.py up` 启动本地 Web。
+浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。isolated-dev 通过 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动本地 Web。
 
 ## 当前 main
 

@@ -5,34 +5,26 @@ Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只�
 ## Unit
 
 ```sh
-python tools/dev.py install
-python tools/dev.py quality
-python tools/dev.py test
+python -m pip install -e ".[dev]"
+git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
+python -m compileall -q packages services tests
+python -m unittest discover -s tests/unit -v
 ```
 
 ## Corpus
 
 ```sh
-python tools/dev.py test pytest tests/corpus/v2_assets --ftype excel -q
-python tools/dev.py test pytest tests/corpus/v2_assets --ftype pdf -q
-python tools/dev.py test pytest tests/corpus/v2_assets --ftype scanned -q
-python tools/dev.py test pytest tests/corpus/v3_poc -q
-python tools/dev.py test pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+python -m pytest tests/corpus/v2_assets --ftype excel -q
+python -m pytest tests/corpus/v2_assets --ftype pdf -q
+python -m pytest tests/corpus/v2_assets --ftype scanned -q
+python -m pytest tests/corpus/v3_poc -q
+python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
-## Local integration
+## Schema / deploy / E2E
 
-```sh
-python tools/stack.py up
-python tools/stack.py verify
-python tools/stack.py verify-auth
-python tools/stack.py verify-uploads
-python tools/stack.py verify-audit
-python tools/stack.py down
-```
+#7 / #11 浏览器 E2E：`python -m unittest tests.e2e.test_web_audit -v`（需 Playwright 与 `docker compose -f deploy/isolated-dev/compose.yaml up -d --wait`）。
 
-#7 / #11 浏览器 E2E：`python tools/dev.py test e2e`（需 Playwright 与 `python tools/stack.py up`）。
+Schema upgrade：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres init-db --wait && python -m unittest tests.schema.test_upgrade -v`。
 
-Schema upgrade：`python tools/stack.py migrate && python tools/dev.py migrate && python tools/dev.py test schema`。
-
-Production compose：`PPAP_BUILD_IMAGES=1 python tools/dev.py deploy && python tools/dev.py test deploy && python tools/dev.py backup && python tools/dev.py test backup && python tools/dev.py undeploy`。
+Production compose：`PPAP_BUILD_SHA="$(git rev-parse HEAD)" docker buildx bake && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait && python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans`。

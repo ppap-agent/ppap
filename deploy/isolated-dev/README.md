@@ -1,7 +1,9 @@
-# isolated-dev infrastructure
+# isolated-dev stack
 
-`python tools/stack.py up` is the supported one-command start. It runs PostgreSQL and [PGSTY Silo](https://github.com/pgsty/silo) as local processes so Cloud Agent VMs without a usable Docker daemon can still boot the stack. The Silo linux amd64 archive is pinned to the same release as production compose.
+```sh
+docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
+```
 
-This Compose file is optional, for hosts that already run Docker. It uses the same isolated-dev credentials and loopback ports (S3 `:9000`, console `:9001`). Prefer `python tools/stack.py up` unless you are replacing only the data services.
+This Compose file is the isolated-dev product stack: PostgreSQL, [PGSTY Silo](https://github.com/pgsty/silo), `psql` bootstrap/migrations, the object bucket, API, Worker, and nginx Web. Credentials match [`.env.dev`](../../.env.dev). S3 inside the compose network is `http://silo:9000`; loopback ports stay published for host tools (`5432`, `9000`, `9001`, `8080`, `4173`).
 
 Silo is AGPL and S3-compatible. Phase-1 production compose uses the same pinned classic image; the application still talks S3 through `PPAP_S3_*`.

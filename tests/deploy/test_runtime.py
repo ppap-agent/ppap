@@ -1,17 +1,21 @@
-"""Live checks against a `python tools/dev.py deploy` compose stack."""
+"""Live checks against a docker compose production stack."""
 from __future__ import annotations
 
 import json
 import os
-import sys
+import subprocess
 import unittest
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT)]
 
-from tools.paths import git_sha
+
+def _sha() -> str:
+    forced = os.environ.get("PPAP_BUILD_SHA", "").strip()
+    if forced:
+        return forced
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
 
 def _get(path: str) -> tuple[int, dict | str]:
@@ -25,7 +29,7 @@ def _get(path: str) -> tuple[int, dict | str]:
 
 class DeployRuntimeTests(unittest.TestCase):
     def test_api_health_version_and_ready_use_the_image_sha(self):
-        sha = os.environ.get("PPAP_BUILD_SHA") or git_sha()
+        sha = _sha()
         status, health = _get("/health")
         self.assertEqual(status, 200)
         self.assertEqual(health["status"], "alive")
@@ -39,8 +43,18 @@ class DeployRuntimeTests(unittest.TestCase):
         self.assertEqual(ready["postgres"]["state"], "ok")
         self.assertEqual(ready["object_storage"]["state"], "ok")
 
-    def test_web_serves_the_workbench(self):
+    def test_web_serves_the_workbench_and_customer_aliases(self):
         with urllib.request.urlopen("http://127.0.0.1:4173/", timeout=5) as response:
             body = response.read().decode()
             self.assertEqual(response.status, 200)
             self.assertIn("<", body)
+        with urllib.request.urlopen("http://127.0.0.1:4173/audit-files", timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("审核文件", response.read().decode())
+        with urllib.request.urlopen("http://127.0.0.1:4173/addon", timeout=5) as response:
+            self.assertIn("PPAP Audit", response.read().decode())
+        with urllib.request.urlopen("http://127.0.0.1:4173/usage", timeout=5) as response:
+            self.assertIn('data-testid="usage-list"', response.read().decode())
+        with urllib.request.urlopen("http://127.0.0.1:4173/runtime-config.json", timeout=5) as response:
+            config = json.loads(response.read().decode())
+            self.assertEqual(config["api_url"], "http://127.0.0.1:8080")

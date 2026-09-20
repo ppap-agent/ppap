@@ -10,12 +10,10 @@ WORKDIR /app
 COPY pyproject.toml /app/
 COPY packages /app/packages
 COPY services /app/services
-COPY tools /app/tools
-COPY migrations /app/migrations
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libgomp1 libglib2.0-0 postgresql-client \
+    && apt-get install -y --no-install-recommends ca-certificates libgomp1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
     && chmod +x /app/entrypoint.sh \
     && pip install --no-cache-dir --upgrade pip \
