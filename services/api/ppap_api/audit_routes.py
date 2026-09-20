@@ -54,6 +54,27 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         return JSONResponse(store.create_draft(principal), status_code=201)
 
+    @app.post("/file-analyses")
+    def files_analyze(body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            result = store.accept_file_analysis(principal, body.get("request_id"), body.get("source_file_id"), body.get("source_file_version_id"))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+        return JSONResponse(result, status_code=202)
+
+    @app.get("/file-analyses/{analysis_id}")
+    def files_analysis_get(analysis_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.get_file_analysis(principal, analysis_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.get("/drafts/{draft_id}")
     def drafts_get(draft_id: str, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)

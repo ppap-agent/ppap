@@ -309,23 +309,35 @@ class MemoryAuthStore:
         return count
 
     def accept_rule_parse(self, principal, request_id, source_file_id, source_file_version_id, document_type=""):
+        return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "rule_parse", document_type)
+
+    def accept_file_analysis(self, principal, request_id, source_file_id, source_file_version_id):
+        return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_analysis")
+
+    def _accept_file_job(self, principal, request_id, source_file_id, source_file_version_id, kind, document_type=""):
         job_id, payload = rule_parse_request(request_id, source_file_id, source_file_version_id, document_type)
         prepared = self._prepared_items(principal, [{"file_version_id": payload["source_file_version_id"], "role": "reference"}])
         if prepared[0]["file_id"] != payload["source_file_id"]:
             raise KeyError("missing")
         previous = self.jobs.get(job_id)
         if previous:
-            if previous["tenant_id"] != principal.tenant_id or previous["kind"] != "rule_parse":
+            if previous["tenant_id"] != principal.tenant_id or previous["kind"] != kind:
                 raise KeyError("missing")
             if previous["payload"] != payload:
                 raise ValueError("rule_parse_conflict")
         else:
-            self.jobs[job_id] = {"id": job_id, "tenant_id": principal.tenant_id, "kind": "rule_parse", "payload": payload, "status": "queued", "attempt": 0, "created": len(self.jobs), "lease_until": None}
-        return self.get_rule_parse(principal, job_id)
+            self.jobs[job_id] = {"id": job_id, "tenant_id": principal.tenant_id, "kind": kind, "payload": payload, "status": "queued", "attempt": 0, "created": len(self.jobs), "lease_until": None}
+        return self._get_file_job(principal, job_id, kind)
 
     def get_rule_parse(self, principal, job_id):
+        return self._get_file_job(principal, job_id, "rule_parse")
+
+    def get_file_analysis(self, principal, job_id):
+        return self._get_file_job(principal, job_id, "file_analysis")
+
+    def _get_file_job(self, principal, job_id, kind):
         job = self.jobs.get(job_id)
-        if not job or job["tenant_id"] != principal.tenant_id or job["kind"] != "rule_parse":
+        if not job or job["tenant_id"] != principal.tenant_id or job["kind"] != kind:
             raise KeyError("missing")
         self._prepared_items(principal, [{"file_version_id": job["payload"]["source_file_version_id"], "role": "reference"}])
         return rule_parse_view(job_id, job["payload"], job["status"], job.get("result"), bool(job.get("lease_until") and job["lease_until"] < _now()))
@@ -333,7 +345,7 @@ class MemoryAuthStore:
     def list_rules(self, tenant_id: str) -> list[dict[str, str]]:
         rows = [row for row in self.rule_versions.values() if row["tenant_id"] == tenant_id]
         rows.sort(key=lambda row: (row.get("created_at", ""), row["id"]), reverse=True)
-        return [{"id": row["id"], "title": row["title"], "created_at": row.get("created_at"), "kind": str(row["body"].get("kind") or "engine"),
+        return [{"id": row["id"], "title": row["title"], "created_at": row.get("created_at"), "predecessor_id": row.get("predecessor_id"), "kind": str(row["body"].get("kind") or "engine"),
                  **{field: row["body"].get(field) for field in ("type", "rule_profile", "customers", "models", "parts")}} for row in rows]
 
     def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
@@ -521,7 +533,7 @@ class MemoryAuthStore:
             if job["status"] == "queued"
             or (
                 job["status"] == "leased"
-                and job["kind"] != "rule_parse"
+                and job["kind"] not in {"rule_parse", "file_analysis"}
                 and job.get("lease_until") is not None
                 and job["lease_until"] < now
             )
@@ -554,7 +566,7 @@ class MemoryAuthStore:
             return False
         job["status"] = "succeeded" if outcome == "succeeded" else "failed"
         job["lease_until"] = None
-        if claimed.kind == "rule_parse":
+        if claimed.kind in {"rule_parse", "file_analysis"}:
             job["result"] = result
         findings = result.get("findings") or []
         self.attempts[(claimed.id, claimed.attempt)] = {
