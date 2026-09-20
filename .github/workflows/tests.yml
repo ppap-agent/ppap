@@ -62,7 +62,7 @@ jobs:
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Bake images, compose up, runtime and backup checks
         env:
-          PPAP_BUILD_SHA: ${{ github.sha }}
+          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           uv pip install -e ".[dev]"
@@ -102,7 +102,7 @@ jobs:
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Isolated-dev compose and browser loop
         env:
-          PPAP_BUILD_SHA: ${{ github.sha }}
+          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           uv pip install -e ".[dev,e2e]"

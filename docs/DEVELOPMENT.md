@@ -36,7 +36,7 @@ docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。schema 由 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 

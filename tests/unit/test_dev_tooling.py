@@ -138,10 +138,13 @@ class DeployContractTests(unittest.TestCase):
         app = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
         self.assertNotIn("COPY tools", app)
         self.assertNotIn("postgresql-client", app)
+        self.assertLess(app.index("apt-get"), app.index("ARG PPAP_BUILD_SHA"))
+        self.assertIn("Acquire::Retries=5", app)
         web = (ROOT / "deploy" / "web" / "Dockerfile").read_text()
         self.assertIn("FROM nginx:1.27-alpine", web)
         self.assertNotIn("web_server.py", web)
         self.assertIn("build-identity.json", web)
+        self.assertLess(web.index("COPY apps/web"), web.index("ARG PPAP_BUILD_SHA"))
 
     def test_nginx_aliases_match_baseline_customer_entries(self):
         conf = (ROOT / "deploy" / "web" / "nginx.conf").read_text()
@@ -328,6 +331,7 @@ class DeployContractTests(unittest.TestCase):
         isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
         self.assertNotIn("127.0.0.1:9000:9000", isolated)
         self.assertNotIn("127.0.0.1:9001:9001", isolated)
+        self.assertIn("github.event.pull_request.head.sha", workflow)
 
 
 if __name__ == "__main__":
