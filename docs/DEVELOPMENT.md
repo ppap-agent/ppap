@@ -42,7 +42,7 @@ unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`。质量检查是 `git show --check` 与 `compileall`；测试是 unittest / pytest；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。schema / build / e2e 需要 Docker Engine、Compose 和 Buildx；self-hosted runner 上若缺失，CI 会安装 Debian `docker.io` / `docker-compose` / `docker-buildx`。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。#15 剩余：客户入口切到新主路径之后再 sunset `ppap-agent`；compose 验证不等于客户 cut-over。
+当前实现是 Python 3.12、单一 `pyproject.toml`。质量检查是 `git show --check` 与 `compileall`；测试是 unittest / pytest；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。schema / build / e2e 需要 Docker Engine、Compose 和 Buildx。self-hosted runner 上若 Engine 已可用，CI 只补 Compose/Buildx 插件，不会用 Debian `docker.io` 覆盖已安装的 `docker-ce`；仅在完全没有 Docker CLI 时才安装 `docker.io`。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。#15 剩余：客户入口切到新主路径之后再 sunset `ppap-agent`；compose 验证不等于客户 cut-over。
 
 ## 迁移工作
 

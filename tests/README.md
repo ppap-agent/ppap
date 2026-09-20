@@ -25,6 +25,6 @@ python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/t
 
 #7 / #11 浏览器 E2E：`python -m unittest tests.e2e.test_web_audit -v`（需 Playwright 与 `docker compose -f deploy/isolated-dev/compose.yaml up -d --wait`）。
 
-Schema upgrade：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres init-db --wait && python -m unittest tests.schema.test_upgrade -v`（测试通过本机 `psql` 连 `127.0.0.1`）。
+Schema upgrade：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait && docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db && python -m unittest tests.schema.test_upgrade -v`（测试通过本机 `psql` 连 `127.0.0.1`）。
 
 Production compose：`PPAP_BUILD_SHA="$(git rev-parse HEAD)" docker buildx bake && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait && python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans`。

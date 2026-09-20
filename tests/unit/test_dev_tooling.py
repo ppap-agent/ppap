@@ -300,6 +300,30 @@ class DeployContractTests(unittest.TestCase):
         self.assertEqual(selected["PPAP_PG_HOST"], api["PPAP_PG_HOST"])
         self.assertEqual(selected["PPAP_PG_PORT"], worker["PPAP_PG_PORT"])
 
+    def test_init_waits_for_ready_postgres_and_silo(self):
+        paths = [
+            ROOT / "deploy" / "compose.yaml",
+            ROOT / "deploy" / "isolated-dev" / "compose.yaml",
+            ROOT / "deploy" / "insforge" / "compose.yaml",
+        ]
+        for path in paths:
+            services = _compose_services(path.read_text())
+            if "postgres" in services:
+                self.assertIn("/proc/1/comm", services["postgres"])
+            self.assertIn("minio/health/live", services["silo"])
+            self.assertIn("PGCONNECT_TIMEOUT", services["init-db"])
+            self.assertIn("bootstrap.sql", services["init-db"])
+            self.assertIn("apply.sql", services["init-db"])
+            self.assertIn("i=$$((i+1))", services["init-db"])
+            self.assertIn("condition: service_healthy", services["init-bucket"])
+            self.assertNotIn("condition: service_started", services["init-bucket"])
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        self.assertIn("up -d postgres --wait", workflow)
+        self.assertIn("run --rm init-db", workflow)
+        ensure = (ROOT / ".github" / "actions" / "ensure-docker" / "action.yml").read_text()
+        self.assertIn("not installing docker.io", ensure)
+        self.assertIn("docker.io", ensure)
+
 
 if __name__ == "__main__":
     unittest.main()

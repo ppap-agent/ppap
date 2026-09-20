@@ -30,7 +30,8 @@ python -m pytest tests/corpus/v2_assets --ftype scanned -q
 python -m pytest tests/corpus/v3_poc -q
 python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 
-docker compose -f deploy/isolated-dev/compose.yaml up -d postgres init-db --wait
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
 python -m unittest tests.schema.test_upgrade -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 # schema tests talk to postgres with native psql on 127.0.0.1

@@ -65,18 +65,37 @@ runs:
           return 1
         }
 
-        if docker_ready; then
+        report_ready() {
           docker version
           docker compose version
           docker buildx version
+        }
+
+        if docker_ready; then
+          report_ready
           exit 0
         fi
         expose_socket || true
         if docker_ready; then
-          docker version
-          docker compose version
-          docker buildx version
+          report_ready
           exit 0
+        fi
+
+        # Engine or CLI already present: start it and install plugins only.
+        # Never apt-install docker.io over docker-ce.
+        if command -v docker >/dev/null 2>&1; then
+          start_engine || true
+          expose_socket || true
+          install_cli_plugins
+          if docker_ready; then
+            report_ready
+            exit 0
+          fi
+          echo "Docker CLI is present but Engine/Compose/Buildx are not usable; not installing docker.io" >&2
+          ls -l /var/run/docker.sock /run/docker.sock /usr/bin/docker /usr/local/bin/docker 2>/dev/null || true
+          sudo -n docker info >&2 || true
+          docker info >&2 || true
+          exit 127
         fi
 
         echo "Docker Engine is missing on this self-hosted runner; installing it"
@@ -122,6 +141,4 @@ runs:
           docker info >&2 || true
           exit 127
         fi
-        docker version
-        docker compose version
-        docker buildx version
+        report_ready

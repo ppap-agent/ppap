@@ -66,12 +66,17 @@ jobs:
         run: |
           set -euo pipefail
           uv pip install -e ".[dev]"
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
+          compose() { docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example "$@"; }
+          dump() { compose ps -a || true; compose logs --no-color --timestamps postgres silo init-db init-bucket api worker web || true; }
+          compose down -v --remove-orphans || true
           docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
           docker buildx bake
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait --wait-timeout 180
+          if ! compose up -d --wait --wait-timeout 180; then
+            dump
+            exit 1
+          fi
           python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
+          compose down -v --remove-orphans
 
   e2e:
     runs-on: [self-hosted, linux, x64, ppap]
@@ -101,12 +106,17 @@ jobs:
           set -euo pipefail
           uv pip install -e ".[dev,e2e]"
           python -m playwright install chromium
+          compose() { docker compose -f deploy/isolated-dev/compose.yaml "$@"; }
+          dump() { compose ps -a || true; compose logs --no-color --timestamps postgres silo init-db init-bucket api worker web || true; }
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
-          docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
+          compose down -v --remove-orphans || true
           docker buildx bake
-          docker compose -f deploy/isolated-dev/compose.yaml up -d --wait --wait-timeout 180
+          if ! compose up -d --wait --wait-timeout 180; then
+            dump
+            exit 1
+          fi
           python -m unittest tests.e2e.test_web_audit -v
-          docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+          compose down -v --remove-orphans
 
   schema:
     runs-on: [self-hosted, linux, x64, ppap]
@@ -144,11 +154,20 @@ jobs:
           export PPAP_PG_API_PASSWORD=ppap_isolated_dev
           export PPAP_PG_WORKER_USER=ppap_worker
           export PPAP_PG_WORKER_PASSWORD=ppap_isolated_dev
+          compose() { docker compose -f deploy/isolated-dev/compose.yaml "$@"; }
+          dump() { compose ps -a || true; compose logs --no-color --timestamps postgres init-db || true; }
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
-          docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
-          docker compose -f deploy/isolated-dev/compose.yaml up -d postgres init-db --wait --wait-timeout 120
+          compose down -v --remove-orphans || true
+          if ! compose up -d postgres --wait --wait-timeout 120; then
+            dump
+            exit 1
+          fi
+          if ! compose run --rm init-db; then
+            dump
+            exit 1
+          fi
           python -m unittest tests.schema.test_upgrade -v
-          docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+          compose down -v --remove-orphans
 
   corpus:
     name: ${{ matrix.name }}
