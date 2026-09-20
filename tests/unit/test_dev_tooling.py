@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import tomllib
@@ -37,6 +38,58 @@ def _compose_services(compose: str) -> dict[str, str]:
         if current:
             services[current].append(line)
     return {name: "\n".join(body) for name, body in services.items()}
+
+
+_COMPOSE_VAR = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(:-([^}]*))?\}")
+
+
+def _parse_dotenv(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, _, value = raw.partition("=")
+        values[key] = value
+    return values
+
+
+def _service_environment(body: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    in_env = False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped == "environment:":
+            in_env = True
+            continue
+        if not in_env:
+            continue
+        if line.startswith("    ") and not line.startswith("      ") and stripped.endswith(":"):
+            break
+        if ":" not in stripped:
+            continue
+        key, _, raw = stripped.partition(":")
+        env[key] = raw.strip().strip('"').strip("'")
+    return env
+
+
+def _interpolate(value: str, values: dict[str, str]) -> str:
+    def repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        has_default = match.group(2) is not None
+        default = match.group(3) or ""
+        held = values.get(name)
+        if held:
+            return held
+        if has_default:
+            return default
+        return held or ""
+
+    return _COMPOSE_VAR.sub(repl, value)
+
+
+def _interpolated_environment(body: str, values: dict[str, str]) -> dict[str, str]:
+    return {key: _interpolate(raw, values) for key, raw in _service_environment(body).items()}
 
 
 class DevToolingTests(unittest.TestCase):
@@ -150,6 +203,16 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("${PPAP_COMPOSE_ENV_FILE:-compose.env.example}", services["init"])
         self.assertNotIn("env_file:", services["api"])
         self.assertNotIn("env_file:", services["worker"])
+        self.assertIn("PPAP_PG_HOST: ${PPAP_PG_HOST}", services["api"])
+        self.assertIn("PPAP_PG_HOST: ${PPAP_PG_HOST}", services["worker"])
+        self.assertNotIn("PPAP_PG_HOST: postgres", services["api"])
+        self.assertNotIn("PPAP_PG_HOST: postgres", services["worker"])
+        self.assertIn("FEISHU_APP_ID", services["api"])
+        self.assertIn("FEISHU_APP_SECRET", services["api"])
+        self.assertIn("FEISHU_VERIFICATION_TOKEN", services["api"])
+        self.assertIn("FEISHU_AI_ITEM_ID", services["api"])
+        self.assertNotIn("FEISHU_APP_ID", services["worker"])
+        self.assertNotIn("FEISHU_APP_SECRET", services["worker"])
         self.assertIn("PPAP_PG_API_PASSWORD", services["api"])
         self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["api"])
         self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", services["api"])
@@ -198,6 +261,66 @@ class DevToolingTests(unittest.TestCase):
                 self.assertNotEqual(Path(cmd[cmd.index("--env-file") + 1]), fixture)
                 self.assertEqual(env["PPAP_COMPOSE_ENV_FILE"], str(selected.resolve()))
         self.assertEqual(compose_env_file(), fixture)
+
+    def test_selected_env_drives_pg_host_and_feishu_without_init_secrets(self):
+        compose = (ROOT / "deploy" / "compose.yaml").read_text()
+        services = _compose_services(compose)
+        fixture = _parse_dotenv(ROOT / "deploy" / "compose.env.example")
+        selected = dict(fixture)
+        selected.update(
+            {
+                "PPAP_PG_HOST": "db.example.internal",
+                "PPAP_PG_PORT": "6543",
+                "PPAP_PG_BOOTSTRAP_PASSWORD": "boot-secret",
+                "PPAP_PG_MIGRATOR_PASSWORD": "mig-secret",
+                "PPAP_PG_API_PASSWORD": "api-secret",
+                "PPAP_PG_WORKER_PASSWORD": "worker-secret",
+                "FEISHU_APP_ID": "cli_prod",
+                "FEISHU_APP_SECRET": "feishu-secret",
+                "FEISHU_VERIFICATION_TOKEN": "verify-prod",
+                "FEISHU_AI_ITEM_ID": "item-prod",
+                "FEISHU_FREE_TRIAL_QUOTA_POINTS": "2500",
+                "PPAP_PARTNER_AI_ENDPOINT": "https://partner.example",
+            }
+        )
+
+        fixture_api = _interpolated_environment(services["api"], fixture)
+        fixture_worker = _interpolated_environment(services["worker"], fixture)
+        self.assertEqual(fixture_api["PPAP_PG_HOST"], "postgres")
+        self.assertEqual(fixture_api["PPAP_PG_PORT"], "5432")
+        self.assertEqual(fixture_worker["PPAP_PG_HOST"], "postgres")
+        self.assertEqual(fixture_api["FEISHU_APP_ID"], "")
+
+        api = _interpolated_environment(services["api"], selected)
+        worker = _interpolated_environment(services["worker"], selected)
+        self.assertEqual(api["PPAP_PG_HOST"], "db.example.internal")
+        self.assertEqual(api["PPAP_PG_PORT"], "6543")
+        self.assertEqual(worker["PPAP_PG_HOST"], "db.example.internal")
+        self.assertEqual(worker["PPAP_PG_PORT"], "6543")
+        self.assertEqual(api["PPAP_PG_API_PASSWORD"], "api-secret")
+        self.assertEqual(worker["PPAP_PG_WORKER_PASSWORD"], "worker-secret")
+        self.assertEqual(api["FEISHU_APP_ID"], "cli_prod")
+        self.assertEqual(api["FEISHU_APP_SECRET"], "feishu-secret")
+        self.assertEqual(api["FEISHU_VERIFICATION_TOKEN"], "verify-prod")
+        self.assertEqual(api["FEISHU_AI_ITEM_ID"], "item-prod")
+        self.assertEqual(api["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "2500")
+        self.assertNotIn("FEISHU_APP_ID", worker)
+        self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", api)
+        self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", api)
+        self.assertNotIn("PPAP_PG_WORKER_PASSWORD", api)
+        self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", worker)
+        self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", worker)
+        self.assertNotIn("PPAP_PG_API_PASSWORD", worker)
+        self.assertNotIn("FEISHU_APP_SECRET", worker)
+        self.assertNotIn("PADDLE_TOKEN", api)
+        self.assertNotIn("OCR_OPENAI_API_KEY", api)
+
+        self.assertIn("${PPAP_COMPOSE_ENV_FILE:-compose.env.example}", services["init"])
+        self.assertNotIn("PPAP_PG_HOST:", services["init"])
+        self.assertEqual(selected["PPAP_PG_HOST"], api["PPAP_PG_HOST"])
+        self.assertEqual(selected["PPAP_PG_PORT"], worker["PPAP_PG_PORT"])
+        self.assertEqual(selected["PPAP_PG_BOOTSTRAP_PASSWORD"], "boot-secret")
+        self.assertEqual(selected["PPAP_PG_MIGRATOR_PASSWORD"], "mig-secret")
 
     def test_backup_restore_rollback_are_canonical_commands(self):
         from tools.dev import _sql_ident, cmd_restore, cmd_rollback, latest_backup
