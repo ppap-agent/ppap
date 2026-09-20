@@ -224,7 +224,7 @@ function renderRound(api, round, state) {
   box.innerHTML = findings.map((item) => {
     const locator = item.locator;
     let evidence = "定位缺口";
-    if (locator && locator.kind === "file_version") {
+    if (locator && locator.file_id && locator.file_version_id) {
       const name = locator.filename || "";
       evidence = `<a data-testid="open-original" href="${api}/rounds/${encodeURIComponent(round.id)}/files/${encodeURIComponent(locator.file_id)}/versions/${encodeURIComponent(locator.file_version_id)}/download">打开原件 ${escapeHtml(name)}</a>`;
     } else if (locator && locator.locator) {
@@ -232,7 +232,7 @@ function renderRound(api, round, state) {
     }
     const nativeEvidence = item.audit_evidence || item.evidence || locator?.evidence;
     if (nativeEvidence) evidence += `<pre>${escapeHtml(typeof nativeEvidence === "string" ? nativeEvidence : JSON.stringify(nativeEvidence, null, 2))}</pre>`;
-    if (locator?.locator_gap || (!nativeEvidence && locator?.kind === "file_version")) evidence += " · 无精确定位，请在原件中核对";
+    if (locator?.file_version_id && !nativeEvidence?.sources?.length) evidence += " · 无精确定位，请在原件中核对";
     const suggestion = item.suggestions ? escapeHtml(item.suggestions) : "无模型建议";
     const review = item.review ? `${item.review.judgment} / ${item.review.rationale || ""}` : "尚未复核";
     return `<article class="finding-row" data-testid="finding-row" data-item-key="${escapeHtml(item.item_key)}">

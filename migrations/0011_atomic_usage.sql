@@ -8,4 +8,4 @@ ALTER TABLE product.usage_events ADD CONSTRAINT usage_external_status_known
     CHECK (external_status IN ('none', 'pending', 'reporting', 'confirmed', 'unknown'));
 CREATE UNIQUE INDEX IF NOT EXISTS usage_events_round_slice_idx
     ON product.usage_events(round_id, is_free_trial) WHERE round_id IS NOT NULL;
-INSERT INTO product.schema_migrations(version) VALUES ('0011_atomic_usage.sql') ON CONFLICT DO NOTHING;
+INSERT INTO product.schema_migrations (version) VALUES ('0011_atomic_usage.sql') ON CONFLICT DO NOTHING;

@@ -280,7 +280,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         events = [
             row
             for row in self.store.usage_events
-            if row["trace_id"] == submitted.json()["id"]
+            if row["trace_id"] == submitted.json()["id"] + ":trial"
         ]
         self.assertEqual(len(events), 1)
         self.assertTrue(events[0]["is_free_trial"])
