@@ -67,10 +67,9 @@
       <section class="pc-card" data-testid="draft-panel">
         <h2>选择规则并提交</h2>
         <p>草稿 <code data-testid="draft-id" id="draft-id"></code></p>
-        <label for="rule-select">规则
-          <select data-testid="rule-select" id="rule-select"></select>
-        </label>
-        <p data-testid="draft-items" id="draft-items"></p>
+        <p>每个待审文件须选择规则版本。参考文件只提供上下文，不执行完整审核。</p>
+        <div data-testid="draft-items" id="draft-items"></div>
+        <p data-testid="audit-error" id="audit-error" role="alert"></p>
         <p>
           <button type="button" data-testid="save-draft" id="save-draft">保存范围和规则</button>
           <button type="button" class="pc-primary" data-testid="submit-audit" id="submit-audit">提交审核</button>

@@ -10,6 +10,10 @@ function versionLabel(row) {
   return (target && target.file_version_id) || "";
 }
 
+function ruleLabel(row) {
+  return (row.inputs || []).filter((item) => item.role === "target").map((item) => `${item.original_filename}: ${item.rule?.title || ""}`).join("；");
+}
+
 function resultSummary(row) {
   const counts = row.result_counts || {};
   const total = (counts.PASS || 0) + (counts.NG || 0) + (counts.ERR || 0);
@@ -32,7 +36,7 @@ function renderRows(items, query, execution) {
     if (!needle) {
       return true;
     }
-    const hay = `${targetName(row)} ${(row.rule && row.rule.title) || ""}`.toLowerCase();
+    const hay = `${targetName(row)} ${ruleLabel(row)}`.toLowerCase();
     return hay.includes(needle);
   });
   errorNode.classList.add("hidden");
@@ -45,7 +49,7 @@ function renderRows(items, query, execution) {
   table.classList.remove("hidden");
   rows.innerHTML = filtered.map((row) => {
     const name = targetName(row);
-    const rule = (row.rule && row.rule.title) || "";
+    const rule = ruleLabel(row);
     return `<tr data-testid="history-row">
       <td>${name}</td>
       <td data-testid="history-version">${versionLabel(row)}</td>

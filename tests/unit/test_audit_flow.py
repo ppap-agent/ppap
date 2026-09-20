@@ -77,8 +77,7 @@ class AuditFlowTests(unittest.TestCase):
         saved = self.client.put(
             f"/drafts/{draft.json()['id']}",
             json={
-                "rule_version_id": RULE_A,
-                "items": [{"file_version_id": target["id"], "role": "target"}],
+                "items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}],
             },
         )
         self.assertEqual(saved.status_code, 200)
@@ -96,9 +95,8 @@ class AuditFlowTests(unittest.TestCase):
         self.client.put(
             f"/drafts/{draft}",
             json={
-                "rule_version_id": RULE_A,
                 "items": [
-                    {"file_version_id": target["id"], "role": "target"},
+                    {"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A},
                     {"file_version_id": reference["id"], "role": "reference"},
                 ],
             },
@@ -117,8 +115,7 @@ class AuditFlowTests(unittest.TestCase):
         self.client.put(
             f"/drafts/{other}",
             json={
-                "rule_version_id": RULE_A,
-                "items": [{"file_version_id": reference["id"], "role": "target"}],
+                "items": [{"file_version_id": reference["id"], "role": "target", "rule_version_id": RULE_A}],
             },
         )
         mismatched = self.client.post(f"/drafts/{other}/accept", json={"idempotency_key": "submit-1"})
@@ -144,7 +141,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "k"}).json()["id"]
         self._finish_worker()
@@ -171,7 +168,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rev"}).json()["id"]
         self._finish_worker()
@@ -205,7 +202,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": first["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": first["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         old_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "old"}).json()["id"]
         self._finish_worker()
@@ -224,7 +221,7 @@ class AuditFlowTests(unittest.TestCase):
             f"/rounds/{old_id}/resubmit",
             json={
                 "idempotency_key": "new",
-                "items": [{"file_version_id": second["id"], "role": "target"}],
+                "items": [{"file_version_id": second["id"], "role": "target", "rule_version_id": RULE_A}],
             },
         )
         self.assertEqual(created.status_code, 201)
@@ -255,7 +252,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         blocked = self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": vid, "role": "target"}]},
+            json={"items": [{"file_version_id": vid, "role": "target", "rule_version_id": RULE_A}]},
         )
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.json()["error"], "file_not_ready")
@@ -266,7 +263,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "fence"}).json()["id"]
         first = self.store.claim_job("w1")
@@ -308,7 +305,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "reclaim"}).json()["id"]
         first = self.store.claim_job("w1")
@@ -353,10 +350,9 @@ class AuditFlowTests(unittest.TestCase):
         self.client.put(
             f"/drafts/{draft}",
             json={
-                "rule_version_id": RULE_A,
                 "items": [
-                    {"file_version_id": first["id"], "role": "target"},
-                    {"file_version_id": second["id"], "role": "target"},
+                    {"file_version_id": first["id"], "role": "target", "rule_version_id": RULE_A},
+                    {"file_version_id": second["id"], "role": "target", "rule_version_id": RULE_A},
                     {"file_version_id": reference["id"], "role": "reference"},
                 ],
             },
@@ -365,7 +361,7 @@ class AuditFlowTests(unittest.TestCase):
         self._finish_worker()
         body = self.client.get(f"/rounds/{round_id}").json()
         keys = {row["item_key"] for row in body["findings"]}
-        self.assertEqual(keys, {f"target:{first['id']}", f"target:{second['id']}", f"reference:{reference['id']}"})
+        self.assertEqual(keys, {f"target:{first['id']}", f"target:{second['id']}"})
         self.assertEqual(sorted(body["coverage"]["checked"]), ["a.xlsx", "b.xlsx"])
         self.assertTrue(any("context.pdf" in row for row in body["coverage"]["unchecked"]))
         self.assertFalse(body["coverage"]["locator_gap"])
@@ -380,7 +376,7 @@ class AuditFlowTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": target["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "history-1"}).json()["id"]
         listed = self.client.get("/rounds").json()["rounds"]
@@ -410,9 +406,7 @@ class PresenceEvaluationTests(unittest.TestCase):
         work = RoundWork(
             "r1",
             "t1",
-            "资料就绪",
-            {"kind": "presence"},
-            [RoundInput("target", "f1", "v1", "a.xlsx", "ready")],
+            [RoundInput("target", "f1", "v1", "a.xlsx", "ready", rule_version_id="rule-1", rule_title="资料就绪", rule_body={"kind": "presence"})],
         )
         with patch.dict(os.environ, {}, clear=False):
             result = evaluate_round(work)

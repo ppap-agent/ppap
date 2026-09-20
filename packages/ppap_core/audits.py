@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,15 +43,11 @@ def normalize_role(value: Any) -> str:
     return role
 
 
-def request_fingerprint(rule_version_id: str, items: list[dict[str, str]]) -> str:
-    canonical = {
-        "rule_version_id": rule_version_id,
-        "items": sorted(
-            ({"file_version_id": row["file_version_id"], "role": row["role"]} for row in items),
-            key=lambda row: (row["role"], row["file_version_id"]),
-        ),
-    }
-    blob = json.dumps(canonical, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+def request_fingerprint(items: list[dict]) -> str:
+    # All fields are validated UUIDs or fixed roles; delimiters cannot occur in them.
+    # The forward migration uses this same canonical form for existing snapshots.
+    canonical = sorted((row["file_version_id"], row["role"], row.get("rule_version_id") or "") for row in items)
+    blob = ";".join(":".join(row) for row in canonical)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -70,20 +65,20 @@ class RoundInput:
     status: str
     object_key: str = ""
     content_type: str = ""
+    rule_version_id: str | None = None
+    rule_title: str | None = None
+    rule_body: dict[str, Any] | None = None
+
+    def rule_kind(self) -> str:
+        return str((self.rule_body or {}).get("kind") or KIND_ENGINE)
 
 
 @dataclass
 class RoundWork:
     round_id: str
     tenant_id: str
-    rule_title: str
-    rule_body: dict[str, Any]
     inputs: list[RoundInput]
     result_attempt: int | None = None
-
-    def rule_kind(self) -> str:
-        kind = str((self.rule_body or {}).get("kind") or KIND_ENGINE)
-        return kind if kind in {KIND_PRESENCE, KIND_ENGINE} else KIND_ENGINE
 
 
 @dataclass
@@ -96,30 +91,15 @@ class ClaimedJob:
     tenant_id: str | None = None
 
 
-def _presence_finding(item: RoundInput) -> dict[str, Any]:
+def presence_finding(item: RoundInput) -> dict[str, Any]:
     ready = item.status == "ready"
-    if item.role == TARGET:
-        return {
-            "item_key": f"target:{item.file_version_id}",
-            "classification": "资料",
-            "item": "待审文件版本已就绪",
-            "priority": "P0",
-            "status": PASS if ready else NG,
-            "suggestions": "" if ready else "未完成的暂存不能被审核受理。",
-            "locator": {
-                "kind": "file_version",
-                "file_id": item.file_id,
-                "file_version_id": item.file_version_id,
-                "filename": item.filename,
-            },
-        }
     return {
-        "item_key": f"reference:{item.file_version_id}",
+        "item_key": f"target:{item.file_version_id}",
         "classification": "资料",
-        "item": "参考文件已引用",
-        "priority": "P2",
+        "item": "待审文件版本已就绪",
+        "priority": "P0",
         "status": PASS if ready else NG,
-        "suggestions": "被引用不等于已完整审核。",
+        "suggestions": "" if ready else "未完成的暂存不能被审核受理。",
         "locator": {
             "kind": "file_version",
             "file_id": item.file_id,
@@ -134,7 +114,7 @@ def unused_reference_note(filename: str, detail: str = "未作为待审完整检
 
 
 def evaluate_presence(work: RoundWork) -> dict[str, Any]:
-    findings = [_presence_finding(item) for item in work.inputs]
+    findings = [presence_finding(item) for item in work.inputs if item.role == TARGET]
     checked = [item.filename for item in work.inputs if item.role == TARGET]
     unchecked = [unused_reference_note(item.filename) for item in work.inputs if item.role == REFERENCE]
     locator_gap = any(row.get("locator") is None for row in findings)
@@ -208,7 +188,8 @@ def findings_from_engine_results(results: list[Any], *, target: RoundInput) -> d
 
 
 def evaluate_round(work: RoundWork, engine_runner=None) -> dict[str, Any]:
-    if work.rule_kind() == KIND_PRESENCE:
+    targets = [item for item in work.inputs if item.role == TARGET]
+    if targets and all(item.rule_kind() == KIND_PRESENCE for item in targets):
         return evaluate_presence(work)
     if engine_runner is None:
         return execution_error_result("engine_unavailable")

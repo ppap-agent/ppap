@@ -10,10 +10,11 @@ from pathlib import Path
 
 from ppap_api.store import AuthStore
 from ppap_core.audits import (
-    KIND_ENGINE,
+    KIND_PRESENCE,
     TARGET,
     evaluate_round,
     findings_from_engine_results,
+    presence_finding,
     unused_reference_note,
 )
 from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
@@ -49,10 +50,12 @@ def run_claimed_job(kind: str, payload: dict) -> dict:
     }
 
 
-def _rule_input(work) -> RuleInput:
-    body = work.rule_body or {}
+def _rule_input(item) -> RuleInput:
+    if not item.rule_version_id or item.rule_body is None:
+        raise ValueError("rule_required")
+    body = item.rule_body
     return RuleInput(
-        rule_id=str(body.get("rule_id") or work.round_id),
+        rule_id=item.rule_version_id,
         rule_profile=body.get("rule_profile") or "v2",
         type=body.get("type") or "",
         rules=list(body.get("rules") or []),
@@ -72,9 +75,7 @@ def _audit_input(item, path: str) -> AuditInput:
 
 
 def _doc_type_key(audit: AuditInput) -> str | None:
-    from ppap_excel_audit_engine.contract_mapper import infer_document_type
-
-    inferred = infer_document_type(audit)
+    inferred = PpapDocumentType.infer_from_signals(filename=audit.file_metadata.get("original_filename", ""), minimum_score=8, min_margin=4)
     if inferred is None or inferred is PpapDocumentType.UNKNOWN:
         return None
     return inferred.get_type_name()
@@ -94,9 +95,9 @@ def engine_runner(work, store: AuthStore):
     from ppap_excel_audit_engine.app_runtime import run_audit_engine
 
     targets = [item for item in work.inputs if item.role == TARGET]
-    references = [item for item in work.inputs if item.role != TARGET]
     if not targets:
         raise ValueError("target_required")
+    rules_by_version = {item.file_version_id: _rule_input(item) for item in targets}
 
     temps: list[str] = []
     try:
@@ -117,7 +118,7 @@ def engine_runner(work, store: AuthStore):
             audit = _audit_input(item, path)
             audits_by_version[item.file_version_id] = audit
             by_audit_id[item.file_version_id] = audit
-            type_key = _doc_type_key(audit)
+            type_key = rules_by_version[item.file_version_id].type if item.role == TARGET else _doc_type_key(audit)
             if type_key:
                 by_doc_type.setdefault(type_key, []).append(audit)
             if item.role != TARGET:
@@ -126,19 +127,22 @@ def engine_runner(work, store: AuthStore):
                 else:
                     reference_notes.append(unused_reference_note(item.filename, "未能识别文档类型，未作为待审完整检查"))
 
-        rule = _rule_input(work)
         group_context = GroupContextInput(
             task_group_id=work.round_id,
             by_audit_id=by_audit_id,
             by_doc_type=by_doc_type,
-            rules_by_id={rule.rule_id: rule},
+            rules_by_id={rule.rule_id: rule for rule in rules_by_version.values()},
         )
         findings: list[dict] = []
         checked: list[str] = []
         locator_gap = False
         for target in targets:
+            if target.rule_kind() == KIND_PRESENCE:
+                findings.append(presence_finding(target))
+                checked.append(target.filename)
+                continue
             audit = audits_by_version[target.file_version_id]
-            results = run_audit_engine(audit, rule, group_context=group_context)
+            results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
             mapped = findings_from_engine_results(results, target=target)
             findings.extend(mapped["findings"])
             checked.append(target.filename)
@@ -223,7 +227,7 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
             return result
         if work.tenant_id:
             tokens.extend(bind(tenant_id=work.tenant_id))
-        runner = (lambda current: engine_runner(current, store)) if work.rule_kind() == KIND_ENGINE else None
+        runner = lambda current: engine_runner(current, store)
         try:
             result = evaluate_round(work, engine_runner=runner)
             result["note"] = result.get("note") or "round_audit"

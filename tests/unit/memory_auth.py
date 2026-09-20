@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 from ppap_core.audits import (
@@ -364,7 +365,6 @@ class MemoryAuthStore:
             "id": draft_id,
             "tenant_id": principal.tenant_id,
             "created_by": principal.user_id,
-            "rule_version_id": None,
             "status": DRAFT_OPEN,
         }
         self.draft_items[draft_id] = []
@@ -376,38 +376,25 @@ class MemoryAuthStore:
             return None
         return self._draft_public(draft_id)
 
-    def save_draft(self, principal: Principal, draft_id: str, rule_version_id: str | None, items: list[dict] | None) -> dict:
+    def save_draft(self, principal: Principal, draft_id: str, items: list[dict] | None) -> dict:
         draft = self.drafts.get(draft_id)
         if not draft or draft["tenant_id"] != principal.tenant_id:
             raise KeyError("missing")
         if draft["status"] != DRAFT_OPEN:
             raise ValueError("draft_already_accepted")
-        if rule_version_id is not None:
-            rule = self.rule_versions.get(rule_version_id)
-            if not rule or rule["tenant_id"] != principal.tenant_id:
-                raise ValueError("unknown_rule")
-            draft["rule_version_id"] = rule_version_id
         if items is not None:
-            self.draft_items[draft_id] = self._prepared_items(principal, items)
+            self.draft_items[draft_id] = self._bound_audit_items(principal, items, require_rules=False)
         return self._draft_public(draft_id)
 
     def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str) -> dict:
         key = normalize_idempotency_key(idempotency_key)
-        return self._accept(principal, key, source_draft_id=draft_id, predecessor_id=None, rule_version_id=None, items=None)
-
-    def round_by_idempotency(self, principal: Principal, idempotency_key: str) -> dict | None:
-        key = normalize_idempotency_key(idempotency_key)
-        existing_id = self.idempotency.get((principal.tenant_id, key))
-        if not existing_id:
-            return None
-        return self._round_public(existing_id)
+        return self._accept(principal, key, source_draft_id=draft_id, predecessor_id=None, items=None)
 
     def resubmit_round(
         self,
         principal: Principal,
         round_id: str,
         idempotency_key: str,
-        rule_version_id: str | None,
         items: list[dict] | None,
     ) -> dict:
         key = normalize_idempotency_key(idempotency_key)
@@ -421,7 +408,6 @@ class MemoryAuthStore:
             key,
             source_draft_id=None,
             predecessor_id=round_id,
-            rule_version_id=rule_version_id or current["rule_version_id"],
             items=items,
         )
 
@@ -449,7 +435,6 @@ class MemoryAuthStore:
                 {
                     "id": body["id"],
                     "execution": body["execution"],
-                    "rule": body["rule"],
                     "predecessor_id": body.get("predecessor_id"),
                     "created_at": body.get("created_at"),
                     "inputs": [
@@ -457,6 +442,7 @@ class MemoryAuthStore:
                             "role": item["role"],
                             "original_filename": item["original_filename"],
                             "file_version_id": item["file_version_id"],
+                            "rule": item["rule"],
                         }
                         for item in body.get("inputs") or []
                     ],
@@ -517,9 +503,12 @@ class MemoryAuthStore:
                     version.status,
                     version.object_key,
                     version.content_type,
+                    item.get("rule_version_id"),
+                    item.get("rule_title"),
+                    item.get("rule_body"),
                 )
             )
-        return RoundWork(round_id, row["tenant_id"], row["rule_title"], row["rule_body"], inputs, row.get("result_attempt"))
+        return RoundWork(round_id, row["tenant_id"], inputs, row.get("result_attempt"))
 
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
         now = _now()
@@ -613,13 +602,29 @@ class MemoryAuthStore:
             prepared.append({"file_version_id": version.id, "role": role, "file_id": version.file_id})
         return prepared
 
+    def _bound_audit_items(self, principal, items, *, require_rules=True):
+        prepared = self._prepared_items(principal, items)
+        for row, raw in zip(prepared, items):
+            rule_id = raw.get("rule_version_id")
+            rule = None
+            if row["role"] == "reference" and rule_id:
+                raise ValueError("reference_rule_forbidden")
+            if row["role"] == "target":
+                if not rule_id and require_rules:
+                    raise ValueError("rule_required")
+                if rule_id:
+                    rule = self.rule_versions.get(rule_id)
+                    if not rule or rule["tenant_id"] != principal.tenant_id:
+                        raise ValueError("unknown_rule")
+            row.update(rule_version_id=rule["id"] if rule else None, rule_title=rule["title"] if rule else None, rule_body=deepcopy(rule["body"]) if rule else None)
+        return prepared
+
     def _accept(
         self,
         principal: Principal,
         key: str,
         source_draft_id: str | None,
         predecessor_id: str | None,
-        rule_version_id: str | None,
         items: list[dict] | None,
     ) -> dict:
         existing_id = self.idempotency.get((principal.tenant_id, key))
@@ -629,20 +634,16 @@ class MemoryAuthStore:
                 raise KeyError("missing")
             if items is None:
                 items = list(self.draft_items.get(source_draft_id, []))
-            if rule_version_id is None:
-                rule_version_id = draft["rule_version_id"]
         if items is None:
             items = []
-        if not rule_version_id:
-            raise ValueError("rule_required")
-        rule = self.rule_versions.get(rule_version_id)
-        if not rule or rule["tenant_id"] != principal.tenant_id:
-            raise ValueError("unknown_rule")
-        prepared = self._prepared_items(principal, items)
+        prepared = self._bound_audit_items(principal, items)
         require_targets(prepared)
-        fingerprint = request_fingerprint(rule["id"], prepared)
+        fingerprint = request_fingerprint(prepared)
         if existing_id:
             current = self.rounds[existing_id]
+            resource = self.resources.get(existing_id)
+            if resource is None or not can_read(principal, resource, self.grants(existing_id, principal.user_id)):
+                raise KeyError("missing")
             if current["request_fingerprint"] != fingerprint:
                 raise ValueError("idempotency_conflict")
             return self._round_public(existing_id)
@@ -658,9 +659,6 @@ class MemoryAuthStore:
             "created_by": principal.user_id,
             "source_draft_id": source_draft_id,
             "predecessor_id": predecessor_id,
-            "rule_version_id": rule["id"],
-            "rule_title": rule["title"],
-            "rule_body": dict(rule["body"]),
             "idempotency_key": key,
             "request_fingerprint": fingerprint,
             "execution": EXEC_QUEUED,
@@ -688,7 +686,6 @@ class MemoryAuthStore:
 
     def _draft_public(self, draft_id: str) -> dict:
         draft = self.drafts[draft_id]
-        rule = self.rule_versions.get(draft["rule_version_id"]) if draft["rule_version_id"] else None
         items = []
         for item in self.draft_items.get(draft_id, []):
             version = self.versions_by_id[item["file_version_id"]]
@@ -699,12 +696,13 @@ class MemoryAuthStore:
                     "file_id": version.file_id,
                     "original_filename": version.original_filename,
                     "status": version.status,
+                    "rule_version_id": item.get("rule_version_id"),
+                    "rule": {"id": item["rule_version_id"], "title": item["rule_title"], "body": item["rule_body"]} if item.get("rule_version_id") else None,
                 }
             )
         return {
             "id": draft_id,
             "status": draft["status"],
-            "rule": {"id": rule["id"], "title": rule["title"]} if rule else None,
             "items": items,
         }
 
@@ -720,6 +718,8 @@ class MemoryAuthStore:
                     "file_id": version.file_id,
                     "original_filename": version.original_filename,
                     "status": version.status,
+                    "rule_version_id": item.get("rule_version_id"),
+                    "rule": {"id": item["rule_version_id"], "title": item["rule_title"], "body": item["rule_body"]} if item.get("rule_version_id") else None,
                 }
             )
         findings = []
@@ -747,7 +747,6 @@ class MemoryAuthStore:
         return {
             "id": round_id,
             "execution": row["execution"],
-            "rule": {"id": row["rule_version_id"], "title": row["rule_title"]},
             "coverage": row.get("coverage") or {},
             "predecessor_id": row.get("predecessor_id"),
             "source_draft_id": row.get("source_draft_id"),

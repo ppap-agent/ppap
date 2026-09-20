@@ -208,6 +208,20 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.http.close()
         self._env.stop()
 
+    def _draft_for_imported_file(self):
+        imported = self.client.post(
+            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
+        )
+        self.assertEqual(imported.status_code, 201)
+        created = self.client.post("/drafts")
+        self.assertEqual(created.status_code, 201)
+        draft = created.json()["id"]
+        saved = self.client.put(f"/drafts/{draft}", json={"items": [
+            {"file_version_id": imported.json()["id"], "role": "target", "rule_version_id": RULE_A},
+        ]})
+        self.assertEqual(saved.status_code, 200)
+        return draft
+
     def test_host_code_creates_feishu_session_without_oauth_redirect(self):
         logged = self.client.post("/login/feishu/host", json={"code": "host-code"})
         self.assertEqual(logged.status_code, 200)
@@ -230,15 +244,8 @@ class FeishuDocsAddonTests(unittest.TestCase):
         quota = self.client.get("/integrations/feishu/usage/quota")
         self.assertEqual(quota.status_code, 200)
         self.assertTrue(quota.json()["quota_sufficient"])
-        submitted = self.client.post(
-            "/integrations/feishu/audits",
-            json={
-                "file_token": "xlsx-token",
-                "doc_type": "file",
-                "rule_version_id": RULE_A,
-                "idempotency_key": "addon-submit-1",
-            },
-        )
+        draft = self._draft_for_imported_file()
+        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-submit-1"})
         self.assertEqual(submitted.status_code, 201)
         round_id = submitted.json()["id"]
         claimed = self.store.claim_job("test-worker")
@@ -260,27 +267,12 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(logged.status_code, 200)
         before = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(before["remaining_trial_ai_points"], 10000)
-        submitted = self.client.post(
-            "/integrations/feishu/audits",
-            json={
-                "file_token": "xlsx-token",
-                "doc_type": "file",
-                "rule_version_id": RULE_A,
-                "idempotency_key": "addon-usage-1",
-            },
-        )
+        draft = self._draft_for_imported_file()
+        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-1"})
         self.assertEqual(submitted.status_code, 201)
         after = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(after["remaining_trial_ai_points"], 9500)
-        replay = self.client.post(
-            "/integrations/feishu/audits",
-            json={
-                "file_token": "xlsx-token",
-                "doc_type": "file",
-                "rule_version_id": RULE_A,
-                "idempotency_key": "addon-usage-1",
-            },
-        )
+        replay = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-1"})
         self.assertEqual(replay.status_code, 201)
         self.assertEqual(replay.json()["id"], submitted.json()["id"])
         still = self.client.get("/integrations/feishu/usage/quota").json()
@@ -300,15 +292,8 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(logged.status_code, 200)
         principal = self.store.principal_for_fixture("alice")
         self.store.record_usage_event(principal, "ai-item-1", 9800, True, trace_id="pre-trial")
-        submitted = self.client.post(
-            "/integrations/feishu/audits",
-            json={
-                "file_token": "xlsx-token",
-                "doc_type": "file",
-                "rule_version_id": RULE_A,
-                "idempotency_key": "addon-usage-split",
-            },
-        )
+        draft = self._draft_for_imported_file()
+        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
         self.assertEqual(submitted.status_code, 201)
         round_id = submitted.json()["id"]
         trial = [row for row in self.store.usage_events if row["trace_id"] == round_id]

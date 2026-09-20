@@ -157,7 +157,11 @@ function quotaBlocksStart(quota, selectedCount) {
   return !paidOk && (remaining < cost || remaining <= 0);
 }
 
-function renderDocuments(items, selected) {
+function escapeHtml(value) {
+  return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function renderDocuments(items, selected, rules) {
   const box = document.getElementById("addon-documents");
   if (!items.length) {
     box.textContent = "暂无可识别文件";
@@ -165,10 +169,11 @@ function renderDocuments(items, selected) {
   }
   box.innerHTML = items.map((item) => {
     const checked = selected.has(item.token) ? "checked" : "";
-    return `<label class="document">
-      <input data-testid="addon-doc-${item.token}" type="checkbox" value="${item.token}" ${checked} />
-      <span>${item.name || item.token}</span>
-    </label>`;
+    return `<div class="document" data-token="${escapeHtml(item.token)}">
+      <label><input data-testid="addon-doc-${escapeHtml(item.token)}" type="checkbox" value="${escapeHtml(item.token)}" ${checked} /> ${escapeHtml(item.name || item.token)}</label>
+      <select data-testid="addon-role" aria-label="文件角色"><option value="target" ${item.role === "target" ? "selected" : ""}>待审</option><option value="reference" ${item.role === "reference" ? "selected" : ""}>参考</option></select>
+      <select data-testid="addon-rule" aria-label="规则版本" ${item.role === "reference" ? "disabled" : ""}><option value="">请选择规则版本</option>${rules.map((rule) => `<option value="${escapeHtml(rule.id)}" ${item.rule_version_id === rule.id ? "selected" : ""}>${escapeHtml(rule.title)} · ${escapeHtml(rule.type || rule.kind)} · ${escapeHtml(rule.id.slice(0, 8))}</option>`).join("")}</select>
+    </div>`;
   }).join("");
 }
 
@@ -209,7 +214,19 @@ async function main() {
   const submit = document.getElementById("addon-submit");
   const writeback = document.getElementById("addon-writeback");
   const selected = new Set();
-  const state = { api: "", fileToken: "", selectable: [], quota: null, roundId: "" };
+  const query = new URLSearchParams(window.location.search);
+  const state = { api: "", fileToken: "", selectable: [], rules: [], quota: null, roundId: query.get("round") || "", draftId: query.get("draft") || "", draftAccepted: false, busy: false };
+  function remember() {
+    const url = new URL(window.location.href);
+    if (state.draftId) url.searchParams.set("draft", state.draftId);
+    if (state.roundId) url.searchParams.set("round", state.roundId);
+    window.history.replaceState({}, "", url);
+  }
+  async function request(path, body) {
+    const result = await authorizedJson(state.api, host, `${state.api}${path}`, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!result.ok) throw new Error(result.body.error || "操作失败，请重试");
+    return result.body;
+  }
 
   const runtime = (await readJson("./runtime-config.json")).body;
   const config = (await readJson(`${runtime.api_url}/public-config`)).body;
@@ -232,50 +249,56 @@ async function main() {
     if (!state.fileToken) {
       throw new Error("缺少 fileToken，无法加载关联文件。");
     }
-    const links = await authorizedJson(
-      state.api,
-      host,
-      `${state.api}/integrations/feishu/docs/links?file_token=${encodeURIComponent(state.fileToken)}`
-    );
-    if (!links.ok) {
-      throw new Error(links.body.error === "feishu_user_token_missing" ? "飞书登录失败，请重试" : "文件列表加载失败，请稍后重试。");
+    state.rules = (await request("/rules")).rules || [];
+    if (state.draftId) {
+      const draft = await request(`/drafts/${encodeURIComponent(state.draftId)}`);
+      state.draftAccepted = draft.status === "accepted";
+      state.selectable = (draft.items || []).map((item) => ({ ...item, token: item.file_version_id, name: item.original_filename }));
+    } else if (!state.roundId) {
+      const links = await request(`/integrations/feishu/docs/links?file_token=${encodeURIComponent(state.fileToken)}`);
+      const split = splitDocuments(links.doc_links || []);
+      state.selectable = split.selectable.map((item) => ({ ...item, role: "target", rule_version_id: null }));
+      renderAbnormal(split.cloud, split.nonExcel);
     }
-    const split = splitDocuments(links.body.doc_links || []);
-    state.selectable = split.selectable;
-    split.selectable.forEach((item) => selected.add(item.token));
-    renderDocuments(split.selectable, selected);
-    renderAbnormal(split.cloud, split.nonExcel);
+    state.selectable.forEach((item) => selected.add(item.token));
+    renderDocuments(state.selectable, selected, state.rules);
     const quota = await authorizedJson(state.api, host, `${state.api}/integrations/feishu/usage/quota`);
     state.quota = quota.body;
     const quotaNode = document.getElementById("addon-quota");
     quotaNode.textContent = quota.body.detailed_message || quota.body.message || "";
     quotaNode.classList.toggle("hidden", !quotaNode.textContent);
-    setStatus("选择要审核的文件");
+    setStatus("为每个待审文件选择规则；参考文件只提供上下文");
   } catch (error) {
     setStatus("飞书登录失败，请重试");
     showError(error.message || "飞书登录失败，请重试");
     return;
   }
 
-  function selectedCount() {
-    return selected.size;
+  function targets() {
+    return state.selectable.filter((item) => selected.has(item.token) && item.role === "target");
   }
 
   function refreshSubmit() {
-    const blocked = !state.selectable.length || selectedCount() === 0 || quotaBlocksStart(state.quota || {}, selectedCount());
+    const blocked = state.busy || Boolean(state.roundId) || !targets().length || quotaBlocksStart(state.quota || {}, targets().length);
     submit.disabled = blocked;
+    document.querySelectorAll("#addon-documents input, #addon-documents select").forEach((node) => {
+      const item = state.selectable.find((row) => row.token === node.closest("[data-token]").dataset.token);
+      node.disabled = state.busy || state.draftAccepted || Boolean(state.roundId) || (node.dataset.testid === "addon-rule" && item.role === "reference");
+    });
   }
 
   document.getElementById("addon-documents").addEventListener("change", (event) => {
     const input = event.target;
-    if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
-      return;
-    }
-    if (input.checked) {
-      selected.add(input.value);
-    } else {
-      selected.delete(input.value);
-    }
+    const item = state.selectable.find((row) => row.token === input.closest("[data-token]")?.dataset.token);
+    if (!item) return;
+    if (input.type === "checkbox") {
+      if (input.checked) selected.add(input.value);
+      else selected.delete(input.value);
+    } else if (input.dataset.testid === "addon-role") {
+      item.role = input.value;
+      item.rule_version_id = null;
+      renderDocuments(state.selectable, selected, state.rules);
+    } else item.rule_version_id = input.value || null;
     refreshSubmit();
   });
   refreshSubmit();
@@ -302,56 +325,69 @@ async function main() {
     node.textContent = result.body.inserted ? "已写回当前文档" : "未写回";
   }
 
+  async function showRound() {
+    document.getElementById("addon-round").classList.remove("hidden");
+    document.getElementById("addon-round-id").textContent = state.roundId;
+    document.getElementById("addon-open-round").href = `./?round=${encodeURIComponent(state.roundId)}`;
+    const round = await pollRound(state.api, state.roundId);
+    if (!round.ok) throw new Error("审核结果读取失败");
+    setStatus(round.body.execution === "completed" ? "审核完成" : "审核未完成");
+    return round.body;
+  }
+
+  async function saveImportedItems() {
+    const items = state.selectable.filter((item) => selected.has(item.token) && item.file_version_id).map((item) => ({ file_version_id: item.file_version_id, role: item.role, rule_version_id: item.rule_version_id || null }));
+    const saved = await authorizedJson(state.api, host, `${state.api}/drafts/${encodeURIComponent(state.draftId)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+    if (!saved.ok) throw new Error(saved.body.error || "草稿保存失败");
+  }
+
   submit.addEventListener("click", async () => {
     if (submit.disabled) {
       return;
     }
     showError("");
-    const tokens = Array.from(selected);
-    const rules = await authorizedJson(state.api, host, `${state.api}/rules`);
-    const ruleId = (rules.body.rules || [])[0] && (rules.body.rules || [])[0].id;
-    if (!ruleId) {
-      showError("没有可用规则");
+    if (targets().some((item) => !item.rule_version_id)) {
+      showError("请为每个待审文件选择规则版本");
       return;
     }
-    submit.disabled = true;
-    setStatus("正在发起审核...");
-    const created = await authorizedJson(state.api, host, `${state.api}/integrations/feishu/audits`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        file_token: tokens[0],
-        compare_file_tokens: tokens.slice(1),
-        rule_version_id: ruleId,
-        idempotency_key: crypto.randomUUID(),
-      }),
-    });
-    if (!created.ok) {
-      showError("发起审核失败，请稍后重试。");
-      refreshSubmit();
-      return;
-    }
-    state.roundId = created.body.id;
-    document.getElementById("addon-round").classList.remove("hidden");
-    document.getElementById("addon-round-id").textContent = state.roundId;
-    const open = document.getElementById("addon-open-round");
-    open.href = `./?round=${encodeURIComponent(state.roundId)}`;
-    const round = await pollRound(state.api, state.roundId);
-    if (!round.ok) {
-      showError("审核结果读取失败");
-      refreshSubmit();
-      return;
-    }
-    setStatus(round.body.execution === "completed" ? "审核完成" : "审核未完成");
-    if (round.body.execution === "completed") {
-      await writeCurrentDocument();
-    }
+    state.busy = true;
     refreshSubmit();
+    setStatus("正在发起审核...");
+    try {
+      if (!state.draftId) {
+        state.draftId = (await request("/drafts", {})).id;
+        remember();
+      }
+      if (!state.draftAccepted) {
+        for (const item of state.selectable.filter((row) => selected.has(row.token))) {
+          if (!item.file_version_id) {
+            const imported = await request("/integrations/feishu/files/import", { file_token: item.token, doc_type: "file" });
+            item.file_version_id = imported.id;
+            item.file_id = imported.file_id;
+            await saveImportedItems();
+          }
+        }
+        await saveImportedItems();
+      }
+      state.roundId = (await request(`/drafts/${encodeURIComponent(state.draftId)}/accept`, { idempotency_key: `addon:${state.draftId}` })).id;
+      state.draftAccepted = true;
+      remember();
+      const round = await showRound();
+      if (round.execution === "completed") await writeCurrentDocument();
+    } catch (error) {
+      showError(error.message || "发起审核失败，请重试");
+    } finally {
+      state.busy = false;
+      refreshSubmit();
+    }
   });
 
   writeback.addEventListener("click", () => {
     void writeCurrentDocument();
   });
+  if (state.roundId) {
+    try { await showRound(); } catch (error) { showError(error.message); }
+  }
 }
 
 main();

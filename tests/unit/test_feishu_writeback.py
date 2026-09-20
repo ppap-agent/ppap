@@ -57,7 +57,7 @@ class HistorySemanticsTests(unittest.TestCase):
         mapped = findings_from_engine_results([result], target=target)
         body = {
             "execution": "completed",
-            "inputs": [{"role": "target", "file_version_id": target.file_version_id, "original_filename": target.filename}],
+            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": target.file_version_id, "original_filename": target.filename}],
             "findings": mapped["findings"],
         }
         text = history_text(body)
@@ -81,7 +81,7 @@ class HistorySemanticsTests(unittest.TestCase):
         body = {
             "execution": "completed",
             "inputs": [
-                {"role": "target", "file_version_id": target.file_version_id, "original_filename": target.filename}
+                {"role": "target", "rule_version_id": RULE_A, "file_version_id": target.file_version_id, "original_filename": target.filename}
                 for target in (first, second)
             ],
             "findings": findings,
@@ -93,7 +93,7 @@ class HistorySemanticsTests(unittest.TestCase):
         self.assertEqual(comment_text(body), "总结：\n签字检查：缺少签字")
 
     def test_unproven_target_results_cannot_generate_a_report(self):
-        target = {"role": "target", "file_version_id": "target-version", "original_filename": "report.xlsx"}
+        target = {"role": "target", "rule_version_id": RULE_A, "file_version_id": "target-version", "original_filename": "report.xlsx"}
         reference = {"role": "reference", "file_version_id": "reference-version", "original_filename": "report.xlsx"}
         passed = {"status": "PASS", "locator": {"file_version_id": "target-version"}}
         cases = [
@@ -129,7 +129,7 @@ class HistorySemanticsTests(unittest.TestCase):
                 self.assertTrue(mapped["coverage"]["locator_gap"])
                 body = {
                     "execution": "completed",
-                    "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "report.xlsx"}],
+                    "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": "version-1", "original_filename": "report.xlsx"}],
                     "findings": mapped["findings"],
                 }
                 if status == "NG":
@@ -144,7 +144,7 @@ class HistorySemanticsTests(unittest.TestCase):
             "id": "round-1",
             "execution": "completed",
             "created_at": "2026-09-19T12:00:00+00:00",
-            "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "report.xlsx"}],
+            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": "version-1", "original_filename": "report.xlsx"}],
             "findings": [
                 {
                     "item": "封面",
@@ -168,7 +168,7 @@ class HistorySemanticsTests(unittest.TestCase):
         body = {
             "id": "round-2",
             "execution": "completed",
-            "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "plan.xlsx"}],
+            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": "version-1", "original_filename": "plan.xlsx"}],
             "findings": [
                 {
                     "item": "零件号",
@@ -187,7 +187,7 @@ class HistorySemanticsTests(unittest.TestCase):
     def test_ng_without_suggestions_still_states_the_machine_result(self):
         body = {
             "execution": "completed",
-            "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "plan.xlsx"}],
+            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": "version-1", "original_filename": "plan.xlsx"}],
             "findings": [{"item": "零件号", "status": "NG", "locator": {"file_version_id": "version-1"}}],
         }
         self.assertIn("审核结果：NG", history_text(body))
@@ -279,7 +279,7 @@ class FeishuWritebackTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         saved = self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": version["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         self.assertEqual(saved.status_code, 200)
         accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-writeback-1"})
@@ -363,7 +363,7 @@ class FeishuWritebackTests(unittest.TestCase):
         draft = self.client.post("/drafts").json()["id"]
         self.client.put(
             f"/drafts/{draft}",
-            json={"rule_version_id": RULE_A, "items": [{"file_version_id": version["id"], "role": "target"}]},
+            json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         queued = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-writeback-queued"})
         queued_id = queued.json()["id"]

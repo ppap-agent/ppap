@@ -53,7 +53,7 @@ class EngineRunnerTests(unittest.TestCase):
         self.assertEqual(ready.status_code, 200)
         return ready.json()
 
-    def test_runs_every_target_and_keeps_references_in_coverage(self):
+    def test_runs_each_target_with_its_bound_rule_and_keeps_references_in_context_only(self):
         from ppap_excel_audit_engine import app_runtime
         from ppap_worker import engine_runner
 
@@ -64,11 +64,9 @@ class EngineRunnerTests(unittest.TestCase):
         work = RoundWork(
             "round-multi",
             "t1",
-            "engine",
-            {"kind": "engine", "type": "控制计划", "rule_id": "rule-1"},
             [
-                RoundInput("target", first["file_id"], first["id"], "a.xlsx", "ready"),
-                RoundInput("target", second["file_id"], second["id"], "b.xlsx", "ready"),
+                RoundInput("target", first["file_id"], first["id"], "a.xlsx", "ready", rule_version_id="rule-1", rule_title="控制计划", rule_body={"kind": "engine", "rule_profile": "v3", "type": "控制计划"}),
+                RoundInput("target", second["file_id"], second["id"], "b.xlsx", "ready", rule_version_id="rule-2", rule_title="PFMEA", rule_body={"kind": "engine", "rule_profile": "v2", "type": "过程失效模式及后果分析"}),
                 RoundInput("reference", reference["file_id"], reference["id"], "context.pdf", "ready"),
                 RoundInput("reference", "missing-file", "missing-version", "gone.pdf", "ready"),
             ],
@@ -76,7 +74,7 @@ class EngineRunnerTests(unittest.TestCase):
         calls = []
 
         def fake_run(audit, rule, group_context=None):
-            calls.append((audit.audit_id, group_context))
+            calls.append((audit.audit_id, group_context, rule))
             return [
                 AuditResultItem(
                     status="PASS",
@@ -94,12 +92,17 @@ class EngineRunnerTests(unittest.TestCase):
         with patch.object(app_runtime, "run_audit_engine", fake_run):
             result = engine_runner(work, self.store)
         self.assertEqual([call[0] for call in calls], [first["id"], second["id"]])
+        self.assertEqual([call[2].rule_id for call in calls], ["rule-1", "rule-2"])
+        self.assertEqual([call[2].rule_profile for call in calls], ["v3", "v2"])
+        self.assertEqual([call[2].type for call in calls], ["控制计划", "过程失效模式及后果分析"])
         context = calls[0][1]
         self.assertEqual(context.task_group_id, "round-multi")
         self.assertIn(first["id"], context.by_audit_id)
         self.assertIn(second["id"], context.by_audit_id)
         self.assertIn(reference["id"], context.by_audit_id)
         self.assertNotIn("missing-version", context.by_audit_id)
+        self.assertEqual(set(context.rules_by_id), {"rule-1", "rule-2"})
+        self.assertEqual([item.audit_id for item in context.by_doc_type["控制计划"]], [first["id"]])
         self.assertEqual(
             {row["item_key"] for row in result["findings"]},
             {f"{first['id']}:engine:1", f"{second['id']}:engine:1"},

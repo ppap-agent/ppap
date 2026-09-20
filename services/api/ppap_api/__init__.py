@@ -498,28 +498,12 @@ def create_app(
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return None
 
-    def compare_file_tokens(value) -> list[str]:
-        if value is None or value == "":
-            return []
-        if isinstance(value, str):
-            parts = value.split(",")
-        elif isinstance(value, list):
-            parts = value
-        else:
-            raise ValueError("invalid_compare_file_tokens")
-        tokens: list[str] = []
-        seen: set[str] = set()
-        for part in parts:
-            token = str(part or "").strip()
-            if token and token not in seen:
-                seen.add(token)
-                tokens.append(token)
-        return tokens
-
-    def observe_feishu_audit_usage(principal, round_id: str, file_count: int) -> None:
+    def observe_feishu_audit_usage(principal, round_body: dict) -> None:
         item_id = (settings.feishu_ai_item_id or "").strip()
-        if not item_id:
+        if not item_id or principal.provider != "feishu":
             return
+        round_id = round_body["id"]
+        file_count = sum(item["role"] == "target" for item in round_body["inputs"])
         points = audit_usage_points(file_count)
         if points <= 0:
             return
@@ -552,57 +536,6 @@ def create_app(
                 return mapped
             raise
         return JSONResponse(ready.public(), status_code=201)
-
-    @app.post("/integrations/feishu/audits")
-    def feishu_audits_create(body: dict, request: Request) -> JSONResponse:
-        session = session_of(request)
-        if not session:
-            return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        if not session.access_token:
-            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
-        file_token = str(body.get("file_token") or "").strip()
-        if not file_token:
-            return JSONResponse({"error": "invalid_file_token"}, status_code=400)
-        doc_type = str(body.get("doc_type") or "").strip() or None
-        rule_version_id = str(body.get("rule_version_id") or "").strip()
-        if not rule_version_id:
-            return JSONResponse({"error": "rule_required"}, status_code=400)
-        try:
-            compares = compare_file_tokens(body.get("compare_file_tokens"))
-            existing = store.round_by_idempotency(session.principal, body.get("idempotency_key"))
-        except ValueError as exc:
-            mapped = feishu_material_error(exc)
-            return mapped or JSONResponse({"error": str(exc)}, status_code=400)
-        if existing:
-            resource = store.resource(existing["id"])
-            grants = store.grants(existing["id"], session.principal.user_id) if resource else set()
-            if resource is None or not can_read(session.principal, resource, grants):
-                return JSONResponse({"error": "access_denied"}, status_code=403)
-            return JSONResponse(existing, status_code=201)
-        try:
-            target = persist_imported(
-                session.principal,
-                import_drive_material(http, session.access_token, file_token, doc_type),
-            )
-            items = [{"file_version_id": target.id, "role": "target"}]
-            for compare in compares:
-                if compare == file_token:
-                    continue
-                reference = persist_imported(
-                    session.principal,
-                    import_drive_material(http, session.access_token, compare, None),
-                )
-                items.append({"file_version_id": reference.id, "role": "reference"})
-            draft = store.create_draft(session.principal)
-            store.save_draft(session.principal, draft["id"], rule_version_id, items)
-            round_body = store.accept_draft(session.principal, draft["id"], body.get("idempotency_key"))
-        except Exception as exc:
-            mapped = feishu_material_error(exc)
-            if mapped:
-                return mapped
-            raise
-        observe_feishu_audit_usage(session.principal, round_body["id"], len(items))
-        return JSONResponse(round_body, status_code=201)
 
     @app.get("/integrations/feishu/docs/links")
     def feishu_doc_links(request: Request, file_token: str = "") -> JSONResponse:
@@ -778,7 +711,7 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
-    register_audit_routes(app, store, principal_of)
+    register_audit_routes(app, store, principal_of, observe_feishu_audit_usage)
     register_rule_routes(app, store, principal_of)
     return app
 

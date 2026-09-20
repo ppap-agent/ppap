@@ -1,4 +1,10 @@
 const readJson = (...args) => window.PpapProduct.readJson(...args);
+let availableRules = [];
+let auditBusy = false;
+
+function auditError(result) {
+  document.getElementById("audit-error").textContent = result ? (result.body?.error || "操作失败，请重试") : "";
+}
 
 function params() {
   return new URLSearchParams(window.location.search);
@@ -101,7 +107,7 @@ function renderVersionList(api, items, roundId) {
     const role = item.role === "target" ? "待审" : item.role === "reference" ? "参考" : item.role;
     const href = versionHref(api, roundId, item);
     const preview = href ? `<a data-testid="open-version" href="${href}">预览</a>` : "";
-    return `<li data-testid="file-version-row">${escapeHtml(role)} · ${escapeHtml(item.original_filename)} · ${escapeHtml(item.file_version_id)} ${preview}</li>`;
+    return `<li data-testid="file-version-row">${escapeHtml(role)} · ${escapeHtml(item.original_filename)} · ${escapeHtml(item.file_version_id)} · ${escapeHtml(item.rule?.title || (item.role === "reference" ? "仅参考" : ""))} ${preview}</li>`;
   }).join("");
 }
 
@@ -112,7 +118,11 @@ function renderDraftItems(api, items, roundId) {
     renderVersionList(api, items, roundId);
     return;
   }
-  node.textContent = items.map((item) => `${item.role}: ${item.original_filename} (${item.file_version_id})`).join("；");
+  node.innerHTML = items.map((item, index) => `<div data-testid="draft-item" data-index="${index}">
+    <span>${escapeHtml(item.original_filename)}</span>
+    <select data-testid="item-role" aria-label="文件角色" ${auditBusy ? "disabled" : ""}><option value="target" ${item.role === "target" ? "selected" : ""}>待审</option><option value="reference" ${item.role === "reference" ? "selected" : ""}>参考</option></select>
+    <select data-testid="item-rule" aria-label="规则版本" ${auditBusy || item.role === "reference" ? "disabled" : ""}><option value="">请选择规则版本</option>${availableRules.map((rule) => `<option value="${escapeHtml(rule.id)}" ${rule.id === item.rule_version_id ? "selected" : ""}>${escapeHtml(rule.title)} · ${escapeHtml(rule.type || rule.kind)} · ${escapeHtml(rule.id.slice(0, 8))}</option>`).join("")}</select>
+  </div>`).join("");
   renderVersionList(api, items, roundId);
 }
 
@@ -179,6 +189,11 @@ function renderRound(api, round, state) {
   document.getElementById("round-execution").textContent = round.execution || "";
   if (state) {
     state.roundId = round.id || state.roundId;
+    if (state.displayedRoundId !== round.id) {
+      state.displayedRoundId = round.id;
+      state.items = round.inputs || [];
+      renderDraftItems(api, state.items, round.id);
+    }
   }
   const coverage = round.coverage || {};
   document.getElementById("coverage-panel").textContent = coverageLabel(coverage);
@@ -263,7 +278,7 @@ async function uploadOneFile(api, file, role, state) {
   if (!readyVersion.ok) {
     return false;
   }
-  const next = { file_version_id: readyVersion.body.id, role, file_id: fileId, original_filename: file.name };
+  const next = { file_version_id: readyVersion.body.id, role, file_id: fileId, original_filename: file.name, rule_version_id: existing?.rule_version_id || null };
   if (existing) {
     state.items = state.items.map((item) => (item === existing ? next : item));
   } else {
@@ -312,17 +327,18 @@ async function saveDraft(api, state) {
   if (!(await ensureDraft(api, state))) {
     return false;
   }
-  const rule = document.getElementById("rule-select").value;
   const saved = await readJson(`${api}/drafts/${encodeURIComponent(state.draftId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rule_version_id: rule, items: state.items }),
+    body: JSON.stringify({ items: state.items }),
   });
   if (!saved.ok) {
+    auditError(saved);
     showDenied(saved.status === 401 || saved.status === 403);
     return false;
   }
-  renderDraftItems(api, saved.body.items || [], state.roundId);
+  state.items = saved.body.items || [];
+  renderDraftItems(api, state.items, state.roundId);
   return true;
 }
 
@@ -373,30 +389,32 @@ async function main() {
   });
 
   const state = { fileId: fileIdFromLocation(), draftId: params().get("draft") || "", items: [], roundId: params().get("round") || "", selectedItemKey: "" };
+  function onAction(id, handler) {
+    document.getElementById(id).addEventListener("click", async () => {
+      if (auditBusy) return;
+      auditBusy = true;
+      auditError(null);
+      const controls = document.querySelectorAll("#prepare-audit, #prepare-reference, #save-draft, #submit-audit, #resubmit-audit, #source-upload, #reference-upload, #draft-items select");
+      controls.forEach((node) => { node.disabled = true; });
+      try { await handler(); } catch { auditError({ body: { error: "操作失败，请重试" } }); }
+      finally {
+        auditBusy = false;
+        controls.forEach((node) => { node.disabled = false; });
+        renderDraftItems(api, state.items, state.roundId);
+      }
+    });
+  }
   renderVersionList(api, state.items, state.roundId);
   if (me.ok) {
     const rules = await product.rules();
-    const select = document.getElementById("rule-select");
-    (rules.body.rules || []).forEach((rule) => {
-      const option = document.createElement("option");
-      option.value = rule.id;
-      option.textContent = rule.kind === "engine" ? `${rule.title} · ${rule.id.slice(0, 8)}` : rule.title;
-      select.appendChild(option);
-    });
+    availableRules = rules.body.rules || [];
+    if (!rules.ok) auditError(rules);
     if (state.draftId) {
       const draft = await readJson(`${api}/drafts/${encodeURIComponent(state.draftId)}`);
       if (draft.ok) {
         document.getElementById("draft-id").textContent = draft.body.id;
-        state.items = (draft.body.items || []).map((item) => ({
-          file_version_id: item.file_version_id,
-          role: item.role,
-          file_id: item.file_id,
-          original_filename: item.original_filename,
-        }));
+        state.items = draft.body.items || [];
         renderDraftItems(api, state.items, state.roundId);
-        if (draft.body.rule && draft.body.rule.id) {
-          select.value = draft.body.rule.id;
-        }
       } else {
         showDenied(draft.status === 401 || draft.status === 403);
       }
@@ -408,16 +426,28 @@ async function main() {
     }
   }
 
-  document.getElementById("prepare-audit").addEventListener("click", async () => {
+  document.getElementById("draft-items").addEventListener("change", (event) => {
+    if (auditBusy) return;
+    const row = event.target.closest("[data-index]");
+    if (!row) return;
+    const item = state.items[Number(row.dataset.index)];
+    if (event.target.dataset.testid === "item-role") {
+      item.role = event.target.value;
+      item.rule_version_id = null;
+      item.rule = null;
+      renderDraftItems(api, state.items, state.roundId);
+    } else item.rule_version_id = event.target.value || null;
+  });
+  onAction("prepare-audit", async () => {
     await uploadVersion(api, "source-upload", "target", state);
   });
-  document.getElementById("prepare-reference").addEventListener("click", async () => {
+  onAction("prepare-reference", async () => {
     await uploadVersion(api, "reference-upload", "reference", state);
   });
-  document.getElementById("save-draft").addEventListener("click", async () => {
+  onAction("save-draft", async () => {
     await saveDraft(api, state);
   });
-  document.getElementById("submit-audit").addEventListener("click", async () => {
+  onAction("submit-audit", async () => {
     if (!(await saveDraft(api, state))) {
       return;
     }
@@ -433,6 +463,7 @@ async function main() {
       body: JSON.stringify({ idempotency_key: idempotency }),
     });
     if (!accepted.ok) {
+      auditError(accepted);
       showDenied(accepted.status === 401 || accepted.status === 403);
       return;
     }
@@ -515,7 +546,7 @@ async function main() {
     document.getElementById("review-saved").textContent = "saved";
     renderRound(api, saved.body, state);
   });
-  document.getElementById("resubmit-audit").addEventListener("click", async () => {
+  onAction("resubmit-audit", async () => {
     if (!state.roundId) {
       return;
     }
@@ -525,10 +556,10 @@ async function main() {
       body: JSON.stringify({
         idempotency_key: crypto.randomUUID(),
         items: state.items.length ? state.items : undefined,
-        rule_version_id: document.getElementById("rule-select").value || undefined,
       }),
     });
     if (!accepted.ok) {
+      auditError(accepted);
       showDenied(accepted.status === 401 || accepted.status === 403);
       return;
     }

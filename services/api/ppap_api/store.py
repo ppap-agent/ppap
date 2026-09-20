@@ -729,7 +729,7 @@ class AuthStore:
         with self._conn() as conn:
             return self._draft_public(conn, parsed)
 
-    def save_draft(self, principal: Principal, draft_id: str, rule_version_id: str | None, items: list[dict] | None) -> dict:
+    def save_draft(self, principal: Principal, draft_id: str, items: list[dict] | None) -> dict:
         parsed = _as_uuid(draft_id)
         if not parsed:
             raise KeyError("missing")
@@ -746,28 +746,16 @@ class AuthStore:
                     raise KeyError("missing")
                 if draft[2] != DRAFT_OPEN:
                     raise ValueError("draft_already_accepted")
-                if rule_version_id is not None:
-                    rid = _as_uuid(rule_version_id)
-                    if not rid or not self._rule_for_tenant(conn, rid, principal.tenant_id):
-                        raise ValueError("unknown_rule")
-                    conn.execute(
-                        """
-                        UPDATE product.audit_drafts
-                        SET rule_version_id = %s, updated_at = now()
-                        WHERE id = %s
-                        """,
-                        (rid, parsed),
-                    )
                 if items is not None:
-                    prepared = self._prepared_items(conn, principal, items)
+                    prepared = self._bound_audit_items(conn, principal, items, require_rules=False)
                     conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
                     for row in prepared:
                         conn.execute(
                             """
-                            INSERT INTO product.draft_items (draft_id, file_version_id, role)
-                            VALUES (%s, %s, %s)
+                            INSERT INTO product.draft_items (draft_id, file_version_id, role, rule_version_id)
+                            VALUES (%s, %s, %s, %s)
                             """,
-                            (parsed, row["file_version_id"], row["role"]),
+                            (parsed, row["file_version_id"], row["role"], row["rule_version_id"]),
                         )
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
                 return self._draft_public(conn, parsed)
@@ -780,26 +768,14 @@ class AuthStore:
         with self._conn() as conn:
             with conn.transaction():
                 return self._accept_locked(
-                    conn, principal, key, source_draft_id=parsed, predecessor_id=None, rule_version_id=None, items=None
+                    conn, principal, key, source_draft_id=parsed, predecessor_id=None, items=None
                 )
-
-    def round_by_idempotency(self, principal: Principal, idempotency_key: str) -> dict | None:
-        key = normalize_idempotency_key(idempotency_key)
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT id FROM product.audit_rounds WHERE tenant_id = %s AND idempotency_key = %s",
-                (principal.tenant_id, key),
-            ).fetchone()
-            if not row:
-                return None
-            return self._round_public(conn, str(row[0]))
 
     def resubmit_round(
         self,
         principal: Principal,
         round_id: str,
         idempotency_key: str,
-        rule_version_id: str | None,
         items: list[dict] | None,
     ) -> dict:
         key = normalize_idempotency_key(idempotency_key)
@@ -810,8 +786,8 @@ class AuthStore:
             with conn.transaction():
                 current = conn.execute(
                     """
-                    SELECT id, tenant_id, rule_version_id FROM product.audit_rounds
-                    WHERE id = %s FOR UPDATE
+                    SELECT id, tenant_id FROM product.audit_rounds
+                    WHERE id = %s
                     """,
                     (parsed,),
                 ).fetchone()
@@ -819,18 +795,16 @@ class AuthStore:
                     raise KeyError("missing")
                 if items is None:
                     rows = conn.execute(
-                        "SELECT file_version_id, role FROM product.round_inputs WHERE round_id = %s",
+                        "SELECT file_version_id, role, rule_version_id FROM product.round_inputs WHERE round_id = %s",
                         (parsed,),
                     ).fetchall()
-                    items = [{"file_version_id": str(row[0]), "role": row[1]} for row in rows]
-                rule = rule_version_id or str(current[2])
+                    items = [{"file_version_id": str(row[0]), "role": row[1], "rule_version_id": str(row[2]) if row[2] else None} for row in rows]
                 return self._accept_locked(
                     conn,
                     principal,
                     key,
                     source_draft_id=None,
                     predecessor_id=parsed,
-                    rule_version_id=rule,
                     items=items,
                 )
 
@@ -935,7 +909,7 @@ class AuthStore:
         with self._conn() as conn:
             head = conn.execute(
                 """
-                SELECT id, tenant_id, rule_title, rule_body, result_attempt
+                SELECT id, tenant_id, result_attempt
                 FROM product.audit_rounds WHERE id = %s
                 """,
                 (parsed,),
@@ -944,7 +918,8 @@ class AuthStore:
                 return None
             rows = conn.execute(
                 """
-                SELECT i.role, fv.file_id, fv.id, fv.original_filename, fv.status, fv.object_key, fv.content_type
+                SELECT i.role, fv.file_id, fv.id, fv.original_filename, fv.status, fv.object_key, fv.content_type,
+                       i.rule_version_id, i.rule_title, i.rule_body
                 FROM product.round_inputs i
                 JOIN product.file_versions fv ON fv.id = i.file_version_id
                 WHERE i.round_id = %s
@@ -955,13 +930,11 @@ class AuthStore:
         return RoundWork(
             str(head[0]),
             str(head[1]),
-            head[2],
-            head[3] or {},
             [
-                RoundInput(row[0], str(row[1]), str(row[2]), row[3], row[4], row[5], row[6])
+                RoundInput(row[0], str(row[1]), str(row[2]), row[3], row[4], row[5], row[6], str(row[7]) if row[7] else None, row[8], row[9])
                 for row in rows
             ],
-            head[4],
+            head[2],
         )
 
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
@@ -1142,6 +1115,24 @@ class AuthStore:
             prepared.append({"file_version_id": str(row[0]), "role": role, "file_id": str(row[1])})
         return prepared
 
+    def _bound_audit_items(self, conn, principal, items, *, require_rules=True) -> list[dict]:
+        prepared = self._prepared_items(conn, principal, items)
+        for row, raw in zip(prepared, items):
+            rule_id = raw.get("rule_version_id")
+            rule = None
+            if row["role"] == "reference" and rule_id:
+                raise ValueError("reference_rule_forbidden")
+            if row["role"] == "target":
+                if not rule_id and require_rules:
+                    raise ValueError("rule_required")
+                if rule_id:
+                    rid = _as_uuid(str(rule_id))
+                    rule = self._rule_for_tenant(conn, rid, principal.tenant_id) if rid else None
+                    if not rule:
+                        raise ValueError("unknown_rule")
+            row.update(rule_version_id=str(rule[0]) if rule else None, rule_title=rule[1] if rule else None, rule_body=rule[2] if rule else None)
+        return prepared
+
     def _accept_locked(
         self,
         conn,
@@ -1149,9 +1140,11 @@ class AuthStore:
         key: str,
         source_draft_id: str | None,
         predecessor_id: str | None,
-        rule_version_id: str | None,
         items: list[dict] | None,
     ) -> dict:
+        # Serialize one tenant/key before reading existing acceptance, including
+        # competing requests from different drafts. Hash collisions only serialize.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
             SELECT id, request_fingerprint FROM product.audit_rounds
@@ -1160,39 +1153,32 @@ class AuthStore:
             (principal.tenant_id, key),
         ).fetchone()
         draft_status = None
-        draft_rule = None
         if source_draft_id:
             draft = conn.execute(
                 """
-                SELECT id, tenant_id, rule_version_id, status FROM product.audit_drafts
+                SELECT id, tenant_id, status FROM product.audit_drafts
                 WHERE id = %s FOR UPDATE
                 """,
                 (source_draft_id,),
             ).fetchone()
             if not draft or str(draft[1]) != principal.tenant_id:
                 raise KeyError("missing")
-            draft_rule = str(draft[2]) if draft[2] else None
-            draft_status = draft[3]
+            draft_status = draft[2]
             if items is None:
                 rows = conn.execute(
-                    "SELECT file_version_id, role FROM product.draft_items WHERE draft_id = %s",
+                    "SELECT file_version_id, role, rule_version_id FROM product.draft_items WHERE draft_id = %s",
                     (source_draft_id,),
                 ).fetchall()
-                items = [{"file_version_id": str(row[0]), "role": row[1]} for row in rows]
-            if rule_version_id is None:
-                rule_version_id = draft_rule
+                items = [{"file_version_id": str(row[0]), "role": row[1], "rule_version_id": str(row[2]) if row[2] else None} for row in rows]
         if items is None:
             items = []
-        if not rule_version_id:
-            raise ValueError("rule_required")
-        rid = _as_uuid(str(rule_version_id))
-        rule = self._rule_for_tenant(conn, rid, principal.tenant_id) if rid else None
-        if not rule:
-            raise ValueError("unknown_rule")
-        prepared = self._prepared_items(conn, principal, items)
+        prepared = self._bound_audit_items(conn, principal, items)
         require_targets(prepared)
-        fingerprint = request_fingerprint(str(rule[0]), prepared)
+        fingerprint = request_fingerprint(prepared)
         if existing:
+            resource = self.resource(str(existing[0]))
+            if resource is None or not can_read(principal, resource, self.grants(str(existing[0]), principal.user_id)):
+                raise KeyError("missing")
             if existing[1] != fingerprint:
                 raise ValueError("idempotency_conflict")
             return self._round_public(conn, str(existing[0]))
@@ -1208,20 +1194,21 @@ class AuthStore:
             """
             INSERT INTO product.audit_rounds (
                 id, tenant_id, created_by, source_draft_id, predecessor_id,
-                rule_version_id, rule_title, rule_body, idempotency_key,
+                idempotency_key,
                 request_fingerprint, execution
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 round_id, principal.tenant_id, principal.user_id, source_draft_id, predecessor_id,
-                rule[0], rule[1], Jsonb(rule[2] or {}), key, fingerprint, EXEC_QUEUED,
+                key, fingerprint, EXEC_QUEUED,
             ),
         )
         for row in prepared:
             conn.execute(
-                "INSERT INTO product.round_inputs (round_id, file_version_id, role) VALUES (%s, %s, %s)",
-                (round_id, row["file_version_id"], row["role"]),
+                """INSERT INTO product.round_inputs (round_id, file_version_id, role, rule_version_id, rule_title, rule_body)
+                VALUES (%s, %s, %s, %s, %s, %s)""",
+                (round_id, row["file_version_id"], row["role"], row["rule_version_id"], row["rule_title"], Jsonb(row["rule_body"]) if row["rule_body"] is not None else None),
             )
         conn.execute(
             """
@@ -1252,9 +1239,8 @@ class AuthStore:
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT d.id, d.tenant_id, d.status, d.rule_version_id, r.title
+            SELECT d.id, d.tenant_id, d.status
             FROM product.audit_drafts d
-            LEFT JOIN product.rule_versions r ON r.id = d.rule_version_id
             WHERE d.id = %s
             """,
             (draft_id,),
@@ -1263,9 +1249,10 @@ class AuthStore:
             return None
         items = conn.execute(
             """
-            SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status
+            SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status, i.rule_version_id, r.title, r.body
             FROM product.draft_items i
             JOIN product.file_versions fv ON fv.id = i.file_version_id
+            LEFT JOIN product.rule_versions r ON r.id = i.rule_version_id
             WHERE i.draft_id = %s
             ORDER BY i.role, fv.original_filename
             """,
@@ -1274,7 +1261,6 @@ class AuthStore:
         return {
             "id": str(row[0]),
             "status": row[2],
-            "rule": {"id": str(row[3]), "title": row[4]} if row[3] else None,
             "items": [
                 {
                     "role": item[0],
@@ -1282,6 +1268,8 @@ class AuthStore:
                     "file_id": str(item[2]),
                     "original_filename": item[3],
                     "status": item[4],
+                    "rule_version_id": str(item[5]) if item[5] else None,
+                    "rule": {"id": str(item[5]), "title": item[6], "body": item[7]} if item[5] else None,
                 }
                 for item in items
             ],
@@ -1290,7 +1278,7 @@ class AuthStore:
     def _round_history(self, conn, round_id) -> dict | None:
         row = conn.execute(
             """
-            SELECT id, execution, rule_version_id, rule_title, predecessor_id, created_at
+            SELECT id, execution, predecessor_id, created_at
             FROM product.audit_rounds WHERE id = %s
             """,
             (round_id,),
@@ -1299,7 +1287,7 @@ class AuthStore:
             return None
         inputs = conn.execute(
             """
-            SELECT i.role, fv.original_filename, fv.id
+            SELECT i.role, fv.original_filename, fv.id, i.rule_version_id, i.rule_title
             FROM product.round_inputs i
             JOIN product.file_versions fv ON fv.id = i.file_version_id
             WHERE i.round_id = %s
@@ -1318,14 +1306,14 @@ class AuthStore:
         return {
             "id": str(row[0]),
             "execution": row[1],
-            "rule": {"id": str(row[2]), "title": row[3]},
-            "predecessor_id": str(row[4]) if row[4] else None,
-            "created_at": row[5].isoformat() if row[5] is not None else None,
+            "predecessor_id": str(row[2]) if row[2] else None,
+            "created_at": row[3].isoformat() if row[3] is not None else None,
             "inputs": [
                 {
                     "role": item[0],
                     "original_filename": item[1],
                     "file_version_id": str(item[2]),
+                    "rule": {"id": str(item[3]), "title": item[4]} if item[3] else None,
                 }
                 for item in inputs
             ],
@@ -1335,7 +1323,7 @@ class AuthStore:
     def _round_public(self, conn, round_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT id, execution, rule_version_id, rule_title, coverage, predecessor_id,
+            SELECT id, execution, coverage, predecessor_id,
                    source_draft_id, result_attempt, created_at
             FROM product.audit_rounds WHERE id = %s
             """,
@@ -1345,7 +1333,7 @@ class AuthStore:
             return None
         inputs = conn.execute(
             """
-            SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status
+            SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status, i.rule_version_id, i.rule_title, i.rule_body
             FROM product.round_inputs i
             JOIN product.file_versions fv ON fv.id = i.file_version_id
             WHERE i.round_id = %s
@@ -1367,12 +1355,11 @@ class AuthStore:
         return {
             "id": str(row[0]),
             "execution": row[1],
-            "rule": {"id": str(row[2]), "title": row[3]},
-            "coverage": row[4] or {},
-            "predecessor_id": str(row[5]) if row[5] else None,
-            "source_draft_id": str(row[6]) if row[6] else None,
-            "result_attempt": row[7],
-            "created_at": row[8].isoformat() if row[8] is not None else None,
+            "coverage": row[2] or {},
+            "predecessor_id": str(row[3]) if row[3] else None,
+            "source_draft_id": str(row[4]) if row[4] else None,
+            "result_attempt": row[5],
+            "created_at": row[6].isoformat() if row[6] is not None else None,
             "inputs": [
                 {
                     "role": item[0],
@@ -1380,6 +1367,8 @@ class AuthStore:
                     "file_id": str(item[2]),
                     "original_filename": item[3],
                     "status": item[4],
+                    "rule_version_id": str(item[5]) if item[5] else None,
+                    "rule": {"id": str(item[5]), "title": item[6], "body": item[7]} if item[5] else None,
                 }
                 for item in inputs
             ],

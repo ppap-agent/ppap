@@ -48,10 +48,10 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.goto(WEB)
                 page.get_by_test_id("isolated-dev-login").click()
                 page.wait_for_selector("text=ou_alice")
-                page.get_by_test_id("rule-select").select_option(RULE_A)
                 page.get_by_test_id("source-upload").set_input_files(str(target))
                 page.get_by_test_id("prepare-audit").click()
                 page.wait_for_function("() => document.getElementById('document-version-id').textContent.length > 0")
+                page.get_by_test_id("item-rule").first.select_option(RULE_A)
                 page.get_by_test_id("reference-upload").set_input_files(str(reference))
                 page.get_by_test_id("prepare-reference").click()
                 page.wait_for_function("() => document.getElementById('draft-items').textContent.includes('context.pdf')")
@@ -97,8 +97,9 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.get_by_test_id("source-upload").set_input_files(str(newer))
                 page.get_by_test_id("prepare-audit").click()
                 page.wait_for_function(
-                    "() => document.getElementById('document-version-id').textContent.length > 0"
+                    "() => document.getElementById('draft-items').textContent.includes('report-v2.xlsx')"
                 )
+                page.get_by_test_id("item-rule").last.select_option(RULE_A)
                 page.get_by_test_id("resubmit-audit").click()
                 page.wait_for_selector('[data-testid="previous-round"]:not(.hidden)')
                 expect(page.get_by_test_id("previous-round")).to_be_visible()

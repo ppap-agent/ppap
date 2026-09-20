@@ -8,7 +8,7 @@ from ppap_core.identity import can_read, can_review
 from ppap_api.store import AuthStore
 
 
-def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
+def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, observe_usage) -> None:
     def require_principal(request: Request):
         principal = principal_of(request)
         if not principal:
@@ -69,9 +69,10 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         items = body.get("items") if "items" in body else None
-        rule = body.get("rule_version_id") if "rule_version_id" in body else None
+        if "rule_version_id" in body:
+            return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
         try:
-            draft = store.save_draft(principal, draft_id, str(rule) if rule else None, items)
+            draft = store.save_draft(principal, draft_id, items)
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(draft)
@@ -85,6 +86,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             round_body = store.accept_draft(principal, draft_id, body.get("idempotency_key"))
         except (KeyError, ValueError) as exc:
             return fail(exc)
+        observe_usage(principal, round_body)
         return JSONResponse(round_body, status_code=201)
 
     @app.get("/rounds")
@@ -142,17 +144,18 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         items = body.get("items") if "items" in body else None
-        rule = body.get("rule_version_id") if "rule_version_id" in body else None
+        if "rule_version_id" in body:
+            return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
         try:
             created = store.resubmit_round(
                 principal,
                 round_id,
                 body.get("idempotency_key"),
-                str(rule) if rule else None,
                 items,
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)
+        observe_usage(principal, created)
         return JSONResponse(created, status_code=201)
 
     @app.put("/rounds/{round_id}/reviews")

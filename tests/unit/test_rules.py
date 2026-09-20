@@ -169,7 +169,7 @@ class RuleApiTests(unittest.TestCase):
         original = self.client.post("/rules", json={"title": "控制计划", "body": rule_body(), "source_file_version_id": source["id"]}).json()
         target = self.upload("控制计划.xlsx")
         draft = self.client.post("/drafts").json()["id"]
-        self.client.put(f"/drafts/{draft}", json={"rule_version_id": original["id"], "items": [{"file_version_id": target["id"], "role": "target"}]})
+        self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": original["id"]}]})
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "old-rule-round"}).json()["id"]
         changed = rule_body()
         changed["rules"][0]["rule_to_check"] = "新版要求"
@@ -178,7 +178,7 @@ class RuleApiTests(unittest.TestCase):
         self.assertNotEqual(successor.json()["id"], original["id"])
         self.assertEqual(successor.json()["predecessor_id"], original["id"])
         self.assertEqual(self.client.get("/rules/" + original["id"]).json()["body"], rule_body())
-        self.assertEqual(self.client.get("/rounds/" + round_id).json()["rule"]["id"], original["id"])
+        self.assertEqual(self.client.get("/rounds/" + round_id).json()["inputs"][0]["rule"]["id"], original["id"])
 
     def test_source_authorization_and_enterprise_rule_visibility_are_separate(self):
         source = self.upload()
