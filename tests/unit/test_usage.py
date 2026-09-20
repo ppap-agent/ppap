@@ -1,0 +1,77 @@
+"""Provider-neutral usage read path for the Web workbench."""
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+
+from fastapi.testclient import TestClient
+
+from ppap_core.settings import Settings
+from ppap_api import create_app
+from tests.unit.memory_auth import MemoryAuthStore
+
+
+def _clean_env(**extra: str):
+    keep = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
+    }
+    keep.update(extra)
+    return patch.dict(os.environ, keep, clear=True)
+
+
+class UsageReadTests(unittest.TestCase):
+    def setUp(self):
+        self._env = _clean_env(PPAP_BUILD_SHA="a" * 40)
+        self._env.start()
+        self.settings = Settings()
+        self.store = MemoryAuthStore(self.settings)
+        self.store.seed_isolated_dev()
+        self.client = TestClient(
+            create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
+        )
+
+    def tearDown(self):
+        self._env.stop()
+
+    def _login(self, subject: str) -> None:
+        self.client.cookies.clear()
+        response = self.client.post("/isolated-dev/sessions", json={"subject": subject})
+        self.assertEqual(response.status_code, 200)
+
+    def test_usage_requires_authentication(self):
+        response = self.client.get("/usage")
+        self.assertEqual(response.status_code, 401)
+
+    def test_usage_lists_current_principal_events_only(self):
+        alice = self.store.principal_for_fixture("alice")
+        bob = self.store.principal_for_fixture("bob")
+        self.store.record_usage_event(alice, "item-a", 400, True, trace_id="alice-1")
+        self.store.record_usage_event(alice, "item-a", 50, False, trace_id="alice-2")
+        self.store.record_usage_event(bob, "item-a", 10, True, trace_id="bob-1")
+
+        self._login("alice")
+        listed = self.client.get("/usage")
+        self.assertEqual(listed.status_code, 200)
+        events = listed.json()["events"]
+        self.assertEqual(len(events), 2)
+        self.assertEqual({row["trace_id"] for row in events}, {"alice-1", "alice-2"})
+        self.assertTrue(all("created_at" in row and row["created_at"] for row in events))
+        self.assertTrue(all(row["ai_item_id"] == "item-a" for row in events))
+        self.assertNotIn("paid_balance", listed.json())
+
+        self._login("bob")
+        bob_listed = self.client.get("/usage")
+        self.assertEqual(bob_listed.status_code, 200)
+        self.assertEqual([row["trace_id"] for row in bob_listed.json()["events"]], ["bob-1"])
+
+        self._login("carol")
+        isolated = self.client.get("/usage")
+        self.assertEqual(isolated.json()["events"], [])

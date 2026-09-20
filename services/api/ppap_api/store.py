@@ -1314,7 +1314,7 @@ class AuthStore:
                 existing = conn.execute(
                     """
                     SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                           external_status, external_record_id, trace_id
+                           external_status, external_record_id, trace_id, created_at
                     FROM product.usage_events
                     WHERE tenant_id = %s AND trace_id = %s
                     """,
@@ -1331,7 +1331,7 @@ class AuthStore:
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                              external_status, external_record_id, trace_id
+                              external_status, external_record_id, trace_id, created_at
                     """,
                     (
                         event_id,
@@ -1348,7 +1348,7 @@ class AuthStore:
                 row = conn.execute(
                     """
                     SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                           external_status, external_record_id, trace_id
+                           external_status, external_record_id, trace_id, created_at
                     FROM product.usage_events
                     WHERE tenant_id = %s AND trace_id = %s
                     """,
@@ -1373,6 +1373,9 @@ class AuthStore:
         return int(row[0] if row else 0)
 
     def usage_event_public(self, row: dict) -> dict:
+        created = row.get("created_at")
+        if hasattr(created, "isoformat"):
+            created = created.isoformat()
         return {
             "id": row["id"],
             "ai_item_id": row["ai_item_id"],
@@ -1381,14 +1384,34 @@ class AuthStore:
             "external_status": row["external_status"],
             "external_record_id": row.get("external_record_id"),
             "trace_id": row["trace_id"],
+            "created_at": created,
         }
+
+    def list_usage_events(self, principal: Principal, limit: int = 50) -> list[dict]:
+        try:
+            cap = max(1, min(int(limit), 50))
+        except (TypeError, ValueError):
+            cap = 50
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                       external_status, external_record_id, trace_id, created_at
+                FROM product.usage_events
+                WHERE tenant_id = %s AND user_id = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT %s
+                """,
+                (principal.tenant_id, principal.user_id, cap),
+            ).fetchall()
+        return [self.usage_event_public(self._usage_from_row(row)) for row in rows]
 
     def usage_event(self, principal: Principal, event_id: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute(
                 """
                 SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                       external_status, external_record_id, trace_id
+                       external_status, external_record_id, trace_id, created_at
                 FROM product.usage_events
                 WHERE id = %s AND tenant_id = %s
                 """,
@@ -1410,7 +1433,7 @@ class AuthStore:
                 SET trace_id = %s
                 WHERE id = %s AND tenant_id = %s AND trace_id IS NULL
                 RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                          external_status, external_record_id, trace_id
+                          external_status, external_record_id, trace_id, created_at
                 """,
                 (trace, event_id, principal.tenant_id),
             ).fetchone()
@@ -1433,7 +1456,7 @@ class AuthStore:
                 SET external_status = %s, external_record_id = %s
                 WHERE id = %s AND tenant_id = %s AND is_free_trial = false
                 RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                          external_status, external_record_id, trace_id
+                          external_status, external_record_id, trace_id, created_at
                 """,
                 (status, record_id, event_id, principal.tenant_id),
             ).fetchone()
@@ -1442,6 +1465,9 @@ class AuthStore:
         return self._usage_from_row(row)
 
     def _usage_from_row(self, row) -> dict:
+        created = row[9] if len(row) > 9 else None
+        if hasattr(created, "isoformat"):
+            created = created.isoformat()
         return {
             "id": str(row[0]),
             "tenant_id": str(row[1]),
@@ -1452,4 +1478,5 @@ class AuthStore:
             "external_status": row[6],
             "external_record_id": row[7],
             "trace_id": row[8],
+            "created_at": created,
         }

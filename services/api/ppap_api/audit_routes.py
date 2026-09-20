@@ -94,6 +94,13 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         return JSONResponse({"rounds": store.list_rounds(principal, limit)})
 
+    @app.get("/usage")
+    def usage_list(request: Request, limit: int = 50) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        return JSONResponse({"events": store.list_usage_events(principal, limit)})
+
     @app.get("/rounds/{round_id}")
     def rounds_get(round_id: str, request: Request) -> JSONResponse:
         principal, denied = require_object(request, round_id)

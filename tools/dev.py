@@ -32,6 +32,8 @@ COMPOSE_FILE = ROOT / "deploy" / "compose.yaml"
 COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 BACKUP_ROOT = DIST / "backups"
 APP_SERVICES = ("api", "worker", "web")
+OBJECT_STORE_SERVICE = "silo"
+OBJECT_STORE_VOLUME = "silo-data"
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 _COMPOSE_ENV_COMMANDS = {"deploy", "upgrade", "undeploy", "backup", "restore", "rollback"}
 
@@ -48,8 +50,30 @@ def compose_env_file() -> Path:
     return path
 
 
+def compose_file() -> Path:
+    """Compose file for deploy/backup. Default is the bundled production overlay."""
+    raw = os.environ.get("PPAP_COMPOSE_FILE", "").strip()
+    path = Path(raw) if raw else COMPOSE_FILE
+    if not path.is_absolute():
+        path = ROOT / path
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"compose file not found: {path}")
+    return path
+
+
+def _compose_has_service(name: str, path: Path | None = None) -> bool:
+    text = (path or compose_file()).read_text()
+    marker = f"  {name}:"
+    for line in text.splitlines():
+        if line == marker or line.startswith(marker + " ") or line.startswith(marker + "\t"):
+            if line.startswith("  ") and not line.startswith("    "):
+                return True
+    return False
+
+
 def take_compose_env_args(argv: list[str]) -> list[str]:
-    """Honor `--env-file PATH` by setting PPAP_COMPOSE_ENV. Remaining args are unchanged."""
+    """Honor `--env-file` and `--compose-file`. Remaining args are unchanged."""
     out: list[str] = []
     i = 0
     while i < len(argv):
@@ -62,6 +86,16 @@ def take_compose_env_args(argv: list[str]) -> list[str]:
             continue
         if arg.startswith("--env-file="):
             os.environ["PPAP_COMPOSE_ENV"] = arg.split("=", 1)[1]
+            i += 1
+            continue
+        if arg == "--compose-file":
+            if i + 1 >= len(argv):
+                raise ValueError("--compose-file requires a path")
+            os.environ["PPAP_COMPOSE_FILE"] = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--compose-file="):
+            os.environ["PPAP_COMPOSE_FILE"] = arg.split("=", 1)[1]
             i += 1
             continue
         out.append(arg)
@@ -236,6 +270,7 @@ def cmd_build() -> int:
 
 def _compose_argv(sha: str, *args: str) -> tuple[list[str], dict[str, str]]:
     env_file = compose_env_file()
+    compose = compose_file()
     env = dict(os.environ)
     env["PPAP_BUILD_SHA"] = sha
     env["PYTHONPATH"] = pythonpath(env.get("PYTHONPATH", ""))
@@ -245,7 +280,7 @@ def _compose_argv(sha: str, *args: str) -> tuple[list[str], dict[str, str]]:
             "docker",
             "compose",
             "-f",
-            str(COMPOSE_FILE),
+            str(compose),
             "--env-file",
             str(env_file),
             *args,
@@ -261,6 +296,61 @@ def _compose(sha: str, *args: str) -> int:
         print(f"compose env failed: {exc}", file=sys.stderr)
         return 1
     return subprocess.call(command, cwd=str(ROOT), env=env)
+
+
+def _pg_admin_run(
+    sha: str,
+    script: str,
+    *,
+    stdin: bytes | None = None,
+    stdout: int | object | None = subprocess.PIPE,
+) -> subprocess.CompletedProcess[bytes]:
+    if _compose_has_service("postgres"):
+        return _compose_run(sha, "exec", "-T", "postgres", "sh", "-c", script, stdin=stdin, stdout=stdout)
+    return _compose_run(
+        sha,
+        "run",
+        "--rm",
+        "-T",
+        "--no-deps",
+        "--entrypoint",
+        "sh",
+        "init",
+        "-c",
+        script,
+        stdin=stdin,
+        stdout=stdout,
+    )
+
+
+def _pg_dump_script(database: str) -> str:
+    if _compose_has_service("postgres"):
+        return f'pg_dump -U "$POSTGRES_USER" --no-owner --format=plain {database}'
+    return (
+        'PGPASSWORD="$PPAP_PG_BOOTSTRAP_PASSWORD" pg_dump '
+        '-h "$PPAP_PG_HOST" -p "$PPAP_PG_PORT" -U "$PPAP_PG_BOOTSTRAP_USER" '
+        f"--no-owner --format=plain {database}"
+    )
+
+
+def _psql_admin_script(sql: str) -> str:
+    if _compose_has_service("postgres"):
+        return f'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -c "{sql}"'
+    return (
+        'PGPASSWORD="$PPAP_PG_BOOTSTRAP_PASSWORD" psql '
+        '-h "$PPAP_PG_HOST" -p "$PPAP_PG_PORT" -U "$PPAP_PG_BOOTSTRAP_USER" '
+        f'-d postgres -v ON_ERROR_STOP=1 -c "{sql}"'
+    )
+
+
+def _psql_database_script(database: str) -> str:
+    if _compose_has_service("postgres"):
+        return f'psql -U "$POSTGRES_USER" -d {database} -v ON_ERROR_STOP=1'
+    return (
+        'PGPASSWORD="$PPAP_PG_BOOTSTRAP_PASSWORD" psql '
+        '-h "$PPAP_PG_HOST" -p "$PPAP_PG_PORT" -U "$PPAP_PG_BOOTSTRAP_USER" '
+        f"-d {database} -v ON_ERROR_STOP=1"
+    )
 
 
 def _wait_http(url: str, *, timeout: int = 60) -> dict:
@@ -296,6 +386,31 @@ def _sql_ident(name: str) -> str:
     if not _IDENT.match(name):
         raise ValueError(f"invalid identifier: {name}")
     return name
+
+
+def _object_store_run(
+    sha: str,
+    *command: str,
+    stdin: bytes | None = None,
+    stdout: int | object | None = subprocess.PIPE,
+    entrypoint: str = "tar",
+) -> subprocess.CompletedProcess[bytes]:
+    """Read or write Silo `/data`. Classic ubi-micro has `sh`/`mcli`/`curl`, not `tar`."""
+    return _compose_run(
+        sha,
+        "run",
+        "--rm",
+        "-T",
+        "--no-deps",
+        "--entrypoint",
+        entrypoint,
+        "-v",
+        f"{OBJECT_STORE_VOLUME}:/data",
+        "init",
+        *command,
+        stdin=stdin,
+        stdout=stdout,
+    )
 
 
 def _compose_run(
@@ -405,22 +520,13 @@ def cmd_backup() -> int:
         paused = True
         dump = tmp / "postgres.sql"
         with dump.open("wb") as fh:
-            proc = _compose_run(
-                sha,
-                "exec",
-                "-T",
-                "postgres",
-                "sh",
-                "-c",
-                f'pg_dump -U "$POSTGRES_USER" --no-owner --format=plain {database}',
-                stdout=fh,
-            )
+            proc = _pg_admin_run(sha, _pg_dump_script(database), stdout=fh)
         if proc.returncode != 0:
             shutil.rmtree(tmp, ignore_errors=True)
             return _proc_error("backup postgres", proc)
         objects = tmp / "objects.tar.gz"
         with objects.open("wb") as fh:
-            proc = _compose_run(sha, "exec", "-T", "minio", "tar", "-C", "/data", "-czf", "-", ".", stdout=fh)
+            proc = _object_store_run(sha, "-C", "/data", "-czf", "-", ".", stdout=fh)
         if proc.returncode != 0:
             shutil.rmtree(tmp, ignore_errors=True)
             return _proc_error("backup objects", proc)
@@ -468,64 +574,30 @@ def _restore_dir(path: Path) -> int:
             return code
         paused = True
         terminate = (
-            "psql -U \"$POSTGRES_USER\" -d postgres -v ON_ERROR_STOP=1 "
-            f"-c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            f"WHERE datname = '{database}' AND pid <> pg_backend_pid();\""
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '{database}' AND pid <> pg_backend_pid();"
         )
-        proc = _compose_run(sha, "exec", "-T", "postgres", "sh", "-c", terminate)
+        proc = _pg_admin_run(sha, _psql_admin_script(terminate))
         if proc.returncode != 0:
             return _proc_error("restore terminate", proc)
-        proc = _compose_run(
-            sha,
-            "exec",
-            "-T",
-            "postgres",
-            "sh",
-            "-c",
-            f'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS {database};"',
-        )
+        proc = _pg_admin_run(sha, _psql_admin_script(f"DROP DATABASE IF EXISTS {database};"))
         if proc.returncode != 0:
             return _proc_error("restore drop", proc)
-        proc = _compose_run(
-            sha,
-            "exec",
-            "-T",
-            "postgres",
-            "sh",
-            "-c",
-            f'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE {database} OWNER {migrator};"',
-        )
+        proc = _pg_admin_run(sha, _psql_admin_script(f"CREATE DATABASE {database} OWNER {migrator};"))
         if proc.returncode != 0:
             return _proc_error("restore create", proc)
-        proc = _compose_run(
-            sha,
-            "exec",
-            "-T",
-            "postgres",
-            "sh",
-            "-c",
-            f'psql -U "$POSTGRES_USER" -d {database} -v ON_ERROR_STOP=1',
-            stdin=dump.read_bytes(),
-        )
+        proc = _pg_admin_run(sha, _psql_database_script(database), stdin=dump.read_bytes())
         if proc.returncode != 0:
             return _proc_error("restore postgres", proc)
-        proc = _compose_run(
-            sha,
-            "exec",
-            "-T",
-            "minio",
-            "sh",
-            "-c",
-            'rm -rf /data/.[!.]* /data/*',
-        )
+        proc = _object_store_run(sha, "-c", "rm -rf /data/.[!.]* /data/*", entrypoint="sh")
         if proc.returncode != 0:
             return _proc_error("restore wipe objects", proc)
-        proc = _compose_run(sha, "exec", "-T", "minio", "tar", "-C", "/data", "-xzf", "-", stdin=objects.read_bytes())
+        proc = _object_store_run(sha, "-C", "/data", "-xzf", "-", stdin=objects.read_bytes())
         if proc.returncode != 0:
             return _proc_error("restore objects", proc)
-        proc = _compose_run(sha, "restart", "minio")
+        proc = _compose_run(sha, "restart", OBJECT_STORE_SERVICE)
         if proc.returncode != 0:
-            return _proc_error("restore restart minio", proc)
+            return _proc_error("restore restart silo", proc)
     except Exception as exc:
         print(f"restore failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

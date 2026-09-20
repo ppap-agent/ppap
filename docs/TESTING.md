@@ -13,7 +13,7 @@
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
 - **integration**：数据库、对象存储、Worker、授权和必要外部接口。
-- **E2E**：少量完整客户路径。#7 覆盖 Web 审核闭环；#11 覆盖飞书来源进入同一产品闭环。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/unit/test_feishu_drive.py` 与 `tests/unit/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/unit/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon` 与 `/audit-files` 的静态入口在 `tests/unit/test_web_server.py`。
+- **E2E**：少量完整客户路径。#7 覆盖 Web 审核闭环；#11 覆盖飞书来源进入同一产品闭环。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/unit/test_feishu_drive.py` 与 `tests/unit/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/unit/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 的静态入口在 `tests/unit/test_web_server.py`。Web 只调 Product API 的边界在 `tests/unit/test_web_boundary.py`。InsForge overlay 与 Custom Compute 规格在 `tests/unit/test_insforge_runtime.py`（不要求 live InsForge）。
 
 规则排列组合留在低层，不复制到 E2E。
 

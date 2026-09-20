@@ -20,6 +20,7 @@ class WebAliasTests(unittest.TestCase):
         self.assertEqual(aliased_path("/audit-files"), "/audit-files.html")
         self.assertEqual(aliased_path("/audit-files?round=1"), "/audit-files.html")
         self.assertEqual(aliased_path("/addon"), "/addon.html")
+        self.assertEqual(aliased_path("/usage"), "/usage.html")
         self.assertEqual(aliased_path("/index.html"), "/index.html")
         self.assertEqual(aliased_path("/"), "/")
 
@@ -36,14 +37,17 @@ class WebAliasTests(unittest.TestCase):
                 body = response.read().decode()
                 status = response.status
             self.assertEqual(status, 200)
-            self.assertIn("历史审核记录", body)
+            self.assertIn("审核文件", body)
             self.assertIn('data-testid="history-list"', body)
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/addon") as response:
                 addon = response.read().decode()
             self.assertIn("PPAP Audit", addon)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/usage") as response:
+                usage = response.read().decode()
+            self.assertIn('data-testid="usage-list"', usage)
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/audit-files/") as response:
                 self.assertEqual(response.geturl().rstrip("/").endswith("/audit-files"), True)
-                self.assertIn("历史审核记录", response.read().decode())
+                self.assertIn("审核文件", response.read().decode())
         finally:
             server.shutdown()
             server.server_close()

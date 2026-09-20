@@ -14,6 +14,8 @@ PostgreSQL  object storage
      packages
 ```
 
+生产部署可以把 API/Worker 放到 self-hosted InsForge Custom Compute 上，由 InsForge 提供 PostgreSQL 集群与容器生命周期；PPAP 仍是唯一 Product API 与领域 authority。Web 不直连 InsForge Database/PostgREST。细节见 [deploy/insforge/README.md](../deploy/insforge/README.md)。
+
 ## 所有权
 
 API 拥有身份、授权、文件版本、草稿、审核受理、结果读取、人工复核和用量视图。重解析、转换、模型调用和规则检查由 Worker 执行。

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PPAP 用量记录</title>
+    <link rel="stylesheet" href="./shell.css" />
+  </head>
+  <body class="pc-app">
+    <aside class="pc-shell" data-testid="pc-shell">
+      <div class="pc-shell__brand">PPAP</div>
+      <nav class="pc-shell__nav">
+        <a data-nav="workbench" data-testid="nav-workbench" href="./">工作台</a>
+        <a data-nav="audit-files" data-testid="nav-audit-files" href="./audit-files">审核文件</a>
+        <a data-nav="usage" data-testid="nav-usage" href="./usage">用量记录</a>
+      </nav>
+    </aside>
+    <main class="pc-main">
+      <h1>用量记录</h1>
+      <p>只列出当前身份在本租户下已发生的用量事件；外部确认状态单独保存，不把本地任务完成当成已扣费。</p>
+      <p data-testid="usage-error" id="usage-error" class="error hidden"></p>
+      <p data-testid="usage-empty" id="usage-empty" class="hidden">暂无用量记录</p>
+      <table data-testid="usage-list" id="usage-list" class="hidden">
+        <thead>
+          <tr><th>时间</th><th>点数</th><th>试用</th><th>外部状态</th><th>追踪</th></tr>
+        </thead>
+        <tbody data-testid="usage-rows" id="usage-rows"></tbody>
+      </table>
+    </main>
+    <script src="./product-api.js"></script>
+    <script src="./usage.js"></script>
+    <script src="./shell.js"></script>
+  </body>
+</html>

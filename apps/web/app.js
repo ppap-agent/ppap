@@ -1,8 +1,4 @@
-async function readJson(url, options = {}) {
-  const response = await fetch(url, { credentials: "include", headers: { Accept: "application/json" }, ...options });
-  const body = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, body };
-}
+const readJson = (...args) => window.PpapProduct.readJson(...args);
 
 function params() {
   return new URLSearchParams(window.location.search);
@@ -71,9 +67,9 @@ function renderRound(api, round) {
       evidence = locator.locator;
     }
     const review = item.review ? `${item.review.judgment} / ${item.review.rationale || ""}` : "尚未复核";
-    return `<article data-testid="finding-row" data-item-key="${item.item_key}">
+    return `<article class="finding-row" data-testid="finding-row" data-item-key="${item.item_key}">
       <p><span class="status-${item.status}" data-testid="finding-status">${item.status}</span> ${item.classification} — ${item.item}</p>
-      <p>${evidence}</p>
+      <p class="finding-evidence">${evidence}</p>
       <p data-testid="finding-review">${review}</p>
     </article>`;
   }).join("");
@@ -189,20 +185,19 @@ async function pollRound(api, roundId) {
 }
 
 async function main() {
-  const runtime = (await readJson("./runtime-config.json")).body;
-  const config = (await readJson(`${runtime.api_url}/public-config`)).body;
-  const api = config.api_url;
+  const { api, config } = await window.PpapProduct.connect();
+  const product = window.PpapProduct.client(api);
   document.getElementById("build-revision").textContent = config.git_sha || "unknown";
   document.getElementById("login-feishu").href = `${api}/login/feishu?return_to=${encodeURIComponent(window.location.href)}`;
   try {
-    const ready = await readJson(`${api}/ready`);
+    const ready = await product.ready();
     document.getElementById("stack-state").textContent = ready.body.status || "not_ready";
   } catch (err) {
     document.getElementById("stack-state").textContent = "not_ready";
   }
-  const capabilities = await readJson(`${api}/capabilities`);
+  const capabilities = await product.capabilities();
   document.getElementById("capabilities").textContent = JSON.stringify(capabilities.body, null, 2);
-  const me = await readJson(`${api}/me`);
+  const me = await product.me();
   if (me.ok) {
     document.getElementById("current-user").textContent = me.body.identity.subject;
   } else {
@@ -213,17 +208,17 @@ async function main() {
   }
   document.getElementById("isolated-dev-login").addEventListener("click", async () => {
     const subject = document.getElementById("isolated-dev-subject").value;
-    await readJson(`${api}/isolated-dev/sessions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject }) });
+    await product.isolatedDevSession(subject);
     window.location.reload();
   });
   document.getElementById("logout").addEventListener("click", async () => {
-    await readJson(`${api}/logout`, { method: "POST" });
+    await product.logout();
     window.location.reload();
   });
 
   const state = { fileId: fileIdFromLocation(), draftId: params().get("draft") || "", items: [], roundId: params().get("round") || "" };
   if (me.ok) {
-    const rules = await readJson(`${api}/rules`);
+    const rules = await product.rules();
     const select = document.getElementById("rule-select");
     (rules.body.rules || []).forEach((rule) => {
       const option = document.createElement("option");

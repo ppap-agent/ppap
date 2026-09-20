@@ -121,6 +121,8 @@ class DevToolingTests(unittest.TestCase):
             self.assertTrue((dist / "web" / "index.html").is_file())
             self.assertTrue((dist / "web" / "addon.html").is_file())
             self.assertTrue((dist / "web" / "audit-files.html").is_file())
+            self.assertTrue((dist / "web" / "usage.html").is_file())
+            self.assertTrue((dist / "web" / "product-api.js").is_file())
             self.assertEqual(json.loads((dist / "web" / "build-identity.json").read_text())["git_sha"], sha)
             self.assertFalse((dist / "web" / "runtime-config.json").exists())
 
@@ -190,16 +192,28 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", compose)
         self.assertIn("ppap-web:${PPAP_BUILD_SHA}", compose)
         self.assertIn("python tools/dev.py provision", compose)
-        self.assertIn("context: minio", compose)
         self.assertNotIn("minio/minio:", compose)
-        self.assertNotIn("context: deploy/minio", compose)
-        dockerfile = (ROOT / "deploy" / "minio" / "Dockerfile").read_text()
-        from tools.stack import MINIO_RELEASE, MINIO_SHA256
+        self.assertNotIn("ppap-minio:", compose)
+        self.assertNotIn("context: minio", compose)
+        self.assertFalse((ROOT / "deploy" / "minio" / "Dockerfile").exists())
+        app_dockerfile = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
+        self.assertIn("postgresql-client", app_dockerfile)
+        from tools.stack import SILO_ARCHIVE_SHA256, SILO_IMAGE, SILO_RELEASE
 
-        self.assertIn(MINIO_RELEASE, dockerfile)
-        self.assertIn(MINIO_SHA256, dockerfile)
+        self.assertIn(SILO_IMAGE, compose)
+        self.assertIn(SILO_RELEASE, compose)
+        self.assertIn('command: ["server", "/data", "--console-address", ":9001"]', compose)
+        self.assertIn("MINIO_ROOT_USER", compose)
+        self.assertNotIn("distroless", compose)
+        self.assertNotIn("pgsty/silo:latest", compose)
+        isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
+        self.assertIn(SILO_IMAGE, isolated)
+        self.assertNotIn("minio/minio:", isolated)
+        self.assertEqual(len(SILO_ARCHIVE_SHA256), 64)
 
         services = _compose_services(compose)
+        self.assertIn("silo", services)
+        self.assertNotIn("minio", services)
         self.assertIn("${PPAP_COMPOSE_ENV_FILE:-compose.env.example}", services["init"])
         self.assertNotIn("env_file:", services["api"])
         self.assertNotIn("env_file:", services["worker"])
@@ -239,9 +253,10 @@ class DevToolingTests(unittest.TestCase):
             for name in ("pg_api_password", "pg_worker_password", "pg_migrator_password", "pg_bootstrap_password")
         ))
         self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
+        self.assertEqual(parsed["PPAP_S3_ENDPOINT"], "http://silo:9000")
 
     def test_compose_selects_explicit_env_file_for_init_and_runtime(self):
-        from tools.dev import _compose, _compose_envfile, compose_env_file, take_compose_env_args
+        from tools.dev import _compose, _compose_envfile, compose_env_file, compose_file, take_compose_env_args
 
         fixture = (ROOT / "deploy" / "compose.env.example").resolve()
         self.assertEqual(compose_env_file(), fixture)
@@ -258,6 +273,7 @@ class DevToolingTests(unittest.TestCase):
                     cmd = call.call_args.args[0]
                     env = call.call_args.kwargs["env"]
                 self.assertEqual(cmd[cmd.index("--env-file") + 1], str(selected.resolve()))
+                self.assertEqual(cmd[cmd.index("-f") + 1], str(compose_file()))
                 self.assertNotEqual(Path(cmd[cmd.index("--env-file") + 1]), fixture)
                 self.assertEqual(env["PPAP_COMPOSE_ENV_FILE"], str(selected.resolve()))
         self.assertEqual(compose_env_file(), fixture)
@@ -330,6 +346,11 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn('"restore"', source)
         self.assertIn('"rollback"', source)
         self.assertIn("--no-deps", source)
+        self.assertIn('OBJECT_STORE_SERVICE = "silo"', source)
+        self.assertIn('OBJECT_STORE_VOLUME = "silo-data"', source)
+        self.assertIn('f"{OBJECT_STORE_VOLUME}:/data"', source)
+        self.assertNotIn('exec", "-T", "minio"', source)
+        self.assertNotIn('exec", "-T", "silo", "tar"', source)
         self.assertEqual(_sql_ident("ppap"), "ppap")
         with self.assertRaises(ValueError):
             _sql_ident("ppap;drop")

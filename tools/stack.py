@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated-dev process supervisor for PostgreSQL, MinIO, API, worker, and local web."""
+"""Isolated-dev process supervisor for PostgreSQL, Silo, API, worker, and local web."""
 from __future__ import annotations
 
 import argparse
@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -27,18 +28,24 @@ BIN = ROOT / ".local" / "bin"
 VENV = ROOT / ".venv"
 WEB = ROOT / "apps" / "web"
 PGDATA = LOCAL / "pgdata"
-MINIO_DATA = LOCAL / "minio"
+SILO_DATA = LOCAL / "silo"
 LOGS = LOCAL / "logs"
 PIDS = LOCAL / "pids"
 
-MINIO_RELEASE = "RELEASE.2025-09-07T16-13-09Z"
-MINIO_URL = (
-    "https://github.com/minio/minio/releases/download/"
-    f"{MINIO_RELEASE}/minio.linux-amd64.{MINIO_RELEASE}"
+SILO_RELEASE = "RELEASE.2026-09-16T00-00-00Z"
+SILO_PACKAGE = "20260916000000.0.0"
+SILO_ARCHIVE = f"silo_{SILO_PACKAGE}_linux_amd64.tar.gz"
+SILO_URL = (
+    "https://github.com/pgsty/silo/releases/download/"
+    f"{SILO_RELEASE}/{SILO_ARCHIVE}"
 )
-MINIO_SHA256 = "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f"
+SILO_ARCHIVE_SHA256 = "381e745510a8fb64323d7bb3207f95984b7f4ed826f4fcad318f97683c420c73"
+SILO_IMAGE = (
+    f"docker.io/pgsty/silo:{SILO_RELEASE}"
+    "@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46"
+)
 
-PROCESSES = ("postgres", "minio", "api", "worker", "web")
+PROCESSES = ("postgres", "silo", "api", "worker", "web")
 
 
 def pythonpath() -> str:
@@ -117,7 +124,7 @@ def venv_python() -> Path:
 
 
 def ensure_dirs() -> None:
-    for path in (LOCAL, BIN, LOGS, PIDS, MINIO_DATA, WEB):
+    for path in (LOCAL, BIN, LOGS, PIDS, SILO_DATA, WEB):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -203,21 +210,39 @@ def stop_pid(name: str) -> None:
     pid_path(name).unlink(missing_ok=True)
 
 
-def download_minio() -> Path:
-    dest = BIN / "minio"
-    if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == MINIO_SHA256:
+def download_silo() -> Path:
+    dest = BIN / "silo"
+    stamp = dest.with_name("silo.archive.sha256")
+    if dest.exists() and stamp.exists() and stamp.read_text().strip() == SILO_ARCHIVE_SHA256:
         dest.chmod(0o755)
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".partial")
-    with urllib.request.urlopen(MINIO_URL, timeout=120) as response, tmp.open("wb") as handle:
+    archive = dest.with_name(SILO_ARCHIVE)
+    tmp = dest.with_name(SILO_ARCHIVE + ".partial")
+    with urllib.request.urlopen(SILO_URL, timeout=180) as response, tmp.open("wb") as handle:
         shutil.copyfileobj(response, handle)
     digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
-    if digest != MINIO_SHA256:
+    if digest != SILO_ARCHIVE_SHA256:
         tmp.unlink(missing_ok=True)
-        raise SystemExit("minio checksum mismatch")
-    tmp.replace(dest)
+        raise SystemExit("silo archive checksum mismatch")
+    tmp.replace(archive)
+    with tarfile.open(archive, "r:gz") as tar:
+        member = next(
+            (
+                item
+                for item in tar.getmembers()
+                if item.isfile() and Path(item.name).name == "silo"
+            ),
+            None,
+        )
+        extracted = tar.extractfile(member) if member is not None else None
+        if extracted is None:
+            archive.unlink(missing_ok=True)
+            raise SystemExit("silo archive missing silo binary")
+        dest.write_bytes(extracted.read())
     dest.chmod(0o755)
+    stamp.write_text(SILO_ARCHIVE_SHA256 + "\n")
+    archive.unlink(missing_ok=True)
     return dest
 
 
@@ -225,7 +250,7 @@ def install() -> None:
     ensure_dirs()
     pg_bin("postgres")
     pg_bin("initdb")
-    download_minio()
+    download_silo()
     if not venv_python().exists():
         subprocess.check_call([sys.executable, "-m", "venv", str(VENV)])
     subprocess.check_call([str(venv_python()), "-m", "pip", "install", "-q", "-e", str(ROOT) + "[dev]"])
@@ -307,14 +332,23 @@ def migrate(env: dict[str, str]) -> None:
         apply_migrations(conn)
 
 
-def start_minio(env: dict[str, str]) -> None:
-    minio = download_minio()
+def start_silo(env: dict[str, str]) -> None:
+    silo = download_silo()
     child = dict(env)
     child["MINIO_ROOT_USER"] = env.get("PPAP_S3_ACCESS_KEY", "ppap_isolated_dev")
     child["MINIO_ROOT_PASSWORD"] = env.get("PPAP_S3_SECRET_KEY", "ppap_isolated_dev")
     spawn(
-        "minio",
-        [str(minio), "server", str(MINIO_DATA), "--address", "127.0.0.1:9000", "--quiet"],
+        "silo",
+        [
+            str(silo),
+            "server",
+            str(SILO_DATA),
+            "--address",
+            "127.0.0.1:9000",
+            "--console-address",
+            "127.0.0.1:9001",
+            "--quiet",
+        ],
         child,
     )
     wait_port("127.0.0.1", 9000)
@@ -358,7 +392,7 @@ def up() -> None:
     os.environ.update({k: v for k, v in env.items() if k.startswith(("PPAP_", "LLM_", "PYTHONPATH"))})
     bootstrap_roles(env)
     migrate(env)
-    start_minio(env)
+    start_silo(env)
     start_apps(env)
     print(json.dumps({
         "status": "started",

@@ -24,6 +24,8 @@ Secret 包括 API key、app secret、verification token、session/cookie 和生�
 
 已有组织内 Secret 可以用于授权的开发/迁移路径，但只通过 gitignored 本地配置、GitHub Secrets 或部署 Secret 注入；日志不输出 token、cookie、signed URL 或客户原文。
 
+self-hosted InsForge Custom Compute 需要把宿主机 `docker.sock` 挂进 InsForge 容器。该 socket 等价于 host root；这是明确的平台决策，不是默认。InsForge 管理面必须保持访问受限。
+
 ## 外部效果
 
 只有路径真正产生外部效果时才考虑幂等、未知结果和 readback。未知的非幂等结果不能盲目重试。
