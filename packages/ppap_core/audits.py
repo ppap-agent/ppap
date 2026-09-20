@@ -161,21 +161,26 @@ def execution_error_result(code: str) -> dict[str, Any]:
     }
 
 
-def findings_from_engine_results(results: list[Any], *, item_key_prefix: str = "") -> dict[str, Any]:
+def findings_from_engine_results(results: list[Any], *, target: RoundInput) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     checked: list[str] = []
     locator_gap = False
-    prefix = f"{item_key_prefix}:" if item_key_prefix else ""
+    prefix = f"{target.file_version_id}:"
+    file_locator = {
+        "kind": "file_version",
+        "file_id": target.file_id,
+        "file_version_id": target.file_version_id,
+        "filename": target.filename,
+    }
     for index, result in enumerate(results, start=1):
         status = getattr(result, "status", ERR)
         if status not in FINDING_STATUSES:
             status = ERR
-        locator = None
         evidence = getattr(result, "evidence", None)
         sources = getattr(evidence, "sources", None) if evidence is not None else None
+        locator = {**file_locator, "evidence": evidence.model_dump(mode="json") if evidence is not None else None}
         if sources:
-            source = sources[0]
-            locator = {"kind": getattr(source, "kind", "structure"), "locator": getattr(source, "locator", "")}
+            locator.update(kind=sources[0].kind, locator=sources[0].locator)
             checked.append(str(getattr(result, "item", "")))
         else:
             locator_gap = True
@@ -192,9 +197,9 @@ def findings_from_engine_results(results: list[Any], *, item_key_prefix: str = "
         )
     if not findings:
         empty = execution_error_result("empty_engine_result")
-        if prefix:
-            for row in empty["findings"]:
-                row["item_key"] = f"{prefix}{row['item_key']}"
+        for row in empty["findings"]:
+            row["item_key"] = f"{prefix}{row['item_key']}"
+            row["locator"] = file_locator
         return empty
     return {
         "findings": findings,

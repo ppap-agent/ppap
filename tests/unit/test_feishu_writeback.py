@@ -13,8 +13,10 @@ import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 
+from ppap_core.audits import RoundInput, findings_from_engine_results
+from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from ppap_core.feishu import UserTokens
-from ppap_core.feishu_writeback import comment_text, history_text, structured_blocks, writeback_state
+from ppap_core.feishu_writeback import FeishuWritebackError, comment_text, history_text, structured_blocks, writeback_state
 from ppap_core.fixtures import RULE_A
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
@@ -34,18 +36,121 @@ def _clean_env(**extra: str):
 
 
 class HistorySemanticsTests(unittest.TestCase):
+    def test_engine_ng_keeps_its_file_and_all_evidence_in_the_report(self):
+        target = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
+        evidence = AuditEvidence(
+            required="structure_or_visual",
+            used="both",
+            source_format="xlsx",
+            prepared_format="xlsx",
+            sources=(
+                EvidenceSource(kind="structure", locator="Sheet1!A1"),
+                EvidenceSource(kind="visual", locator="Sheet1 image 2"),
+            ),
+            diagnostics=(
+                EvidenceDiagnostic(code="partial_structure", stage="structure", severity="warning", message="部分结构缺失"),
+            ),
+        )
+        result = AuditResultItem(
+            classification="签字", item="签字检查", priority="P0", status="NG", suggestions="缺少签字", evidence=evidence,
+        )
+        mapped = findings_from_engine_results([result], target=target)
+        body = {
+            "execution": "completed",
+            "inputs": [{"role": "target", "file_version_id": target.file_version_id, "original_filename": target.filename}],
+            "findings": mapped["findings"],
+        }
+        text = history_text(body)
+        self.assertNotIn("审核结果：PASS", text)
+        self.assertIn("签字检查 : 缺少签字", text)
+        self.assertEqual(comment_text(body), "总结：\n签字检查：缺少签字")
+        self.assertEqual(mapped["findings"][0]["locator"]["kind"], "structure")
+        self.assertEqual(mapped["findings"][0]["locator"]["locator"], "Sheet1!A1")
+        self.assertEqual(mapped["findings"][0]["locator"]["evidence"], evidence.model_dump(mode="json"))
+
+    def test_same_name_versions_have_separate_machine_results(self):
+        first = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
+        second = RoundInput("target", "file-2", "version-2", "report.xlsx", "ready")
+        findings = []
+        for target, status in [(first, "PASS"), (second, "NG")]:
+            result = AuditResultItem(
+                classification="签字", item="签字检查", priority="P0", status=status, suggestions="缺少签字" if status == "NG" else "",
+            )
+            findings.extend(findings_from_engine_results([result], target=target)["findings"])
+        findings[1]["review"] = {"judgment": "PASS", "rationale": "人工接受", "next_step": "", "version": 1}
+        body = {
+            "execution": "completed",
+            "inputs": [
+                {"role": "target", "file_version_id": target.file_version_id, "original_filename": target.filename}
+                for target in (first, second)
+            ],
+            "findings": findings,
+        }
+        text = history_text(body)
+        self.assertIn("**审核内容1：report.xlsx**\n\n审核结果：PASS", text)
+        self.assertIn("**审核内容2：report.xlsx**\n\n审核结果：NG\n总结：\n签字检查 : 缺少签字", text)
+        self.assertEqual(text.count("审核结果：PASS"), 1)
+        self.assertEqual(comment_text(body), "总结：\n签字检查：缺少签字")
+
+    def test_unproven_target_results_cannot_generate_a_report(self):
+        target = {"role": "target", "file_version_id": "target-version", "original_filename": "report.xlsx"}
+        reference = {"role": "reference", "file_version_id": "reference-version", "original_filename": "report.xlsx"}
+        passed = {"status": "PASS", "locator": {"file_version_id": "target-version"}}
+        cases = [
+            ("empty", [target], []),
+            ("no_inputs", [], [passed]),
+            ("unmapped", [target], [{"status": "PASS", "locator": {"filename": "report.xlsx"}}]),
+            ("different_version", [target], [{"status": "PASS", "locator": {"file_version_id": "other-version"}}]),
+            ("extra_unmapped", [target], [passed, {"status": "NG", "locator": None}]),
+            ("unknown_status", [target], [{**passed, "status": "UNKNOWN"}]),
+            ("malformed_finding", [target], [passed, None]),
+            ("missing_target", [target, reference], [{"status": "PASS", "locator": {"file_version_id": "reference-version"}}]),
+            ("only_reference", [reference], [{"status": "PASS", "locator": {"file_version_id": "reference-version"}}]),
+        ]
+        for name, inputs, findings in cases:
+            with self.subTest(name=name):
+                body = {"execution": "completed", "inputs": inputs, "findings": findings}
+                self.assertEqual(writeback_state(body), "round_incomplete")
+                with self.assertRaisesRegex(FeishuWritebackError, "round_incomplete"):
+                    history_text(body)
+
+    def test_missing_evidence_and_empty_or_unknown_engine_results_remain_explicit(self):
+        target = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
+        for status in ("NG", "UNKNOWN", None):
+            with self.subTest(status=status):
+                results = [] if status is None else [
+                    AuditResultItem(classification="签字", item="签字检查", priority="P0", status=status, suggestions="")
+                ]
+                mapped = findings_from_engine_results(results, target=target)
+                finding = mapped["findings"][0]
+                self.assertEqual(finding["status"], "NG" if status == "NG" else "ERR")
+                self.assertEqual(finding["locator"]["file_version_id"], "version-1")
+                self.assertEqual(finding["locator"]["file_id"], "file-1")
+                self.assertTrue(mapped["coverage"]["locator_gap"])
+                body = {
+                    "execution": "completed",
+                    "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "report.xlsx"}],
+                    "findings": mapped["findings"],
+                }
+                if status == "NG":
+                    self.assertIn("审核结果：NG", history_text(body))
+                else:
+                    self.assertEqual(writeback_state(body), "round_has_errors")
+                    with self.assertRaisesRegex(FeishuWritebackError, "round_has_errors"):
+                        history_text(body)
+
     def test_pass_round_writes_result_and_return_url(self):
         body = {
             "id": "round-1",
             "execution": "completed",
             "created_at": "2026-09-19T12:00:00+00:00",
-            "inputs": [{"role": "target", "original_filename": "report.xlsx"}],
+            "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "report.xlsx"}],
             "findings": [
                 {
                     "item": "封面",
                     "status": "PASS",
                     "suggestions": "",
-                    "locator": {"filename": "report.xlsx"},
+                    "locator": {"file_version_id": "version-1", "filename": "report.xlsx"},
                 }
             ],
         }
@@ -63,13 +168,13 @@ class HistorySemanticsTests(unittest.TestCase):
         body = {
             "id": "round-2",
             "execution": "completed",
-            "inputs": [{"role": "target", "original_filename": "plan.xlsx"}],
+            "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "plan.xlsx"}],
             "findings": [
                 {
                     "item": "零件号",
                     "status": "NG",
                     "suggestions": "与封面不一致",
-                    "locator": {"filename": "plan.xlsx"},
+                    "locator": {"file_version_id": "version-1", "filename": "plan.xlsx"},
                 }
             ],
         }
@@ -78,6 +183,14 @@ class HistorySemanticsTests(unittest.TestCase):
         self.assertIn("零件号 : 与封面不一致", text)
         self.assertNotIn("审核结果：PASS", text)
         self.assertEqual(comment_text(body), "总结：\n零件号：与封面不一致")
+
+    def test_ng_without_suggestions_still_states_the_machine_result(self):
+        body = {
+            "execution": "completed",
+            "inputs": [{"role": "target", "file_version_id": "version-1", "original_filename": "plan.xlsx"}],
+            "findings": [{"item": "零件号", "status": "NG", "locator": {"file_version_id": "version-1"}}],
+        }
+        self.assertIn("审核结果：NG", history_text(body))
 
     def test_err_and_incomplete_are_not_ready(self):
         incomplete = {"execution": "queued", "findings": [{"status": "PASS"}]}
@@ -230,6 +343,18 @@ class FeishuWritebackTests(unittest.TestCase):
         )
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.json()["error"], "round_has_errors")
+        self.assertEqual(self.feishu.calls, [])
+
+    def test_unmapped_results_do_not_send_external_writes(self):
+        self._login_feishu_user()
+        round_id = self._complete_round()
+        for row in self.store.findings[round_id].values():
+            row["locator"] = {"filename": "report.xlsx"}
+        response = self.client.post(
+            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "round_incomplete")
         self.assertEqual(self.feishu.calls, [])
 
     def test_incomplete_and_cross_tenant_and_insert_failure(self):

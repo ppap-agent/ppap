@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import tests.pathsetup  # noqa: F401
@@ -11,6 +10,7 @@ import tests.pathsetup  # noqa: F401
 from fastapi.testclient import TestClient
 
 from ppap_core.audits import RoundInput, RoundWork
+from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from tests.unit.memory_auth import MemoryAuthStore
@@ -78,13 +78,16 @@ class EngineRunnerTests(unittest.TestCase):
         def fake_run(audit, rule, group_context=None):
             calls.append((audit.audit_id, group_context))
             return [
-                SimpleNamespace(
+                AuditResultItem(
                     status="PASS",
                     classification="规则",
                     item=audit.file_metadata["original_filename"],
                     priority="P0",
                     suggestions="",
-                    evidence=SimpleNamespace(sources=[SimpleNamespace(kind="structure", locator="A1")]),
+                    evidence=AuditEvidence(
+                        required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                        sources=(EvidenceSource(kind="structure", locator="A1"),),
+                    ),
                 )
             ]
 
@@ -100,6 +103,10 @@ class EngineRunnerTests(unittest.TestCase):
         self.assertEqual(
             {row["item_key"] for row in result["findings"]},
             {f"{first['id']}:engine:1", f"{second['id']}:engine:1"},
+        )
+        self.assertEqual(
+            {row["locator"]["file_version_id"] for row in result["findings"]},
+            {first["id"], second["id"]},
         )
         self.assertEqual(result["coverage"]["checked"], ["a.xlsx", "b.xlsx"])
         self.assertTrue(any("context.pdf" in row for row in result["coverage"]["unchecked"]))

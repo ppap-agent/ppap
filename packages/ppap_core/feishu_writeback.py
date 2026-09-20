@@ -4,10 +4,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NG, PASS, TARGET
+from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NG, TARGET
 from ppap_core.feishu_drive import OPEN_API
-
-COMPLETED_STATUSES = {PASS, NG, ERR}
 
 
 class FeishuWritebackError(Exception):
@@ -27,48 +25,43 @@ def round_return_url(web_url: str, round_id: str) -> str:
     return base + "/?round=" + round_id
 
 
-def _filename_of(finding: dict) -> str:
+def _finding_version(finding: dict) -> str:
     locator = finding.get("locator") if isinstance(finding.get("locator"), dict) else {}
-    name = str(locator.get("filename") or finding.get("item") or "").strip()
-    return name
-
-
-def _target_names(round_body: dict) -> list[str]:
-    names: list[str] = []
-    seen: set[str] = set()
-    for item in round_body.get("inputs") or []:
-        if not isinstance(item, dict) or item.get("role") != TARGET:
-            continue
-        name = str(item.get("original_filename") or "").strip()
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
+    return str(locator.get("file_version_id") or "")
 
 
 def _group_findings(round_body: dict) -> list[tuple[str, list[dict]]]:
     findings = [row for row in (round_body.get("findings") or []) if isinstance(row, dict)]
-    names = _target_names(round_body)
-    if not names:
-        return [("审核", findings)] if findings else []
     groups: list[tuple[str, list[dict]]] = []
-    for name in names:
-        rows = [row for row in findings if _filename_of(row) == name]
-        groups.append((name, rows))
+    for item in round_body.get("inputs") or []:
+        if not isinstance(item, dict) or item.get("role") != TARGET:
+            continue
+        version = str(item.get("file_version_id") or "")
+        rows = [row for row in findings if _finding_version(row) == version]
+        groups.append((str(item.get("original_filename") or "未命名资料"), rows))
     return groups
 
 
 def writeback_state(round_body: dict) -> str:
     if not isinstance(round_body, dict) or round_body.get("execution") != EXEC_COMPLETED:
         return "round_incomplete"
-    findings = [row for row in (round_body.get("findings") or []) if isinstance(row, dict)]
-    if not findings:
+    findings = round_body.get("findings") or []
+    if not findings or any(not isinstance(row, dict) for row in findings):
         return "round_incomplete"
     statuses = {str(row.get("status") or "") for row in findings}
-    if not statuses.issubset(COMPLETED_STATUSES) or not statuses.issubset(FINDING_STATUSES):
+    if not statuses.issubset(FINDING_STATUSES):
         return "round_incomplete"
     if ERR in statuses:
         return "round_has_errors"
+    inputs = round_body.get("inputs") or []
+    if not inputs or any(not isinstance(item, dict) for item in inputs):
+        return "round_incomplete"
+    input_versions = {str(item.get("file_version_id") or "") for item in inputs}
+    if "" in input_versions or any(_finding_version(row) not in input_versions for row in findings):
+        return "round_incomplete"
+    groups = _group_findings(round_body)
+    if not groups or any(not rows for _, rows in groups):
+        return "round_incomplete"
     return "ready"
 
 
@@ -88,6 +81,9 @@ def _audit_clock(round_body: dict, now: datetime | None = None) -> str:
 
 
 def history_text(round_body: dict, return_url: str = "", *, now: datetime | None = None) -> str:
+    state = writeback_state(round_body)
+    if state != "ready":
+        raise FeishuWritebackError(state)
     lines = ["审核时间：" + _audit_clock(round_body, now), ""]
     index = 1
     for name, rows in _group_findings(round_body):
@@ -95,6 +91,7 @@ def history_text(round_body: dict, return_url: str = "", *, now: datetime | None
         lines.append("")
         ng_rows = [row for row in rows if row.get("status") == NG]
         if ng_rows:
+            lines.append("审核结果：NG")
             lines.append("总结：")
             for row in ng_rows:
                 item = str(row.get("item") or "").strip()
@@ -113,20 +110,18 @@ def history_text(round_body: dict, return_url: str = "", *, now: datetime | None
 
 
 def comment_text(round_body: dict) -> str:
-    names = set(_target_names(round_body))
     lines: list[str] = []
-    for row in round_body.get("findings") or []:
-        if not isinstance(row, dict) or row.get("status") != NG:
-            continue
-        if names and _filename_of(row) not in names:
-            continue
-        suggestions = str(row.get("suggestions") or "").strip()
-        item = str(row.get("item") or "").strip()
-        if not suggestions:
-            continue
-        if not lines:
-            lines.append("总结：")
-        lines.append((item or _filename_of(row)) + "：" + suggestions)
+    for name, rows in _group_findings(round_body):
+        for row in rows:
+            if row.get("status") != NG:
+                continue
+            suggestions = str(row.get("suggestions") or "").strip()
+            item = str(row.get("item") or "").strip()
+            if not suggestions:
+                continue
+            if not lines:
+                lines.append("总结：")
+            lines.append((item or name) + "：" + suggestions)
     return "\n".join(lines) if lines else ""
 
 

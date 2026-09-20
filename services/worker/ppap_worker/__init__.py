@@ -138,7 +138,7 @@ def engine_runner(work, store: AuthStore):
         for target in targets:
             audit = audits_by_version[target.file_version_id]
             results = run_audit_engine(audit, rule, group_context=group_context)
-            mapped = findings_from_engine_results(results, item_key_prefix=target.file_version_id)
+            mapped = findings_from_engine_results(results, target=target)
             findings.extend(mapped["findings"])
             checked.append(target.filename)
             locator_gap = locator_gap or bool((mapped.get("coverage") or {}).get("locator_gap"))
