@@ -9,7 +9,16 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+sys.path[:0] = [
+    str(ROOT / "packages" / "ppap_excel_audit_engine" / "src"),
+    str(ROOT / "packages" / "ppap_docops" / "src"),
+    str(ROOT / "packages" / "ppap_ocr_adapter" / "src"),
+    str(ROOT / "packages" / "ppap_pdf_to_excel" / "src"),
+    str(ROOT / "packages" / "ppap_vision" / "src"),
+    str(ROOT / "packages"),
+    str(ROOT / "services" / "api"),
+    str(ROOT / "services" / "worker"),
+]
 
 try:
     from playwright.sync_api import expect, sync_playwright

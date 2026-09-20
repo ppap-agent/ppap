@@ -3,16 +3,15 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+from tests import pathsetup
+
+ROOT = pathsetup.ROOT
 
 from fastapi.testclient import TestClient
 
