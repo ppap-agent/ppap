@@ -1,0 +1,127 @@
+name: Ensure Docker
+description: Make Docker Engine, Compose, and Buildx usable on the self-hosted runner
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure Docker Engine, Compose, and Buildx
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:${PATH}"
+        echo "${PATH}" >> "$GITHUB_PATH"
+
+        docker_ready() {
+          command -v docker >/dev/null 2>&1 \
+            && docker info >/dev/null 2>&1 \
+            && docker compose version >/dev/null 2>&1 \
+            && docker buildx version >/dev/null 2>&1
+        }
+
+        expose_socket() {
+          if docker info >/dev/null 2>&1; then
+            return 0
+          fi
+          if sudo -n docker info >/dev/null 2>&1; then
+            sudo -n chmod a+rw /var/run/docker.sock || sudo -n chmod a+rw /run/docker.sock || true
+          fi
+          docker info >/dev/null 2>&1
+        }
+
+        install_cli_plugins() {
+          local plugin_dir="${HOME}/.docker/cli-plugins"
+          mkdir -p "${plugin_dir}"
+          if ! docker compose version >/dev/null 2>&1; then
+            curl -fsSL -o "${plugin_dir}/docker-compose" \
+              https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64
+            chmod +x "${plugin_dir}/docker-compose"
+            sudo mkdir -p /usr/libexec/docker/cli-plugins
+            sudo cp "${plugin_dir}/docker-compose" /usr/libexec/docker/cli-plugins/docker-compose
+          fi
+          if ! docker buildx version >/dev/null 2>&1; then
+            curl -fsSL -o "${plugin_dir}/docker-buildx" \
+              https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-amd64
+            chmod +x "${plugin_dir}/docker-buildx"
+            sudo mkdir -p /usr/libexec/docker/cli-plugins
+            sudo cp "${plugin_dir}/docker-buildx" /usr/libexec/docker/cli-plugins/docker-buildx
+          fi
+        }
+
+        start_engine() {
+          sudo systemctl enable --now docker 2>/dev/null \
+            || sudo service docker start 2>/dev/null \
+            || true
+          if ! sudo -n docker info >/dev/null 2>&1 && command -v dockerd >/dev/null; then
+            sudo mkdir -p /var/lib/docker
+            sudo dockerd --host=unix:///var/run/docker.sock >/tmp/ppap-dockerd.log 2>&1 &
+          fi
+          local i
+          for i in $(seq 1 30); do
+            if sudo -n docker info >/dev/null 2>&1 || docker info >/dev/null 2>&1; then
+              return 0
+            fi
+            sleep 1
+          done
+          return 1
+        }
+
+        if docker_ready; then
+          docker version
+          docker compose version
+          docker buildx version
+          exit 0
+        fi
+        expose_socket || true
+        if docker_ready; then
+          docker version
+          docker compose version
+          docker buildx version
+          exit 0
+        fi
+
+        echo "Docker Engine is missing on this self-hosted runner; installing it"
+        id
+        if ! sudo -n true; then
+          echo "passwordless sudo is required to install Docker on this runner" >&2
+          exit 127
+        fi
+        installed=0
+        if command -v apt-get >/dev/null; then
+          for attempt in 1 2 3 4 5; do
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 update \
+              && sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+                docker.io docker-cli docker-compose docker-buildx; then
+              installed=1
+              break
+            fi
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+              docker.io docker-compose docker-buildx; then
+              installed=1
+              break
+            fi
+            sleep $((attempt * 4))
+          done
+        fi
+
+        if [ "${installed}" -eq 0 ]; then
+          tmp="$(mktemp -d)"
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar -xz -C "${tmp}"
+          sudo install -m 0755 "${tmp}"/docker/docker "${tmp}"/docker/dockerd \
+            "${tmp}"/docker/containerd "${tmp}"/docker/containerd-shim-runc-v2 \
+            "${tmp}"/docker/runc "${tmp}"/docker/docker-init "${tmp}"/docker/docker-proxy \
+            /usr/local/bin/
+        fi
+
+        start_engine || true
+        expose_socket || true
+        install_cli_plugins
+        if ! docker_ready; then
+          echo "Docker Engine/Compose/Buildx are still unavailable after install" >&2
+          ls -l /var/run/docker.sock /run/docker.sock /usr/bin/docker /usr/local/bin/docker 2>/dev/null || true
+          sudo -n docker info >&2 || true
+          docker info >&2 || true
+          exit 127
+        fi
+        docker version
+        docker compose version
+        docker buildx version
