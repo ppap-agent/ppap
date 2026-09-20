@@ -27,7 +27,9 @@ class AuditDatabaseCase(unittest.TestCase):
         if self.previous_schema:
             from tests.schema.test_upgrade import migration_files
 
-            for migration in migration_files()[:-1]:
+            for migration in migration_files():
+                if migration.name >= "0010":
+                    break
                 _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
         else:
             _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "apply.sql")), "apply audit schema")

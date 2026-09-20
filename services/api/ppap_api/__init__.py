@@ -39,13 +39,12 @@ from ppap_core.feishu_drive import (
 )
 from ppap_core.feishu_usage import (
     FeishuUsageError,
-    audit_usage_points,
     quota_payload,
     quota_unavailable,
     query_tenant_ai_item,
     remaining_trial_points,
-    report_partner_usage,
-    split_trial_and_partner,
+    apply_report_credential,
+    report_usage_record,
     tenant_access_token,
 )
 from ppap_core.feishu_writeback import (
@@ -498,24 +497,6 @@ def create_app(
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return None
 
-    def observe_feishu_audit_usage(principal, round_body: dict) -> None:
-        item_id = (settings.feishu_ai_item_id or "").strip()
-        if not item_id or principal.provider != "feishu":
-            return
-        round_id = round_body["id"]
-        file_count = sum(item["role"] == "target" for item in round_body["inputs"])
-        points = audit_usage_points(file_count)
-        if points <= 0:
-            return
-        consumed = store.trial_consumed_points(principal.tenant_id, item_id)
-        remaining = remaining_trial_points(settings.feishu_free_trial_quota_points, consumed)
-        try:
-            for index, (slice_points, is_trial) in enumerate(split_trial_and_partner(remaining, points)):
-                trace = round_id if index == 0 else round_id + ":partner"
-                store.record_usage_event(principal, item_id, slice_points, is_trial, trace_id=trace)
-        except (ValueError, TypeError):
-            return
-
     @app.post("/integrations/feishu/files/import")
     def feishu_files_import(body: dict, request: Request) -> JSONResponse:
         session = session_of(request)
@@ -588,28 +569,6 @@ def create_app(
         payload = quota_payload(item, remaining)
         return JSONResponse(payload)
 
-    @app.post("/integrations/feishu/usage/events")
-    def feishu_usage_events(body: dict, request: Request) -> JSONResponse:
-        session = session_of(request)
-        if not session:
-            return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        item_id = str(body.get("ai_item_id") or settings.feishu_ai_item_id or "").strip()
-        try:
-            points = int(body.get("consumed_points"))
-        except (TypeError, ValueError):
-            return JSONResponse({"error": "invalid_usage_points"}, status_code=400)
-        is_free_trial = bool(body.get("is_free_trial"))
-        trace_id = str(body.get("trace_id") or "").strip() or None
-        try:
-            row = store.record_usage_event(
-                session.principal, item_id, points, is_free_trial, trace_id=trace_id
-            )
-        except ValueError as exc:
-            code = str(exc)
-            status = 409 if code == "feishu_ai_item_missing" else 400
-            return JSONResponse({"error": code}, status_code=status)
-        return JSONResponse(store.usage_event_public(row), status_code=201)
-
     @app.post("/integrations/feishu/usage/events/{event_id}/report")
     def feishu_usage_report(event_id: str, request: Request) -> JSONResponse:
         session = session_of(request)
@@ -625,30 +584,42 @@ def create_app(
             public["skipped"] = True
             public["skip_reason"] = "消费在赠送额度内"
             return JSONResponse(public)
-        if row["external_status"] == "confirmed" and row.get("external_record_id"):
+        if public["external_status"] == "confirmed":
             public["skipped"] = False
             return JSONResponse(public)
+        if public["external_status"] != "pending":
+            return JSONResponse(public, status_code=409)
+        if not row.get("trace_id"):
+            return JSONResponse({"error": "usage_trace_missing"}, status_code=409)
         ticket = store.app_ticket(settings.feishu_app_id)
         if not ticket:
             return JSONResponse({"error": "feishu_app_ticket_missing"}, status_code=409)
+        # Preparation cannot report a charge. Failure leaves the event pending.
         try:
-            row = store.ensure_usage_trace_id(session.principal, event_id)
             tenant_token = tenant_access_token(
-                http, settings.feishu_app_id, settings.feishu_app_secret, ticket
+                http, settings.feishu_app_id, settings.feishu_app_secret, ticket,
+                session.principal.tenant_key,
             )
-            record_id = report_partner_usage(http, session.access_token, tenant_token, row)
-            settled = store.settle_usage_external(session.principal, event_id, "confirmed", record_id)
-        except FeishuUsageError as exc:
-            code = str(exc)
-            if code == "feishu_app_ticket_missing":
-                return JSONResponse({"error": code}, status_code=409)
-            try:
-                store.settle_usage_external(session.principal, event_id, "failed")
-            except KeyError:
-                pass
-            return JSONResponse({"error": "feishu_usage_report_failed"}, status_code=502)
-        except KeyError:
-            return JSONResponse({"error": "access_denied"}, status_code=403)
+            report_token = apply_report_credential(
+                http, session.access_token, row["ai_item_id"], row["trace_id"]
+            )
+        except FeishuUsageError:
+            return JSONResponse({"error": "feishu_usage_prepare_failed"}, status_code=502)
+        claim = store.claim_usage_report(session.principal, event_id)
+        if claim is None:
+            current = store.usage_event(session.principal, event_id)
+            return JSONResponse(store.usage_event_public(current), status_code=409)
+        try:
+            record_id = report_usage_record(
+                http, tenant_token, report_token, row["ai_item_id"],
+                row["trace_id"], row["consumed_points"],
+            )
+        except FeishuUsageError:
+            store.settle_usage_external(session.principal, event_id, claim, "unknown")
+            return JSONResponse({"error": "feishu_usage_report_unknown"}, status_code=502)
+        settled = store.settle_usage_external(
+            session.principal, event_id, claim, "confirmed", record_id
+        )
         body = store.usage_event_public(settled)
         body["skipped"] = False
         return JSONResponse(body)
@@ -711,7 +682,7 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
-    register_audit_routes(app, store, principal_of, observe_feishu_audit_usage)
+    register_audit_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of)
     return app
 

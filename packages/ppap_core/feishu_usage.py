@@ -111,7 +111,7 @@ def query_tenant_ai_item(http, access_token: str, ai_item_id: str) -> PartnerAiI
     except Exception as exc:
         raise FeishuUsageError("feishu_ai_item_failed") from exc
     status = int(getattr(response, "status_code", 0) or 0)
-    if status < 200 or status >= 300 or body.get("code") not in (0, None):
+    if status < 200 or status >= 300 or body.get("code") != 0:
         raise FeishuUsageError("feishu_ai_item_failed")
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
     item = data.get("tenant_ai_item") if isinstance(data.get("tenant_ai_item"), dict) else {}
@@ -153,6 +153,7 @@ def quota_unavailable(message: str, detailed: str) -> dict[str, object]:
 
 
 TENANT_ACCESS_TOKEN_URL = OPEN_API + "/auth/v3/tenant_access_token"
+APP_ACCESS_TOKEN_URL = OPEN_API + "/auth/v3/app_access_token"
 CREDENTIAL_APPLY_URL = OPEN_API + "/partner_ai/v1/credential/apply"
 USAGE_REPORT_URL = OPEN_API + "/partner_ai/v1/usage_records/report"
 
@@ -162,17 +163,29 @@ def _ok(response) -> bool:
     if status < 200 or status >= 300:
         return False
     body = _response_json(response)
-    return body.get("code") in (0, None)
+    return body.get("code") == 0
 
 
-def tenant_access_token(http, app_id: str, app_secret: str, app_ticket: str) -> str:
+def tenant_access_token(http, app_id: str, app_secret: str, app_ticket: str, tenant_key: str) -> str:
     ticket = (app_ticket or "").strip()
     if not ticket:
         raise FeishuUsageError("feishu_app_ticket_missing")
+    if not app_id or not app_secret or not tenant_key:
+        raise FeishuUsageError("feishu_tenant_token_failed")
     try:
         response = http.post(
-            TENANT_ACCESS_TOKEN_URL,
+            APP_ACCESS_TOKEN_URL,
             json={"app_id": app_id, "app_secret": app_secret, "app_ticket": ticket},
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=20,
+        )
+        body = _response_json(response)
+        app_token = str(body.get("app_access_token") or "").strip()
+        if not _ok(response) or not app_token:
+            raise FeishuUsageError("feishu_app_token_failed")
+        response = http.post(
+            TENANT_ACCESS_TOKEN_URL,
+            json={"app_access_token": app_token, "tenant_key": tenant_key},
             headers={"Content-Type": "application/json; charset=utf-8"},
             timeout=20,
         )

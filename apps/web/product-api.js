@@ -91,7 +91,8 @@ window.PpapProduct = (function () {
           `${api}/rounds/${encodeURIComponent(roundId)}/files/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}/download`,
       },
       usage: {
-        list: () => readJson(`${api}/usage`),
+        list: (params = {}) => readJson(`${api}/usage?${new URLSearchParams(params)}`),
+        report: (id) => readJson(`${api}/integrations/feishu/usage/events/${encodeURIComponent(id)}/report`, { method: "POST" }),
       },
     };
   }

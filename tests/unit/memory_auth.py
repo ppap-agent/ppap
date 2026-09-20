@@ -682,6 +682,13 @@ class MemoryAuthStore:
         self.idempotency[(principal.tenant_id, key)] = round_id
         if source_draft_id:
             draft["status"] = DRAFT_ACCEPTED
+        if self.settings and self.settings.feishu_ai_item_id and principal.provider == "feishu":
+            from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
+            item = self.settings.feishu_ai_item_id
+            remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, self.trial_consumed_points(principal.tenant_id, item))
+            for points, trial in split_trial_and_partner(remaining, audit_usage_points(sum(x["role"] == "target" for x in prepared))):
+                event = self.record_usage_event(principal, item, points, trial, trace_id=round_id + (":trial" if trial else ":partner"))
+                next(x for x in self.usage_events if x["id"] == event["id"])["round_id"] = round_id
         return self._round_public(round_id)
 
     def _draft_public(self, draft_id: str) -> dict:
@@ -806,56 +813,35 @@ class MemoryAuthStore:
         return total
 
     def usage_event_public(self, row: dict) -> dict:
-        return {
-            "id": row["id"],
-            "ai_item_id": row["ai_item_id"],
-            "consumed_points": row["consumed_points"],
-            "is_free_trial": row["is_free_trial"],
-            "external_status": row["external_status"],
-            "external_record_id": row.get("external_record_id"),
-            "trace_id": row["trace_id"],
-            "created_at": row.get("created_at"),
-        }
+        from ppap_api.store import AuthStore
+        return AuthStore.usage_event_public(self, row)
 
-    def list_usage_events(self, principal: Principal, limit: int = 50) -> list[dict]:
-        try:
-            cap = max(1, min(int(limit), 50))
-        except (TypeError, ValueError):
-            cap = 50
-        items = [
-            self.usage_event_public(row)
-            for row in reversed(self.usage_events)
-            if row["tenant_id"] == principal.tenant_id and row["user_id"] == principal.user_id
-        ]
-        return items[:cap]
+    def list_usage_events(self, principal, limit=50, offset=0, since=None, until=None):
+        return [self.usage_event_public(row) for row in reversed(self.usage_events)
+                if row["tenant_id"] == principal.tenant_id and row["user_id"] == principal.user_id
+                and (not since or row["created_at"][:10] >= str(since))
+                and (not until or row["created_at"][:10] <= str(until))][offset:offset + limit]
 
-    def usage_event(self, principal: Principal, event_id: str) -> dict | None:
-        for row in self.usage_events:
-            if row["id"] == event_id and row["tenant_id"] == principal.tenant_id:
-                return dict(row)
-        return None
+    def usage_event(self, principal, event_id):
+        return next((dict(row) for row in self.usage_events
+                     if row["id"] == event_id and row["tenant_id"] == principal.tenant_id
+                     and row["user_id"] == principal.user_id), None)
 
-    def ensure_usage_trace_id(self, principal: Principal, event_id: str) -> dict:
+    def claim_usage_report(self, principal, event_id):
         row = self.usage_event(principal, event_id)
-        if row is None:
-            raise KeyError("access_denied")
-        if row.get("trace_id"):
-            return row
-        trace = uuid.uuid4().hex
+        if not row or row["external_status"] != "pending" or row["is_free_trial"]:
+            return None
+        claim = str(uuid.uuid4())
         for item in self.usage_events:
-            if item["id"] == event_id and item["tenant_id"] == principal.tenant_id:
-                item["trace_id"] = trace
-                return dict(item)
-        raise KeyError("access_denied")
+            if item["id"] == event_id:
+                item.update(external_status="reporting", report_claim=claim, reporting_at=_now())
+        return claim
 
-    def settle_usage_external(
-        self, principal: Principal, event_id: str, status: str, record_id: str | None = None
-    ) -> dict:
-        if status not in {"pending", "confirmed", "failed"}:
-            raise ValueError("invalid_external_status")
+    def settle_usage_external(self, principal, event_id, claim, status, record_id=None):
         for item in self.usage_events:
-            if item["id"] == event_id and item["tenant_id"] == principal.tenant_id and not item["is_free_trial"]:
-                item["external_status"] = status
-                item["external_record_id"] = record_id
+            if (item["id"] == event_id and item["tenant_id"] == principal.tenant_id
+                    and item["user_id"] == principal.user_id and item.get("report_claim") == claim
+                    and item["external_status"] == "reporting"):
+                item.update(external_status=status, external_record_id=record_id)
                 return dict(item)
-        raise KeyError("access_denied")
+        raise KeyError("usage_claim_lost")

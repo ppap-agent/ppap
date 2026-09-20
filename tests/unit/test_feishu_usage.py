@@ -66,10 +66,15 @@ class _PartnerMock:
         method = request.method.upper()
         auth = request.headers.get("authorization", "")
         self.calls.append((method, url))
-        if method == "POST" and url.endswith("/auth/v3/tenant_access_token"):
+        if method == "POST" and url.endswith("/auth/v3/app_access_token"):
             body = json.loads(request.content.decode())
             if body.get("app_id") != "cli_test" or body.get("app_ticket") != "tik":
                 return httpx.Response(401, json={"code": 1, "msg": "bad ticket"})
+            return httpx.Response(200, json={"code": 0, "app_access_token": "app-access"})
+        if method == "POST" and url.endswith("/auth/v3/tenant_access_token"):
+            body = json.loads(request.content.decode())
+            if body != {"app_access_token": "app-access", "tenant_key": "isolated-dev-a"}:
+                return httpx.Response(401, json={"code": 1})
             return httpx.Response(200, json={"code": 0, "tenant_access_token": "tenant-access"})
         if method == "GET" and "/partner_ai/v1/tenant_ai_items/" in url:
             if auth != "Bearer user-access":
@@ -135,6 +140,18 @@ class FeishuUsageTests(unittest.TestCase):
         )
         self.client.cookies.set(SESSION_COOKIE, raw)
 
+    def _seed_event(self, *, json):
+        # Test fixture only; the Product API cannot create arbitrary usage events.
+        principal = self.store.principal_for_fixture("alice")
+        row = self.store.record_usage_event(principal, "ai-item-1", json["consumed_points"],
+                                           json["is_free_trial"], trace_id=json.get("trace_id"))
+        return httpx.Response(201, json=self.store.usage_event_public(row))
+
+    def test_arbitrary_usage_creation_is_not_exposed(self):
+        self._login_feishu_user("alice")
+        response = self.client.post("/integrations/feishu/usage/events", json={"consumed_points": 0})
+        self.assertEqual(response.status_code, 404)
+
     def test_quota_check_uses_partner_ai_and_local_trial_only(self):
         self._login_feishu_user("alice")
         first = self.client.get("/integrations/feishu/usage/quota")
@@ -146,22 +163,19 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertTrue(body["quota_sufficient"])
         self.assertEqual(body["remaining_trial_ai_points"], 10000)
         self.assertEqual(body["message"], "AI额度充足")
-        recorded = self.client.post(
-            "/integrations/feishu/usage/events",
+        recorded = self._seed_event(
             json={"consumed_points": 4000, "is_free_trial": True, "trace_id": "trial-1"},
         )
         self.assertEqual(recorded.status_code, 201)
         self.assertTrue(recorded.json()["is_free_trial"])
         self.assertEqual(recorded.json()["external_status"], "none")
-        replay = self.client.post(
-            "/integrations/feishu/usage/events",
+        replay = self._seed_event(
             json={"consumed_points": 4000, "is_free_trial": True, "trace_id": "trial-1"},
         )
         self.assertEqual(replay.json()["id"], recorded.json()["id"])
         after = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(after["remaining_trial_ai_points"], 6000)
-        pending = self.client.post(
-            "/integrations/feishu/usage/events",
+        pending = self._seed_event(
             json={"consumed_points": 2000, "is_free_trial": False, "trace_id": "partner-1"},
         )
         self.assertEqual(pending.json()["external_status"], "pending")
@@ -190,8 +204,7 @@ class FeishuUsageTests(unittest.TestCase):
 
     def test_cross_tenant_trial_is_isolated(self):
         self._login_feishu_user("alice")
-        self.client.post(
-            "/integrations/feishu/usage/events",
+        self._seed_event(
             json={"consumed_points": 1000, "is_free_trial": True, "trace_id": "alice-trial"},
         )
         self._login_feishu_user("carol")
@@ -207,8 +220,7 @@ class FeishuUsageTests(unittest.TestCase):
     def test_trial_report_is_skipped_without_partner_http(self):
         self._login_feishu_user("alice")
         self.store.save_app_ticket("cli_test", "tik")
-        created = self.client.post(
-            "/integrations/feishu/usage/events",
+        created = self._seed_event(
             json={"consumed_points": 100, "is_free_trial": True, "trace_id": "trial-skip"},
         ).json()
         self.partner.calls.clear()
@@ -221,8 +233,7 @@ class FeishuUsageTests(unittest.TestCase):
 
     def test_pending_report_confirms_only_after_feishu_record_id(self):
         self._login_feishu_user("alice")
-        missing = self.client.post(
-            "/integrations/feishu/usage/events",
+        missing = self._seed_event(
             json={"consumed_points": 50, "is_free_trial": False, "trace_id": "partner-report"},
         ).json()
         blocked = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
@@ -251,16 +262,19 @@ class FeishuUsageTests(unittest.TestCase):
         self._login_feishu_user("alice")
         self.store.save_app_ticket("cli_test", "tik")
         self.partner.fail_report = True
-        created = self.client.post(
-            "/integrations/feishu/usage/events",
+        created = self._seed_event(
             json={"consumed_points": 9, "is_free_trial": False, "trace_id": "partner-fail"},
         ).json()
         response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"], "feishu_usage_report_failed")
+        self.assertEqual(response.json()["error"], "feishu_usage_report_unknown")
         row = self.store.usage_event(self.store.principal_for_fixture("alice"), created["id"])
-        self.assertEqual(row["external_status"], "failed")
+        self.assertEqual(row["external_status"], "unknown")
         self.assertIsNone(row["external_record_id"])
+        count = len(self.partner.calls)
+        again = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(len(self.partner.calls), count)
 
 
 if __name__ == "__main__":

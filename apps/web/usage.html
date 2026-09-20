@@ -23,13 +23,17 @@
         <p class="pc-lead">只列出当前身份在本租户下已发生的用量事件；外部确认状态单独保存，不把本地任务完成当成已扣费。</p>
       </header>
       <p data-testid="usage-error" id="usage-error" class="error hidden"></p>
+      <form id="usage-filter"><label>开始日期 <input type="date" id="usage-since"></label>
+        <label>结束日期 <input type="date" id="usage-until"></label><button>查询</button></form>
       <p data-testid="usage-empty" id="usage-empty" class="hidden">暂无用量记录</p>
       <table data-testid="usage-list" id="usage-list" class="hidden">
         <thead>
-          <tr><th>时间</th><th>点数</th><th>试用</th><th>外部状态</th><th>追踪</th></tr>
+          <tr><th>时间</th><th>点数</th><th>类型</th><th>外部状态</th><th>追踪</th><th>操作</th></tr>
         </thead>
         <tbody data-testid="usage-rows" id="usage-rows"></tbody>
       </table>
+      <button id="usage-more" hidden>加载更多</button>
+      <p class="pc-lead">每个待审文件受理时记录 500 点，参考文件不计入。试用优先；本地记录不等于飞书已扣费。结果未知时请人工核对，不重复上报。</p>
     </main>
     <script src="./product-api.js"></script>
     <script src="./usage.js"></script>

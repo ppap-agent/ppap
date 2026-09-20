@@ -54,6 +54,7 @@ from ppap_core.fixtures import (
     USER_CAROL,
 )
 from ppap_core.feishu import UserTokens
+from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.identity import (
     PROVIDER_FEISHU,
     Principal,
@@ -1234,7 +1235,31 @@ class AuthStore:
                 """,
                 (DRAFT_ACCEPTED, source_draft_id),
             )
+        self._record_round_usage(conn, principal, round_id, prepared)
         return self._round_public(conn, round_id)
+
+    def _record_round_usage(self, conn, principal, round_id, prepared) -> None:
+        item_id = self.settings.feishu_ai_item_id.strip()
+        if not item_id or principal.provider != PROVIDER_FEISHU:
+            return
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                     ("usage:" + principal.tenant_id + ":" + item_id,))
+        consumed = conn.execute(
+            """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
+               WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
+            (principal.tenant_id, item_id),
+        ).fetchone()[0]
+        remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, consumed)
+        points = audit_usage_points(sum(row["role"] == "target" for row in prepared))
+        for amount, trial in split_trial_and_partner(remaining, points):
+            conn.execute(
+                """INSERT INTO product.usage_events
+                   (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                    external_status, trace_id, round_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (str(uuid.uuid4()), principal.tenant_id, principal.user_id, item_id, amount,
+                 trial, "none" if trial else "pending", round_id + (":trial" if trial else ":partner"), round_id),
+            )
 
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
@@ -1394,192 +1419,86 @@ class AuthStore:
             ],
         }
 
-    def record_usage_event(
-        self,
-        principal: Principal,
-        ai_item_id: str,
-        consumed_points: int,
-        is_free_trial: bool,
-        *,
-        trace_id: str | None = None,
-    ) -> dict:
-        item = str(ai_item_id or "").strip()
-        if not item:
-            raise ValueError("feishu_ai_item_missing")
-        points = int(consumed_points)
-        if points < 0:
-            raise ValueError("invalid_usage_points")
-        tid = str(trace_id or "").strip() or None
-        event_id = str(uuid.uuid4())
-        status = "none" if is_free_trial else "pending"
-        with self._conn() as conn:
-            if tid:
-                existing = conn.execute(
-                    """
-                    SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                           external_status, external_record_id, trace_id, created_at
-                    FROM product.usage_events
-                    WHERE tenant_id = %s AND trace_id = %s
-                    """,
-                    (principal.tenant_id, tid),
-                ).fetchone()
-                if existing:
-                    return self._usage_from_row(existing)
-            try:
-                row = conn.execute(
-                    """
-                    INSERT INTO product.usage_events (
-                        id, tenant_id, user_id, ai_item_id, consumed_points,
-                        is_free_trial, external_status, trace_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                              external_status, external_record_id, trace_id, created_at
-                    """,
-                    (
-                        event_id,
-                        principal.tenant_id,
-                        principal.user_id,
-                        item,
-                        points,
-                        bool(is_free_trial),
-                        status,
-                        tid,
-                    ),
-                ).fetchone()
-            except UniqueViolation:
-                row = conn.execute(
-                    """
-                    SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                           external_status, external_record_id, trace_id, created_at
-                    FROM product.usage_events
-                    WHERE tenant_id = %s AND trace_id = %s
-                    """,
-                    (principal.tenant_id, tid),
-                ).fetchone()
-        if not row:
-            raise RuntimeError("usage_event_insert_failed")
-        return self._usage_from_row(row)
-
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
-        item = str(ai_item_id or "").strip()
         with self._conn() as conn:
-            row = conn.execute(
-                """
-                SELECT COALESCE(SUM(consumed_points), 0)
-                FROM product.usage_events
-                WHERE tenant_id = %s AND ai_item_id = %s
-                  AND is_free_trial = true AND external_status = 'none'
-                """,
-                (tenant_id, item),
-            ).fetchone()
-        return int(row[0] if row else 0)
+            return int(conn.execute(
+                """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
+                   WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
+                (tenant_id, ai_item_id),
+            ).fetchone()[0])
 
     def usage_event_public(self, row: dict) -> dict:
-        created = row.get("created_at")
+        result = {key: row.get(key) for key in (
+            "id", "ai_item_id", "consumed_points", "is_free_trial", "external_status",
+            "external_record_id", "trace_id", "created_at", "round_id",
+        )}
+        for key in ("id", "round_id"):
+            if result[key] is not None:
+                result[key] = str(result[key])
+        created = result["created_at"]
         if hasattr(created, "isoformat"):
-            created = created.isoformat()
-        return {
-            "id": row["id"],
-            "ai_item_id": row["ai_item_id"],
-            "consumed_points": row["consumed_points"],
-            "is_free_trial": row["is_free_trial"],
-            "external_status": row["external_status"],
-            "external_record_id": row.get("external_record_id"),
-            "trace_id": row["trace_id"],
-            "created_at": created,
-        }
+            result["created_at"] = created.isoformat()
+        started = row.get("reporting_at")
+        if isinstance(started, str):
+            started = datetime.fromisoformat(started)
+        if result["external_status"] == "reporting" and started and started < _now() - timedelta(seconds=120):
+            result["external_status"] = "unknown"
+        return result
 
-    def list_usage_events(self, principal: Principal, limit: int = 50) -> list[dict]:
-        try:
-            cap = max(1, min(int(limit), 50))
-        except (TypeError, ValueError):
-            cap = 50
+    def list_usage_events(self, principal: Principal, limit: int = 50, offset: int = 0,
+                          since=None, until=None) -> list[dict]:
         with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                       external_status, external_record_id, trace_id, created_at
-                FROM product.usage_events
-                WHERE tenant_id = %s AND user_id = %s
-                ORDER BY created_at DESC, id DESC
-                LIMIT %s
-                """,
-                (principal.tenant_id, principal.user_id, cap),
-            ).fetchall()
-        return [self.usage_event_public(self._usage_from_row(row)) for row in rows]
+            rows = self._usage_rows(conn, principal, limit, offset, since, until)
+        return [self.usage_event_public(row) for row in rows]
+
+    def _usage_rows(self, conn, principal, limit, offset, since, until):
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """SELECT * FROM product.usage_events
+                   WHERE tenant_id = %s AND user_id = %s
+                     AND (%s::date IS NULL OR created_at >= %s::date)
+                     AND (%s::date IS NULL OR created_at < %s::date + INTERVAL '1 day')
+                   ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s""",
+                (principal.tenant_id, principal.user_id, since, since, until, until, limit, offset),
+            )
+            return cur.fetchall()
 
     def usage_event(self, principal: Principal, event_id: str) -> dict | None:
+        if not _as_uuid(event_id):
+            return None
+        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """SELECT * FROM product.usage_events
+                   WHERE id = %s AND tenant_id = %s AND user_id = %s""",
+                (event_id, principal.tenant_id, principal.user_id),
+            )
+            return cur.fetchone()
+
+    def claim_usage_report(self, principal, event_id) -> str | None:
+        claim = str(uuid.uuid4())
         with self._conn() as conn:
             row = conn.execute(
-                """
-                SELECT id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                       external_status, external_record_id, trace_id, created_at
-                FROM product.usage_events
-                WHERE id = %s AND tenant_id = %s
-                """,
-                (event_id, principal.tenant_id),
+                """UPDATE product.usage_events SET external_status = 'reporting',
+                          report_claim = %s, reporting_at = now()
+                   WHERE id = %s AND tenant_id = %s AND user_id = %s
+                     AND external_status = 'pending' AND NOT is_free_trial
+                   RETURNING id""",
+                (claim, event_id, principal.tenant_id, principal.user_id),
             ).fetchone()
-        return self._usage_from_row(row) if row else None
+        return claim if row else None
 
-    def ensure_usage_trace_id(self, principal: Principal, event_id: str) -> dict:
-        row = self.usage_event(principal, event_id)
-        if row is None:
-            raise KeyError("access_denied")
-        if row.get("trace_id"):
-            return row
-        trace = uuid.uuid4().hex
-        with self._conn() as conn:
-            updated = conn.execute(
-                """
-                UPDATE product.usage_events
-                SET trace_id = %s
-                WHERE id = %s AND tenant_id = %s AND trace_id IS NULL
-                RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                          external_status, external_record_id, trace_id, created_at
-                """,
-                (trace, event_id, principal.tenant_id),
-            ).fetchone()
-        if updated:
-            return self._usage_from_row(updated)
-        again = self.usage_event(principal, event_id)
-        if again is None:
-            raise KeyError("access_denied")
-        return again
-
-    def settle_usage_external(
-        self, principal: Principal, event_id: str, status: str, record_id: str | None = None
-    ) -> dict:
-        if status not in {"pending", "confirmed", "failed"}:
+    def settle_usage_external(self, principal, event_id, claim, status, record_id=None) -> dict:
+        if status not in {"confirmed", "unknown"} or (status == "confirmed" and not record_id):
             raise ValueError("invalid_external_status")
-        with self._conn() as conn:
-            row = conn.execute(
-                """
-                UPDATE product.usage_events
-                SET external_status = %s, external_record_id = %s
-                WHERE id = %s AND tenant_id = %s AND is_free_trial = false
-                RETURNING id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                          external_status, external_record_id, trace_id, created_at
-                """,
-                (status, record_id, event_id, principal.tenant_id),
-            ).fetchone()
-        if not row:
-            raise KeyError("access_denied")
-        return self._usage_from_row(row)
-
-    def _usage_from_row(self, row) -> dict:
-        created = row[9] if len(row) > 9 else None
-        if hasattr(created, "isoformat"):
-            created = created.isoformat()
-        return {
-            "id": str(row[0]),
-            "tenant_id": str(row[1]),
-            "user_id": str(row[2]),
-            "ai_item_id": row[3],
-            "consumed_points": int(row[4]),
-            "is_free_trial": bool(row[5]),
-            "external_status": row[6],
-            "external_record_id": row[7],
-            "trace_id": row[8],
-            "created_at": created,
-        }
+        with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """UPDATE product.usage_events SET external_status = %s, external_record_id = %s
+                   WHERE id = %s AND tenant_id = %s AND user_id = %s
+                     AND report_claim = %s AND external_status = 'reporting'
+                   RETURNING *""",
+                (status, record_id, event_id, principal.tenant_id, principal.user_id, claim),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise KeyError("usage_claim_lost")
+        return row

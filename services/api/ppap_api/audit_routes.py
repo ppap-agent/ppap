@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from datetime import date
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import JSONResponse, Response
 
 from ppap_core.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
@@ -8,7 +9,7 @@ from ppap_core.identity import can_read, can_review
 from ppap_api.store import AuthStore
 
 
-def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, observe_usage) -> None:
+def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
     def require_principal(request: Request):
         principal = principal_of(request)
         if not principal:
@@ -86,7 +87,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, observe_
             round_body = store.accept_draft(principal, draft_id, body.get("idempotency_key"))
         except (KeyError, ValueError) as exc:
             return fail(exc)
-        observe_usage(principal, round_body)
         return JSONResponse(round_body, status_code=201)
 
     @app.get("/rounds")
@@ -97,11 +97,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, observe_
         return JSONResponse({"rounds": store.list_rounds(principal, limit)})
 
     @app.get("/usage")
-    def usage_list(request: Request, limit: int = 50) -> JSONResponse:
+    def usage_list(request: Request, limit: int = Query(50, ge=1, le=50),
+                   offset: int = Query(0, ge=0), since: date | None = None,
+                   until: date | None = None) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
-        return JSONResponse({"events": store.list_usage_events(principal, limit)})
+        if since and until and since > until:
+            return JSONResponse({"error": "invalid_date_range"}, status_code=400)
+        rows = store.list_usage_events(principal, limit + 1, offset, since, until)
+        return JSONResponse({"events": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.get("/rounds/{round_id}")
     def rounds_get(round_id: str, request: Request) -> JSONResponse:
@@ -155,7 +160,6 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, observe_
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)
-        observe_usage(principal, created)
         return JSONResponse(created, status_code=201)
 
     @app.put("/rounds/{round_id}/reviews")
