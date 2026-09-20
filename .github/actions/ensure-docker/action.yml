@@ -71,14 +71,52 @@ runs:
           docker buildx version
         }
 
-        if docker_ready; then
+        # Leftover iptables-legacy FORWARD DROP from a previous Docker install
+        # still filters packets after iptables-nft Docker 29 is healthy. Compose
+        # user-defined bridges then time out even when localhost healthchecks pass.
+        repair_compose_forward() {
+          sudo -n sysctl -w net.ipv4.ip_forward=1 >/dev/null || true
+          if sudo -n iptables-legacy -P FORWARD ACCEPT >/dev/null 2>&1; then
+            sudo -n iptables-legacy -F FORWARD >/dev/null 2>&1 || true
+            sudo -n iptables-legacy -P FORWARD ACCEPT >/dev/null 2>&1 || true
+          fi
+          sudo -n iptables -P FORWARD ACCEPT >/dev/null 2>&1 || true
+          sudo -n iptables -I DOCKER-USER -j ACCEPT >/dev/null 2>&1 || true
+        }
+
+        probe_compose_icc() {
+          docker rm -f ppap-icc-dst >/dev/null 2>&1 || true
+          docker network rm ppap-icc-probe >/dev/null 2>&1 || true
+          docker network create ppap-icc-probe >/dev/null
+          docker pull -q busybox:1.37 >/dev/null
+          docker run -d --name ppap-icc-dst --network ppap-icc-probe busybox:1.37 nc -l -p 7 >/dev/null
+          local ok=1
+          if docker run --rm --network ppap-icc-probe busybox:1.37 sh -c 'echo ping | nc -w 5 ppap-icc-dst 7' >/dev/null; then
+            ok=0
+          fi
+          docker rm -f ppap-icc-dst >/dev/null 2>&1 || true
+          docker network rm ppap-icc-probe >/dev/null 2>&1 || true
+          return "${ok}"
+        }
+
+        finish() {
+          repair_compose_forward
+          if ! probe_compose_icc; then
+            echo "Docker user-defined networks cannot pass traffic; leftover iptables-legacy FORWARD DROP is the usual cause" >&2
+            sudo -n iptables-legacy -S >&2 || true
+            sudo -n iptables -S >&2 || true
+            exit 1
+          fi
           report_ready
           exit 0
+        }
+
+        if docker_ready; then
+          finish
         fi
         expose_socket || true
         if docker_ready; then
-          report_ready
-          exit 0
+          finish
         fi
 
         # Engine or CLI already present: start it and install plugins only.
@@ -88,8 +126,7 @@ runs:
           expose_socket || true
           install_cli_plugins
           if docker_ready; then
-            report_ready
-            exit 0
+            finish
           fi
           echo "Docker CLI is present but Engine/Compose/Buildx are not usable; not installing docker.io" >&2
           ls -l /var/run/docker.sock /run/docker.sock /usr/bin/docker /usr/local/bin/docker 2>/dev/null || true
@@ -141,4 +178,4 @@ runs:
           docker info >&2 || true
           exit 127
         fi
-        report_ready
+        finish

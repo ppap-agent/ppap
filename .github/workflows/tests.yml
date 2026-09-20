@@ -73,6 +73,7 @@ jobs:
           docker buildx bake
           if ! compose up -d --wait --wait-timeout 180; then
             dump
+            compose down -v --remove-orphans || true
             exit 1
           fi
           python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
@@ -113,6 +114,7 @@ jobs:
           docker buildx bake
           if ! compose up -d --wait --wait-timeout 180; then
             dump
+            compose down -v --remove-orphans || true
             exit 1
           fi
           python -m unittest tests.e2e.test_web_audit -v

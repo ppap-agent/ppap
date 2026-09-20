@@ -63,7 +63,7 @@ docker compose -f deploy/compose.yaml --env-file "$ENV" stop api worker web
 docker compose -f deploy/compose.yaml --env-file "$ENV" exec -T postgres \
   sh -c 'pg_dump -U "$POSTGRES_USER" --no-owner --format=plain ppap' > postgres.sql
 docker compose -f deploy/compose.yaml --env-file "$ENV" run --rm -T --no-deps \
-  --entrypoint tar -v silo-data:/data init-db -C /data -czf - . > objects.tar.gz
+  --entrypoint tar init-db -C /data -czf - . > objects.tar.gz
 docker compose -f deploy/compose.yaml --env-file "$ENV" up -d --no-deps --wait api worker web
 ```
 

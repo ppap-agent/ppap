@@ -59,6 +59,7 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertNotIn("PADDLE_TOKEN", services["api"])
         self.assertIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["init-db"])
         self.assertIn("PGCONNECT_TIMEOUT", services["init-db"])
+        self.assertIn("silo-data:/data", services["init-db"])
         self.assertIn("image: postgres:16.10-bookworm", services["init-db"])
         self.assertIn("minio/health/live", services["silo"])
         self.assertIn("condition: service_healthy", services["init-bucket"])

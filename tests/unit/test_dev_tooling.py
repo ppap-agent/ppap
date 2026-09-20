@@ -315,6 +315,7 @@ class DeployContractTests(unittest.TestCase):
             self.assertIn("bootstrap.sql", services["init-db"])
             self.assertIn("apply.sql", services["init-db"])
             self.assertIn("i=$$((i+1))", services["init-db"])
+            self.assertIn("silo-data:/data", services["init-db"])
             self.assertIn("condition: service_healthy", services["init-bucket"])
             self.assertNotIn("condition: service_started", services["init-bucket"])
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
@@ -322,7 +323,11 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("run --rm init-db", workflow)
         ensure = (ROOT / ".github" / "actions" / "ensure-docker" / "action.yml").read_text()
         self.assertIn("not installing docker.io", ensure)
-        self.assertIn("docker.io", ensure)
+        self.assertIn("iptables-legacy", ensure)
+        self.assertIn("ppap-icc-probe", ensure)
+        isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
+        self.assertIn("127.0.0.1:9000:9000", isolated)
+        self.assertNotIn("127.0.0.1:9001:9001", isolated)
 
 
 if __name__ == "__main__":

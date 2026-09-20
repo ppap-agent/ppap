@@ -30,7 +30,6 @@ services:
       - silo-data:/data
     ports:
       - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 2s
@@ -58,6 +57,7 @@ services:
       PGCONNECT_TIMEOUT: "5"
     volumes:
       - ../../migrations:/migrations:ro
+      - silo-data:/data
     entrypoint: ["sh", "-c"]
     command:
       - |
