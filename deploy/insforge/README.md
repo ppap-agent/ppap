@@ -62,7 +62,9 @@ Set the same service env as the JSON specs (`--env-set`). Worker must stay `ingr
 
 ## Object storage and model gateway
 
-PPAP keeps its S3 abstraction (`PPAP_S3_*`). Phase 1 keeps a dedicated [PGSTY Silo](https://github.com/pgsty/silo) for PPAP objects because the InsForge S3 gateway is a subset (default ~50MB uploads, no versioning). The compose service is the pinned classic image `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z` (not `:latest`, not distroless). Silo still reads `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`. InsForge storage backup does not include those objects.
+PPAP keeps its S3 abstraction (`PPAP_S3_*`). Phase 1 keeps a dedicated [PGSTY Silo](https://github.com/pgsty/silo) for PPAP objects because the InsForge S3 gateway is a subset (default ~50MB uploads, no versioning). The compose service is the pinned classic image `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z` (not `:latest`, not distroless). Objects live on the named volume `ppap-silo-data`, not the container writable layer. Silo still reads `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`. InsForge storage backup does not include those objects.
+
+`python tools/dev.py undeploy --compose-file deploy/insforge/compose.yaml` stops PPAP services and does **not** pass `-v`. The named object volume stays. Verification `deploy/compose.yaml` may still wipe volumes so CI can start clean.
 
 If InsForge Model Gateway speaks the current OpenAI-compatible contract, point `LLM_BASE_URL` at it. OCR and other special providers stay as they are unless that contract actually matches.
 
