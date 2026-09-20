@@ -54,11 +54,33 @@ def _rule_input(item) -> RuleInput:
     if not item.rule_version_id or item.rule_body is None:
         raise ValueError("rule_required")
     body = item.rule_body
+    builtin_rules = []
+    if body.get("kind") != KIND_PRESENCE:
+        from ppap_excel_audit_engine.routing import resolve_engine_agent_class
+        from ppap_excel_audit_engine.checkers.rule_declarations import discover_declared_rules
+
+        filename = item.filename
+        if Path(filename).suffix.lower() == ".doc":
+            filename = str(Path(filename).with_suffix(".docx"))
+        agent_cls = resolve_engine_agent_class(
+            PpapDocumentType.from_string(body.get("type") or ""), filename,
+            body.get("rule_profile") or "v2",
+        )
+        # PDF delegates execute the corresponding Excel checker's declarations.
+        agent_cls = getattr(agent_cls, "TARGET_EXCEL_AGENT_CLASS", None) or agent_cls
+        declarations = discover_declared_rules(agent_cls) if agent_cls else ()
+        if not declarations:
+            raise ValueError("builtin_rules_unavailable")
+        builtin_rules = [
+            {"id": str(index), "category": description, "priority": "P0",
+             "rule_to_check": description, "type_of_rule": "text"}
+            for index, (_method, description) in enumerate(declarations, 1)
+        ]
     return RuleInput(
         rule_id=item.rule_version_id,
         rule_profile=body.get("rule_profile") or "v2",
         type=body.get("type") or "",
-        rules=list(body.get("rules") or []),
+        rules=builtin_rules,
         customers=list(body.get("customers") or []),
         models=list(body.get("models") or []),
         parts=list(body.get("parts") or []),
