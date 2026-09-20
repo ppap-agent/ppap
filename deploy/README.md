@@ -57,7 +57,7 @@ python tools/dev.py upgrade
 python tools/dev.py undeploy
 ```
 
-`deploy` / `upgrade` 用同一 Git revision 的 `ppap-api` / `ppap-worker` / `ppap-web` 镜像启动 `deploy/compose.yaml`。生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture，不是生产密钥库。真实部署通过 `PPAP_COMPOSE_ENV` 或 `--env-file` 注入填好的 env 文件；未指定时仍用该 fixture。`init` 与 compose 插值使用同一份选定文件。禁止 isolated-dev 口令与 `http://127.0.0.1:9000`。`init` 是唯一读取 bootstrap/migrator 口令的组件并执行 `python tools/dev.py provision`（建角色/库、apply SQL、确保对象桶）。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
+`deploy` / `upgrade` 用同一 Git revision 的 `ppap-api` / `ppap-worker` / `ppap-web` 镜像启动 `deploy/compose.yaml`。生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture，不是生产密钥库。真实部署通过 `PPAP_COMPOSE_ENV` 或 `--env-file` 注入填好的 env 文件；未指定时仍用该 fixture。`init` 与 compose 插值使用同一份选定文件。API/Worker 使用该文件中的 `PPAP_PG_HOST` / `PPAP_PG_PORT`，不再写死 bundled `postgres:5432`；API 另接收飞书 capability 变量。禁止 isolated-dev 口令与 `http://127.0.0.1:9000`。`init` 是唯一读取 bootstrap/migrator 口令的组件并执行 `python tools/dev.py provision`（建角色/库、apply SQL、确保对象桶）。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置，以及各自拥有的 capability。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
 
 `backup` 在短暂停下 API/Worker/Web 后，把当前 compose PostgreSQL（`ppap`）和 MinIO `/data` 写到 `dist/backups/<UTC stamp>/`（`postgres.sql`、`objects.tar.gz`、`manifest.json`），再恢复进程并要求 `/ready`。`restore` 按指定目录 drop/create 数据库并覆盖对象存储；`rollback` 恢复最新一份 backup。这是当前可执行的生产数据回退路径，不是异地备份策略。
 
