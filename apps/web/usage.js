@@ -5,6 +5,11 @@ async function main() {
   const emptyNode = document.getElementById("usage-empty");
   const table = document.getElementById("usage-list");
   const rows = document.getElementById("usage-rows");
+  const me = await product.me();
+  const userNode = document.getElementById("usage-user");
+  if (userNode) {
+    userNode.textContent = me.ok ? me.body.identity.subject : "anonymous";
+  }
   const listed = await product.usage.list();
   if (!listed.ok) {
     errorNode.textContent = listed.status === 401 ? "请先登录" : "无法加载用量记录";

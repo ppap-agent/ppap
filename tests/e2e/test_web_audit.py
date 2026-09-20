@@ -77,6 +77,15 @@ class WebAuditLoopTests(unittest.TestCase):
                     downloaded = page.request.get(href)
                     self.assertEqual(downloaded.status, 200)
                     self.assertEqual(downloaded.body(), b"browser-target-v1")
+                    target_link.click(no_wait_after=True)
+                    expect(page.get_by_test_id("file-preview")).to_be_visible()
+                    expect(page.get_by_test_id("file-preview-name")).to_contain_text("report.xlsx")
+                    page.get_by_test_id("file-preview-close").click()
+                    expect(page.get_by_test_id("file-preview")).to_be_hidden()
+                expect(page.get_by_test_id("finding-suggestion").first).to_be_visible()
+                expect(page.get_by_test_id("finding-evidence").first).to_be_visible()
+                expect(page.get_by_test_id("result-summary")).to_contain_text("PASS")
+                expect(page.get_by_test_id("pc-shell")).to_be_visible()
                 page.get_by_test_id("review-judgment").fill("需修改")
                 page.get_by_test_id("review-rationale").fill("尺寸缺失")
                 page.get_by_test_id("review-next").fill("补传")
@@ -92,6 +101,34 @@ class WebAuditLoopTests(unittest.TestCase):
                 expect(page.get_by_test_id("previous-round")).to_be_visible()
                 page.get_by_test_id("previous-round").click()
                 page.wait_for_selector("text=需修改")
+                expect(page.get_by_test_id("pc-shell")).to_be_visible()
+                expect(page.get_by_test_id("finding-suggestion").first).to_be_visible()
+                expect(page.get_by_test_id("file-version-list")).to_contain_text("report.xlsx")
+                page.get_by_test_id("nav-usage").click()
+                page.wait_for_url("**/usage")
+                page.wait_for_function(
+                    """() => ['usage-list', 'usage-empty', 'usage-error'].some((id) => {
+                      const node = document.getElementById(id);
+                      return Boolean(node && !node.classList.contains('hidden'));
+                    })"""
+                )
+                usage_error = page.get_by_test_id("usage-error")
+                if usage_error.is_visible():
+                    self.fail(usage_error.inner_text())
+                page.get_by_test_id("nav-audit-files").click()
+                page.wait_for_url("**/audit-files")
+                page.wait_for_function(
+                    """() => ['history-list', 'history-empty', 'history-error'].some((id) => {
+                      const node = document.getElementById(id);
+                      return Boolean(node && !node.classList.contains('hidden'));
+                    })"""
+                )
+                history_error = page.get_by_test_id("history-error")
+                if history_error.is_visible():
+                    self.fail(history_error.inner_text())
+                expect(page.get_by_test_id("history-list")).to_be_visible()
+                expect(page.get_by_test_id("history-result").first).to_contain_text("PASS")
+                expect(page.get_by_test_id("history-version").first).not_to_have_text("")
                 browser.close()
 
     def test_docs_addon_entry_reports_missing_host(self):

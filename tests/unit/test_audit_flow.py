@@ -386,7 +386,12 @@ class AuditFlowTests(unittest.TestCase):
         listed = self.client.get("/rounds").json()["rounds"]
         self.assertEqual([row["id"] for row in listed], [round_id])
         self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
+        self.assertTrue(listed[0]["inputs"][0]["file_version_id"])
+        self.assertEqual(set(listed[0]["result_counts"]), {"PASS", "NG", "ERR"})
         self.assertNotIn("findings", listed[0])
+        self._finish_worker()
+        done = self.client.get("/rounds").json()["rounds"]
+        self.assertGreater(done[0]["result_counts"]["PASS"], 0)
         self._login("carol")
         other = self.client.get("/rounds")
         self.assertEqual(other.status_code, 200)
@@ -431,6 +436,8 @@ class WebHookTests(unittest.TestCase):
             'data-testid="resubmit-audit"',
             'data-testid="isolated-dev-login"',
             'data-testid="pc-shell"',
+            'data-testid="file-preview"',
+            'data-testid="review-panel"',
             'id="source-upload"',
             "multiple",
         ):

@@ -1201,7 +1201,7 @@ class AuthStore:
             return None
         inputs = conn.execute(
             """
-            SELECT i.role, fv.original_filename
+            SELECT i.role, fv.original_filename, fv.id
             FROM product.round_inputs i
             JOIN product.file_versions fv ON fv.id = i.file_version_id
             WHERE i.round_id = %s
@@ -1209,13 +1209,29 @@ class AuthStore:
             """,
             (round_id,),
         ).fetchall()
+        counts = conn.execute(
+            "SELECT status, COUNT(*) FROM product.findings WHERE round_id = %s GROUP BY status",
+            (round_id,),
+        ).fetchall()
+        result_counts = {"PASS": 0, "NG": 0, "ERR": 0}
+        for status, n in counts:
+            if status in result_counts:
+                result_counts[status] = int(n)
         return {
             "id": str(row[0]),
             "execution": row[1],
             "rule": {"id": str(row[2]), "title": row[3]},
             "predecessor_id": str(row[4]) if row[4] else None,
             "created_at": row[5].isoformat() if row[5] is not None else None,
-            "inputs": [{"role": item[0], "original_filename": item[1]} for item in inputs],
+            "inputs": [
+                {
+                    "role": item[0],
+                    "original_filename": item[1],
+                    "file_version_id": str(item[2]),
+                }
+                for item in inputs
+            ],
+            "result_counts": result_counts,
         }
 
     def _round_public(self, conn, round_id: str) -> dict | None:

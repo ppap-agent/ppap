@@ -17,76 +17,110 @@
       <p class="pc-shell__session">当前身份 <code data-testid="current-user" id="current-user">anonymous</code></p>
     </aside>
     <main class="pc-main">
-      <h1>工作台</h1>
-      <p>隔离开发 Web 入口。预存 session 只测授权与原件版本，不能证明 S02 真实登录或 S03 审核历史。</p>
-      <p>构建 <code data-testid="build-revision" id="build-revision">loading</code></p>
-      <p>核心依赖 <code data-testid="stack-state" id="stack-state">loading</code></p>
-      <p>
-        <a data-testid="login-feishu" id="login-feishu" href="#">登录飞书</a>
-        <button type="button" data-testid="logout" id="logout">退出</button>
-      </p>
-      <p id="isolated-dev-login-panel" class="hidden">
-        <label for="isolated-dev-subject">隔离开发身份
-          <select data-testid="isolated-dev-subject" id="isolated-dev-subject">
-            <option value="alice">alice</option>
-            <option value="bob">bob</option>
-            <option value="carol">carol</option>
-          </select>
-        </label>
-        <button type="button" data-testid="isolated-dev-login" id="isolated-dev-login">开发登录</button>
-      </p>
+      <header class="pc-page-head">
+        <div class="pc-page-head__row">
+          <div>
+            <h1 data-testid="pc-page-title">工作台</h1>
+            <p class="pc-lead">准备待审和参考资料，选择规则后提交一轮审核。结果、依据和人工复核都留在这一轮，不会被后来的上传改写。</p>
+          </div>
+          <div class="pc-session-actions">
+            <p>
+              <a data-testid="login-feishu" id="login-feishu" href="#">登录飞书</a>
+              <button type="button" data-testid="logout" id="logout">退出</button>
+            </p>
+            <p id="isolated-dev-login-panel" class="hidden">
+              <label for="isolated-dev-subject">隔离开发身份
+                <select data-testid="isolated-dev-subject" id="isolated-dev-subject">
+                  <option value="alice">alice</option>
+                  <option value="bob">bob</option>
+                  <option value="carol">carol</option>
+                </select>
+              </label>
+              <button type="button" data-testid="isolated-dev-login" id="isolated-dev-login">开发登录</button>
+            </p>
+          </div>
+        </div>
+      </header>
       <p data-testid="access-denied" id="access-denied" class="hidden">access-denied</p>
 
-      <fieldset>
-        <legend>准备资料</legend>
-        <p>
+      <section class="pc-card" data-testid="prepare-panel">
+        <h2>准备资料</h2>
+        <p class="pc-muted">每次上传都会生成新的文件版本。历史审核仍引用当时的版本。</p>
+        <div class="pc-grid">
           <label for="source-upload">待审文件
             <input data-testid="source-upload" id="source-upload" type="file" multiple />
           </label>
           <button type="button" data-testid="prepare-audit" id="prepare-audit">固化待审版本</button>
-        </p>
-        <p>
           <label for="reference-upload">参考文件
             <input data-testid="reference-upload" id="reference-upload" type="file" multiple />
           </label>
           <button type="button" data-testid="prepare-reference" id="prepare-reference">固化参考版本</button>
-        </p>
-        <p>文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
+        </div>
+        <p>当前文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
         <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
-        <p><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
-      </fieldset>
+        <p><a data-testid="download-original" id="download-original" href="#">预览当前原件</a></p>
+        <h3>本轮资料版本</h3>
+        <ul data-testid="file-version-list" id="file-version-list" class="pc-version-list"></ul>
+      </section>
 
-      <fieldset>
-        <legend>草稿</legend>
+      <section class="pc-card" data-testid="draft-panel">
+        <h2>选择规则并提交</h2>
         <p>草稿 <code data-testid="draft-id" id="draft-id"></code></p>
         <label for="rule-select">规则
           <select data-testid="rule-select" id="rule-select"></select>
         </label>
         <p data-testid="draft-items" id="draft-items"></p>
-        <button type="button" data-testid="save-draft" id="save-draft">保存范围和规则</button>
-        <button type="button" data-testid="submit-audit" id="submit-audit">提交审核</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>审核结果</legend>
-        <p>轮次 <code data-testid="round-id" id="round-id"></code></p>
-        <p>执行 <code data-testid="round-execution" id="round-execution"></code></p>
-        <p>覆盖范围 <code data-testid="coverage-panel" id="coverage-panel"></code></p>
-        <p data-testid="locator-gap" id="locator-gap" class="hidden">定位缺口</p>
-        <p><a data-testid="previous-round" id="previous-round" class="hidden" href="#">查看旧轮次</a></p>
-        <div data-testid="findings" id="findings"></div>
         <p>
-          <label for="review-judgment">判断 <input data-testid="review-judgment" id="review-judgment" type="text" /></label>
-          <label for="review-rationale">理由 <textarea data-testid="review-rationale" id="review-rationale" rows="2"></textarea></label>
-          <label for="review-next">下一步 <textarea data-testid="review-next" id="review-next" rows="2"></textarea></label>
-          <button type="button" data-testid="save-review" id="save-review">保存人工复核</button>
+          <button type="button" data-testid="save-draft" id="save-draft">保存范围和规则</button>
+          <button type="button" class="pc-primary" data-testid="submit-audit" id="submit-audit">提交审核</button>
         </p>
-        <p data-testid="review-saved" id="review-saved"></p>
-        <button type="button" data-testid="resubmit-audit" id="resubmit-audit">显式重审</button>
-      </fieldset>
+      </section>
 
-      <pre data-testid="resource-panel" id="resource-panel"></pre>
-      <pre data-testid="capabilities" id="capabilities"></pre>
+      <section class="pc-card" data-testid="result-panel">
+        <h2>审核结果</h2>
+        <nav data-testid="round-switcher" id="round-switcher" class="pc-round-switcher">
+          <span>当前轮次 <code data-testid="round-id" id="round-id"></code></span>
+          <a data-testid="previous-round" id="previous-round" class="hidden" href="#">查看上一轮</a>
+        </nav>
+        <p data-testid="result-summary" id="result-summary" class="pc-result-summary"></p>
+        <p>执行 <code data-testid="round-execution" id="round-execution"></code></p>
+        <p>覆盖范围 <span data-testid="coverage-panel" id="coverage-panel"></span></p>
+        <p data-testid="locator-gap" id="locator-gap" class="hidden">定位缺口</p>
+        <div class="pc-result-layout">
+          <div data-testid="findings" id="findings" class="pc-findings"></div>
+          <aside class="pc-review" data-testid="review-panel">
+            <h3>人工复核</h3>
+            <p class="pc-muted">复核只记录判断和下一步，不会改写机器 PASS / NG / ERR。</p>
+            <p data-testid="review-item-label" id="review-item-label">选择一条检查结果后复核</p>
+            <label for="review-judgment">判断 <input data-testid="review-judgment" id="review-judgment" type="text" /></label>
+            <label for="review-rationale">理由 <textarea data-testid="review-rationale" id="review-rationale" rows="2"></textarea></label>
+            <label for="review-next">下一步 <textarea data-testid="review-next" id="review-next" rows="2"></textarea></label>
+            <button type="button" data-testid="save-review" id="save-review">保存人工复核</button>
+            <p data-testid="review-saved" id="review-saved"></p>
+            <button type="button" data-testid="resubmit-audit" id="resubmit-audit">显式重审</button>
+          </aside>
+        </div>
+        <h3>历史轮次</h3>
+        <ul data-testid="round-history-list" id="round-history-list" class="pc-version-list"></ul>
+      </section>
+
+      <dialog data-testid="file-preview" id="file-preview" class="pc-preview">
+        <form method="dialog" class="pc-preview__bar">
+          <strong data-testid="file-preview-name" id="file-preview-name">原件预览</strong>
+          <a data-testid="file-preview-download" id="file-preview-download" href="#">下载原件</a>
+          <button type="submit" data-testid="file-preview-close" id="file-preview-close">关闭</button>
+        </form>
+        <iframe data-testid="file-preview-frame" id="file-preview-frame" title="原件预览" hidden></iframe>
+        <p data-testid="file-preview-fallback" id="file-preview-fallback" class="pc-muted">该格式请下载后查看。</p>
+      </dialog>
+
+      <details class="pc-runtime">
+        <summary>运行信息</summary>
+        <p>构建 <code data-testid="build-revision" id="build-revision">loading</code></p>
+        <p>核心依赖 <code data-testid="stack-state" id="stack-state">loading</code></p>
+        <pre data-testid="resource-panel" id="resource-panel"></pre>
+        <pre data-testid="capabilities" id="capabilities"></pre>
+      </details>
     </main>
     <script src="./product-api.js"></script>
     <script src="./app.js"></script>
