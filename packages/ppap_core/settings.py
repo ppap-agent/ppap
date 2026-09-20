@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     feishu_free_trial_quota_points: int = Field(default=10000, alias="FEISHU_FREE_TRIAL_QUOTA_POINTS")
     partner_ai_endpoint: str = Field(default="", alias="PPAP_PARTNER_AI_ENDPOINT")
     legacy_engine_url: str = Field(default="", alias="PPAP_LEGACY_ENGINE_URL")
+    onlyoffice_url: str = Field(default="", alias="PPAP_ONLYOFFICE_URL")
+    onlyoffice_api_url: str = Field(default="", alias="PPAP_ONLYOFFICE_API_URL")
+    onlyoffice_secret: str = Field(default="", alias="PPAP_ONLYOFFICE_SECRET")
 
     pg_host: str = Field(default="127.0.0.1", alias="PPAP_PG_HOST")
     pg_port: int = Field(default=5432, alias="PPAP_PG_PORT")

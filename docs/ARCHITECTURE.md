@@ -22,7 +22,7 @@ PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入�
 
 API 拥有身份、授权、文件版本、草稿、审核受理、结果读取、人工复核和用量视图。重解析、转换、模型调用和规则检查由 Worker 执行。
 
-原件预览是受授权的只读内容摘录：API 对有大小上限的 Word / Excel / 文本提取显示内容，不执行宏、公式或模型，也不转换旧 DOC；排版和图片以原件为准。审核历史支持服务端搜索和分页。飞书目录选择使用当前用户令牌，逐文件导入独立版本，不递归导入或修改来源。
+原件预览优先使用可选的 OnlyOffice Document Server，Python API 签发只读配置，不提供编辑回写。`PPAP_ONLYOFFICE_URL` 是浏览器可达地址，`PPAP_ONLYOFFICE_API_URL` 是 Document Server 可达的 Product API 地址，`PPAP_ONLYOFFICE_SECRET` 与其 JWT secret 一致。授权通过后签发单文件版本、单租户、十分钟有效的读取凭证；该凭证在到期前仍可读取，因此 Document Server 及其缓存必须属于可信部署边界。API 和反向代理不得记录凭证查询串。缺少服务时回退到有大小上限的 Word / Excel / 文本摘录；摘录不执行宏、公式或模型，也不转换旧 DOC。审核历史支持服务端搜索和分页。飞书目录选择使用当前用户令牌，逐文件导入独立版本，不递归导入或修改来源。
 
 PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试。两者不是两套产品台账。对象存储保存文件版本引用的字节；数据库保存文件版本、对象位置和授权关系。
 

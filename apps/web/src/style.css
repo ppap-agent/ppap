@@ -50,6 +50,8 @@
 .audit-filters button[aria-pressed=true] { color: var(--pc-accent); background: var(--pc-accent-soft); border-color: var(--pc-accent); }
 .audit-original { overflow: auto; }
 .audit-original iframe { width: 100%; min-height: 65vh; border: 0; }
+.office-preview { height:70vh; min-height:420px; }
+.office-preview > div { height:100%; }
 .audit-original pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .audit-original header { display: flex; justify-content: space-between; gap: 8px; }
 .audit-original #file-preview-name { overflow-wrap: anywhere; color: var(--pc-muted); font-size: 12px; }

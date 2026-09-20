@@ -71,6 +71,7 @@ from ppap_api.store import AuthStore
 from ppap_api.audit_routes import register_audit_routes
 from ppap_api.rule_routes import register_rule_routes
 from ppap_api.report_routes import register_report_routes
+from ppap_api.office_routes import register_office_routes
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -657,6 +658,7 @@ def create_app(
         return JSONResponse(body)
 
     register_report_routes(app, store, session_of, http, settings)
+    register_office_routes(app, store, principal_of, settings)
 
     @app.post("/integrations/feishu/rounds/{round_id}/writeback")
     def feishu_round_writeback(round_id: str, body: dict, request: Request) -> JSONResponse:
