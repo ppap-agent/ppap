@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import {computed} from 'vue'
-import {type Round, originalUrl} from './api'
+import {computed, ref, watch} from 'vue'
+import {type Round, originalUrl, request} from './api'
 const props=defineProps<{round:Round}>()
+interface Export {id:string; status:string; document_id:string|null}
+const report=ref<Export|null>(null), exporting=ref(false), error=ref('')
+const path=computed(()=>`/integrations/feishu/rounds/${props.round.id}/report`)
+async function readReport(){try{report.value=(await request<{report:Export|null}>(path.value)).report}catch{report.value=null}}
+async function exportReport(){if(exporting.value)return;exporting.value=true;error.value='';try{report.value=(await request<{report:Export|null}>(path.value,'POST',{})).report}catch(e){error.value=e instanceof Error?e.message:'报告创建失败，请重新读取状态后确认。'}finally{exporting.value=false}}
+watch(()=>props.round,()=>{if(props.round.execution==='completed')void readReport()}, {immediate:true})
 const groups=computed(()=>props.round.inputs.filter(file=>file.role==='target').map(file=>({file,findings:props.round.findings.filter(finding=>finding.locator?.file_version_id===file.file_version_id)})))
 const incomplete=computed(()=>props.round.execution!=='completed' || !groups.value.length || groups.value.some(group=>!group.findings.length || group.findings.some(finding=>finding.status==='ERR')))
 </script>
@@ -9,6 +15,10 @@ const incomplete=computed(()=>props.round.execution!=='completed' || !groups.val
 <template>
   <details class="report-preview">
     <summary>审核报告预览</summary>
+    <div class="audit-actions"><button class="pc-primary" :disabled="incomplete || exporting || !!report" @click="exportReport">{{ exporting?'正在生成报告…':'生成飞书报告' }}</button><button v-if="report && report.status!=='ready' || error" :disabled="exporting" @click="readReport">重新读取状态</button><a v-if="report?.document_id" :href="`https://feishu.cn/docx/${encodeURIComponent(report.document_id)}`" target="_blank" rel="noopener">{{ report.status==='ready'?'打开飞书报告':'查看已创建文档（内容可能不完整）' }}</a></div>
+    <p v-if="error" role="alert" class="error">{{ error }}</p>
+    <p v-if="report && report.status!=='ready'" role="status">{{ report.status==='unknown'?'创建或写入结果不确定，请先核对飞书文档，不要重复创建。':'报告正在创建或写入；若长时间未完成，请核对飞书文档。' }}</p>
+    <p v-if="report?.status==='ready'">报告已生成。请在飞书文档中使用分享功能；后续复核修改不会自动覆盖这份报告。</p>
     <p v-if="incomplete" role="status">审核尚未完整完成或存在执行错误。以下为当前结果，不能作为完整通过结论。</p>
     <p>机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。</p>
     <p v-if="round.created_at">提交时间：{{ new Date(round.created_at).toLocaleString() }}</p>
