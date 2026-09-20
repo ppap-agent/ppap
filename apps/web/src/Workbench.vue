@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, onBeforeUnmount, onMounted, reactive, ref, watch} from 'vue'
+import {computed, onBeforeUnmount, onMounted, reactive, ref} from 'vue'
 import {request, upload, type Material, type Rule, type Round, type Analysis, type Job, type Finding} from './api'
 import OriginalPreview from './OriginalPreview.vue'
 import DrivePicker from './DrivePicker.vue'
@@ -9,6 +9,14 @@ const busy = ref(false), error = ref(''), message = ref(''), selectedFileId = re
 const draftId = ref(new URLSearchParams(location.search).get('draft') || '')
 const review = reactive({judgment:'', rationale:'', next_step:''}), reviewDirty = ref(false)
 const workspacePanel = ref('checks')
+const workspace = ref<HTMLElement>(), previewWidth = ref(36), resizing = ref(false)
+function resizePreview(event:PointerEvent) {
+  if (!resizing.value || !workspace.value) return
+  const bounds=workspace.value.getBoundingClientRect()
+  previewWidth.value=Math.max(28,Math.min(50,(bounds.right-event.clientX)/bounds.width*100))
+}
+function startResize(event:PointerEvent) { if(event.button!==0)return; resizing.value=true; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); resizePreview(event) }
+function resizeKey(event:KeyboardEvent) { const change=event.key==='ArrowLeft'?2:event.key==='ArrowRight'?-2:0; if(change){event.preventDefault();previewWidth.value=Math.max(28,Math.min(50,previewWidth.value+change))} }
 const selectedFile = computed(() => (round.value?.inputs || items.value).find(item => item.file_version_id === selectedFileId.value))
 const findings = computed(() => (round.value?.findings || []).filter(item => (!selectedFileId.value || item.locator?.file_version_id === selectedFileId.value) && (!filter.value || item.status === filter.value)))
 const selectedFinding = computed(() => round.value?.findings.find(item => item.item_key === selectedKey.value))
@@ -20,11 +28,15 @@ function later(work:()=>void) { const timer = setTimeout(() => {timers.delete(ti
 function query(values: Record<string,string | null>) { const url = new URL(location.href); for (const [key,value] of Object.entries(values)) value ? url.searchParams.set(key,value) : url.searchParams.delete(key); history.replaceState(null,'',url) }
 async function action(work:()=>Promise<void>) { if (busy.value) return; busy.value = true; error.value = ''; try { await work() } catch(e) { error.value = e instanceof Error ? e.message : '操作失败，请重试。' } finally { busy.value = false } }
 function choose(item?: Finding) {
+  if (item?.item_key === selectedKey.value) return true
   if (item?.item_key !== selectedKey.value && reviewDirty.value && !confirm('复核尚未保存，是否放弃修改？')) return false
   selectedKey.value = item?.item_key || ''; Object.assign(review, {judgment:item?.review?.judgment || '', rationale:item?.review?.rationale || '', next_step:item?.review?.next_step || ''}); reviewDirty.value = false; return true
 }
 function chooseFile(file:Material) { const first = round.value?.findings.find(row=>row.locator?.file_version_id === file.file_version_id && (!filter.value || row.status === filter.value)); if (choose(first)) { selectedFileId.value = file.file_version_id; workspacePanel.value = 'checks' } }
-watch(filter, () => { choose(findings.value[0]) })
+function chooseFilter(status:string) {
+  const first=round.value?.findings.find(item=>(!selectedFileId.value || item.locator?.file_version_id===selectedFileId.value) && (!status || item.status===status))
+  if(choose(first)) filter.value=status
+}
 async function saveDraft() {
   if (!draftId.value) draftId.value = (await request<{id:string}>('/drafts','POST')).id
   await request(`/drafts/${draftId.value}`,'PUT',{items:items.value.map(item=>({file_version_id:item.file_version_id, role:item.role, rule_version_id:item.role === 'target' ? item.rule_version_id : null}))})
@@ -122,13 +134,14 @@ onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout)})
   <div v-else>
     <div class="audit-result-heading"><p><span v-for="count in counts" :key="count.status" :class="`status-${count.status}`">{{ count.status }} {{ count.count }}　</span></p><span>{{ ({queued:'排队中',running:'审核中',completed:'审核完成',failed:'执行失败'} as Record<string,string>)[round.execution] || round.execution }}</span><button :disabled="busy" @click="prepareAgain">准备下一次审核</button></div>
     <nav class="workspace-switch" aria-label="审核工作区视图"><button v-for="panel in [{id:'files',label:'文件'},{id:'checks',label:'检查结果'},{id:'original',label:'原件'}]" :key="panel.id" :aria-pressed="workspacePanel===panel.id" @click="workspacePanel=panel.id">{{ panel.label }}</button></nav>
-    <div class="audit-workspace" :data-panel="workspacePanel">
+    <div ref="workspace" class="audit-workspace" :class="{'is-resizing':resizing}" :data-panel="workspacePanel" :style="{'--preview-width':`${previewWidth}%`}">
       <aside class="audit-files"><label>本次资料<input v-model="search" type="search" placeholder="查找文件" /></label><button v-for="file in visibleFiles" :key="file.file_version_id" :aria-pressed="selectedFileId===file.file_version_id" @click="chooseFile(file)">{{ file.original_filename }}<small>{{ file.role==='reference'?'参考资料':file.rule?.title }}</small></button></aside>
-      <section class="audit-checks"><h2>{{ selectedFile?.original_filename || '检查结果' }}</h2><p class="pc-muted">{{ selectedFile?.rule?.title }}</p><nav class="audit-filters" aria-label="结果筛选"><button v-for="status in ['', 'NG', 'ERR', 'PASS']" :key="status" :aria-pressed="filter===status" @click="filter=status">{{ status || '全部' }}</button></nav>
+      <section class="audit-checks"><h2>{{ selectedFile?.original_filename || '检查结果' }}</h2><p class="pc-muted">{{ selectedFile?.rule?.title }}</p><nav class="audit-filters" aria-label="结果筛选"><button v-for="status in ['', 'NG', 'ERR', 'PASS']" :key="status" :aria-pressed="filter===status" @click="chooseFilter(status)">{{ status || '全部' }}</button></nav>
         <p v-if="!findings.length">{{ ['queued','running'].includes(round.execution)?'审核正在进行，完成后会在此显示结果。':'当前没有检查结果。' }}</p>
         <button v-for="finding in findings" :key="finding.item_key" class="finding-row" :class="{'is-selected':selectedKey===finding.item_key}" @click="choose(finding)"><strong :class="`status-${finding.status}`">{{ finding.status }}</strong> {{ finding.item }}<p>{{ finding.suggestions }}</p><small v-if="finding.locator?.locator">依据：{{ finding.locator.locator }}</small><small v-else>可在右侧原件中核对；尚无精确位置。</small><p v-if="finding.review">人工复核：{{ finding.review.judgment }}</p></button>
         <details v-if="selectedFinding" class="audit-review" open><summary>人工复核 · {{ selectedFinding.item }}</summary><label>判断<input v-model="review.judgment" @input="reviewDirty=true" /></label><label>理由<textarea v-model="review.rationale" @input="reviewDirty=true" /></label><label>下一步<textarea v-model="review.next_step" @input="reviewDirty=true" /></label><button :disabled="busy || !review.judgment.trim()" @click="saveReview">保存复核</button></details>
       </section>
+      <div class="preview-resizer" role="separator" tabindex="0" aria-label="调整原件预览宽度" aria-orientation="vertical" :aria-valuenow="Math.round(previewWidth)" aria-valuemin="28" aria-valuemax="50" @pointerdown.prevent="startResize" @pointermove="resizePreview" @pointerup="resizing=false" @pointercancel="resizing=false" @lostpointercapture="resizing=false" @keydown="resizeKey" />
       <OriginalPreview :file="selectedFile" :round-id="round.id" />
     </div>
     <details><summary>审核范围与记录</summary><p>待审：{{ round.coverage?.checked?.join('、') }}</p><p>参考：{{ round.coverage?.unchecked?.join('、') }}</p><a v-if="round.predecessor_id" :href="`/?round=${round.predecessor_id}`">查看上一轮</a><a href="/audit-files">全部审核记录</a></details>

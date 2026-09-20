@@ -34,7 +34,11 @@
 .audit-app [data-testid=draft-item] span { overflow-wrap: anywhere; }
 .audit-result-heading { justify-content: flex-start; flex-wrap: wrap; }
 .audit-result-heading button { margin-left: auto; }
-.audit-workspace { display: grid; grid-template-columns: 210px minmax(300px,1fr) minmax(300px,36%); border: 1px solid var(--pc-border); border-radius: 8px; background: white; min-height: 65vh; }
+.audit-workspace { display: grid; grid-template-columns: 180px minmax(260px,1fr) 8px minmax(280px,var(--preview-width,36%)); border: 1px solid var(--pc-border); border-radius: 4px; background: white; min-height: 65vh; }
+.preview-resizer { cursor:col-resize; touch-action:none; background:#f5f7fa; border-inline:1px solid var(--pc-border); }
+.preview-resizer:hover, .preview-resizer:focus-visible { background:var(--pc-accent-soft); }
+.is-resizing { user-select:none; cursor:col-resize; }
+.is-resizing iframe { pointer-events:none; }
 .audit-files, .audit-checks, .audit-original { padding: 16px; min-width: 0; }
 .audit-files, .audit-checks { border-right: 1px solid var(--pc-border); }
 .audit-workspace h2 { font-size: 16px; margin: 0 0 12px; overflow-wrap: anywhere; }
@@ -44,7 +48,7 @@
 .audit-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .audit-filters button { padding: 4px 8px; margin: 0; font-size: 12px; }
 .audit-filters button[aria-pressed=true] { color: var(--pc-accent); background: var(--pc-accent-soft); border-color: var(--pc-accent); }
-.audit-original { overflow: auto; resize: horizontal; }
+.audit-original { overflow: auto; }
 .audit-original iframe { width: 100%; min-height: 65vh; border: 0; }
 .audit-original pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .audit-original header { display: flex; justify-content: space-between; gap: 8px; }
@@ -80,6 +84,7 @@
   .workspace-switch button { min-height:44px; margin:0; }
   .workspace-switch button[aria-pressed=true] { color:var(--pc-accent); border-color:var(--pc-accent); background:var(--pc-accent-soft); }
   .audit-workspace { display:block; }
+  .preview-resizer { display:none; }
   .audit-workspace > .audit-files, .audit-workspace > .audit-checks, .audit-workspace > .audit-original { display:none; border:0; }
   .audit-workspace[data-panel=files] > .audit-files, .audit-workspace[data-panel=checks] > .audit-checks, .audit-workspace[data-panel=original] > .audit-original { display:block; }
   .audit-app .rules-layout { grid-template-columns:minmax(180px, 30%) minmax(0,1fr); }
