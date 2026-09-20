@@ -210,7 +210,7 @@ function renderRound(api, round, state) {
       counts[item.status] += 1;
     }
   });
-  summary.innerHTML = `<span class="status-PASS">PASS ${counts.PASS}</span> · <span class="status-NG">NG ${counts.NG}</span> · <span class="status-ERR">ERR ${counts.ERR}</span>`;
+  summary.innerHTML = `<span class="${counts.PASS ? "status-PASS" : ""}">PASS ${counts.PASS}</span> · <span class="${counts.NG ? "status-NG" : ""}">NG ${counts.NG}</span> · <span class="${counts.ERR ? "status-ERR" : ""}">ERR ${counts.ERR}</span>`;
   box.innerHTML = findings.map((item) => {
     const locator = item.locator;
     let evidence = "定位缺口";

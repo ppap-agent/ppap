@@ -59,6 +59,7 @@ body.pc-app {
   color: var(--pc-text);
   text-decoration: none;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .pc-shell__nav a:hover,
