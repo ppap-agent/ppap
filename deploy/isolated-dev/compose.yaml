@@ -28,8 +28,6 @@ services:
       MINIO_ROOT_PASSWORD: ppap_isolated_dev
     volumes:
       - silo-data:/data
-    ports:
-      - "127.0.0.1:9000:9000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 2s

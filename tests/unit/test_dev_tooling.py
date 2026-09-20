@@ -326,7 +326,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("iptables-legacy", ensure)
         self.assertIn("ppap-icc-probe", ensure)
         isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
-        self.assertIn("127.0.0.1:9000:9000", isolated)
+        self.assertNotIn("127.0.0.1:9000:9000", isolated)
         self.assertNotIn("127.0.0.1:9001:9001", isolated)
 
 
