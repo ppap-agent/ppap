@@ -150,6 +150,40 @@ def _bullet(content: str) -> dict:
     return {"block_type": 12, "bullet": {"elements": [_text_run(content)]}}
 
 
+def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
+    """Complete report, unlike the brief summary written into a source document."""
+    state = writeback_state(round_body)
+    if state != "ready":
+        raise FeishuWritebackError(state)
+    blocks = [_heading2("PPAP 审核报告"), _text("审核时间（UTC）：" + _audit_clock(round_body)),
+              _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
+    for name, rows in _group_findings(round_body):
+        blocks.append(_heading2(name))
+        for row in rows:
+            blocks.append(_heading3(str(row["status"]) + " · " + str(row.get("item") or "检查项")))
+            if row.get("suggestions"):
+                blocks.append(_text(str(row["suggestions"])))
+            locator = row.get("locator") or {}
+            positions = [str(locator["locator"])] if locator.get("locator") else []
+            for source in (locator.get("evidence") or {}).get("sources") or []:
+                position = str(source.get("locator") or "")
+                if position and position not in positions:
+                    positions.append(position)
+            blocks.append(_text("依据：" + "；".join(positions) if positions else "未提供精确位置，请核对原件。"))
+            review = row.get("review") or {}
+            if review.get("judgment"):
+                blocks.append(_text("人工复核：" + str(review["judgment"])))
+                for field, label in (("rationale", "理由"), ("next_step", "下一步")):
+                    if review.get(field):
+                        blocks.append(_text(label + "：" + str(review[field])))
+    references = [str(item.get("original_filename") or "未命名资料") for item in round_body["inputs"] if item.get("role") != TARGET]
+    if references:
+        blocks.append(_text("参考资料（不单独审核）：" + "、".join(references)))
+    if return_url:
+        blocks.append(_text("查看审核与原件：" + return_url))
+    return blocks
+
+
 def structured_blocks(content: str) -> list[dict]:
     children: list[dict] = []
     lines = (content or "").split("\n")
