@@ -68,3 +68,12 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertIn("result_counts", history_js)
         addon = (WEB / "addon.html").read_text()
         self.assertNotIn("pc-shell", addon)
+
+    def test_rule_preparation_has_a_customer_editor_and_explicit_publication(self):
+        page = (WEB / "rules.html").read_text()
+        for test_id in ("rule-file", "parse-rule", "rule-items", "publish-rule", "rule-versions"):
+            self.assertIn(f'data-testid="{test_id}"', page)
+        self.assertIn("本企业", page)
+        self.assertIn("新版本", page)
+        for name in ("index.html", "audit-files.html", "usage.html"):
+            self.assertIn('href="./rules"', (WEB / name).read_text())

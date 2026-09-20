@@ -67,7 +67,7 @@ class AIClient:
                 self.langfuse_enabled = True
                 logger.debug("Development mode enabled with Langfuse tracking")
             except ImportError as exc:
-                logger.warning("Langfuse not available in development mode (%s)", exc)
+                logger.warning("Langfuse unavailable: error_type=%s", type(exc).__name__)
 
         if self.langfuse_enabled:
             try:
@@ -76,7 +76,7 @@ class AIClient:
                 self.langfuse_client = get_client()
                 logger.debug("Langfuse客户端初始化成功")
             except Exception as exc:
-                logger.exception("Langfuse客户端初始化失败: %s", exc)
+                logger.error("Langfuse initialization failed: error_type=%s", type(exc).__name__)
 
         # Register shutdown handler
         atexit.register(self.shutdown)
@@ -173,8 +173,8 @@ class AIClient:
             try:
                 self.langfuse_client.flush()
                 logger.debug("Langfuse数据已刷新")
-            except Exception:
-                logger.exception("Langfuse刷新失败")
+            except Exception as exc:
+                logger.error("Langfuse flush failed: error_type=%s", type(exc).__name__)
         else:
             logger.debug("Langfuse未启用，跳过数据刷新")
 
@@ -184,8 +184,8 @@ class AIClient:
             try:
                 self.langfuse_client.shutdown()
                 logger.debug("Langfuse客户端已关闭")
-            except Exception:
-                logger.exception("Langfuse关闭失败")
+            except Exception as exc:
+                logger.error("Langfuse shutdown failed: error_type=%s", type(exc).__name__)
         else:
             logger.debug("Langfuse未启用，无需关闭")
 
@@ -196,6 +196,9 @@ class AIClient:
         temperature: float = 0.1,
         response_format: Optional[Dict[str, str]] = None,
         operation: str = "chat_completion",
+        *,
+        request_timeout: float | None = None,
+        retry_limit: int | None = None,
     ) -> str:
         """
         统一的聊天完成接口，支持文本和图像
@@ -217,34 +220,31 @@ class AIClient:
                 temperature=temperature,
                 response_format=response_format,
             )
-            max_retries = max(0, int(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRIES", 2)))
+            if request_timeout is not None:
+                request_kwargs["timeout"] = request_timeout
+            # Per-call SDK options do not mutate the shared client or its defaults.
+            request_client = self.client if retry_limit is None else self.client.with_options(max_retries=max(0, retry_limit))
+            max_retries = max(0, int(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRIES", 2) if retry_limit is None else retry_limit))
             base_retry_delay = float(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRY_DELAY_SECONDS", 1.0))
 
             for attempt in range(max_retries + 1):
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
-                response = self.client.chat.completions.create(**request_kwargs)
+                response = request_client.chat.completions.create(**request_kwargs)
 
                 try:
                     choices = getattr(response, "choices", None)
                     if not choices:
-                        response_id = getattr(response, "id", "")
-                        response_model = getattr(response, "model", "")
-                        usage = getattr(response, "usage", None)
-                        raise _InvalidAIResponseError(f"AI响应未返回可用choices (id={response_id}, model={response_model}, usage={usage})")
+                        raise _InvalidAIResponseError("AI response has no choices")
 
                     first_choice = choices[0]
                     message = getattr(first_choice, "message", None)
                     if message is None:
-                        finish_reason = getattr(first_choice, "finish_reason", "")
-                        raise _InvalidAIResponseError(f"AI响应首个choice缺少message (finish_reason={finish_reason})")
+                        raise _InvalidAIResponseError("AI response has no message")
 
                     content = getattr(message, "content", None)
-                    # logger.info(f"AI响应内容: {response}")
                     if content is None:
-                        refusal = getattr(message, "refusal", None)
-                        finish_reason = getattr(first_choice, "finish_reason", "")
-                        raise _InvalidAIResponseError(f"AI response content is None (finish_reason={finish_reason}, refusal={refusal})")
+                        raise _InvalidAIResponseError("AI response has no content")
                     if not isinstance(content, str):
                         raise TypeError("AI response content is not text")
 
@@ -274,18 +274,19 @@ class AIClient:
 
                     delay_seconds = max(0.0, base_retry_delay) * (2**attempt)
                     logger.warning(
-                        "AI响应结构异常，准备重试 (%s/%s): %s",
+                        "AI response retry (%s/%s): operation=%s error_type=%s",
                         attempt + 1,
                         max_retries,
-                        exc,
+                        operation,
+                        type(exc).__name__,
                     )
                     if delay_seconds > 0:
                         time.sleep(delay_seconds)
 
             raise RuntimeError("AI响应异常且未执行有效重试")
 
-        except Exception:
-            logger.exception("AI客户端调用失败")
+        except Exception as exc:
+            logger.error("AI call failed: operation=%s error_type=%s", operation, type(exc).__name__)
             raise
 
     def _build_request_kwargs(
@@ -326,6 +327,9 @@ class AIClient:
         temperature: float = 0.1,
         json_format: bool = False,
         operation: str = "structured_completion",
+        *,
+        request_timeout: float | None = None,
+        retry_limit: int | None = None,
     ) -> str:
         """
         结构化完成接口
@@ -354,6 +358,8 @@ class AIClient:
             temperature=temperature,
             response_format=response_format,
             operation=operation,
+            request_timeout=request_timeout,
+            retry_limit=retry_limit,
         )
 
     def _llm_is_available(self) -> bool:
@@ -430,8 +436,8 @@ class AIClient:
                 chunk_result_map = {str(item.get("id")): self._coerce_json_bool(item.get("equal")) for item in chunk_results if isinstance(item, dict) and item.get("id") is not None}
                 for item in chunk:
                     results[item["id"]] = chunk_result_map.get(item["id"], False)
-            except Exception:
-                logger.exception("llm_equal_batch 判断失败")
+            except Exception as exc:
+                logger.error("llm_equal_batch failed: error_type=%s", type(exc).__name__)
                 for item in chunk:
                     results[item["id"]] = False
 

@@ -36,6 +36,7 @@ from ppap_core.files import (
 from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import Principal, Resource, Session, can_read, identity_key, new_token, token_hash
 from ppap_core.settings import Settings
+from ppap_core.rules import normalize_rule_body, rule_title, rule_parse_request, rule_parse_view
 
 
 def _now() -> datetime:
@@ -306,10 +307,54 @@ class MemoryAuthStore:
             count += 1
         return count
 
+    def accept_rule_parse(self, principal, request_id, source_file_id, source_file_version_id, document_type=""):
+        job_id, payload = rule_parse_request(request_id, source_file_id, source_file_version_id, document_type)
+        prepared = self._prepared_items(principal, [{"file_version_id": payload["source_file_version_id"], "role": "reference"}])
+        if prepared[0]["file_id"] != payload["source_file_id"]:
+            raise KeyError("missing")
+        previous = self.jobs.get(job_id)
+        if previous:
+            if previous["tenant_id"] != principal.tenant_id or previous["kind"] != "rule_parse":
+                raise KeyError("missing")
+            if previous["payload"] != payload:
+                raise ValueError("rule_parse_conflict")
+        else:
+            self.jobs[job_id] = {"id": job_id, "tenant_id": principal.tenant_id, "kind": "rule_parse", "payload": payload, "status": "queued", "attempt": 0, "created": len(self.jobs), "lease_until": None}
+        return self.get_rule_parse(principal, job_id)
+
+    def get_rule_parse(self, principal, job_id):
+        job = self.jobs.get(job_id)
+        if not job or job["tenant_id"] != principal.tenant_id or job["kind"] != "rule_parse":
+            raise KeyError("missing")
+        self._prepared_items(principal, [{"file_version_id": job["payload"]["source_file_version_id"], "role": "reference"}])
+        return rule_parse_view(job_id, job["payload"], job["status"], job.get("result"), bool(job.get("lease_until") and job["lease_until"] < _now()))
+
     def list_rules(self, tenant_id: str) -> list[dict[str, str]]:
         rows = [row for row in self.rule_versions.values() if row["tenant_id"] == tenant_id]
-        rows.sort(key=lambda row: (row["title"], row["id"]))
-        return [{"id": row["id"], "title": row["title"], "kind": str(row["body"].get("kind") or "engine")} for row in rows]
+        rows.sort(key=lambda row: (row.get("created_at", ""), row["id"]), reverse=True)
+        return [{"id": row["id"], "title": row["title"], "created_at": row.get("created_at"), "kind": str(row["body"].get("kind") or "engine"),
+                 **{field: row["body"].get(field) for field in ("type", "rule_profile", "customers", "models", "parts")}} for row in rows]
+
+    def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
+        import copy
+
+        row = self.rule_versions.get(rule_version_id)
+        if row is None or row["tenant_id"] != tenant_id:
+            return None
+        return copy.deepcopy({key: value for key, value in row.items() if key != "tenant_id"})
+
+    def publish_rule(self, principal, title, body, source_file_version_id, predecessor_id=None):
+        title, body = rule_title(title), normalize_rule_body(body)
+        items = self._prepared_items(principal, [{"file_version_id": source_file_version_id, "role": "reference"}])
+        if predecessor_id and self.get_rule(principal.tenant_id, predecessor_id) is None:
+            raise KeyError("missing")
+        rule_id = str(uuid.uuid4())
+        self.rule_versions[rule_id] = {
+            "id": rule_id, "tenant_id": principal.tenant_id, "title": title, "body": body,
+            "source_file_version_id": source_file_version_id, "source_file_id": items[0]["file_id"],
+            "predecessor_id": predecessor_id, "created_by": principal.user_id, "created_at": _now().isoformat(),
+        }
+        return self.get_rule(principal.tenant_id, rule_id)
 
     def create_draft(self, principal: Principal) -> dict:
         draft_id = str(uuid.uuid4())
@@ -484,6 +529,7 @@ class MemoryAuthStore:
             if job["status"] == "queued"
             or (
                 job["status"] == "leased"
+                and job["kind"] != "rule_parse"
                 and job.get("lease_until") is not None
                 and job["lease_until"] < now
             )
@@ -503,18 +549,30 @@ class MemoryAuthStore:
         self.attempts[(job["id"], job["attempt"])] = {"worker_id": worker_ident, "diagnostic": {}}
         return ClaimedJob(job["id"], job["kind"], payload, job["attempt"], round_id, job.get("tenant_id"))
 
+    def renew_job_lease(self, claimed, worker_ident):
+        job = self.jobs.get(claimed.id)
+        if not job or job["attempt"] != claimed.attempt or job.get("lease_owner") != worker_ident or job["status"] != "leased":
+            return False
+        job["lease_until"] = _now() + timedelta(seconds=30)
+        return True
+
     def complete_job(self, claimed: ClaimedJob, worker_ident: str, result: dict, outcome: str = "succeeded") -> bool:
         job = self.jobs.get(claimed.id)
         if not job or job["attempt"] != claimed.attempt or job.get("lease_owner") != worker_ident or job["status"] != "leased":
             return False
         job["status"] = "succeeded" if outcome == "succeeded" else "failed"
+        job["lease_until"] = None
+        if claimed.kind == "rule_parse":
+            job["result"] = result
         findings = result.get("findings") or []
         self.attempts[(claimed.id, claimed.attempt)] = {
             "worker_id": worker_ident,
             "diagnostic": {"note": result.get("note") or "round_audit", "finding_count": len(findings)},
             "outcome": outcome,
         }
-        if not claimed.round_id or claimed.round_id not in self.rounds:
+        if not claimed.round_id:
+            return True
+        if claimed.round_id not in self.rounds:
             return False
         current = self.rounds[claimed.round_id]
         previous = current.get("result_attempt")

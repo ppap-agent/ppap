@@ -65,6 +65,7 @@ from ppap_core.identity import (
     token_hash,
 )
 from ppap_core.settings import Settings
+from ppap_core.rules import normalize_rule_body, rule_title, rule_parse_request, rule_parse_view
 from ppap_core.storage import S3Objects
 
 
@@ -599,17 +600,102 @@ class AuthStore:
                 continue
         return len(rows)
 
-    def list_rules(self, tenant_id: str) -> list[dict[str, str]]:
+    def accept_rule_parse(self, principal, request_id, source_file_id, source_file_version_id, document_type="") -> dict:
+        job_id, payload = rule_parse_request(request_id, source_file_id, source_file_version_id, document_type)
+        with self._conn() as conn:
+            with conn.transaction():
+                prepared = self._prepared_items(conn, principal, [{"file_version_id": payload["source_file_version_id"], "role": "reference"}])
+                if prepared[0]["file_id"] != payload["source_file_id"]:
+                    raise KeyError("missing")
+                conn.execute(
+                    """INSERT INTO engine.jobs (id, tenant_id, kind, payload, status)
+                    VALUES (%s, %s, 'rule_parse', %s, 'queued') ON CONFLICT (id) DO NOTHING""",
+                    (job_id, principal.tenant_id, Jsonb(payload)),
+                )
+                row = conn.execute(
+                    "SELECT tenant_id, kind, payload, status, result, lease_until < now() FROM engine.jobs WHERE id = %s",
+                    (job_id,),
+                ).fetchone()
+                if str(row[0]) != principal.tenant_id or row[1] != "rule_parse":
+                    raise KeyError("missing")
+                if row[2] != payload:
+                    raise ValueError("rule_parse_conflict")
+                return rule_parse_view(job_id, row[2], row[3], row[4], bool(row[5]))
+
+    def get_rule_parse(self, principal, job_id: str) -> dict:
+        parsed = _as_uuid(job_id)
+        if not parsed:
+            raise KeyError("missing")
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT payload, status, result, lease_until < now() FROM engine.jobs
+                WHERE id = %s AND tenant_id = %s AND kind = 'rule_parse'""",
+                (parsed, principal.tenant_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("missing")
+            self._prepared_items(conn, principal, [{"file_version_id": row[0]["source_file_version_id"], "role": "reference"}])
+            return rule_parse_view(parsed, row[0], row[1], row[2], bool(row[3]))
+
+    def list_rules(self, tenant_id: str) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, title, body FROM product.rule_versions WHERE tenant_id = %s ORDER BY title, id",
+                "SELECT id, title, body, created_at FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
                 (tenant_id,),
             ).fetchall()
         out = []
         for row in rows:
             body = row[2] or {}
-            out.append({"id": str(row[0]), "title": row[1], "kind": str(body.get("kind") or "engine")})
+            out.append({
+                "id": str(row[0]), "title": row[1], "kind": str(body.get("kind") or "engine"),
+                "created_at": row[3].isoformat(),
+                **{field: body.get(field) for field in ("type", "rule_profile", "customers", "models", "parts")},
+            })
         return out
+
+    def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
+        parsed = _as_uuid(rule_version_id)
+        if not parsed:
+            return None
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT r.id, r.title, r.body, r.created_at, r.source_file_version_id,
+                       fv.file_id, r.predecessor_id, r.created_by
+                FROM product.rule_versions r
+                LEFT JOIN product.file_versions fv ON fv.id = r.source_file_version_id
+                WHERE r.tenant_id = %s AND r.id = %s
+                """,
+                (tenant_id, parsed),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row[0]), "title": row[1], "body": row[2], "created_at": row[3].isoformat(),
+            "source_file_version_id": str(row[4]) if row[4] else None,
+            "source_file_id": str(row[5]) if row[5] else None,
+            "predecessor_id": str(row[6]) if row[6] else None,
+            "created_by": str(row[7]) if row[7] else None,
+        }
+
+    def publish_rule(self, principal: Principal, title, body, source_file_version_id, predecessor_id=None) -> dict:
+        title, body = rule_title(title), normalize_rule_body(body)
+        rule_id = str(uuid.uuid4())
+        with self._conn() as conn:
+            with conn.transaction():
+                self._prepared_items(conn, principal, [{"file_version_id": source_file_version_id, "role": "reference"}])
+                predecessor = _as_uuid(predecessor_id) if predecessor_id else None
+                if predecessor_id and (not predecessor or not self._rule_for_tenant(conn, predecessor, principal.tenant_id)):
+                    raise KeyError("missing")
+                conn.execute(
+                    """
+                    INSERT INTO product.rule_versions
+                        (id, tenant_id, title, body, source_file_version_id, predecessor_id, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (rule_id, principal.tenant_id, title, Jsonb(body), source_file_version_id, predecessor, principal.user_id),
+                )
+        return self.get_rule(principal.tenant_id, rule_id)
 
     def create_draft(self, principal: Principal) -> dict:
         draft_id = str(uuid.uuid4())
@@ -886,7 +972,7 @@ class AuthStore:
                     SELECT id, kind, payload, tenant_id FROM engine.jobs
                     WHERE (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
-                        OR (status = 'leased' AND lease_until IS NOT NULL AND lease_until < now())
+                        OR (status = 'leased' AND kind <> 'rule_parse' AND lease_until IS NOT NULL AND lease_until < now())
                     )
                     ORDER BY created_at
                     FOR UPDATE SKIP LOCKED
@@ -936,6 +1022,15 @@ class AuthStore:
                     str(tenant_id) if tenant_id else None,
                 )
 
+    def renew_job_lease(self, claimed: ClaimedJob, worker_ident: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
+                WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased' RETURNING id""",
+                (claimed.id, claimed.attempt, worker_ident),
+            ).fetchone()
+            return row is not None
+
     def complete_job(self, claimed: ClaimedJob, worker_ident: str, result: dict, outcome: str = "succeeded") -> bool:
         coverage = result.get("coverage") or {}
         findings = result.get("findings") or []
@@ -945,12 +1040,15 @@ class AuthStore:
                 won = conn.execute(
                     """
                     UPDATE engine.jobs
-                    SET status = %s, lease_until = NULL, updated_at = now()
+                    SET status = %s, lease_until = NULL, updated_at = now(),
+                        result = CASE WHEN kind = 'rule_parse' THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                     RETURNING id
                     """,
-                    ("succeeded" if outcome == "succeeded" else "failed", claimed.id, claimed.attempt, worker_ident),
+                    ("succeeded" if outcome == "succeeded" else "failed", Jsonb(result) if claimed.kind == "rule_parse" else None, claimed.id, claimed.attempt, worker_ident),
                 ).fetchone()
+                if not won:
+                    return False
                 conn.execute(
                     """
                     UPDATE engine.attempts
@@ -964,8 +1062,8 @@ class AuthStore:
                         claimed.attempt,
                     ),
                 )
-                if not won or not claimed.round_id:
-                    return False
+                if not claimed.round_id:
+                    return True
                 updated = conn.execute(
                     """
                     UPDATE product.audit_rounds

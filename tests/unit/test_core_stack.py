@@ -46,34 +46,34 @@ class SettingsTests(unittest.TestCase):
     def test_env_dev_records_settings_defaults_without_conversion_flag(self):
         path = ROOT / ".env.dev"
         values = dotenv_values(path)
-        self.assertNotIn("LEGACY_DOC_CONVERSION_ENABLED", values)
+        self.assertTrue("LEGACY_DOC_CONVERSION_ENABLED" not in values, "Development template must not contain the conversion flag")
         self.assertEqual(values["PPAP_PROFILE"], "isolated-dev")
         self.assertEqual(values["PPAP_PG_PORT"], "5432")
         self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
         self.assertEqual(values["PPAP_PG_API_USER"], "ppap_api")
-        self.assertEqual(values["PPAP_PG_API_PASSWORD"], ISOLATED_DEV_SECRET)
+        self.assertTrue(values["PPAP_PG_API_PASSWORD"] == ISOLATED_DEV_SECRET, "Development template must use the isolated-dev database password")
         self.assertEqual(values["PPAP_S3_ENDPOINT"], "http://127.0.0.1:9000")
         self.assertEqual(values["PPAP_S3_REGION"], "us-east-1")
         self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
         self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
         self.assertEqual(values["LOG_LEVEL"], "INFO")
         self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
-        self.assertEqual(values["LLM_API_KEY"], "")
-        self.assertEqual(values["FEISHU_APP_ID"], "")
+        self.assertTrue(values["LLM_API_KEY"] == "", "Development template LLM_API_KEY must be empty")
+        self.assertTrue(values["FEISHU_APP_ID"] == "", "Development template FEISHU_APP_ID must be empty")
 
     def test_env_production_records_safe_defaults_without_isolated_dev_secrets(self):
         path = ROOT / ".env.production"
         values = dotenv_values(path)
-        self.assertNotIn("LEGACY_DOC_CONVERSION_ENABLED", values)
-        self.assertNotIn(ISOLATED_DEV_SECRET, set(values.values()))
+        self.assertTrue("LEGACY_DOC_CONVERSION_ENABLED" not in values, "Production template must not contain the conversion flag")
+        self.assertTrue(ISOLATED_DEV_SECRET not in set(values.values()), "Production template must not contain the isolated-dev secret")
         self.assertEqual(values["PPAP_PROFILE"], "production")
         self.assertEqual(values["PPAP_PG_PORT"], "5432")
         self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
         self.assertEqual(values["PPAP_PG_API_USER"], "ppap_api")
-        self.assertEqual(values["PPAP_PG_API_PASSWORD"], "")
+        self.assertTrue(values["PPAP_PG_API_PASSWORD"] == "", "Production template PPAP_PG_API_PASSWORD must be empty")
         self.assertEqual(values["PPAP_PG_HOST"], "")
         self.assertEqual(values["PPAP_S3_ENDPOINT"], "")
-        self.assertEqual(values["PPAP_S3_ACCESS_KEY"], "")
+        self.assertTrue(values["PPAP_S3_ACCESS_KEY"] == "", "Production template PPAP_S3_ACCESS_KEY must be empty")
         self.assertEqual(values["PPAP_S3_REGION"], "us-east-1")
         self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
         self.assertEqual(values["PPAP_WEB_URL"], "")
@@ -83,7 +83,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
         self.assertEqual(values["LOG_LEVEL"], "INFO")
         self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
-        self.assertEqual(values["FEISHU_APP_ID"], "")
+        self.assertTrue(values["FEISHU_APP_ID"] == "", "Production template FEISHU_APP_ID must be empty")
 
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(LLM_API_KEY="sk-test"):

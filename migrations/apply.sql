@@ -6,3 +6,4 @@
 \ir 0006_audit_product.sql
 \ir 0007_usage_events.sql
 \ir 0008_usage_event_report.sql
+\ir 0009_rule_sources.sql

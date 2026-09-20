@@ -4,6 +4,7 @@ import os
 import signal
 import socket
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -160,7 +161,45 @@ def engine_runner(work, store: AuthStore):
             Path(path).unlink(missing_ok=True)
 
 
-def process_claimed(store: AuthStore, claimed, ident: str) -> dict:
+def process_rule_parse(store, claimed, ident, ai=None) -> dict:
+    from ppap_core.files import READY
+    from ppap_core.rules import RuleParseError, parse_rule_file
+
+    stopped = threading.Event()
+
+    def renew():
+        while not stopped.wait(10):
+            try:
+                if not store.renew_job_lease(claimed, ident):
+                    return
+            except Exception:
+                emit("rule_parse_lease_unknown", job_id=claimed.id, attempt=claimed.attempt)
+                return
+
+    renewal = threading.Thread(target=renew, daemon=True)
+    renewal.start()
+    try:
+        try:
+            payload = claimed.payload
+            version = store.get_version(payload["source_file_id"], payload["source_file_version_id"])
+            if version is None or version.tenant_id != claimed.tenant_id or version.status != READY:
+                raise RuleParseError("file_not_ready")
+            parsed = parse_rule_file(version.original_filename, store.version_bytes(version), document_type=payload["document_type"], ai=ai)
+            result = {"title": Path(version.original_filename).stem, "body": parsed, "source_file_version_id": version.id}
+            outcome = "succeeded"
+        except RuleParseError as exc:
+            result, outcome = {"error": str(exc)}, "failed"
+        except Exception:
+            result, outcome = {"error": "rule_parse_failed"}, "failed"
+        accepted = store.complete_job(claimed, ident, result, outcome)
+        emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note="rule_parse")
+        return result
+    finally:
+        stopped.set()
+        renewal.join(timeout=1)
+
+
+def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> dict:
     tokens = bind(
         job_id=claimed.id,
         attempt=claimed.attempt,
@@ -169,6 +208,8 @@ def process_claimed(store: AuthStore, claimed, ident: str) -> dict:
     )
     emit("job_claimed", kind=claimed.kind)
     try:
+        if claimed.kind == "rule_parse":
+            return process_rule_parse(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
             diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
             store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, "succeeded")

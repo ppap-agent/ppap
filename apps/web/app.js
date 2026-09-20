@@ -380,7 +380,7 @@ async function main() {
     (rules.body.rules || []).forEach((rule) => {
       const option = document.createElement("option");
       option.value = rule.id;
-      option.textContent = rule.title;
+      option.textContent = rule.kind === "engine" ? `${rule.title} · ${rule.id.slice(0, 8)}` : rule.title;
       select.appendChild(option);
     });
     if (state.draftId) {

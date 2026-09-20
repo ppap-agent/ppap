@@ -16,6 +16,8 @@ class WebAliasTests(unittest.TestCase):
         self.assertIn("try_files /addon.html =404", CONF)
         self.assertIn("location = /usage", CONF)
         self.assertIn("try_files /usage.html =404", CONF)
+        self.assertIn("location = /rules", CONF)
+        self.assertIn("try_files /rules.html =404", CONF)
         self.assertNotIn("try_files $uri /index.html", CONF)
 
     def test_directory_aliases_redirect_without_html_suffix(self):
@@ -25,6 +27,7 @@ class WebAliasTests(unittest.TestCase):
         self.assertIn("return 301 /addon$is_args$args", CONF)
         self.assertIn("location = /usage/", CONF)
         self.assertIn("return 301 /usage$is_args$args", CONF)
+        self.assertIn("return 301 /rules$is_args$args", CONF)
 
     def test_unknown_path_is_not_rewritten_to_the_workbench(self):
         self.assertIn("try_files $uri $uri/ =404", CONF)

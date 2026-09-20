@@ -20,6 +20,8 @@ sys.path[:0] = [
     str(ROOT / "services" / "worker"),
 ]
 
+from ppap_core.fixtures import RULE_A
+
 try:
     from playwright.sync_api import expect, sync_playwright
 except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
@@ -46,6 +48,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.goto(WEB)
                 page.get_by_test_id("isolated-dev-login").click()
                 page.wait_for_selector("text=ou_alice")
+                page.get_by_test_id("rule-select").select_option(RULE_A)
                 page.get_by_test_id("source-upload").set_input_files(str(target))
                 page.get_by_test_id("prepare-audit").click()
                 page.wait_for_function("() => document.getElementById('document-version-id').textContent.length > 0")

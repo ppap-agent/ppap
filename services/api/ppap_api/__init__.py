@@ -70,6 +70,7 @@ from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
 from ppap_api.store import AuthStore
 from ppap_api.audit_routes import register_audit_routes
+from ppap_api.rule_routes import register_rule_routes
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -778,6 +779,7 @@ def create_app(
         return response
 
     register_audit_routes(app, store, principal_of)
+    register_rule_routes(app, store, principal_of)
     return app
 
 

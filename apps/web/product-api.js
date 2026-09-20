@@ -28,6 +28,17 @@ window.PpapProduct = (function () {
           body: JSON.stringify({ subject }),
         }),
       rules: () => readJson(`${api}/rules`),
+      ruleVersions: {
+        types: () => readJson(`${api}/rule-types`),
+        get: (id) => readJson(`${api}/rules/${encodeURIComponent(id)}`),
+        parseResult: (id) => readJson(`${api}/rules/parse/${encodeURIComponent(id)}`),
+        parse: (body) => readJson(`${api}/rules/parse`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        }),
+        publish: (body) => readJson(`${api}/rules`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        }),
+      },
       resource: (id) => readJson(`${api}/resources/${encodeURIComponent(id)}`),
       files: {
         create: (meta) =>

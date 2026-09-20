@@ -32,7 +32,7 @@ python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/t
 
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-python -m unittest tests.schema.test_upgrade -v
+python -m unittest tests.schema.test_upgrade tests.schema.test_rule_parse -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 # schema tests talk to postgres with native psql on 127.0.0.1
 
@@ -53,8 +53,10 @@ python -m playwright install chromium
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake
 docker compose -f deploy/isolated-dev/compose.yaml up -d --wait
-python -m unittest tests.e2e.test_web_audit -v
+python -m unittest tests.e2e.test_web_audit tests.e2e.test_rules tests.e2e.test_rule_interactions -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 ```
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
+
+`tests/unit/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`tests/unit/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。`tests/schema/test_rule_parse.py` 在独立临时 PostgreSQL 数据库验证并发重复受理、未知租约、迟到完成和来源权限读回。`tests/e2e/test_rules.py` 使用结构化规则文件走真实上传、人工编辑、发布和重访；`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读及显式重跑。这些测试不调用外部模型服务。
