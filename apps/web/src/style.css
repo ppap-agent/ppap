@@ -79,6 +79,10 @@
 .audit-checks .finding-row { width: 100%; text-align: left; }
 .audit-checks .finding-row.is-selected { border-color: var(--pc-accent); }
 .workspace-switch { display:none; }
+.report-preview { margin-top:24px; border-top:1px solid var(--pc-border); overflow-wrap:anywhere; }
+.report-preview section { padding:16px 0; }
+.report-preview p { white-space:pre-wrap; }
+.report-review { border-left:3px solid var(--pc-accent); padding-left:12px; }
 @media (max-width:1200px) {
   .workspace-switch { display:flex; gap:8px; margin:12px 0; }
   .workspace-switch button { min-height:44px; margin:0; }

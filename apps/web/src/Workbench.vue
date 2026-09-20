@@ -3,6 +3,7 @@ import {computed, onBeforeUnmount, onMounted, reactive, ref} from 'vue'
 import {request, upload, type Material, type Rule, type Round, type Analysis, type Job, type Finding} from './api'
 import OriginalPreview from './OriginalPreview.vue'
 import DrivePicker from './DrivePicker.vue'
+import ReportPreview from './ReportPreview.vue'
 
 const items = ref<Material[]>([]), rules = ref<Rule[]>([]), round = ref<Round | null>(null)
 const busy = ref(false), error = ref(''), message = ref(''), selectedFileId = ref(''), selectedKey = ref(''), filter = ref(''), search = ref('')
@@ -144,6 +145,7 @@ onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout)})
       <div class="preview-resizer" role="separator" tabindex="0" aria-label="调整原件预览宽度" aria-orientation="vertical" :aria-valuenow="Math.round(previewWidth)" aria-valuemin="28" aria-valuemax="50" @pointerdown.prevent="startResize" @pointermove="resizePreview" @pointerup="resizing=false" @pointercancel="resizing=false" @lostpointercapture="resizing=false" @keydown="resizeKey" />
       <OriginalPreview :file="selectedFile" :round-id="round.id" />
     </div>
+    <ReportPreview :round="round" />
     <details><summary>审核范围与记录</summary><p>待审：{{ round.coverage?.checked?.join('、') }}</p><p>参考：{{ round.coverage?.unchecked?.join('、') }}</p><a v-if="round.predecessor_id" :href="`/?round=${round.predecessor_id}`">查看上一轮</a><a href="/audit-files">全部审核记录</a></details>
   </div>
 </template>
