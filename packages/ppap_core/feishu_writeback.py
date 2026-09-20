@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from datetime import datetime, timezone
 
 from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NG, TARGET
@@ -10,6 +12,45 @@ from ppap_core.feishu_drive import OPEN_API
 
 class FeishuWritebackError(Exception):
     pass
+
+
+def create_report_document(http, access_token: str, title: str) -> str:
+    """One external attempt. Caller must persist its claim before this call."""
+    try:
+        response = http.post(
+            OPEN_API + "/docx/v1/documents",
+            headers={"Authorization": "Bearer " + access_token},
+            json={"title": title[:200]}, timeout=20,
+        )
+    except Exception as exc:
+        raise FeishuWritebackError("feishu_report_create_unknown") from exc
+    payload = _response_json(response)
+    if not _ok(response) or payload.get("code") != 0:
+        raise FeishuWritebackError("feishu_report_create_unknown")
+    document_id = ((payload.get("data") or {}).get("document") or {}).get("document_id")
+    if not isinstance(document_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", document_id):
+        raise FeishuWritebackError("feishu_report_create_unknown")
+    return document_id
+
+
+def append_report_blocks(http, access_token: str, document_id: str,
+                         blocks: list[dict], operation_id: str) -> None:
+    """Write in ordered batches; never auto-retry an ambiguous append."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", document_id):
+        raise FeishuWritebackError("invalid_file_token")
+    for offset in range(0, len(blocks), 50):
+        client_token = str(uuid.uuid5(uuid.NAMESPACE_URL, operation_id + ":" + str(offset)))
+        try:
+            response = http.post(
+                docx_children_url(document_id),
+                params={"client_token": client_token},
+                headers={"Authorization": "Bearer " + access_token},
+                json={"index": -1, "children": blocks[offset:offset + 50]}, timeout=20,
+            )
+        except Exception as exc:
+            raise FeishuWritebackError("feishu_report_write_unknown") from exc
+        if not _ok(response) or _response_json(response).get("code") != 0:
+            raise FeishuWritebackError("feishu_report_write_unknown")
 
 
 def docx_children_url(document_id: str) -> str:
