@@ -1,0 +1,28 @@
+# Optional local read-only Office preview. Use with compose.yaml.
+# Export a separate random PPAP_ONLYOFFICE_SECRET before starting API and this service.
+services:
+  api:
+    environment:
+      PPAP_ONLYOFFICE_URL: http://127.0.0.1:8082
+      PPAP_ONLYOFFICE_API_URL: http://api:8080
+      PPAP_ONLYOFFICE_SECRET: ${PPAP_ONLYOFFICE_SECRET:?export a separate local preview secret}
+
+  onlyoffice:
+    image: onlyoffice/documentserver@sha256:3ab6ebc7c605e5a32b7ae3ff19daed4925090245acc8100ce2230bd766c88212
+    ports:
+      - "127.0.0.1:8082:80"
+    shm_size: 256mb
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${PPAP_ONLYOFFICE_SECRET:?export a separate local preview secret}
+      # Needed for DocumentServer to fetch from the local Docker API service.
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "false"
+      NGINX_ACCESS_LOG: "false"
+      PLUGINS_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s

@@ -21,8 +21,9 @@ class WebProductBoundaryTests(unittest.TestCase):
 
     def test_one_vue_interface_preserves_customer_routes(self):
         shell = (WEB / "src/App.vue").read_text()
-        for route in ('href="/"', 'href="/audit-files"', 'href="/rules"', 'href="/usage"'):
-            self.assertIn(route, shell)
+        for route in ('/', '/audit-files', '/rules', '/usage'):
+            self.assertIn(f"path:'{route}'", shell)
+        self.assertIn(':href="link.path"', shell)
         self.assertNotIn("/v2", shell)
         self.assertIn("createApp(App)", (WEB / "src/main.ts").read_text())
         self.assertIn('type="module"', (WEB / "index.html").read_text())
@@ -36,7 +37,7 @@ class WebProductBoundaryTests(unittest.TestCase):
             self.assertIn(content, rules)
         self.assertNotIn("eval(", rules)
         self.assertNotIn("new Function", rules)
-        self.assertIn("不自动改变审核程序", rules)
+        self.assertIn("不会自动改变内置审核程序", rules)
 
     def test_usage_page_does_not_report_real_usage(self):
         usage = (WEB / "src/UsageView.vue").read_text()

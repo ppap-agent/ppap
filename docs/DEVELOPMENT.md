@@ -21,6 +21,8 @@
 
 Local 与 CI 使用同一组 native 工具：pip、unittest/pytest、git、compileall、Docker Buildx bake、Docker Compose、psql。
 
+唯一产品前端使用 Vue 3 + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
+
 ```sh
 python -m pip install -e ".[dev]"
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'

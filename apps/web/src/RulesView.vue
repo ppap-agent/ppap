@@ -15,14 +15,14 @@ const customers=computed(()=>Array.from(new Set(currentRules.value.flatMap(rule=
 function belongs(rule:Rule,name:string){return name==='未指定客户'?!rule.customers?.length:rule.customers?.includes(name)}
 const visible=computed(()=>(showVersions.value?rules.value:currentRules.value).filter(rule=>(!customer.value || belongs(rule,customer.value)) && (rule.title+' '+rule.type).toLowerCase().includes(query.value.toLowerCase())))
 function leaveCandidate(){return !candidate.value || confirm('解析内容尚未保存，是否离开？')}
-function showList(name=customer.value){if(busy.value || !leaveCandidate())return;customer.value=name;candidate.value=null;selected.value=null;view.value='list';predecessor.value=null;status.value='';history.replaceState(null,'','/rules')}
-function newRule(){if(busy.value || !leaveCandidate())return;candidate.value=null;selected.value=null;predecessor.value=null;type.value='';status.value='';view.value='upload';history.replaceState(null,'','/rules')}
+function showList(name=customer.value){if(busy.value || !leaveCandidate())return;customer.value=name;candidate.value=null;selected.value=null;view.value='list';predecessor.value=null;parseId.value='';status.value='';error.value='';history.replaceState(null,'','/rules')}
+function newRule(){if(busy.value || !leaveCandidate())return;candidate.value=null;selected.value=null;predecessor.value=null;parseId.value='';source.value=undefined;type.value='';status.value='';error.value='';view.value='upload';history.replaceState(null,'','/rules')}
 const body=computed(()=>candidate.value?.body || selected.value?.body)
 const sourceFile=computed(()=>candidate.value?source.value:selected.value?{file_id:selected.value.source_file_id,file_version_id:selected.value.source_file_version_id,original_filename:selected.value.title,role:'reference' as const,rule_version_id:null}:undefined)
 let timer:ReturnType<typeof setTimeout>|undefined, disposed=false
 async function action(work:()=>Promise<void>) {if(busy.value)return; busy.value=true; error.value=''; try{await work()}catch(e){error.value=e instanceof Error?e.message:'操作失败'}finally{busy.value=false}}
 async function refresh(){rules.value=(await request<{rules:Rule[]}>('/rules')).rules}
-async function select(id:string){if(!leaveCandidate())return;await action(async()=>{selected.value=await request<Detail>(`/rules/${id}`);candidate.value=null;predecessor.value=null;status.value='';view.value='detail'})}
+async function select(id:string){if(!leaveCandidate())return;await action(async()=>{selected.value=await request<Detail>(`/rules/${id}`);candidate.value=null;predecessor.value=null;parseId.value='';status.value='';view.value='detail';history.replaceState(null,'','/rules')})}
 async function poll(id:string){
   try{const job=await request<Job<Candidate>>(`/rules/parse/${id}`);if(disposed)return;status.value=job.status
     if(job.status==='succeeded' && job.result){candidate.value=job.result;view.value='detail';busy.value=false}
@@ -34,7 +34,7 @@ async function parse(event:Event){const file=(event.target as HTMLInputElement).
   try{source.value=await upload(file,'reference');const job=await request<Job<Candidate>>('/rules/parse','POST',{request_id:crypto.randomUUID(),source_file_id:source.value.file_id,source_file_version_id:source.value.file_version_id,document_type:type.value});parseId.value=job.id;const url=new URL(location.href);url.searchParams.set('parse',job.id);if(predecessor.value)url.searchParams.set('predecessor',predecessor.value);else url.searchParams.delete('predecessor');history.replaceState(null,'',url);await poll(job.id)}
   catch(e){busy.value=false;error.value=e instanceof Error?e.message:'上传失败'}
 }
-async function publish(){await action(async()=>{if(!candidate.value)return;const result=await request<Detail>('/rules','POST',{...candidate.value,predecessor_id:predecessor.value});candidate.value=null;selected.value=result;await refresh();history.replaceState(null,'','/rules');status.value='已保存规则'})}
+async function publish(){await action(async()=>{if(!candidate.value)return;const result=await request<Detail>('/rules','POST',{...candidate.value,predecessor_id:predecessor.value});candidate.value=null;selected.value=result;parseId.value='';await refresh();history.replaceState(null,'','/rules');status.value='已保存规则'})}
 async function resumeParse(){if(busy.value || !parseId.value)return;busy.value=true;error.value='';view.value='upload';try{const job=await request<Job<Candidate>&{source_file_id:string;source_file_version_id:string;document_type:string}>(`/rules/parse/${parseId.value}`);if(disposed)return;source.value={file_id:job.source_file_id,file_version_id:job.source_file_version_id,original_filename:'规则原件',role:'reference',rule_version_id:null};type.value=job.document_type;predecessor.value=new URLSearchParams(location.search).get('predecessor');await poll(parseId.value)}catch{busy.value=false;error.value='无法读取解析任务，请稍后重新读取。'}}
 onMounted(async()=>{window.addEventListener('beforeunload',guardLeave);await action(async()=>{await refresh();types.value=(await request<{types:string[]}>('/rule-types')).types});if(parseId.value && !disposed)await resumeParse()})
 onBeforeUnmount(()=>{disposed=true;clearTimeout(timer);window.removeEventListener('beforeunload',guardLeave)})
@@ -68,7 +68,8 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(timer);window.removeEventListene
           <label v-if="candidate">规则名称<input v-model="candidate.title" :disabled="busy" /></label>
           <dl class="rule-metadata"><div><dt>文件类型</dt><dd>{{ body.type }}</dd></div><div><dt>适用客户</dt><dd>{{ body.customers?.join('、') || '未指定' }}</dd></div><div><dt>型号 / 零件</dt><dd>{{ [...(body.models || []),...(body.parts || [])].join('、') || '未指定' }}</dd></div><div v-if="selected && !candidate"><dt>版本时间</dt><dd>{{ new Date(selected.created_at).toLocaleString() }}</dd></div></dl>
           <div class="rule-detail-actions"><a v-if="sourceFile?.file_id" :href="originalUrl(sourceFile)" target="_blank" rel="noopener">查看原始文件</a><button v-if="selected?.predecessor_id && !candidate" :disabled="busy" @click="select(selected.predecessor_id)">上一版本</button><button v-if="selected && !candidate" :disabled="busy" @click="predecessor=selected.id;type=selected.body.type;view='upload';status=''">上传新版本</button></div>
-          <div class="rule-items-heading"><h3>解析条目</h3><span>{{ body.rules.length }} 项</span></div>
+          <div class="rule-items-heading"><h3>解析条目</h3><span>{{ body.rules?.length || 0 }} 项</span></div>
+          <p v-if="!body.rules?.length" class="pc-muted">此规则未包含可展示的解析条目，请核对原始文件。</p>
           <article v-for="(item,index) in body.rules" :key="item.id" class="rule-item"><h3><span class="rule-number">{{ String(index+1).padStart(2,'0') }}</span>{{ item.category }} <small class="priority-label">{{ item.priority }}</small></h3><textarea v-if="candidate" v-model="item.rule_to_check" :disabled="busy" rows="3" :aria-label="`检查要求 ${index+1}`" /><p v-else>{{ item.rule_to_check }}</p></article>
           <div v-if="candidate" class="audit-actions"><button class="pc-primary" :disabled="busy || !candidate.title.trim()" @click="publish">保存规则</button></div>
         </template>

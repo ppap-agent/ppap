@@ -12,13 +12,26 @@
 
 PC 多选文件默认待审，参考资料可另行添加或修改角色。上传自动完成文件准备；后台任务提取客户、型号、零件并建议匹配规则，用户确认后提交。URL 可回访草稿和审核，刷新不重新上传或提交。
 
-规则准备入口是 `/rules`：上传 Excel、Word `.docx`、文本 PDF、Markdown 或结构化 JSON → Worker 解析 → 检查/编辑条目、类型、profile 和适用范围 → 确认发布。发布内容对本企业可见，来源原件仍独立检查文件权限。每次发布创建不可变规则版本；编辑已发布规则只会生成新版本，不更新原版本或旧审核快照。
+规则准备入口是 `/rules`：选择文档类型并上传 Excel、Word、文本 PDF、Markdown 或结构化 JSON → Worker 解析 → 核对适用范围、编辑名称与检查条目 → 保存规则。列表按客户浏览，默认展示最新版本，也可查看历史版本。已保存规则可上传新版本，原版本与旧审核引用保持不变；来源原件独立检查文件权限。
 
 解析复用 `engine.jobs` 保存执行状态与预览结果，不创建第二份规则事实。URL 中的解析任务标识可用于回访，刷新只读取同一任务，不会重新调用模型。租约失联显示“结果未知”，不自动重领；原 Worker 仍可返回迟到结果。用户可以显式新建任务重跑，但原任务可能仍完成，也可能再次消耗模型费用。规则解析每次模型调用超时为 120 秒，不做 SDK 或空响应自动重试。页面在导入、读取和发布期间统一禁用编辑操作，避免迟到响应混入另一个候选版本。
 
 导入和编辑保存客户规则版本，不等于修改内置检查算法。当前自动检查按文档类型和 profile 的内置检查集执行；实际覆盖以结果中的检查项为准。
 
 超过提取 prompt 的 20000 字符上限会要求拆分，类型未知且超过分类 prompt 的 4000 字符上限会要求先选择类型，不静默截断。旧 `.doc` 需先转为 `.docx`。
+
+## 原件预览
+
+PDF、图片直接预览；Office 格式可连接独立 OnlyOffice DocumentServer，只读查看，无 Java 服务或编辑回写。未配置或服务不可用时显示提取文字与原件下载入口。
+
+本地可叠加 `deploy/isolated-dev/onlyoffice.yaml`。先在当前终端设置独立的随机 `PPAP_ONLYOFFICE_SECRET`，再用相同变量启动 API 和 DocumentServer，例如：
+
+```sh
+export PPAP_ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
+docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/onlyoffice.yaml up -d --wait
+```
+
+命令在仓库根目录执行；若已有 Compose 项目或配置 overlay，应保留相同项目名及配置文件。DocumentServer 仅绑定本机 8082；允许访问 Docker 私网只是本地联调配置。生产需使用受信任的 DocumentServer、HTTPS 和独立密钥，不直接沿用此 overlay。
 
 ## 最终责任
 

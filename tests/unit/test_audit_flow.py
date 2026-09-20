@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -422,17 +423,17 @@ class AuditFlowTests(unittest.TestCase):
 
 class PresenceEvaluationTests(unittest.TestCase):
     def test_presence_does_not_import_engine(self):
-        from ppap_core.audits import RoundInput, RoundWork
-
-        work = RoundWork(
-            "r1",
-            "t1",
-            [RoundInput("target", "f1", "v1", "a.xlsx", "ready", rule_version_id="rule-1", rule_title="资料就绪", rule_body={"kind": "presence"})],
-        )
-        with patch.dict(os.environ, {}, clear=False):
-            result = evaluate_round(work)
-        self.assertEqual(result["findings"][0]["status"], "PASS")
-        self.assertNotIn("ppap_excel_audit_engine", sys.modules)
+        # Engine tests can run first in discovery. Verify lazy imports in a fresh interpreter.
+        result = subprocess.run([sys.executable, "-c", """
+from tests import pathsetup
+import sys
+from ppap_core.audits import RoundInput, RoundWork, evaluate_round
+work = RoundWork('r1', 't1', [RoundInput('target', 'f1', 'v1', 'a.xlsx', 'ready',
+    rule_version_id='rule-1', rule_title='资料就绪', rule_body={'kind': 'presence'})])
+assert evaluate_round(work)['findings'][0]['status'] == 'PASS'
+assert 'ppap_excel_audit_engine' not in sys.modules
+"""], cwd=ROOT, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_round_payload_does_not_import_engine(self):
         result = run_claimed_job("audit", {"round_id": "abc"})
@@ -442,38 +443,27 @@ class PresenceEvaluationTests(unittest.TestCase):
 
 class WebHookTests(unittest.TestCase):
     def test_workbench_hooks_exist(self):
-        html = (ROOT / "apps" / "web" / "index.html").read_text()
+        workbench = (ROOT / "apps/web/src/Workbench.vue").read_text()
         for marker in (
-            'data-testid="submit-audit"',
-            'data-testid="round-id"',
-            'data-testid="findings"',
-            'data-testid="save-review"',
-            'data-testid="resubmit-audit"',
-            'data-testid="isolated-dev-login"',
-            'data-testid="pc-shell"',
-            'data-testid="file-preview"',
-            'data-testid="review-panel"',
-            'id="source-upload"',
-            "multiple",
+            '@click="submit"', '@click="saveReview"', '@click="prepareAgain"',
+            'class="finding-row"', '<OriginalPreview', '<ReportPreview',
+            '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
         ):
-            self.assertIn(marker, html)
-        js = (ROOT / "apps" / "web" / "app.js").read_text()
-        self.assertNotIn("filter((item) => item.role !== role)", js)
-        self.assertIn("item.role === role && item.original_filename === file.name", js)
-        self.assertIn("PpapProduct.connect", js)
+            self.assertIn(marker, workbench)
+        self.assertIn('items.value.push(material)', workbench)
+        self.assertIn('file.file_version_id', workbench)
+        self.assertIn("await connect()", (ROOT / "apps/web/src/App.vue").read_text())
 
 
 class AuditHistoryPageTests(unittest.TestCase):
     def test_history_page_hooks_exist(self):
-        html = (ROOT / "apps" / "web" / "audit-files.html").read_text()
-        js = (ROOT / "apps" / "web" / "audit-files.js").read_text()
-        for marker in ('data-testid="history-list"', 'data-testid="history-empty"'):
-            self.assertIn(marker, html)
-        self.assertIn("./?round=", js)
+        history = (ROOT / "apps/web/src/HistoryView.vue").read_text()
+        for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核记录', '加载更多'):
+            self.assertIn(marker, history)
         addon = (ROOT / "apps" / "web" / "addon.html").read_text()
-        workbench = (ROOT / "apps" / "web" / "index.html").read_text()
+        workbench = (ROOT / "apps/web/src/App.vue").read_text()
         self.assertIn('href="./audit-files"', addon)
-        self.assertIn('href="./audit-files"', workbench)
-        self.assertIn('href="./usage"', workbench)
+        self.assertIn("path:'/audit-files'", workbench)
+        self.assertIn("path:'/usage'", workbench)
         self.assertNotIn("audit-files.html", addon)
         self.assertNotIn("audit-files.html", workbench)
