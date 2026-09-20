@@ -32,6 +32,7 @@ COMPOSE_FILE = ROOT / "deploy" / "compose.yaml"
 COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 BACKUP_ROOT = DIST / "backups"
 APP_SERVICES = ("api", "worker", "web")
+OBJECT_STORE_SERVICE = "silo"
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 _COMPOSE_ENV_COMMANDS = {"deploy", "upgrade", "undeploy", "backup", "restore", "rollback"}
 
@@ -499,7 +500,9 @@ def cmd_backup() -> int:
             return _proc_error("backup postgres", proc)
         objects = tmp / "objects.tar.gz"
         with objects.open("wb") as fh:
-            proc = _compose_run(sha, "exec", "-T", "minio", "tar", "-C", "/data", "-czf", "-", ".", stdout=fh)
+            proc = _compose_run(
+                sha, "exec", "-T", OBJECT_STORE_SERVICE, "tar", "-C", "/data", "-czf", "-", ".", stdout=fh
+            )
         if proc.returncode != 0:
             shutil.rmtree(tmp, ignore_errors=True)
             return _proc_error("backup objects", proc)
@@ -566,19 +569,30 @@ def _restore_dir(path: Path) -> int:
             sha,
             "exec",
             "-T",
-            "minio",
+            OBJECT_STORE_SERVICE,
             "sh",
             "-c",
             'rm -rf /data/.[!.]* /data/*',
         )
         if proc.returncode != 0:
             return _proc_error("restore wipe objects", proc)
-        proc = _compose_run(sha, "exec", "-T", "minio", "tar", "-C", "/data", "-xzf", "-", stdin=objects.read_bytes())
+        proc = _compose_run(
+            sha,
+            "exec",
+            "-T",
+            OBJECT_STORE_SERVICE,
+            "tar",
+            "-C",
+            "/data",
+            "-xzf",
+            "-",
+            stdin=objects.read_bytes(),
+        )
         if proc.returncode != 0:
             return _proc_error("restore objects", proc)
-        proc = _compose_run(sha, "restart", "minio")
+        proc = _compose_run(sha, "restart", OBJECT_STORE_SERVICE)
         if proc.returncode != 0:
-            return _proc_error("restore restart minio", proc)
+            return _proc_error("restore restart silo", proc)
     except Exception as exc:
         print(f"restore failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

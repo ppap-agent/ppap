@@ -37,10 +37,9 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertNotIn("denoland/deno", compose)
         self.assertNotIn("postgrest/postgrest", compose)
         self.assertNotIn("edge function", compose.lower())
-        self.assertIn("context: ../minio", compose)
         self.assertIn("python tools/dev.py provision", compose)
         services = _compose_services(compose)
-        self.assertEqual(set(services), {"minio", "init", "api", "worker", "web"})
+        self.assertEqual(set(services), {"silo", "init", "api", "worker", "web"})
         self.assertIn("${PPAP_COMPOSE_ENV_FILE:-env.example}", services["init"])
         self.assertNotIn("postgres:", services["init"])
         self.assertNotIn("env_file:", services["api"])
@@ -69,7 +68,7 @@ class InsForgeRuntimeTests(unittest.TestCase):
             "PPAP_PG_API_PASSWORD": "api-secret",
             "PPAP_PG_WORKER_USER": "ppap_worker",
             "PPAP_PG_WORKER_PASSWORD": "worker-secret",
-            "PPAP_S3_ENDPOINT": "http://minio:9000",
+            "PPAP_S3_ENDPOINT": "http://silo:9000",
             "PPAP_S3_REGION": "us-east-1",
             "PPAP_S3_BUCKET": "ppap-objects",
             "PPAP_S3_ACCESS_KEY": "objects",
@@ -96,7 +95,16 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertEqual(catalog["PPAP_PG_HOST"], "postgres")
         self.assertEqual(catalog["PPAP_PG_BOOTSTRAP_USER"], "postgres")
         self.assertEqual(catalog["PPAP_PG_DATABASE"], "ppap")
+        self.assertEqual(catalog["PPAP_S3_ENDPOINT"], "http://silo:9000")
         self.assertNotIn("isolated-dev", catalog["PPAP_S3_ENDPOINT"])
+        from tools.stack import SILO_IMAGE
+
+        self.assertIn(SILO_IMAGE, compose)
+        self.assertIn('command: ["server", "/data", "--console-address", ":9001"]', compose)
+        self.assertIn("MINIO_ROOT_USER", compose)
+        self.assertNotIn("minio/minio:", compose)
+        self.assertNotIn("ppap-minio:", compose)
+        self.assertNotIn("distroless", compose)
 
     def test_compute_specs_are_custom_compute_not_edge_functions(self):
         api = json.loads((INSFORGE / "compute" / "api.json").read_text())
@@ -138,7 +146,8 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertEqual(compose_file(), default)
         self.assertTrue(_compose_has_service("postgres", default))
         self.assertFalse(_compose_has_service("postgres", overlay))
-        self.assertTrue(_compose_has_service("minio", overlay))
+        self.assertTrue(_compose_has_service("silo", overlay))
+        self.assertFalse(_compose_has_service("minio", overlay))
         with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(overlay)}, clear=False):
             self.assertEqual(compose_file(), overlay)
             leftover = take_compose_env_args(["--compose-file", str(overlay), "dist/backups/x"])

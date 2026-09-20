@@ -48,7 +48,7 @@ def _plant_canary() -> None:
         _sha(),
         "exec",
         "-T",
-        "minio",
+        "silo",
         "sh",
         "-c",
         "echo restore-me > /data/ppap-backup-canary",
@@ -59,7 +59,7 @@ def _plant_canary() -> None:
 
 def _canary_present() -> bool:
     table = _psql_scalar("SELECT to_regclass('public.ppap_backup_canary')")
-    proc = _compose_run(_sha(), "exec", "-T", "minio", "sh", "-c", "test -f /data/ppap-backup-canary")
+    proc = _compose_run(_sha(), "exec", "-T", "silo", "sh", "-c", "test -f /data/ppap-backup-canary")
     return table == "ppap_backup_canary" or proc.returncode == 0
 
 
