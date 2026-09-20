@@ -51,6 +51,10 @@ def register_report_routes(app, store, session_of, http, settings):
             store.settle_report(principal, ident, "writing", document_id)
             append_report_blocks(http, session.access_token, document_id, blocks, ident)
             store.settle_report(principal, ident, "ready")
-        except FeishuWritebackError:
-            store.settle_report(principal, ident, "unknown")
+        except FeishuWritebackError as exc:
+            # Only a definite creation rejection can be explicitly retried.
+            # A failed append may have left a real document, so it stays unknown.
+            code = str(exc)
+            state = 'failed' if code.startswith('feishu_report_create_rejected:') else 'unknown'
+            store.settle_report(principal, ident, state, error_code=code)
         return {"report": store.get_report(principal, round_id, fingerprint)}

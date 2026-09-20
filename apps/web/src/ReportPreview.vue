@@ -2,7 +2,7 @@
 import {computed, onBeforeUnmount, ref, watch} from 'vue'
 import {type Round, originalUrl, request} from './api'
 const props=defineProps<{round:Round;unsavedReview?:boolean}>()
-interface Export {id:string; status:string; document_id:string|null}
+interface Export {id:string; status:string; document_id:string|null;error_code?:string|null}
 const report=ref<Export|null>(null), exporting=ref(false), error=ref('')
 const path=computed(()=>`/integrations/feishu/rounds/${props.round.id}/report`)
 let revision=0
@@ -17,10 +17,11 @@ const incomplete=computed(()=>props.round.execution!=='completed' || !groups.val
 <template>
   <details class="report-preview">
     <summary>审核报告预览</summary>
-    <div class="audit-actions"><button class="pc-primary" :disabled="incomplete || exporting || !!report || unsavedReview || !!error" @click="exportReport">{{ exporting?'正在生成报告…':'生成飞书报告' }}</button><button v-if="report && report.status!=='ready' || error" :disabled="exporting" @click="readReport">重新读取状态</button><a v-if="report?.document_id" :href="`https://feishu.cn/docx/${encodeURIComponent(report.document_id)}`" target="_blank" rel="noopener">{{ report.status==='ready'?'打开飞书报告':'查看已创建文档（内容可能不完整）' }}</a></div>
+    <div class="audit-actions"><button class="pc-primary" :disabled="incomplete || exporting || (!!report && report.status!=='failed') || unsavedReview || !!error" @click="exportReport">{{ exporting?'正在生成报告…':report?.status==='failed'?'重试生成飞书报告':'生成飞书报告' }}</button><button v-if="report && report.status!=='ready' || error" :disabled="exporting" @click="readReport">重新读取状态</button><a v-if="report?.document_id" :href="`https://feishu.cn/docx/${encodeURIComponent(report.document_id)}`" target="_blank" rel="noopener">{{ report.status==='ready'?'打开飞书报告':'查看已创建文档（内容可能不完整）' }}</a></div>
     <p v-if="unsavedReview" role="status">请先保存人工复核，再生成报告。预览仅包含已保存的结果。</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
-    <p v-if="report && report.status!=='ready'" role="status">{{ report.status==='unknown'?'创建或写入结果不确定，请先核对飞书文档，不要重复创建。':'报告正在创建或写入；若长时间未完成，请核对飞书文档。' }}</p>
+    <p v-if="report && report.status!=='ready'" role="status">{{ report.status==='failed'?'飞书拒绝创建报告。请检查登录授权、应用文档权限或限流情况，处理后可重试。':report.status==='unknown'?'创建或写入结果不确定，请先核对飞书文档，不要重复创建。':'报告正在创建或写入；若长时间未完成，请核对飞书文档。' }}</p>
+    <p v-if="report?.error_code" role="alert" class="error">{{ report.error_code.startsWith('feishu_report_write_')?'报告内容写入失败':'报告创建失败' }}（诊断码：{{ report.error_code }}）</p>
     <p v-if="report?.status==='ready'">报告已生成。请在飞书文档中使用分享功能；后续复核修改不会自动覆盖这份报告。</p>
     <p v-if="incomplete" role="status">审核尚未完整完成或存在执行错误。以下为当前结果，不能作为完整通过结论。</p>
     <p>机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。</p>

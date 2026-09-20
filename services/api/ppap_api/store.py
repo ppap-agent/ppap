@@ -841,27 +841,32 @@ class AuthStore:
     def get_report(self, principal: Principal, round_id: str, fingerprint: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT id, status, document_id FROM product.report_exports WHERE round_id=%s AND tenant_id=%s AND created_by=%s AND fingerprint=%s",
+                "SELECT id, status, document_id, error_code FROM product.report_exports WHERE round_id=%s AND tenant_id=%s AND created_by=%s AND fingerprint=%s",
                 (round_id, principal.tenant_id, principal.user_id, fingerprint),
             ).fetchone()
-        return {"id": str(row[0]), "status": row[1], "document_id": row[2]} if row else None
+        return {"id": str(row[0]), "status": row[1], "document_id": row[2], "error_code": row[3]} if row else None
 
     def claim_report(self, principal: Principal, round_id: str, fingerprint: str) -> str | None:
         ident = str(uuid.uuid4())
         with self._conn() as conn:
             row = conn.execute(
                 """INSERT INTO product.report_exports (id,round_id,tenant_id,created_by,fingerprint,status)
-                   VALUES (%s,%s,%s,%s,%s,'creating') ON CONFLICT DO NOTHING RETURNING id""",
+                   VALUES (%s,%s,%s,%s,%s,'creating')
+                   ON CONFLICT (round_id, created_by, fingerprint) DO UPDATE
+                   SET id=EXCLUDED.id, status='creating', error_code=NULL
+                   WHERE report_exports.status='failed' AND report_exports.document_id IS NULL
+                   RETURNING id""",
                 (ident, round_id, principal.tenant_id, principal.user_id, fingerprint),
             ).fetchone()
         return ident if row else None
 
-    def settle_report(self, principal: Principal, ident: str, status: str, document_id: str | None = None) -> None:
+    def settle_report(self, principal: Principal, ident: str, status: str, document_id: str | None = None,
+                      error_code: str | None = None) -> None:
         with self._conn() as conn:
             conn.execute(
-                """UPDATE product.report_exports SET status=%s, document_id=COALESCE(%s,document_id)
+                """UPDATE product.report_exports SET status=%s, document_id=COALESCE(%s,document_id), error_code=%s
                    WHERE id=%s AND tenant_id=%s AND created_by=%s AND status IN ('creating','writing')""",
-                (status, document_id, ident, principal.tenant_id, principal.user_id),
+                (status, document_id, error_code, ident, principal.tenant_id, principal.user_id),
             )
 
     def get_round(self, round_id: str) -> dict | None:

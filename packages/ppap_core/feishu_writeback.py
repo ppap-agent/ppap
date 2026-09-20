@@ -14,6 +14,15 @@ class FeishuWritebackError(Exception):
     pass
 
 
+def _report_error(response, stage: str) -> FeishuWritebackError:
+    # Preserve only a public numeric code, never provider messages or credentials.
+    status = int(getattr(response, 'status_code', 0) or 0)
+    code = _response_json(response).get('code')
+    detail = str(code) if type(code) is int and code != 0 else 'http_' + str(status)
+    outcome = 'rejected' if status in (401, 403, 422, 429) else 'unknown'
+    return FeishuWritebackError(f'feishu_report_{stage}_{outcome}:{detail}')
+
+
 def create_report_document(http, access_token: str, title: str) -> str:
     """One external attempt. Caller must persist its claim before this call."""
     try:
@@ -26,7 +35,7 @@ def create_report_document(http, access_token: str, title: str) -> str:
         raise FeishuWritebackError("feishu_report_create_unknown") from exc
     payload = _response_json(response)
     if not _ok(response) or payload.get("code") != 0:
-        raise FeishuWritebackError("feishu_report_create_unknown")
+        raise _report_error(response, 'create')
     document_id = ((payload.get("data") or {}).get("document") or {}).get("document_id")
     if not isinstance(document_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", document_id):
         raise FeishuWritebackError("feishu_report_create_unknown")
@@ -50,7 +59,7 @@ def append_report_blocks(http, access_token: str, document_id: str,
         except Exception as exc:
             raise FeishuWritebackError("feishu_report_write_unknown") from exc
         if not _ok(response) or _response_json(response).get("code") != 0:
-            raise FeishuWritebackError("feishu_report_write_unknown")
+            raise _report_error(response, 'write')
 
 
 def docx_children_url(document_id: str) -> str:
@@ -198,8 +207,15 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         raise FeishuWritebackError(state)
     blocks = [_heading2("PPAP 审核报告"), _text("审核时间（UTC）：" + _audit_clock(round_body)),
               _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
+    targets = {item['file_version_id']: item for item in round_body['inputs'] if item.get('role') == TARGET}
     for name, rows in _group_findings(round_body):
         blocks.append(_heading2(name))
+        source = targets[_finding_version(rows[0])]
+        rule = source.get('rule') or {}
+        blocks.append(_text('匹配规则：' + str(rule.get('title') or '未记录规则名称')))
+        blocks.append(_text('待审文件版本：' + source['file_version_id']))
+        if source.get('rule_version_id'):
+            blocks.append(_text('规则版本：' + source['rule_version_id']))
         for row in rows:
             blocks.append(_heading3(str(row["status"]) + " · " + str(row.get("item") or "检查项")))
             if row.get("suggestions"):

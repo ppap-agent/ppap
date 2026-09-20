@@ -40,6 +40,15 @@ class ReportRouteTests(unittest.TestCase):
         self.create_report_document.assert_called_once()
         self.append_report_blocks.assert_not_called()
 
+    def test_only_definite_creation_rejection_allows_explicit_retry(self):
+        for code, status in [('feishu_report_create_rejected:99991672', 'failed'),
+                             ('feishu_report_write_rejected:99991672', 'unknown')]:
+            with self.subTest(code=code):
+                self.create_report_document.side_effect = FeishuWritebackError(code)
+                self.client.post('/integrations/feishu/rounds/round1/report')
+                self.assertEqual(self.store.settle_report.call_args.args[2], status)
+                self.assertEqual(self.store.settle_report.call_args.kwargs['error_code'], code)
+
     def test_denied_object_cannot_export(self):
         self.can_read.return_value = False
         self.assertEqual(self.client.post('/integrations/feishu/rounds/round1/report').status_code, 403)
