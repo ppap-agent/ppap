@@ -58,7 +58,9 @@ def preview_config(settings, version) -> dict:
     key = hashlib.sha256((settings.public_api_url+'|'+version.tenant_id+'|'+version.id).encode()).hexdigest()
     config = {'documentType':OFFICE_TYPES[extension], 'width':'100%', 'height':'100%',
               'document':{'key':key, 'title':version.original_filename[:128], 'fileType':extension, 'url':download,
-                          'permissions':{'edit':False, 'review':False, 'comment':False, 'fillForms':False, 'download':False, 'print':False}},
-              'editorConfig':{'mode':'view', 'lang':'zh', 'customization':{'compactHeader':True}}, 'exp':expires}
+                          'permissions':{'edit':False, 'review':False, 'comment':False, 'chat':False, 'fillForms':False, 'download':False, 'print':False}},
+              'editorConfig':{'mode':'view', 'lang':'zh', 'customization':{
+                  'compactHeader':True, 'anonymous':{'request':False}, 'macros':False, 'macrosMode':'disable',
+              }}, 'exp':expires}
     config['token'] = _sign(config, settings.onlyoffice_secret)
     return {'available':True, 'script_url':settings.onlyoffice_url.rstrip('/')+'/web-apps/apps/api/documents/api.js', 'config':config}

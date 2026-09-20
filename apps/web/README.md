@@ -22,7 +22,7 @@ PC 多选文件默认待审，参考资料可另行添加或修改角色。上�
 
 ## 原件预览
 
-PDF、图片直接预览；Office 格式可连接独立 OnlyOffice DocumentServer，只读查看，无 Java 服务或编辑回写。未配置或服务不可用时显示提取文字与原件下载入口。
+PDF、图片直接预览；Office 格式可连接独立 OnlyOffice DocumentServer，只读查看，无 Java 服务或编辑回写。未配置或服务不可用时显示提取文字与原件下载入口。Office 排版与文字摘录可以切换；保存复核不重新加载同一文件版本。按 [OnlyOffice 配置](https://api.onlyoffice.com/docs/docs-api/usage-api/config/editor/customization/customization-standard-branding/) 关闭姓名询问及宏执行；若工作簿靠宏显示工作表，网页只展示其当前可见状态，可用文字摘录辅助核对。
 
 本地可叠加 `deploy/isolated-dev/onlyoffice.yaml`。先在当前终端设置独立的随机 `PPAP_ONLYOFFICE_SECRET`，再用相同变量启动 API 和 DocumentServer，例如：
 
