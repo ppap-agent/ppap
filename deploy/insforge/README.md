@@ -68,7 +68,7 @@ If InsForge Model Gateway speaks the current OpenAI-compatible contract, point `
 
 ## Backup and restore
 
-InsForge cluster backup and PPAP object backup are separate. `python tools/dev.py backup --compose-file deploy/insforge/compose.yaml --env-file …` dumps the `ppap` database through the init image against `PPAP_PG_HOST` (no compose `postgres` service) and Silo `/data`. Restore/rollback use the same split. Changing a compute image or env recreates the container and discards its filesystem; durable state stays in PostgreSQL and object storage.
+InsForge cluster backup and PPAP object backup are separate. `python tools/dev.py backup --compose-file deploy/insforge/compose.yaml --env-file …` dumps the `ppap` database through the init image against `PPAP_PG_HOST` (no compose `postgres` service) and archives Silo `/data` by mounting `silo-data` into that same init image (`tar` is not in the ubi-micro Silo image). Restore/rollback use the same split. Changing a compute image or env recreates the container and discards its filesystem; durable state stays in PostgreSQL and object storage.
 
 ## Web
 

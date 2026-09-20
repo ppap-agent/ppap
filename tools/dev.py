@@ -33,6 +33,7 @@ COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 BACKUP_ROOT = DIST / "backups"
 APP_SERVICES = ("api", "worker", "web")
 OBJECT_STORE_SERVICE = "silo"
+OBJECT_STORE_VOLUME = "silo-data"
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 _COMPOSE_ENV_COMMANDS = {"deploy", "upgrade", "undeploy", "backup", "restore", "rollback"}
 
@@ -387,6 +388,31 @@ def _sql_ident(name: str) -> str:
     return name
 
 
+def _object_store_run(
+    sha: str,
+    *command: str,
+    stdin: bytes | None = None,
+    stdout: int | object | None = subprocess.PIPE,
+    entrypoint: str = "tar",
+) -> subprocess.CompletedProcess[bytes]:
+    """Read or write Silo `/data`. Classic ubi-micro has `sh`/`mcli`/`curl`, not `tar`."""
+    return _compose_run(
+        sha,
+        "run",
+        "--rm",
+        "-T",
+        "--no-deps",
+        "--entrypoint",
+        entrypoint,
+        "-v",
+        f"{OBJECT_STORE_VOLUME}:/data",
+        "init",
+        *command,
+        stdin=stdin,
+        stdout=stdout,
+    )
+
+
 def _compose_run(
     sha: str,
     *args: str,
@@ -500,9 +526,7 @@ def cmd_backup() -> int:
             return _proc_error("backup postgres", proc)
         objects = tmp / "objects.tar.gz"
         with objects.open("wb") as fh:
-            proc = _compose_run(
-                sha, "exec", "-T", OBJECT_STORE_SERVICE, "tar", "-C", "/data", "-czf", "-", ".", stdout=fh
-            )
+            proc = _object_store_run(sha, "-C", "/data", "-czf", "-", ".", stdout=fh)
         if proc.returncode != 0:
             shutil.rmtree(tmp, ignore_errors=True)
             return _proc_error("backup objects", proc)
@@ -565,29 +589,10 @@ def _restore_dir(path: Path) -> int:
         proc = _pg_admin_run(sha, _psql_database_script(database), stdin=dump.read_bytes())
         if proc.returncode != 0:
             return _proc_error("restore postgres", proc)
-        proc = _compose_run(
-            sha,
-            "exec",
-            "-T",
-            OBJECT_STORE_SERVICE,
-            "sh",
-            "-c",
-            'rm -rf /data/.[!.]* /data/*',
-        )
+        proc = _object_store_run(sha, "-c", "rm -rf /data/.[!.]* /data/*", entrypoint="sh")
         if proc.returncode != 0:
             return _proc_error("restore wipe objects", proc)
-        proc = _compose_run(
-            sha,
-            "exec",
-            "-T",
-            OBJECT_STORE_SERVICE,
-            "tar",
-            "-C",
-            "/data",
-            "-xzf",
-            "-",
-            stdin=objects.read_bytes(),
-        )
+        proc = _object_store_run(sha, "-C", "/data", "-xzf", "-", stdin=objects.read_bytes())
         if proc.returncode != 0:
             return _proc_error("restore objects", proc)
         proc = _compose_run(sha, "restart", OBJECT_STORE_SERVICE)

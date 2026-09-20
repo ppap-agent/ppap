@@ -347,7 +347,10 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn('"rollback"', source)
         self.assertIn("--no-deps", source)
         self.assertIn('OBJECT_STORE_SERVICE = "silo"', source)
+        self.assertIn('OBJECT_STORE_VOLUME = "silo-data"', source)
+        self.assertIn('f"{OBJECT_STORE_VOLUME}:/data"', source)
         self.assertNotIn('exec", "-T", "minio"', source)
+        self.assertNotIn('exec", "-T", "silo", "tar"', source)
         self.assertEqual(_sql_ident("ppap"), "ppap")
         with self.assertRaises(ValueError):
             _sql_ident("ppap;drop")
