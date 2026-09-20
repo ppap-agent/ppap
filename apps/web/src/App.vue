@@ -30,7 +30,7 @@ async function devLogin() { await request('/isolated-dev/sessions', 'POST', {sub
     <p class="pc-shell__session">{{ user }}</p>
   </aside>
   <main class="pc-main">
-    <header class="audit-heading"><div><p class="audit-eyebrow">PPAP AUDIT</p><h1>{{ title }}</h1></div><div><a :href="loginUrl">登录飞书</a><button type="button" @click="logout">退出</button></div></header>
+    <header class="audit-heading"><h1>{{ title }}</h1><div><a :href="loginUrl">登录飞书</a><button type="button" @click="logout">退出</button></div></header>
     <p v-if="error" role="alert">{{ error }}</p><template v-if="ready"><HistoryView v-if="page==='/audit-files'" /><RulesView v-else-if="page==='/rules'" /><UsageView v-else-if="page==='/usage'" /><Workbench v-else /></template>
     <details v-if="development" class="pc-runtime"><summary>开发工具</summary><button type="button" @click="devLogin">使用隔离测试身份</button></details>
   </main>
