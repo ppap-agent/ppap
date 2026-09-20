@@ -6,9 +6,11 @@
 
 ## 当前配置
 
-应用配置的 executable authority 是 typed Settings 和 [`.env.example`](../.env.example)。
+应用配置的 executable authority 是 typed Settings、[`.env.dev`](../.env.dev) 里的默认值，以及 [`.env.example`](../.env.example)。
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
+- 已提交的 `.env.dev` 填的是 Settings 默认值；生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
+- `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。
 - 新增配置项前先确认它代表独立运行决策，而不是可推导内部细节。

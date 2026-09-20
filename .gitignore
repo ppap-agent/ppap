@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.dev
 node_modules/
 dist/
 __pycache__/

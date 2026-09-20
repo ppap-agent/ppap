@@ -45,6 +45,24 @@ def pythonpath() -> str:
     return shared_pythonpath()
 
 
+def apply_dotenv_files(env: dict[str, str]) -> dict[str, str]:
+    """Fill blanks from `.env.dev`, then from gitignored `.env`. Process env wins."""
+    from dotenv import dotenv_values
+
+    out = dict(env)
+    layered: dict[str, str] = {}
+    for path in (ROOT / ".env.dev", ROOT / ".env"):
+        if not path.is_file():
+            continue
+        for key, value in dotenv_values(path).items():
+            if key and value is not None:
+                layered[key] = value
+    for key, value in layered.items():
+        if not str(out.get(key) or "").strip():
+            out[key] = value
+    return out
+
+
 def map_llm_names(env: dict[str, str]) -> dict[str, str]:
     """Environment-side mapping only. Application settings still read LLM_*."""
     out = dict(env)
@@ -61,7 +79,7 @@ def map_llm_names(env: dict[str, str]) -> dict[str, str]:
 def child_env() -> dict[str, str]:
     from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL
 
-    env = map_llm_names(dict(os.environ))
+    env = map_llm_names(apply_dotenv_files(dict(os.environ)))
     sha = git_sha()
     env["PYTHONPATH"] = pythonpath()
     env["PPAP_PROFILE"] = env.get("PPAP_PROFILE") or "isolated-dev"

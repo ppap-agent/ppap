@@ -8,15 +8,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+sys.path[:0] = [str(ROOT), str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
 
 from pydantic import ValidationError
 
 from ppap_core.capabilities import report
 from ppap_core.llm import llm_configured, responses_url
+from dotenv import dotenv_values
+
 from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL, ISOLATED_DEV_SECRET, Settings
 from ppap_api import create_app
-from tools.stack import child_env, map_llm_names
+from tools.stack import apply_dotenv_files, child_env, map_llm_names
 
 
 def _clean_env(**extra: str):
@@ -40,6 +42,31 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
         self.assertFalse(llm_configured(settings))
+        self.assertFalse(hasattr(settings, "LEGACY_DOC_CONVERSION_ENABLED"))
+        self.assertIn(".doc", settings.get_allowed_extensions())
+
+    def test_env_dev_records_settings_defaults_without_conversion_flag(self):
+        path = ROOT / ".env.dev"
+        values = dotenv_values(path)
+        self.assertNotIn("LEGACY_DOC_CONVERSION_ENABLED", values)
+        self.assertEqual(values["PPAP_PROFILE"], "isolated-dev")
+        self.assertEqual(values["PPAP_PG_PORT"], "5432")
+        self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
+        self.assertEqual(values["PPAP_PG_API_USER"], "ppap_api")
+        self.assertEqual(values["PPAP_PG_API_PASSWORD"], ISOLATED_DEV_SECRET)
+        self.assertEqual(values["PPAP_S3_ENDPOINT"], "http://127.0.0.1:9000")
+        self.assertEqual(values["PPAP_S3_REGION"], "us-east-1")
+        self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
+        self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
+        self.assertEqual(values["LOG_LEVEL"], "INFO")
+        self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
+        self.assertEqual(values["LLM_API_KEY"], "")
+        self.assertEqual(values["FEISHU_APP_ID"], "")
+
+    def test_dotenv_overlay_fills_blanks_then_keeps_process_env(self):
+        filled = apply_dotenv_files({"PPAP_PG_PORT": "", "PPAP_WEB_URL": "https://app.example"})
+        self.assertEqual(filled["PPAP_PG_PORT"], "5432")
+        self.assertEqual(filled["PPAP_WEB_URL"], "https://app.example")
 
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(LLM_API_KEY="sk-test"):

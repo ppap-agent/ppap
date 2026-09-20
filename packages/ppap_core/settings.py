@@ -86,7 +86,6 @@ class Settings(BaseSettings):
     LANGFUSE_HOST: str = ""
     MAX_FILE_SIZE: str = "100MB"
     ALLOWED_EXTENSIONS: str = ".pdf,.doc,.docx,.pptx,.xlsx,.xls,.xlsm,.jpg,.jpeg,.png,.gif,.md"
-    LEGACY_DOC_CONVERSION_ENABLED: bool = False
     OCR_ADAPTER_MODE: str = "auto"
     OCR_ENGINE: str = "easyocr"
     OCR_LANGUAGES: str = "ch_sim,en"
