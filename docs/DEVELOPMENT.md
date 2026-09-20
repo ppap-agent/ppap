@@ -10,6 +10,7 @@
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
 - 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
+- 生产 compose 默认注入 `deploy/compose.env.example`（CI fixture）。真实部署把填好密钥的文件交给同一入口：`PPAP_COMPOSE_ENV=.env python tools/dev.py deploy` 或 `python tools/dev.py deploy --env-file .env`。`init` 与 API/Worker 插值使用同一份文件。
 - `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。

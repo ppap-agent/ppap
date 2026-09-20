@@ -33,6 +33,40 @@ COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 BACKUP_ROOT = DIST / "backups"
 APP_SERVICES = ("api", "worker", "web")
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
+_COMPOSE_ENV_COMMANDS = {"deploy", "upgrade", "undeploy", "backup", "restore", "rollback"}
+
+
+def compose_env_file() -> Path:
+    """Env file for compose interpolation and init. Default is the CI fixture."""
+    raw = os.environ.get("PPAP_COMPOSE_ENV", "").strip()
+    path = Path(raw) if raw else COMPOSE_ENV
+    if not path.is_absolute():
+        path = ROOT / path
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"compose env file not found: {path}")
+    return path
+
+
+def take_compose_env_args(argv: list[str]) -> list[str]:
+    """Honor `--env-file PATH` by setting PPAP_COMPOSE_ENV. Remaining args are unchanged."""
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--env-file":
+            if i + 1 >= len(argv):
+                raise ValueError("--env-file requires a path")
+            os.environ["PPAP_COMPOSE_ENV"] = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--env-file="):
+            os.environ["PPAP_COMPOSE_ENV"] = arg.split("=", 1)[1]
+            i += 1
+            continue
+        out.append(arg)
+        i += 1
+    return out
 
 
 def run(command: list[str], *, extra_env: dict[str, str] | None = None, cwd: Path | None = None) -> int:
@@ -200,23 +234,33 @@ def cmd_build() -> int:
     return 0
 
 
-def _compose(sha: str, *args: str) -> int:
+def _compose_argv(sha: str, *args: str) -> tuple[list[str], dict[str, str]]:
+    env_file = compose_env_file()
     env = dict(os.environ)
     env["PPAP_BUILD_SHA"] = sha
     env["PYTHONPATH"] = pythonpath(env.get("PYTHONPATH", ""))
-    return subprocess.call(
+    env["PPAP_COMPOSE_ENV_FILE"] = str(env_file)
+    return (
         [
             "docker",
             "compose",
             "-f",
             str(COMPOSE_FILE),
             "--env-file",
-            str(COMPOSE_ENV),
+            str(env_file),
             *args,
         ],
-        cwd=str(ROOT),
-        env=env,
+        env,
     )
+
+
+def _compose(sha: str, *args: str) -> int:
+    try:
+        command, env = _compose_argv(sha, *args)
+    except FileNotFoundError as exc:
+        print(f"compose env failed: {exc}", file=sys.stderr)
+        return 1
+    return subprocess.call(command, cwd=str(ROOT), env=env)
 
 
 def _wait_http(url: str, *, timeout: int = 60) -> dict:
@@ -239,7 +283,7 @@ def _wait_http(url: str, *, timeout: int = 60) -> dict:
 
 def _compose_envfile() -> dict[str, str]:
     values: dict[str, str] = {}
-    for line in COMPOSE_ENV.read_text().splitlines():
+    for line in compose_env_file().read_text().splitlines():
         raw = line.strip()
         if not raw or raw.startswith("#") or "=" not in raw:
             continue
@@ -260,19 +304,12 @@ def _compose_run(
     stdin: bytes | None = None,
     stdout: int | object | None = subprocess.PIPE,
 ) -> subprocess.CompletedProcess[bytes]:
-    env = dict(os.environ)
-    env["PPAP_BUILD_SHA"] = sha
-    env["PYTHONPATH"] = pythonpath(env.get("PYTHONPATH", ""))
+    try:
+        command, env = _compose_argv(sha, *args)
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(args=["docker", "compose"], returncode=1, stdout=b"", stderr=str(exc).encode())
     return subprocess.run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            str(COMPOSE_FILE),
-            "--env-file",
-            str(COMPOSE_ENV),
-            *args,
-        ],
+        command,
         cwd=str(ROOT),
         env=env,
         input=stdin,
@@ -585,6 +622,12 @@ def main() -> int:
     rest = list(args.args)
     if rest[:1] == ["--"]:
         rest = rest[1:]
+    if args.command in _COMPOSE_ENV_COMMANDS:
+        try:
+            rest = take_compose_env_args(rest)
+        except ValueError as exc:
+            print(f"{args.command} failed: {exc}", file=sys.stderr)
+            return 1
     if args.command == "install":
         return cmd_install()
     if args.command == "quality":

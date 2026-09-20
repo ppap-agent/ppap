@@ -147,7 +147,7 @@ class DevToolingTests(unittest.TestCase):
         self.assertIn(MINIO_SHA256, dockerfile)
 
         services = _compose_services(compose)
-        self.assertIn("compose.env.example", services["init"])
+        self.assertIn("${PPAP_COMPOSE_ENV_FILE:-compose.env.example}", services["init"])
         self.assertNotIn("env_file:", services["api"])
         self.assertNotIn("env_file:", services["worker"])
         self.assertIn("PPAP_PG_API_PASSWORD", services["api"])
@@ -176,6 +176,28 @@ class DevToolingTests(unittest.TestCase):
             for name in ("pg_api_password", "pg_worker_password", "pg_migrator_password", "pg_bootstrap_password")
         ))
         self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
+
+    def test_compose_selects_explicit_env_file_for_init_and_runtime(self):
+        from tools.dev import _compose, _compose_envfile, compose_env_file, take_compose_env_args
+
+        fixture = (ROOT / "deploy" / "compose.env.example").resolve()
+        self.assertEqual(compose_env_file(), fixture)
+        with tempfile.TemporaryDirectory() as tmp:
+            selected = Path(tmp) / "production.env"
+            selected.write_text(fixture.read_text() + "PPAP_WEB_URL=https://app.example\n", encoding="utf-8")
+            with patch.dict(os.environ, {"PPAP_COMPOSE_ENV": str(selected)}, clear=False):
+                self.assertEqual(compose_env_file(), selected.resolve())
+                self.assertEqual(_compose_envfile()["PPAP_WEB_URL"], "https://app.example")
+                leftover = take_compose_env_args(["--env-file", str(selected), "dist/backups/x"])
+                self.assertEqual(leftover, ["dist/backups/x"])
+                with patch("tools.dev.subprocess.call", return_value=0) as call:
+                    self.assertEqual(_compose("deadbeef", "up", "-d"), 0)
+                    cmd = call.call_args.args[0]
+                    env = call.call_args.kwargs["env"]
+                self.assertEqual(cmd[cmd.index("--env-file") + 1], str(selected.resolve()))
+                self.assertNotEqual(Path(cmd[cmd.index("--env-file") + 1]), fixture)
+                self.assertEqual(env["PPAP_COMPOSE_ENV_FILE"], str(selected.resolve()))
+        self.assertEqual(compose_env_file(), fixture)
 
     def test_backup_restore_rollback_are_canonical_commands(self):
         from tools.dev import _sql_ident, cmd_restore, cmd_rollback, latest_backup

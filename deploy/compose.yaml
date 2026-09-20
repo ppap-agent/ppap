@@ -29,7 +29,7 @@ services:
       minio:
         condition: service_started
     env_file:
-      - compose.env.example
+      - ${PPAP_COMPOSE_ENV_FILE:-compose.env.example}
     environment:
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
     command:
