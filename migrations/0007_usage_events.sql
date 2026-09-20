@@ -23,3 +23,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS usage_events_trace_idx
     WHERE trace_id IS NOT NULL;
 
 GRANT SELECT, INSERT ON product.usage_events TO ppap_api;
+
+INSERT INTO product.schema_migrations (version) VALUES ('0007_usage_events.sql')
+ON CONFLICT DO NOTHING;

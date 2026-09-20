@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT), str(ROOT / "packages")]
 
-from tests.unit.test_dev_tooling import _compose_services, _interpolated_environment, _parse_dotenv
+from tests.unit.test_dev_tooling import (
+    SILO_IMAGE,
+    _compose_services,
+    _interpolated_environment,
+    _parse_dotenv,
+)
 
 INSFORGE = ROOT / "deploy" / "insforge"
 
@@ -37,11 +37,12 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertNotIn("denoland/deno", compose)
         self.assertNotIn("postgrest/postgrest", compose)
         self.assertNotIn("edge function", compose.lower())
-        self.assertIn("python tools/dev.py provision", compose)
+        self.assertIn("bootstrap.sql", compose)
+        self.assertIn("apply.sql", compose)
+        self.assertNotIn("python tools/", compose)
         services = _compose_services(compose)
-        self.assertEqual(set(services), {"silo", "init", "api", "worker", "web"})
-        self.assertIn("${PPAP_COMPOSE_ENV_FILE:-env.example}", services["init"])
-        self.assertNotIn("postgres:", services["init"])
+        self.assertEqual(set(services), {"silo", "init-db", "init-bucket", "api", "worker", "web"})
+        self.assertNotIn("depends_on:", services["init-db"])
         self.assertNotIn("env_file:", services["api"])
         self.assertNotIn("env_file:", services["worker"])
         self.assertIn("PPAP_PG_HOST: ${PPAP_PG_HOST}", services["api"])
@@ -56,6 +57,12 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertIn("PPAP_PG_WORKER_PASSWORD", services["worker"])
         self.assertNotIn("PPAP_PG_API_PASSWORD", services["worker"])
         self.assertNotIn("PADDLE_TOKEN", services["api"])
+        self.assertIn("PPAP_PG_BOOTSTRAP_PASSWORD", services["init-db"])
+        self.assertIn("PGCONNECT_TIMEOUT", services["init-db"])
+        self.assertIn("silo-data:/data", services["init-db"])
+        self.assertIn("image: postgres:16.10-bookworm", services["init-db"])
+        self.assertIn("minio/health/live", services["silo"])
+        self.assertIn("condition: service_healthy", services["init-bucket"])
 
     def test_selected_env_reaches_insforge_postgres_host(self):
         compose = (INSFORGE / "compose.yaml").read_text()
@@ -82,11 +89,13 @@ class InsForgeRuntimeTests(unittest.TestCase):
         }
         api = _interpolated_environment(services["api"], selected)
         worker = _interpolated_environment(services["worker"], selected)
+        init_db = _interpolated_environment(services["init-db"], selected)
         self.assertEqual(api["PPAP_PG_HOST"], "postgres")
         self.assertEqual(worker["PPAP_PG_HOST"], "postgres")
         self.assertEqual(api["PPAP_PG_API_PASSWORD"], "api-secret")
         self.assertEqual(worker["PPAP_PG_WORKER_PASSWORD"], "worker-secret")
         self.assertEqual(api["FEISHU_APP_ID"], "cli_prod")
+        self.assertEqual(init_db["PGHOST"], "postgres")
         self.assertNotIn("PPAP_PG_BOOTSTRAP_PASSWORD", api)
         self.assertNotIn("PPAP_PG_MIGRATOR_PASSWORD", api)
         self.assertNotIn("PPAP_PG_WORKER_PASSWORD", api)
@@ -97,8 +106,6 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertEqual(catalog["PPAP_PG_DATABASE"], "ppap")
         self.assertEqual(catalog["PPAP_S3_ENDPOINT"], "http://silo:9000")
         self.assertNotIn("isolated-dev", catalog["PPAP_S3_ENDPOINT"])
-        from tools.stack import SILO_IMAGE
-
         self.assertIn(SILO_IMAGE, compose)
         self.assertIn('command: ["server", "/data", "--console-address", ":9001"]', compose)
         self.assertIn("MINIO_ROOT_USER", compose)
@@ -132,75 +139,17 @@ class InsForgeRuntimeTests(unittest.TestCase):
             self.assertNotIn("edge-function", blob)
             self.assertNotIn("deno", blob.lower())
 
-    def test_compose_file_flag_selects_insforge_overlay(self):
-        from tools.dev import (
-            _compose,
-            _compose_has_service,
-            _pg_dump_script,
-            compose_file,
-            take_compose_env_args,
-        )
-
-        default = (ROOT / "deploy" / "compose.yaml").resolve()
-        overlay = (INSFORGE / "compose.yaml").resolve()
-        self.assertEqual(compose_file(), default)
-        self.assertTrue(_compose_has_service("postgres", default))
-        self.assertFalse(_compose_has_service("postgres", overlay))
-        self.assertTrue(_compose_has_service("silo", overlay))
-        self.assertFalse(_compose_has_service("minio", overlay))
-        with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(overlay)}, clear=False):
-            self.assertEqual(compose_file(), overlay)
-            leftover = take_compose_env_args(["--compose-file", str(overlay), "dist/backups/x"])
-            self.assertEqual(leftover, ["dist/backups/x"])
-            with patch("tools.dev.subprocess.call", return_value=0) as call:
-                self.assertEqual(_compose("deadbeef", "up", "-d"), 0)
-                cmd = call.call_args.args[0]
-            self.assertEqual(cmd[cmd.index("-f") + 1], str(overlay))
-            dump = _pg_dump_script("ppap")
-            self.assertIn("PPAP_PG_HOST", dump)
-            self.assertNotIn("POSTGRES_USER", dump)
-        self.assertIn("$POSTGRES_USER", _pg_dump_script("ppap"))
-        self.assertEqual(compose_file(), default)
-
-    def test_missing_compose_file_is_an_error(self):
-        from tools.dev import compose_file
-
-        with tempfile.TemporaryDirectory() as tmp:
-            missing = Path(tmp) / "missing.yaml"
-            with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(missing)}, clear=False):
-                with self.assertRaises(FileNotFoundError):
-                    compose_file()
-
-    def test_api_image_can_dump_remote_postgres(self):
-        dockerfile = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
-        self.assertIn("postgresql-client", dockerfile)
-
-    def test_object_store_is_durable_and_insforge_undeploy_keeps_the_volume(self):
-        from tools.dev import cmd_undeploy
-
+    def test_object_store_is_durable_and_insforge_down_keeps_the_volume(self):
         compose = (INSFORGE / "compose.yaml").read_text()
         services = _compose_services(compose)
         self.assertIn("- silo-data:/data", services["silo"])
         self.assertIn("name: ppap-silo-data", compose)
         self.assertNotIn("bind:", services["silo"])
-        overlay = (INSFORGE / "compose.yaml").resolve()
-        default = (ROOT / "deploy" / "compose.yaml").resolve()
-        with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(overlay)}, clear=False):
-            with patch("tools.dev.shutil.which", return_value="/usr/bin/docker"):
-                with patch("tools.dev.subprocess.call", return_value=0) as call:
-                    self.assertEqual(cmd_undeploy(), 0)
-                    cmd = call.call_args.args[0]
-            self.assertEqual(cmd[cmd.index("-f") + 1], str(overlay))
-            self.assertIn("down", cmd)
-            self.assertIn("--remove-orphans", cmd)
-            self.assertNotIn("-v", cmd[cmd.index("down") :])
-        with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(default)}, clear=False):
-            with patch("tools.dev.shutil.which", return_value="/usr/bin/docker"):
-                with patch("tools.dev.subprocess.call", return_value=0) as call:
-                    self.assertEqual(cmd_undeploy(), 0)
-                    verify = call.call_args.args[0]
-            self.assertEqual(verify[verify.index("-f") + 1], str(default))
-            self.assertIn("-v", verify[verify.index("down") :])
+        readme = (INSFORGE / "README.md").read_text()
+        self.assertIn("compose.yaml down", readme)
+        self.assertIn("without `-v`", readme)
+        verify = (ROOT / "deploy" / "README.md").read_text()
+        self.assertIn("down -v", verify)
 
 
 if __name__ == "__main__":

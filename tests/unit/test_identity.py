@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import os
-import sys
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 

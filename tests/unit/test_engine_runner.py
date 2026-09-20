@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import os
-import sys
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 
@@ -57,6 +54,7 @@ class EngineRunnerTests(unittest.TestCase):
         return ready.json()
 
     def test_runs_every_target_and_keeps_references_in_coverage(self):
+        from ppap_excel_audit_engine import app_runtime
         from ppap_worker import engine_runner
 
         self._login()
@@ -90,7 +88,7 @@ class EngineRunnerTests(unittest.TestCase):
                 )
             ]
 
-        with patch("ppap_excel_audit_engine.app_runtime.run_audit_engine", fake_run):
+        with patch.object(app_runtime, "run_audit_engine", fake_run):
             result = engine_runner(work, self.store)
         self.assertEqual([call[0] for call in calls], [first["id"], second["id"]])
         context = calls[0][1]

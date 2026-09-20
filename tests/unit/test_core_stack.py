@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT), str(ROOT / "packages"), str(ROOT / "services" / "api"), str(ROOT / "services" / "worker")]
+from tests import pathsetup
+
+ROOT = pathsetup.ROOT
 
 from pydantic import ValidationError
 
@@ -19,7 +17,6 @@ from dotenv import dotenv_values
 
 from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL, ISOLATED_DEV_SECRET, Settings
 from ppap_api import create_app
-from tools.stack import apply_dotenv_files, child_env, map_llm_names
 
 
 def _clean_env(**extra: str):
@@ -88,43 +85,13 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
         self.assertEqual(values["FEISHU_APP_ID"], "")
 
-    def test_dotenv_overlay_fills_blanks_then_keeps_process_env(self):
-        filled = apply_dotenv_files({"PPAP_PG_PORT": "", "PPAP_WEB_URL": "https://app.example"})
-        self.assertEqual(filled["PPAP_PG_PORT"], "5432")
-        self.assertEqual(filled["PPAP_WEB_URL"], "https://app.example")
-
-    def test_production_profile_does_not_fill_isolated_dev_secrets(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / ".env.dev").write_text((ROOT / ".env.dev").read_text())
-            (root / ".env.production").write_text((ROOT / ".env.production").read_text())
-            with patch("tools.stack.ROOT", root):
-                isolated = apply_dotenv_files({})
-                production = apply_dotenv_files({"PPAP_PROFILE": "production", "PPAP_PG_PORT": ""})
-                (root / ".env").write_text("PPAP_PROFILE=production\n")
-                from_env_file = apply_dotenv_files({})
-        self.assertEqual(isolated["PPAP_PROFILE"], "isolated-dev")
-        self.assertEqual(isolated["PPAP_PG_API_PASSWORD"], ISOLATED_DEV_SECRET)
-        self.assertEqual(isolated["PPAP_S3_ENDPOINT"], "http://127.0.0.1:9000")
-        self.assertEqual(production["PPAP_PROFILE"], "production")
-        self.assertEqual(production["PPAP_PG_PORT"], "5432")
-        self.assertEqual(production["PPAP_PG_API_PASSWORD"], "")
-        self.assertEqual(production["PPAP_S3_ENDPOINT"], "")
-        self.assertEqual(production["PPAP_WEB_URL"], "")
-        self.assertEqual(from_env_file["PPAP_PROFILE"], "production")
-        self.assertEqual(from_env_file["PPAP_PG_API_PASSWORD"], "")
-        self.assertEqual(from_env_file["PPAP_S3_ENDPOINT"], "")
-
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(LLM_API_KEY="sk-test"):
             settings = Settings()
-            env = child_env()
         self.assertEqual(settings.llm_api_key, "sk-test")
         self.assertEqual(settings.llm_base_url, ISOLATED_DEV_LLM_BASE_URL)
         self.assertEqual(settings.llm_model, ISOLATED_DEV_LLM_MODEL)
         self.assertTrue(llm_configured(settings))
-        self.assertEqual(env["LLM_BASE_URL"], ISOLATED_DEV_LLM_BASE_URL)
-        self.assertEqual(env["LLM_MODEL"], ISOLATED_DEV_LLM_MODEL)
 
     def test_openai_names_are_not_application_authority(self):
         with _clean_env(OPENAI_API_KEY="from-openai", OPENAI_BASE_URL="https://example.invalid/v1", MODEL_NAME="hidden"):
@@ -135,16 +102,6 @@ class SettingsTests(unittest.TestCase):
         self.assertNotEqual(settings.llm_base_url, "https://example.invalid/v1")
         self.assertNotEqual(settings.llm_model, "hidden")
         self.assertFalse(llm_configured(settings))
-
-    def test_environment_side_mapping_fills_llm_names(self):
-        mapped = map_llm_names({
-            "OPENAI_API_KEY": "from-openai",
-            "OPENAI_BASE_URL": "https://example.invalid/v1",
-            "MODEL_NAME": "hidden",
-        })
-        self.assertEqual(mapped["LLM_API_KEY"], "from-openai")
-        self.assertEqual(mapped["LLM_BASE_URL"], "https://example.invalid/v1")
-        self.assertEqual(mapped["LLM_MODEL"], "hidden")
 
     def test_production_rejects_isolated_dev_credentials(self):
         with _clean_env(PPAP_PROFILE="production"):

@@ -29,3 +29,6 @@ CREATE INDEX IF NOT EXISTS files_tenant_idx ON product.files (tenant_id);
 CREATE INDEX IF NOT EXISTS file_versions_file_idx ON product.file_versions (file_id, created_at);
 
 GRANT SELECT, INSERT, UPDATE ON product.files, product.file_versions TO ppap_api;
+
+INSERT INTO product.schema_migrations (version) VALUES ('0005_files.sql')
+ON CONFLICT DO NOTHING;
