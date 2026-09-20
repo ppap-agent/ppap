@@ -127,7 +127,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 if history_error.is_visible():
                     self.fail(history_error.inner_text())
                 expect(page.get_by_test_id("history-list")).to_be_visible()
-                expect(page.get_by_test_id("history-result").first).to_contain_text("PASS")
+                expect(page.locator('[data-testid="history-result"]', has_text="PASS").first).to_be_visible()
                 expect(page.get_by_test_id("history-version").first).not_to_have_text("")
                 browser.close()
 
