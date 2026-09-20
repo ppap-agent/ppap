@@ -4,7 +4,7 @@ const ruleErrors = {
   unauthenticated: "请先登录。",
   access_denied: "没有规则或来源文件的访问权限。请使用有权限的来源文件。",
   file_not_ready: "来源文件尚未就绪，请重新上传。",
-  unsupported_rule_file: "此规则文件格式暂不支持。旧 .doc 请先转为 .docx。",
+  unsupported_rule_file: "此规则文件格式暂不支持，请使用 Word、Excel、文本 PDF、Markdown 或 JSON。",
   empty_rule_document: "未提取到文本。扫描 PDF 请先转为可读文本资料。",
   rule_document_too_long: "规则原文超过单次解析上限，请拆分后导入。没有内容被截断或发布。",
   rule_type_required: "长文档无法仅凭文件名确定类型，请选择文档类型后重新解析。",

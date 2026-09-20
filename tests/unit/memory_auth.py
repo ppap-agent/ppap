@@ -416,7 +416,7 @@ class MemoryAuthStore:
             return None
         return self._round_public(round_id)
 
-    def list_rounds(self, principal: Principal, limit: int = 50) -> list[dict]:
+    def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "") -> list[dict]:
         try:
             cap = max(1, min(int(limit), 50))
         except (TypeError, ValueError):
@@ -427,6 +427,11 @@ class MemoryAuthStore:
             if resource is None or not can_read(principal, resource, self.grants(round_id, principal.user_id)):
                 continue
             body = self._round_public(round_id)
+            if execution and body["execution"] != execution:
+                continue
+            hay = " ".join(item["original_filename"] + " " + (item.get("rule") or {}).get("title", "") for item in body["inputs"])
+            if q.lower() not in hay.lower():
+                continue
             result_counts = {"PASS": 0, "NG": 0, "ERR": 0}
             for finding in body.get("findings") or []:
                 if finding["status"] in result_counts:
@@ -449,9 +454,7 @@ class MemoryAuthStore:
                     "result_counts": result_counts,
                 }
             )
-            if len(items) >= cap:
-                break
-        return items
+        return items[offset:offset + limit]
 
     def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
         if round_id not in self.rounds:

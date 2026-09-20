@@ -442,6 +442,22 @@ def create_app(
             },
         )
 
+    @app.get("/files/{file_id}/versions/{version_id}/preview")
+    def files_preview(file_id: str, version_id: str, request: Request):
+        from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        version = store.get_version(file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if version.byte_size > MAX_PREVIEW_BYTES:
+            return JSONResponse({"available": False, "notice": "文件过大，请下载原件。"})
+        try:
+            return JSONResponse(document_preview(store.version_bytes(version), version.original_filename))
+        except Exception:
+            return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
+
     @app.post("/files/from-url")
     def files_from_url(body: dict, request: Request) -> JSONResponse:
         principal = principal_of(request)
@@ -496,6 +512,21 @@ def create_app(
         if isinstance(exc, KeyError):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return None
+
+    @app.get("/integrations/feishu/files")
+    def feishu_files_list(request: Request, folder_token: str = "", page_token: str = ""):
+        from ppap_core.feishu_drive import list_drive_folder
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        try:
+            return JSONResponse(list_drive_folder(http, session.access_token, folder_token, page_token))
+        except ValueError:
+            return JSONResponse({"error": "invalid_folder_query"}, status_code=400)
+        except FeishuMetaError:
+            return JSONResponse({"error": "feishu_folder_failed"}, status_code=502)
 
     @app.post("/integrations/feishu/files/import")
     def feishu_files_import(body: dict, request: Request) -> JSONResponse:

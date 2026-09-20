@@ -1,0 +1,98 @@
+"""Small product-boundary checks for browsing, excerpts and history."""
+import io
+import os
+import unittest
+from unittest.mock import patch
+
+import httpx
+import tests.pathsetup  # noqa: F401
+from ppap_core.preview import document_preview
+from ppap_core.feishu_drive import FeishuMetaError, list_drive_folder
+
+
+class PreviewTests(unittest.TestCase):
+    def test_office_excerpts_preserve_text_cells_and_do_not_evaluate_formulas(self):
+        from openpyxl import Workbook
+        from docx import Document
+        book = Workbook()
+        book.active.title = "控制计划"
+        book.active.append(["零件号", "=1+1"])
+        output = io.BytesIO()
+        book.save(output)
+        book.close()
+        text = document_preview(output.getvalue(), "sample.xlsx")["text"]
+        self.assertIn("控制计划", text)
+        self.assertIn("A1: 零件号", text)
+        self.assertIn("B1: =1+1", text)
+        doc = Document()
+        doc.add_paragraph("before")
+        doc.add_table(rows=1, cols=1).cell(0, 0).text = "<not-html>"
+        doc.add_paragraph("after")
+        output = io.BytesIO()
+        doc.save(output)
+        text = document_preview(output.getvalue(), "sample.docx")["text"]
+        self.assertLess(text.index("before"), text.index("<not-html>"))
+        self.assertLess(text.index("<not-html>"), text.index("after"))
+        self.assertFalse(document_preview(b"unsupported", "sample.doc")["available"])
+
+    def test_folder_listing_passes_current_user_auth_and_provider_cursor(self):
+        def handler(request):
+            self.assertEqual(request.headers["authorization"], "Bearer test-user")
+            self.assertEqual(request.url.params["folder_token"], "folder-test")
+            self.assertEqual(request.url.params["page_token"], "next-test")
+            return httpx.Response(200, json={"code": 0, "data": {
+                "files": [{"token": "file-test", "name": "客户文件", "type": "docx"}],
+                "has_more": True, "next_page_token": "page-two"}})
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+            page = list_drive_folder(http, "test-user", "folder-test", "next-test")
+        self.assertEqual(page["next_page_token"], "page-two")
+        self.assertEqual(page["files"][0]["name"], "客户文件")
+        with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))) as http:
+            with self.assertRaises(FeishuMetaError):
+                list_drive_folder(http, "test-user")
+
+
+class ProductExperienceTests(unittest.TestCase):
+    def setUp(self):
+        from ppap_api import create_app
+        from ppap_core.settings import Settings
+        from tests.unit.memory_auth import MemoryAuthStore
+        from fastapi.testclient import TestClient
+        clean = {k: v for k, v in os.environ.items() if not k.startswith(("PPAP_", "FEISHU_", "LLM_", "OPENAI_"))}
+        env = patch.dict(os.environ, clean, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+        settings = Settings()
+        self.store = MemoryAuthStore(settings)
+        self.store.seed_isolated_dev()
+        self.client = TestClient(create_app(settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store))
+        self.addCleanup(self.client.close)
+        self.login("alice")
+
+    def login(self, subject):
+        self.client.cookies.clear()
+        self.client.post("/isolated-dev/sessions", json={"subject": subject})
+
+    def test_preview_authorization_and_search_across_history_pages(self):
+        from ppap_core.fixtures import RULE_A
+        rounds = []
+        for filename in ("first.txt", "second.txt"):
+            version = self.client.post("/files", json={"original_filename": filename, "byte_size": 4}).json()
+            path = f"/files/{version['file_id']}/versions/{version['id']}"
+            self.client.put(path + "/blob", content=b"test")
+            self.client.post(path + "/finalize")
+            self.assertEqual(self.client.get(path + "/preview").json()["text"], "test")
+            draft = self.client.post("/drafts").json()["id"]
+            self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]})
+            rounds.append(self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": filename}).json()["id"])
+        first = self.client.get("/rounds?limit=1").json()
+        second = self.client.get(f"/rounds?limit=1&offset={first['next_offset']}").json()
+        self.assertEqual({first["rounds"][0]["id"], second["rounds"][0]["id"]}, set(rounds))
+        self.assertIsNone(second["next_offset"])
+        self.assertEqual(len(self.client.get("/rounds?q=first").json()["rounds"]), 1)
+        round_path = f"/rounds/{rounds[-1]}" + path + "/preview"
+        self.assertEqual(self.client.get(round_path).status_code, 200)
+        self.login("bob")
+        self.assertEqual(self.client.get(path + "/preview").status_code, 403)
+        self.assertEqual(self.client.get(round_path).status_code, 403)
+        self.assertEqual(self.client.get("/rounds").json()["rounds"], [])

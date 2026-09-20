@@ -296,7 +296,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
         self.assertEqual(submitted.status_code, 201)
         round_id = submitted.json()["id"]
-        trial = [row for row in self.store.usage_events if row["trace_id"] == round_id]
+        trial = [row for row in self.store.usage_events if row["trace_id"] == round_id + ":trial"]
         partner = [row for row in self.store.usage_events if row["trace_id"] == round_id + ":partner"]
         self.assertEqual(trial[0]["consumed_points"], 200)
         self.assertTrue(trial[0]["is_free_trial"])

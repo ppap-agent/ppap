@@ -28,8 +28,8 @@
       <button id="rerun-rule" class="hidden" type="button">新建任务重新解析（可能再次计费）</button>
       <section class="pc-card">
         <h2>1. 导入规则文件</h2>
-        <p class="pc-muted">支持 Excel、Word .docx、可提取文本的 PDF、Markdown 和结构化 JSON。旧 .doc 请先转为 .docx。</p>
-        <label for="rule-file">规则文件 <input id="rule-file" data-testid="rule-file" type="file" accept=".xlsx,.xls,.xlsm,.docx,.pdf,.md,.json" /></label>
+        <p class="pc-muted">支持 Excel、Word .doc / .docx、可提取文本的 PDF、Markdown 和结构化 JSON。旧 .doc 在 Worker 中受限转换。</p>
+        <label for="rule-file">规则文件 <input id="rule-file" data-testid="rule-file" type="file" accept=".xlsx,.xls,.xlsm,.doc,.docx,.pdf,.md,.json" /></label>
         <label for="parse-type">文档类型 <select id="parse-type"><option value="">自动识别</option></select></label>
         <button id="parse-rule" data-testid="parse-rule" type="button">上传并解析</button>
         <p class="pc-muted">解析仅生成待确认内容，不发布规则。原文过长会明确提示拆分，不会截断后发布。</p>

@@ -46,6 +46,7 @@
 
       <section class="pc-card" data-testid="prepare-panel">
         <h2>准备资料</h2>
+        <a href="./">新建审核</a>
         <p class="pc-muted">每次上传都会生成新的文件版本。历史审核仍引用当时的版本。</p>
         <div class="pc-grid">
           <label for="source-upload">待审文件
@@ -58,6 +59,17 @@
           <button type="button" data-testid="prepare-reference" id="prepare-reference">固化参考版本</button>
         </div>
         <p>当前文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
+        <details id="drive-picker">
+          <summary>从飞书云空间选取</summary>
+          <p class="pc-muted">只访问当前登录用户获授权的目录。选中后导入独立版本，不修改飞书原件。</p>
+          <label>文件夹链接或 token（留空为根目录）<input id="drive-folder" type="text" /></label>
+          <button id="drive-browse" type="button">打开目录</button>
+          <button id="drive-root" type="button">回到根目录</button>
+          <p id="drive-status" role="status"></p><div id="drive-rows"></div>
+          <button id="drive-more" type="button" hidden>加载更多</button>
+          <label>导入角色 <select id="drive-role"><option value="target">待审文件</option><option value="reference">参考文件</option></select></label>
+          <button id="drive-import" type="button">导入所选文件</button>
+        </details>
         <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
         <p><a data-testid="download-original" id="download-original" href="#">预览当前原件</a></p>
         <h3>本轮资料版本</h3>
@@ -67,7 +79,7 @@
       <section class="pc-card" data-testid="draft-panel">
         <h2>选择规则并提交</h2>
         <p>草稿 <code data-testid="draft-id" id="draft-id"></code></p>
-        <p>每个待审文件须选择规则版本。参考文件只提供上下文，不执行完整审核。</p>
+        <p>每个待审文件须选择规则版本，受理时记录 500 点；试用优先。参考文件只提供上下文，不执行完整审核、不计点。</p>
         <div data-testid="draft-items" id="draft-items"></div>
         <p data-testid="audit-error" id="audit-error" role="alert"></p>
         <p>
@@ -110,7 +122,8 @@
           <a data-testid="file-preview-download" id="file-preview-download" href="#">下载原件</a>
           <button type="submit" data-testid="file-preview-close" id="file-preview-close">关闭</button>
         </form>
-        <iframe data-testid="file-preview-frame" id="file-preview-frame" title="原件预览" hidden></iframe>
+        <iframe data-testid="file-preview-frame" id="file-preview-frame" title="原件预览" sandbox="allow-same-origin" hidden></iframe>
+        <pre id="file-preview-text" hidden></pre>
         <p data-testid="file-preview-fallback" id="file-preview-fallback" class="pc-muted">该格式请下载后查看。</p>
       </dialog>
 

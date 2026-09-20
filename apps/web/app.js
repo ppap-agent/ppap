@@ -40,50 +40,45 @@ function escapeHtml(value) {
 }
 
 let previewObjectUrl = "";
+let previewRevision = 0;
 
 function canPreviewInline(name) {
   return /\.(pdf|png|jpe?g|gif|webp)(\?|$)/i.test(name || "");
 }
 
 async function openPreview(href, name) {
+  const current = ++previewRevision;
   const dialog = document.getElementById("file-preview");
   const frame = document.getElementById("file-preview-frame");
   const fallback = document.getElementById("file-preview-fallback");
+  const text = document.getElementById("file-preview-text");
   const download = document.getElementById("file-preview-download");
   document.getElementById("file-preview-name").textContent = name || "原件预览";
-  download.href = href;
-  download.removeAttribute("download");
-  const inline = canPreviewInline(name);
-  frame.hidden = true;
-  fallback.hidden = false;
-  if (previewObjectUrl) {
-    URL.revokeObjectURL(previewObjectUrl);
-    previewObjectUrl = "";
-  }
-  frame.src = "about:blank";
-  if (typeof dialog.showModal === "function") {
-    dialog.showModal();
-  } else {
-    dialog.setAttribute("open", "");
-  }
+  download.href = href; download.removeAttribute("download");
+  frame.hidden = true; frame.src = "about:blank";
+  text.hidden = true; text.textContent = "";
+  fallback.hidden = false; fallback.textContent = "正在加载…";
+  if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = ""; }
+  if (!dialog.open) dialog.showModal();
   try {
-    const response = await fetch(href, { credentials: "include" });
-    if (!response.ok) {
+    if (!canPreviewInline(name)) {
+      const result = await readJson(href.replace(/\/download$/, "/preview"));
+      if (current !== previewRevision) return;
+      fallback.textContent = result.ok ? result.body.notice : "无法预览，请下载原件。";
+      if (result.ok && result.body.available) { text.textContent = result.body.text; text.hidden = false; }
       return;
     }
-    const blob = await response.blob();
-    previewObjectUrl = URL.createObjectURL(blob);
-    download.href = previewObjectUrl;
-    if (name) {
-      download.setAttribute("download", name);
-    }
-    if (inline) {
-      frame.src = previewObjectUrl;
-      frame.hidden = false;
-      fallback.hidden = true;
-    }
-  } catch (_err) {
-    download.href = href;
+    const response = await fetch(href, {credentials: "include"});
+    if (!response.ok) throw new Error("无法加载原件");
+    const data = await response.arrayBuffer();
+    if (current !== previewRevision) return;
+    const extension = name.split(".").pop().toLowerCase();
+    const mime = {pdf:"application/pdf",png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp"}[extension];
+    previewObjectUrl = URL.createObjectURL(new Blob([data], {type: mime || "application/octet-stream"}));
+    frame.src = previewObjectUrl; frame.hidden = false; fallback.hidden = true;
+    download.href = previewObjectUrl; download.setAttribute("download", name);
+  } catch (_) {
+    if (current === previewRevision) fallback.textContent = "无法预览，请下载原件。";
   }
 }
 
@@ -91,7 +86,7 @@ function versionHref(api, roundId, item) {
   if (!api || !item || !item.file_id || !item.file_version_id) {
     return "";
   }
-  if (roundId) {
+  if (roundId && !item.draft_only) {
     return `${api}/rounds/${encodeURIComponent(roundId)}/files/${encodeURIComponent(item.file_id)}/versions/${encodeURIComponent(item.file_version_id)}/download`;
   }
   return `${api}/files/${encodeURIComponent(item.file_id)}/versions/${encodeURIComponent(item.file_version_id)}/download`;
@@ -106,7 +101,7 @@ function renderVersionList(api, items, roundId) {
   node.innerHTML = items.map((item) => {
     const role = item.role === "target" ? "待审" : item.role === "reference" ? "参考" : item.role;
     const href = versionHref(api, roundId, item);
-    const preview = href ? `<a data-testid="open-version" href="${href}">预览</a>` : "";
+    const preview = href ? `<a data-testid="open-version" data-filename="${escapeHtml(item.original_filename)}" href="${href}">预览</a>` : "";
     return `<li data-testid="file-version-row">${escapeHtml(role)} · ${escapeHtml(item.original_filename)} · ${escapeHtml(item.file_version_id)} · ${escapeHtml(item.rule?.title || (item.role === "reference" ? "仅参考" : ""))} ${preview}</li>`;
   }).join("");
 }
@@ -235,6 +230,9 @@ function renderRound(api, round, state) {
     } else if (locator && locator.locator) {
       evidence = escapeHtml(locator.locator);
     }
+    const nativeEvidence = item.audit_evidence || item.evidence || locator?.evidence;
+    if (nativeEvidence) evidence += `<pre>${escapeHtml(typeof nativeEvidence === "string" ? nativeEvidence : JSON.stringify(nativeEvidence, null, 2))}</pre>`;
+    if (locator?.locator_gap || (!nativeEvidence && locator?.kind === "file_version")) evidence += " · 无精确定位，请在原件中核对";
     const suggestion = item.suggestions ? escapeHtml(item.suggestions) : "无模型建议";
     const review = item.review ? `${item.review.judgment} / ${item.review.rationale || ""}` : "尚未复核";
     return `<article class="finding-row" data-testid="finding-row" data-item-key="${escapeHtml(item.item_key)}">
@@ -278,7 +276,7 @@ async function uploadOneFile(api, file, role, state) {
   if (!readyVersion.ok) {
     return false;
   }
-  const next = { file_version_id: readyVersion.body.id, role, file_id: fileId, original_filename: file.name, rule_version_id: existing?.rule_version_id || null };
+  const next = { file_version_id: readyVersion.body.id, role, file_id: fileId, original_filename: file.name, rule_version_id: existing?.rule_version_id || null, draft_only: true };
   if (existing) {
     state.items = state.items.map((item) => (item === existing ? next : item));
   } else {
@@ -356,6 +354,84 @@ async function pollRound(api, roundId, state) {
   return null;
 }
 
+function setupDrivePicker(api, state, onAction) {
+  const field = document.getElementById("drive-folder");
+  const rows = document.getElementById("drive-rows");
+  const status = document.getElementById("drive-status");
+  const more = document.getElementById("drive-more");
+  const selected = new Map();
+  let folder = "", next = null, files = [];
+  const keyOf = item => `${item.type}:${item.token}`;
+  function render() {
+    rows.innerHTML = files.map(item => {
+      const key = keyOf(item);
+      if (item.type === "folder") return `<p><button type="button" data-folder="${escapeHtml(item.token)}">📁 ${escapeHtml(item.name)}</button></p>`;
+      const supported = ["file", "doc", "docx", "sheet", "bitable"].includes(item.type);
+      return `<label><input type="checkbox" data-drive-key="${escapeHtml(key)}" ${selected.has(key) ? "checked" : ""} ${supported ? "" : "disabled"}> ${escapeHtml(item.name)} · ${escapeHtml(item.type)}${supported ? "" : "（不支持导入）"}</label>`;
+    }).join("");
+    more.hidden = !next;
+    status.textContent = `${files.length} 个目录项，已选 ${selected.size} 个文件。`;
+  }
+  function folderToken(value) {
+    if (!value.includes("://")) return value.trim();
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !url.hostname.endsWith(".feishu.cn")) throw new Error("请使用飞书文件夹链接");
+    const match = url.pathname.match(/^\/drive\/folder\/([A-Za-z0-9_-]+)\/?$/);
+    if (!match) throw new Error("请使用文件夹链接，或从根目录选择文件");
+    return match[1];
+  }
+  async function browse(reset) {
+    try {
+      const target = reset ? folderToken(field.value) : folder;
+      const query = new URLSearchParams({folder_token: target});
+      if (!reset && next) query.set("page_token", next);
+      const result = await readJson(`${api}/integrations/feishu/files?${query}`);
+      if (!result.ok) throw new Error(result.status === 409 ? "请用飞书登录后选择文件。" : "无法读取目录，请检查飞书授权和目录访问权限。");
+      folder = target; field.value = folder;
+      files = reset ? result.body.files : files.concat(result.body.files);
+      next = result.body.next_page_token || null;
+      render();
+    } catch(e) { status.textContent = e.message; }
+  }
+  onAction("drive-browse", () => browse(true));
+  onAction("drive-root", () => { field.value = ""; return browse(true); });
+  onAction("drive-more", () => browse(false));
+  rows.addEventListener("click", event => {
+    if (auditBusy) return;
+    const button = event.target.closest("[data-folder]");
+    if (button) { field.value = button.dataset.folder; document.getElementById("drive-browse").click(); }
+  });
+  rows.addEventListener("change", event => {
+    if (auditBusy) return;
+    const key = event.target.dataset.driveKey;
+    const item = files.find(item => keyOf(item) === key);
+    if (!item) return;
+    if (event.target.checked) selected.set(key, item); else selected.delete(key);
+    render();
+  });
+  onAction("drive-import", async () => {
+    const role = document.getElementById("drive-role").value;
+    for (const [key, item] of selected) {
+      status.textContent = `正在导入 ${item.name}…`;
+      const result = await readJson(`${api}/integrations/feishu/files/import`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file_token: item.token, doc_type: item.type}),
+      });
+      if (!result.ok) { status.textContent = `导入失败：${item.name}。已导入的版本保留，请勿重复选择。`; auditError(result); return; }
+      const version = result.body;
+      state.items.push({file_version_id: version.id, file_id: version.file_id,
+        original_filename: version.original_filename, role, rule_version_id: null, draft_only: true});
+      selected.delete(key);
+      // Persist each successful import before moving to the next source.
+      if (!state.roundId && !(await saveDraft(api, state))) {
+        render(); status.textContent = "文件已导入，但草稿未保存。请先保存草稿，不要重复导入。"; return;
+      }
+    }
+    render();
+    status.textContent = state.roundId ? "导入完成。选择规则后点击显式重审，旧轮次不变。" : "导入完成。请为每个待审文件选择规则版本。";
+  });
+}
+
 async function main() {
   const { api, config } = await window.PpapProduct.connect();
   const product = window.PpapProduct.client(api);
@@ -394,7 +470,7 @@ async function main() {
       if (auditBusy) return;
       auditBusy = true;
       auditError(null);
-      const controls = document.querySelectorAll("#prepare-audit, #prepare-reference, #save-draft, #submit-audit, #resubmit-audit, #source-upload, #reference-upload, #draft-items select");
+      const controls = document.querySelectorAll("#prepare-audit, #prepare-reference, #save-draft, #submit-audit, #resubmit-audit, #source-upload, #reference-upload, #draft-items select, #drive-picker input, #drive-picker button, #drive-picker select");
       controls.forEach((node) => { node.disabled = true; });
       try { await handler(); } catch { auditError({ body: { error: "操作失败，请重试" } }); }
       finally {
@@ -404,6 +480,7 @@ async function main() {
       }
     });
   }
+  setupDrivePicker(api, state, onAction);
   renderVersionList(api, state.items, state.roundId);
   if (me.ok) {
     const rules = await product.rules();
@@ -487,9 +564,10 @@ async function main() {
       return;
     }
     event.preventDefault();
-    openPreview(link.getAttribute("href"), link.closest("[data-testid=file-version-row]").textContent.trim());
+    openPreview(link.getAttribute("href"), link.dataset.filename);
   });
   document.getElementById("file-preview").addEventListener("close", () => {
+    previewRevision += 1;
     document.getElementById("file-preview-frame").src = "about:blank";
     if (previewObjectUrl) {
       URL.revokeObjectURL(previewObjectUrl);

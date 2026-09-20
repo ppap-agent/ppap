@@ -1,6 +1,5 @@
 """Usage allocation and send ownership on real PostgreSQL, not a mock lock."""
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 from unittest.mock import patch
 
 from tests.schema.test_audit_bindings import AuditDatabaseCase

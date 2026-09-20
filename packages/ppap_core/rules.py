@@ -8,7 +8,7 @@ from pathlib import Path
 from ppap_core.contracts import RuleItem
 from ppap_core.types import PpapDocumentType
 
-RULE_FILE_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".docx", ".md", ".pdf", ".json"}
+RULE_FILE_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".doc", ".docx", ".md", ".pdf", ".json"}
 MAX_RULE_TEXT = 20000  # The migrated extraction prompt accepts this much source text.
 
 
@@ -93,6 +93,10 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
     from ppap_excel_audit_engine.checkers.prompts import PromptManager
 
     try:
+        if extension == ".doc":
+            from ppap_docops.word.legacy import convert_legacy_doc_to_docx
+            content = convert_legacy_doc_to_docx(content, filename)
+            extension = ".docx"
         text = get_extractor(extension).extract_text(content)
     except Exception:
         raise RuleParseError("rule_text_extraction_failed") from None

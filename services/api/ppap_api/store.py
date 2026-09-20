@@ -816,32 +816,23 @@ class AuthStore:
         with self._conn() as conn:
             return self._round_public(conn, parsed)
 
-    def list_rounds(self, principal: Principal, limit: int = 50) -> list[dict]:
-        try:
-            cap = max(1, min(int(limit), 50))
-        except (TypeError, ValueError):
-            cap = 50
+    def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0,
+                    q: str = "", execution: str = "") -> list[dict]:
+        needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:
             rows = conn.execute(
-                """
-                SELECT r.id
-                FROM product.audit_rounds r
-                JOIN product.resource_grants g
-                    ON g.resource_id = r.id AND g.user_id = %s
-                    AND g.capability IN ('read', 'review')
-                WHERE r.tenant_id = %s
-                GROUP BY r.id, r.created_at
-                ORDER BY r.created_at DESC, r.id DESC
-                LIMIT %s
-                """,
-                (principal.user_id, principal.tenant_id, cap),
+                """SELECT r.id FROM product.audit_rounds r
+                   WHERE r.tenant_id = %s
+                     AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id
+                                 AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                     AND (%s = '' OR r.execution = %s)
+                     AND (%s = '' OR EXISTS (
+                         SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
+                         WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
+                   ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
+                (principal.tenant_id, principal.user_id, execution, execution, q, needle, needle, limit, offset),
             ).fetchall()
-            items = []
-            for row in rows:
-                item = self._round_history(conn, row[0])
-                if item:
-                    items.append(item)
-            return items
+            return [self._round_history(conn, row[0]) for row in rows]
 
     def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
         rid, fid, vid = _as_uuid(round_id), _as_uuid(file_id), _as_uuid(version_id)

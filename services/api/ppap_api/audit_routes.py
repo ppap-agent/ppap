@@ -90,11 +90,15 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         return JSONResponse(round_body, status_code=201)
 
     @app.get("/rounds")
-    def rounds_list(request: Request, limit: int = 50) -> JSONResponse:
+    def rounds_list(request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0),
+                    q: str = Query("", max_length=200), execution: str = "") -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
-        return JSONResponse({"rounds": store.list_rounds(principal, limit)})
+        if execution not in {"", "queued", "running", "completed", "failed"}:
+            return JSONResponse({"error": "invalid_execution"}, status_code=400)
+        rows = store.list_rounds(principal, limit + 1, offset, q, execution)
+        return JSONResponse({"rounds": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.get("/usage")
     def usage_list(request: Request, limit: int = Query(50, ge=1, le=50),
@@ -142,6 +146,22 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "X-Content-SHA256": version.sha256 or "",
             },
         )
+
+    @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview")
+    def rounds_preview(round_id: str, file_id: str, version_id: str, request: Request):
+        from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
+        principal, denied = require_object(request, round_id)
+        if denied:
+            return denied
+        version = store.round_input_version(round_id, file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        if version.byte_size > MAX_PREVIEW_BYTES:
+            return JSONResponse({"available": False, "notice": "文件过大，请下载原件。"})
+        try:
+            return JSONResponse(document_preview(store.version_bytes(version), version.original_filename))
+        except Exception:
+            return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
 
     @app.post("/rounds/{round_id}/resubmit")
     def rounds_resubmit(round_id: str, body: dict, request: Request) -> JSONResponse:

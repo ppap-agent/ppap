@@ -231,6 +231,38 @@ def _auth_headers(access_token: str) -> dict[str, str]:
     }
 
 
+def list_drive_folder(http, access_token: str, folder_token: str = "", page_token: str = "") -> dict:
+    if folder_token and not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", folder_token):
+        raise ValueError("invalid_folder_token")
+    if len(page_token) > 4096:
+        raise ValueError("invalid_page_token")
+    params = {"page_size": 50}
+    if folder_token:
+        params["folder_token"] = folder_token
+    if page_token:
+        params["page_token"] = page_token
+    try:
+        response = http.get(OPEN_API + "/drive/v1/files", params=params,
+                            headers=_auth_headers(access_token), timeout=20)
+        body = _response_json(response)
+        if response.status_code != 200 or body.get("code") != 0:
+            raise FeishuMetaError("feishu_folder_failed")
+        data = body.get("data") or {}
+        files = data.get("files")
+        if not isinstance(files, list):
+            raise FeishuMetaError("feishu_folder_failed")
+        next_page = data.get("next_page_token") if data.get("has_more") else None
+        if data.get("has_more") and (not isinstance(next_page, str) or not next_page):
+            raise FeishuMetaError("feishu_folder_failed")
+        return {"files": [{"token": item["token"], "name": item["name"], "type": item["type"]}
+                          for item in files if isinstance(item, dict) and all(isinstance(item.get(k), str) for k in ("token", "name", "type"))],
+                "next_page_token": next_page}
+    except FeishuMetaError:
+        raise
+    except Exception:
+        raise FeishuMetaError("feishu_folder_failed") from None
+
+
 def _response_json(response) -> dict:
     parser = getattr(response, "json", None)
     if callable(parser):

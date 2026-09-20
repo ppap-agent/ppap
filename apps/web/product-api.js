@@ -73,7 +73,7 @@ window.PpapProduct = (function () {
           }),
       },
       rounds: {
-        list: () => readJson(`${api}/rounds`),
+        list: (params = {}) => readJson(`${api}/rounds?${new URLSearchParams(params)}`),
         get: (id) => readJson(`${api}/rounds/${encodeURIComponent(id)}`),
         review: (id, body) =>
           readJson(`${api}/rounds/${encodeURIComponent(id)}/reviews`, {

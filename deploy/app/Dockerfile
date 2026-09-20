@@ -1,4 +1,10 @@
+FROM python:3.12-slim-bookworm AS converter-builder
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+COPY packages/ppap_docops/native/legacy_doc_sandbox.c /tmp/legacy_doc_sandbox.c
+RUN gcc -O2 -Wall -Wextra -Werror /tmp/legacy_doc_sandbox.c -o /usr/local/bin/ppap-local-converter-sandbox
+
 FROM python:3.12-slim-bookworm
+COPY --from=converter-builder /usr/local/bin/ppap-local-converter-sandbox /usr/local/bin/
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
@@ -12,7 +18,7 @@ RUN set -eux; \
     i=1; \
     while [ "$i" -le 5 ]; do \
       if apt-get -o Acquire::Retries=5 update \
-        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates libgomp1 libglib2.0-0; then \
+        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates libgomp1 libglib2.0-0 libreoffice-writer fonts-noto-cjk; then \
         break; \
       fi; \
       if [ "$i" -eq 5 ]; then \
