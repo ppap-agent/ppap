@@ -5,6 +5,7 @@ networks:
 
 volumes:
   silo-data:
+    name: ppap-silo-data
 
 services:
   silo:

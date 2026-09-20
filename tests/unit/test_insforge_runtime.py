@@ -175,6 +175,33 @@ class InsForgeRuntimeTests(unittest.TestCase):
         dockerfile = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
         self.assertIn("postgresql-client", dockerfile)
 
+    def test_object_store_is_durable_and_insforge_undeploy_keeps_the_volume(self):
+        from tools.dev import cmd_undeploy
+
+        compose = (INSFORGE / "compose.yaml").read_text()
+        services = _compose_services(compose)
+        self.assertIn("- silo-data:/data", services["silo"])
+        self.assertIn("name: ppap-silo-data", compose)
+        self.assertNotIn("bind:", services["silo"])
+        overlay = (INSFORGE / "compose.yaml").resolve()
+        default = (ROOT / "deploy" / "compose.yaml").resolve()
+        with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(overlay)}, clear=False):
+            with patch("tools.dev.shutil.which", return_value="/usr/bin/docker"):
+                with patch("tools.dev.subprocess.call", return_value=0) as call:
+                    self.assertEqual(cmd_undeploy(), 0)
+                    cmd = call.call_args.args[0]
+            self.assertEqual(cmd[cmd.index("-f") + 1], str(overlay))
+            self.assertIn("down", cmd)
+            self.assertIn("--remove-orphans", cmd)
+            self.assertNotIn("-v", cmd[cmd.index("down") :])
+        with patch.dict(os.environ, {"PPAP_COMPOSE_FILE": str(default)}, clear=False):
+            with patch("tools.dev.shutil.which", return_value="/usr/bin/docker"):
+                with patch("tools.dev.subprocess.call", return_value=0) as call:
+                    self.assertEqual(cmd_undeploy(), 0)
+                    verify = call.call_args.args[0]
+            self.assertEqual(verify[verify.index("-f") + 1], str(default))
+            self.assertIn("-v", verify[verify.index("down") :])
+
 
 if __name__ == "__main__":
     unittest.main()

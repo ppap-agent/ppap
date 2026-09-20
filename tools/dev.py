@@ -29,6 +29,7 @@ IMAGE_BUILDS = (
     ("web", "deploy/web/Dockerfile", ()),
 )
 COMPOSE_FILE = ROOT / "deploy" / "compose.yaml"
+COMPOSE_INSFORGE = ROOT / "deploy" / "insforge" / "compose.yaml"
 COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 BACKUP_ROOT = DIST / "backups"
 APP_SERVICES = ("api", "worker", "web")
@@ -666,7 +667,10 @@ def cmd_undeploy() -> int:
         print("undeploy failed: docker is required", file=sys.stderr)
         return 1
     sha = git_sha() or os.environ.get("PPAP_BUILD_SHA") or "unknown"
-    return _compose(sha, "down", "-v", "--remove-orphans")
+    args = ["down", "--remove-orphans"]
+    if compose_file() != COMPOSE_INSFORGE.resolve():
+        args.insert(1, "-v")
+    return _compose(sha, *args)
 
 
 def main() -> int:
