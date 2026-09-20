@@ -11,10 +11,12 @@ from urllib.parse import urlparse
 PAGE_ALIASES = {
     "/audit-files": "/audit-files.html",
     "/addon": "/addon.html",
+    "/usage": "/usage.html",
 }
 DIRECTORY_REDIRECTS = {
     "/audit-files/": "/audit-files",
     "/addon/": "/addon",
+    "/usage/": "/usage",
 }
 
 

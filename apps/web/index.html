@@ -4,99 +4,92 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PPAP</title>
-    <style>
-      body { font-family: sans-serif; margin: 2rem; max-width: 46rem; line-height: 1.5; }
-      code { background: #f4f4f4; padding: 0.1rem 0.3rem; }
-      .hidden { display: none; }
-      fieldset { border: 1px solid #ddd; margin: 1rem 0; padding: 0.8rem 1rem; }
-      label { display: block; margin: 0.4rem 0; }
-      textarea, select, input[type="text"] { width: 100%; max-width: 100%; box-sizing: border-box; }
-      table { width: 100%; border-collapse: collapse; }
-      th, td { border-bottom: 1px solid #eee; text-align: left; padding: 0.4rem 0.2rem; vertical-align: top; }
-      .status-PASS { color: #0a7; font-weight: 600; }
-      .status-NG { color: #c60; font-weight: 600; }
-      .status-ERR { color: #c00; font-weight: 600; }
-      button, a { margin-right: 0.4rem; }
-      @media (max-width: 40rem) {
-        body { margin: 1rem; }
-        table, thead, tbody, th, td, tr { display: block; }
-        th { border: 0; }
-      }
-    </style>
+    <link rel="stylesheet" href="./shell.css" />
   </head>
-  <body>
-    <h1>PPAP</h1>
-    <p>隔离开发 Web 入口。预存 session 只测授权与原件版本，不能证明 S02 真实登录或 S03 审核历史。</p>
-    <p>构建 <code data-testid="build-revision" id="build-revision">loading</code></p>
-    <p>核心依赖 <code data-testid="stack-state" id="stack-state">loading</code></p>
-    <p>
-      <a data-testid="login-feishu" id="login-feishu" href="#">登录飞书</a>
-      <button type="button" data-testid="logout" id="logout">退出</button>
-      <a data-testid="open-history" href="./audit-files">历史审核记录</a>
-    </p>
-    <p id="isolated-dev-login-panel" class="hidden">
-      <label for="isolated-dev-subject">隔离开发身份
-        <select data-testid="isolated-dev-subject" id="isolated-dev-subject">
-          <option value="alice">alice</option>
-          <option value="bob">bob</option>
-          <option value="carol">carol</option>
-        </select>
-      </label>
-      <button type="button" data-testid="isolated-dev-login" id="isolated-dev-login">开发登录</button>
-    </p>
-    <p>当前身份 <code data-testid="current-user" id="current-user">anonymous</code></p>
-    <p data-testid="access-denied" id="access-denied" class="hidden">access-denied</p>
-
-    <fieldset>
-      <legend>准备资料</legend>
+  <body class="pc-app">
+    <aside class="pc-shell" data-testid="pc-shell">
+      <div class="pc-shell__brand">PPAP</div>
+      <nav class="pc-shell__nav">
+        <a data-nav="workbench" data-testid="nav-workbench" href="./">工作台</a>
+        <a data-nav="audit-files" data-testid="open-history" href="./audit-files">审核文件</a>
+        <a data-nav="usage" data-testid="nav-usage" href="./usage">用量记录</a>
+      </nav>
+      <p class="pc-shell__session">当前身份 <code data-testid="current-user" id="current-user">anonymous</code></p>
+    </aside>
+    <main class="pc-main">
+      <h1>工作台</h1>
+      <p>隔离开发 Web 入口。预存 session 只测授权与原件版本，不能证明 S02 真实登录或 S03 审核历史。</p>
+      <p>构建 <code data-testid="build-revision" id="build-revision">loading</code></p>
+      <p>核心依赖 <code data-testid="stack-state" id="stack-state">loading</code></p>
       <p>
-        <label for="source-upload">待审文件
-          <input data-testid="source-upload" id="source-upload" type="file" multiple />
+        <a data-testid="login-feishu" id="login-feishu" href="#">登录飞书</a>
+        <button type="button" data-testid="logout" id="logout">退出</button>
+      </p>
+      <p id="isolated-dev-login-panel" class="hidden">
+        <label for="isolated-dev-subject">隔离开发身份
+          <select data-testid="isolated-dev-subject" id="isolated-dev-subject">
+            <option value="alice">alice</option>
+            <option value="bob">bob</option>
+            <option value="carol">carol</option>
+          </select>
         </label>
-        <button type="button" data-testid="prepare-audit" id="prepare-audit">固化待审版本</button>
+        <button type="button" data-testid="isolated-dev-login" id="isolated-dev-login">开发登录</button>
       </p>
-      <p>
-        <label for="reference-upload">参考文件
-          <input data-testid="reference-upload" id="reference-upload" type="file" multiple />
+      <p data-testid="access-denied" id="access-denied" class="hidden">access-denied</p>
+
+      <fieldset>
+        <legend>准备资料</legend>
+        <p>
+          <label for="source-upload">待审文件
+            <input data-testid="source-upload" id="source-upload" type="file" multiple />
+          </label>
+          <button type="button" data-testid="prepare-audit" id="prepare-audit">固化待审版本</button>
+        </p>
+        <p>
+          <label for="reference-upload">参考文件
+            <input data-testid="reference-upload" id="reference-upload" type="file" multiple />
+          </label>
+          <button type="button" data-testid="prepare-reference" id="prepare-reference">固化参考版本</button>
+        </p>
+        <p>文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
+        <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
+        <p><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>草稿</legend>
+        <p>草稿 <code data-testid="draft-id" id="draft-id"></code></p>
+        <label for="rule-select">规则
+          <select data-testid="rule-select" id="rule-select"></select>
         </label>
-        <button type="button" data-testid="prepare-reference" id="prepare-reference">固化参考版本</button>
-      </p>
-      <p>文件版本 <code data-testid="document-version-id" id="document-version-id"></code></p>
-      <p>原件 SHA-256 <code data-testid="evidence-source-sha256" id="evidence-source-sha256"></code></p>
-      <p><a data-testid="download-original" id="download-original" href="#">下载原件</a></p>
-    </fieldset>
+        <p data-testid="draft-items" id="draft-items"></p>
+        <button type="button" data-testid="save-draft" id="save-draft">保存范围和规则</button>
+        <button type="button" data-testid="submit-audit" id="submit-audit">提交审核</button>
+      </fieldset>
 
-    <fieldset>
-      <legend>草稿</legend>
-      <p>草稿 <code data-testid="draft-id" id="draft-id"></code></p>
-      <label for="rule-select">规则
-        <select data-testid="rule-select" id="rule-select"></select>
-      </label>
-      <p data-testid="draft-items" id="draft-items"></p>
-      <button type="button" data-testid="save-draft" id="save-draft">保存范围和规则</button>
-      <button type="button" data-testid="submit-audit" id="submit-audit">提交审核</button>
-    </fieldset>
+      <fieldset>
+        <legend>审核结果</legend>
+        <p>轮次 <code data-testid="round-id" id="round-id"></code></p>
+        <p>执行 <code data-testid="round-execution" id="round-execution"></code></p>
+        <p>覆盖范围 <code data-testid="coverage-panel" id="coverage-panel"></code></p>
+        <p data-testid="locator-gap" id="locator-gap" class="hidden">定位缺口</p>
+        <p><a data-testid="previous-round" id="previous-round" class="hidden" href="#">查看旧轮次</a></p>
+        <div data-testid="findings" id="findings"></div>
+        <p>
+          <label for="review-judgment">判断 <input data-testid="review-judgment" id="review-judgment" type="text" /></label>
+          <label for="review-rationale">理由 <textarea data-testid="review-rationale" id="review-rationale" rows="2"></textarea></label>
+          <label for="review-next">下一步 <textarea data-testid="review-next" id="review-next" rows="2"></textarea></label>
+          <button type="button" data-testid="save-review" id="save-review">保存人工复核</button>
+        </p>
+        <p data-testid="review-saved" id="review-saved"></p>
+        <button type="button" data-testid="resubmit-audit" id="resubmit-audit">显式重审</button>
+      </fieldset>
 
-    <fieldset>
-      <legend>审核轮次</legend>
-      <p>轮次 <code data-testid="round-id" id="round-id"></code></p>
-      <p>执行 <code data-testid="round-execution" id="round-execution"></code></p>
-      <p>覆盖范围 <code data-testid="coverage-panel" id="coverage-panel"></code></p>
-      <p data-testid="locator-gap" id="locator-gap" class="hidden">定位缺口</p>
-      <p><a data-testid="previous-round" id="previous-round" class="hidden" href="#">查看旧轮次</a></p>
-      <div data-testid="findings" id="findings"></div>
-      <p>
-        <label for="review-judgment">判断 <input data-testid="review-judgment" id="review-judgment" type="text" /></label>
-        <label for="review-rationale">理由 <textarea data-testid="review-rationale" id="review-rationale" rows="2"></textarea></label>
-        <label for="review-next">下一步 <textarea data-testid="review-next" id="review-next" rows="2"></textarea></label>
-        <button type="button" data-testid="save-review" id="save-review">保存人工复核</button>
-      </p>
-      <p data-testid="review-saved" id="review-saved"></p>
-      <button type="button" data-testid="resubmit-audit" id="resubmit-audit">显式重审</button>
-    </fieldset>
-
-    <pre data-testid="resource-panel" id="resource-panel"></pre>
-    <pre data-testid="capabilities" id="capabilities"></pre>
+      <pre data-testid="resource-panel" id="resource-panel"></pre>
+      <pre data-testid="capabilities" id="capabilities"></pre>
+    </main>
+    <script src="./product-api.js"></script>
     <script src="./app.js"></script>
+    <script src="./shell.js"></script>
   </body>
 </html>

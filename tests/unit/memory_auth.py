@@ -721,6 +721,7 @@ class MemoryAuthStore:
             "external_status": "none" if is_free_trial else "pending",
             "external_record_id": None,
             "trace_id": tid,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         self.usage_events.append(row)
         return dict(row)
@@ -747,7 +748,20 @@ class MemoryAuthStore:
             "external_status": row["external_status"],
             "external_record_id": row.get("external_record_id"),
             "trace_id": row["trace_id"],
+            "created_at": row.get("created_at"),
         }
+
+    def list_usage_events(self, principal: Principal, limit: int = 50) -> list[dict]:
+        try:
+            cap = max(1, min(int(limit), 50))
+        except (TypeError, ValueError):
+            cap = 50
+        items = [
+            self.usage_event_public(row)
+            for row in reversed(self.usage_events)
+            if row["tenant_id"] == principal.tenant_id and row["user_id"] == principal.user_id
+        ]
+        return items[:cap]
 
     def usage_event(self, principal: Principal, event_id: str) -> dict | None:
         for row in self.usage_events:

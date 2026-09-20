@@ -8,7 +8,7 @@
 | 飞书前端 | `ppap-web` | #11 |
 | 飞书身份、提交、用量 | `ppap-uac` | #11 |
 | Java PPAP/file-audit/transformer | `ppap-biz` | #11 |
-| 现有 Web/hosting slice | `ppap-host` | #11 / #15 |
+| 现有 Web/hosting slice | `ppap-host` | #57 / #58 |
 | 产品行为与现网运行知识 | `hax` | #11 / #15 |
 | 当前远程环境、配置和数据源 | 组织内可访问环境 | 对应 owning Issue |
 

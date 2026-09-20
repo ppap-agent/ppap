@@ -3,6 +3,8 @@
 本文件只在 legacy migration 期间存在。迁移 baseline 的具体 Git revision 只由 owning Issue 保存：
 - engine/corpus：#3
 - 飞书产品：#11
+- PC UI：#57
+- InsForge runtime：#58
 - 最终切换 / sunset：#15
 
 #15 完成后，本文件应删除或缩减到仍存在的真实兼容边界；历史迁移设计由 Git history 保存。

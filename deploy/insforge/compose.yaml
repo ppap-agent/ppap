@@ -1,0 +1,123 @@
+networks:
+  default:
+    name: insforge-network
+    external: true
+
+services:
+  minio:
+    image: ppap-minio:verify
+    build:
+      context: ../minio
+      dockerfile: Dockerfile
+    command: ["minio", "server", "/data", "--address", ":9000"]
+    environment:
+      MINIO_ROOT_USER: ${PPAP_S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${PPAP_S3_SECRET_KEY}
+
+  init:
+    image: ppap-api:${PPAP_BUILD_SHA}
+    depends_on:
+      minio:
+        condition: service_started
+    env_file:
+      - ${PPAP_COMPOSE_ENV_FILE:-env.example}
+    environment:
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
+    command:
+      - sh
+      - -c
+      - python tools/dev.py provision
+
+  api:
+    image: ppap-api:${PPAP_BUILD_SHA}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      PPAP_PROFILE: production
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
+      PPAP_SERVICE: api
+      PPAP_PG_HOST: ${PPAP_PG_HOST}
+      PPAP_PG_PORT: "${PPAP_PG_PORT}"
+      PPAP_PG_DATABASE: ${PPAP_PG_DATABASE}
+      PPAP_PG_API_USER: ${PPAP_PG_API_USER}
+      PPAP_PG_API_PASSWORD: ${PPAP_PG_API_PASSWORD}
+      PPAP_S3_ENDPOINT: ${PPAP_S3_ENDPOINT}
+      PPAP_S3_REGION: ${PPAP_S3_REGION}
+      PPAP_S3_BUCKET: ${PPAP_S3_BUCKET}
+      PPAP_S3_ACCESS_KEY: ${PPAP_S3_ACCESS_KEY}
+      PPAP_S3_SECRET_KEY: ${PPAP_S3_SECRET_KEY}
+      PPAP_WEB_URL: ${PPAP_WEB_URL}
+      PPAP_PUBLIC_API_URL: ${PPAP_PUBLIC_API_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
+      FEISHU_AI_ITEM_ID: ${FEISHU_AI_ITEM_ID:-}
+      FEISHU_FREE_TRIAL_QUOTA_POINTS: ${FEISHU_FREE_TRIAL_QUOTA_POINTS:-10000}
+      PPAP_PARTNER_AI_ENDPOINT: ${PPAP_PARTNER_AI_ENDPOINT:-}
+      LOG_FORMAT: json
+      LOG_LEVEL: INFO
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  worker:
+    image: ppap-worker:${PPAP_BUILD_SHA}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      PPAP_PROFILE: production
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
+      PPAP_SERVICE: worker
+      PPAP_PG_HOST: ${PPAP_PG_HOST}
+      PPAP_PG_PORT: "${PPAP_PG_PORT}"
+      PPAP_PG_DATABASE: ${PPAP_PG_DATABASE}
+      PPAP_PG_WORKER_USER: ${PPAP_PG_WORKER_USER}
+      PPAP_PG_WORKER_PASSWORD: ${PPAP_PG_WORKER_PASSWORD}
+      PPAP_S3_ENDPOINT: ${PPAP_S3_ENDPOINT}
+      PPAP_S3_REGION: ${PPAP_S3_REGION}
+      PPAP_S3_BUCKET: ${PPAP_S3_BUCKET}
+      PPAP_S3_ACCESS_KEY: ${PPAP_S3_ACCESS_KEY}
+      PPAP_S3_SECRET_KEY: ${PPAP_S3_SECRET_KEY}
+      PPAP_WEB_URL: ${PPAP_WEB_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OCR_ADAPTER_MODE: ${OCR_ADAPTER_MODE:-auto}
+      OCR_ENGINE: ${OCR_ENGINE:-easyocr}
+      OCR_LANGUAGES: ${OCR_LANGUAGES:-ch_sim,en}
+      OCR_OPENAI_API_KEY: ${OCR_OPENAI_API_KEY:-}
+      OCR_OPENAI_BASE_URL: ${OCR_OPENAI_BASE_URL:-}
+      OCR_MODEL_NAME: ${OCR_MODEL_NAME:-}
+      PADDLE_OCR_URL: ${PADDLE_OCR_URL:-}
+      PADDLE_TOKEN: ${PADDLE_TOKEN:-}
+      LOG_FORMAT: json
+      LOG_LEVEL: INFO
+
+  web:
+    image: ppap-web:${PPAP_BUILD_SHA}
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA}
+      PPAP_PUBLIC_API_URL: ${PPAP_PUBLIC_API_URL}
+      PPAP_WEB_BIND: 0.0.0.0
+      PPAP_WEB_PORT: "4173"
+    ports:
+      - "127.0.0.1:4173:4173"

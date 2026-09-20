@@ -430,6 +430,7 @@ class WebHookTests(unittest.TestCase):
             'data-testid="save-review"',
             'data-testid="resubmit-audit"',
             'data-testid="isolated-dev-login"',
+            'data-testid="pc-shell"',
             'id="source-upload"',
             "multiple",
         ):
@@ -437,6 +438,7 @@ class WebHookTests(unittest.TestCase):
         js = (ROOT / "apps" / "web" / "app.js").read_text()
         self.assertNotIn("filter((item) => item.role !== role)", js)
         self.assertIn("item.role === role && item.original_filename === file.name", js)
+        self.assertIn("PpapProduct.connect", js)
 
 
 class AuditHistoryPageTests(unittest.TestCase):
@@ -450,5 +452,6 @@ class AuditHistoryPageTests(unittest.TestCase):
         workbench = (ROOT / "apps" / "web" / "index.html").read_text()
         self.assertIn('href="./audit-files"', addon)
         self.assertIn('href="./audit-files"', workbench)
+        self.assertIn('href="./usage"', workbench)
         self.assertNotIn("audit-files.html", addon)
         self.assertNotIn("audit-files.html", workbench)

@@ -121,6 +121,8 @@ class DevToolingTests(unittest.TestCase):
             self.assertTrue((dist / "web" / "index.html").is_file())
             self.assertTrue((dist / "web" / "addon.html").is_file())
             self.assertTrue((dist / "web" / "audit-files.html").is_file())
+            self.assertTrue((dist / "web" / "usage.html").is_file())
+            self.assertTrue((dist / "web" / "product-api.js").is_file())
             self.assertEqual(json.loads((dist / "web" / "build-identity.json").read_text())["git_sha"], sha)
             self.assertFalse((dist / "web" / "runtime-config.json").exists())
 
@@ -194,6 +196,8 @@ class DevToolingTests(unittest.TestCase):
         self.assertNotIn("minio/minio:", compose)
         self.assertNotIn("context: deploy/minio", compose)
         dockerfile = (ROOT / "deploy" / "minio" / "Dockerfile").read_text()
+        app_dockerfile = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
+        self.assertIn("postgresql-client", app_dockerfile)
         from tools.stack import MINIO_RELEASE, MINIO_SHA256
 
         self.assertIn(MINIO_RELEASE, dockerfile)
@@ -241,7 +245,7 @@ class DevToolingTests(unittest.TestCase):
         self.assertNotEqual(settings.s3_endpoint, ISOLATED_DEV_S3_ENDPOINT)
 
     def test_compose_selects_explicit_env_file_for_init_and_runtime(self):
-        from tools.dev import _compose, _compose_envfile, compose_env_file, take_compose_env_args
+        from tools.dev import _compose, _compose_envfile, compose_env_file, compose_file, take_compose_env_args
 
         fixture = (ROOT / "deploy" / "compose.env.example").resolve()
         self.assertEqual(compose_env_file(), fixture)
@@ -258,6 +262,7 @@ class DevToolingTests(unittest.TestCase):
                     cmd = call.call_args.args[0]
                     env = call.call_args.kwargs["env"]
                 self.assertEqual(cmd[cmd.index("--env-file") + 1], str(selected.resolve()))
+                self.assertEqual(cmd[cmd.index("-f") + 1], str(compose_file()))
                 self.assertNotEqual(Path(cmd[cmd.index("--env-file") + 1]), fixture)
                 self.assertEqual(env["PPAP_COMPOSE_ENV_FILE"], str(selected.resolve()))
         self.assertEqual(compose_env_file(), fixture)
