@@ -8,6 +8,7 @@ const items = ref<Material[]>([]), rules = ref<Rule[]>([]), round = ref<Round | 
 const busy = ref(false), error = ref(''), message = ref(''), selectedFileId = ref(''), selectedKey = ref(''), filter = ref(''), search = ref('')
 const draftId = ref(new URLSearchParams(location.search).get('draft') || '')
 const review = reactive({judgment:'', rationale:'', next_step:''}), reviewDirty = ref(false)
+const workspacePanel = ref('checks')
 const selectedFile = computed(() => (round.value?.inputs || items.value).find(item => item.file_version_id === selectedFileId.value))
 const findings = computed(() => (round.value?.findings || []).filter(item => (!selectedFileId.value || item.locator?.file_version_id === selectedFileId.value) && (!filter.value || item.status === filter.value)))
 const selectedFinding = computed(() => round.value?.findings.find(item => item.item_key === selectedKey.value))
@@ -22,7 +23,7 @@ function choose(item?: Finding) {
   if (item?.item_key !== selectedKey.value && reviewDirty.value && !confirm('复核尚未保存，是否放弃修改？')) return false
   selectedKey.value = item?.item_key || ''; Object.assign(review, {judgment:item?.review?.judgment || '', rationale:item?.review?.rationale || '', next_step:item?.review?.next_step || ''}); reviewDirty.value = false; return true
 }
-function chooseFile(file:Material) { const first = round.value?.findings.find(row=>row.locator?.file_version_id === file.file_version_id && (!filter.value || row.status === filter.value)); if (choose(first)) selectedFileId.value = file.file_version_id }
+function chooseFile(file:Material) { const first = round.value?.findings.find(row=>row.locator?.file_version_id === file.file_version_id && (!filter.value || row.status === filter.value)); if (choose(first)) { selectedFileId.value = file.file_version_id; workspacePanel.value = 'checks' } }
 watch(filter, () => { choose(findings.value[0]) })
 async function saveDraft() {
   if (!draftId.value) draftId.value = (await request<{id:string}>('/drafts','POST')).id
@@ -120,7 +121,8 @@ onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout)})
   </div>
   <div v-else>
     <div class="audit-result-heading"><p><span v-for="count in counts" :key="count.status" :class="`status-${count.status}`">{{ count.status }} {{ count.count }}　</span></p><span>{{ ({queued:'排队中',running:'审核中',completed:'审核完成',failed:'执行失败'} as Record<string,string>)[round.execution] || round.execution }}</span><button :disabled="busy" @click="prepareAgain">准备下一次审核</button></div>
-    <div class="audit-workspace">
+    <nav class="workspace-switch" aria-label="审核工作区视图"><button v-for="panel in [{id:'files',label:'文件'},{id:'checks',label:'检查结果'},{id:'original',label:'原件'}]" :key="panel.id" :aria-pressed="workspacePanel===panel.id" @click="workspacePanel=panel.id">{{ panel.label }}</button></nav>
+    <div class="audit-workspace" :data-panel="workspacePanel">
       <aside class="audit-files"><label>本次资料<input v-model="search" type="search" placeholder="查找文件" /></label><button v-for="file in visibleFiles" :key="file.file_version_id" :aria-pressed="selectedFileId===file.file_version_id" @click="chooseFile(file)">{{ file.original_filename }}<small>{{ file.role==='reference'?'参考资料':file.rule?.title }}</small></button></aside>
       <section class="audit-checks"><h2>{{ selectedFile?.original_filename || '检查结果' }}</h2><p class="pc-muted">{{ selectedFile?.rule?.title }}</p><nav class="audit-filters" aria-label="结果筛选"><button v-for="status in ['', 'NG', 'ERR', 'PASS']" :key="status" :aria-pressed="filter===status" @click="filter=status">{{ status || '全部' }}</button></nav>
         <p v-if="!findings.length">{{ ['queued','running'].includes(round.execution)?'审核正在进行，完成后会在此显示结果。':'当前没有检查结果。' }}</p>

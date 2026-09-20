@@ -74,5 +74,22 @@
 .audit-material strong { overflow-wrap: anywhere; }
 .audit-checks .finding-row { width: 100%; text-align: left; }
 .audit-checks .finding-row.is-selected { border-color: var(--pc-accent); }
+.workspace-switch { display:none; }
+@media (max-width:1200px) {
+  .workspace-switch { display:flex; gap:8px; margin:12px 0; }
+  .workspace-switch button { min-height:44px; margin:0; }
+  .workspace-switch button[aria-pressed=true] { color:var(--pc-accent); border-color:var(--pc-accent); background:var(--pc-accent-soft); }
+  .audit-workspace { display:block; }
+  .audit-workspace > .audit-files, .audit-workspace > .audit-checks, .audit-workspace > .audit-original { display:none; border:0; }
+  .audit-workspace[data-panel=files] > .audit-files, .audit-workspace[data-panel=checks] > .audit-checks, .audit-workspace[data-panel=original] > .audit-original { display:block; }
+  .audit-app .rules-layout { grid-template-columns:minmax(180px, 30%) minmax(0,1fr); }
+}
+@media (max-width:700px) {
+  .audit-app button, .audit-app input, .audit-app select { min-height:44px; }
+  .audit-app .rules-layout { grid-template-columns:1fr; }
+  .audit-heading > div { display:flex; align-items:center; gap:8px; }
+  .audit-actions { flex-wrap:wrap; }
+  .audit-app input[type=file] { width:100%; min-width:0; }
+}
 @media (min-width:701px) and (max-width:980px) { .audit-app .pc-shell { width:var(--pc-sidebar); flex:0 0 var(--pc-sidebar); min-height:100vh; flex-direction:column; align-items:stretch; } .audit-app .pc-shell__nav { flex-direction:column; } }
 @media (max-width:700px) { #app { display:block; } .audit-material, .rules-layout { grid-template-columns:1fr; } .audit-app .pc-main { padding:0 16px 16px; } .audit-heading { margin:0 -16px 16px; padding:0 16px; min-height:60px; height:auto; } .rules-layout { margin:0; min-height:0; } .rules-layout > aside { border-right:0; border-bottom:1px solid var(--pc-border); } .audit-app .pc-shell__nav a { min-height:44px; } .audit-app table { display:table; } .audit-app thead { display:table-header-group; } .audit-app tbody { display:table-row-group; } .audit-app tr { display:table-row; } .audit-app th, .audit-app td { display:table-cell; } }
