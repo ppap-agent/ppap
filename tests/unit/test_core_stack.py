@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -63,10 +64,56 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["LLM_API_KEY"], "")
         self.assertEqual(values["FEISHU_APP_ID"], "")
 
+    def test_env_production_records_safe_defaults_without_isolated_dev_secrets(self):
+        path = ROOT / ".env.production"
+        values = dotenv_values(path)
+        self.assertNotIn("LEGACY_DOC_CONVERSION_ENABLED", values)
+        self.assertNotIn(ISOLATED_DEV_SECRET, set(values.values()))
+        self.assertEqual(values["PPAP_PROFILE"], "production")
+        self.assertEqual(values["PPAP_PG_PORT"], "5432")
+        self.assertEqual(values["PPAP_PG_DATABASE"], "ppap")
+        self.assertEqual(values["PPAP_PG_API_USER"], "ppap_api")
+        self.assertEqual(values["PPAP_PG_API_PASSWORD"], "")
+        self.assertEqual(values["PPAP_PG_HOST"], "")
+        self.assertEqual(values["PPAP_S3_ENDPOINT"], "")
+        self.assertEqual(values["PPAP_S3_ACCESS_KEY"], "")
+        self.assertEqual(values["PPAP_S3_REGION"], "us-east-1")
+        self.assertEqual(values["PPAP_S3_BUCKET"], "ppap-objects")
+        self.assertEqual(values["PPAP_WEB_URL"], "")
+        self.assertEqual(values["PPAP_PUBLIC_API_URL"], "")
+        self.assertEqual(values["LLM_BASE_URL"], "")
+        self.assertEqual(values["LLM_MODEL"], "")
+        self.assertEqual(values["FEISHU_FREE_TRIAL_QUOTA_POINTS"], "10000")
+        self.assertEqual(values["LOG_LEVEL"], "INFO")
+        self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
+        self.assertEqual(values["FEISHU_APP_ID"], "")
+
     def test_dotenv_overlay_fills_blanks_then_keeps_process_env(self):
         filled = apply_dotenv_files({"PPAP_PG_PORT": "", "PPAP_WEB_URL": "https://app.example"})
         self.assertEqual(filled["PPAP_PG_PORT"], "5432")
         self.assertEqual(filled["PPAP_WEB_URL"], "https://app.example")
+
+    def test_production_profile_does_not_fill_isolated_dev_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env.dev").write_text((ROOT / ".env.dev").read_text())
+            (root / ".env.production").write_text((ROOT / ".env.production").read_text())
+            with patch("tools.stack.ROOT", root):
+                isolated = apply_dotenv_files({})
+                production = apply_dotenv_files({"PPAP_PROFILE": "production", "PPAP_PG_PORT": ""})
+                (root / ".env").write_text("PPAP_PROFILE=production\n")
+                from_env_file = apply_dotenv_files({})
+        self.assertEqual(isolated["PPAP_PROFILE"], "isolated-dev")
+        self.assertEqual(isolated["PPAP_PG_API_PASSWORD"], ISOLATED_DEV_SECRET)
+        self.assertEqual(isolated["PPAP_S3_ENDPOINT"], "http://127.0.0.1:9000")
+        self.assertEqual(production["PPAP_PROFILE"], "production")
+        self.assertEqual(production["PPAP_PG_PORT"], "5432")
+        self.assertEqual(production["PPAP_PG_API_PASSWORD"], "")
+        self.assertEqual(production["PPAP_S3_ENDPOINT"], "")
+        self.assertEqual(production["PPAP_WEB_URL"], "")
+        self.assertEqual(from_env_file["PPAP_PROFILE"], "production")
+        self.assertEqual(from_env_file["PPAP_PG_API_PASSWORD"], "")
+        self.assertEqual(from_env_file["PPAP_S3_ENDPOINT"], "")
 
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(LLM_API_KEY="sk-test"):

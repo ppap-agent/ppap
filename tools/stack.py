@@ -45,18 +45,23 @@ def pythonpath() -> str:
     return shared_pythonpath()
 
 
-def apply_dotenv_files(env: dict[str, str]) -> dict[str, str]:
-    """Fill blanks from `.env.dev`, then from gitignored `.env`. Process env wins."""
+def _dotenv_values(path: Path) -> dict[str, str]:
     from dotenv import dotenv_values
 
+    if not path.is_file():
+        return {}
+    return {key: value for key, value in dotenv_values(path).items() if key and value is not None}
+
+
+def apply_dotenv_files(env: dict[str, str]) -> dict[str, str]:
+    """Fill blanks from profile defaults, then gitignored `.env`. Process env wins."""
     out = dict(env)
+    local = _dotenv_values(ROOT / ".env")
+    profile = str(out.get("PPAP_PROFILE") or local.get("PPAP_PROFILE") or "").strip()
+    defaults = ROOT / ".env.production" if profile == "production" else ROOT / ".env.dev"
     layered: dict[str, str] = {}
-    for path in (ROOT / ".env.dev", ROOT / ".env"):
-        if not path.is_file():
-            continue
-        for key, value in dotenv_values(path).items():
-            if key and value is not None:
-                layered[key] = value
+    layered.update(_dotenv_values(defaults))
+    layered.update(local)
     for key, value in layered.items():
         if not str(out.get(key) or "").strip():
             out[key] = value

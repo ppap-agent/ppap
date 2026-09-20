@@ -6,10 +6,10 @@
 
 ## 当前配置
 
-应用配置的 executable authority 是 typed Settings、[`.env.dev`](../.env.dev) 里的默认值，以及 [`.env.example`](../.env.example)。
+应用配置的 executable authority 是 typed Settings、[`.env.dev`](../.env.dev) / [`.env.production`](../.env.production) 里的默认值，以及 [`.env.example`](../.env.example)。
 
 - Secret 只通过本地 gitignored `.env`、GitHub Secrets 或部署 Secret 注入。
-- 已提交的 `.env.dev` 填的是 Settings 默认值；生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
+- 已提交的 `.env.dev` 填 isolated-dev Settings 默认值；[`.env.production`](../.env.production) 填生产仍可沿用的默认值，口令、S3 endpoint、公开 URL 和 LLM 留空。生产不能沿用 isolated-dev 口令和 `http://127.0.0.1:9000`。
 - `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。

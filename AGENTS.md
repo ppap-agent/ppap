@@ -13,7 +13,7 @@
 - 产品目标：Northstar 与当前 owning Issue。
 - 当前行为：本仓源码、数据库约束和测试。
 - 迁移 baseline：只由对应 owning Issue 拥有。
-- 配置：typed Settings、[`.env.dev`](.env.dev) 默认值与 [`.env.example`](.env.example)。
+- 配置：typed Settings、[`.env.dev`](.env.dev) / [`.env.production`](.env.production) 默认值与 [`.env.example`](.env.example)。
 - 当前工作状态：GitHub Issues / 当前 PR。
 
 Issue 是验收合同，不是实施顺序。允许一个 PR 同时推进多个 Issue；不要为了票的先后制造串行依赖。
