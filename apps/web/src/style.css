@@ -1,0 +1,65 @@
+.audit-app { --pc-sidebar: 188px; --pc-accent: #3370ff; --pc-radius: 8px; font-size: 14px; }
+.audit-app .pc-shell { background: #f8f9fb; position: sticky; top: 0; height: 100vh; }
+.audit-app .pc-shell__brand { padding: 8px 4px 20px; }
+.audit-app .pc-shell__brand small { font-weight: 400; font-size: 11px; color: var(--pc-accent); }
+.audit-app .pc-main { padding: 24px; }
+.audit-heading, .audit-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.audit-heading h1 { font-size: 24px; margin: 0 0 20px; }
+.audit-eyebrow { font-size: 11px; letter-spacing: .12em; color: var(--pc-accent); margin: 0 0 6px; }
+.audit-app button, .audit-app input, .audit-app select, .audit-app textarea { font: inherit; border: 1px solid #d8dce3; border-radius: 6px; padding: 8px 12px; }
+.audit-app button { background: white; cursor: pointer; }
+.audit-app button:disabled { cursor: wait; opacity: .55; }
+.audit-app button.pc-primary { background: var(--pc-accent); color: white; border-color: var(--pc-accent); }
+.audit-app :focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 3px; }
+.audit-app summary { cursor: pointer; padding: 12px 0; }
+#audit-preparation { max-width: 980px; margin: 24px auto; }
+.audit-steps { display: flex; justify-content: space-between; gap: 24px; padding: 0; list-style: none; margin-bottom: 24px; color: var(--pc-muted); }
+.audit-steps [aria-current] { color: var(--pc-accent); font-weight: 600; }
+.audit-upload { padding: 28px; }
+.audit-dropzone { min-height: 180px; border: 1px dashed #adc6ff; background: #f8faff; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; padding: 24px; border-radius: 8px; cursor: pointer; }
+.audit-dropzone span { color: var(--pc-muted); }
+.audit-dropzone input { max-width: 100%; background: white; }
+.audit-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 20px; }
+.audit-app [data-testid=draft-item] { display: grid; grid-template-columns: minmax(160px,1fr) 110px minmax(180px,1fr); align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--pc-border); }
+.audit-app [data-testid=draft-item] span { overflow-wrap: anywhere; }
+.audit-result-heading { justify-content: flex-start; flex-wrap: wrap; }
+.audit-result-heading button { margin-left: auto; }
+.audit-workspace { display: grid; grid-template-columns: 210px minmax(300px,1fr) minmax(300px,36%); border: 1px solid var(--pc-border); border-radius: 8px; background: white; min-height: 65vh; }
+.audit-files, .audit-checks, .audit-original { padding: 16px; min-width: 0; }
+.audit-files, .audit-checks { border-right: 1px solid var(--pc-border); }
+.audit-workspace h2 { font-size: 16px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.audit-files button { display: block; width: 100%; text-align: left; margin: 10px 0; overflow-wrap: anywhere; }
+.audit-files button[aria-pressed=true] { border-color: var(--pc-accent); background: var(--pc-accent-soft); }
+.audit-files small { display: block; color: var(--pc-muted); margin-top: 6px; }
+.audit-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.audit-filters button { padding: 4px 8px; margin: 0; font-size: 12px; }
+.audit-filters button[aria-pressed=true] { color: var(--pc-accent); background: var(--pc-accent-soft); border-color: var(--pc-accent); }
+.audit-original { overflow: auto; resize: horizontal; }
+.audit-original iframe { width: 100%; min-height: 65vh; border: 0; }
+.audit-original pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.audit-original header { display: flex; justify-content: space-between; gap: 8px; }
+.audit-original #file-preview-name { overflow-wrap: anywhere; color: var(--pc-muted); font-size: 12px; }
+.audit-app .finding-row { border-radius: 4px; }
+.audit-app .finding-row pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.audit-app .finding-row p { margin: 6px 0; }
+.audit-review { border-top: 1px solid var(--pc-border); margin-top: 24px; }
+.audit-app .pc-runtime { margin-top: 24px; }
+#audit-error:empty { display: none; }
+#audit-error:not(:empty) { color: #b42318; padding: 12px; background: #fff2f0; border-radius: 6px; }
+@media (max-width: 1200px) { .audit-app { --pc-sidebar: 148px; } .audit-workspace { grid-template-columns: 180px minmax(0,1fr); } .audit-original { grid-column: 1 / -1; border-top: 1px solid var(--pc-border); resize: none; } }
+@media (max-width: 700px) { .audit-app { display: block; } .audit-app .pc-shell { position: static; width: 100%; height: auto; min-height: 0; } .audit-app .pc-shell__nav { flex-direction: row; overflow-x: auto; } .audit-app .pc-shell__session { display: none; } .audit-app .pc-main { padding: 16px; } .audit-heading { align-items: flex-start; flex-wrap: wrap; } .audit-app [data-testid=draft-item] { grid-template-columns: 1fr; } .audit-workspace { display: block; } .audit-files { border-bottom: 1px solid var(--pc-border); } .audit-steps { gap: 8px; font-size: 12px; } }
+#app { display: flex; width: 100%; min-height: 100vh; }
+.rules-layout { display:grid; grid-template-columns:250px minmax(0,1fr); gap:20px; }
+.rule-link { display:block; width:100%; text-align:left; margin:12px 0; }
+.rule-link small { display:block; color:var(--pc-muted); }
+.rule-link[aria-pressed=true] { background:var(--pc-accent-soft); border-color:var(--pc-accent); }
+.rule-item { border-top:1px solid var(--pc-border); padding:12px 0; }
+.table-scroll { overflow-x:auto; }
+.audit-app [hidden] { display: none !important; }
+.audit-app .error { color: #b42318; background: #fff2f0; padding: 12px; border-radius: 6px; }
+.audit-material { display: grid; grid-template-columns: minmax(150px,1fr) 100px minmax(160px,1fr) auto; gap: 12px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--pc-border); }
+.audit-material small { display: block; color: var(--pc-muted); }
+.audit-material strong { overflow-wrap: anywhere; }
+.audit-checks .finding-row { width: 100%; text-align: left; }
+.audit-checks .finding-row.is-selected { border-color: var(--pc-accent); }
+@media (max-width:700px) { #app { display:block; } .audit-material, .rules-layout { grid-template-columns:1fr; } }

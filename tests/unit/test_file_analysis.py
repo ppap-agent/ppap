@@ -65,7 +65,10 @@ class FileAnalysisApiTests(RuleApiTests):
         result = self.client.get("/file-analyses/" + job.id).json()
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["result"]["matched_rule_id"], published.json()["id"])
+        latest_path = f"/files/{source['file_id']}/versions/{source['id']}/analysis"
+        self.assertEqual(self.client.get(latest_path).json()["analysis"]["id"], job.id)
         for subject in ("bob", "carol"):
             self.login(subject)
             self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 403)
+            self.assertEqual(self.client.get(latest_path).status_code, 403)
             self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 403)

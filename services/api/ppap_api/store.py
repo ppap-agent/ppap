@@ -635,6 +635,18 @@ class AuthStore:
     def get_file_analysis(self, principal, job_id: str) -> dict:
         return self._get_file_job(principal, job_id, "file_analysis")
 
+    def latest_file_analysis(self, principal, file_id: str, version_id: str) -> dict | None:
+        with self._conn() as conn:
+            prepared = self._prepared_items(conn, principal, [{"file_version_id": version_id, "role": "reference"}])
+            if prepared[0]["file_id"] != file_id:
+                raise KeyError("missing")
+            row = conn.execute(
+                """SELECT id FROM engine.jobs WHERE tenant_id = %s AND kind = 'file_analysis'
+                AND payload->>'source_file_version_id' = %s ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (principal.tenant_id, version_id),
+            ).fetchone()
+        return self.get_file_analysis(principal, str(row[0])) if row else None
+
     def _get_file_job(self, principal, job_id: str, kind: str) -> dict:
         parsed = _as_uuid(job_id)
         if not parsed:

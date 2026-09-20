@@ -7,6 +7,8 @@
 .pytest_cache
 dist
 node_modules
+**/node_modules
+**/dist
 tests
 docs
 assets

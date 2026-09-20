@@ -1,0 +1,31 @@
+<script setup lang="ts">
+import {computed, onBeforeUnmount, onMounted, ref} from 'vue'
+import {request, upload, originalUrl, type Rule, type Material, type Job} from './api'
+interface RuleItem {id:string; category:string; priority:string|null; rule_to_check:string; type_of_rule:string}
+interface RuleBody {kind:string; type:string; rule_profile:string; customers:string[]; models:string[]; parts:string[]; rules:RuleItem[]}
+interface Detail extends Rule {body:RuleBody; source_file_id:string; source_file_version_id:string}
+interface Candidate {title:string; body:RuleBody; source_file_version_id:string}
+const rules=ref<Rule[]>([]), selected=ref<Detail|null>(null), candidate=ref<Candidate|null>(null), source=ref<Material>(), types=ref<string[]>([]), type=ref(''), query=ref(''), error=ref(''), status=ref(''), busy=ref(false), predecessor=ref<string|null>(null)
+const visible=computed(()=>rules.value.filter(rule=>(rule.title+' '+rule.type).toLowerCase().includes(query.value.toLowerCase())))
+const body=computed(()=>candidate.value?.body || selected.value?.body)
+const sourceFile=computed(()=>candidate.value?source.value:selected.value?{file_id:selected.value.source_file_id,file_version_id:selected.value.source_file_version_id,original_filename:selected.value.title,role:'reference' as const,rule_version_id:null}:undefined)
+let timer:ReturnType<typeof setTimeout>|undefined, disposed=false
+async function action(work:()=>Promise<void>) {if(busy.value)return; busy.value=true; error.value=''; try{await work()}catch(e){error.value=e instanceof Error?e.message:'操作失败'}finally{busy.value=false}}
+async function refresh(){rules.value=(await request<{rules:Rule[]}>('/rules')).rules}
+async function select(id:string){await action(async()=>{selected.value=await request<Detail>(`/rules/${id}`);candidate.value=null;predecessor.value=null;status.value=''})}
+async function poll(id:string){
+  try{const job=await request<Job<Candidate>>(`/rules/parse/${id}`);if(disposed)return;status.value=job.status
+    if(job.status==='succeeded' && job.result){candidate.value=job.result;busy.value=false}
+    else if(['queued','leased'].includes(job.status))timer=setTimeout(()=>{void poll(id)},2000)
+    else{busy.value=false;error.value=job.status==='unknown'?'解析结果暂不确定，请稍后刷新查看，不要重复提交。':job.result?.error || '解析失败，请检查原件与文档类型。'}
+  }catch{busy.value=false;error.value='无法获取解析状态，请刷新重访当前任务。'}
+}
+async function parse(event:Event){const file=(event.target as HTMLInputElement).files?.[0];if(!file || busy.value)return;busy.value=true;error.value='';candidate.value=null
+  try{source.value=await upload(file,'reference');const job=await request<Job<Candidate>>('/rules/parse','POST',{request_id:crypto.randomUUID(),source_file_id:source.value.file_id,source_file_version_id:source.value.file_version_id,document_type:type.value});const url=new URL(location.href);url.searchParams.set('parse',job.id);if(predecessor.value)url.searchParams.set('predecessor',predecessor.value);else url.searchParams.delete('predecessor');history.replaceState(null,'',url);await poll(job.id)}
+  catch(e){busy.value=false;error.value=e instanceof Error?e.message:'上传失败'}
+}
+async function publish(){await action(async()=>{if(!candidate.value)return;const result=await request<Detail>('/rules','POST',{...candidate.value,predecessor_id:predecessor.value});candidate.value=null;selected.value=result;await refresh();history.replaceState(null,'','/rules');status.value='已保存规则'})}
+onMounted(()=>action(async()=>{await refresh();types.value=(await request<{types:string[]}>('/rule-types')).types;const params=new URLSearchParams(location.search);const id=params.get('parse');if(id){const job=await request<Job<Candidate>&{source_file_id:string;source_file_version_id:string;document_type:string}>(`/rules/parse/${id}`);source.value={file_id:job.source_file_id,file_version_id:job.source_file_version_id,original_filename:'规则原件',role:'reference',rule_version_id:null};type.value=job.document_type;predecessor.value=params.get('predecessor');timer=setTimeout(()=>{busy.value=true;void poll(id)},0)}}))
+onBeforeUnmount(()=>{disposed=true;clearTimeout(timer)})
+</script>
+<template><p v-if="error" class="error" role="alert">{{ error }}</p><div class="rules-layout"><aside class="pc-card"><h2>规则库</h2><input v-model="query" type="search" placeholder="搜索规则" aria-label="搜索规则" /><button v-for="rule in visible" :key="rule.id" class="rule-link" :disabled="busy" :aria-pressed="selected?.id===rule.id" @click="select(rule.id)"><strong>{{ rule.title }}</strong><small>{{ rule.type }} · {{ rule.created_at?new Date(rule.created_at).toLocaleDateString():'' }}</small></button><p v-if="!visible.length">还没有规则。</p></aside><section class="pc-card"><h2>{{ candidate?'核对解析内容':selected?.title || '上传客户规则' }}</h2><p class="pc-muted">将客户要求整理为可阅读的条目。解析内容目前不自动改变审核程序。</p><fieldset :disabled="busy"><legend>{{ predecessor?'更新当前规则':'新增规则' }}</legend><label>文档类型<select v-model="type"><option value="">自动识别</option><option v-for="name in types" :key="name">{{ name }}</option></select></label><input type="file" aria-label="规则原件" @change="parse" /></fieldset><p role="status">{{ ({queued:'等待解析',leased:'正在解析',succeeded:'解析完成，请核对后保存'} as Record<string,string>)[status] || status }}</p><template v-if="body"><label v-if="candidate">规则名称<input v-model="candidate.title" :disabled="busy" /></label><p>类型：{{ body.type }}　适用客户：{{ body.customers?.join('、') || '未指定' }}</p><p>型号：{{ body.models?.join('、') || '未指定' }}　零件：{{ body.parts?.join('、') || '未指定' }}</p><p><a v-if="sourceFile?.file_id" :href="originalUrl(sourceFile)" target="_blank" rel="noopener">查看原始文件</a><button v-if="selected?.predecessor_id" :disabled="busy" @click="select(selected.predecessor_id)">上一版本</button><button v-if="selected && !candidate" :disabled="busy" @click="predecessor=selected.id;status='请上传新的规则原件'">上传新版本</button></p><article v-for="item in body.rules" :key="item.id" class="rule-item"><h3>{{ item.category }} <small>{{ item.priority }}</small></h3><textarea v-if="candidate" v-model="item.rule_to_check" :disabled="busy" rows="3" aria-label="检查要求" /><p v-else>{{ item.rule_to_check }}</p></article><button v-if="candidate" class="pc-primary" :disabled="busy" @click="publish">保存规则</button></template></section></div></template>

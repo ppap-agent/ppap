@@ -1,0 +1,9 @@
+{
+  "name": "ppap-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {"dev": "vite --host 127.0.0.1", "build": "vue-tsc --noEmit && vite build", "typecheck": "vue-tsc --noEmit"},
+  "dependencies": {"vue": "3.5.43"},
+  "devDependencies": {"@vitejs/plugin-vue": "6.0.4", "typescript": "5.9.3", "vite": "7.3.6", "vue-tsc": "3.3.11"}
+}

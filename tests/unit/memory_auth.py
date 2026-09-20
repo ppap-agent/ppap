@@ -335,6 +335,13 @@ class MemoryAuthStore:
     def get_file_analysis(self, principal, job_id):
         return self._get_file_job(principal, job_id, "file_analysis")
 
+    def latest_file_analysis(self, principal, file_id, version_id):
+        prepared = self._prepared_items(principal, [{"file_version_id": version_id, "role": "reference"}])
+        if prepared[0]["file_id"] != file_id:
+            raise KeyError("missing")
+        jobs = [job for job in self.jobs.values() if job["tenant_id"] == principal.tenant_id and job["kind"] == "file_analysis" and job["payload"]["source_file_version_id"] == version_id]
+        return self.get_file_analysis(principal, max(jobs, key=lambda job: job["created"])["id"]) if jobs else None
+
     def _get_file_job(self, principal, job_id, kind):
         job = self.jobs.get(job_id)
         if not job or job["tenant_id"] != principal.tenant_id or job["kind"] != kind:

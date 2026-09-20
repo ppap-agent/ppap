@@ -75,6 +75,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
+    @app.get("/files/{file_id}/versions/{version_id}/analysis")
+    def files_latest_analysis(file_id: str, version_id: str, request: Request):
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse({"analysis": store.latest_file_analysis(principal, file_id, version_id)})
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.get("/drafts/{draft_id}")
     def drafts_get(draft_id: str, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)

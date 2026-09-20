@@ -4,11 +4,13 @@
 
 ## 当前 main
 
-当前 Web 是可演示的 PC 产品入口（工作台 / 审核文件 / 用量记录），不是旧轻量页面外套一层 shell。工作台覆盖准备资料、选择规则、提交、PASS/NG/ERR、依据与模型建议分栏、原件预览、文件版本、历史轮次切换、人工复核和显式重审。审核文件页提供搜索/执行筛选、版本与结果摘要。数据只走 Product API（`product-api.js`），含 provider-neutral `GET /usage`。飞书 docs-addon 入口是 `addon.html`（`app.json` `blockTypeID blk_69eb1e6ab880ccc61d0520b2`，客户路径 `/addon`）：已有 PPAP session 则复用 `/me`，否则宿主登录 → 当前文档关联文件 → Partner AI 额度门闩 → 普通 Feishu 提交/回访；PASS/NG 完成后自动写回当前文档。宿主 SDK 使用 vendored `@lark-opdev/block-docs-addon-api@0.0.11`，仅在 iframe 宿主中加载；测试可注入 `window.__PPAP_DOCS_ADDON_HOST__`。历史审核记录客户路径是 `/audit-files`，用量记录是 `/usage`。飞书客户功能 parity 由 #11 验收。PC 演示路径由 #57 验收。
+唯一产品界面是 Vue 3 + TypeScript，源码位于 `src/`，不设 `/v2` 或新旧界面切换。`/` 为审核准备与工作区，`/audit-files` 为审核记录，`/rules` 为规则库，`/usage` 只读展示用量。数据通过 `src/api.ts` 调用 Product API；前端不另建身份或业务存储。
+
+在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。Docs-addon 的 `/addon` 宿主适配仍保留，继续进入同一产品 API，不是第二套 PC 界面。
 
 ## 规则准备
 
-PC 与 docs-addon 多选文件默认全部待审，逐个选择规则版本；参考角色须明确选择且不执行完整审核。小组件使用普通文件版本/草稿/受理 API，URL 可回访已导入草稿和轮次，刷新不重新导入或提交。每个轮次展示冻结的逐文件规则；改变规则或角色须显式重审。
+PC 多选文件默认待审，参考资料可另行添加或修改角色。上传自动完成文件准备；后台任务提取客户、型号、零件并建议匹配规则，用户确认后提交。URL 可回访草稿和审核，刷新不重新上传或提交。
 
 规则准备入口是 `/rules`：上传 Excel、Word `.docx`、文本 PDF、Markdown 或结构化 JSON → Worker 解析 → 检查/编辑条目、类型、profile 和适用范围 → 确认发布。发布内容对本企业可见，来源原件仍独立检查文件权限。每次发布创建不可变规则版本；编辑已发布规则只会生成新版本，不更新原版本或旧审核快照。
 
