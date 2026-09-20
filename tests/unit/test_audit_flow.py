@@ -69,6 +69,27 @@ class AuditFlowTests(unittest.TestCase):
         self.assertIsNotNone(claimed)
         process_claimed(self.store, claimed, "test-worker")
 
+    def test_reaudit_draft_acceptance_retains_authorized_predecessor(self):
+        self._login('alice')
+        target = self._upload('report.xlsx', b'target-bytes')
+        def draft():
+            ident = self.client.post('/drafts').json()['id']
+            self.client.put(f'/drafts/{ident}', json={'items':[{'file_version_id':target['id'],'role':'target','rule_version_id':RULE_A}]})
+            return ident
+        first_draft = draft()
+        first = self.client.post(f'/drafts/{first_draft}/accept', json={'idempotency_key':'first-report'}).json()
+        second_draft = draft()
+        payload = {'idempotency_key':'second-report','predecessor_id':first['id']}
+        second = self.client.post(f'/drafts/{second_draft}/accept', json=payload)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.json()['predecessor_id'], first['id'])
+        self.assertEqual(self.client.get(f'/drafts/{second_draft}').json()['status'], 'accepted')
+        self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json=payload).json()['id'], second.json()['id'])
+        self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json={'idempotency_key':'second-report'}).status_code, 409)
+        third_draft = draft()
+        self.store.grant_table[(first['id'], self.store.principal_for_fixture('alice').user_id)] = set()
+        self.assertEqual(self.client.post(f'/drafts/{third_draft}/accept', json={'idempotency_key':'third-report','predecessor_id':first['id']}).status_code, 403)
+
     def test_draft_does_not_create_a_round(self):
         self._login("alice")
         target = self._upload("report.xlsx", b"target-bytes")

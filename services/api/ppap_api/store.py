@@ -786,15 +786,19 @@ class AuthStore:
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
                 return self._draft_public(conn, parsed)
 
-    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str) -> dict:
+    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
         key = normalize_idempotency_key(idempotency_key)
         parsed = _as_uuid(draft_id)
         if not parsed:
             raise KeyError("missing")
+        if predecessor_id:
+            resource = self.resource(predecessor_id)
+            if resource is None or resource.kind != 'audit_round' or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+                raise KeyError('missing')
         with self._conn() as conn:
             with conn.transaction():
                 return self._accept_locked(
-                    conn, principal, key, source_draft_id=parsed, predecessor_id=None, items=None
+                    conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None
                 )
 
     def resubmit_round(
@@ -1190,7 +1194,7 @@ class AuthStore:
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
-            SELECT id, request_fingerprint FROM product.audit_rounds
+            SELECT id, request_fingerprint, predecessor_id FROM product.audit_rounds
             WHERE tenant_id = %s AND idempotency_key = %s
             """,
             (principal.tenant_id, key),
@@ -1222,7 +1226,7 @@ class AuthStore:
             resource = self.resource(str(existing[0]))
             if resource is None or not can_read(principal, resource, self.grants(str(existing[0]), principal.user_id)):
                 raise KeyError("missing")
-            if existing[1] != fingerprint:
+            if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id:
                 raise ValueError("idempotency_conflict")
             return self._round_public(conn, str(existing[0]))
         if source_draft_id and draft_status == DRAFT_ACCEPTED:

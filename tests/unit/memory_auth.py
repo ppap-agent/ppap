@@ -405,9 +405,13 @@ class MemoryAuthStore:
             self.draft_items[draft_id] = self._bound_audit_items(principal, items, require_rules=False)
         return self._draft_public(draft_id)
 
-    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str) -> dict:
+    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
         key = normalize_idempotency_key(idempotency_key)
-        return self._accept(principal, key, source_draft_id=draft_id, predecessor_id=None, items=None)
+        if predecessor_id:
+            resource = self.resources.get(predecessor_id)
+            if resource is None or resource.kind != 'audit_round' or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+                raise KeyError('missing')
+        return self._accept(principal, key, source_draft_id=draft_id, predecessor_id=predecessor_id, items=None)
 
     def resubmit_round(
         self,
@@ -666,7 +670,7 @@ class MemoryAuthStore:
             resource = self.resources.get(existing_id)
             if resource is None or not can_read(principal, resource, self.grants(existing_id, principal.user_id)):
                 raise KeyError("missing")
-            if current["request_fingerprint"] != fingerprint:
+            if current["request_fingerprint"] != fingerprint or current['predecessor_id'] != predecessor_id:
                 raise ValueError("idempotency_conflict")
             return self._round_public(existing_id)
         if source_draft_id and draft["status"] == DRAFT_ACCEPTED:

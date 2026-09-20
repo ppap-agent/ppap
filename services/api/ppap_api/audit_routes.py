@@ -115,7 +115,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         try:
-            round_body = store.accept_draft(principal, draft_id, body.get("idempotency_key"))
+            round_body = store.accept_draft(principal, draft_id, body.get("idempotency_key"), body.get("predecessor_id"))
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(round_body, status_code=201)

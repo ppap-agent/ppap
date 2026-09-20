@@ -8,6 +8,7 @@ import ReportPreview from './ReportPreview.vue'
 const items = ref<Material[]>([]), rules = ref<Rule[]>([]), round = ref<Round | null>(null)
 const busy = ref(false), error = ref(''), message = ref(''), selectedFileId = ref(''), selectedKey = ref(''), filter = ref(''), search = ref('')
 const draftId = ref(new URLSearchParams(location.search).get('draft') || '')
+const predecessorId = ref(new URLSearchParams(location.search).get('from') || '')
 const review = reactive({judgment:'', rationale:'', next_step:''}), reviewDirty = ref(false)
 const workspacePanel = ref('checks')
 const workspace = ref<HTMLElement>(), previewWidth = ref(36), resizing = ref(false)
@@ -23,7 +24,10 @@ const findings = computed(() => (round.value?.findings || []).filter(item => (!s
 const selectedFinding = computed(() => round.value?.findings.find(item => item.item_key === selectedKey.value))
 const visibleFiles = computed(() => (round.value?.inputs || []).filter(item => item.original_filename.toLowerCase().includes(search.value.toLowerCase())))
 const counts = computed(() => ['PASS','NG','ERR'].map(status => ({status, count:(round.value?.findings || []).filter(row => row.status === status).length})))
+const analysisNotices:Record<string,string>={empty_document_text:'未提取到文字，将主要按文件名匹配。',document_text_unavailable:'文字提取失败，请核对文件类型与规则。',metadata_uses_excerpt:'业务信息基于文字摘录识别；审核仍读取完整文件。',metadata_extraction_failed:'业务信息识别失败，请人工核对。',rule_matching_failed:'自动匹配失败，请手动选择规则。',no_available_rules:'暂无可匹配的规则，请先上传规则。'}
+function guardLeave(event:BeforeUnloadEvent){if(reviewDirty.value){event.preventDefault();event.returnValue=''}}
 let disposed = false
+let activeRoundId = new URLSearchParams(location.search).get('round') || ''
 const timers = new Set<ReturnType<typeof setTimeout>>()
 function later(work:()=>void) { const timer = setTimeout(() => {timers.delete(timer); if (!disposed) work()}, 2000); timers.add(timer) }
 function query(values: Record<string,string | null>) { const url = new URL(location.href); for (const [key,value] of Object.entries(values)) value ? url.searchParams.set(key,value) : url.searchParams.delete(key); history.replaceState(null,'',url) }
@@ -41,7 +45,7 @@ function chooseFilter(status:string) {
 async function saveDraft() {
   if (!draftId.value) draftId.value = (await request<{id:string}>('/drafts','POST')).id
   await request(`/drafts/${draftId.value}`,'PUT',{items:items.value.map(item=>({file_version_id:item.file_version_id, role:item.role, rule_version_id:item.role === 'target' ? item.rule_version_id : null}))})
-  query({draft:draftId.value, round:null})
+  query({draft:draftId.value, round:null, from:predecessorId.value || null})
 }
 async function readAnalysis(item:Material, id:string) {
   try {
@@ -72,9 +76,10 @@ async function addFiles(event:Event, role:Material['role']) {
 }
 async function imported(material:Material) { items.value.push(material); await saveDraft(); void analyze(items.value[items.value.length-1]) }
 async function loadRound(id:string) {
+  if(id!==activeRoundId)return
   try {
     const result = await request<Round>(`/rounds/${id}`)
-    if (disposed) return
+    if (disposed || id!==activeRoundId) return
     round.value = result
     if (!selectedFileId.value) {selectedFileId.value=result.inputs.find(item=>item.role==='target')?.file_version_id || result.inputs[0]?.file_version_id || ''; choose(findings.value[0])}
     if (['queued','running'].includes(result.execution)) later(()=>{void loadRound(id)})
@@ -83,8 +88,8 @@ async function loadRound(id:string) {
 async function submit() { await action(async()=>{
   await saveDraft()
   const key=`ppap-idempotency-${draftId.value}`; const id=sessionStorage.getItem(key)||crypto.randomUUID(); sessionStorage.setItem(key,id)
-  const result=await request<Round>(`/drafts/${draftId.value}/accept`,'POST',{idempotency_key:id})
-  query({round:result.id,draft:null}); await loadRound(result.id)
+  const result=await request<Round>(`/drafts/${draftId.value}/accept`,'POST',{idempotency_key:id,predecessor_id:predecessorId.value || null})
+  query({round:result.id,draft:null,from:null}); predecessorId.value='';activeRoundId=result.id; await loadRound(result.id)
 }) }
 async function saveReview() { await action(async()=>{
   if (!round.value || !selectedFinding.value) return
@@ -92,10 +97,11 @@ async function saveReview() { await action(async()=>{
   round.value=result; reviewDirty.value=false; message.value='复核已保存。'
 }) }
 async function prepareAgain() { await action(async()=>{
-  if (!round.value || (reviewDirty.value && !confirm('复核尚未保存，是否放弃修改？'))) return
-  items.value=round.value.inputs.map(item=>({...item})); round.value=null; draftId.value=''; selectedFileId.value=''; choose(); await saveDraft()
+  if (!round.value || !choose()) return
+  predecessorId.value=round.value.id; items.value=round.value.inputs.map(item=>({...item}));activeRoundId=''; round.value=null; draftId.value=''; selectedFileId.value=''; filter.value=''; await saveDraft()
 }) }
 onMounted(async()=>{
+  window.addEventListener('beforeunload',guardLeave)
   await action(async()=>{
     rules.value=(await request<{rules:Rule[]}>('/rules')).rules
     const id=new URLSearchParams(location.search).get('round')
@@ -109,7 +115,7 @@ onMounted(async()=>{
     }
   })
 })
-onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout)})
+onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout);window.removeEventListener('beforeunload',guardLeave)})
 </script>
 
 <template>
@@ -123,7 +129,7 @@ onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout)})
     </section>
     <section class="pc-card"><h2>确认文件与规则</h2><p v-if="!items.length" class="pc-muted">上传文件后，在这里核对资料用途与匹配规则。</p>
       <div v-for="item in items" :key="item.file_version_id" class="audit-material">
-        <div><strong>{{ item.original_filename }}</strong><small v-if="item.analysis">{{ [item.analysis.document_type,item.analysis.metadata.customer,item.analysis.metadata.model,item.analysis.metadata.part].filter(Boolean).join(' · ') || '未识别到业务信息' }}</small><small v-if="['queued','leased'].includes(item.analysisStatus || '')">正在识别信息与匹配规则…</small><small v-if="['failed','unknown'].includes(item.analysisStatus || '')">分析未完成，可手动选择规则。</small><small v-if="item.analysis?.matching_status === 'unmatched'">未找到匹配规则，请手动选择。</small></div>
+        <div><strong>{{ item.original_filename }}</strong><small v-if="item.analysis">{{ [item.analysis.document_type,item.analysis.metadata.customer,item.analysis.metadata.model,item.analysis.metadata.part].filter(Boolean).join(' · ') || '未识别到业务信息' }}</small><small v-if="['queued','leased'].includes(item.analysisStatus || '')">正在识别信息与匹配规则…</small><small v-if="['failed','unknown'].includes(item.analysisStatus || '')">分析未完成，可手动选择规则。</small><small v-if="item.analysis?.matching_status === 'unmatched'">未找到匹配规则，请手动选择。</small><small v-for="notice in item.analysis?.notices || []" :key="notice">{{ analysisNotices[notice] || notice }}</small></div>
         <select v-model="item.role" aria-label="文件用途" :disabled="busy" @change="item.rule_version_id=null"><option value="target">待审</option><option value="reference">参考</option></select>
         <select v-model="item.rule_version_id" aria-label="匹配规则" :disabled="busy || item.role==='reference'"><option :value="null">选择审核规则</option><option v-for="rule in rules" :key="rule.id" :value="rule.id">{{ rule.title }} · {{ rule.type }}</option></select>
         <button type="button" :disabled="busy" @click="items=items.filter(row=>row!==item)">移除</button>
@@ -145,7 +151,7 @@ onBeforeUnmount(()=>{disposed=true; timers.forEach(clearTimeout)})
       <div class="preview-resizer" role="separator" tabindex="0" aria-label="调整原件预览宽度" aria-orientation="vertical" :aria-valuenow="Math.round(previewWidth)" aria-valuemin="28" aria-valuemax="50" @pointerdown.prevent="startResize" @pointermove="resizePreview" @pointerup="resizing=false" @pointercancel="resizing=false" @lostpointercapture="resizing=false" @keydown="resizeKey" />
       <OriginalPreview :file="selectedFile" :round-id="round.id" />
     </div>
-    <ReportPreview :round="round" />
+    <ReportPreview :round="round" :unsaved-review="reviewDirty" />
     <details><summary>审核范围与记录</summary><p>待审：{{ round.coverage?.checked?.join('、') }}</p><p>参考：{{ round.coverage?.unchecked?.join('、') }}</p><a v-if="round.predecessor_id" :href="`/?round=${round.predecessor_id}`">查看上一轮</a><a href="/audit-files">全部审核记录</a></details>
   </div>
 </template>

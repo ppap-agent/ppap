@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import {computed, ref, watch} from 'vue'
+import {computed, onBeforeUnmount, ref, watch} from 'vue'
 import {type Round, originalUrl, request} from './api'
-const props=defineProps<{round:Round}>()
+const props=defineProps<{round:Round;unsavedReview?:boolean}>()
 interface Export {id:string; status:string; document_id:string|null}
 const report=ref<Export|null>(null), exporting=ref(false), error=ref('')
 const path=computed(()=>`/integrations/feishu/rounds/${props.round.id}/report`)
-async function readReport(){try{report.value=(await request<{report:Export|null}>(path.value)).report}catch{report.value=null}}
-async function exportReport(){if(exporting.value)return;exporting.value=true;error.value='';try{report.value=(await request<{report:Export|null}>(path.value,'POST',{})).report}catch(e){error.value=e instanceof Error?e.message:'报告创建失败，请重新读取状态后确认。'}finally{exporting.value=false}}
-watch(()=>props.round,()=>{if(props.round.execution==='completed')void readReport()}, {immediate:true})
+let revision=0
+async function readReport(){const current=++revision;try{const result=await request<{report:Export|null}>(path.value);if(current===revision){report.value=result.report;error.value=''}}catch{if(current===revision)error.value='无法读取报告状态，请稍后重新读取。'}}
+async function exportReport(){if(exporting.value || props.unsavedReview)return;exporting.value=true;error.value='';const current=++revision;try{const result=await request<{report:Export|null}>(path.value,'POST',{});if(current===revision)report.value=result.report}catch(e){if(current===revision)error.value=e instanceof Error?e.message:'报告创建失败，请重新读取状态后确认。'}finally{exporting.value=false}}
+watch(()=>props.round,()=>{revision++;report.value=null;if(props.round.execution==='completed')void readReport()}, {immediate:true})
+onBeforeUnmount(()=>{revision++})
 const groups=computed(()=>props.round.inputs.filter(file=>file.role==='target').map(file=>({file,findings:props.round.findings.filter(finding=>finding.locator?.file_version_id===file.file_version_id)})))
 const incomplete=computed(()=>props.round.execution!=='completed' || !groups.value.length || groups.value.some(group=>!group.findings.length || group.findings.some(finding=>finding.status==='ERR')))
 </script>
@@ -15,7 +17,8 @@ const incomplete=computed(()=>props.round.execution!=='completed' || !groups.val
 <template>
   <details class="report-preview">
     <summary>审核报告预览</summary>
-    <div class="audit-actions"><button class="pc-primary" :disabled="incomplete || exporting || !!report" @click="exportReport">{{ exporting?'正在生成报告…':'生成飞书报告' }}</button><button v-if="report && report.status!=='ready' || error" :disabled="exporting" @click="readReport">重新读取状态</button><a v-if="report?.document_id" :href="`https://feishu.cn/docx/${encodeURIComponent(report.document_id)}`" target="_blank" rel="noopener">{{ report.status==='ready'?'打开飞书报告':'查看已创建文档（内容可能不完整）' }}</a></div>
+    <div class="audit-actions"><button class="pc-primary" :disabled="incomplete || exporting || !!report || unsavedReview || !!error" @click="exportReport">{{ exporting?'正在生成报告…':'生成飞书报告' }}</button><button v-if="report && report.status!=='ready' || error" :disabled="exporting" @click="readReport">重新读取状态</button><a v-if="report?.document_id" :href="`https://feishu.cn/docx/${encodeURIComponent(report.document_id)}`" target="_blank" rel="noopener">{{ report.status==='ready'?'打开飞书报告':'查看已创建文档（内容可能不完整）' }}</a></div>
+    <p v-if="unsavedReview" role="status">请先保存人工复核，再生成报告。预览仅包含已保存的结果。</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <p v-if="report && report.status!=='ready'" role="status">{{ report.status==='unknown'?'创建或写入结果不确定，请先核对飞书文档，不要重复创建。':'报告正在创建或写入；若长时间未完成，请核对飞书文档。' }}</p>
     <p v-if="report?.status==='ready'">报告已生成。请在飞书文档中使用分享功能；后续复核修改不会自动覆盖这份报告。</p>

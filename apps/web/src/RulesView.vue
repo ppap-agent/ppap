@@ -8,6 +8,8 @@ interface Detail extends Rule {body:RuleBody; source_file_id:string; source_file
 interface Candidate {title:string; body:RuleBody; source_file_version_id:string}
 const rules=ref<Rule[]>([]), selected=ref<Detail|null>(null), candidate=ref<Candidate|null>(null), source=ref<Material>(), types=ref<string[]>([]), type=ref(''), query=ref(''), error=ref(''), status=ref(''), busy=ref(false), predecessor=ref<string|null>(null)
 const customer=ref(''), customerQuery=ref(''), view=ref<'list'|'detail'|'upload'>('list'), showVersions=ref(false)
+const parseId=ref(new URLSearchParams(location.search).get('parse') || '')
+function guardLeave(event:BeforeUnloadEvent){if(candidate.value){event.preventDefault();event.returnValue=''}}
 const currentRules=computed(()=>{const older=new Set(rules.value.map(rule=>rule.predecessor_id).filter(Boolean));return rules.value.filter(rule=>!older.has(rule.id))})
 const customers=computed(()=>Array.from(new Set(currentRules.value.flatMap(rule=>rule.customers?.length?rule.customers:['未指定客户']))).sort().filter(name=>name.includes(customerQuery.value)))
 function belongs(rule:Rule,name:string){return name==='未指定客户'?!rule.customers?.length:rule.customers?.includes(name)}
@@ -29,12 +31,13 @@ async function poll(id:string){
   }catch{busy.value=false;error.value='无法获取解析状态，请刷新重访当前任务。'}
 }
 async function parse(event:Event){const file=(event.target as HTMLInputElement).files?.[0];if(!file || busy.value)return;busy.value=true;error.value='';candidate.value=null
-  try{source.value=await upload(file,'reference');const job=await request<Job<Candidate>>('/rules/parse','POST',{request_id:crypto.randomUUID(),source_file_id:source.value.file_id,source_file_version_id:source.value.file_version_id,document_type:type.value});const url=new URL(location.href);url.searchParams.set('parse',job.id);if(predecessor.value)url.searchParams.set('predecessor',predecessor.value);else url.searchParams.delete('predecessor');history.replaceState(null,'',url);await poll(job.id)}
+  try{source.value=await upload(file,'reference');const job=await request<Job<Candidate>>('/rules/parse','POST',{request_id:crypto.randomUUID(),source_file_id:source.value.file_id,source_file_version_id:source.value.file_version_id,document_type:type.value});parseId.value=job.id;const url=new URL(location.href);url.searchParams.set('parse',job.id);if(predecessor.value)url.searchParams.set('predecessor',predecessor.value);else url.searchParams.delete('predecessor');history.replaceState(null,'',url);await poll(job.id)}
   catch(e){busy.value=false;error.value=e instanceof Error?e.message:'上传失败'}
 }
 async function publish(){await action(async()=>{if(!candidate.value)return;const result=await request<Detail>('/rules','POST',{...candidate.value,predecessor_id:predecessor.value});candidate.value=null;selected.value=result;await refresh();history.replaceState(null,'','/rules');status.value='已保存规则'})}
-onMounted(()=>action(async()=>{await refresh();types.value=(await request<{types:string[]}>('/rule-types')).types;const params=new URLSearchParams(location.search);const id=params.get('parse');if(id){const job=await request<Job<Candidate>&{source_file_id:string;source_file_version_id:string;document_type:string}>(`/rules/parse/${id}`);source.value={file_id:job.source_file_id,file_version_id:job.source_file_version_id,original_filename:'规则原件',role:'reference',rule_version_id:null};type.value=job.document_type;predecessor.value=params.get('predecessor');timer=setTimeout(()=>{busy.value=true;void poll(id)},0)}}))
-onBeforeUnmount(()=>{disposed=true;clearTimeout(timer)})
+async function resumeParse(){if(busy.value || !parseId.value)return;busy.value=true;error.value='';view.value='upload';try{const job=await request<Job<Candidate>&{source_file_id:string;source_file_version_id:string;document_type:string}>(`/rules/parse/${parseId.value}`);if(disposed)return;source.value={file_id:job.source_file_id,file_version_id:job.source_file_version_id,original_filename:'规则原件',role:'reference',rule_version_id:null};type.value=job.document_type;predecessor.value=new URLSearchParams(location.search).get('predecessor');await poll(parseId.value)}catch{busy.value=false;error.value='无法读取解析任务，请稍后重新读取。'}}
+onMounted(async()=>{window.addEventListener('beforeunload',guardLeave);await action(async()=>{await refresh();types.value=(await request<{types:string[]}>('/rule-types')).types});if(parseId.value && !disposed)await resumeParse()})
+onBeforeUnmount(()=>{disposed=true;clearTimeout(timer);window.removeEventListener('beforeunload',guardLeave)})
 </script>
 <template>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -60,6 +63,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(timer)})
         <div class="section-heading"><div><h2>{{ candidate?'核对解析内容':selected?.title || '上传客户规则' }}</h2><p class="pc-muted">{{ candidate?'请核对 AI 提取的条目，再保存到规则库。':'保留规则版本和来源，方便审核时核对。' }}</p></div></div>
         <fieldset v-if="view==='upload'" class="rule-upload" :disabled="busy"><legend>{{ predecessor?'上传新版本':'选择规则文件' }}</legend><p class="pc-muted">支持 Excel、Word、PDF、Markdown 和 JSON。</p><label>文档类型<select v-model="type"><option value="">自动识别</option><option v-for="name in types" :key="name">{{ name }}</option></select></label><label class="rule-upload-file">规则原件<input type="file" accept=".xlsx,.xls,.xlsm,.doc,.docx,.pdf,.md,.json" @change="parse" /></label></fieldset>
         <p v-if="status" role="status" class="rule-status">{{ ({queued:'等待解析',leased:'正在解析，请稍候…',succeeded:'解析完成，请核对后保存'} as Record<string,string>)[status] || status }}</p>
+        <button v-if="parseId && !candidate && (error || status==='unknown')" :disabled="busy" @click="resumeParse">重新读取解析状态（不重跑）</button>
         <template v-if="body && view==='detail'">
           <label v-if="candidate">规则名称<input v-model="candidate.title" :disabled="busy" /></label>
           <dl class="rule-metadata"><div><dt>文件类型</dt><dd>{{ body.type }}</dd></div><div><dt>适用客户</dt><dd>{{ body.customers?.join('、') || '未指定' }}</dd></div><div><dt>型号 / 零件</dt><dd>{{ [...(body.models || []),...(body.parts || [])].join('、') || '未指定' }}</dd></div><div v-if="selected && !candidate"><dt>版本时间</dt><dd>{{ new Date(selected.created_at).toLocaleString() }}</dd></div></dl>
