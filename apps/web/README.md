@@ -35,6 +35,8 @@ docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/onlyof
 
 ## 最终责任
 
+报告通过当前用户身份创建飞书文档，分享由飞书处理。若飞书返回 `99991679`，表示缺少用户授权（[官方说明](https://open.feishu.cn/document/faq/trouble-shooting/how-to-resolve-error-99991679)）。报告页提供显式授权入口，请求 `docx:document:create` 和 `docx:document:write_only`；开放平台也需已启用对应用户身份权限。普通登录不请求这些写权限，授权完成不会自动创建报告。只有明确拒绝且尚未创建文档时允许手动重试；超时或内容写入结果未知时先核对文档。
+
 - 产品导航和呈现
 - 文件/资料集准备
 - 审核提交和结果回访

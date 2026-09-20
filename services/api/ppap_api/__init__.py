@@ -228,12 +228,14 @@ def create_app(
         return JSONResponse({"error": "ignored"}, status_code=400)
 
     @app.get("/login/feishu", response_model=None)
-    def login_feishu(return_to: str = "") -> RedirectResponse | JSONResponse:
+    def login_feishu(return_to: str = "", purpose: str = "") -> RedirectResponse | JSONResponse:
+        if purpose not in ("", "report"):
+            return JSONResponse({"error": "invalid_login_purpose"}, status_code=400)
         if not settings.feishu_app_id or not settings.feishu_app_secret:
             return JSONResponse({"error": "feishu_disabled"}, status_code=409)
         state = new_token()
         store.save_state(state, safe_return_to(return_to, settings))
-        return RedirectResponse(authorize_url(settings, state), status_code=302)
+        return RedirectResponse(authorize_url(settings, state, report=purpose == "report"), status_code=302)
 
     @app.get("/login/feishu/callback")
     def login_feishu_callback(code: str = "", state: str = "", error: str = "") -> RedirectResponse:

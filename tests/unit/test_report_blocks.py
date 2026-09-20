@@ -7,6 +7,13 @@ from ppap_core.feishu_writeback import FeishuWritebackError, report_blocks, crea
 
 
 class ReportBlocksTests(unittest.TestCase):
+    def test_missing_user_consent_is_a_definite_rejection_even_with_http_400(self):
+        http = Mock()
+        http.post.return_value = httpx.Response(400, json={'code': 99991679})
+        with self.assertRaisesRegex(FeishuWritebackError, 'feishu_report_create_rejected:99991679'):
+            create_report_document(http, 'test-token', '报告')
+        self.assertEqual(http.post.call_count, 1)
+
     def test_permission_rejection_retains_public_error_code(self):
         http = Mock()
         http.post.return_value = httpx.Response(403, json={'code': 99991672, 'msg': 'private provider details'})

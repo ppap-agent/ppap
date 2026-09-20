@@ -55,13 +55,15 @@ def callback_url(settings: Settings) -> str:
     return settings.public_api_url.rstrip("/") + "/login/feishu/callback"
 
 
-def authorize_url(settings: Settings, state: str) -> str:
+def authorize_url(settings: Settings, state: str, *, report: bool = False) -> str:
     params = {
         "client_id": settings.feishu_app_id,
         "response_type": "code",
         "redirect_uri": callback_url(settings),
         "state": state,
     }
+    if report:
+        params["scope"] = "docx:document:create docx:document:write_only"
     return AUTHORIZE_URL + "?" + urlencode(params)
 
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, ref, watch} from 'vue'
-import {type Round, originalUrl, request} from './api'
+import {type Round, apiUrl, originalUrl, request} from './api'
 const props=defineProps<{round:Round;unsavedReview?:boolean}>()
 interface Export {id:string; status:string; document_id:string|null;error_code?:string|null}
 const report=ref<Export|null>(null), exporting=ref(false), error=ref('')
 const path=computed(()=>`/integrations/feishu/rounds/${props.round.id}/report`)
+const needsConsent=computed(()=>report.value?.error_code?.endsWith(':99991679'))
+const consentUrl=computed(()=>`${apiUrl}/login/feishu?purpose=report&return_to=${encodeURIComponent(`${location.origin}/?round=${props.round.id}`)}`)
 let revision=0
 async function readReport(){const current=++revision;try{const result=await request<{report:Export|null}>(path.value);if(current===revision){report.value=result.report;error.value=''}}catch{if(current===revision)error.value='无法读取报告状态，请稍后重新读取。'}}
 async function exportReport(){if(exporting.value || props.unsavedReview)return;exporting.value=true;error.value='';const current=++revision;try{const result=await request<{report:Export|null}>(path.value,'POST',{});if(current===revision)report.value=result.report}catch(e){if(current===revision)error.value=e instanceof Error?e.message:'报告创建失败，请重新读取状态后确认。'}finally{exporting.value=false}}
@@ -22,6 +24,7 @@ const incomplete=computed(()=>props.round.execution!=='completed' || !groups.val
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <p v-if="report && report.status!=='ready'" role="status">{{ report.status==='failed'?'飞书拒绝创建报告。请检查登录授权、应用文档权限或限流情况，处理后可重试。':report.status==='unknown'?'创建或写入结果不确定，请先核对飞书文档，不要重复创建。':'报告正在创建或写入；若长时间未完成，请核对飞书文档。' }}</p>
     <p v-if="report?.error_code" role="alert" class="error">{{ report.error_code.startsWith('feishu_report_write_')?'报告内容写入失败':'报告创建失败' }}（诊断码：{{ report.error_code }}）</p>
+    <p v-if="needsConsent">生成报告需要你授权 PPAP 创建和编辑飞书文档。<a :href="consentUrl">授权生成报告</a>；返回后再重试。授权不会自动创建报告。</p>
     <p v-if="report?.status==='ready'">报告已生成。请在飞书文档中使用分享功能；后续复核修改不会自动覆盖这份报告。</p>
     <p v-if="incomplete" role="status">审核尚未完整完成或存在执行错误。以下为当前结果，不能作为完整通过结论。</p>
     <p>机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。</p>

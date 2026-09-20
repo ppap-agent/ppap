@@ -193,6 +193,15 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(bad.status_code, 303)
         self.assertTrue(bad.headers["location"].startswith("http://127.0.0.1:4173"))
 
+    def test_report_consent_is_explicit_and_limited_to_document_creation_and_writing(self):
+        from urllib.parse import parse_qs, urlparse
+        normal = self.client.get('/login/feishu', follow_redirects=False)
+        self.assertNotIn('scope', parse_qs(urlparse(normal.headers['location']).query))
+        report = self.client.get('/login/feishu?purpose=report', follow_redirects=False)
+        query = parse_qs(urlparse(report.headers['location']).query)
+        self.assertEqual(query.get('scope'), ['docx:document:create docx:document:write_only'])
+        self.assertEqual(self.client.get('/login/feishu?purpose=arbitrary', follow_redirects=False).status_code, 400)
+
     def test_oauth_callback_binds_tenant_subject_not_email(self):
         from urllib.parse import parse_qs, urlparse
 

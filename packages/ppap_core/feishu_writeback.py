@@ -19,7 +19,8 @@ def _report_error(response, stage: str) -> FeishuWritebackError:
     status = int(getattr(response, 'status_code', 0) or 0)
     code = _response_json(response).get('code')
     detail = str(code) if type(code) is int and code != 0 else 'http_' + str(status)
-    outcome = 'rejected' if status in (401, 403, 422, 429) else 'unknown'
+    # Feishu can return missing app/user permission as HTTP 400, before creation.
+    outcome = 'rejected' if status in (401, 403, 422, 429) or code in (99991672, 99991679) else 'unknown'
     return FeishuWritebackError(f'feishu_report_{stage}_{outcome}:{detail}')
 
 
