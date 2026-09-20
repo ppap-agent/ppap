@@ -14,9 +14,13 @@
         <a data-nav="audit-files" data-testid="nav-audit-files" href="./audit-files">审核文件</a>
         <a data-nav="usage" data-testid="nav-usage" href="./usage">用量记录</a>
       </nav>
+      <p class="pc-shell__session">当前身份 <code data-testid="current-user" id="history-user">anonymous</code></p>
     </aside>
     <main class="pc-main">
-      <h1>审核文件</h1>
+      <header class="pc-page-head">
+        <h1 data-testid="pc-page-title">审核文件</h1>
+        <p class="pc-lead">回访历史轮次。每一轮固定当时的文件版本，新上传不会改写旧结果。</p>
+      </header>
       <div class="pc-toolbar">
         <input data-testid="history-search" id="history-search" type="search" placeholder="搜索文件或规则" />
         <select data-testid="history-execution-filter" id="history-execution-filter">
@@ -31,7 +35,7 @@
       <p data-testid="history-empty" id="history-empty" class="hidden">暂无审核记录</p>
       <table data-testid="history-list" id="history-list" class="hidden">
         <thead>
-          <tr><th>文件</th><th>规则</th><th>执行</th><th>回访</th></tr>
+          <tr><th>文件</th><th>版本</th><th>规则</th><th>执行</th><th>结果</th><th>回访</th></tr>
         </thead>
         <tbody data-testid="history-rows" id="history-rows"></tbody>
       </table>

@@ -14,10 +14,13 @@
         <a data-nav="audit-files" data-testid="nav-audit-files" href="./audit-files">审核文件</a>
         <a data-nav="usage" data-testid="nav-usage" href="./usage">用量记录</a>
       </nav>
+      <p class="pc-shell__session">当前身份 <code data-testid="current-user" id="usage-user">anonymous</code></p>
     </aside>
     <main class="pc-main">
-      <h1>用量记录</h1>
-      <p>只列出当前身份在本租户下已发生的用量事件；外部确认状态单独保存，不把本地任务完成当成已扣费。</p>
+      <header class="pc-page-head">
+        <h1 data-testid="pc-page-title">用量记录</h1>
+        <p class="pc-lead">只列出当前身份在本租户下已发生的用量事件；外部确认状态单独保存，不把本地任务完成当成已扣费。</p>
+      </header>
       <p data-testid="usage-error" id="usage-error" class="error hidden"></p>
       <p data-testid="usage-empty" id="usage-empty" class="hidden">暂无用量记录</p>
       <table data-testid="usage-list" id="usage-list" class="hidden">

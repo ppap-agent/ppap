@@ -396,6 +396,10 @@ class MemoryAuthStore:
             if resource is None or not can_read(principal, resource, self.grants(round_id, principal.user_id)):
                 continue
             body = self._round_public(round_id)
+            result_counts = {"PASS": 0, "NG": 0, "ERR": 0}
+            for finding in body.get("findings") or []:
+                if finding["status"] in result_counts:
+                    result_counts[finding["status"]] += 1
             items.append(
                 {
                     "id": body["id"],
@@ -404,9 +408,14 @@ class MemoryAuthStore:
                     "predecessor_id": body.get("predecessor_id"),
                     "created_at": body.get("created_at"),
                     "inputs": [
-                        {"role": item["role"], "original_filename": item["original_filename"]}
+                        {
+                            "role": item["role"],
+                            "original_filename": item["original_filename"],
+                            "file_version_id": item["file_version_id"],
+                        }
                         for item in body.get("inputs") or []
                     ],
+                    "result_counts": result_counts,
                 }
             )
             if len(items) >= cap:

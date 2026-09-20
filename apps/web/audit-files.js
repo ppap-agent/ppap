@@ -4,6 +4,21 @@ function targetName(row) {
   return (target && target.original_filename) || (inputs[0] && inputs[0].original_filename) || row.id;
 }
 
+function versionLabel(row) {
+  const inputs = row.inputs || [];
+  const target = inputs.find((item) => item.role === "target") || inputs[0];
+  return (target && target.file_version_id) || "";
+}
+
+function resultSummary(row) {
+  const counts = row.result_counts || {};
+  const total = (counts.PASS || 0) + (counts.NG || 0) + (counts.ERR || 0);
+  if (!total) {
+    return row.execution || "";
+  }
+  return `PASS ${counts.PASS || 0} / NG ${counts.NG || 0} / ERR ${counts.ERR || 0}`;
+}
+
 function renderRows(items, query, execution) {
   const errorNode = document.getElementById("history-error");
   const emptyNode = document.getElementById("history-empty");
@@ -33,9 +48,11 @@ function renderRows(items, query, execution) {
     const rule = (row.rule && row.rule.title) || "";
     return `<tr data-testid="history-row">
       <td>${name}</td>
+      <td data-testid="history-version">${versionLabel(row)}</td>
       <td>${rule}</td>
       <td>${row.execution || ""}</td>
-      <td><a data-testid="history-open-round" href="./?round=${encodeURIComponent(row.id)}">回访</a></td>
+      <td data-testid="history-result">${resultSummary(row)}</td>
+      <td><a data-testid="history-open-round" href="./?round=${encodeURIComponent(row.id)}">打开详情</a></td>
     </tr>`;
   }).join("");
 }
@@ -43,6 +60,11 @@ function renderRows(items, query, execution) {
 async function main() {
   const { api } = await window.PpapProduct.connect();
   const product = window.PpapProduct.client(api);
+  const me = await product.me();
+  const userNode = document.getElementById("history-user");
+  if (userNode) {
+    userNode.textContent = me.ok ? me.body.identity.subject : "anonymous";
+  }
   const listed = await product.rounds.list();
   if (!listed.ok) {
     const errorNode = document.getElementById("history-error");
