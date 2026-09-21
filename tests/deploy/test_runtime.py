@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import unittest
 import urllib.request
@@ -47,14 +48,23 @@ class DeployRuntimeTests(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:4173/", timeout=5) as response:
             body = response.read().decode()
             self.assertEqual(response.status, 200)
-            self.assertIn("<", body)
-        with urllib.request.urlopen("http://127.0.0.1:4173/audit-files", timeout=5) as response:
-            self.assertEqual(response.status, 200)
-            self.assertIn("审核文件", response.read().decode())
+            self.assertIn('id="app"', body)
+            self.assertIn("PPAP Audit", body)
+            script = re.search(r'src="(/assets/[^"]+\.js)"', body)
+            self.assertIsNotNone(script)
+        with urllib.request.urlopen("http://127.0.0.1:4173" + script.group(1), timeout=5) as response:
+            bundle = response.read().decode()
+            self.assertIn("nav-audit-files", bundle)
+            self.assertIn("审核结果", bundle)
+            self.assertIn("usage-list", bundle)
+        for path in ("/audit-files", "/usage", "/rules"):
+            with urllib.request.urlopen("http://127.0.0.1:4173" + path, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn('id="app"', response.read().decode())
         with urllib.request.urlopen("http://127.0.0.1:4173/addon", timeout=5) as response:
-            self.assertIn("PPAP Audit", response.read().decode())
-        with urllib.request.urlopen("http://127.0.0.1:4173/usage", timeout=5) as response:
-            self.assertIn('data-testid="usage-list"', response.read().decode())
+            html = response.read().decode()
+            self.assertIn("PPAP Audit", html)
+            self.assertIn("audit-files", html)
         with urllib.request.urlopen("http://127.0.0.1:4173/runtime-config.json", timeout=5) as response:
             config = json.loads(response.read().decode())
             self.assertEqual(config["api_url"], "http://127.0.0.1:8080")
