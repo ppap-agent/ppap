@@ -21,18 +21,21 @@
 
 ```text
 audit_round
+  -> analysis_mode (standard | deep; 草稿可改，受理后冻结)
   -> target file_version_id + frozen rule_version (id/title/body)
   -> reference file_version_id (无审核规则，仅上下文)
-  -> job/attempt
+  -> job/attempt（冻结 executor / executor_revision）
   -> machine findings + locators
   -> human reviews
 ```
+
+`analysis_mode` 属于草稿和轮次，不是文件或规则属性。缺省 `standard`。相同幂等键、相同文件版本/角色/规则绑定、但不同 `analysis_mode` 视为冲突。`request_fingerprint` 仍只覆盖文件版本/角色/规则绑定，不把模式塞进指纹。SHA-256 只用于 Deep 执行完整性校验，不替代 `file_version_id`。
 
 ## 受理与重试
 
 每个待审文件在受理时绑定明确规则版本；参考文件不得附审核规则。草稿保存可暂缺规则，受理不可缺。规则的 id/title/body 随每个轮次输入冻结，后续发布不会改旧快照。
 
-相同租户、相同幂等键、相同文件版本/角色/规则绑定返回同一轮次；同键不同请求冲突。幂等键不是授权，返回既有轮次前仍检查对象权限。创建轮次、冻结输入和创建执行工作在一个 PostgreSQL 事务内完成。
+相同租户、相同幂等键、相同文件版本/角色/规则绑定与 `analysis_mode` 返回同一轮次；同键不同请求冲突。幂等键不是授权，返回既有轮次前仍检查对象权限。创建轮次、冻结输入和创建执行工作在一个 PostgreSQL 事务内完成。
 
 Worker 用租约/attempt fencing 防止晚到结果覆盖当前结果。技术重试保持轮次不变；用户主动重审创建新轮次。
 

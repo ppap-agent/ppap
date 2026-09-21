@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ppap_api.store import AuthStore
 from ppap_core.audits import (
+    ANALYSIS_DEEP,
     KIND_PRESENCE,
     TARGET,
     evaluate_round,
@@ -255,6 +256,15 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
             return result
         if work.tenant_id:
             tokens.extend(bind(tenant_id=work.tenant_id))
+        if work.analysis_mode == ANALYSIS_DEEP:
+            result, outcome = run_deep_round(store, claimed, work)
+            accepted = store.complete_job(claimed, ident, result, outcome)
+            emit(
+                "job_completed" if accepted else "job_result_discarded",
+                outcome=outcome,
+                note=result.get("note") or "deep_audit",
+            )
+            return result
         runner = lambda current: engine_runner(current, store)
         try:
             result = evaluate_round(work, engine_runner=runner)
@@ -272,6 +282,39 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
             return result
     finally:
         reset(tokens)
+
+
+def run_deep_round(store: AuthStore, claimed, work) -> tuple[dict, str]:
+    """Deep execution boundary. Never falls back to the in-repo Standard engine."""
+    from ppap_core.audits import DEEP_PROTOCOL_REVISION, EXECUTOR_DEEP, execution_error_result, frozen_executor
+    from ppap_deep.client import DeepClient, DeepError
+    from ppap_deep.mapping import product_result, spec_from_work
+
+    settings = getattr(store, "settings", None)
+    payload = claimed.payload if isinstance(claimed.payload, dict) else {}
+    executor = payload.get("executor")
+    revision = payload.get("executor_revision")
+    _expected_executor, expected_revision = frozen_executor(
+        ANALYSIS_DEEP,
+        getattr(settings, "deep_executor_revision", "") if settings else "",
+    )
+    if work.analysis_mode != ANALYSIS_DEEP or executor != EXECUTOR_DEEP:
+        return execution_error_result("deep_executor_mismatch"), "failed"
+    if revision != expected_revision:
+        return execution_error_result("executor_revision_mismatch"), "failed"
+    socket_path = str(getattr(settings, "deep_controller_socket", "") if settings else "").strip()
+    if not socket_path:
+        return execution_error_result("deep_runtime_unavailable"), "failed"
+    try:
+        spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION)
+        response = DeepClient(socket_path).execute(spec)
+        result = product_result(response, work)
+        result["note"] = result.get("note") or "deep_audit"
+        return result, "succeeded"
+    except DeepError as exc:
+        return execution_error_result(exc.code), "failed"
+    except Exception:
+        return execution_error_result("deep_execution_failed"), "failed"
 
 
 def run() -> None:

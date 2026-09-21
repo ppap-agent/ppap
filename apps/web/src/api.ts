@@ -18,10 +18,13 @@ export interface Finding {
 export interface Round {
   id: string; execution: string; inputs: Material[]; findings: Finding[]; predecessor_id?: string
   created_at?: string; result_counts?: Record<string, number>; reviewed_count?: number; coverage?: {checked: string[]; unchecked: string[]; locator_gap: boolean}
+  analysis_mode?: AnalysisMode; executor?: string; executor_revision?: string
 }
-export interface Draft {id:string; status:string; items:Material[]; updated_at?:string; predecessor_id?:string|null}
+export interface Draft {id:string; status:string; items:Material[]; updated_at?:string; predecessor_id?:string|null; analysis_mode?: AnalysisMode}
+export type AnalysisMode = 'standard' | 'deep'
 export const resultLabels:Record<string,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常'}
 export const executionLabels:Record<string,string> = {queued:'排队中', running:'检查中', completed:'检查完成', failed:'执行失败'}
+export const analysisModeLabels:Record<AnalysisMode,string> = {standard:'标准', deep:'深度'}
 export function dateLabel(value?:string) {
   return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
 }
@@ -39,6 +42,7 @@ const messages: Record<string,string> = {
   unauthenticated: '请先登录飞书。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
   rule_required: '请为待审文件选择规则。', target_required: '请添加至少一份待审文件。', review_conflict: '复核已被更新，请刷新后核对。',
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
+  invalid_analysis_mode: '请选择标准或深度审核。',
 }
 export async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})

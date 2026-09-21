@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent} from 'react'
-import {request, upload, dateLabel, executionLabels, resultLabels, type Draft, type Material, type Rule, type Round, type Analysis, type Job, type Finding} from './api'
+import {request, upload, dateLabel, executionLabels, resultLabels, analysisModeLabels, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding} from './api'
 import {analysisNotices, clampPreviewWidth, latestRules, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from './helpers'
 import OriginalPreview, {type OriginalPreviewHandle} from './OriginalPreview'
 import DrivePicker from './DrivePicker'
@@ -37,7 +37,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   const [draftNext, setDraftNext] = useState<number | null>(null)
   const [draftLoading, setDraftLoading] = useState(false)
   const [previousRound, setPreviousRound] = useState<Round | null>(null)
-  const [savedDraft, setSavedDraft] = useState('[]')
+  const [savedDraft, setSavedDraft] = useState(JSON.stringify({items: [], analysis_mode: 'standard'}))
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('standard')
   const [dragActive, setDragActive] = useState(false)
   const originalPreview = useRef<OriginalPreviewHandle>(null)
   const workspace = useRef<HTMLDivElement>(null)
@@ -62,6 +63,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   const predecessorIdRef = useRef(predecessorId)
   const savedDraftRef = useRef(savedDraft)
   const initializedRef = useRef(false)
+  const analysisModeRef = useRef(analysisMode)
   const restoredPosition = useRef<ReturnType<typeof parseWorkspacePosition>>(null)
   const resizeStart = useRef({x: 0, width: 50})
   const viewScroll = useRef({review: 0, original: 0, report: 0})
@@ -81,6 +83,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   draftIdRef.current = draftId
   predecessorIdRef.current = predecessorId
   savedDraftRef.current = savedDraft
+  analysisModeRef.current = analysisMode
   pendingRef.current = pendingChange
 
   useEffect(() => { onReviewing(!!round) }, [round, onReviewing])
@@ -96,7 +99,10 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   function materialSnapshot(list = items) {
     return list.map(item => ({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.role === 'target' ? item.rule_version_id : null}))
   }
-  const draftDirty = !round && JSON.stringify(materialSnapshot()) !== savedDraft
+  function draftSnapshot(list = items, mode = analysisMode) {
+    return {items: materialSnapshot(list), analysis_mode: mode}
+  }
+  const draftDirty = !round && JSON.stringify(draftSnapshot()) !== savedDraft
   const draftDirtyRef = useRef(draftDirty)
   draftDirtyRef.current = draftDirty
   const missingRules = items.filter(item => item.role === 'target' && !item.rule_version_id).length
@@ -185,8 +191,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
       setDraftId(id)
       draftIdRef.current = id
     }
-    const snapshot = materialSnapshot(list)
-    await request(`/drafts/${id}`, 'PUT', {items: snapshot})
+    const snapshot = draftSnapshot(list, analysisModeRef.current)
+    await request(`/drafts/${id}`, 'PUT', snapshot)
     const serialized = JSON.stringify(snapshot)
     setSavedDraft(serialized)
     savedDraftRef.current = serialized
@@ -313,7 +319,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
       }
     } else {
       choose(roundRef.current?.findings.find(item => item.item_key === selectedKeyRef.current))
-      const serialized = JSON.stringify(materialSnapshot())
+      const serialized = JSON.stringify(draftSnapshot())
       setSavedDraft(serialized)
       savedDraftRef.current = serialized
     }
@@ -349,6 +355,9 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
         const nextItems = current.inputs.map(item => ({...item}))
         setItems(nextItems)
         itemsRef.current = nextItems
+        const nextMode = current.analysis_mode === 'deep' ? 'deep' : 'standard'
+        setAnalysisMode(nextMode)
+        analysisModeRef.current = nextMode
         activeRoundId.current = ''
         setRound(null)
         roundRef.current = null
@@ -526,10 +535,13 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
         const draft = await request<Draft>(`/drafts/${draftIdRef.current}`)
         setItems(draft.items)
         itemsRef.current = draft.items
+        const nextMode = draft.analysis_mode === 'deep' ? 'deep' : 'standard'
+        setAnalysisMode(nextMode)
+        analysisModeRef.current = nextMode
         const from = draft.predecessor_id || predecessorIdRef.current
         setPredecessorId(from)
         predecessorIdRef.current = from
-        const serialized = JSON.stringify(materialSnapshot(draft.items))
+        const serialized = JSON.stringify(draftSnapshot(draft.items, nextMode))
         setSavedDraft(serialized)
         savedDraftRef.current = serialized
         if (from) setPreviousRound(await request<Round>(`/rounds/${from}`))
@@ -622,6 +634,13 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
               {!!targetCount && <div className="scope-note scope-inline">客户规则用于人工复核<Help title="审核范围"><p>自动检查按所选文档类型执行；客户规则中的自定义条目供人工复核。</p></Help></div>}
               <div className="action-bar sticky-actions">
                 <div>
+                  <label className="mode-select">
+                    <span>审核模式</span>
+                    <select data-testid="analysis-mode" value={analysisMode} disabled={busy} aria-label="审核模式" onChange={event => setAnalysisMode(event.target.value === 'deep' ? 'deep' : 'standard')}>
+                      <option value="standard">{analysisModeLabels.standard}</option>
+                      <option value="deep">{analysisModeLabels.deep}</option>
+                    </select>
+                  </label>
                   <strong>{targetCount} 份待审</strong>
                   {!!missingRules && <span className="status-NG"> · {missingRules} 份未匹配规则</span>}
                   <small className="pc-muted">{draftDirty ? '有未保存的修改' : '草稿已保存'}</small>
@@ -640,7 +659,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                 <a key={draft.id} className="draft-row" href={'/?draft=' + draft.id}>
                   <div>
                     <strong>{draft.items.filter(item => item.role === 'target').map(item => item.original_filename).join('、') || draft.items.map(item => item.original_filename).join('、')}</strong>
-                    <small>{draft.items.length} 份资料 · {dateLabel(draft.updated_at)}{draft.predecessor_id ? ' · 再次审核' : ''}</small>
+                    <small>{draft.items.length} 份资料 · {dateLabel(draft.updated_at)}{draft.predecessor_id ? ' · 再次审核' : ''}{draft.analysis_mode === 'deep' ? ' · 深度' : ''}</small>
                   </div>
                   <span>继续 →</span>
                 </a>
@@ -656,6 +675,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
             <div className="round-context">
               <a className="back-link" href="/audit-files" data-testid="open-history">← 审核结果</a>
               <span className="round-status">{executionLabels[round.execution] || round.execution}</span>
+              {round.analysis_mode === 'deep' && <span className="round-mode" data-testid="round-analysis-mode">{analysisModeLabels.deep}</span>}
               <span className="round-date">{round.inputs.filter(file => file.role === 'target').length} 份资料 · {dateLabel(round.created_at)}</span>
             </div>
             <div className="button-group">

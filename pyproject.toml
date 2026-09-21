@@ -56,6 +56,7 @@ where = [
 ]
 include = [
     "ppap_core*",
+    "ppap_deep*",
     "ppap_docops*",
     "ppap_excel_audit_engine*",
     "ppap_ocr_adapter*",

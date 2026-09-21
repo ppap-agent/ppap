@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     web_port: int = Field(default=4173, alias="PPAP_WEB_PORT")
     web_url: str = Field(default="", alias="PPAP_WEB_URL")
     worker_id: str = Field(default="", alias="PPAP_WORKER_ID")
+    deep_controller_socket: str = Field(default="", alias="PPAP_DEEP_CONTROLLER_SOCKET")
+    deep_executor_revision: str = Field(default="", alias="PPAP_DEEP_EXECUTOR_REVISION")
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
     DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"

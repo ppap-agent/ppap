@@ -15,7 +15,7 @@ PPAP 唯一公开 HTTP API。isolated-dev 使用 `docker compose -f deploy/isola
 - 对象授权读取 `/resources/{id}`
 - 文件/版本：创建版本、写入 blob、finalize、读取 metadata、download
 - isolated-dev fixture session 与 staging cleanup
-- 审核草稿、规则选择、受理入队、轮次读取、人工复核、显式重审
+- 审核草稿、规则选择、受理入队、轮次读取、人工复核、显式重审。草稿/轮次带 `analysis_mode`（`standard` | `deep`，缺省 `standard`）；`PUT /drafts/{id}` 可写 `analysis_mode`，受理后冻结。
 - 审核历史：`GET /rounds`（当前主体可读取的 round 摘要，供 docs-addon / Web 回访，不另建飞书履历台账）。客户入口路径是 `/audit-files`。
 - 用量读取：`GET /usage`（当前主体在本租户下的 `usage_events`，含 `created_at` 与外部确认状态；不是飞书专属入口，也不发明本地余额）
 

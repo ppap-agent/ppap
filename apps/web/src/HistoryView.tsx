@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {dateLabel, executionLabels, resultLabels, request, type Round} from './api'
+import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type Round} from './api'
 
 export default function HistoryView() {
   const [rows, setRows] = useState<Round[]>([])
@@ -63,7 +63,7 @@ export default function HistoryView() {
                   <td className="record-title">
                     <a href={'/?round=' + row.id}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</a>
                   </td>
-                  <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time>{row.predecessor_id && <small className="repeat-label">重审</small>}</td>
+                  <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time>{row.predecessor_id && <small className="repeat-label">重审</small>}{row.analysis_mode === 'deep' && <small className="repeat-label">{analysisModeLabels.deep}</small>}</td>
                   <td data-label="检查结果" data-testid="history-result">
                     {row.execution !== 'completed'
                       ? <span className={'badge' + (row.execution === 'failed' ? ' status-ERR' : '')}>{executionLabels[row.execution] || row.execution}</span>
