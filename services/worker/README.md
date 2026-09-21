@@ -6,7 +6,7 @@ isolated-dev 使用 `docker compose -f deploy/isolated-dev/compose.yaml up --bui
 
 ## 当前 main
 
-当前 Worker 已有 heartbeat、`engine.jobs` claim（含过期 `leased` 重试，同一 round 只增加 attempt）、按 round `analysis_mode` 的单一执行边界（`standard` 对本轮待审文件调用本仓 `run_audit_engine`，`deep` 只走 bounded Controller protocol），以及产品轮次 findings 写回。Deep 不持有 Docker socket，失败不回退 Standard。claim/complete 的 JSON 日志带 `job_id` / `attempt` / `round_id` / `tenant_id`，不记录 findings 正文。飞书入口仍由 #11 拥有。
+当前 Worker 已有 heartbeat、`engine.jobs` claim（含过期 `leased` 重试，同一 round 只增加 attempt）、按 round `analysis_mode` 的单一执行边界（`standard` 对本轮待审文件调用本仓 `run_audit_engine`，`deep` 只走 bounded Controller protocol），以及产品轮次 findings 写回。Deep 不持有 Docker socket，失败不回退 Standard。Controller 是独立进程 `python -m ppap_deep`。claim/complete 的 JSON 日志带 `job_id` / `attempt` / `round_id` / `tenant_id`，不记录 findings 正文。飞书入口仍由 #11 拥有。
 
 ## 最终责任
 

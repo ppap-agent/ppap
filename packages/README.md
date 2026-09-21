@@ -7,7 +7,7 @@
 | Package | Owns |
 |---|---|
 | `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型、审核 contracts/types |
-| `ppap_deep` | 独立 Deep 执行协议、UDS client、Controller；把冻结 round 转成 bounded spec 再写回 findings |
+| `ppap_deep` | 独立 Deep 执行协议、UDS client、Controller；把冻结 round 转成 bounded spec 再写回 findings。`python -m ppap_deep` 是 Controller 进程，拥有 gVisor guest；Worker 只连 UDS |
 | `ppap_docops` | 文档抽取、转换、文件工具 |
 | `ppap_excel_audit_engine` | 规则检查器与 worker audit runtime |
 | `ppap_pdf_to_excel` | PDF → Excel |

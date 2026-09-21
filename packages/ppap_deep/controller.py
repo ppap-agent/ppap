@@ -115,9 +115,10 @@ class Controller:
 
 
 class UnixControllerServer:
-    def __init__(self, path: str, controller: Controller):
+    def __init__(self, path: str, controller: Controller, request_timeout: float = 180.0):
         self.path = path
         self.controller = controller
+        self.request_timeout = request_timeout
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
@@ -172,7 +173,7 @@ class UnixControllerServer:
                 continue
             with conn:
                 try:
-                    conn.settimeout(30)
+                    conn.settimeout(self.request_timeout)
                     payload = read_frame(conn)
                     if len(json.dumps(payload).encode()) > MAX_FRAME:
                         write_frame(conn, ErrorEnvelope(op="error", code="deep_payload_too_large").model_dump())
