@@ -31,6 +31,6 @@ apps/web -> services/api -> PostgreSQL / object storage -> services/worker -> pa
 - [#3 审核引擎与回归资产迁移](https://github.com/ppap-agent/ppap/issues/3)
 - [#7 核心审核产品流程](https://github.com/ppap-agent/ppap/issues/7)
 - [#11 飞书 PPAP 迁移](https://github.com/ppap-agent/ppap/issues/11)
-- [#15 生产交付与旧路径 Sunset](https://github.com/ppap-agent/ppap/issues/15)
+- [#15 本仓生产交付与客户入口](https://github.com/ppap-agent/ppap/issues/15)
 
 这些 Issue 是验收合同，不是实施顺序。具体迁移原则、资产使用默认和开发约束见 [AGENTS.md](AGENTS.md)；不要在 README 复制 Issue 正文或迁移 baseline。
