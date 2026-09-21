@@ -12,3 +12,4 @@
 \ir 0012_report_exports.sql
 \ir 0013_report_errors.sql
 \ir 0014_draft_origin.sql
+\ir 0015_analysis_mode.sql

@@ -125,6 +125,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("packages", cfg["where"])
         self.assertIn("services/api", cfg["where"])
         self.assertIn("ppap_core*", cfg["include"])
+        self.assertIn("ppap_deep*", cfg["include"])
         self.assertIn("ppap_excel_audit_engine*", cfg["include"])
 
     def test_bake_tags_api_worker_web_with_the_same_sha(self):

@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ppap_core.audits import (
+    ANALYSIS_STANDARD,
     ClaimedJob,
     DRAFT_ACCEPTED,
     DRAFT_OPEN,
@@ -19,6 +20,8 @@ from ppap_core.audits import (
     EXEC_RUNNING,
     RoundInput,
     RoundWork,
+    job_payload,
+    normalize_analysis_mode,
     normalize_idempotency_key,
     normalize_review,
     normalize_role,
@@ -79,6 +82,29 @@ def _as_uuid(value: str) -> str | None:
         return str(uuid.UUID(value))
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _executor_public(payload) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    extra = {}
+    if payload.get("executor"):
+        extra["executor"] = payload["executor"]
+    if payload.get("executor_revision"):
+        extra["executor_revision"] = payload["executor_revision"]
+    return extra
+
+
+def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> dict:
+    diagnostic = {
+        "note": result.get("note") or "round_audit",
+        "finding_count": len(findings),
+    }
+    payload = claimed.payload if isinstance(claimed.payload, dict) else {}
+    if payload.get("executor"):
+        diagnostic["executor"] = payload["executor"]
+        diagnostic["executor_revision"] = payload.get("executor_revision")
+    return diagnostic
 
 
 class AuthStore:
@@ -731,16 +757,24 @@ class AuthStore:
         draft_id = str(uuid.uuid4())
         with self._conn() as conn:
             with conn.transaction():
+                mode = ANALYSIS_STANDARD
+                if predecessor_id:
+                    inherited = conn.execute(
+                        "SELECT analysis_mode FROM product.audit_rounds WHERE id = %s",
+                        (predecessor_id,),
+                    ).fetchone()
+                    if inherited:
+                        mode = normalize_analysis_mode(inherited[0])
                 conn.execute(
                     "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')",
                     (draft_id, principal.tenant_id),
                 )
                 conn.execute(
                     """
-                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id, analysis_mode)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id),
+                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, mode),
                 )
                 conn.execute(
                     """
@@ -772,7 +806,9 @@ class AuthStore:
         with self._conn() as conn:
             return self._draft_public(conn, parsed)
 
-    def save_draft(self, principal: Principal, draft_id: str, items: list[dict] | None) -> dict:
+    def save_draft(
+        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None
+    ) -> dict:
         parsed = _as_uuid(draft_id)
         if not parsed:
             raise KeyError("missing")
@@ -800,6 +836,12 @@ class AuthStore:
                             """,
                             (parsed, row["file_version_id"], row["role"], row["rule_version_id"]),
                         )
+                if analysis_mode is not None:
+                    conn.execute(
+                        "UPDATE product.audit_drafts SET analysis_mode = %s, updated_at = now() WHERE id = %s",
+                        (normalize_analysis_mode(analysis_mode), parsed),
+                    )
+                elif items is not None:
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
                 return self._draft_public(conn, parsed)
 
@@ -986,7 +1028,7 @@ class AuthStore:
         with self._conn() as conn:
             head = conn.execute(
                 """
-                SELECT id, tenant_id, result_attempt
+                SELECT id, tenant_id, result_attempt, analysis_mode
                 FROM product.audit_rounds WHERE id = %s
                 """,
                 (parsed,),
@@ -996,7 +1038,7 @@ class AuthStore:
             rows = conn.execute(
                 """
                 SELECT i.role, fv.file_id, fv.id, fv.original_filename, fv.status, fv.object_key, fv.content_type,
-                       i.rule_version_id, i.rule_title, i.rule_body
+                       i.rule_version_id, i.rule_title, i.rule_body, fv.sha256
                 FROM product.round_inputs i
                 JOIN product.file_versions fv ON fv.id = i.file_version_id
                 WHERE i.round_id = %s
@@ -1008,10 +1050,23 @@ class AuthStore:
             str(head[0]),
             str(head[1]),
             [
-                RoundInput(row[0], str(row[1]), str(row[2]), row[3], row[4], row[5], row[6], str(row[7]) if row[7] else None, row[8], row[9])
+                RoundInput(
+                    row[0],
+                    str(row[1]),
+                    str(row[2]),
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                    str(row[7]) if row[7] else None,
+                    row[8],
+                    row[9],
+                    row[10],
+                )
                 for row in rows
             ],
             head[2],
+            normalize_analysis_mode(head[3]),
         )
 
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
@@ -1107,7 +1162,7 @@ class AuthStore:
                     """,
                     (
                         outcome,
-                        Jsonb({"note": result.get("note") or "round_audit", "finding_count": len(findings)}),
+                        Jsonb(_attempt_diagnostic(claimed, result, findings)),
                         claimed.id,
                         claimed.attempt,
                     ),
@@ -1224,12 +1279,13 @@ class AuthStore:
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
-            SELECT id, request_fingerprint, predecessor_id FROM product.audit_rounds
+            SELECT id, request_fingerprint, predecessor_id, analysis_mode FROM product.audit_rounds
             WHERE tenant_id = %s AND idempotency_key = %s
             """,
             (principal.tenant_id, key),
         ).fetchone()
         draft_status = None
+        analysis_mode = ANALYSIS_STANDARD
         if source_draft_id:
             draft = conn.execute(
                 """
@@ -1247,6 +1303,17 @@ class AuthStore:
                     (source_draft_id,),
                 ).fetchall()
                 items = [{"file_version_id": str(row[0]), "role": row[1], "rule_version_id": str(row[2]) if row[2] else None} for row in rows]
+            mode_row = conn.execute(
+                "SELECT analysis_mode FROM product.audit_drafts WHERE id = %s",
+                (source_draft_id,),
+            ).fetchone()
+            analysis_mode = normalize_analysis_mode(mode_row[0] if mode_row else ANALYSIS_STANDARD)
+        elif predecessor_id:
+            mode_row = conn.execute(
+                "SELECT analysis_mode FROM product.audit_rounds WHERE id = %s",
+                (predecessor_id,),
+            ).fetchone()
+            analysis_mode = normalize_analysis_mode(mode_row[0] if mode_row else ANALYSIS_STANDARD)
         if items is None:
             items = []
         prepared = self._bound_audit_items(conn, principal, items)
@@ -1256,7 +1323,11 @@ class AuthStore:
             resource = self.resource(str(existing[0]))
             if resource is None or not can_read(principal, resource, self.grants(str(existing[0]), principal.user_id)):
                 raise KeyError("missing")
-            if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id:
+            if (
+                existing[1] != fingerprint
+                or (str(existing[2]) if existing[2] else None) != predecessor_id
+                or existing[3] != analysis_mode
+            ):
                 raise ValueError("idempotency_conflict")
             return self._round_public(conn, str(existing[0]))
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
@@ -1272,13 +1343,13 @@ class AuthStore:
             INSERT INTO product.audit_rounds (
                 id, tenant_id, created_by, source_draft_id, predecessor_id,
                 idempotency_key,
-                request_fingerprint, execution
+                request_fingerprint, execution, analysis_mode
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 round_id, principal.tenant_id, principal.user_id, source_draft_id, predecessor_id,
-                key, fingerprint, EXEC_QUEUED,
+                key, fingerprint, EXEC_QUEUED, analysis_mode,
             ),
         )
         for row in prepared:
@@ -1300,7 +1371,12 @@ class AuthStore:
             INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
             VALUES (%s, %s, %s, 'audit', %s, 'queued')
             """,
-            (job_id, principal.tenant_id, round_id, Jsonb({"round_id": round_id})),
+            (
+                job_id,
+                principal.tenant_id,
+                round_id,
+                Jsonb(job_payload(round_id, analysis_mode, self.settings.deep_executor_revision)),
+            ),
         )
         if source_draft_id:
             conn.execute(
@@ -1340,7 +1416,7 @@ class AuthStore:
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id
+            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.analysis_mode
             FROM product.audit_drafts d
             WHERE d.id = %s
             """,
@@ -1364,6 +1440,7 @@ class AuthStore:
             "status": row[2],
             "updated_at": row[3].isoformat(),
             "predecessor_id": str(row[4]) if row[4] else None,
+            "analysis_mode": normalize_analysis_mode(row[5]),
             "items": [
                 {
                     "role": item[0],
@@ -1381,7 +1458,7 @@ class AuthStore:
     def _round_history(self, conn, round_id) -> dict | None:
         row = conn.execute(
             """
-            SELECT id, execution, predecessor_id, created_at
+            SELECT id, execution, predecessor_id, created_at, analysis_mode
             FROM product.audit_rounds WHERE id = %s
             """,
             (round_id,),
@@ -1412,6 +1489,7 @@ class AuthStore:
             "execution": row[1],
             "predecessor_id": str(row[2]) if row[2] else None,
             "created_at": row[3].isoformat() if row[3] is not None else None,
+            "analysis_mode": normalize_analysis_mode(row[4]),
             "inputs": [
                 {
                     "role": item[0],
@@ -1429,7 +1507,7 @@ class AuthStore:
         row = conn.execute(
             """
             SELECT id, execution, coverage, predecessor_id,
-                   source_draft_id, result_attempt, created_at
+                   source_draft_id, result_attempt, created_at, analysis_mode
             FROM product.audit_rounds WHERE id = %s
             """,
             (round_id,),
@@ -1457,6 +1535,16 @@ class AuthStore:
             """,
             (round_id,),
         ).fetchall()
+        job = conn.execute(
+            """
+            SELECT payload FROM engine.jobs
+            WHERE audit_round_id = %s AND kind = 'audit'
+            ORDER BY created_at
+            LIMIT 1
+            """,
+            (round_id,),
+        ).fetchone()
+        payload = job[0] if job else {}
         return {
             "id": str(row[0]),
             "execution": row[1],
@@ -1465,6 +1553,8 @@ class AuthStore:
             "source_draft_id": str(row[4]) if row[4] else None,
             "result_attempt": row[5],
             "created_at": row[6].isoformat() if row[6] is not None else None,
+            "analysis_mode": normalize_analysis_mode(row[7]),
+            **_executor_public(payload),
             "inputs": [
                 {
                     "role": item[0],

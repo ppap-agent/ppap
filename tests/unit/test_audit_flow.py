@@ -451,6 +451,7 @@ class WebHookTests(unittest.TestCase):
             'function submit', 'function saveReview', 'function prepareAgain',
             'finding-picker', 'function pickFinding', '<OriginalPreview', '<ReportPreview',
             '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
+            'data-testid="analysis-mode"', 'analysis_mode',
         ):
             self.assertIn(marker, workbench)
         self.assertIn('list.concat(material)', workbench)
@@ -461,7 +462,7 @@ class WebHookTests(unittest.TestCase):
 class AuditHistoryPageTests(unittest.TestCase):
     def test_history_page_hooks_exist(self):
         history = (ROOT / "apps/web/src/HistoryView.tsx").read_text()
-        for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核结果', '加载更多'):
+        for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核结果', '加载更多', 'analysis_mode'):
             self.assertIn(marker, history)
         addon = (ROOT / "apps" / "web" / "addon.html").read_text()
         workbench = (ROOT / "apps/web/src/App.tsx").read_text()

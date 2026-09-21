@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 from ppap_core.audits import (
+    ANALYSIS_STANDARD,
     ClaimedJob,
     DRAFT_ACCEPTED,
     DRAFT_OPEN,
@@ -14,6 +15,8 @@ from ppap_core.audits import (
     EXEC_RUNNING,
     RoundInput,
     RoundWork,
+    job_payload,
+    normalize_analysis_mode,
     normalize_idempotency_key,
     normalize_review,
     normalize_role,
@@ -381,6 +384,10 @@ class MemoryAuthStore:
             resource = self.resources.get(predecessor_id)
             if resource is None or resource.kind != 'audit_round' or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
                 raise KeyError('missing')
+        mode = ANALYSIS_STANDARD
+        if predecessor_id:
+            pred = self.rounds.get(predecessor_id) or {}
+            mode = normalize_analysis_mode(pred.get("analysis_mode"))
         draft_id = str(uuid.uuid4())
         self.resources[draft_id] = Resource(draft_id, principal.tenant_id, "audit_draft")
         self.grant_table.setdefault((draft_id, principal.user_id), set()).update({"read", "review"})
@@ -391,6 +398,7 @@ class MemoryAuthStore:
             "status": DRAFT_OPEN,
             "updated_at": _now().isoformat(),
             "predecessor_id": predecessor_id,
+            "analysis_mode": mode,
         }
         self.draft_items[draft_id] = []
         return self.get_draft(draft_id)
@@ -408,7 +416,9 @@ class MemoryAuthStore:
             return None
         return self._draft_public(draft_id)
 
-    def save_draft(self, principal: Principal, draft_id: str, items: list[dict] | None) -> dict:
+    def save_draft(
+        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None
+    ) -> dict:
         draft = self.drafts.get(draft_id)
         if not draft or draft["tenant_id"] != principal.tenant_id:
             raise KeyError("missing")
@@ -416,6 +426,9 @@ class MemoryAuthStore:
             raise ValueError("draft_already_accepted")
         if items is not None:
             self.draft_items[draft_id] = self._bound_audit_items(principal, items, require_rules=False)
+            draft['updated_at'] = _now().isoformat()
+        if analysis_mode is not None:
+            draft["analysis_mode"] = normalize_analysis_mode(analysis_mode)
             draft['updated_at'] = _now().isoformat()
         return self._draft_public(draft_id)
 
@@ -486,6 +499,7 @@ class MemoryAuthStore:
                     "execution": body["execution"],
                     "predecessor_id": body.get("predecessor_id"),
                     "created_at": body.get("created_at"),
+                    "analysis_mode": body.get("analysis_mode"),
                     "inputs": [
                         {
                             "role": item["role"],
@@ -554,9 +568,16 @@ class MemoryAuthStore:
                     item.get("rule_version_id"),
                     item.get("rule_title"),
                     item.get("rule_body"),
+                    version.sha256,
                 )
             )
-        return RoundWork(round_id, row["tenant_id"], inputs, row.get("result_attempt"))
+        return RoundWork(
+            round_id,
+            row["tenant_id"],
+            inputs,
+            row.get("result_attempt"),
+            normalize_analysis_mode(row.get("analysis_mode")),
+        )
 
     def claim_job(self, worker_ident: str) -> ClaimedJob | None:
         now = _now()
@@ -604,7 +625,18 @@ class MemoryAuthStore:
         findings = result.get("findings") or []
         self.attempts[(claimed.id, claimed.attempt)] = {
             "worker_id": worker_ident,
-            "diagnostic": {"note": result.get("note") or "round_audit", "finding_count": len(findings)},
+            "diagnostic": {
+                "note": result.get("note") or "round_audit",
+                "finding_count": len(findings),
+                **(
+                    {
+                        "executor": claimed.payload.get("executor"),
+                        "executor_revision": claimed.payload.get("executor_revision"),
+                    }
+                    if isinstance(claimed.payload, dict) and claimed.payload.get("executor")
+                    else {}
+                ),
+            },
             "outcome": outcome,
         }
         if not claimed.round_id:
@@ -687,12 +719,22 @@ class MemoryAuthStore:
         prepared = self._bound_audit_items(principal, items)
         require_targets(prepared)
         fingerprint = request_fingerprint(prepared)
+        if source_draft_id:
+            analysis_mode = normalize_analysis_mode(draft.get("analysis_mode"))
+        elif predecessor_id:
+            analysis_mode = normalize_analysis_mode((self.rounds.get(predecessor_id) or {}).get("analysis_mode"))
+        else:
+            analysis_mode = ANALYSIS_STANDARD
         if existing_id:
             current = self.rounds[existing_id]
             resource = self.resources.get(existing_id)
             if resource is None or not can_read(principal, resource, self.grants(existing_id, principal.user_id)):
                 raise KeyError("missing")
-            if current["request_fingerprint"] != fingerprint or current['predecessor_id'] != predecessor_id:
+            if (
+                current["request_fingerprint"] != fingerprint
+                or current['predecessor_id'] != predecessor_id
+                or current.get("analysis_mode") != analysis_mode
+            ):
                 raise ValueError("idempotency_conflict")
             return self._round_public(existing_id)
         if source_draft_id and draft["status"] == DRAFT_ACCEPTED:
@@ -713,13 +755,18 @@ class MemoryAuthStore:
             "result_attempt": None,
             "coverage": {},
             "created_at": "now",
+            "analysis_mode": analysis_mode,
         }
         self.round_inputs[round_id] = prepared
         self.findings[round_id] = {}
         self.jobs[job_id] = {
             "id": job_id,
             "kind": "audit",
-            "payload": {"round_id": round_id},
+            "payload": job_payload(
+                round_id,
+                analysis_mode,
+                self.settings.deep_executor_revision if self.settings else "",
+            ),
             "status": "queued",
             "attempt": 0,
             "created": len(self.jobs),
@@ -760,6 +807,7 @@ class MemoryAuthStore:
             "status": draft["status"],
             "updated_at": draft.get("updated_at"),
             "predecessor_id": draft.get("predecessor_id"),
+            "analysis_mode": normalize_analysis_mode(draft.get("analysis_mode")),
             "items": items,
         }
 
@@ -801,6 +849,16 @@ class MemoryAuthStore:
                     },
                 }
             )
+        payload = {}
+        for job in self.jobs.values():
+            if job.get("kind") == "audit" and isinstance(job.get("payload"), dict) and job["payload"].get("round_id") == round_id:
+                payload = job["payload"]
+                break
+        extra = {}
+        if payload.get("executor"):
+            extra["executor"] = payload["executor"]
+        if payload.get("executor_revision"):
+            extra["executor_revision"] = payload["executor_revision"]
         return {
             "id": round_id,
             "execution": row["execution"],
@@ -809,6 +867,8 @@ class MemoryAuthStore:
             "source_draft_id": row.get("source_draft_id"),
             "result_attempt": row.get("result_attempt"),
             "created_at": row.get("created_at"),
+            "analysis_mode": normalize_analysis_mode(row.get("analysis_mode")),
+            **extra,
             "inputs": inputs,
             "findings": findings,
         }

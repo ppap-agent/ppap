@@ -232,6 +232,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(caps["partner_ai"]["state"], "disabled")
         self.assertEqual(caps["legacy_engine"]["state"], "disabled")
         self.assertEqual(caps["llm"]["state"], "disabled")
+        self.assertEqual(caps["deep"]["state"], "disabled")
         self.assertFalse(llm_configured(self.settings))
         self.assertEqual(self.client.get("/health").status_code, 200)
 
@@ -241,6 +242,7 @@ class ApiSurfaceTests(unittest.TestCase):
             FEISHU_APP_ID="cli_test",
             FEISHU_APP_SECRET="secret",
             PPAP_PARTNER_AI_ENDPOINT="https://example.invalid",
+            PPAP_DEEP_CONTROLLER_SOCKET="/tmp/ppap-deep.sock",
         ):
             settings = Settings()
         caps = report(settings)
@@ -248,6 +250,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(caps["feishu"]["state"], "configured")
         self.assertEqual(caps["partner_ai"]["state"], "configured")
         self.assertEqual(caps["legacy_engine"]["state"], "disabled")
+        self.assertEqual(caps["deep"]["state"], "configured")
         for body in caps.values():
             self.assertEqual(set(body), {"state"})
             self.assertNotIn("ready_proven_by", body)
