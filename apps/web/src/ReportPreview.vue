@@ -24,15 +24,17 @@ const issues=computed(()=>props.round.findings.filter(item=>item.status!=='PASS'
 <template>
   <section class="report-preview">
     <div class="section-heading"><div><h2>审核报告</h2><p class="pc-muted">{{ dateLabel(round.created_at) }} · {{ groups.length }} 份待审资料 · 已保存复核 {{ reviewed }} / {{ round.findings.length }} 项</p></div>
+      <div class="button-group">
       <a v-if="report?.status==='ready' && report.document_id" class="button pc-primary" :href="'https://feishu.cn/docx/'+encodeURIComponent(report.document_id)" target="_blank" rel="noopener">打开飞书报告 ↗</a>
-      <a v-else-if="needsConsent" class="button pc-primary" :href="consentUrl">授权生成报告</a>
       <button v-else-if="unsavedReview" @click="emit('review')">返回保存复核</button>
       <button v-else-if="error || (report && ['unknown','creating','writing'].includes(report.status))" :disabled="exporting || reading" @click="readReport">刷新报告状态</button>
       <button v-else class="pc-primary" :disabled="incomplete || exporting || reading || (!!report && report.status!=='failed')" @click="exportReport">{{ reading?'正在读取状态…':exporting?'正在生成…':report?.status==='failed'?'重试生成报告':'生成飞书报告' }}</button>
+      <a v-if="needsConsent && !exporting" class="button" :href="consentUrl">授权生成报告</a>
+      </div>
     </div>
     <p v-if="unsavedReview" class="notice" role="status">复核修改尚未保存，报告仅包含已保存的内容。</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
-    <p v-if="needsConsent" class="notice">需要授权创建飞书文档。授权后返回本页生成报告。</p>
+    <p v-if="needsConsent" class="notice">需要授权创建飞书文档。完成授权后，点击“重试生成报告”。</p>
     <p v-else-if="report?.status==='failed'" class="error" role="alert">报告未能生成，请确认飞书权限后重试。</p>
     <p v-else-if="report?.status==='unknown'" class="notice" role="status">尚未确认报告是否生成。请先核对飞书文档，避免重复创建。</p>
     <p v-else-if="report && report.status!=='ready'" class="notice" role="status">正在生成报告，请稍后刷新状态。</p>
