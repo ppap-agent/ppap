@@ -141,9 +141,12 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   }
   function choose(item?: Finding) {
     const judgment = item?.review?.judgment || ''
-    setSelectedKey(item?.item_key || '')
+    const key = item?.item_key || ''
+    selectedKeyRef.current = key
+    setSelectedKey(key)
     setReview({judgment, rationale: item?.review?.rationale || '', next_step: item?.review?.next_step || ''})
     setReviewDirty(false)
+    reviewDirtyRef.current = false
     setCustomJudgment(!!judgment && !reviewJudgments.includes(judgment as typeof reviewJudgments[number]))
     setReviewFeedback('')
   }
@@ -151,15 +154,25 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     try {
       const saved = parseWorkspacePosition(sessionStorage.getItem(workspaceStorageKey(result.id)))
       if (!saved || !result.inputs.some(file => file.file_version_id === saved.file)) return
+      selectedFileIdRef.current = saved.file
       setSelectedFileId(saved.file)
       const nextFilter = ['attention', 'unreviewed', '', 'PASS'].includes(saved.filter) ? saved.filter : 'attention'
+      filterRef.current = nextFilter
       setFilter(nextFilter)
       const finding = result.findings.find(item => item.item_key === saved.finding && item.locator?.file_version_id === saved.file)
       const restoredFindings = result.findings.filter(item => item.locator?.file_version_id === saved.file && matchesFilter(item, nextFilter))
       choose(finding || restoredFindings[0])
-      setRoundView(saved.view === 'report' ? 'report' : 'review')
-      setWorkspacePanel('checks')
-      if (Number.isFinite(saved.width)) setPreviewWidth(clampPreviewWidth(saved.width))
+      const nextView = saved.view === 'report' ? 'report' : 'review'
+      roundViewRef.current = nextView
+      setRoundView(nextView)
+      const nextPanel = saved.panel === 'original' ? 'original' : 'checks'
+      workspacePanelRef.current = nextPanel
+      setWorkspacePanel(nextPanel)
+      if (Number.isFinite(saved.width)) {
+        const width = clampPreviewWidth(saved.width)
+        previewWidthRef.current = width
+        setPreviewWidth(width)
+      }
       restoredPosition.current = saved
     } catch { /* A stale view state must never block the actual audit. */ }
   }
@@ -224,23 +237,32 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
       if (resumeReview.current && result.findings.length) {
         const pending = result.findings.find(item => !item.review && item.status !== 'PASS') || result.findings.find(item => !item.review)
         if (pending) {
-          setSelectedFileId(pending.locator?.file_version_id || '')
+          const fileId = pending.locator?.file_version_id || ''
+          selectedFileIdRef.current = fileId
+          setSelectedFileId(fileId)
+          filterRef.current = 'unreviewed'
           setFilter('unreviewed')
+          roundViewRef.current = 'review'
+          setRoundView('review')
+          workspacePanelRef.current = 'checks'
+          setWorkspacePanel('checks')
           choose(pending)
         }
         resumeReview.current = false
       }
       if (!selectedFileIdRef.current) {
         const fileId = result.inputs.find(item => item.role === 'target')?.file_version_id || result.inputs[0]?.file_version_id || ''
-        setSelectedFileId(fileId)
         selectedFileIdRef.current = fileId
+        setSelectedFileId(fileId)
         const nextFilter = result.findings.some(item => item.locator?.file_version_id === fileId && item.status !== 'PASS') ? 'attention' : ''
+        filterRef.current = nextFilter
         setFilter(nextFilter)
         choose(result.findings.filter(item => item.locator?.file_version_id === fileId && matchesFilter(item, nextFilter))[0])
       }
       if (!selectedKeyRef.current && result.findings.length && !reviewDirtyRef.current) {
         const fileId = selectedFileIdRef.current
         const nextFilter = result.findings.some(item => item.locator?.file_version_id === fileId && item.status !== 'PASS') ? 'attention' : ''
+        filterRef.current = nextFilter
         setFilter(nextFilter)
         choose(result.findings.filter(item => item.locator?.file_version_id === fileId && matchesFilter(item, nextFilter))[0])
       }
@@ -383,6 +405,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   function chooseFilter(status: string) {
     guardChange(() => {
       const candidates = fileFindingsRef.current.filter(item => matchesFilter(item, status))
+      filterRef.current = status
       setFilter(status)
       choose(candidates.find(item => item.item_key === selectedKeyRef.current) || candidates[0])
     })
@@ -410,8 +433,12 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     const pending = remaining.find(item => item.item_key !== selectedKeyRef.current && item.status !== 'PASS') || remaining.find(item => item.item_key !== selectedKeyRef.current)
     if (!pending) return
     choose(pending)
-    setSelectedFileId(pending.locator?.file_version_id || '')
+    const fileId = pending.locator?.file_version_id || ''
+    selectedFileIdRef.current = fileId
+    setSelectedFileId(fileId)
+    filterRef.current = 'unreviewed'
     setFilter('unreviewed')
+    workspacePanelRef.current = 'checks'
     setWorkspacePanel('checks')
     focusFinding()
   }
@@ -431,8 +458,11 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     event.target.value = selectedFileIdRef.current
     if (file) guardChange(() => {
       const nextFilter = roundRef.current?.findings.some(item => item.locator?.file_version_id === file.file_version_id && item.status !== 'PASS') ? 'attention' : ''
+      filterRef.current = nextFilter
       setFilter(nextFilter)
+      selectedFileIdRef.current = file.file_version_id
       setSelectedFileId(file.file_version_id)
+      workspacePanelRef.current = 'checks'
       setWorkspacePanel('checks')
       choose((roundRef.current?.findings.filter(item => item.locator?.file_version_id === file.file_version_id && matchesFilter(item, nextFilter)) || [])[0])
     })
@@ -440,8 +470,10 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   function switchView(view: 'review' | 'original' | 'report') {
     const current = roundViewRef.current === 'report' ? 'report' : workspacePanelRef.current === 'original' ? 'original' : 'review'
     viewScroll.current[current] = window.scrollY
-    setRoundView(view === 'report' ? 'report' : 'review')
-    setWorkspacePanel(view === 'original' ? 'original' : 'checks')
+    roundViewRef.current = view === 'report' ? 'report' : 'review'
+    workspacePanelRef.current = view === 'original' ? 'original' : 'checks'
+    setRoundView(roundViewRef.current)
+    setWorkspacePanel(workspacePanelRef.current)
     void Promise.resolve().then(() => window.scrollTo({top: viewScroll.current[view]}))
   }
   async function findEvidence() {
@@ -667,7 +699,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   <>
                     {error && <p className="error" role="alert">{error}</p>}
                     <nav className="audit-filters" aria-label="结果筛选">
-                      {filters.map(entry => <button type="button" key={entry.id || 'all'} disabled={busy} aria-pressed={filter === entry.id} onClick={() => chooseFilter(entry.id)}>{entry.label} <span>{fileFindings.filter(item => matchesFilter(item, entry.id)).length}</span></button>)}
+                      {filters.map(entry => <button type="button" key={entry.id || 'all'} data-testid={'filter-' + (entry.id || 'all')} disabled={busy} aria-pressed={filter === entry.id} onClick={() => chooseFilter(entry.id)}>{entry.label} <span>{fileFindings.filter(item => matchesFilter(item, entry.id)).length}</span></button>)}
                     </nav>
                     {!findings.length && (
                       <div className="empty-state compact">
@@ -681,7 +713,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                       <div className="finding-navigation">
                         <label className="finding-picker">
                           <span className="sr-only">检查项</span>
-                          <select value={findings.some(item => item.item_key === selectedKey) ? selectedKey : ''} disabled={busy} onChange={pickFinding}>
+                          <select data-testid="finding-picker" value={findings.some(item => item.item_key === selectedKey) ? selectedKey : ''} disabled={busy} onChange={pickFinding}>
                             {!findings.some(item => item.item_key === selectedKey) && <option value="" disabled>当前项已保存，可继续下一项</option>}
                             {findings.map((finding, index) => <option key={finding.item_key} value={finding.item_key}>{index + 1}. {finding.item} · {resultLabels[finding.status]}{finding.review ? ' · 已记录' : ''}</option>)}
                           </select>

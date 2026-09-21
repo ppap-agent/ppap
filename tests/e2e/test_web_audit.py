@@ -181,6 +181,67 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertTrue(page.url.rstrip("/").endswith("/audit-files"))
             browser.close()
 
+    def test_return_from_rules_restores_file_finding_filter_and_review_next(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "alpha.xlsx"
+            second = Path(tmp) / "beta.xlsx"
+            first.write_bytes(b"browser-alpha")
+            second.write_bytes(b"browser-beta")
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                page = browser.new_page()
+                page.set_viewport_size({"width": 1440, "height": 900})
+                isolated_dev_login(page)
+                page.get_by_test_id("source-upload").set_input_files(str(first))
+                page.wait_for_selector('[data-testid="draft-items"]')
+                page.get_by_test_id("item-rule").first.select_option(RULE_A)
+                page.get_by_test_id("source-upload").set_input_files(str(second))
+                page.wait_for_function("() => document.querySelector('[data-testid=\"draft-items\"]').innerText.includes('beta.xlsx')")
+                page.get_by_test_id("item-rule").last.select_option(RULE_A)
+                page.wait_for_selector('[data-testid="submit-audit"]:not([disabled])')
+                page.get_by_test_id("submit-audit").click()
+                page.wait_for_function("() => new URL(window.location.href).searchParams.get('round')")
+                round_id = page.evaluate("() => new URL(window.location.href).searchParams.get('round')")
+                page.wait_for_selector('[data-testid="finding-status"]')
+                page.wait_for_function("() => document.body.innerText.includes('检查完成')")
+                page.wait_for_function(
+                    """() => {
+                      const sel = document.querySelector('[data-testid="file-version-list"]');
+                      return Boolean(sel && sel.options.length >= 2);
+                    }"""
+                )
+                default_file = page.get_by_test_id("file-version-list").evaluate("el => el.options[el.selectedIndex].text")
+                self.assertIn("alpha.xlsx", default_file)
+                expect(page.get_by_test_id("filter-all")).to_have_attribute("aria-pressed", "true")
+                page.get_by_test_id("file-version-list").select_option(label="beta.xlsx")
+                page.wait_for_function("() => document.querySelector('[data-testid=\"file-version-list\"]')?.selectedOptions[0]?.text.includes('beta.xlsx')")
+                page.get_by_test_id("filter-PASS").click()
+                expect(page.get_by_test_id("filter-PASS")).to_have_attribute("aria-pressed", "true")
+                heading = page.locator(".finding-detail > h3").inner_text()
+                finding_key = page.get_by_test_id("finding-picker").input_value()
+                self.assertTrue(finding_key)
+                page.locator(".context-link").click()
+                page.wait_for_url("**/rules**")
+                page.get_by_role("link", name="返回审核结果").first.click()
+                page.wait_for_function("() => new URL(window.location.href).searchParams.get('round')")
+                page.wait_for_selector('[data-testid="finding-status"]')
+                restored_file = page.get_by_test_id("file-version-list").evaluate("el => el.options[el.selectedIndex].text")
+                self.assertIn("beta.xlsx", restored_file)
+                expect(page.get_by_test_id("filter-PASS")).to_have_attribute("aria-pressed", "true")
+                expect(page.get_by_test_id("filter-all")).to_have_attribute("aria-pressed", "false")
+                expect(page.get_by_test_id("finding-picker")).to_have_value(finding_key)
+                expect(page.locator(".finding-detail > h3")).to_have_text(heading)
+                page.goto(f"{WEB}/?round={round_id}&review=next")
+                page.wait_for_selector('[data-testid="finding-status"]')
+                expect(page.get_by_test_id("filter-unreviewed")).to_have_attribute("aria-pressed", "true")
+                expect(page.get_by_test_id("filter-PASS")).to_have_attribute("aria-pressed", "false")
+                next_file = page.get_by_test_id("file-version-list").evaluate("el => el.options[el.selectedIndex].text")
+                next_key = page.get_by_test_id("finding-picker").input_value()
+                self.assertTrue(next_key)
+                self.assertIn("xlsx", next_file)
+                browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()
+
