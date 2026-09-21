@@ -209,6 +209,21 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
     blocks = [_heading2("PPAP 审核报告"), _text("审核时间（UTC）：" + _audit_clock(round_body)),
               _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
     targets = {item['file_version_id']: item for item in round_body['inputs'] if item.get('role') == TARGET}
+    findings = round_body.get('findings') or []
+    counts = {status: sum(row.get('status') == status for row in findings) for status in ('PASS', 'NG', 'ERR')}
+    pending = sum(not row.get('review') for row in findings)
+    blocks.extend([
+        _heading2('本轮摘要'),
+        _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts['PASS']}，不符合 {counts['NG']}，检查异常 {counts['ERR']}。"),
+        _text(f'未记录人工复核 {pending} 项。已记录不等于问题已解决，本报告不代表正式批准。'),
+        _text('客户自定义要求仅作人工复核参考，不会自动增加机器检查项。'),
+    ])
+    for row in findings:
+        if row.get('status') != 'PASS':
+            blocks.append(_bullet(str(row.get('item') or '检查项') + (' · 已记录复核' if row.get('review') else ' · 未记录复核')))
+    unchecked = (round_body.get('coverage') or {}).get('unchecked') or []
+    if unchecked:
+        blocks.append(_text('未检查范围：' + '；'.join(map(str, unchecked))))
     for name, rows in _group_findings(round_body):
         blocks.append(_heading2(name))
         source = targets[_finding_version(rows[0])]

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
@@ -447,7 +447,7 @@ def create_app(
         )
 
     @app.get("/files/{file_id}/versions/{version_id}/preview")
-    def files_preview(file_id: str, version_id: str, request: Request):
+    def files_preview(file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
         principal, denied = require_file_read(request, file_id)
         if denied:
@@ -458,7 +458,7 @@ def create_app(
         if version.byte_size > MAX_PREVIEW_BYTES:
             return JSONResponse({"available": False, "notice": "文件过大，请下载原件。"})
         try:
-            return JSONResponse(document_preview(store.version_bytes(version), version.original_filename))
+            return JSONResponse(document_preview(store.version_bytes(version), version.original_filename, sheet, start_row))
         except Exception:
             return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
 

@@ -22,7 +22,8 @@ const sourceFile=computed(()=>candidate.value?source.value:selected.value?{file_
 
 const params = new URLSearchParams(location.search)
 const backTo = params.get('return_to') || ''
-const returnTo = /^\/\?draft=[a-f0-9-]+(?:&from=[a-f0-9-]+)?$/.test(backTo) ? backTo : ''
+const returnTo = /^\/\?(?:draft=[a-f0-9-]+(?:&from=[a-f0-9-]+)?|round=[a-f0-9-]+)$/.test(backTo) ? backTo : ''
+const returnLabel = returnTo.startsWith('/?round=')?'返回审核结果':'返回审核准备'
 function setUrl(ruleId?:string) {
   const query = new URLSearchParams()
   if(ruleId)query.set('rule',ruleId)
@@ -56,7 +57,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(timer);window.removeEventListene
 <template>
   <section class="page-content rules-page">
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <a v-if="returnTo && !candidate" class="back-link" :href="returnTo">← 返回审核准备</a>
+    <a v-if="returnTo && !candidate" class="back-link" :href="returnTo">← {{ returnLabel }}</a>
     <template v-if="view==='list'">
       <div class="toolbar">
         <input v-model="query" type="search" placeholder="搜索规则名称或文件类型" aria-label="搜索规则" />
@@ -92,7 +93,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(timer);window.removeEventListene
         <p v-if="!body.rules?.length" class="empty-state">未解析出规则条目，请核对原始文件。</p>
         <article v-for="(item,index) in body.rules" :key="item.id" class="rule-item"><h3><span class="rule-number">{{ String(index+1).padStart(2,'0') }}</span>{{ item.category }} <small v-if="item.priority" class="badge">{{ item.priority }}</small></h3><textarea v-if="candidate" v-model="item.rule_to_check" :disabled="busy" rows="3" :aria-label="'检查要求 '+(index+1)" /><p v-else>{{ item.rule_to_check }}</p></article>
         <div v-if="candidate" class="action-bar sticky-actions"><span class="pc-muted">{{ body.rules.length }} 项客户要求</span><button class="pc-primary" :disabled="busy || !candidate.title.trim()" @click="publish">保存规则</button></div>
-        <a v-else-if="returnTo" class="button pc-primary" :href="returnTo">返回审核准备</a>
+        <a v-else-if="returnTo" class="button pc-primary" :href="returnTo">{{ returnLabel }}</a>
       </template>
     </template>
   </section>

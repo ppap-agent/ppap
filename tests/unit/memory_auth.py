@@ -458,7 +458,7 @@ class MemoryAuthStore:
             return None
         return self._round_public(round_id)
 
-    def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "") -> list[dict]:
+    def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         try:
             cap = max(1, min(int(limit), 50))
         except (TypeError, ValueError):
@@ -470,6 +470,8 @@ class MemoryAuthStore:
                 continue
             body = self._round_public(round_id)
             if execution and body["execution"] != execution:
+                continue
+            if unreviewed and not any(not finding.get("review") for finding in body.get("findings", [])):
                 continue
             hay = " ".join(item["original_filename"] + " " + (item.get("rule") or {}).get("title", "") for item in body["inputs"])
             if q.lower() not in hay.lower():

@@ -195,12 +195,15 @@ class AuditFlowTests(unittest.TestCase):
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rev"}).json()["id"]
         self._finish_worker()
         finding = self.client.get(f"/rounds/{round_id}").json()["findings"][0]
+        self.assertEqual([row['id'] for row in self.client.get('/rounds?unreviewed=true').json()['rounds']], [round_id])
         machine = finding["status"]
         saved = self.client.put(
             f"/rounds/{round_id}/reviews",
             json={"item_key": finding["item_key"], "judgment": "需修改", "rationale": "字段不清", "next_step": "补传", "version": 0},
         )
         self.assertEqual(saved.status_code, 200)
+        self.assertEqual(self.client.get('/rounds?unreviewed=true').json()['rounds'], [])
+        self.assertEqual(len(self.client.get('/rounds').json()['rounds']), 1)
         again = saved.json()["findings"][0]
         self.assertEqual(again["status"], machine)
         self.assertEqual(again["review"]["judgment"], "需修改")
@@ -446,7 +449,7 @@ class WebHookTests(unittest.TestCase):
         workbench = (ROOT / "apps/web/src/Workbench.vue").read_text()
         for marker in (
             '@click="submit"', '@submit.prevent="saveReview"', '@click="prepareAgain"',
-            'class="finding-row"', '<OriginalPreview', '<ReportPreview',
+            'class="finding-picker"', '@change="pickFinding"', '<OriginalPreview', '<ReportPreview',
             '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
         ):
             self.assertIn(marker, workbench)

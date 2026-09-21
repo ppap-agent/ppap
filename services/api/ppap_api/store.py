@@ -899,7 +899,7 @@ class AuthStore:
             return self._round_public(conn, parsed)
 
     def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0,
-                    q: str = "", execution: str = "") -> list[dict]:
+                    q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:
             rows = conn.execute(
@@ -908,11 +908,14 @@ class AuthStore:
                      AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id
                                  AND g.user_id = %s AND g.capability IN ('read', 'review'))
                      AND (%s = '' OR r.execution = %s)
+                     AND (NOT %s OR EXISTS (
+                         SELECT 1 FROM product.findings f WHERE f.round_id = r.id
+                         AND NOT EXISTS (SELECT 1 FROM product.reviews v WHERE v.round_id = f.round_id AND v.item_key = f.item_key)))
                      AND (%s = '' OR EXISTS (
                          SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
                    ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, principal.user_id, execution, execution, q, needle, needle, limit, offset),
+                (principal.tenant_id, principal.user_id, execution, execution, unreviewed, q, needle, needle, limit, offset),
             ).fetchall()
             return [self._round_history(conn, row[0]) for row in rows]
 

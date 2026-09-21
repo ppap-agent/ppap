@@ -16,6 +16,9 @@ onBeforeUnmount(()=>{revision++})
 const groups=computed(()=>props.round.inputs.filter(file=>file.role==='target').map(file=>({file,findings:props.round.findings.filter(finding=>finding.locator?.file_version_id===file.file_version_id)})))
 const incomplete=computed(()=>props.round.execution!=='completed' || !groups.value.length || groups.value.some(group=>!group.findings.length || group.findings.some(finding=>finding.status==='ERR')))
 const reviewed=computed(()=>props.round.findings.filter(finding=>finding.review).length)
+const counts=computed(()=>['NG','ERR','PASS'].map(status=>({status,count:props.round.findings.filter(item=>item.status===status).length})))
+const pending=computed(()=>props.round.findings.filter(item=>!item.review).length)
+const issues=computed(()=>props.round.findings.filter(item=>item.status!=='PASS'))
 </script>
 
 <template>
@@ -36,11 +39,18 @@ const reviewed=computed(()=>props.round.findings.filter(finding=>finding.review)
     <a v-if="report?.document_id && report.status!=='ready'" :href="'https://feishu.cn/docx/'+encodeURIComponent(report.document_id)" target="_blank" rel="noopener">核对已创建的文档 ↗</a>
     <p v-if="report?.status==='ready'" class="notice">报告已生成，可在飞书中分享。后续复核修改不会覆盖这份报告。</p>
     <p v-if="incomplete" class="notice" role="status">检查尚未完整完成，暂不能生成完整报告。</p>
-    <p v-if="reviewed<round.findings.length" class="scope-note">仍有 {{ round.findings.length-reviewed }} 项未记录人工复核。报告会分别保留机器结果与已有的人工判断。</p>
+    <section class="report-summary" aria-label="本轮摘要">
+      <h3>本轮摘要</h3>
+      <div class="result-counts"><span v-for="count in counts" :key="count.status" :class="count.count?'status-'+count.status:'pc-muted'">{{ resultLabels[count.status] }} {{ count.count }}</span><span>未记录复核 {{ pending }} 项</span></div>
+      <p>自动检查 {{ round.findings.length }} 项；客户自定义要求仍需另行人工核对。已记录复核不等于问题已解决，本报告不代表正式批准。</p>
+      <ul v-if="issues.length" class="report-issues"><li v-for="finding in issues" :key="finding.item_key"><a :href="'#report-'+finding.item_key">{{ finding.item }}</a><span>{{ finding.review?'已记录复核':'未记录复核' }}</span></li></ul>
+      <p v-else>{{ round.findings.length?'已返回检查项未发现不符合；不代表未检查范围也已通过。':'尚无检查结果。' }}</p>
+      <p v-if="round.coverage?.unchecked?.length">未检查范围：{{ round.coverage.unchecked.join('；') }}</p>
+    </section>
     <section v-for="group in groups" :key="group.file.file_version_id" class="report-file">
-      <div class="section-heading"><div><h3>{{ group.file.original_filename }}</h3><p class="pc-muted">参考规则 · {{ group.file.rule?.title || '未记录' }}</p></div><a :href="originalUrl(group.file,round.id)" target="_blank" rel="noopener">原件 ↗</a></div>
+      <div class="section-heading"><div><h3>{{ group.file.original_filename }}</h3><p class="pc-muted">客户要求参考 · <a v-if="group.file.rule_version_id" :href="'/rules?rule='+group.file.rule_version_id+'&return_to='+encodeURIComponent('/?round='+round.id)">{{ group.file.rule?.title || '查看规则版本' }}</a><span v-else>未记录</span></p></div><a :href="originalUrl(group.file,round.id)" target="_blank" rel="noopener">原件 ↗</a></div>
       <p v-if="!group.findings.length">尚无检查结果。</p>
-      <article v-for="finding in group.findings" :key="finding.item_key" class="report-finding">
+      <article v-for="finding in group.findings" :id="'report-'+finding.item_key" :key="finding.item_key" class="report-finding">
         <h4><span class="badge" :class="'status-'+finding.status">{{ resultLabels[finding.status] }}</span>{{ finding.item }}</h4>
         <p v-if="finding.suggestions">{{ finding.suggestions }}</p>
         <p v-if="finding.locator?.locator" class="pc-muted">依据 · {{ finding.locator.locator }}</p>

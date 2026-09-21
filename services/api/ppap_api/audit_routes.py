@@ -133,13 +133,13 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
 
     @app.get("/rounds")
     def rounds_list(request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0),
-                    q: str = Query("", max_length=200), execution: str = "") -> JSONResponse:
+                    q: str = Query("", max_length=200), execution: str = "", unreviewed: bool = False) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
         if execution not in {"", "queued", "running", "completed", "failed"}:
             return JSONResponse({"error": "invalid_execution"}, status_code=400)
-        rows = store.list_rounds(principal, limit + 1, offset, q, execution)
+        rows = store.list_rounds(principal, limit + 1, offset, q, execution, unreviewed)
         return JSONResponse({"rounds": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.get("/usage")
@@ -190,7 +190,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         )
 
     @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview")
-    def rounds_preview(round_id: str, file_id: str, version_id: str, request: Request):
+    def rounds_preview(round_id: str, file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
         principal, denied = require_object(request, round_id)
         if denied:
@@ -201,7 +201,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if version.byte_size > MAX_PREVIEW_BYTES:
             return JSONResponse({"available": False, "notice": "文件过大，请下载原件。"})
         try:
-            return JSONResponse(document_preview(store.version_bytes(version), version.original_filename))
+            return JSONResponse(document_preview(store.version_bytes(version), version.original_filename, sheet, start_row))
         except Exception:
             return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
 

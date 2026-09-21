@@ -14,6 +14,8 @@ const draftId = ref(new URLSearchParams(location.search).get('draft') || '')
 const predecessorId = ref(new URLSearchParams(location.search).get('from') || '')
 const review = reactive({judgment:'', rationale:'', next_step:''}), reviewDirty = ref(false)
 const workspacePanel = ref('checks'), roundView=ref('review')
+const originalPreview = ref<InstanceType<typeof OriginalPreview>>()
+const resumeReview = ref(new URLSearchParams(location.search).get('review')==='next')
 const workspace = ref<HTMLElement>(), previewWidth = ref(50), resizing = ref(false)
 function resizePreview(event:PointerEvent) {
   if (!resizing.value || !workspace.value) return
@@ -80,6 +82,11 @@ async function loadRound(id:string) {
     const result = await request<Round>(`/rounds/${id}`)
     if (disposed || id!==activeRoundId) return
     round.value = result
+    if(resumeReview.value && result.findings.length){
+      const pending=result.findings.find(item=>!item.review && item.status!=='PASS') || result.findings.find(item=>!item.review)
+      if(pending){selectedFileId.value=pending.locator?.file_version_id || '';filter.value='unreviewed';choose(pending)}
+      resumeReview.value=false
+    }
     if (!selectedFileId.value) {selectedFileId.value=result.inputs.find(item=>item.role==='target')?.file_version_id || result.inputs[0]?.file_version_id || ''; filter.value=result.findings.some(item=>item.locator?.file_version_id===selectedFileId.value && item.status!=='PASS')?'attention':''; choose(findings.value[0])}
     if (!selectedKey.value && result.findings.length && !reviewDirty.value) {
       filter.value=result.findings.some(item=>item.locator?.file_version_id===selectedFileId.value && item.status!=='PASS')?'attention':''
@@ -135,8 +142,8 @@ const missingRules=computed(()=>items.value.filter(item=>item.role==='target' &&
 const targetCount=computed(()=>items.value.filter(item=>item.role==='target').length)
 const reviewed=computed(()=>round.value?.findings.filter(item=>item.review).length || 0)
 const fileFindings=computed(()=>round.value?.findings.filter(item=>item.locator?.file_version_id===selectedFileId.value) || [])
-const filters=[{id:'attention',label:'需关注'},{id:'',label:'全部'},{id:'PASS',label:'通过'}]
-function matchesFilter(item:Finding, status:string){return status==='attention'?item.status!=='PASS':!status || item.status===status}
+const filters=[{id:'attention',label:'需关注'},{id:'unreviewed',label:'未记录'},{id:'',label:'全部'},{id:'PASS',label:'通过'}]
+function matchesFilter(item:Finding, status:string){return status==='unreviewed'?!item.review:status==='attention'?item.status!=='PASS':!status || item.status===status}
 function filterCount(status:string){return fileFindings.value.filter(item=>matchesFilter(item,status)).length}
 function availableRules(item:Material){return rules.value.filter(rule=>currentRules.value.some(current=>current.id===rule.id) || rule.id===item.rule_version_id)}
 function selectFile(event:Event) {
@@ -154,6 +161,23 @@ function nextFinding() {
   if(next)selectFinding(next)
 }
 async function saveAndNext(){await saveReview();if(!reviewDirty.value)nextFinding()}
+const remaining=computed(()=>round.value?.findings.filter(item=>!item.review) || [])
+async function nextUnreviewed(){
+  if(reviewDirty.value){await saveReview();if(reviewDirty.value)return}
+  const pending=remaining.value.find(item=>item.item_key!==selectedKey.value && item.status!=='PASS') || remaining.value.find(item=>item.item_key!==selectedKey.value)
+  if(!pending)return
+  if(choose(pending)){selectedFileId.value=pending.locator?.file_version_id || '';filter.value='unreviewed';workspacePanel.value='checks'}
+}
+function setJudgment(value:string){review.judgment=value;reviewDirty.value=true}
+function pickFinding(event:Event){const select=event.target as HTMLSelectElement;const finding=round.value?.findings.find(item=>item.item_key===select.value);if(finding && !choose(finding))select.value=selectedKey.value}
+async function findEvidence(){workspacePanel.value='original';await nextTick();await originalPreview.value?.findEvidence()}
+function matchingHelp(item:Material){
+  if(['queued','leased'].includes(item.analysisStatus || ''))return '正在匹配。也可以先手动选择适用规则。'
+  if(!currentRules.value.length)return '规则库暂无规则，请先上传客户规则。'
+  if(['failed','unknown'].includes(item.analysisStatus || '') || item.analysis?.matching_status==='failed')return '自动匹配未完成，请手动核对并选择规则。'
+  if(item.analysis?.document_type && !currentRules.value.some(rule=>rule.type===item.analysis?.document_type))return `识别为「${item.analysis.document_type}」，规则库暂无同类型规则。请核对类型或上传适用规则。`
+  return '尚未确认适用规则。请选择并核对规则；没有适用项时，可上传客户规则。'
+}
 async function loadDrafts(more=false) {
   draftLoading.value=true
   try {
@@ -210,7 +234,7 @@ function unchanged(item:Material){return previousRound.value?.inputs.some(previo
       <article v-for="item in items" :key="item.file_version_id" class="audit-material">
         <div class="material-name"><strong>{{ item.original_filename }}</strong><span v-if="previousRound" class="badge">{{ unchanged(item)?'沿用原件':'本轮新增' }}</span><small v-if="item.analysis">{{ [item.analysis.metadata.customer,item.analysis.metadata.model,item.analysis.metadata.part].filter(Boolean).join(' · ') }}</small><small v-if="['queued','leased'].includes(item.analysisStatus || '')" role="status">正在识别并匹配…</small><small v-if="['failed','unknown'].includes(item.analysisStatus || '')">自动匹配未完成，请手动选择。</small><small v-for="notice in (item.analysis?.notices || []).filter(notice=>notice!=='metadata_uses_excerpt')" :key="notice">{{ analysisNotices[notice] || notice }}</small></div>
         <label>用途<select v-model="item.role" :disabled="busy" @change="item.rule_version_id=null"><option value="target">待审文件</option><option value="reference">参考资料</option></select></label>
-        <div v-if="item.role==='target'" class="material-rule"><label>客户规则<select v-model="item.rule_version_id" :disabled="busy" :aria-label="item.original_filename+'的匹配规则'"><option :value="null">选择匹配规则</option><option v-for="rule in availableRules(item)" :key="rule.id" :value="rule.id">{{ rule.title }}{{ currentRules.some(current=>current.id===rule.id)?'':'（历史版本）' }}</option></select></label><div class="material-rule-meta"><span>{{ item.rule_version_id ? rules.find(rule=>rule.id===item.rule_version_id)?.type || '已选择规则' : '尚未匹配' }}</span><button v-if="item.rule_version_id" class="text-button" :disabled="busy" @click="openRules(item)">查看规则</button></div></div>
+        <div v-if="item.role==='target'" class="material-rule"><label>客户规则参考<select v-model="item.rule_version_id" :disabled="busy" :aria-label="item.original_filename+'的匹配规则'"><option :value="null">选择匹配规则</option><option v-for="rule in availableRules(item)" :key="rule.id" :value="rule.id">{{ rule.title }}{{ currentRules.some(current=>current.id===rule.id)?'':'（历史版本）' }}</option></select></label><div class="material-rule-meta"><span>{{ item.rule_version_id ? '自动检查类型 · '+(rules.find(rule=>rule.id===item.rule_version_id)?.type || '按规则类型') : '尚未匹配' }}</span><button v-if="item.rule_version_id" class="text-button" :disabled="busy" @click="openRules(item)">查看规则</button></div><p v-if="!item.rule_version_id" class="matching-help">{{ matchingHelp(item) }}</p></div>
         <span v-else class="pc-muted material-rule">仅作参考，不单独检查</span>
         <button class="text-button subtle" :disabled="busy" :aria-label="'移除 '+item.original_filename" @click="items=items.filter(row=>row!==item)">移除</button>
       </article>
@@ -225,10 +249,11 @@ function unchanged(item:Material){return previousRound.value?.inputs.some(previo
   </div>
   <div v-else class="round-page">
     <div class="round-heading"><div><a class="back-link" href="/audit-files">← 审核结果</a><h2>{{ round.inputs.filter(file=>file.role==='target').length }} 份资料 <span class="badge" :class="{'status-ERR':round.execution==='failed'}">{{ executionLabels[round.execution] || round.execution }}</span></h2><p class="pc-muted">{{ dateLabel(round.created_at) }}<template v-if="round.findings.length"> · 已保存复核 {{ reviewed }} / {{ round.findings.length }} 项</template></p></div><div class="button-group"><a v-if="round.predecessor_id" class="button" :href="'/?round='+round.predecessor_id">上一轮</a><button :disabled="busy || ['queued','running'].includes(round.execution)" @click="prepareAgain">修改资料再审核</button></div></div>
-    <div v-if="round.findings.length" class="result-summary"><span v-for="count in counts" :key="count.status" :class="'status-'+count.status"><strong>{{ count.count }}</strong>{{ resultLabels[count.status] }}</span></div>
+    <div v-if="round.findings.length" class="result-summary"><span v-for="count in counts" :key="count.status" :class="count.count?'status-'+count.status:'pc-muted'"><strong>{{ count.count }}</strong>{{ resultLabels[count.status] }}</span><span class="summary-note">机器检查结果 · 不代表正式批准</span></div>
     <nav class="view-tabs" aria-label="审核视图"><button :aria-pressed="roundView==='review'" @click="roundView='review'">检查与复核</button><button :aria-pressed="roundView==='report'" @click="roundView='report'">审核报告</button></nav>
     <div v-show="roundView==='review'">
       <div class="workspace-heading"><label>审核资料<select :value="selectedFileId" :disabled="busy" @change="selectFile"><option v-for="file in round.inputs" :key="file.file_version_id" :value="file.file_version_id">{{ file.original_filename }}{{ file.role==='reference'?' · 参考资料':'' }}</option></select></label><div class="workspace-switch"><button :aria-pressed="workspacePanel==='checks'" @click="workspacePanel='checks'">检查结果</button><button :aria-pressed="workspacePanel==='original'" @click="workspacePanel='original'">查看原件</button></div></div>
+      <div v-if="selectedFile?.role==='target'" class="scope-strip"><span>自动检查 {{ fileFindings.length }} 项</span><a v-if="selectedFile.rule_version_id" :href="'/rules?rule='+selectedFile.rule_version_id+'&return_to='+encodeURIComponent('/?round='+round.id)">客户要求参考 ↗</a><span>客户自定义要求另需人工核对</span></div>
       <div v-if="workspacePanel==='original' && selectedFinding" class="mobile-finding-context"><strong>{{ selectedFinding.item }}</strong><p>{{ selectedFinding.suggestions }}</p><button @click="workspacePanel='checks'">返回复核</button></div>
       <div ref="workspace" class="audit-workspace" :class="{'is-resizing':resizing}" :data-panel="workspacePanel" :style="{'--preview-width':previewWidth+'%'}">
         <section class="audit-checks">
@@ -236,28 +261,28 @@ function unchanged(item:Material){return previousRound.value?.inputs.some(previo
           <template v-else>
             <nav class="audit-filters" aria-label="结果筛选"><button v-for="entry in filters" :key="entry.id" :disabled="busy" :aria-pressed="filter===entry.id" @click="chooseFilter(entry.id)">{{ entry.label }} <span>{{ filterCount(entry.id) }}</span></button></nav>
             <div v-if="!findings.length" class="empty-state compact"><h3>{{ ['queued','running'].includes(round.execution)?'正在检查资料…':round.execution==='failed'?'本次检查未完成':'当前筛选下没有检查项' }}</h3><p v-if="['queued','running'].includes(round.execution)" class="pc-muted">可以离开页面，稍后从审核结果继续查看。</p><button v-else-if="fileFindings.length" @click="chooseFilter('')">查看全部检查项</button></div>
-            <div class="finding-list" aria-label="检查项">
-              <button v-for="finding in findings" :key="finding.item_key" class="finding-row" :disabled="busy" :aria-pressed="selectedKey===finding.item_key" @click="selectFinding(finding)"><span class="status-dot" :class="'status-'+finding.status" aria-hidden="true"></span><span>{{ finding.item }}<small>{{ resultLabels[finding.status] }}{{ finding.review?' · 已保存复核':'' }}</small></span><span aria-hidden="true">›</span></button>
-            </div>
+            <label v-if="findings.length" class="finding-picker">检查项<select :value="findings.some(item=>item.item_key===selectedKey)?selectedKey:''" :disabled="busy" @change="pickFinding"><option v-if="!findings.some(item=>item.item_key===selectedKey)" value="" disabled>当前项已保存，可继续下一项</option><option v-for="(finding,index) in findings" :key="finding.item_key" :value="finding.item_key">{{ index+1 }}. {{ finding.item }} · {{ resultLabels[finding.status] }}{{ finding.review?' · 已记录':'' }}</option></select></label>
             <article v-if="selectedFinding" class="finding-detail">
               <div class="section-heading"><span class="badge" :class="'status-'+selectedFinding.status">{{ resultLabels[selectedFinding.status] }}</span><button class="text-button mobile-original-link" @click="workspacePanel='original'">核对原件 →</button></div>
               <h3 ref="detailHeading" tabindex="-1">{{ selectedFinding.item }}</h3>
               <p class="finding-description">{{ selectedFinding.suggestions }}</p>
-              <p class="evidence"><span class="field-label">依据位置</span>{{ selectedFinding.locator?.locator || '未提供精确位置，请核对原件。' }}</p>
+              <div class="evidence"><span class="field-label">依据位置</span>{{ selectedFinding.locator?.locator || '尚无精确定位，可按检查说明查找原件。' }}<button type="button" class="text-button" @click="findEvidence">在原件中查找 →</button></div>
               <form class="audit-review" @submit.prevent="saveReview">
                 <div class="section-heading"><h3>人工复核</h3><span class="pc-muted">{{ reviewDirty?'未保存':selectedFinding.review?'已保存':'' }}</span></div>
                 <fieldset class="plain-fieldset" :disabled="busy">
+                  <div class="judgment-options" aria-label="快捷复核判断"><button v-for="value in ['认可机器判断','有异议','待确认']" :key="value" type="button" :aria-pressed="review.judgment===value" @click="setJudgment(value)">{{ value }}</button></div>
                   <label>判断<input v-model="review.judgment" placeholder="填写你的复核判断" @input="reviewDirty=true" /></label>
                   <label>理由<textarea v-model="review.rationale" rows="3" @input="reviewDirty=true" /></label>
                   <label>下一步<textarea v-model="review.next_step" rows="2" @input="reviewDirty=true" /></label>
-                  <div class="button-group"><button class="pc-primary" :disabled="!review.judgment.trim() || !reviewDirty">保存复核</button><button v-if="findings.findIndex(item=>item.item_key===selectedKey)<findings.length-1" type="button" :disabled="reviewDirty && !review.judgment.trim()" @click="reviewDirty?saveAndNext():nextFinding()">{{ reviewDirty?'保存并下一项':'下一项 →' }}</button></div>
+                  <div class="button-group"><button class="pc-primary" :disabled="!review.judgment.trim() || !reviewDirty">保存复核</button><button v-if="remaining.some(item=>item.item_key!==selectedKey)" type="button" :disabled="reviewDirty && !review.judgment.trim()" @click="nextUnreviewed">{{ reviewDirty?'保存并继续':'下一未记录项 →' }}</button><button v-if="findings.findIndex(item=>item.item_key===selectedKey)<findings.length-1" class="text-button" type="button" :disabled="reviewDirty && !review.judgment.trim()" @click="reviewDirty?saveAndNext():nextFinding()">下一项 →</button></div>
+                  <p class="review-footnote">记录复核不等于问题已解决，也不改变机器结论。</p>
                 </fieldset>
               </form>
             </article>
           </template>
         </section>
         <div class="preview-resizer" role="separator" tabindex="0" aria-label="调整原件预览宽度" aria-orientation="vertical" :aria-valuenow="Math.round(previewWidth)" aria-valuemin="28" aria-valuemax="50" @pointerdown.prevent="startResize" @pointermove="resizePreview" @pointerup="resizing=false" @pointercancel="resizing=false" @lostpointercapture="resizing=false" @keydown="resizeKey" />
-        <OriginalPreview :file="selectedFile" :round-id="round.id" />
+        <OriginalPreview ref="originalPreview" :file="selectedFile" :round-id="round.id" :finding="selectedFinding" />
       </div>
     </div>
     <ReportPreview v-if="roundView==='report'" :round="round" :unsaved-review="reviewDirty" @review="roundView='review';workspacePanel='checks'" />

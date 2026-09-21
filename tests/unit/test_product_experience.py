@@ -11,6 +11,27 @@ from ppap_core.feishu_drive import FeishuMetaError, list_drive_folder
 
 
 class PreviewTests(unittest.TestCase):
+    def test_sheet_selection_reads_later_sheets_and_preserves_row_coordinates(self):
+        from openpyxl import Workbook
+        book = Workbook()
+        for number in range(6):
+            book.create_sheet(f"Data-{number}")
+        book["Data-5"]["B235"] = "=1+1"
+        book["Data-5"]["C436"] = "later"
+        output = io.BytesIO()
+        book.save(output)
+        book.close()
+        content = output.getvalue()
+        self.assertIn("Data-5", document_preview(content, "report.xlsm")["sheets"])
+        page = document_preview(content, "report.xlsm", "Data-5", 233)
+        self.assertEqual(page["sheet"], "Data-5")
+        self.assertEqual(page["rows"], [{"number": 235, "text": "B235: =1+1"}])
+        self.assertEqual(page["next_row"], 433)
+        tail = document_preview(content, "report.xlsm", "Data-5", page["next_row"])
+        self.assertIn("C436: later", tail["text"])
+        self.assertIsNone(tail["next_row"])
+        self.assertFalse(document_preview(content, "report.xlsm", "missing")["available"])
+
     def test_office_excerpts_preserve_text_cells_and_do_not_evaluate_formulas(self):
         from openpyxl import Workbook
         from docx import Document
@@ -126,7 +147,10 @@ class ProductExperienceTests(unittest.TestCase):
         self.assertEqual(len(self.client.get("/rounds?q=first").json()["rounds"]), 1)
         round_path = f"/rounds/{rounds[-1]}" + path + "/preview"
         self.assertEqual(self.client.get(round_path).status_code, 200)
+        self.assertEqual(self.client.get(round_path + '?start_row=0').status_code, 422)
+        self.assertEqual(self.client.get(round_path + '?start_row=1048577').status_code, 422)
         self.login("bob")
         self.assertEqual(self.client.get(path + "/preview").status_code, 403)
         self.assertEqual(self.client.get(round_path).status_code, 403)
+        self.assertEqual(self.client.get(round_path + '?sheet=Sheet1&start_row=30').status_code, 403)
         self.assertEqual(self.client.get("/rounds").json()["rounds"], [])
