@@ -1,11 +1,28 @@
-import {forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState} from 'react'
+import {forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState} from 'react'
 import {apiUrl, originalUrl, request, type Material, type Finding} from './api'
 import {parseExcerptCells} from './helpers'
 import OfficePreview from './OfficePreview'
+import Help from './Help'
+import {Download, Search} from 'lucide-react'
 
 interface Excerpt {
   available: boolean; text?: string; notice: string; sheets?: string[]; sheet?: string
   rows?: {number: number; text: string}[]; start_row?: number; end_row?: number; next_row?: number | null
+}
+
+interface PreviewPosition {
+  sheet: string; startRow: number; textMode: boolean; rawExcerpt: boolean
+  search: string; lookupRow: number | null; finding: string
+  scrollTop: number; pageTop: number
+}
+
+function readPosition(key: string): PreviewPosition | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(key) || 'null')
+    if (!saved || typeof saved.sheet !== 'string' || typeof saved.search !== 'string') return null
+    if (![saved.startRow, saved.scrollTop, saved.pageTop].every(Number.isFinite)) return null
+    return {...saved, startRow: Math.max(1, Math.min(1048576, saved.startRow))}
+  } catch { return null }
 }
 
 export interface OriginalPreviewHandle {findEvidence: () => Promise<void>}
@@ -26,6 +43,15 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   const [loading, setLoading] = useState(false)
   const [textMode, setTextMode] = useState(false)
   const [office, setOffice] = useState<{available: boolean; script_url: string; config: Record<string, unknown>} | null>(null)
+  const storageKey = `ppap-view:preview:${roundId || 'draft'}:${file?.file_version_id || ''}`
+  const [readyKey, setReadyKey] = useState('')
+  const pendingLookup = useRef(false)
+  const pendingRestore = useRef<PreviewPosition | null>(null)
+  const positionRef = useRef<PreviewPosition | null>(null)
+  positionRef.current = readyKey === storageKey ? {
+    sheet, startRow, textMode: textMode || (!office && !!excerpt), rawExcerpt, search, lookupRow, finding: finding?.item_key || '',
+    scrollTop: excerptElement.current?.scrollTop || 0, pageTop: window.scrollY,
+  } : null
   const revision = useRef(0)
   const excerptRevision = useRef(0)
   const controller = useRef<AbortController | undefined>(undefined)
@@ -46,6 +72,8 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   )
 
   function clear() {
+    pendingLookup.current = false
+    pendingRestore.current = null
     controller.current?.abort()
     excerptRevision.current += 1
     setExcerpt(null)
@@ -59,6 +87,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
     setText('')
     setOffice(null)
     setTextMode(false)
+    setRawExcerpt(false)
   }
 
   async function fallback(target: Material, current: number, reason = '') {
@@ -99,12 +128,51 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
     }
   }
 
-  async function revealLookup() {
-    await Promise.resolve()
-    const row = excerptElement.current?.querySelector<HTMLElement>('.is-lookup')
-    row?.focus({preventScroll: true})
-    row?.scrollIntoView({block: 'nearest'})
+  // React must commit the fetched rows before we can focus or scroll them.
+  useLayoutEffect(() => {
+    if (loading || searching || !excerptElement.current?.getClientRects().length) return
+    if (pendingRestore.current) {
+      const saved = pendingRestore.current
+      pendingRestore.current = null
+      excerptElement.current.scrollTop = Math.max(0, saved.scrollTop)
+      window.scrollTo({top: Math.max(0, saved.pageTop)})
+      const bounds = excerptElement.current.getBoundingClientRect()
+      // The rule link is above the preview. Returning should reveal the reading
+      // position, not leave it below the viewport where that link was clicked.
+      if (saved.scrollTop > 0 && (bounds.top >= window.innerHeight || bounds.bottom <= 0)) {
+        excerptElement.current.scrollIntoView({block: 'start'})
+      }
+    }
+    if (pendingLookup.current) {
+      pendingLookup.current = false
+      const row = excerptElement.current.querySelector<HTMLElement>('.is-lookup')
+      row?.focus({preventScroll: true})
+      const target = row || excerptElement.current
+      target.scrollIntoView({block: 'start'})
+    }
+  })
+
+  function rememberPosition() {
+    if (!positionRef.current || loading || searching) return
+    try {
+      const visible = !!excerptElement.current?.getClientRects().length
+      const saved = visible ? null : readPosition(storageKey)
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        ...positionRef.current,
+        scrollTop: visible ? excerptElement.current!.scrollTop : saved?.scrollTop || 0,
+        pageTop: visible ? window.scrollY : saved?.pageTop ?? window.scrollY,
+      }))
+    } catch { /* Reading works even when browser storage is unavailable. */ }
   }
+
+  useEffect(() => {
+    window.addEventListener('pagehide', rememberPosition)
+    document.addEventListener('click', rememberPosition)
+    return () => {
+      window.removeEventListener('pagehide', rememberPosition)
+      document.removeEventListener('click', rememberPosition)
+    }
+  }, [storageKey, loading, searching])
 
   async function findEvidence() {
     const target = fileRef.current
@@ -131,15 +199,12 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
       const nextStart = looked ? Math.max(1, looked - 2) : 1
       setStartRow(nextStart)
       setLookupNote('按检查说明查找的位置，请对照下方原文核实。')
+      pendingLookup.current = true
       await readSheet(named, nextStart)
-      await revealLookup()
     } else {
       setLookupNote('未识别到明确工作表，请选择工作表或输入文字查找。')
     }
   }
-
-  const excerptRef = useRef(excerpt)
-  excerptRef.current = excerpt
 
   useImperativeHandle(ref, () => ({findEvidence}))
 
@@ -167,6 +232,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   useEffect(() => {
     const current = ++revision.current
     clear()
+    setReadyKey('')
     if (!file) { setNotice('请选择一份文件。'); setLoading(false); return }
     const target = file
     setLoading(true)
@@ -189,12 +255,29 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
           catch { /* Keep the authorized text preview available. */ }
           if (current !== revision.current) return
           if (result?.available) setOffice(result)
-          else await fallback(target, current)
+          const saved = readPosition(storageKey)
+          if (saved?.textMode) {
+            setTextMode(true)
+            const loaded = await fallback(target, current)
+            if (current !== revision.current) return
+            setRawExcerpt(!!saved.rawExcerpt)
+            setSearch(saved.search)
+            if (saved.sheet && loaded?.sheets?.includes(saved.sheet)) {
+              setSheet(saved.sheet)
+              setStartRow(saved.startRow)
+              const sameFinding = saved.finding === (findingRef.current?.item_key || '')
+              setLookupRow(sameFinding && Number.isInteger(saved.lookupRow) ? saved.lookupRow : null)
+              if (sameFinding && saved.lookupRow) setLookupNote('按检查说明查找的位置，请对照下方原文核实。')
+              await readSheet(saved.sheet, saved.startRow)
+              if (current !== revision.current) return
+              pendingRestore.current = saved
+            }
+          } else if (!result?.available) await fallback(target, current)
         }
       } catch (error) {
         if (current === revision.current) setNotice(error instanceof Error ? error.message : '无法预览，请下载原件。')
       } finally {
-        if (current === revision.current) setLoading(false)
+        if (current === revision.current) { setLoading(false); setReadyKey(storageKey) }
       }
     })()
     return () => { revision.current += 1; controller.current?.abort() }
@@ -208,12 +291,13 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
 
   return (
     <section className="audit-original" data-testid="file-preview">
-      <header><h2>原件预览</h2>{file && <a href={originalUrl(file, roundId)} target="_blank" rel="noopener" data-testid="open-original">下载原件</a>}</header>
-      <p className="preview-filename" data-testid="file-preview-name">{file?.original_filename}</p>
+      <header className="preview-heading"><h2 title={file?.original_filename}>原件<span className="sr-only" data-testid="file-preview-name"> · {file?.original_filename}</span></h2><div className="button-group">
+        {office && <button type="button" className="text-button" disabled={loading} onClick={() => void showText()}>{textMode ? '排版预览' : '文字摘录'}</button>}
+        <Help title="预览说明"><p>{file?.original_filename}</p>{notice && <p>{notice}</p>}<p>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</p></Help>
+        {file && <a className="icon-button" href={originalUrl(file, roundId)} target="_blank" rel="noopener" data-testid="open-original" aria-label="下载原件" title="下载原件"><Download size={18} aria-hidden="true" /></a>}
+      </div></header>
       {loading && <p role="status">正在加载原件…</p>}
-      {office && <button type="button" disabled={loading} onClick={() => void showText()}>{textMode ? '返回排版预览' : '查看文字摘录'}</button>}
-      {lookupNote && <p className="preview-notice" role="status">{lookupNote}</p>}
-      {office && /\.xlsm$/i.test(file?.original_filename || '') && <p className="pc-muted preview-notice">含宏文件不运行宏。内容不可见时，可切换文字摘录或下载核对。</p>}
+      {lookupNote && !lookupRow && <p className="preview-notice" role="status">{lookupNote}</p>}
       {office && !textMode && <OfficePreview key={file?.file_version_id} scriptUrl={office.script_url} config={office.config} onFailed={officeFailed} />}
       {url && <iframe key={url} src={url} title={file?.original_filename || '原件预览'} sandbox="allow-same-origin" referrerPolicy="no-referrer" />}
       {(!office || textMode) && (
@@ -232,12 +316,12 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
               <button type="submit" disabled={!sheet || loading || searching}>定位</button>
             </form>
           )}
-          {text && <label className="excerpt-search">查找当前摘录<input value={search} onChange={event => setSearch(event.target.value)} type="search" placeholder="输入文字或单元格，如 A35" enterKeyHint="search" autoCapitalize="none" /></label>}
-          {notice && <p className="preview-notice pc-muted">{notice}</p>}
+          {text && <label className="excerpt-search"><Search size={16} aria-hidden="true" /><span className="sr-only">查找当前摘录</span><input value={search} onChange={event => setSearch(event.target.value)} type="search" placeholder="查找文字或单元格，如 A35" enterKeyHint="search" autoCapitalize="none" /></label>}
+          {notice && !text && <p className="preview-notice pc-muted" role="status">{notice}</p>}
           {searching ? <p role="status">正在读取工作表…</p> : excerpt?.sheet ? (
             <>
-              <div className="excerpt-caption"><span>{excerpt.sheet} · 第 {excerpt.start_row}–{excerpt.end_row || excerpt.start_row} 行</span><button type="button" className="text-button" aria-pressed={rawExcerpt} onClick={() => setRawExcerpt(value => !value)}>{rawExcerpt ? '分格阅读' : '原始摘录'}</button></div>
-              <div ref={excerptElement} className="excerpt-rows" aria-label="工作表原文摘录" tabIndex={0}>
+              <div className="excerpt-caption"><span>摘录 · 第 {excerpt.start_row}–{excerpt.end_row || excerpt.start_row} 行 · 非完整原件</span><button type="button" className="text-button" aria-pressed={rawExcerpt} onClick={() => setRawExcerpt(value => !value)}>{rawExcerpt ? '分格阅读' : '原始摘录'}</button></div>
+              <div ref={excerptElement} className="excerpt-rows" aria-label="工作表原文摘录" tabIndex={0} onScroll={rememberPosition}>
                 {excerptRows.map(row => (
                   <article key={row.number} className={'excerpt-row' + (row.number === lookupRow ? ' is-lookup' : '')} tabIndex={-1}>
                     <header><strong>第 {row.number} 行</strong>{row.number === lookupRow && <span>查找线索 · 请核实</span>}</header>

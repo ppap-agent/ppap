@@ -5,6 +5,8 @@ import OriginalPreview, {type OriginalPreviewHandle} from './OriginalPreview'
 import DrivePicker from './DrivePicker'
 import ReportPreview from './ReportPreview'
 import Modal from './Modal'
+import Help from './Help'
+import {ArrowLeft, ArrowRight, X, Search} from 'lucide-react'
 
 const filters = [{id: 'attention', label: '需关注'}, {id: 'unreviewed', label: '未记录'}, {id: '', label: '全部'}, {id: 'PASS', label: '通过'}]
 
@@ -486,7 +488,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     if (!currentRules.length) return '规则库暂无规则，请先上传客户规则。'
     if (['failed', 'unknown'].includes(item.analysisStatus || '') || item.analysis?.matching_status === 'failed') return '自动匹配未完成，请手动核对并选择规则。'
     if (item.analysis?.document_type && !currentRules.some(rule => rule.type === item.analysis?.document_type)) return `识别为「${item.analysis.document_type}」，规则库暂无同类型规则。请核对类型或上传适用规则。`
-    return '尚未确认适用规则。请选择并核对规则；没有适用项时，可上传客户规则。'
+    return '请选择适用规则，或上传新规则。'
   }
   function availableRules(item: Material) {
     return rules.filter(rule => currentRules.some(current => current.id === rule.id) || rule.id === item.rule_version_id)
@@ -608,16 +610,16 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                         </select>
                       </label>
                       <div className="material-rule-meta">
-                        <span>{item.rule_version_id ? '自动检查类型 · ' + (rules.find(rule => rule.id === item.rule_version_id)?.type || '按规则类型') : '尚未匹配'}</span>
+                        {item.rule_version_id && <span>{rules.find(rule => rule.id === item.rule_version_id)?.type || '按规则类型'}</span>}
                         {item.rule_version_id && <button type="button" className="text-button" disabled={busy} onClick={() => void openRules(item)}>查看规则</button>}
                       </div>
                       {!item.rule_version_id && <p className="matching-help">{matchingHelp(item)}</p>}
                     </div>
                   ) : <span className="pc-muted material-rule">仅作参考，不单独检查</span>}
-                  <button type="button" className="text-button subtle" disabled={busy} aria-label={'移除 ' + item.original_filename} onClick={() => setItems(current => current.filter(row => row.file_version_id !== item.file_version_id))}>移除</button>
+                  <button type="button" className="icon-button material-remove" disabled={busy} title="移除资料" aria-label={'移除 ' + item.original_filename} onClick={() => setItems(current => current.filter(row => row.file_version_id !== item.file_version_id))}><X size={18} aria-hidden="true" /></button>
                 </article>
               ))}
-              {!!targetCount && <p className="scope-note">自动检查按所选文档类型执行；客户规则中的自定义条目供人工复核。</p>}
+              {!!targetCount && <div className="scope-note scope-inline">客户规则用于人工复核<Help title="审核范围"><p>自动检查按所选文档类型执行；客户规则中的自定义条目供人工复核。</p></Help></div>}
               <div className="action-bar sticky-actions">
                 <div>
                   <strong>{targetCount} 份待审</strong>
@@ -653,15 +655,15 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
           <div className="round-heading">
             <div className="round-context">
               <a className="back-link" href="/audit-files" data-testid="open-history">← 审核结果</a>
-              <h2>{executionLabels[round.execution] || round.execution}</h2>
-              <p className="pc-muted">{round.inputs.filter(file => file.role === 'target').length} 份待审 · {dateLabel(round.created_at)}</p>
+              <span className="round-status">{executionLabels[round.execution] || round.execution}</span>
+              <span className="round-date">{round.inputs.filter(file => file.role === 'target').length} 份资料 · {dateLabel(round.created_at)}</span>
             </div>
             <div className="button-group">
               {round.predecessor_id && <a className="text-button button" data-testid="previous-round" href={'/?round=' + round.predecessor_id}>上一轮</a>}
-              <button type="button" className="text-button" data-testid="prepare-again" disabled={busy || ['queued', 'running'].includes(round.execution)} onClick={prepareAgain}>修改资料再审核</button>
+              <button type="button" className="text-button" data-testid="prepare-again" disabled={busy || ['queued', 'running'].includes(round.execution)} onClick={prepareAgain}>修改后重审</button>
             </div>
           </div>
-          {!!round.findings.length && (
+          {!!round.findings.length && roundView !== 'report' && (
             <div className="result-summary" aria-label="本轮机器检查结果" data-testid="result-summary">
               {counts.map(count => <span key={count.status} className={count.count ? 'status-' + count.status : 'pc-muted'}><strong>{count.count}</strong>{resultLabels[count.status]}</span>)}
               <span className="review-progress">复核 {reviewed} / {round.findings.length}<progress value={reviewed} max={round.findings.length} aria-label="已记录人工复核" /></span>
@@ -676,18 +678,16 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
             <div className="workspace-heading">
               <label>
                 <span className="sr-only">审核资料</span>
-                <select data-testid="file-version-list" value={selectedFileId} disabled={busy} onChange={selectFile}>
+                <select data-testid="file-version-list" title={selectedFile?.original_filename} value={selectedFileId} disabled={busy} onChange={selectFile}>
                   {round.inputs.map(file => <option key={file.file_version_id} value={file.file_version_id}>{file.original_filename}{file.role === 'reference' ? ' · 参考资料' : ''}</option>)}
                 </select>
               </label>
               {selectedFile?.rule_version_id && <a className="context-link" href={'/rules?rule=' + selectedFile.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>客户规则参考 ↗</a>}
             </div>
-            {selectedFile?.role === 'target' && <p className="scope-strip">自动检查 {fileFindings.length} 项 · 客户自定义要求需人工核对</p>}
             <div className="sr-only" data-testid="coverage-panel">{round.inputs.map(file => file.original_filename).join(' ')}</div>
-            {round.coverage?.locator_gap && <p className="notice" data-testid="locator-gap">部分检查项没有精确定位，请按说明在原件中核对。</p>}
             {workspacePanel === 'original' && selectedFinding && (
               <div className="mobile-finding-context">
-                <div><strong>{selectedFinding.item}</strong><p>{selectedFinding.suggestions}</p></div>
+                <strong>{selectedFinding.item}</strong>
                 <button type="button" onClick={() => switchView('review')}>返回复核</button>
               </div>
             )}
@@ -719,8 +719,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                           </select>
                         </label>
                         <div className="finding-arrows">
-                          <button type="button" aria-label="上一检查项" title="上一检查项" disabled={busy || findingIndex <= 0} onClick={() => nextFinding(-1)}>←</button>
-                          <button type="button" aria-label="下一检查项" title="下一检查项" disabled={busy || findingIndex >= findings.length - 1} onClick={() => nextFinding()}>→</button>
+                          <button type="button" className="icon-button" aria-label="上一检查项" title="上一检查项" disabled={busy || findingIndex <= 0} onClick={() => nextFinding(-1)}><ArrowLeft size={18} aria-hidden="true" /></button>
+                          <button type="button" className="icon-button" aria-label="下一检查项" title="下一检查项" disabled={busy || findingIndex >= findings.length - 1} onClick={() => nextFinding()}><ArrowRight size={18} aria-hidden="true" /></button>
                         </div>
                       </div>
                     )}
@@ -733,11 +733,11 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                         <h3 ref={detailHeading} tabIndex={-1}>{selectedFinding.item}</h3>
                         <p className="finding-description" data-testid="finding-suggestion">{selectedFinding.suggestions}</p>
                         <div className="evidence" data-testid="finding-evidence">
-                          <div><span className="field-label">{selectedFinding.locator?.locator ? '依据位置' : '原件核对'}</span>{selectedFinding.locator?.locator || '按检查说明查找，位置需人工核实。'}</div>
-                          <button type="button" className="text-button" onClick={() => void findEvidence()}>在原件中查找 →</button>
+                          <div>{selectedFinding.locator?.locator || <span data-testid="locator-gap">定位线索 · 待核实</span>}</div>
+                          <button type="button" className="text-button" onClick={() => void findEvidence()}><Search size={16} aria-hidden="true" />在原件中查找</button>
                         </div>
                         <form className="audit-review" onSubmit={event => void nextUnreviewed(event)}>
-                          <div className="section-heading"><h3>人工复核</h3><span className="review-save-state" role="status">{savingReview ? '正在保存…' : reviewDirty ? '未保存' : selectedFinding.review ? '已保存' : ''}</span></div>
+                          <div className="section-heading"><div className="scope-inline"><h3>人工复核</h3><Help title="复核与自动检查"><p>记录复核不等于问题已解决，也不改变机器结论。客户规则中的自定义要求需另行人工核对。</p></Help></div><span className="review-save-state" role="status">{savingReview ? '正在保存…' : reviewDirty ? '未保存' : selectedFinding.review ? '已保存' : ''}</span></div>
                           <fieldset className="plain-fieldset" disabled={busy}>
                             <div className="judgment-options" aria-label="复核判断">
                               {reviewJudgments.map(value => <button type="button" key={value} aria-pressed={!customJudgment && review.judgment === value} onClick={() => setJudgment(value)}>{value}</button>)}
@@ -746,7 +746,6 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                             {customJudgment && <label>判断<input data-testid="review-judgment" value={review.judgment} placeholder="填写你的复核判断" onChange={event => { setReview(current => ({...current, judgment: event.target.value})); setReviewDirty(true) }} /></label>}
                             <label>理由<textarea data-testid="review-rationale" value={review.rationale} rows={3} onChange={event => { setReview(current => ({...current, rationale: event.target.value})); setReviewDirty(true) }} /></label>
                             <label>下一步<textarea data-testid="review-next" value={review.next_step} rows={2} onChange={event => { setReview(current => ({...current, next_step: event.target.value})); setReviewDirty(true) }} /></label>
-                            <p className="review-footnote">记录复核不等于问题已解决，也不改变机器结论。</p>
                             <div className="review-actions">
                               <span className="review-save-state" role="status">{reviewFeedback || (selectedFinding.review && !reviewDirty ? '已记录此项' : '')}</span>
                               <div className="button-group">

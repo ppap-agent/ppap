@@ -32,7 +32,7 @@ export default function UsageView() {
 
   return (
     <section className="page-content">
-      <form className="toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
+      <form className="toolbar usage-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
         <label>起始日期<input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
         <label>截止日期<input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>
         <button type="submit" disabled={busy}>查询</button>
@@ -42,13 +42,13 @@ export default function UsageView() {
       {!busy && !rows.length && !error && <div className="empty-state" data-testid="usage-empty"><h2>当前范围没有用量记录</h2></div>}
       {!!rows.length && (
         <div className="table-scroll" data-testid="usage-list">
-          <table className="responsive-table">
+          <table className="responsive-table usage-table">
             <thead><tr><th>时间</th><th>用量（点）</th><th>类型</th><th><span className="sr-only">关联审核</span></th></tr></thead>
             <tbody>
               {rows.map(row => (
                 <tr key={row.id}>
                   <td data-label="时间">{dateLabel(row.created_at)}</td>
-                  <td data-label="用量（点）">{row.consumed_points.toLocaleString('zh-CN')}</td>
+                  <td data-label="用量（点）">{row.consumed_points.toLocaleString('zh-CN')}<span className="mobile-unit">点</span></td>
                   <td data-label="类型">{row.is_free_trial ? '试用' : '额度'}</td>
                   <td className="row-action">{row.round_id && <a href={'/?round=' + row.round_id}>查看审核 →</a>}</td>
                 </tr>

@@ -3,6 +3,7 @@ import {request, upload, originalUrl, dateLabel, type Rule, type Material, type 
 import {isSafeReturnTo, latestRules} from './helpers'
 import rulesIcon from './assets/rules.svg'
 import Modal from './Modal'
+import Help from './Help'
 
 interface RuleItem {id: string; category: string; priority: string | null; rule_to_check: string; type_of_rule: string}
 interface RuleBody {kind: string; type: string; rule_profile: string; customers: string[]; models: string[]; parts: string[]; rules: RuleItem[]}
@@ -301,7 +302,7 @@ export default function RulesView() {
           <button type="button" className="back-link" disabled={busy} onClick={() => showList()}>← 规则库</button>
           <div className="section-heading">
             <h2>{candidate ? '核对规则' : view === 'upload' ? (predecessor ? '上传新版本' : '上传客户规则') : selected?.title}</h2>
-            {view === 'detail' && <span className="badge">人工复核参考</span>}
+            {view === 'detail' && <div className="scope-inline"><span className="badge">人工复核参考</span><Help title="客户规则用途"><p>客户要求用于人工复核，不会自动增加检查项。</p></Help></div>}
           </div>
           {view === 'upload' && (
             <fieldset className="rule-upload" disabled={busy}>
@@ -328,7 +329,7 @@ export default function RulesView() {
           {body && view === 'detail' && (
             <>
               {candidate && <label className="rule-name">规则名称<input id="rule-title" data-testid="rule-title" value={candidate.title} disabled={busy} onChange={event => setCandidate({...candidate, title: event.target.value})} /></label>}
-              <p id="rule-origin" className="pc-muted">{candidate ? (predecessor ? '基于版本' : '新规则') : '版本 · ' + dateLabel(selected?.created_at)}</p>
+              {candidate && <p id="rule-origin" className="pc-muted">{predecessor ? '基于版本' : '新规则'}</p>}
               <dl className="rule-metadata">
                 <div>
                   <dt>文件类型</dt>
@@ -336,24 +337,25 @@ export default function RulesView() {
                     ? <select value={candidate.body.type} aria-label="核对规则类型" disabled={busy} onChange={event => setCandidate({...candidate, body: {...candidate.body, type: event.target.value}})}>{types.map(name => <option key={name}>{name}</option>)}</select>
                     : body.type}</dd>
                 </div>
-                <div>
+                {(candidate || !!body.customers?.length) && <div>
                   <dt>适用客户</dt>
                   <dd>{candidate
                     ? <input id="rule-customers" data-testid="rule-customers" defaultValue={body.customers.join('、')} aria-label="适用客户" disabled={busy} onChange={event => setScope('customers', event)} />
                     : (body.customers?.join('、') || '未指定')}</dd>
-                </div>
-                <div>
+                </div>}
+                {(candidate || !!body.models?.length) && <div>
                   <dt>型号</dt>
                   <dd>{candidate
                     ? <input defaultValue={body.models.join('、')} aria-label="型号" disabled={busy} onChange={event => setScope('models', event)} />
                     : (body.models?.join('、') || '未指定')}</dd>
-                </div>
-                <div>
+                </div>}
+                {(candidate || !!body.parts?.length) && <div>
                   <dt>零件</dt>
                   <dd>{candidate
                     ? <input defaultValue={body.parts.join('、')} aria-label="零件" disabled={busy} onChange={event => setScope('parts', event)} />
                     : (body.parts?.join('、') || '未指定')}</dd>
-                </div>
+                </div>}
+                {!candidate && !body.customers?.length && !body.models?.length && !body.parts?.length && <div><dt>适用范围</dt><dd>未填写</dd></div>}
               </dl>
               <div className="toolbar rule-detail-actions">
                 {sourceFile?.file_id && <a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">原始文件 ↗</a>}
@@ -361,7 +363,6 @@ export default function RulesView() {
                 {selected?.predecessor_id && !candidate && <button type="button" disabled={busy} onClick={() => void select(selected.predecessor_id!)}>上一版本</button>}
                 {selected && !candidate && <button type="button" disabled={busy} onClick={() => { setPredecessor(selected.id); setType(selected.body.type); setView('upload'); setStatus('') }}>上传新版本</button>}
               </div>
-              <p className="scope-note">客户要求用于人工复核，不会自动增加检查项。</p>
               <div className="section-heading"><h3>客户要求</h3><span className="pc-muted">{body.rules?.length || 0} 项</span></div>
               {!body.rules?.length && <p className="empty-state">未解析出规则条目，请核对原始文件。</p>}
               <div data-testid="rule-items" id="rule-items">

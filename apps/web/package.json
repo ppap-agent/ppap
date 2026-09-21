@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "lucide-react": "^1.47.0",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },
@@ -20,6 +21,8 @@
     "vite": "7.3.6"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

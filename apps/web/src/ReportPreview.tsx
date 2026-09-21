@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
-import {type Round, apiUrl, originalUrl, request, dateLabel, resultLabels} from './api'
+import {type Round, apiUrl, originalUrl, request, resultLabels} from './api'
 
 interface Export {id: string; status: string; document_id: string | null; error_code?: string | null}
 
@@ -60,7 +60,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
       <div className="section-heading">
         <div>
           <h2>审核报告</h2>
-          <p className="pc-muted">{dateLabel(round.created_at)} · {groups.length} 份待审资料 · 已保存复核 {reviewed} / {round.findings.length} 项</p>
+          <p className="pc-muted">已复核 {reviewed} / {round.findings.length} 项</p>
         </div>
         <div className="button-group">
           {report?.status === 'ready' && report.document_id
@@ -85,15 +85,14 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
       {report?.status === 'ready' && <p className="notice">报告已生成，可在飞书中分享。后续复核修改不会覆盖这份报告。</p>}
       {incomplete && <p className="notice" role="status">检查尚未完整完成，暂不能生成完整报告。</p>}
       <section className="report-summary" aria-label="本轮摘要">
-        <h3>本轮摘要</h3>
         <div className="result-counts">
           {counts.map(count => <span key={count.status} className={count.count ? 'status-' + count.status : 'pc-muted'}>{resultLabels[count.status]} {count.count}</span>)}
           <span>未记录复核 {pending} 项</span>
         </div>
-        <p>自动检查 {round.findings.length} 项；客户自定义要求仍需另行人工核对。已记录复核不等于问题已解决，本报告不代表正式批准。</p>
-        {issues.length
+        <p>自动检查 {round.findings.length} 项 · 客户自定义要求需人工核对 · 非正式批准</p>
+        {issues.length > 8
           ? <ul className="report-issues">{issues.map(finding => <li key={finding.item_key}><a href={'#report-' + finding.item_key}>{finding.item}</a><span>{finding.review ? '已记录复核' : '未记录复核'}</span></li>)}</ul>
-          : <p>{round.findings.length ? '已返回检查项未发现不符合；不代表未检查范围也已通过。' : '尚无检查结果。'}</p>}
+          : !issues.length ? <p>{round.findings.length ? '已返回检查项未发现不符合；不代表未检查范围也已通过。' : '尚无检查结果。'}</p> : null}
         {!!round.coverage?.unchecked?.length && <p>未检查范围：{round.coverage.unchecked.join('；')}</p>}
       </section>
       {groups.map(group => (

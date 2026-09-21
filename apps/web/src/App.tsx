@@ -4,14 +4,14 @@ import Workbench from './Workbench'
 import HistoryView from './HistoryView'
 import RulesView from './RulesView'
 import UsageView from './UsageView'
-import brandIcon from './assets/brand.svg'
+import {CirclePlus, ChevronDown} from 'lucide-react'
 import filesIcon from './assets/files.svg'
 import rulesIcon from './assets/rules.svg'
 import usageIcon from './assets/usage.svg'
 
 const page = location.pathname.replace(/\/$/, '') || '/'
 const navigation = [
-  {path: '/', label: '新建审核', icon: brandIcon},
+  {path: '/', label: '新建审核', icon: null},
   {path: '/audit-files', label: '审核结果', icon: filesIcon},
   {path: '/rules', label: '规则库', icon: rulesIcon},
   {path: '/usage', label: '用量记录', icon: usageIcon},
@@ -24,7 +24,6 @@ export default function App() {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   const [user, setUser] = useState('')
-  const [menuOpen, setMenuOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [loginUrl, setLoginUrl] = useState('#')
   const [development, setDevelopment] = useState(false)
@@ -35,7 +34,6 @@ export default function App() {
     function dismissMenus(event: Event) {
       if (event instanceof KeyboardEvent && event.key !== 'Escape') return
       if (event instanceof KeyboardEvent || !shell.current?.contains(event.target as Node)) {
-        setMenuOpen(false)
         setAccountOpen(false)
       }
     }
@@ -76,13 +74,13 @@ export default function App() {
   return (
     <>
       <a className="skip-link" href="#main-content">跳到主要内容</a>
-      <aside ref={shell} className={'pc-shell' + (menuOpen ? ' is-open' : '')} data-testid="pc-shell">
-        <div className="mobile-bar"><span>{title}</span><button type="button" aria-expanded={menuOpen} aria-controls="main-navigation" onClick={() => setMenuOpen(open => !open)}>{menuOpen ? '收起菜单' : '菜单'}</button></div>
+      <aside ref={shell} className="pc-shell" data-testid="pc-shell">
+        <div className="mobile-bar"><span>{title}</span></div>
         <div className="pc-shell__content">
           <nav id="main-navigation" className="pc-shell__nav" aria-label="主导航">
             {navigation.map(link => (
               <a key={link.path} href={link.path} aria-label={link.label} title={link.label} aria-current={activePath === link.path ? 'page' : undefined} className={(activePath === link.path ? 'is-active' : '') + (link.path === '/usage' ? ' nav-secondary' : '')} data-testid={link.path === '/rules' ? 'nav-rules' : link.path === '/usage' ? 'nav-usage' : link.path === '/audit-files' ? 'nav-audit-files' : 'nav-home'}>
-                <img src={link.icon} alt="" width={20} height={20} />
+                {link.icon ? <img src={link.icon} alt="" width={20} height={20} /> : <CirclePlus size={20} aria-hidden="true" />}
                 <span>{link.label}</span>
               </a>
             ))}
@@ -92,7 +90,7 @@ export default function App() {
               <button type="button" className="account-button" data-testid="session-user" aria-label={user + '，账号菜单'} title={user} aria-expanded={accountOpen} aria-controls="account-actions" onClick={() => setAccountOpen(open => !open)}>
                 <span className="avatar" aria-hidden="true">{user[0]}</span>
                 <span>{user}</span>
-                <span aria-hidden="true">⌄</span>
+                <span aria-hidden="true"><ChevronDown size={16} /></span>
               </button>
               {accountOpen && <div id="account-actions" className="account-actions"><button type="button" onClick={() => void logout()}>退出登录</button></div>}
             </div>

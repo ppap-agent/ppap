@@ -33,13 +33,13 @@ export default function HistoryView() {
 
   return (
     <section className="page-content">
-      <form className="toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
+      <form className="toolbar history-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
         <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
         <select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
           <option value="">全部状态</option>
           {Object.entries(executionLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select>
-        <label className="inline-check"><input type="checkbox" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />有未记录复核项</label>
+        <label className="inline-check"><input type="checkbox" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />待复核</label>
         <button type="submit" disabled={busy}>搜索</button>
         <a className="button pc-primary toolbar-end" href="/">新建审核</a>
       </form>
@@ -62,15 +62,14 @@ export default function HistoryView() {
                 <tr key={row.id}>
                   <td className="record-title">
                     <a href={'/?round=' + row.id}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</a>
-                    {row.predecessor_id && <small>再次审核</small>}
                   </td>
-                  <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time></td>
+                  <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time>{row.predecessor_id && <small className="repeat-label">重审</small>}</td>
                   <td data-label="检查结果" data-testid="history-result">
                     {row.execution !== 'completed'
                       ? <span className={'badge' + (row.execution === 'failed' ? ' status-ERR' : '')}>{executionLabels[row.execution] || row.execution}</span>
                       : <div className="result-counts">{['NG', 'ERR', 'PASS'].map(status => row.result_counts?.[status] ? <span key={status} className={'status-' + status}>{resultLabels[status]} {row.result_counts?.[status]}</span> : null)}{!total(row) && <span>暂无检查项</span>}</div>}
                   </td>
-                  <td data-label="已记录复核">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</td>
+                  <td data-label="已复核">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</td>
                   <td className="row-action"><a href={'/?round=' + row.id + (total(row) > (row.reviewed_count || 0) ? '&review=next' : '')}>{total(row) > (row.reviewed_count || 0) ? '继续复核' : '查看结果'} →</a></td>
                 </tr>
               ))}
