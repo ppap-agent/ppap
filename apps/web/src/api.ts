@@ -25,10 +25,7 @@ export const executionLabels:Record<string,string> = {queued:'排队中', runnin
 export function dateLabel(value?:string) {
   return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
 }
-export function latestRules(rules:Rule[]) {
-  const previous = new Set(rules.map(rule=>rule.predecessor_id).filter(Boolean))
-  return rules.filter(rule=>!previous.has(rule.id))
-}
+export {latestRules} from './helpers'
 export interface Job<T> {id: string; status: string; result?: T & {error?: string}}
 export let apiUrl = ''
 export let profile = ''
@@ -43,9 +40,9 @@ const messages: Record<string,string> = {
   rule_required: '请为待审文件选择规则。', target_required: '请添加至少一份待审文件。', review_conflict: '复核已被更新，请刷新后核对。',
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
 }
-export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const response = await fetch(apiUrl + path, {method, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
-  const result = await response.json().catch(() => ({}))
+export async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
+  const result = await response.json().catch(error => {if(signal?.aborted)throw error;return {}})
   if (!response.ok) throw new Error(messages[result.error] || `请求失败（${response.status}）：${result.error || '请稍后重试'}`)
   return result as T
 }

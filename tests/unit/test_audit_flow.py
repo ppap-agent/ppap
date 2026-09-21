@@ -446,27 +446,27 @@ assert 'ppap_excel_audit_engine' not in sys.modules
 
 class WebHookTests(unittest.TestCase):
     def test_workbench_hooks_exist(self):
-        workbench = (ROOT / "apps/web/src/Workbench.vue").read_text()
+        workbench = (ROOT / "apps/web/src/Workbench.tsx").read_text()
         for marker in (
-            '@click="submit"', '@submit.prevent="saveReview"', '@click="prepareAgain"',
-            'class="finding-picker"', '@change="pickFinding"', '<OriginalPreview', '<ReportPreview',
+            'function submit', 'function saveReview', 'function prepareAgain',
+            'finding-picker', 'function pickFinding', '<OriginalPreview', '<ReportPreview',
             '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
         ):
             self.assertIn(marker, workbench)
-        self.assertIn('items.value.push(material)', workbench)
+        self.assertIn('list.concat(material)', workbench)
         self.assertIn('file.file_version_id', workbench)
-        self.assertIn("await connect()", (ROOT / "apps/web/src/App.vue").read_text())
+        self.assertIn("await connect()", (ROOT / "apps/web/src/App.tsx").read_text())
 
 
 class AuditHistoryPageTests(unittest.TestCase):
     def test_history_page_hooks_exist(self):
-        history = (ROOT / "apps/web/src/HistoryView.vue").read_text()
+        history = (ROOT / "apps/web/src/HistoryView.tsx").read_text()
         for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核结果', '加载更多'):
             self.assertIn(marker, history)
         addon = (ROOT / "apps" / "web" / "addon.html").read_text()
-        workbench = (ROOT / "apps/web/src/App.vue").read_text()
+        workbench = (ROOT / "apps/web/src/App.tsx").read_text()
         self.assertIn('href="./audit-files"', addon)
-        self.assertIn("path:'/audit-files'", workbench)
-        self.assertIn("path:'/usage'", workbench)
+        self.assertIn("path: '/audit-files'", workbench)
+        self.assertIn("path: '/usage'", workbench)
         self.assertNotIn("audit-files.html", addon)
         self.assertNotIn("audit-files.html", workbench)

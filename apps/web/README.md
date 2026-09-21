@@ -4,7 +4,7 @@
 
 ## 当前 main
 
-唯一产品界面是 Vue 3 + TypeScript，源码位于 `src/`，不设 `/v2` 或新旧界面切换。`/` 为审核准备与工作区，`/audit-files` 为审核结果，`/rules` 为规则库，`/usage` 只读展示用量。数据通过 `src/api.ts` 调用 Product API；前端不另建身份或业务存储。
+唯一产品界面是 React + TypeScript，源码位于 `src/`，不设 `/v2` 或新旧界面切换。`/` 为审核准备与工作区，`/audit-files` 为审核结果，`/rules` 为规则库，`/usage` 只读展示用量。数据通过 `src/api.ts` 调用 Product API；前端不另建身份或业务存储。
 
 账户操作统一在导航底部；正常产品页面不显示开发工具或内部上报状态。隔离测试身份只在显式访问 `/dev` 且 API profile 为 `isolated-dev` 时可用。桌面并排显示检查与原件，窄屏切换两者并保留当前检查项；列表在手机上显示为带字段名的记录卡片。
 

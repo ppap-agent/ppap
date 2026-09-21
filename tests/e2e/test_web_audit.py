@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -31,6 +30,18 @@ except ImportError:  # pragma: no cover - optional until the e2e job installs Pl
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
+def isolated_dev_login(page):
+    page.goto(f"{WEB}/dev")
+    page.get_by_test_id("isolated-dev-login").click()
+    page.wait_for_selector('[data-testid="session-user"]', state="attached")
+
+
+def open_nav(page):
+    menu = page.get_by_role("button", name="菜单")
+    if menu.count() and menu.is_visible():
+        menu.click()
+
+
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class WebAuditLoopTests(unittest.TestCase):
     def test_submit_leave_return_review_and_resubmit(self):
@@ -45,93 +56,94 @@ class WebAuditLoopTests(unittest.TestCase):
                 browser = playwright.chromium.launch()
                 page = browser.new_page()
                 page.set_viewport_size({"width": 390, "height": 844})
-                page.goto(WEB)
-                page.get_by_test_id("isolated-dev-login").click()
-                page.wait_for_selector("text=ou_alice")
+                isolated_dev_login(page)
                 page.get_by_test_id("source-upload").set_input_files(str(target))
-                page.get_by_test_id("prepare-audit").click()
-                page.wait_for_function("() => document.getElementById('document-version-id').textContent.length > 0")
+                page.wait_for_selector('[data-testid="draft-items"]')
                 page.get_by_test_id("item-rule").first.select_option(RULE_A)
                 page.get_by_test_id("reference-upload").set_input_files(str(reference))
-                page.get_by_test_id("prepare-reference").click()
-                page.wait_for_function("() => document.getElementById('draft-items').textContent.includes('context.pdf')")
-                page.get_by_test_id("save-draft").click()
-                page.wait_for_function("() => document.getElementById('draft-id').textContent.length > 0")
+                page.wait_for_function("() => document.querySelector('[data-testid=\"draft-items\"]').innerText.includes('context.pdf')")
+                page.wait_for_function("() => new URL(window.location.href).searchParams.get('draft')")
+                save = page.get_by_test_id("save-draft")
+                if save.is_enabled():
+                    save.click()
                 page.get_by_test_id("submit-audit").click()
                 page.wait_for_function("() => new URL(window.location.href).searchParams.get('round')")
                 round_id = page.evaluate("() => new URL(window.location.href).searchParams.get('round')")
                 page.goto(WEB)
-                expect(page.get_by_test_id("round-id")).to_have_text("")
+                expect(page.locator("#audit-preparation")).to_be_visible()
                 page.goto(f"{WEB}/?round={round_id}")
                 page.wait_for_selector('[data-testid="finding-status"]')
-                expect(page.get_by_test_id("finding-status").first).to_have_text("PASS")
+                expect(page.get_by_test_id("finding-status").first).to_have_attribute("data-status", "PASS")
                 coverage = page.get_by_test_id("coverage-panel").inner_text()
                 self.assertIn("report.xlsx", coverage)
                 self.assertIn("context.pdf", coverage)
+                original_tab = page.get_by_role("button", name="原件", exact=True)
+                if original_tab.is_visible():
+                    original_tab.click()
                 original = page.get_by_test_id("open-original")
                 gap = page.get_by_test_id("locator-gap")
                 if original.count() == 0:
                     expect(gap).to_be_visible()
                 else:
-                    expect(gap).to_be_hidden()
-                    target_link = page.locator('[data-testid="open-original"]', has_text="report.xlsx")
-                    href = target_link.get_attribute("href")
+                    href = original.get_attribute("href")
                     self.assertTrue(href)
                     downloaded = page.request.get(href)
                     self.assertEqual(downloaded.status, 200)
                     self.assertEqual(downloaded.body(), b"browser-target-v1")
-                    target_link.click(no_wait_after=True)
                     expect(page.get_by_test_id("file-preview")).to_be_visible()
                     expect(page.get_by_test_id("file-preview-name")).to_contain_text("report.xlsx")
-                    page.get_by_test_id("file-preview-close").click()
-                    expect(page.get_by_test_id("file-preview")).to_be_hidden()
-                expect(page.get_by_test_id("finding-suggestion").first).to_be_visible()
+                    page.get_by_role("button", name="检查与复核").click()
+                expect(page.locator(".finding-detail h3").first).to_be_visible()
                 expect(page.get_by_test_id("finding-evidence").first).to_be_visible()
-                expect(page.get_by_test_id("result-summary")).to_contain_text("PASS")
+                expect(page.get_by_test_id("result-summary")).to_contain_text("通过")
                 expect(page.get_by_test_id("pc-shell")).to_be_visible()
+                page.get_by_role("button", name="其他判断").click()
                 page.get_by_test_id("review-judgment").fill("需修改")
                 page.get_by_test_id("review-rationale").fill("尺寸缺失")
                 page.get_by_test_id("review-next").fill("补传")
                 page.get_by_test_id("save-review").click()
-                page.wait_for_selector("text=saved")
+                page.wait_for_selector("text=复核已保存")
+                page.get_by_test_id("prepare-again").click()
+                page.wait_for_selector("#audit-preparation")
+                page.wait_for_selector('[data-testid="submit-audit"]:not([disabled])')
                 page.get_by_test_id("source-upload").set_input_files(str(newer))
-                page.get_by_test_id("prepare-audit").click()
                 page.wait_for_function(
-                    "() => document.getElementById('draft-items').textContent.includes('report-v2.xlsx')"
+                    """() => document.querySelector('[data-testid="draft-items"]').innerText.includes('report-v2.xlsx')"""
                 )
                 page.get_by_test_id("item-rule").last.select_option(RULE_A)
-                page.get_by_test_id("resubmit-audit").click()
-                page.wait_for_selector('[data-testid="previous-round"]:not(.hidden)')
+                page.get_by_test_id("submit-audit").click()
+                page.wait_for_selector('[data-testid="previous-round"]')
                 expect(page.get_by_test_id("previous-round")).to_be_visible()
                 page.get_by_test_id("previous-round").click()
-                page.wait_for_selector("text=需修改")
+                page.wait_for_selector('[data-testid="review-judgment"]')
+                expect(page.get_by_test_id("review-judgment")).to_have_value("需修改")
                 expect(page.get_by_test_id("pc-shell")).to_be_visible()
-                expect(page.get_by_test_id("finding-suggestion").first).to_be_visible()
+                expect(page.locator(".finding-detail h3").first).to_be_visible()
                 expect(page.get_by_test_id("file-version-list")).to_contain_text("report.xlsx")
+                open_nav(page)
                 page.get_by_test_id("nav-usage").click()
                 page.wait_for_url("**/usage")
                 page.wait_for_function(
                     """() => ['usage-list', 'usage-empty', 'usage-error'].some((id) => {
-                      const node = document.getElementById(id);
-                      return Boolean(node && !node.classList.contains('hidden'));
+                      return Boolean(document.querySelector('[data-testid=\"' + id + '\"]'));
                     })"""
                 )
                 usage_error = page.get_by_test_id("usage-error")
-                if usage_error.is_visible():
+                if usage_error.count() and usage_error.is_visible():
                     self.fail(usage_error.inner_text())
+                open_nav(page)
                 page.get_by_test_id("nav-audit-files").click()
                 page.wait_for_url("**/audit-files")
                 page.wait_for_function(
                     """() => ['history-list', 'history-empty', 'history-error'].some((id) => {
-                      const node = document.getElementById(id);
-                      return Boolean(node && !node.classList.contains('hidden'));
+                      return Boolean(document.querySelector('[data-testid=\"' + id + '\"]'));
                     })"""
                 )
                 history_error = page.get_by_test_id("history-error")
-                if history_error.is_visible():
+                if history_error.count() and history_error.is_visible():
                     self.fail(history_error.inner_text())
                 expect(page.get_by_test_id("history-list")).to_be_visible()
-                expect(page.locator('[data-testid="history-result"]', has_text="PASS").first).to_be_visible()
+                expect(page.locator('[data-testid="history-result"]', has_text="通过").first).to_be_visible()
                 expect(page.get_by_test_id("history-version").first).not_to_have_text("")
                 browser.close()
 
@@ -153,23 +165,18 @@ class WebAuditLoopTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            page.goto(WEB)
-            page.get_by_test_id("isolated-dev-login").click()
-            page.wait_for_selector("text=ou_alice")
-            page.get_by_test_id("open-history").click()
+            isolated_dev_login(page)
+            page.get_by_test_id("nav-audit-files").click()
             page.wait_for_url("**/audit-files")
             page.wait_for_function(
                 """() => ['history-list', 'history-empty', 'history-error'].some((id) => {
-                  const node = document.getElementById(id);
-                  return Boolean(node && !node.classList.contains('hidden'));
+                  return Boolean(document.querySelector('[data-testid=\"' + id + '\"]'));
                 })"""
             )
             error = page.get_by_test_id("history-error")
-            if error.is_visible():
+            if error.count() and error.is_visible():
                 self.fail(error.inner_text())
-            visible = page.locator('[data-testid="history-list"]:not(.hidden)').or_(
-                page.locator('[data-testid="history-empty"]:not(.hidden)')
-            )
+            visible = page.get_by_test_id("history-list").or_(page.get_by_test_id("history-empty"))
             expect(visible).to_be_visible()
             self.assertTrue(page.url.rstrip("/").endswith("/audit-files"))
             browser.close()

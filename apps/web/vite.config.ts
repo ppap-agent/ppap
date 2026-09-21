@@ -1,8 +1,8 @@
 import {defineConfig} from 'vite'
-import vue from '@vitejs/plugin-vue'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [react()],
   base: '/',
   server: {port: 5173, proxy: {'/runtime-config.json': 'http://127.0.0.1:4173'}},
 })
