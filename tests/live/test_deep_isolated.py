@@ -85,7 +85,11 @@ class LiveDeepRoundTests(unittest.TestCase):
         )
         self.assertEqual(status, 200, saved)
         self.assertEqual(saved["analysis_mode"], "deep")
-        status, accepted = client.json("POST", f"/drafts/{draft['id']}/accept", {"idempotency_key": "live-deep-1"})
+        status, accepted = client.json(
+            "POST",
+            f"/drafts/{draft['id']}/accept",
+            {"idempotency_key": f"live-deep-{int(time.time())}"},
+        )
         self.assertEqual(status, 201, accepted)
         round_id = accepted["id"]
         self.assertEqual(accepted["analysis_mode"], "deep")

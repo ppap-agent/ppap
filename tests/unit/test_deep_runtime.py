@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -72,7 +75,8 @@ class GvisorRuntimeTests(unittest.TestCase):
         self.assertIn("--runtime", argv)
         self.assertEqual(argv[argv.index("--runtime") + 1], DEFAULT_DOCKER_RUNTIME)
         self.assertEqual(argv[argv.index("-v") + 1], "/tmp/ppap-deep-job:/work:rw")
-        self.assertIn("--network", argv)
+        self.assertIn("--user", argv)
+        self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn(DEFAULT_GUEST_IMAGE, argv)
         self.assertNotIn("docker.sock", " ".join(argv))
@@ -118,9 +122,12 @@ class GvisorRuntimeTests(unittest.TestCase):
 
         runtime = GvisorRuntime(runner=runner)
         spec = _spec("target")
-        with patch("ppap_deep.runtime.shutil.rmtree", side_effect=OSError("busy")):
-            with self.assertRaises(DeepError) as raised:
-                runtime.execute(spec, {spec.files[0].file_version_id: b"x"})
+        job_dir = tempfile.mkdtemp(prefix="ppap-deep-cleanup-")
+        self.addCleanup(lambda: shutil.rmtree(job_dir, ignore_errors=True))
+        with patch("ppap_deep.runtime.tempfile.mkdtemp", return_value=job_dir):
+            with patch("ppap_deep.runtime.shutil.rmtree", side_effect=OSError("busy")):
+                with self.assertRaises(DeepError) as raised:
+                    runtime.execute(spec, {spec.files[0].file_version_id: b"x"})
         self.assertEqual(raised.exception.code, "deep_cleanup_failed")
 
 

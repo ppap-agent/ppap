@@ -102,9 +102,11 @@ class GvisorRuntime:
             "HOME=/work/home",
             "-e",
             "TERM=dumb",
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
         ]
         if self.grok_bin:
-            argv.extend(["-v", f"{self.grok_bin}:/grant/bin/grok:ro"])
+            argv.extend(["-v", f"{Path(self.grok_bin).resolve()}:/grant/bin/grok:ro"])
         else:
             argv.extend(["--network", "none"])
         argv.extend([self.image, "python", "/work/guest.py"])
