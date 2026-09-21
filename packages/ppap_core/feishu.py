@@ -61,9 +61,10 @@ def authorize_url(settings: Settings, state: str, *, report: bool = False) -> st
         "response_type": "code",
         "redirect_uri": callback_url(settings),
         "state": state,
+        "scope": "offline_access",
     }
     if report:
-        params["scope"] = "docx:document:create docx:document:write_only"
+        params["scope"] += " docx:document:create docx:document:write_only"
     return AUTHORIZE_URL + "?" + urlencode(params)
 
 

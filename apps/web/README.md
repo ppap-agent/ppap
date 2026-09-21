@@ -37,6 +37,8 @@ docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/onlyof
 
 ## 最终责任
 
+普通网页登录请求 `offline_access`，以获取刷新凭据；报告授权在其基础上增加文档写权限。Cookie 与数据库会话的固定上限为 12 小时，不随请求无限延长。有效会话中的飞书 access token 到期后由 API 刷新；无刷新凭据的旧会话仍受 access token 有效期限制，需要重新授权一次。重启 API 不清除 PostgreSQL 会话。部署后应只检查刷新凭据是否存在及到期时间，不输出凭据本身。
+
 报告通过当前用户身份创建飞书文档，分享由飞书处理。若飞书返回 `99991679`，表示缺少用户授权（[官方说明](https://open.feishu.cn/document/faq/trouble-shooting/how-to-resolve-error-99991679)）。报告页提供显式授权入口，请求 `docx:document:create` 和 `docx:document:write_only`；开放平台也需已启用对应用户身份权限。普通登录不请求这些写权限，授权完成不会自动创建报告。只有明确拒绝且尚未创建文档时允许手动重试；超时或内容写入结果未知时先核对文档。
 
 - 产品导航和呈现

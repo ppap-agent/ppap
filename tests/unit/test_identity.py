@@ -196,10 +196,10 @@ class HttpAuthTests(unittest.TestCase):
     def test_report_consent_is_explicit_and_limited_to_document_creation_and_writing(self):
         from urllib.parse import parse_qs, urlparse
         normal = self.client.get('/login/feishu', follow_redirects=False)
-        self.assertNotIn('scope', parse_qs(urlparse(normal.headers['location']).query))
+        self.assertEqual(parse_qs(urlparse(normal.headers['location']).query).get('scope'), ['offline_access'])
         report = self.client.get('/login/feishu?purpose=report', follow_redirects=False)
         query = parse_qs(urlparse(report.headers['location']).query)
-        self.assertEqual(query.get('scope'), ['docx:document:create docx:document:write_only'])
+        self.assertEqual(query.get('scope'), ['offline_access docx:document:create docx:document:write_only'])
         self.assertEqual(self.client.get('/login/feishu?purpose=arbitrary', follow_redirects=False).status_code, 400)
 
     def test_oauth_callback_binds_tenant_subject_not_email(self):
@@ -380,6 +380,12 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["identity"]["subject"], "ou_ada")
         self.assertIn("refresh_token", http.grants)
+        self.assertIn('Max-Age=43200', _done.headers['set-cookie'])
+        # Rotation keeps the same product session, and a fresh access token
+        # does not trigger another provider refresh on the next request.
+        refreshes = http.grants.count('refresh_token')
+        self.assertEqual(client.get('/me', cookies={'ppap_session': raw}).status_code, 200)
+        self.assertEqual(http.grants.count('refresh_token'), refreshes)
 
     def test_oauth_invalid_refresh_revokes_session(self):
         http = _TokenHttp(expires_in=0, refresh_expires_in=2592000, fail_refresh=True)
