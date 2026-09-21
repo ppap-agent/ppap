@@ -376,7 +376,11 @@ class MemoryAuthStore:
         }
         return self.get_rule(principal.tenant_id, rule_id)
 
-    def create_draft(self, principal: Principal) -> dict:
+    def create_draft(self, principal: Principal, predecessor_id: str | None = None) -> dict:
+        if predecessor_id:
+            resource = self.resources.get(predecessor_id)
+            if resource is None or resource.kind != 'audit_round' or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+                raise KeyError('missing')
         draft_id = str(uuid.uuid4())
         self.resources[draft_id] = Resource(draft_id, principal.tenant_id, "audit_draft")
         self.grant_table.setdefault((draft_id, principal.user_id), set()).update({"read", "review"})
@@ -385,9 +389,18 @@ class MemoryAuthStore:
             "tenant_id": principal.tenant_id,
             "created_by": principal.user_id,
             "status": DRAFT_OPEN,
+            "updated_at": _now().isoformat(),
+            "predecessor_id": predecessor_id,
         }
         self.draft_items[draft_id] = []
         return self.get_draft(draft_id)
+
+    def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0) -> list[dict]:
+        rows = [self._draft_public(draft['id']) for draft in self.drafts.values()
+                if draft['status'] == DRAFT_OPEN and self.draft_items.get(draft['id'])
+                and can_read(principal, self.resources[draft['id']], self.grants(draft['id'], principal.user_id))]
+        rows.sort(key=lambda row: (row['updated_at'], row['id']), reverse=True)
+        return rows[offset:offset + limit]
 
     def get_draft(self, draft_id: str) -> dict | None:
         draft = self.drafts.get(draft_id)
@@ -403,9 +416,15 @@ class MemoryAuthStore:
             raise ValueError("draft_already_accepted")
         if items is not None:
             self.draft_items[draft_id] = self._bound_audit_items(principal, items, require_rules=False)
+            draft['updated_at'] = _now().isoformat()
         return self._draft_public(draft_id)
 
     def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
+        draft = self.drafts.get(draft_id)
+        if draft and draft.get('predecessor_id'):
+            if predecessor_id and predecessor_id != draft['predecessor_id']:
+                raise ValueError('idempotency_conflict')
+            predecessor_id = draft['predecessor_id']
         key = normalize_idempotency_key(idempotency_key)
         if predecessor_id:
             resource = self.resources.get(predecessor_id)
@@ -475,6 +494,7 @@ class MemoryAuthStore:
                         for item in body.get("inputs") or []
                     ],
                     "result_counts": result_counts,
+                    "reviewed_count": sum(bool(f.get("review")) for f in body.get("findings", [])),
                 }
             )
         return items[offset:offset + limit]
@@ -736,6 +756,8 @@ class MemoryAuthStore:
         return {
             "id": draft_id,
             "status": draft["status"],
+            "updated_at": draft.get("updated_at"),
+            "predecessor_id": draft.get("predecessor_id"),
             "items": items,
         }
 

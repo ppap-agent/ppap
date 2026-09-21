@@ -73,6 +73,40 @@ class ProductExperienceTests(unittest.TestCase):
         self.client.cookies.clear()
         self.client.post("/isolated-dev/sessions", json={"subject": subject})
 
+    def test_draft_resume_is_paginated_authorized_and_keeps_reaudit_origin(self):
+        from ppap_core.fixtures import RULE_A
+        self.client.post('/drafts')  # Empty drafts should not clutter the homepage.
+        version = self.client.post('/files', json={'original_filename':'resume.txt','byte_size':1}).json()
+        path = f"/files/{version['file_id']}/versions/{version['id']}"
+        self.client.put(path+'/blob', content=b'x')
+        self.client.post(path+'/finalize')
+        items = [{'file_version_id':version['id'],'role':'target','rule_version_id':RULE_A}]
+        ids = []
+        for _ in range(2):
+            draft = self.client.post('/drafts').json()['id']
+            self.client.put(f'/drafts/{draft}', json={'items':items})
+            ids.append(draft)
+        page = self.client.get('/drafts?limit=1').json()
+        tail = self.client.get('/drafts?limit=1&offset='+str(page['next_offset'])).json()
+        self.assertEqual({page['drafts'][0]['id'],tail['drafts'][0]['id']}, set(ids))
+        self.assertIsNone(tail['next_offset'])
+        first = self.client.post(f'/drafts/{ids[0]}/accept', json={'idempotency_key':'resume-origin'}).json()['id']
+        next_draft = self.client.post('/drafts', json={'predecessor_id':first}).json()['id']
+        self.client.put(f'/drafts/{next_draft}', json={'items':items})
+        listed = self.client.get('/drafts').json()['drafts']
+        self.assertNotIn(ids[0], [row['id'] for row in listed])
+        self.assertEqual(next(row for row in listed if row['id']==next_draft)['predecessor_id'], first)
+        # A resumed draft does not depend on a browser query parameter for lineage.
+        accepted = self.client.post(f'/drafts/{next_draft}/accept', json={'idempotency_key':'resume-again'}).json()
+        self.assertEqual(accepted['predecessor_id'], first)
+        self.login('bob')
+        self.assertEqual(self.client.get('/drafts').json()['drafts'], [])
+        self.assertEqual(self.client.post('/drafts', json={'predecessor_id':first}).status_code, 403)
+        self.login('carol')
+        self.assertEqual(self.client.get('/drafts').json()['drafts'], [])
+        self.client.cookies.clear()
+        self.assertEqual(self.client.get('/drafts').status_code, 401)
+
     def test_preview_authorization_and_search_across_history_pages(self):
         from ppap_core.fixtures import RULE_A
         rounds = []

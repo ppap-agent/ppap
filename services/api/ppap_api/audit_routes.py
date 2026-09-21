@@ -48,11 +48,22 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
 
     @app.post("/drafts")
-    def drafts_create(request: Request) -> JSONResponse:
+    def drafts_create(request: Request, body: dict | None = None) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
-        return JSONResponse(store.create_draft(principal), status_code=201)
+        try:
+            return JSONResponse(store.create_draft(principal, (body or {}).get("predecessor_id")), status_code=201)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/drafts")
+    def drafts_list(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0)) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        rows = store.list_drafts(principal, limit + 1, offset)
+        return JSONResponse({"drafts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.post("/file-analyses")
     def files_analyze(body: dict, request: Request) -> JSONResponse:

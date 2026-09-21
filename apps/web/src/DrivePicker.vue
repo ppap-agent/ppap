@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import {ref} from 'vue'
 import {request, type Material} from './api'
+import Modal from './Modal.vue'
 interface DriveFile {token:string; name:string; type:string}
 const props=defineProps<{disabled:boolean; onImport:(material:Material)=>Promise<void>}>()
+const opened=ref(false)
 const emit=defineEmits<{busy:[value:boolean]}>()
 const folder=ref(''), files=ref<DriveFile[]>([]), selected=ref<string[]>([]), next=ref<string|null>(null), role=ref<Material['role']>('target'), message=ref(''), busy=ref(false)
 const key=(file:DriveFile)=>`${file.type}:${file.token}`
@@ -22,7 +24,18 @@ async function importFiles(){await action(async()=>{
     selected.value=selected.value.filter(id=>id!==key(file))
     await props.onImport({file_id:version.file_id,file_version_id:version.id,original_filename:version.original_filename,role:role.value,rule_version_id:null})
   }
-  message.value='导入完成，请核对资料与规则。'
+  message.value='导入完成。';opened.value=false
 })}
 </script>
-<template><details><summary>从飞书云空间导入</summary><p class="pc-muted">仅查看当前登录用户有权限的资料，不修改飞书原件。</p><fieldset :disabled="disabled || busy"><label>文件夹链接或 token<input v-model="folder" placeholder="留空为根目录" /></label><button type="button" @click="browse()">打开目录</button><button type="button" @click="folder='';browse()">根目录</button><div v-for="file in files" :key="key(file)"><button v-if="file.type==='folder'" type="button" @click="folder=file.token;browse()">文件夹：{{ file.name }}</button><label v-else><input v-model="selected" type="checkbox" :value="key(file)" :disabled="!supported(file)" /> {{ file.name }} {{ supported(file)?'':'（不支持导入）' }}</label></div><button v-if="next" type="button" @click="browse(false)">加载更多</button><label>导入为<select v-model="role"><option value="target">待审文件</option><option value="reference">参考文件</option></select></label><button type="button" :disabled="!selected.length" @click="importFiles">导入所选文件</button></fieldset><p role="status">{{ message }}</p></details></template>
+<template>
+  <button type="button" :disabled="disabled" @click="opened=true">从飞书导入</button>
+  <Modal v-if="opened" title="从飞书导入" :busy="busy" @close="opened=false">
+    <fieldset class="plain-fieldset" :disabled="disabled || busy">
+      <form class="toolbar" @submit.prevent="browse()"><input v-model="folder" aria-label="飞书文件夹链接" placeholder="粘贴飞书文件夹链接" /><button>打开</button><button type="button" @click="folder='';browse()">我的云空间</button></form>
+      <p v-if="message" role="status">{{ message }}</p>
+      <div class="drive-files"><div v-for="file in files" :key="key(file)"><button v-if="file.type==='folder'" class="text-button" type="button" @click="folder=file.token;browse()">文件夹 · {{ file.name }} →</button><label v-else class="inline-check"><input v-model="selected" type="checkbox" :value="key(file)" :disabled="!supported(file)" /> {{ file.name }} {{ supported(file)?'':'（不支持导入）' }}</label></div></div>
+      <button v-if="next" type="button" @click="browse(false)">加载更多</button>
+      <div class="action-bar"><label>资料用途<select v-model="role"><option value="target">待审文件</option><option value="reference">参考资料</option></select></label><button class="pc-primary" type="button" :disabled="!selected.length" @click="importFiles">导入{{ selected.length?' '+selected.length+' 份资料':'' }}</button></div>
+    </fieldset>
+  </Modal>
+</template>

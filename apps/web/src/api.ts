@@ -17,7 +17,17 @@ export interface Finding {
 }
 export interface Round {
   id: string; execution: string; inputs: Material[]; findings: Finding[]; predecessor_id?: string
-  created_at?: string; result_counts?: Record<string, number>; coverage?: {checked: string[]; unchecked: string[]; locator_gap: boolean}
+  created_at?: string; result_counts?: Record<string, number>; reviewed_count?: number; coverage?: {checked: string[]; unchecked: string[]; locator_gap: boolean}
+}
+export interface Draft {id:string; status:string; items:Material[]; updated_at?:string; predecessor_id?:string|null}
+export const resultLabels:Record<string,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常'}
+export const executionLabels:Record<string,string> = {queued:'排队中', running:'检查中', completed:'检查完成', failed:'执行失败'}
+export function dateLabel(value?:string) {
+  return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
+}
+export function latestRules(rules:Rule[]) {
+  const previous = new Set(rules.map(rule=>rule.predecessor_id).filter(Boolean))
+  return rules.filter(rule=>!previous.has(rule.id))
 }
 export interface Job<T> {id: string; status: string; result?: T & {error?: string}}
 export let apiUrl = ''

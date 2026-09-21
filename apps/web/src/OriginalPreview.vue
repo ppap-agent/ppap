@@ -42,9 +42,9 @@ onBeforeUnmount(() => { revision++; clear() })
 </script>
 <template>
   <section class="audit-original"><header><h2>原件预览</h2><a v-if="file" :href="originalUrl(file, roundId)" target="_blank" rel="noopener">下载原件</a></header>
-    <p>{{ file?.original_filename }}</p><p v-if="loading" role="status">正在加载原件…</p>
+    <p class="preview-filename">{{ file?.original_filename }}</p><p v-if="loading" role="status">正在加载原件…</p>
     <button v-if="office" :disabled="loading" @click="showText">{{ textMode?'返回排版预览':'查看文字摘录' }}</button>
-    <p v-if="office && /\.xlsm$/i.test(file?.original_filename || '')" class="pc-muted">只读预览不运行宏；若内容由宏控制显示，可查看文字摘录或下载后在本地核对。</p>
+    <p v-if="office && /\.xlsm$/i.test(file?.original_filename || '')" class="pc-muted preview-notice">含宏文件不运行宏。内容不可见时，可切换文字摘录或下载核对。</p>
     <OfficePreview v-if="office" v-show="!textMode" :key="file?.file_version_id" :script-url="office.script_url" :config="office.config" @failed="officeFailed" />
     <iframe v-if="url" :key="url" :src="url" :title="file?.original_filename || '原件预览'" sandbox="allow-same-origin" referrerpolicy="no-referrer" />
     <p v-if="notice && (!office || textMode)" class="pc-muted">{{ notice }}</p><pre v-if="text && (!office || textMode)">{{ text }}</pre>

@@ -445,7 +445,7 @@ class WebHookTests(unittest.TestCase):
     def test_workbench_hooks_exist(self):
         workbench = (ROOT / "apps/web/src/Workbench.vue").read_text()
         for marker in (
-            '@click="submit"', '@click="saveReview"', '@click="prepareAgain"',
+            '@click="submit"', '@submit.prevent="saveReview"', '@click="prepareAgain"',
             'class="finding-row"', '<OriginalPreview', '<ReportPreview',
             '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
         ):
@@ -458,7 +458,7 @@ class WebHookTests(unittest.TestCase):
 class AuditHistoryPageTests(unittest.TestCase):
     def test_history_page_hooks_exist(self):
         history = (ROOT / "apps/web/src/HistoryView.vue").read_text()
-        for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核记录', '加载更多'):
+        for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核结果', '加载更多'):
             self.assertIn(marker, history)
         addon = (ROOT / "apps" / "web" / "addon.html").read_text()
         workbench = (ROOT / "apps/web/src/App.vue").read_text()

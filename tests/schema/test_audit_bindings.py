@@ -49,6 +49,26 @@ class AuditDatabaseCase(unittest.TestCase):
         return draft["id"]
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
+    def test_resumable_drafts_keep_origin_and_respect_grants(self):
+        from ppap_core.fixtures import RULE_A
+        file = self.upload('draft.txt')
+        items = [{'file_version_id':file.id, 'role':'target', 'rule_version_id':RULE_A}]
+        draft = self.draft(items)
+        first = self.store.accept_draft(self.alice, draft, 'origin')
+        next_draft = self.store.create_draft(self.alice, first['id'])['id']
+        self.store.save_draft(self.alice, next_draft, items)
+        rows = self.store.list_drafts(self.alice)
+        self.assertEqual([row['id'] for row in rows], [next_draft])
+        self.assertEqual(rows[0]['predecessor_id'], first['id'])
+        self.assertTrue(rows[0]['updated_at'])
+        bob = self.store.principal_for_fixture('bob')
+        self.assertEqual(self.store.list_drafts(bob), [])
+        with self.assertRaises(KeyError):
+            self.store.create_draft(bob, first['id'])
+        accepted = self.store.accept_draft(self.alice, next_draft, 'resumed')
+        self.assertEqual(accepted['predecessor_id'], first['id'])
+        self.assertEqual(self.store.list_drafts(self.alice), [])
+
     def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
         from ppap_core.fixtures import RULE_A
         from tests.unit.test_rules import rule_body
@@ -174,6 +194,7 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
         self.assertIsNone(by_id[reference.id]["rule"])
         self.assertEqual(loaded["findings"][0]["status"], "NG")
         self.assertEqual(loaded["findings"][0]["review"]["judgment"], "保留人工判断")
+        _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
         self.assertEqual(self.store.accept_draft(self.alice, draft, "old-key")["id"], round_id)
         with self.store._conn() as conn:
             fingerprint = conn.execute("SELECT request_fingerprint FROM product.audit_rounds WHERE id=%s", (round_id,)).fetchone()[0]

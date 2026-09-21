@@ -723,7 +723,11 @@ class AuthStore:
                 )
         return self.get_rule(principal.tenant_id, rule_id)
 
-    def create_draft(self, principal: Principal) -> dict:
+    def create_draft(self, principal: Principal, predecessor_id: str | None = None) -> dict:
+        if predecessor_id:
+            resource = self.resource(predecessor_id)
+            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+                raise KeyError("missing")
         draft_id = str(uuid.uuid4())
         with self._conn() as conn:
             with conn.transaction():
@@ -733,10 +737,10 @@ class AuthStore:
                 )
                 conn.execute(
                     """
-                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN),
+                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id),
                 )
                 conn.execute(
                     """
@@ -747,6 +751,19 @@ class AuthStore:
                     (draft_id, principal.user_id, draft_id, principal.user_id),
                 )
         return self.get_draft(draft_id)
+
+    def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT d.id FROM product.audit_drafts d
+                   WHERE d.tenant_id = %s AND d.status = %s
+                     AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id
+                                 AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                     AND EXISTS (SELECT 1 FROM product.draft_items i WHERE i.draft_id = d.id)
+                   ORDER BY d.updated_at DESC, d.id DESC LIMIT %s OFFSET %s""",
+                (principal.tenant_id, DRAFT_OPEN, principal.user_id, limit, offset),
+            ).fetchall()
+            return [self._draft_public(conn, row[0]) for row in rows]
 
     def get_draft(self, draft_id: str) -> dict | None:
         parsed = _as_uuid(draft_id)
@@ -787,6 +804,11 @@ class AuthStore:
                 return self._draft_public(conn, parsed)
 
     def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
+        draft = self.get_draft(draft_id)
+        if draft and draft.get("predecessor_id"):
+            if predecessor_id and predecessor_id != draft["predecessor_id"]:
+                raise ValueError("idempotency_conflict")
+            predecessor_id = draft["predecessor_id"]
         key = normalize_idempotency_key(idempotency_key)
         parsed = _as_uuid(draft_id)
         if not parsed:
@@ -1315,7 +1337,7 @@ class AuthStore:
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT d.id, d.tenant_id, d.status
+            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id
             FROM product.audit_drafts d
             WHERE d.id = %s
             """,
@@ -1337,6 +1359,8 @@ class AuthStore:
         return {
             "id": str(row[0]),
             "status": row[2],
+            "updated_at": row[3].isoformat(),
+            "predecessor_id": str(row[4]) if row[4] else None,
             "items": [
                 {
                     "role": item[0],
@@ -1379,6 +1403,7 @@ class AuthStore:
         for status, n in counts:
             if status in result_counts:
                 result_counts[status] = int(n)
+        reviewed_count = conn.execute("SELECT COUNT(*) FROM product.reviews WHERE round_id = %s", (round_id,)).fetchone()[0]
         return {
             "id": str(row[0]),
             "execution": row[1],
@@ -1394,6 +1419,7 @@ class AuthStore:
                 for item in inputs
             ],
             "result_counts": result_counts,
+            "reviewed_count": reviewed_count,
         }
 
     def _round_public(self, conn, round_id: str) -> dict | None:
