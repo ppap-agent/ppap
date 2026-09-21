@@ -1,0 +1,21 @@
+# Live Deep overlay. Default isolated-dev Compose stays unpublished Silo and
+# does not require a Controller. This file only adds the UDS mount plus a
+# loopback Silo port so a host Controller can fetch frozen file bytes.
+# Worker still does not receive a Docker control socket.
+
+services:
+  silo:
+    ports:
+      - "127.0.0.1:9000:9000"
+
+  api:
+    environment:
+      PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
+    volumes:
+      - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
+
+  worker:
+    environment:
+      PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
+    volumes:
+      - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep

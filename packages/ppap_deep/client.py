@@ -47,7 +47,7 @@ def read_frame(sock: socket.socket) -> dict:
 
 
 class DeepClient:
-    def __init__(self, socket_path: str, timeout: float = 60.0):
+    def __init__(self, socket_path: str, timeout: float = 180.0):
         self.socket_path = str(socket_path or "").strip()
         self.timeout = timeout
 
