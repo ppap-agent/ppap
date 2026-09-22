@@ -95,6 +95,7 @@ class MemoryAuthStore:
         self.file_sources: dict[str, dict[str, str]] = {}
         self.draft_writebacks: dict[str, dict[str, str]] = {}
         self.round_writebacks: dict[str, dict[str, str]] = {}
+        self.trial_baselines: dict[tuple[str, str], int] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, _now() + timedelta(seconds=ttl_seconds))
@@ -1005,6 +1006,16 @@ class MemoryAuthStore:
         row = self.round_writebacks.get(round_id)
         return dict(row) if row else None
 
+    def trial_baseline_points(self, tenant_id: str, ai_item_id: str) -> int:
+        item = str(ai_item_id or "").strip()
+        direct = int(self.trial_baselines.get((tenant_id, item), 0))
+        if direct:
+            return direct
+        keys = {principal.tenant_key for principal in self.identities.values() if principal.tenant_id == tenant_id}
+        from ppap_core.fixtures import SUBJECTS
+        keys |= {spec["tenant_key"] for spec in SUBJECTS.values() if spec["tenant_id"] == tenant_id}
+        return sum(int(self.trial_baselines.get((key, item), 0)) for key in keys)
+
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
         item = str(ai_item_id or "").strip()
         total = 0
@@ -1016,7 +1027,7 @@ class MemoryAuthStore:
                 and row["external_status"] == "none"
             ):
                 total += int(row["consumed_points"])
-        return total
+        return total + self.trial_baseline_points(tenant_id, item)
 
     def usage_event_public(self, row: dict) -> dict:
         from ppap_api.store import AuthStore

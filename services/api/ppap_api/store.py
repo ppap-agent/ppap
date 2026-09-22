@@ -1472,11 +1472,7 @@ class AuthStore:
             return
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                      ("usage:" + principal.tenant_id + ":" + item_id,))
-        consumed = conn.execute(
-            """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
-               WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
-            (principal.tenant_id, item_id),
-        ).fetchone()[0]
+        consumed = self._trial_ledger_consumed(conn, principal.tenant_id, item_id)
         remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, consumed)
         points = audit_usage_points(sum(row["role"] == "target" for row in prepared))
         for amount, trial in split_trial_and_partner(remaining, points):
@@ -1669,11 +1665,30 @@ class AuthStore:
 
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
         with self._conn() as conn:
-            return int(conn.execute(
-                """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
-                   WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
-                (tenant_id, ai_item_id),
-            ).fetchone()[0])
+            return self._trial_ledger_consumed(conn, tenant_id, ai_item_id)
+
+    def trial_baseline_points(self, tenant_id: str, ai_item_id: str) -> int:
+        with self._conn() as conn:
+            return self._trial_baseline_consumed(conn, tenant_id, ai_item_id)
+
+    def _trial_baseline_consumed(self, conn, tenant_id: str, ai_item_id: str) -> int:
+        row = conn.execute(
+            """SELECT b.consumed_points
+               FROM product.tenants t
+               JOIN product.trial_cutover_baselines b
+                 ON b.provider = t.provider AND b.tenant_key = t.external_key AND b.ai_item_id = %s
+               WHERE t.id = %s""",
+            (ai_item_id, tenant_id),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def _trial_ledger_consumed(self, conn, tenant_id: str, ai_item_id: str) -> int:
+        current = int(conn.execute(
+            """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
+               WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
+            (tenant_id, ai_item_id),
+        ).fetchone()[0])
+        return current + self._trial_baseline_consumed(conn, tenant_id, ai_item_id)
 
     def file_source(self, file_version_id: str) -> dict | None:
         vid = _as_uuid(file_version_id)

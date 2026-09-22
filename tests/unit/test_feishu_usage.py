@@ -234,6 +234,29 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertEqual(estimate.status_code, 409)
         self.assertNotIn("remaining_trial_ai_points", estimate.json())
 
+    def test_cutover_baseline_reduces_remaining_trial_without_inventing_partner_balance(self):
+        self.store.trial_baselines[("isolated-dev-a", "ai-item-1")] = 1000
+        self._login_feishu_user("alice")
+        body = self.client.get("/integrations/feishu/usage/quota").json()
+        self.assertEqual(body["remaining_trial_ai_points"], 9000)
+        self.assertEqual(body["user_quota"], 80)
+        self.assertTrue(body["quota_sufficient"])
+        self._login_feishu_user("carol")
+        other = self.client.get("/integrations/feishu/usage/quota").json()
+        self.assertEqual(other["remaining_trial_ai_points"], 10000)
+
+    def test_cutover_baseline_sql_records_wanxiang_lian_dian_and_baolong(self):
+        from pathlib import Path as P
+        sql = (P(__file__).resolve().parents[2] / "migrations" / "0018_trial_cutover_baseline.sql").read_text()
+        self.assertIn("'1406548d3c95175d'", sql)
+        self.assertIn("'1629d31db550975f'", sql)
+        self.assertIn("'11c1ad08115b175e'", sql)
+        self.assertIn("2500", sql)
+        self.assertIn("OpenApp_Lcoastline_PPAPAuditAgent", sql)
+        self.assertIn("万向钱潮股份公司", sql)
+        self.assertIn("上海保隆汽车科技股份有限公司", sql)
+        self.assertIn("联合汽车电子有限公司", sql)
+
     def test_quota_estimate_includes_accept_gate(self):
         self._login_feishu_user("alice")
         body = self.client.get("/integrations/feishu/usage/quota", params={"target_count": 2}).json()

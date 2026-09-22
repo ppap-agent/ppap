@@ -15,3 +15,4 @@
 \ir 0015_analysis_mode.sql
 \ir 0016_rule_execution.sql
 \ir 0017_origin_writeback.sql
+\ir 0018_trial_cutover_baseline.sql
