@@ -33,6 +33,9 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertIn("/login/feishu/host", app)
         self.assertIn("/login/feishu?return_to=", app)
         self.assertIn("isFeishuHost", app)
+        self.assertIn("当前：新版", app)
+        self.assertIn("/enter-legacy", app)
+        self.assertIn("tenant_not_allowed", app)
         self.assertNotIn("X-Token", app)
         self.assertNotIn("/uac/", app)
         for obsolete in ("app.js", "audit-files.html", "rules.html", "usage.html", "product-api.js"):
@@ -73,6 +76,16 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertIn("target_count", workbench)
         self.assertIn("accept_allowed", workbench)
         self.assertIn("writeback", workbench)
+
+    def test_shared_host_edition_proxy_has_no_v2_prefix(self):
+        conf = (ROOT / "deploy" / "tke" / "edition-proxy.conf").read_text()
+        self.assertIn("ppap_edition", conf)
+        self.assertIn("/enter-current", conf)
+        self.assertIn("/enter-legacy", conf)
+        self.assertIn("/ppap/", conf)
+        self.assertIn("/addon", conf)
+        self.assertNotIn("/v2", conf)
+        self.assertIn("web-base.ppap-test.svc.cluster.local", conf)
 
     def test_shared_helpers_keep_review_excerpt_and_workspace_rules(self):
         helpers = (WEB / "src/helpers.ts").read_text()
