@@ -63,8 +63,9 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertTrue(rows[0]['updated_at'])
         bob = self.store.principal_for_fixture('bob')
         self.assertEqual(self.store.list_drafts(bob), [])
-        with self.assertRaises(KeyError):
-            self.store.create_draft(bob, first['id'])
+        bob_draft = self.store.create_draft(bob, first['id'])
+        self.assertEqual(bob_draft['predecessor_id'], first['id'])
+        self.assertEqual(self.store.list_drafts(bob), [])
         accepted = self.store.accept_draft(self.alice, next_draft, 'resumed')
         self.assertEqual(accepted['predecessor_id'], first['id'])
         self.assertEqual(self.store.list_drafts(self.alice), [])
@@ -145,8 +146,8 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
                 conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (version.file_id, bob.user_id))
         other_draft = self.store.create_draft(bob)["id"]
         self.store.save_draft(bob, other_draft, items)
-        with self.assertRaises(KeyError):
-            self.store.accept_draft(bob, other_draft, key)
+        replay = self.store.accept_draft(bob, other_draft, key)
+        self.assertEqual(replay["id"], accepted[0]["id"])
 
     def test_missing_target_rule_reference_rule_and_foreign_rule_are_rejected(self):
         from ppap_core.fixtures import RULE_A, RULE_B
