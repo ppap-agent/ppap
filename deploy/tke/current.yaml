@@ -1,0 +1,518 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ppap-current
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+data:
+  PPAP_PROFILE: production
+  PPAP_BUILD_SHA: e6160d892c23d4f4b3571915ee0917a372e67418
+  PPAP_WEB_URL: https://ppap.icoastline.com
+  PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
+  PPAP_PG_HOST: ppap-current-postgres
+  PPAP_PG_PORT: "5432"
+  PPAP_PG_DATABASE: ppap
+  PPAP_PG_BOOTSTRAP_USER: ppap
+  PPAP_PG_MIGRATOR_USER: ppap_migrator
+  PPAP_PG_API_USER: ppap_api
+  PPAP_PG_WORKER_USER: ppap_worker
+  PPAP_S3_ENDPOINT: http://ppap-current-silo:9000
+  PPAP_S3_REGION: us-east-1
+  PPAP_S3_BUCKET: ppap-objects
+  LLM_MODEL: qwen/qwen3.5-27b
+  FEISHU_APP_ID: cli_a961a27719b81cc9
+  FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
+  FEISHU_FREE_TRIAL_QUOTA_POINTS: "10000"
+  PPAP_CURRENT_TENANT_ALLOWLIST: 2caeb428f08e175d,16e7179eb1abd75d,16fad24b7282175e,175b8362d5ce575f
+  PPAP_USAGE_CHARGE_ENABLED: "false"
+  PPAP_DEEP_CUSTOMER_ENABLED: "false"
+  LOG_FORMAT: json
+  LOG_LEVEL: INFO
+  OCR_ADAPTER_MODE: auto
+  OCR_ENGINE: easyocr
+  OCR_LANGUAGES: ch_sim,en
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ppap-current-postgres
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: cbs
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ppap-current-silo
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: cbs
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppap-current-postgres
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  selector:
+    k8s-app: ppap-current-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppap-current-silo
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  selector:
+    k8s-app: ppap-current-silo
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppap-current-api
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  selector:
+    k8s-app: ppap-current-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppap-current-web
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  selector:
+    k8s-app: ppap-current-web
+  ports:
+    - name: http
+      port: 4173
+      targetPort: 4173
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppap-current-postgres
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      k8s-app: ppap-current-postgres
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-postgres
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 70
+      containers:
+        - name: postgres
+          image: docker.m.daocloud.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_BOOTSTRAP_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_BOOTSTRAP_PASSWORD
+            - name: POSTGRES_DB
+              value: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ppap"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ppap"]
+            periodSeconds: 20
+            timeoutSeconds: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ppap-current-postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppap-current-silo
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current-silo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      k8s-app: ppap-current-silo
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-silo
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: silo
+          image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+          imagePullPolicy: IfNotPresent
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - containerPort: 9000
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_ACCESS_KEY
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_SECRET_KEY
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 20
+            timeoutSeconds: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ppap-current-silo
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ppap-current-init-db
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-init-db
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: init-db
+          image: docker.m.daocloud.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ppap-current
+            - secretRef:
+                name: ppap-current
+          env:
+            - name: PGHOST
+              value: ppap-current-postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_BOOTSTRAP_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_BOOTSTRAP_PASSWORD
+            - name: PGCONNECT_TIMEOUT
+              value: "5"
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              i=0
+              while true; do
+                if psql -d postgres -v ON_ERROR_STOP=1 -f /migrations/bootstrap.sql \
+                  && PGUSER="$PPAP_PG_MIGRATOR_USER" PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD" \
+                    psql -d "$PPAP_PG_DATABASE" -v ON_ERROR_STOP=1 -f /migrations/apply.sql; then
+                  break
+                fi
+                i=$((i + 1))
+                if [ "$i" -ge 30 ]; then
+                  echo "init-db: postgres did not accept bootstrap/apply" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: migrations
+          configMap:
+            name: ppap-current-migrations
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ppap-current-init-bucket
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current
+spec:
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-init-bucket
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: init-bucket
+          image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ppap-current
+            - secretRef:
+                name: ppap-current
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              i=0
+              until curl -fsS --max-time 2 "$PPAP_S3_ENDPOINT/minio/health/live" >/dev/null; do
+                i=$((i + 1))
+                if [ "$i" -ge 30 ]; then exit 1; fi
+                sleep 2
+              done
+              mcli alias set ppap "$PPAP_S3_ENDPOINT" "$PPAP_S3_ACCESS_KEY" "$PPAP_S3_SECRET_KEY"
+              mcli mb --ignore-existing "ppap/$PPAP_S3_BUCKET"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppap-current-api
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: ppap-current-api
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-api
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: api
+          image: unregistry.xixifusi.online/ppap-api:e6160d892c23d4f4b3571915ee0917a372e67418
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ppap-current
+            - secretRef:
+                name: ppap-current
+          env:
+            - name: PPAP_SERVICE
+              value: api
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 20
+            timeoutSeconds: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppap-current-worker
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: ppap-current-worker
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-worker
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          image: unregistry.xixifusi.online/ppap-worker:e6160d892c23d4f4b3571915ee0917a372e67418
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: ppap-current
+            - secretRef:
+                name: ppap-current
+          env:
+            - name: PPAP_SERVICE
+              value: worker
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppap-current-web
+  namespace: ppap-test
+  labels:
+    k8s-app: ppap-current-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: ppap-current-web
+  template:
+    metadata:
+      labels:
+        k8s-app: ppap-current-web
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: web
+          image: unregistry.xixifusi.online/ppap-web:e6160d892c23d4f4b3571915ee0917a372e67418
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4173
+          envFrom:
+            - configMapRef:
+                name: ppap-current
+          env:
+            - name: PPAP_PUBLIC_API_URL
+              value: https://ppap.icoastline.com/ppap
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4173
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4173
+            periodSeconds: 20
+            timeoutSeconds: 3

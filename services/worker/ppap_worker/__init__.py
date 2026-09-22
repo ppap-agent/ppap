@@ -359,22 +359,26 @@ def run() -> None:
     ident = worker_id(settings.worker_id)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     store = AuthStore(settings, role="worker")
-    with connect(settings, "worker") as conn:
-        while not STOP:
-            conn.execute(
-                """
-                INSERT INTO engine.worker_heartbeats (worker_id, started_at, last_seen_at, git_sha)
-                VALUES (%s, %s::timestamptz, now(), %s)
-                ON CONFLICT (worker_id) DO UPDATE
-                  SET last_seen_at = now(), git_sha = EXCLUDED.git_sha
-                """,
-                (ident, started, settings.git_sha),
-            )
+    while not STOP:
+        try:
+            with connect(settings, "worker") as conn:
+                conn.execute(
+                    """
+                    INSERT INTO engine.worker_heartbeats (worker_id, started_at, last_seen_at, git_sha)
+                    VALUES (%s, %s::timestamptz, now(), %s)
+                    ON CONFLICT (worker_id) DO UPDATE
+                      SET last_seen_at = now(), git_sha = EXCLUDED.git_sha
+                    """,
+                    (ident, started, settings.git_sha),
+                )
             claimed = store.claim_job(ident)
-            if claimed:
-                process_claimed(store, claimed, ident)
-                continue
-            time.sleep(1)
+        except Exception:
+            time.sleep(2)
+            continue
+        if claimed:
+            process_claimed(store, claimed, ident)
+            continue
+        time.sleep(1)
 
 
 if __name__ == "__main__":

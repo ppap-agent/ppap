@@ -182,7 +182,7 @@ class Settings(BaseSettings):
         database = "postgres" if role == "bootstrap" else self.pg_database
         return (
             f"postgresql://{user}:{password}@{self.pg_host}:{self.pg_port}/{database}"
-            "?connect_timeout=5"
+            "?connect_timeout=15"
         )
 
     def canonical_web_url(self) -> str:

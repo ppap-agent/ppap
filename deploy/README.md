@@ -37,6 +37,10 @@ docker buildx bake
 
 Bake 定义在仓库根 [docker-bake.hcl](../docker-bake.hcl)。API `GET /version` 与 Worker heartbeat 读取 `PPAP_BUILD_SHA`。当前镜像不含 isolated-dev 凭据，也不含 `.doc` converter sandbox。
 
+## TKE current preview
+
+Shared customer host `https://ppap.icoastline.com` is split by `deploy/tke/edition-proxy.yaml`. Current PPAP (postgres, silo, api, worker, web) runs in `ppap-test` as `ppap-current-*`. See [tke/README.md](tke/README.md). Do not point `ppap.api.xixifusi.online` at this stack.
+
 ## Production deploy
 
 ```sh

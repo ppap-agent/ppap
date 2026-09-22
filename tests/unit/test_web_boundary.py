@@ -44,6 +44,7 @@ class WebProductBoundaryTests(unittest.TestCase):
             self.assertFalse((WEB / obsolete).exists())
         self.assertFalse(any((WEB / "src").rglob("*.vue")))
         self.assertIn("COPY --from=web-build /app/dist", (ROOT / "deploy/web/Dockerfile").read_text())
+        self.assertNotIn("vite.config.ts", (WEB / "tsconfig.json").read_text())
 
     def test_rule_library_is_readable_and_does_not_add_an_execution_language(self):
         rules = (WEB / "src/RulesView.tsx").read_text()
@@ -84,14 +85,15 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertIn("ppap_edition", conf)
         self.assertIn("/enter-current", conf)
         self.assertIn("/enter-legacy", conf)
-        self.assertIn("/ppap/enter-current", conf)
-        self.assertIn("/ppap/enter-legacy", conf)
+        self.assertIn("ppap-current-api:8080/enter-current", conf)
+        self.assertIn("ppap-current-api:8080/enter-legacy", conf)
         self.assertNotIn("Set-Cookie", conf)
         self.assertNotIn("切换到新版", conf)
         self.assertIn("/ppap/", conf)
         self.assertIn("/addon", conf)
         self.assertNotIn("/v2", conf)
         self.assertIn("web-base.ppap-test.svc.cluster.local", conf)
+        self.assertNotIn("ppap-agent.xixifusi.online", conf)
 
     def test_shared_helpers_keep_review_excerpt_and_workspace_rules(self):
         helpers = (WEB / "src/helpers.ts").read_text()
