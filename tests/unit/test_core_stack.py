@@ -84,6 +84,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(values["LOG_LEVEL"], "INFO")
         self.assertEqual(values["OCR_ADAPTER_MODE"], "auto")
         self.assertTrue(values["FEISHU_APP_ID"] == "", "Production template FEISHU_APP_ID must be empty")
+        self.assertIn("2caeb428f08e175d", values["PPAP_CURRENT_TENANT_ALLOWLIST"])
+        self.assertEqual(values["PPAP_USAGE_CHARGE_ENABLED"], "false")
 
     def test_isolated_dev_with_only_api_key_uses_repository_defaults(self):
         with _clean_env(LLM_API_KEY="sk-test"):
@@ -222,7 +224,9 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_public_config_has_no_secrets(self):
         body = self.client.get("/public-config").json()
-        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "deep_offered", "feishu_app_id"})
+        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "deep_offered", "feishu_app_id", "current_access", "usage_charge_enabled"})
+        self.assertEqual(body["current_access"], "open")
+        self.assertTrue(body["usage_charge_enabled"])
         self.assertTrue(body["deep_offered"])
         self.assertIn("feishu_app_id", body)
         blob = " ".join(str(value).lower() for value in body.values())

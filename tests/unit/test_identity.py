@@ -438,6 +438,45 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(done.headers["location"], dest)
 
 
+    def test_allowlist_blocks_unknown_tenant_session(self):
+        from urllib.parse import parse_qs, urlparse
+
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="2caeb428f08e175d",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        client = self._oauth_client(_TokenHttp(), settings)
+        start = client.get("/login/feishu", params={"return_to": "http://127.0.0.1:4173/"}, follow_redirects=False)
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
+        self.assertEqual(done.status_code, 303)
+        self.assertIn("error=tenant_not_allowed", done.headers["location"])
+        self.assertFalse(done.cookies.get("ppap_session"))
+        host = client.post("/login/feishu/host", json={"code": "host-code"})
+        self.assertEqual(host.status_code, 403)
+        self.assertEqual(host.json(), {"error": "tenant_not_allowed"})
+        self.assertFalse(host.cookies.get("ppap_session"))
+
+    def test_allowlist_accepts_listed_tenant(self):
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="tk-live,2caeb428f08e175d",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        client = self._oauth_client(_TokenHttp(), settings)
+        host = client.post("/login/feishu/host", json={"code": "host-code"})
+        self.assertEqual(host.status_code, 200)
+        self.assertEqual(host.json()["identity"]["tenant_key"], "tk-live")
+        self.assertTrue(host.cookies.get("ppap_session"))
+
+
 class _Resp:
     def __init__(self, payload, status=200):
         self.status_code = status

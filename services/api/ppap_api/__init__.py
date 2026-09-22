@@ -87,6 +87,13 @@ def _cookie_kwargs(settings: Settings) -> dict:
     }
 
 
+def _start_feishu_session(store, settings: Settings, info: dict, tokens):
+    if not settings.tenant_allowed(str(info.get("tenant_key") or "")):
+        return None
+    principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
+    return principal, store.create_session(principal, tokens)
+
+
 def create_app(
     settings: Settings | None = None,
     postgres_probe: Probe | None = None,
@@ -247,8 +254,13 @@ def create_app(
         try:
             tokens = exchange_code(http, settings, code)
             info = user_info(http, tokens.access_token)
-            principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
-            raw = store.create_session(principal, tokens)
+            started = _start_feishu_session(store, settings, info, tokens)
+            if started is None:
+                return RedirectResponse(
+                    settings.canonical_web_url() + "/?error=tenant_not_allowed",
+                    status_code=303,
+                )
+            _principal, raw = started
         except FeishuError:
             return RedirectResponse(fallback, status_code=303)
         response = RedirectResponse(dest, status_code=303)
@@ -285,8 +297,10 @@ def create_app(
         try:
             tokens = exchange_host_code(http, settings, code, redirect_uri)
             info = user_info(http, tokens.access_token)
-            principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
-            raw = store.create_session(principal, tokens)
+            started = _start_feishu_session(store, settings, info, tokens)
+            if started is None:
+                return JSONResponse({"error": "tenant_not_allowed"}, status_code=403)
+            principal, raw = started
         except FeishuError:
             return JSONResponse({"error": "feishu_host_login_failed"}, status_code=502)
         response = JSONResponse(principal.public())
@@ -616,9 +630,12 @@ def create_app(
             if partner is None:
                 body = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
                 body["remaining_trial_ai_points"] = remaining
+                body["usage_charge_enabled"] = settings.usage_charge_enabled
                 return JSONResponse(body)
-            return JSONResponse(quota_payload(partner, remaining))
-        return JSONResponse(estimate_audit(target_count, remaining, partner))
+            body = quota_payload(partner, remaining)
+            body["usage_charge_enabled"] = settings.usage_charge_enabled
+            return JSONResponse(body)
+        return JSONResponse(estimate_audit(target_count, remaining, partner, settings.usage_charge_enabled))
 
     @app.post("/integrations/feishu/usage/events/{event_id}/report")
     def feishu_usage_report(event_id: str, request: Request) -> JSONResponse:

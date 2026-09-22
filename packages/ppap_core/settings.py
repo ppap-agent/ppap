@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     deep_controller_socket: str = Field(default="", alias="PPAP_DEEP_CONTROLLER_SOCKET")
     deep_executor_revision: str = Field(default="", alias="PPAP_DEEP_EXECUTOR_REVISION")
     deep_customer_enabled: bool = Field(default=False, alias="PPAP_DEEP_CUSTOMER_ENABLED")
+    current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
+    usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
     DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"
@@ -200,6 +202,13 @@ class Settings(BaseSettings):
     def deep_offered(self) -> bool:
         return self.profile != "production" or self.deep_customer_enabled
 
+    def allowed_tenant_keys(self) -> frozenset[str]:
+        return frozenset(part.strip() for part in self.current_tenant_allowlist.split(",") if part.strip())
+
+    def tenant_allowed(self, tenant_key: str) -> bool:
+        allowed = self.allowed_tenant_keys()
+        return not allowed or tenant_key.strip() in allowed
+
     def public_config(self) -> dict[str, object]:
         return {
             "git_sha": self.git_sha,
@@ -207,6 +216,8 @@ class Settings(BaseSettings):
             "api_url": self.public_api_url.rstrip("/"),
             "deep_offered": self.deep_offered(),
             "feishu_app_id": self.feishu_app_id,
+            "current_access": "allowlist" if self.allowed_tenant_keys() else "open",
+            "usage_charge_enabled": self.usage_charge_enabled,
         }
 
 

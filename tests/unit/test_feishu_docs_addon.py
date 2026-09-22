@@ -321,6 +321,20 @@ class FeishuDocsAddonTests(unittest.TestCase):
         quota = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(quota["remaining_trial_ai_points"], 0)
 
+    def test_preview_accept_does_not_write_usage(self):
+        self.settings.usage_charge_enabled = False
+        logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
+        self.assertEqual(logged.status_code, 200)
+        before = list(self.store.usage_events)
+        quota = self.client.get("/integrations/feishu/usage/quota", params={"target_count": 1})
+        self.assertEqual(quota.status_code, 200)
+        self.assertEqual(quota.json()["estimated_points"], 0)
+        self.assertTrue(quota.json()["accept_allowed"])
+        draft = self._draft_for_imported_file()
+        submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-preview-no-charge"})
+        self.assertEqual(submitted.status_code, 201)
+        self.assertEqual(self.store.usage_events, before)
+
     def test_empty_code_and_isolated_dev_fixture_host_login(self):
         missing = self.client.post("/login/feishu/host", json={})
         self.assertEqual(missing.status_code, 400)

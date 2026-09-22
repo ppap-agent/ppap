@@ -1467,6 +1467,8 @@ class AuthStore:
         return self._round_public(conn, round_id)
 
     def _record_round_usage(self, conn, principal, round_id, prepared) -> None:
+        if not self.settings.usage_charge_enabled:
+            return
         item_id = self.settings.feishu_ai_item_id.strip()
         if not item_id or principal.provider != PROVIDER_FEISHU:
             return

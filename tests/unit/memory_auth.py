@@ -857,7 +857,7 @@ class MemoryAuthStore:
             target = self.round_writebacks.get(predecessor_id)
         if target:
             self.round_writebacks[round_id] = dict(target)
-        if self.settings and self.settings.feishu_ai_item_id and principal.provider == "feishu":
+        if self.settings and self.settings.usage_charge_enabled and self.settings.feishu_ai_item_id and principal.provider == "feishu":
             from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
             item = self.settings.feishu_ai_item_id
             remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, self.trial_consumed_points(principal.tenant_id, item))

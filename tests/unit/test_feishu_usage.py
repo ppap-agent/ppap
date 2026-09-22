@@ -66,6 +66,10 @@ class QuotaSemanticsTests(unittest.TestCase):
         trial_only = estimate_audit(1, 500, None)
         self.assertTrue(trial_only["accept_allowed"])
         self.assertEqual(trial_only["estimated_points"], 500)
+        preview = estimate_audit(2, 0, PartnerAiItem(False, 0, False), charge_enabled=False)
+        self.assertTrue(preview["accept_allowed"])
+        self.assertEqual(preview["estimated_points"], 0)
+        self.assertEqual(preview["accept_reason"], "current_preview_not_charged")
 
 
 class _PartnerMock:

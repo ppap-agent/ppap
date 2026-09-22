@@ -265,17 +265,28 @@ def report_partner_usage(http, user_token: str, tenant_token: str, event: dict) 
     )
 
 
-def estimate_audit(target_count: int, remaining_trial: int, partner: PartnerAiItem | None) -> dict[str, object]:
-    points = audit_usage_points(target_count)
+def estimate_audit(
+    target_count: int,
+    remaining_trial: int,
+    partner: PartnerAiItem | None,
+    charge_enabled: bool = True,
+) -> dict[str, object]:
     remaining = max(0, int(remaining_trial))
-    partner_ok = bool(partner and quota_sufficient(partner.enabled, partner.user_quota))
-    allowed = remaining >= points or partner_ok
     if partner is None:
         payload = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
     else:
         payload = quota_payload(partner, remaining)
     payload["remaining_trial_ai_points"] = remaining
     payload["target_count"] = max(0, int(target_count))
+    payload["usage_charge_enabled"] = bool(charge_enabled)
+    if not charge_enabled:
+        payload["estimated_points"] = 0
+        payload["accept_allowed"] = True
+        payload["accept_reason"] = "current_preview_not_charged"
+        return payload
+    points = audit_usage_points(target_count)
+    partner_ok = bool(partner and quota_sufficient(partner.enabled, partner.user_quota))
+    allowed = remaining >= points or partner_ok
     payload["estimated_points"] = points
     payload["accept_allowed"] = allowed
     payload["accept_reason"] = "" if allowed else "试用剩余不足，且 Partner AI 额度不可用"

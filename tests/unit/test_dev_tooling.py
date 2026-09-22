@@ -213,6 +213,8 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("FEISHU_APP_SECRET", services["api"])
         self.assertIn("FEISHU_VERIFICATION_TOKEN", services["api"])
         self.assertIn("FEISHU_AI_ITEM_ID", services["api"])
+        self.assertIn("PPAP_CURRENT_TENANT_ALLOWLIST", services["api"])
+        self.assertIn("PPAP_USAGE_CHARGE_ENABLED", services["api"])
         self.assertNotIn("FEISHU_APP_ID", services["worker"])
         self.assertNotIn("FEISHU_APP_SECRET", services["worker"])
         self.assertIn("PPAP_PG_API_PASSWORD", services["api"])
