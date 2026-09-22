@@ -1,0 +1,29 @@
+# Replace nginx web with Vite so apps/web changes reload.
+services:
+  web:
+    image: node:22-bookworm
+    build: !reset
+    working_dir: /web
+    volumes:
+      - ../../apps/web:/web
+      - web-dev-modules:/web/node_modules
+    environment:
+      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+      PPAP_VITE_DOCKER: "1"
+    command:
+      - bash
+      - -lc
+      - |
+        set -eu
+        corepack enable
+        corepack prepare pnpm@10.30.3 --activate
+        pnpm install --frozen-lockfile
+        exec pnpm exec vite --host 0.0.0.0 --port 4173 --strictPort
+    ports:
+      - "127.0.0.1:4173:4173"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  web-dev-modules:

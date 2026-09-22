@@ -111,6 +111,9 @@ services:
         condition: service_completed_successfully
       init-bucket:
         condition: service_completed_successfully
+    env_file:
+      - path: ../../.env
+        required: false
     environment:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
@@ -159,6 +162,9 @@ services:
         condition: service_completed_successfully
       init-bucket:
         condition: service_completed_successfully
+    env_file:
+      - path: ../../.env
+        required: false
     environment:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}

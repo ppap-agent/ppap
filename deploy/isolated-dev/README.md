@@ -6,6 +6,12 @@ docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
 
 This Compose file is the isolated-dev product stack: PostgreSQL, [PGSTY Silo](https://github.com/pgsty/silo), `psql` bootstrap/migrations, the object bucket, API, Worker, and nginx Web. Credentials match [`.env.dev`](../../.env.dev). S3 stays on the compose network at `http://silo:9000` and is not published to the host. Loopback ports for host tools are `5432`, `8080`, and `4173`.
 
+前端热更新把 nginx `web` 换成 Vite，源码来自 `apps/web`：
+
+```sh
+docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/web-dev.yaml up -d --wait
+```
+
 Live Deep 另加 overlay，不改默认 unpublished Silo 合同：
 
 ```sh
