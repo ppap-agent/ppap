@@ -938,18 +938,17 @@ class MemoryAuthStore:
 
     def list_usage_events(self, principal, limit=50, offset=0, since=None, until=None):
         return [self.usage_event_public(row) for row in reversed(self.usage_events)
-                if row["tenant_id"] == principal.tenant_id and row["user_id"] == principal.user_id
+                if row["tenant_id"] == principal.tenant_id
                 and (not since or row["created_at"][:10] >= str(since))
                 and (not until or row["created_at"][:10] <= str(until))][offset:offset + limit]
 
     def usage_event(self, principal, event_id):
         return next((dict(row) for row in self.usage_events
-                     if row["id"] == event_id and row["tenant_id"] == principal.tenant_id
-                     and row["user_id"] == principal.user_id), None)
+                     if row["id"] == event_id and row["tenant_id"] == principal.tenant_id), None)
 
     def claim_usage_report(self, principal, event_id):
         row = self.usage_event(principal, event_id)
-        if not row or row["external_status"] != "pending" or row["is_free_trial"]:
+        if not row or row["user_id"] != principal.user_id or row["external_status"] not in {"pending", "unknown"} or row["is_free_trial"]:
             return None
         claim = str(uuid.uuid4())
         for item in self.usage_events:

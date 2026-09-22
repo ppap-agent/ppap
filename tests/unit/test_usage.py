@@ -47,7 +47,7 @@ class UsageReadTests(unittest.TestCase):
         response = self.client.get("/usage")
         self.assertEqual(response.status_code, 401)
 
-    def test_usage_lists_current_principal_events_only(self):
+    def test_usage_lists_tenant_events_and_keeps_initiator(self):
         alice = self.store.principal_for_fixture("alice")
         bob = self.store.principal_for_fixture("bob")
         self.store.record_usage_event(alice, "item-a", 400, True, trace_id="alice-1")
@@ -58,16 +58,16 @@ class UsageReadTests(unittest.TestCase):
         listed = self.client.get("/usage")
         self.assertEqual(listed.status_code, 200)
         events = listed.json()["events"]
-        self.assertEqual(len(events), 2)
-        self.assertEqual({row["trace_id"] for row in events}, {"alice-1", "alice-2"})
+        self.assertEqual({row["trace_id"] for row in events}, {"alice-1", "alice-2", "bob-1"})
         self.assertTrue(all("created_at" in row and row["created_at"] for row in events))
         self.assertTrue(all(row["ai_item_id"] == "item-a" for row in events))
+        self.assertEqual({row["user_id"] for row in events}, {alice.user_id, bob.user_id})
         self.assertNotIn("paid_balance", listed.json())
 
         self._login("bob")
         bob_listed = self.client.get("/usage")
         self.assertEqual(bob_listed.status_code, 200)
-        self.assertEqual([row["trace_id"] for row in bob_listed.json()["events"]], ["bob-1"])
+        self.assertEqual({row["trace_id"] for row in bob_listed.json()["events"]}, {"alice-1", "alice-2", "bob-1"})
 
         self._login("carol")
         isolated = self.client.get("/usage")

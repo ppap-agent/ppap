@@ -258,6 +258,12 @@ class FeishuUsageTests(unittest.TestCase):
         denied = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
         self.assertEqual(denied.status_code, 403)
 
+        self._login_feishu_user("bob")
+        stolen = self.client.post(f"/integrations/feishu/usage/events/{missing['id']}/report")
+        self.assertEqual(stolen.status_code, 409)
+        self.assertEqual(stolen.json()["error"], "usage_report_owner_required")
+        self.assertEqual(self.store.usage_event(self.store.principal_for_fixture("alice"), missing["id"])["external_status"], "confirmed")
+
     def test_report_failure_stays_unconfirmed(self):
         self._login_feishu_user("alice")
         self.store.save_app_ticket("cli_test", "tik")
@@ -272,9 +278,11 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertEqual(row["external_status"], "unknown")
         self.assertIsNone(row["external_record_id"])
         count = len(self.partner.calls)
+        self.partner.fail_report = False
         again = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
-        self.assertEqual(again.status_code, 409)
-        self.assertEqual(len(self.partner.calls), count)
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["external_status"], "confirmed")
+        self.assertGreater(len(self.partner.calls), count)
 
 
 if __name__ == "__main__":

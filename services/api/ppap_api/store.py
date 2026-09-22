@@ -1611,10 +1611,10 @@ class AuthStore:
 
     def usage_event_public(self, row: dict) -> dict:
         result = {key: row.get(key) for key in (
-            "id", "ai_item_id", "consumed_points", "is_free_trial", "external_status",
+            "id", "user_id", "ai_item_id", "consumed_points", "is_free_trial", "external_status",
             "external_record_id", "trace_id", "created_at", "round_id",
         )}
-        for key in ("id", "round_id"):
+        for key in ("id", "user_id", "round_id"):
             if result[key] is not None:
                 result[key] = str(result[key])
         created = result["created_at"]
@@ -1637,11 +1637,11 @@ class AuthStore:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT * FROM product.usage_events
-                   WHERE tenant_id = %s AND user_id = %s
+                   WHERE tenant_id = %s
                      AND (%s::date IS NULL OR created_at >= %s::date)
                      AND (%s::date IS NULL OR created_at < %s::date + INTERVAL '1 day')
                    ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, principal.user_id, since, since, until, until, limit, offset),
+                (principal.tenant_id, since, since, until, until, limit, offset),
             )
             return cur.fetchall()
 
@@ -1651,8 +1651,8 @@ class AuthStore:
         with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT * FROM product.usage_events
-                   WHERE id = %s AND tenant_id = %s AND user_id = %s""",
-                (event_id, principal.tenant_id, principal.user_id),
+                   WHERE id = %s AND tenant_id = %s""",
+                (event_id, principal.tenant_id),
             )
             return cur.fetchone()
 
@@ -1663,7 +1663,7 @@ class AuthStore:
                 """UPDATE product.usage_events SET external_status = 'reporting',
                           report_claim = %s, reporting_at = now()
                    WHERE id = %s AND tenant_id = %s AND user_id = %s
-                     AND external_status = 'pending' AND NOT is_free_trial
+                     AND external_status IN ('pending', 'unknown') AND NOT is_free_trial
                    RETURNING id""",
                 (claim, event_id, principal.tenant_id, principal.user_id),
             ).fetchone()

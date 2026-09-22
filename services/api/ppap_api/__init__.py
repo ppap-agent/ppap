@@ -615,6 +615,8 @@ def create_app(
         if row is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         public = store.usage_event_public(row)
+        if str(row.get("user_id")) != session.principal.user_id:
+            return JSONResponse({"error": "usage_report_owner_required"}, status_code=409)
         if row["is_free_trial"]:
             public["skipped"] = True
             public["skip_reason"] = "消费在赠送额度内"
@@ -622,7 +624,7 @@ def create_app(
         if public["external_status"] == "confirmed":
             public["skipped"] = False
             return JSONResponse(public)
-        if public["external_status"] != "pending":
+        if public["external_status"] not in {"pending", "unknown"}:
             return JSONResponse(public, status_code=409)
         if not row.get("trace_id"):
             return JSONResponse({"error": "usage_trace_missing"}, status_code=409)

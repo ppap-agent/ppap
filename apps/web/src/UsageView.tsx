@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, request} from './api'
 
-interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string}
+interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string; user_id?: string}
 
 export default function UsageView() {
   const [rows, setRows] = useState<Usage[]>([])
@@ -43,13 +43,14 @@ export default function UsageView() {
       {!!rows.length && (
         <div className="table-scroll" data-testid="usage-list">
           <table className="responsive-table usage-table">
-            <thead><tr><th>时间</th><th>用量（点）</th><th>类型</th><th><span className="sr-only">关联审核</span></th></tr></thead>
+            <thead><tr><th>时间</th><th>用量（点）</th><th>类型</th><th>发起人</th><th><span className="sr-only">关联审核</span></th></tr></thead>
             <tbody>
               {rows.map(row => (
                 <tr key={row.id}>
                   <td data-label="时间">{dateLabel(row.created_at)}</td>
                   <td data-label="用量（点）">{row.consumed_points.toLocaleString('zh-CN')}<span className="mobile-unit">点</span></td>
                   <td data-label="类型">{row.is_free_trial ? '试用' : '额度'}</td>
+                  <td data-label="发起人">{row.user_id || '—'}</td>
                   <td className="row-action">{row.round_id && <a href={'/?round=' + row.round_id}>查看审核 →</a>}</td>
                 </tr>
               ))}
