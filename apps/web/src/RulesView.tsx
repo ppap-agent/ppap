@@ -257,6 +257,7 @@ export default function RulesView() {
       {returnTo && !candidate && <a className="back-link" href={returnTo}>← {returnLabel}</a>}
       {view === 'list' ? (
         <>
+          {(visible.length > 0 || query || customer) && (
           <div className="toolbar">
             <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索规则名称或文件类型" aria-label="搜索规则" />
             <select value={customer} aria-label="客户筛选" onChange={event => setCustomer(event.target.value)}>
@@ -264,8 +265,9 @@ export default function RulesView() {
               {customers.map(name => <option key={name}>{name}</option>)}
             </select>
             <label className="inline-check"><input type="checkbox" checked={showVersions} onChange={event => setShowVersions(event.target.checked)} />历史版本</label>
-            <button type="button" className="pc-primary toolbar-end" data-testid="new-rule" id="new-rule" disabled={busy} onClick={newRule}>上传规则</button>
+            {visible.length > 0 && <button type="button" className="pc-primary toolbar-end" data-testid="new-rule" id="new-rule" disabled={busy} onClick={newRule}>上传规则</button>}
           </div>
+          )}
           {busy && <p className="loading-state" role="status">正在读取规则…</p>}
           {!busy && !visible.length && (
             <div className="empty-state">
@@ -273,7 +275,7 @@ export default function RulesView() {
               <h2>{query || customer ? '没有匹配的规则' : '还没有客户规则'}</h2>
               {query || customer
                 ? <button type="button" onClick={() => { setQuery(''); setCustomer('') }}>清除筛选</button>
-                : <button type="button" className="pc-primary" onClick={newRule}>上传规则</button>}
+                : <button type="button" className="pc-primary" data-testid="new-rule" id="new-rule" disabled={busy} onClick={newRule}>上传规则</button>}
             </div>
           )}
           {!!visible.length && (

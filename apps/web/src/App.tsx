@@ -92,6 +92,14 @@ export default function App() {
       <div className="edition-banner" data-testid="edition-banner" role="status">
         <strong>当前：新版</strong>
         {user ? <a href="/enter-legacy">切换到旧版</a> : null}
+        {user && (
+          <div className="banner-session">
+            <button type="button" className="account-button" aria-label={user + '，账号菜单'} title={user} aria-expanded={accountOpen} aria-controls="account-actions-banner" onClick={() => setAccountOpen(open => !open)}>
+              <span className="avatar" aria-hidden="true">{user[0]}</span>
+            </button>
+            {accountOpen && <div id="account-actions-banner" className="account-actions"><button type="button" onClick={() => void logout()}>退出登录</button></div>}
+          </div>
+        )}
       </div>
       <div className="app-body">
       <a className="skip-link" href="#main-content">跳到主要内容</a>

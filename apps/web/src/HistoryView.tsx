@@ -31,8 +31,12 @@ export default function HistoryView() {
     return Object.values(row.result_counts || {}).reduce((sum, n) => sum + n, 0)
   }
 
+  const filtered = Boolean(query || execution || unreviewed)
+  const showToolbar = rows.length > 0 || filtered
+
   return (
     <section className="page-content">
+      {showToolbar && (
       <form className="toolbar history-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
         <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
         <select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
@@ -41,16 +45,17 @@ export default function HistoryView() {
         </select>
         <label className="inline-check"><input type="checkbox" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />待复核</label>
         <button type="submit" disabled={busy}>搜索</button>
-        <a className="button pc-primary toolbar-end" href="/">新建审核</a>
+        {rows.length > 0 && <a className="button pc-primary toolbar-end" href="/">新建审核</a>}
       </form>
+      )}
       {error && <p className="error" role="alert" data-testid="history-error">{error}</p>}
       {busy && !rows.length && <p className="loading-state" role="status">正在加载…</p>}
       {!busy && !rows.length && !error && (
         <div className="empty-state" data-testid="history-empty">
-          <h2>{query || execution || unreviewed ? '没有符合条件的审核' : '还没有审核结果'}</h2>
-          {!query && !execution && !unreviewed
-            ? <a className="button pc-primary" href="/">新建审核</a>
-            : <button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</button>}
+          <h2>{filtered ? '没有符合条件的审核' : '还没有审核结果'}</h2>
+          {filtered
+            ? <button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</button>
+            : <a className="button pc-primary empty-cta" href="/">新建审核</a>}
         </div>
       )}
       {!!rows.length && (

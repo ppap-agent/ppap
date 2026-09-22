@@ -43,13 +43,17 @@ export default function UsageView() {
   useEffect(() => { void load(); void loadQuota() }, [])
 
   return (
-    <section className="page-content">
-      <p className="scope-note" data-testid="quota-summary">{quotaError || (quota ? `试用剩余 ${quota.remaining_trial_ai_points ?? '—'} 点 · ${quota.detailed_message || quota.message || (quota.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用')}` : '正在读取额度…')}</p>
+    <section className="page-content usage-page">
+      {quotaError
+        ? <p className="notice" role="status" data-testid="quota-summary">{quotaError}</p>
+        : <p className="scope-note" data-testid="quota-summary">{quota ? `试用剩余 ${quota.remaining_trial_ai_points ?? '—'} 点 · ${quota.detailed_message || quota.message || (quota.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用')}` : '正在读取额度…'}</p>}
+      {(rows.length > 0 || since || until) && (
       <form className="toolbar usage-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
         <label>起始日期<input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
         <label>截止日期<input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>
         <button type="submit" disabled={busy}>查询</button>
       </form>
+      )}
       {error && <p className="error" role="alert" data-testid="usage-error">{error}</p>}
       {busy && !rows.length && <p className="loading-state" role="status">正在加载…</p>}
       {!busy && !rows.length && !error && <div className="empty-state" data-testid="usage-empty"><h2>当前范围没有用量记录</h2></div>}
