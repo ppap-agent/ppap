@@ -216,7 +216,7 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         _heading2('本轮摘要'),
         _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts['PASS']}，不符合 {counts['NG']}，检查异常 {counts['ERR']}。"),
         _text(f'未记录人工复核 {pending} 项。已记录不等于问题已解决，本报告不代表正式批准。'),
-        _text('客户自定义要求仅作人工复核参考，不会自动增加机器检查项。'),
+        _text('未自动检查的规则条目会单独列出，不计入机器通过。'),
     ])
     for row in findings:
         if row.get('status') != 'PASS':

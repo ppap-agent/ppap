@@ -98,6 +98,7 @@ class RoundInput:
     rule_title: str | None = None
     rule_body: dict[str, Any] | None = None
     sha256: str | None = None
+    rule_execution: dict[str, Any] | None = None
 
     def rule_kind(self) -> str:
         return str((self.rule_body or {}).get("kind") or KIND_ENGINE)
@@ -215,6 +216,74 @@ def findings_from_engine_results(results: list[Any], *, target: RoundInput) -> d
     return {
         "findings": findings,
         "coverage": {"checked": checked, "unchecked": [], "locator_gap": locator_gap},
+    }
+
+
+def findings_from_rule_execution(results: list[Any], *, target: RoundInput, execution: dict[str, Any]) -> dict[str, Any]:
+    from ppap_core.rule_coverage import COVERAGE_MAPPED, unsupported_item_note
+
+    items = list(execution.get("items") or [])
+    file_locator = {
+        "kind": "file_version",
+        "file_id": target.file_id,
+        "file_version_id": target.file_version_id,
+        "filename": target.filename,
+    }
+    findings: list[dict[str, Any]] = []
+    rule_items: list[dict[str, Any]] = []
+    unchecked: list[str] = []
+    locator_gap = False
+    for spec in items:
+        row = {
+            "id": spec.get("id"),
+            "file_version_id": target.file_version_id,
+            "category": spec.get("category") or "",
+            "priority": spec.get("priority"),
+            "rule_to_check": spec.get("rule_to_check") or "",
+            "coverage": spec.get("coverage"),
+        }
+        if spec.get("coverage") == COVERAGE_MAPPED:
+            index = spec.get("checker_index")
+            result = results[index] if isinstance(index, int) and 0 <= index < len(results) else None
+            status = getattr(result, "status", ERR) if result is not None else ERR
+            if status not in FINDING_STATUSES:
+                status = ERR
+            evidence = getattr(result, "evidence", None) if result is not None else None
+            sources = getattr(evidence, "sources", None) if evidence is not None else None
+            locator = {
+                **file_locator,
+                "rule_item_id": spec.get("id"),
+                "evidence": evidence.model_dump(mode="json") if evidence is not None else None,
+            }
+            if sources:
+                locator.update(kind=sources[0].kind, locator=sources[0].locator)
+            else:
+                locator_gap = True
+            item_key = f"{target.file_version_id}:rule:{spec.get('id')}"
+            findings.append(
+                {
+                    "item_key": item_key,
+                    "classification": str(spec.get("category") or getattr(result, "classification", "") or ""),
+                    "item": str(spec.get("rule_to_check") or getattr(result, "item", "") or ""),
+                    "priority": str(spec.get("priority") or getattr(result, "priority", "") or "P0"),
+                    "status": status,
+                    "suggestions": str(getattr(result, "suggestions", "") if result is not None else "mapped_checker_missing"),
+                    "locator": locator,
+                }
+            )
+            row.update(item_key=item_key, status=status)
+        else:
+            row["reason"] = spec.get("reason") or "manual-only"
+            unchecked.append(unsupported_item_note(spec))
+        rule_items.append(row)
+    return {
+        "findings": findings,
+        "coverage": {
+            "checked": [target.filename] if findings else [],
+            "unchecked": unchecked,
+            "locator_gap": locator_gap,
+            "rule_items": rule_items,
+        },
     }
 
 

@@ -18,7 +18,7 @@ from ppap_core.audits import evaluate_round
 from ppap_core.fixtures import RULE_A, USER_BOB
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from ppap_worker import process_claimed, run_claimed_job
+from ppap_worker import process_claimed
 from tests.unit.memory_auth import MemoryAuthStore
 
 
@@ -424,7 +424,62 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
 
+    def test_selected_rule_items_are_frozen_and_cover_unchecked(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
+        from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+        from tests.unit.test_rules import rule_body
+
+        self._login("alice")
+        source = self._upload("rules.json", b"{}")
+        mapped_text = declarations_for_target("控制计划", "plan.xlsx", "v3")[0][1]
+        body = rule_body()
+        body["rules"] = [
+            {"id": "keep", "category": mapped_text, "priority": "P1", "rule_to_check": mapped_text, "type_of_rule": "text"},
+            {"id": "extra", "category": "customer-only", "priority": None, "rule_to_check": "arbitrary customer requirement", "type_of_rule": "text"},
+        ]
+        published = self.client.post("/rules", json={"title": "控制计划清单", "body": body, "source_file_version_id": source["id"]})
+        self.assertEqual(published.status_code, 201)
+        target = self._upload("plan.xlsx", b"target-bytes")
+        draft = self.client.post("/drafts").json()["id"]
+        self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": published.json()["id"]}]})
+        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rule-items-1"})
+        self.assertEqual(accepted.status_code, 201)
+        frozen = self.store.round_inputs[accepted.json()["id"]][0]["rule_execution"]
+        self.assertEqual(frozen["mode"], "rule_items")
+        self.assertEqual([row["id"] for row in frozen["items"]], ["keep", "extra"])
+        self.assertEqual(frozen["items"][0]["coverage"], "mapped")
+        self.assertEqual(frozen["items"][1]["coverage"], "unsupported")
+
+        def fake_run(audit, rule, group_context=None):
+            return [
+                AuditResultItem(
+                    status="PASS", classification="规则", item=row["rule_to_check"], priority="P0", suggestions="",
+                    evidence=AuditEvidence(
+                        required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                        sources=(EvidenceSource(kind="structure", locator="B2"),),
+                    ),
+                )
+                for row in rule.rules
+            ]
+
+        with patch.object(app_runtime, "run_audit_engine", fake_run):
+            self._finish_worker()
+        loaded = self.client.get("/rounds/" + accepted.json()["id"]).json()
+        self.assertEqual(loaded["findings"][0]["item_key"], target["id"] + ":rule:keep")
+        self.assertEqual(loaded["findings"][0]["item"], mapped_text)
+        self.assertTrue(any("arbitrary customer requirement" in row for row in loaded["coverage"]["unchecked"]))
+        changed = rule_body()
+        changed["rules"][0]["rule_to_check"] = "新版要求"
+        successor = self.client.post("/rules", json={"title": "新版", "body": changed, "source_file_version_id": source["id"], "predecessor_id": published.json()["id"]})
+        self.assertEqual(successor.status_code, 201)
+        replay = self.client.get("/rounds/" + accepted.json()["id"]).json()
+        self.assertEqual(replay["findings"][0]["item"], mapped_text)
+        self.assertEqual(replay["inputs"][0]["rule"]["id"], published.json()["id"])
+
+
 class PresenceEvaluationTests(unittest.TestCase):
+
     def test_presence_does_not_import_engine(self):
         # Engine tests can run first in discovery. Verify lazy imports in a fresh interpreter.
         result = subprocess.run([sys.executable, "-c", """
@@ -439,9 +494,15 @@ assert 'ppap_excel_audit_engine' not in sys.modules
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_round_payload_does_not_import_engine(self):
-        result = run_claimed_job("audit", {"round_id": "abc"})
-        self.assertEqual(result["note"], "round_audit")
-        self.assertNotIn("ppap_excel_audit_engine.app_runtime", sys.modules)
+        result = subprocess.run([sys.executable, "-c", """
+from tests import pathsetup
+import sys
+from ppap_worker import run_claimed_job
+result = run_claimed_job("audit", {"round_id": "abc"})
+assert result["note"] == "round_audit"
+assert "ppap_excel_audit_engine.app_runtime" not in sys.modules
+"""], cwd=ROOT, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class WebHookTests(unittest.TestCase):
@@ -451,7 +512,7 @@ class WebHookTests(unittest.TestCase):
             'function submit', 'function saveReview', 'function prepareAgain',
             'finding-picker', 'function pickFinding', '<OriginalPreview', '<ReportPreview',
             '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
-            'data-testid="analysis-mode"', 'analysis_mode',
+            'data-testid="analysis-mode"', 'analysis_mode', 'unchecked-rule-items',
         ):
             self.assertIn(marker, workbench)
         self.assertIn('list.concat(material)', workbench)

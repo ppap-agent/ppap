@@ -302,7 +302,7 @@ export default function RulesView() {
           <button type="button" className="back-link" disabled={busy} onClick={() => showList()}>← 规则库</button>
           <div className="section-heading">
             <h2>{candidate ? '核对规则' : view === 'upload' ? (predecessor ? '上传新版本' : '上传客户规则') : selected?.title}</h2>
-            {view === 'detail' && <div className="scope-inline"><span className="badge">人工复核参考</span><Help title="客户规则用途"><p>客户要求用于人工复核，不会自动增加检查项。</p></Help></div>}
+            {view === 'detail' && <div className="scope-inline"><span className="badge">机审清单</span><Help title="客户规则用途"><p>保存后的规则条目是审核清单。能映射到内置检查的条目会机器执行；其余条目明确标为未覆盖，需人工核对。</p></Help></div>}
           </div>
           {view === 'upload' && (
             <fieldset className="rule-upload" disabled={busy}>

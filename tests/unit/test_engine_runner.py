@@ -116,6 +116,61 @@ class EngineRunnerTests(unittest.TestCase):
         self.assertTrue(any("gone.pdf" in row and "无法加载" in row for row in result["coverage"]["unchecked"]))
         self.assertFalse(result["coverage"]["locator_gap"])
 
+    def test_customer_rule_items_are_the_machine_checklist(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target, freeze_target_rule_execution
+        from ppap_worker import engine_runner
+
+        self._login()
+        first = self._upload("plan.xlsx", b"one")
+        mapped_text = declarations_for_target("控制计划", "plan.xlsx", "v3")[0][1]
+        body = {
+            "kind": "engine",
+            "rule_profile": "v3",
+            "type": "控制计划",
+            "rules": [
+                {"id": "keep", "category": mapped_text, "priority": "P1", "rule_to_check": mapped_text, "type_of_rule": "text"},
+                {"id": "extra", "category": "customer-only", "priority": None, "rule_to_check": "arbitrary customer requirement", "type_of_rule": "text"},
+            ],
+        }
+        execution = freeze_target_rule_execution(body, "plan.xlsx")
+        work = RoundWork(
+            "round-items",
+            "t1",
+            [
+                RoundInput(
+                    "target", first["file_id"], first["id"], "plan.xlsx", "ready",
+                    rule_version_id="rule-keep", rule_title="控制计划", rule_body=body, rule_execution=execution,
+                ),
+            ],
+        )
+
+        def fake_run(audit, rule, group_context=None):
+            return [
+                AuditResultItem(
+                    status="PASS",
+                    classification="规则",
+                    item=description,
+                    priority="P0",
+                    suggestions="",
+                    evidence=AuditEvidence(
+                        required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                        sources=(EvidenceSource(kind="structure", locator="A1"),),
+                    ),
+                )
+                for description in [row["rule_to_check"] for row in rule.rules]
+            ]
+
+        with patch.object(app_runtime, "run_audit_engine", fake_run):
+            result = engine_runner(work, self.store)
+        self.assertEqual([row["item_key"] for row in result["findings"]], [f"{first['id']}:rule:keep"])
+        self.assertEqual(result["findings"][0]["item"], mapped_text)
+        self.assertEqual(result["findings"][0]["locator"]["rule_item_id"], "keep")
+        self.assertTrue(any("arbitrary customer requirement" in row for row in result["coverage"]["unchecked"]))
+        self.assertEqual([row["id"] for row in result["coverage"]["rule_items"]], ["keep", "extra"])
+        self.assertEqual(result["coverage"]["rule_items"][1]["coverage"], "unsupported")
+        self.assertNotIn("customer-only", " ".join(row["item"] for row in result["findings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

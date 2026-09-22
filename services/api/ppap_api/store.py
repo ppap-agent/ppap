@@ -1038,7 +1038,7 @@ class AuthStore:
             rows = conn.execute(
                 """
                 SELECT i.role, fv.file_id, fv.id, fv.original_filename, fv.status, fv.object_key, fv.content_type,
-                       i.rule_version_id, i.rule_title, i.rule_body, fv.sha256
+                       i.rule_version_id, i.rule_title, i.rule_body, fv.sha256, i.rule_execution
                 FROM product.round_inputs i
                 JOIN product.file_versions fv ON fv.id = i.file_version_id
                 WHERE i.round_id = %s
@@ -1062,6 +1062,7 @@ class AuthStore:
                     row[8],
                     row[9],
                     row[10],
+                    row[11],
                 )
                 for row in rows
             ],
@@ -1244,7 +1245,7 @@ class AuthStore:
             grants = self.grants(str(row[1]), principal.user_id)
             if resource is None or resource.kind != "file" or not can_read(principal, resource, grants):
                 raise KeyError("missing")
-            prepared.append({"file_version_id": str(row[0]), "role": role, "file_id": str(row[1])})
+            prepared.append({"file_version_id": str(row[0]), "role": role, "file_id": str(row[1]), "original_filename": row[4]})
         return prepared
 
     def _bound_audit_items(self, conn, principal, items, *, require_rules=True) -> list[dict]:
@@ -1262,7 +1263,16 @@ class AuthStore:
                     rule = self._rule_for_tenant(conn, rid, principal.tenant_id) if rid else None
                     if not rule:
                         raise ValueError("unknown_rule")
-            row.update(rule_version_id=str(rule[0]) if rule else None, rule_title=rule[1] if rule else None, rule_body=rule[2] if rule else None)
+            execution = None
+            if rule:
+                from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution
+                execution = freeze_target_rule_execution(rule[2], row.get("original_filename") or "")
+            row.update(
+                rule_version_id=str(rule[0]) if rule else None,
+                rule_title=rule[1] if rule else None,
+                rule_body=rule[2] if rule else None,
+                rule_execution=execution,
+            )
         return prepared
 
     def _accept_locked(
@@ -1354,9 +1364,13 @@ class AuthStore:
         )
         for row in prepared:
             conn.execute(
-                """INSERT INTO product.round_inputs (round_id, file_version_id, role, rule_version_id, rule_title, rule_body)
-                VALUES (%s, %s, %s, %s, %s, %s)""",
-                (round_id, row["file_version_id"], row["role"], row["rule_version_id"], row["rule_title"], Jsonb(row["rule_body"]) if row["rule_body"] is not None else None),
+                """INSERT INTO product.round_inputs (round_id, file_version_id, role, rule_version_id, rule_title, rule_body, rule_execution)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    round_id, row["file_version_id"], row["role"], row["rule_version_id"], row["rule_title"],
+                    Jsonb(row["rule_body"]) if row["rule_body"] is not None else None,
+                    Jsonb(row["rule_execution"]) if row.get("rule_execution") is not None else None,
+                ),
             )
         conn.execute(
             """

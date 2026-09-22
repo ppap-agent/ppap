@@ -615,7 +615,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   </label>
                   {item.role === 'target' ? (
                     <div className="material-rule">
-                      <label>客户规则参考
+                      <label>审核规则
                         <select data-testid="item-rule" value={item.rule_version_id || ''} disabled={busy} aria-label={item.original_filename + '的匹配规则'} onChange={event => setItems(current => current.map(row => row.file_version_id === item.file_version_id ? {...row, rule_version_id: event.target.value || null} : row))}>
                           <option value="">选择匹配规则</option>
                           {availableRules(item).map(rule => <option key={rule.id} value={rule.id}>{rule.title}{currentRules.some(current => current.id === rule.id) ? '' : '（历史版本）'}</option>)}
@@ -631,7 +631,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   <button type="button" className="icon-button material-remove" disabled={busy} title="移除资料" aria-label={'移除 ' + item.original_filename} onClick={() => setItems(current => current.filter(row => row.file_version_id !== item.file_version_id))}><X size={18} aria-hidden="true" /></button>
                 </article>
               ))}
-              {!!targetCount && <div className="scope-note scope-inline">客户规则用于人工复核<Help title="审核范围"><p>自动检查按所选文档类型执行；客户规则中的自定义条目供人工复核。</p></Help></div>}
+              {!!targetCount && <div className="scope-note scope-inline">所选规则条目即本轮机审清单<Help title="审核范围"><p>受理后冻结所选规则版本和条目。能映射到内置检查的条目给出 PASS/NG/ERR；不能自动执行的条目进入未覆盖，需人工核对。不会改成另一套内置清单。</p></Help></div>}
               <div className="action-bar sticky-actions">
                 <div>
                   <label className="mode-select">
@@ -702,9 +702,9 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   {round.inputs.map(file => <option key={file.file_version_id} value={file.file_version_id}>{file.original_filename}{file.role === 'reference' ? ' · 参考资料' : ''}</option>)}
                 </select>
               </label>
-              {selectedFile?.rule_version_id && <a className="context-link" href={'/rules?rule=' + selectedFile.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>客户规则参考 ↗</a>}
+              {selectedFile?.rule_version_id && <a className="context-link" href={'/rules?rule=' + selectedFile.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>本轮规则 ↗</a>}
             </div>
-            <div className="sr-only" data-testid="coverage-panel">{round.inputs.map(file => file.original_filename).join(' ')}</div>
+            <div className="sr-only" data-testid="coverage-panel">{[...round.inputs.map(file => file.original_filename), ...(round.coverage?.unchecked || []), ...(round.coverage?.rule_items || []).map(item => item.rule_to_check)].join(' ')}</div>
             {workspacePanel === 'original' && selectedFinding && (
               <div className="mobile-finding-context">
                 <strong>{selectedFinding.item}</strong>
@@ -744,6 +744,16 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                         </div>
                       </div>
                     )}
+                    {!!(round.coverage?.rule_items || []).filter(item => item.coverage === 'unsupported' && (!selectedFile || item.file_version_id === selectedFile.file_version_id || (item.item_key || '').startsWith(selectedFile.file_version_id + ':'))).length && (
+                      <div className="empty-state compact" data-testid="unchecked-rule-items">
+                        <h3>未自动检查</h3>
+                        <ul>
+                          {(round.coverage?.rule_items || []).filter(item => item.coverage === 'unsupported' && (!selectedFile || item.file_version_id === selectedFile.file_version_id || (item.item_key || '').startsWith(selectedFile.file_version_id + ':'))).map(item => (
+                            <li key={item.id}>{item.rule_to_check} · 需人工核对</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {selectedFinding && (
                       <article className="finding-detail">
                         <div className="section-heading">
@@ -757,7 +767,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                           <button type="button" className="text-button" onClick={() => void findEvidence()}><Search size={16} aria-hidden="true" />在原件中查找</button>
                         </div>
                         <form className="audit-review" onSubmit={event => void nextUnreviewed(event)}>
-                          <div className="section-heading"><div className="scope-inline"><h3>人工复核</h3><Help title="复核与自动检查"><p>记录复核不等于问题已解决，也不改变机器结论。客户规则中的自定义要求需另行人工核对。</p></Help></div><span className="review-save-state" role="status">{savingReview ? '正在保存…' : reviewDirty ? '未保存' : selectedFinding.review ? '已保存' : ''}</span></div>
+                          <div className="section-heading"><div className="scope-inline"><h3>人工复核</h3><Help title="复核与自动检查"><p>记录复核不等于问题已解决，也不改变机器结论。未自动检查的规则条目单独列出，不计入机器通过。</p></Help></div><span className="review-save-state" role="status">{savingReview ? '正在保存…' : reviewDirty ? '未保存' : selectedFinding.review ? '已保存' : ''}</span></div>
                           <fieldset className="plain-fieldset" disabled={busy}>
                             <div className="judgment-options" aria-label="复核判断">
                               {reviewJudgments.map(value => <button type="button" key={value} aria-pressed={!customJudgment && review.judgment === value} onClick={() => setJudgment(value)}>{value}</button>)}

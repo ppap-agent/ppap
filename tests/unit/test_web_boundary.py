@@ -38,7 +38,7 @@ class WebProductBoundaryTests(unittest.TestCase):
             self.assertIn(content, rules)
         self.assertNotIn("eval(", rules)
         self.assertNotIn("new Function", rules)
-        self.assertIn("不会自动增加检查项", rules)
+        self.assertIn("明确标为未覆盖", rules)
 
     def test_usage_page_does_not_report_real_usage(self):
         usage = (WEB / "src/UsageView.tsx").read_text()

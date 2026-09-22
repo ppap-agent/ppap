@@ -569,6 +569,7 @@ class MemoryAuthStore:
                     item.get("rule_title"),
                     item.get("rule_body"),
                     version.sha256,
+                    item.get("rule_execution"),
                 )
             )
         return RoundWork(
@@ -679,7 +680,7 @@ class MemoryAuthStore:
             grants = self.grants(version.file_id, principal.user_id)
             if resource is None or resource.kind != "file" or not can_read(principal, resource, grants):
                 raise KeyError("missing")
-            prepared.append({"file_version_id": version.id, "role": role, "file_id": version.file_id})
+            prepared.append({"file_version_id": version.id, "role": role, "file_id": version.file_id, "original_filename": version.original_filename})
         return prepared
 
     def _bound_audit_items(self, principal, items, *, require_rules=True):
@@ -696,7 +697,16 @@ class MemoryAuthStore:
                     rule = self.rule_versions.get(rule_id)
                     if not rule or rule["tenant_id"] != principal.tenant_id:
                         raise ValueError("unknown_rule")
-            row.update(rule_version_id=rule["id"] if rule else None, rule_title=rule["title"] if rule else None, rule_body=deepcopy(rule["body"]) if rule else None)
+            execution = None
+            if rule:
+                from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution
+                execution = freeze_target_rule_execution(rule["body"], row.get("original_filename") or "")
+            row.update(
+                rule_version_id=rule["id"] if rule else None,
+                rule_title=rule["title"] if rule else None,
+                rule_body=deepcopy(rule["body"]) if rule else None,
+                rule_execution=deepcopy(execution) if execution is not None else None,
+            )
         return prepared
 
     def _accept(

@@ -15,9 +15,11 @@ from ppap_core.audits import (
     TARGET,
     evaluate_round,
     findings_from_engine_results,
+    findings_from_rule_execution,
     presence_finding,
     unused_reference_note,
 )
+from ppap_core.rule_coverage import COVERAGE_MAPPED, MODE_RULE_ITEMS
 from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
 from ppap_core.db import connect
 from ppap_core.logs import bind, configure as configure_logs, emit, reset
@@ -51,25 +53,28 @@ def run_claimed_job(kind: str, payload: dict) -> dict:
     }
 
 
+def _declarations(item) -> tuple[tuple[str, str], ...]:
+    from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
+
+    body = item.rule_body or {}
+    return declarations_for_target(body.get("type") or "", item.filename, body.get("rule_profile") or "v2")
+
+
+def _rule_execution(item) -> dict | None:
+    if item.rule_execution:
+        return item.rule_execution
+    from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution
+
+    return freeze_target_rule_execution(item.rule_body, item.filename)
+
+
 def _rule_input(item) -> RuleInput:
     if not item.rule_version_id or item.rule_body is None:
         raise ValueError("rule_required")
     body = item.rule_body
     builtin_rules = []
     if body.get("kind") != KIND_PRESENCE:
-        from ppap_excel_audit_engine.routing import resolve_engine_agent_class
-        from ppap_excel_audit_engine.checkers.rule_declarations import discover_declared_rules
-
-        filename = item.filename
-        if Path(filename).suffix.lower() == ".doc":
-            filename = str(Path(filename).with_suffix(".docx"))
-        agent_cls = resolve_engine_agent_class(
-            PpapDocumentType.from_string(body.get("type") or ""), filename,
-            body.get("rule_profile") or "v2",
-        )
-        # PDF delegates execute the corresponding Excel checker's declarations.
-        agent_cls = getattr(agent_cls, "TARGET_EXCEL_AGENT_CLASS", None) or agent_cls
-        declarations = discover_declared_rules(agent_cls) if agent_cls else ()
+        declarations = _declarations(item)
         if not declarations:
             raise ValueError("builtin_rules_unavailable")
         builtin_rules = [
@@ -120,7 +125,16 @@ def engine_runner(work, store: AuthStore):
     targets = [item for item in work.inputs if item.role == TARGET]
     if not targets:
         raise ValueError("target_required")
-    rules_by_version = {item.file_version_id: _rule_input(item) for item in targets}
+    rules_by_version = {}
+    for item in targets:
+        execution = _rule_execution(item)
+        needs_engine = item.rule_kind() != KIND_PRESENCE and (
+            not execution
+            or execution.get("mode") != MODE_RULE_ITEMS
+            or any(row.get("coverage") == COVERAGE_MAPPED for row in execution.get("items") or [])
+        )
+        if needs_engine:
+            rules_by_version[item.file_version_id] = _rule_input(item)
 
     temps: list[str] = []
     try:
@@ -141,7 +155,11 @@ def engine_runner(work, store: AuthStore):
             audit = _audit_input(item, path)
             audits_by_version[item.file_version_id] = audit
             by_audit_id[item.file_version_id] = audit
-            type_key = rules_by_version[item.file_version_id].type if item.role == TARGET else _doc_type_key(audit)
+            if item.role == TARGET:
+                rule = rules_by_version.get(item.file_version_id)
+                type_key = rule.type if rule is not None else (item.rule_body or {}).get("type")
+            else:
+                type_key = _doc_type_key(audit)
             if type_key:
                 by_doc_type.setdefault(type_key, []).append(audit)
             if item.role != TARGET:
@@ -159,18 +177,33 @@ def engine_runner(work, store: AuthStore):
         findings: list[dict] = []
         checked: list[str] = []
         locator_gap = False
+        rule_items: list[dict] = []
+        item_notes: list[str] = []
         for target in targets:
             if target.rule_kind() == KIND_PRESENCE:
                 findings.append(presence_finding(target))
                 checked.append(target.filename)
                 continue
+            execution = _rule_execution(target)
             audit = audits_by_version[target.file_version_id]
-            results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
-            mapped = findings_from_engine_results(results, target=target)
-            findings.extend(mapped["findings"])
-            checked.append(target.filename)
-            locator_gap = locator_gap or bool((mapped.get("coverage") or {}).get("locator_gap"))
-        if not findings:
+            if execution and execution.get("mode") == MODE_RULE_ITEMS:
+                mapped_items = [row for row in execution.get("items") or [] if row.get("coverage") == COVERAGE_MAPPED]
+                results = (
+                    run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
+                    if mapped_items else []
+                )
+                projected = findings_from_rule_execution(results, target=target, execution=execution)
+            else:
+                results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
+                projected = findings_from_engine_results(results, target=target)
+            findings.extend(projected["findings"])
+            coverage = projected.get("coverage") or {}
+            if projected["findings"] or (execution and execution.get("mode") == MODE_RULE_ITEMS):
+                checked.append(target.filename)
+            locator_gap = locator_gap or bool(coverage.get("locator_gap"))
+            rule_items.extend(coverage.get("rule_items") or [])
+            item_notes.extend(coverage.get("unchecked") or [])
+        if not findings and not rule_items:
             from ppap_core.audits import execution_error_result
 
             return execution_error_result("empty_engine_result")
@@ -178,8 +211,9 @@ def engine_runner(work, store: AuthStore):
             "findings": findings,
             "coverage": {
                 "checked": checked,
-                "unchecked": reference_notes,
+                "unchecked": reference_notes + item_notes,
                 "locator_gap": locator_gap,
+                "rule_items": rule_items,
             },
             "note": "in-repo engine",
         }

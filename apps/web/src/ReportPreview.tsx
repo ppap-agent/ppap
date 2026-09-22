@@ -89,7 +89,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
           {counts.map(count => <span key={count.status} className={count.count ? 'status-' + count.status : 'pc-muted'}>{resultLabels[count.status]} {count.count}</span>)}
           <span>未记录复核 {pending} 项</span>
         </div>
-        <p>自动检查 {round.findings.length} 项 · 客户自定义要求需人工核对 · 非正式批准</p>
+        <p>自动检查 {round.findings.length} 项 · 未覆盖 {(round.coverage?.rule_items || []).filter(item => item.coverage === 'unsupported').length} 项 · 非正式批准</p>
         {issues.length > 8
           ? <ul className="report-issues">{issues.map(finding => <li key={finding.item_key}><a href={'#report-' + finding.item_key}>{finding.item}</a><span>{finding.review ? '已记录复核' : '未记录复核'}</span></li>)}</ul>
           : !issues.length ? <p>{round.findings.length ? '已返回检查项未发现不符合；不代表未检查范围也已通过。' : '尚无检查结果。'}</p> : null}
@@ -100,7 +100,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
           <div className="section-heading">
             <div>
               <h3>{group.file.original_filename}</h3>
-              <p className="pc-muted">客户要求参考 · {group.file.rule_version_id ? <a href={'/rules?rule=' + group.file.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>{group.file.rule?.title || '查看规则版本'}</a> : <span>未记录</span>}</p>
+              <p className="pc-muted">本轮规则 · {group.file.rule_version_id ? <a href={'/rules?rule=' + group.file.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>{group.file.rule?.title || '查看规则版本'}</a> : <span>未记录</span>}</p>
             </div>
             <a href={originalUrl(group.file, round.id)} target="_blank" rel="noopener">原件 ↗</a>
           </div>

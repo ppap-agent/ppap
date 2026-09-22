@@ -10,14 +10,19 @@ export interface Analysis {
   metadata: {customer: string | null; model: string | null; part: string | null}
   document_type: string | null; matched_rule_id: string | null; matching_status: string; notices: string[]
 }
+export interface RuleCoverageItem {
+  id: string; file_version_id?: string; category?: string; priority?: string | null; rule_to_check: string
+  coverage: 'mapped' | 'unsupported'; reason?: string; item_key?: string; status?: string
+}
 export interface Finding {
-  item_key: string; status: 'PASS' | 'NG' | 'ERR'; item: string; classification: string; suggestions: string
-  locator?: {file_id?: string; file_version_id?: string; filename?: string; locator?: string; evidence?: {sources?: {kind: string; locator: string}[]}}
+  item_key: string; status: 'PASS' | 'NG' | 'ERR'; item: string; classification: string; suggestions: string; priority?: string
+  locator?: {file_id?: string; file_version_id?: string; filename?: string; locator?: string; rule_item_id?: string; evidence?: {sources?: {kind: string; locator: string}[]}}
   review?: {judgment: string; rationale: string; next_step: string; version: number}
 }
 export interface Round {
   id: string; execution: string; inputs: Material[]; findings: Finding[]; predecessor_id?: string
-  created_at?: string; result_counts?: Record<string, number>; reviewed_count?: number; coverage?: {checked: string[]; unchecked: string[]; locator_gap: boolean}
+  created_at?: string; result_counts?: Record<string, number>; reviewed_count?: number
+  coverage?: {checked: string[]; unchecked: string[]; locator_gap: boolean; rule_items?: RuleCoverageItem[]}
   analysis_mode?: AnalysisMode; executor?: string; executor_revision?: string
 }
 export interface Draft {id:string; status:string; items:Material[]; updated_at?:string; predecessor_id?:string|null; analysis_mode?: AnalysisMode}

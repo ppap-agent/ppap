@@ -54,7 +54,7 @@ class ReportBlocksTests(unittest.TestCase):
         text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
         for expected in ("NG · 签字", "人工复核：接受", "理由：已核实", "下一步：补签", "Sheet1!A1；image 2", "参考资料（不单独审核）：reference.xlsx", "匹配规则：客户规则", "待审文件版本：v1", "规则版本：rule1", "https://example.test/?round=1"):
             self.assertIn(expected, text)
-        for expected in ('本轮摘要', '不符合 1', '未记录人工复核 0 项', '本报告不代表正式批准', '客户自定义要求仅作人工复核参考'):
+        for expected in ('本轮摘要', '不符合 1', '未记录人工复核 0 项', '本报告不代表正式批准', '未自动检查的规则条目会单独列出'):
             self.assertIn(expected, text)
 
     def test_no_complete_report_from_error_or_missing_results(self):
