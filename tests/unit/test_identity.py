@@ -56,6 +56,19 @@ class DecisionTests(unittest.TestCase):
         self.assertFalse(can_review(alice, resource, {"read"}))
         self.assertTrue(can_review(alice, resource, {"read", "review"}))
 
+    def test_accepted_round_is_tenant_owned_without_personal_grant(self):
+        alice = Principal("u1", "t1", "feishu", "app", "tk1", "ou_1", "member")
+        bob = Principal("u2", "t1", "feishu", "app", "tk1", "ou_2", "member")
+        carol = Principal("u3", "t2", "feishu", "app", "tk2", "ou_3", "member")
+        round_resource = Resource("round-1", "t1", "audit_round")
+        draft = Resource("draft-1", "t1", "audit_draft")
+        self.assertTrue(can_read(alice, round_resource, set()))
+        self.assertTrue(can_read(bob, round_resource, set()))
+        self.assertTrue(can_review(bob, round_resource, set()))
+        self.assertFalse(can_read(carol, round_resource, {"read", "review"}))
+        self.assertFalse(can_read(bob, draft, set()))
+        self.assertTrue(can_read(alice, draft, {"read"}))
+
     def test_return_to_rejects_foreign_origin(self):
         with _clean_env():
             settings = Settings()

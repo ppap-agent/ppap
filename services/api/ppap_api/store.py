@@ -947,8 +947,6 @@ class AuthStore:
             rows = conn.execute(
                 """SELECT r.id FROM product.audit_rounds r
                    WHERE r.tenant_id = %s
-                     AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id
-                                 AND g.user_id = %s AND g.capability IN ('read', 'review'))
                      AND (%s = '' OR r.execution = %s)
                      AND (NOT %s OR EXISTS (
                          SELECT 1 FROM product.findings f WHERE f.round_id = r.id
@@ -957,7 +955,7 @@ class AuthStore:
                          SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
                    ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, principal.user_id, execution, execution, unreviewed, q, needle, needle, limit, offset),
+                (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, limit, offset),
             ).fetchall()
             return [self._round_history(conn, row[0]) for row in rows]
 

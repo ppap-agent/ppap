@@ -118,12 +118,16 @@ class Resource:
 def can_read(principal: Principal, resource: Resource, grants: set[str]) -> bool:
     if principal.tenant_id != resource.tenant_id:
         return False
+    if resource.kind == "audit_round":
+        return True
     return bool(grants & {"read", "review"})
 
 
 def can_review(principal: Principal, resource: Resource, grants: set[str]) -> bool:
     if not can_read(principal, resource, grants):
         return False
+    if resource.kind == "audit_round":
+        return True
     return "review" in grants
 
 

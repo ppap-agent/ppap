@@ -89,7 +89,9 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json={'idempotency_key':'second-report'}).status_code, 409)
         third_draft = draft()
         self.store.grant_table[(first['id'], self.store.principal_for_fixture('alice').user_id)] = set()
-        self.assertEqual(self.client.post(f'/drafts/{third_draft}/accept', json={'idempotency_key':'third-report','predecessor_id':first['id']}).status_code, 403)
+        third = self.client.post(f'/drafts/{third_draft}/accept', json={'idempotency_key':'third-report','predecessor_id':first['id']})
+        self.assertEqual(third.status_code, 201)
+        self.assertEqual(third.json()['predecessor_id'], first['id'])
 
     def test_draft_does_not_create_a_round(self):
         self._login("alice")
@@ -173,16 +175,38 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(denied.json(), {"error": "access_denied"})
         self.assertNotIn(b"secret-bytes", denied.content)
         self._login("bob")
-        self.assertEqual(self.client.get(f"/rounds/{round_id}").status_code, 403)
-        self.store.grant_table[(round_id, USER_BOB)] = {"read"}
         visible = self.client.get(f"/rounds/{round_id}")
         self.assertEqual(visible.status_code, 200)
         finding = visible.json()["findings"][0]
-        blocked = self.client.put(
+        original = self.client.get(
+            f"/rounds/{round_id}/files/{finding['locator']['file_id']}/versions/{finding['locator']['file_version_id']}/download"
+        )
+        self.assertEqual(original.status_code, 200)
+        self.assertEqual(original.content, b"secret-bytes")
+        reviewed = self.client.put(
             f"/rounds/{round_id}/reviews",
             json={"item_key": finding["item_key"], "judgment": "同意", "rationale": "x", "next_step": "y", "version": 0},
         )
-        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(reviewed.status_code, 200)
+        self.assertEqual(reviewed.json()["findings"][0]["review"]["judgment"], "同意")
+        self.assertEqual(self.store.reviews[(round_id, finding["item_key"])]["user_id"], USER_BOB)
+
+    def test_drafts_stay_personal_while_rounds_are_tenant_owned(self):
+        self._login("alice")
+        target = self._upload("report.xlsx", b"draft-bytes")
+        draft = self.client.post("/drafts").json()["id"]
+        self.client.put(
+            f"/drafts/{draft}",
+            json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]},
+        )
+        self._login("bob")
+        self.assertEqual(self.client.get(f"/drafts/{draft}").status_code, 403)
+        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
+        self._login("alice")
+        round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "tenant-round"}).json()["id"]
+        self._login("bob")
+        self.assertEqual(self.client.get("/drafts").json()["drafts"], [])
+        self.assertEqual(self.client.get(f"/rounds/{round_id}").status_code, 200)
 
     def test_review_does_not_mutate_finding_and_conflicts(self):
         self._login("alice")
@@ -418,8 +442,6 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(other.status_code, 200)
         self.assertEqual(other.json()["rounds"], [])
         self._login("bob")
-        self.assertEqual(self.client.get("/rounds").json()["rounds"], [])
-        self.store.grant_table[(round_id, USER_BOB)] = {"read"}
         bob_list = self.client.get("/rounds").json()["rounds"]
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
