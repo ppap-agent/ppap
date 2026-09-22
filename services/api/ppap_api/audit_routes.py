@@ -37,6 +37,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             "draft_already_accepted",
             "file_not_ready",
             "review_conflict",
+            "deep_not_available",
         } else 400
         return JSONResponse({"error": code}, status_code=status)
 

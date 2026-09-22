@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ppap_core.audits import (
+    ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
     ClaimedJob,
     DRAFT_ACCEPTED,
@@ -765,7 +766,7 @@ class AuthStore:
                         (predecessor_id,),
                     ).fetchone()
                     if inherited:
-                        mode = normalize_analysis_mode(inherited[0])
+                        mode = self._offered_analysis_mode(inherited[0], allow_reject=False)
                 conn.execute(
                     "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')",
                     (draft_id, principal.tenant_id),
@@ -811,6 +812,16 @@ class AuthStore:
         with self._conn() as conn:
             return self._draft_public(conn, parsed)
 
+    def _offered_analysis_mode(self, value, allow_reject: bool = True) -> str:
+        mode = normalize_analysis_mode(value)
+        if mode != ANALYSIS_DEEP:
+            return mode
+        if self.settings and self.settings.deep_offered():
+            return mode
+        if allow_reject:
+            raise ValueError("deep_not_available")
+        return ANALYSIS_STANDARD
+
     def save_draft(
         self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None,
         writeback_target=None,
@@ -843,9 +854,10 @@ class AuthStore:
                             (parsed, row["file_version_id"], row["role"], row["rule_version_id"]),
                         )
                 if analysis_mode is not None:
+                    mode = self._offered_analysis_mode(analysis_mode)
                     conn.execute(
                         "UPDATE product.audit_drafts SET analysis_mode = %s, updated_at = now() WHERE id = %s",
-                        (normalize_analysis_mode(analysis_mode), parsed),
+                        (mode, parsed),
                     )
                 elif items is not None:
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
@@ -1385,6 +1397,7 @@ class AuthStore:
             ):
                 raise ValueError("idempotency_conflict")
             return self._round_public(conn, str(existing[0]))
+        analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
         round_id = str(uuid.uuid4())

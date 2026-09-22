@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 from ppap_core.audits import (
+    ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
     ClaimedJob,
     DRAFT_ACCEPTED,
@@ -391,7 +392,7 @@ class MemoryAuthStore:
         mode = ANALYSIS_STANDARD
         if predecessor_id:
             pred = self.rounds.get(predecessor_id) or {}
-            mode = normalize_analysis_mode(pred.get("analysis_mode"))
+            mode = self._offered_analysis_mode(pred.get("analysis_mode"), allow_reject=False)
         draft_id = str(uuid.uuid4())
         self.resources[draft_id] = Resource(draft_id, principal.tenant_id, "audit_draft")
         self.grant_table.setdefault((draft_id, principal.user_id), set()).update({"read", "review"})
@@ -422,6 +423,16 @@ class MemoryAuthStore:
             return None
         return self._draft_public(draft_id)
 
+    def _offered_analysis_mode(self, value, allow_reject: bool = True) -> str:
+        mode = normalize_analysis_mode(value)
+        if mode != ANALYSIS_DEEP:
+            return mode
+        if self.settings and self.settings.deep_offered():
+            return mode
+        if allow_reject:
+            raise ValueError("deep_not_available")
+        return ANALYSIS_STANDARD
+
     def save_draft(
         self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None,
         writeback_target=None,
@@ -435,7 +446,7 @@ class MemoryAuthStore:
             self.draft_items[draft_id] = self._bound_audit_items(principal, items, require_rules=False)
             draft['updated_at'] = _now().isoformat()
         if analysis_mode is not None:
-            draft["analysis_mode"] = normalize_analysis_mode(analysis_mode)
+            draft["analysis_mode"] = self._offered_analysis_mode(analysis_mode)
             draft['updated_at'] = _now().isoformat()
         if writeback_target is not None:
             target = normalize_external_ref(writeback_target) if writeback_target else None
@@ -799,6 +810,7 @@ class MemoryAuthStore:
             ):
                 raise ValueError("idempotency_conflict")
             return self._round_public(existing_id)
+        analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft["status"] == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
         round_id = str(uuid.uuid4())

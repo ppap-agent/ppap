@@ -45,17 +45,20 @@ export {latestRules} from './helpers'
 export interface Job<T> {id: string; status: string; result?: T & {error?: string}}
 export let apiUrl = ''
 export let profile = ''
+export let deepOffered = false
 export async function connect() {
   const runtime = await fetch('/runtime-config.json').then(r => r.json())
   apiUrl = runtime.api_url
-  const config = await request<{api_url: string; profile: string}>('/public-config')
+  const config = await request<{api_url: string; profile: string; deep_offered?: boolean}>('/public-config')
   apiUrl = config.api_url; profile = config.profile
+  deepOffered = config.deep_offered === true
 }
 const messages: Record<string,string> = {
   unauthenticated: '请先登录飞书。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
   rule_required: '请为待审文件选择规则。', target_required: '请添加至少一份待审文件。', review_conflict: '复核已被更新，请刷新后核对。',
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
   invalid_analysis_mode: '请选择标准或深度审核。',
+  deep_not_available: '当前环境不提供深度审核。',
 }
 export async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})

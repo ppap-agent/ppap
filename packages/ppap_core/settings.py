@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     worker_id: str = Field(default="", alias="PPAP_WORKER_ID")
     deep_controller_socket: str = Field(default="", alias="PPAP_DEEP_CONTROLLER_SOCKET")
     deep_executor_revision: str = Field(default="", alias="PPAP_DEEP_EXECUTOR_REVISION")
+    deep_customer_enabled: bool = Field(default=False, alias="PPAP_DEEP_CUSTOMER_ENABLED")
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
     DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"
@@ -196,11 +197,15 @@ class Settings(BaseSettings):
                     origins.append(extra)
         return origins
 
-    def public_config(self) -> dict[str, str]:
+    def deep_offered(self) -> bool:
+        return self.profile != "production" or self.deep_customer_enabled
+
+    def public_config(self) -> dict[str, object]:
         return {
             "git_sha": self.git_sha,
             "profile": self.profile,
             "api_url": self.public_api_url.rstrip("/"),
+            "deep_offered": self.deep_offered(),
         }
 
 

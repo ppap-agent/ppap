@@ -31,6 +31,8 @@ from ppap_core.audits import (
 )
 from ppap_core.capabilities import report
 from ppap_core.fixtures import RULE_A
+from ppap_core.feishu import UserTokens
+from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
@@ -332,6 +334,55 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(report(self.settings)["deep"], {"state": "configured"})
         self.assertEqual(set(report(self.settings)["deep"]), {"state"})
 
+
+
+    def test_production_does_not_offer_placeholder_deep(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_PG_API_PASSWORD="prod-api",
+            PPAP_PG_WORKER_PASSWORD="prod-worker",
+            PPAP_PG_MIGRATOR_PASSWORD="prod-migrator",
+            PPAP_PG_BOOTSTRAP_PASSWORD="prod-boot",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
+            PPAP_DEEP_CONTROLLER_SOCKET="/tmp/ppap-deep.sock",
+        ):
+            settings = Settings()
+        self.assertFalse(settings.deep_offered())
+        self.assertFalse(settings.public_config()["deep_offered"])
+        client = TestClient(
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+        )
+        self.assertFalse(client.get("/public-config").json()["deep_offered"])
+        store = MemoryAuthStore(settings)
+        store.seed_isolated_dev()
+        client = TestClient(
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
+        )
+        principal = store.principal_for_fixture("alice")
+        now = datetime.now(timezone.utc)
+        raw = store.create_session(principal, UserTokens("user-access", "user-refresh", now + timedelta(hours=1), now + timedelta(days=7)))
+        client.cookies.set(SESSION_COOKIE, raw)
+        draft = client.post("/drafts").json()["id"]
+        blocked = client.put(f"/drafts/{draft}", json={"analysis_mode": ANALYSIS_DEEP})
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["error"], "deep_not_available")
+        saved = client.put(f"/drafts/{draft}", json={"analysis_mode": ANALYSIS_STANDARD})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["analysis_mode"], ANALYSIS_STANDARD)
+
+    def test_isolated_dev_still_offers_deep(self):
+        self._login()
+        self.assertTrue(self.settings.deep_offered())
+        self.assertTrue(self.client.get("/public-config").json()["deep_offered"])
+        draft = self.client.post("/drafts").json()["id"]
+        saved = self.client.put(f"/drafts/{draft}", json={"analysis_mode": ANALYSIS_DEEP})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["analysis_mode"], ANALYSIS_DEEP)
 
 if __name__ == "__main__":
     unittest.main()

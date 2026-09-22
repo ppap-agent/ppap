@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent} from 'react'
-import {request, upload, bundleUrl, dateLabel, executionLabels, resultLabels, analysisModeLabels, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding, type QuotaEstimate} from './api'
+import {request, upload, bundleUrl, dateLabel, executionLabels, resultLabels, analysisModeLabels, deepOffered, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding, type QuotaEstimate} from './api'
 import {analysisNotices, clampPreviewWidth, latestRules, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from './helpers'
 import OriginalPreview, {type OriginalPreviewHandle} from './OriginalPreview'
 import DrivePicker from './DrivePicker'
@@ -367,7 +367,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
         const nextItems = current.inputs.map(item => ({...item}))
         setItems(nextItems)
         itemsRef.current = nextItems
-        const nextMode = current.analysis_mode === 'deep' ? 'deep' : 'standard'
+        const nextMode = current.analysis_mode === 'deep' && deepOffered ? 'deep' : 'standard'
         setAnalysisMode(nextMode)
         analysisModeRef.current = nextMode
         activeRoundId.current = ''
@@ -547,7 +547,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
         const draft = await request<Draft>(`/drafts/${draftIdRef.current}`)
         setItems(draft.items)
         itemsRef.current = draft.items
-        const nextMode = draft.analysis_mode === 'deep' ? 'deep' : 'standard'
+        const nextMode = draft.analysis_mode === 'deep' && deepOffered ? 'deep' : 'standard'
         setAnalysisMode(nextMode)
         analysisModeRef.current = nextMode
         const from = draft.predecessor_id || predecessorIdRef.current
@@ -646,13 +646,13 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
               {!!targetCount && <div className="scope-note scope-inline">所选规则条目即本轮机审清单<Help title="审核范围"><p>受理后冻结所选规则版本和条目。能映射到内置检查的条目给出 PASS/NG/ERR；不能自动执行的条目进入未覆盖，需人工核对。不会改成另一套内置清单。</p></Help></div>}
               <div className="action-bar sticky-actions">
                 <div>
-                  <label className="mode-select">
+                  {deepOffered && <label className="mode-select">
                     <span>审核模式</span>
                     <select data-testid="analysis-mode" value={analysisMode} disabled={busy} aria-label="审核模式" onChange={event => setAnalysisMode(event.target.value === 'deep' ? 'deep' : 'standard')}>
                       <option value="standard">{analysisModeLabels.standard}</option>
                       <option value="deep">{analysisModeLabels.deep}</option>
                     </select>
-                  </label>
+                  </label>}
                   <strong>{targetCount} 份待审</strong>
                   {!!missingRules && <span className="status-NG"> · {missingRules} 份未匹配规则</span>}
                   {!!targetCount && <small className="pc-muted" data-testid="quota-estimate">{estimate?.unavailable ? '无法读取 Partner AI' : estimate ? `预计 ${estimate.estimated_points ?? '—'} 点 · 试用剩余 ${estimate.remaining_trial_ai_points ?? '—'} 点 · ${estimate.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用'}${estimate.accept_allowed === false && estimate.accept_reason ? ` · ${estimate.accept_reason}` : ''}` : '正在读取额度…'}</small>}

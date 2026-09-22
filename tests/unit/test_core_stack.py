@@ -222,8 +222,9 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_public_config_has_no_secrets(self):
         body = self.client.get("/public-config").json()
-        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login"})
-        blob = " ".join(body.values()).lower()
+        self.assertEqual(set(body), {"git_sha", "profile", "api_url", "login", "deep_offered"})
+        self.assertTrue(body["deep_offered"])
+        blob = " ".join(str(value).lower() for value in body.values())
         self.assertNotIn("ppap_isolated_dev", blob)
 
     def test_missing_optional_integrations_do_not_block_core(self):

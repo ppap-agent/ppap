@@ -40,6 +40,13 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertNotIn("new Function", rules)
         self.assertIn("明确标为未覆盖", rules)
 
+    def test_production_ui_hides_deep_unless_offered(self):
+        workbench = (WEB / "src/Workbench.tsx").read_text()
+        api = (WEB / "src/api.ts").read_text()
+        self.assertIn("deepOffered", workbench)
+        self.assertIn("deep_offered", api)
+        self.assertIn('deepOffered && <label className="mode-select">', workbench)
+
     def test_usage_page_does_not_report_real_usage(self):
         usage = (WEB / "src/UsageView.tsx").read_text()
         self.assertIn("/usage?", usage)

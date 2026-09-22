@@ -184,7 +184,7 @@ def create_app(
         return {"git_sha": settings.git_sha}
 
     @app.get("/public-config")
-    def public_config() -> dict[str, str]:
+    def public_config() -> dict[str, object]:
         cfg = settings.public_config()
         cfg["login"] = "feishu" if settings.feishu_app_id and settings.feishu_app_secret else "disabled"
         return cfg
