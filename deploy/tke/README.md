@@ -14,3 +14,5 @@ kubectl -n ppap-test apply -f deploy/tke/edition-proxy.yaml
 ```
 
 Then point Ingress backend `web-base` → `edition-proxy`. Do not change the load balancer ID or TLS secret.
+
+TKE qcloud Ingress 只接受 NodePort / LoadBalancer Service。`edition-proxy` 必须是 NodePort。TLS 在 CLB 终止，`/enter-*` 要 302 到 `https://$host/`。

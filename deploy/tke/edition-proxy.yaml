@@ -18,12 +18,12 @@ data:
 
         location = /enter-current {
             add_header Set-Cookie "ppap_edition=current; Path=/; Max-Age=31536000; SameSite=Lax" always;
-            return 302 /;
+            return 302 https://$host/;
         }
 
         location = /enter-legacy {
             add_header Set-Cookie "ppap_edition=legacy; Path=/; Max-Age=31536000; SameSite=Lax" always;
-            return 302 /;
+            return 302 https://$host/;
         }
 
         location /ppap/ {
@@ -129,6 +129,7 @@ metadata:
   labels:
     k8s-app: edition-proxy
 spec:
+  type: NodePort
   selector:
     k8s-app: edition-proxy
   ports:
