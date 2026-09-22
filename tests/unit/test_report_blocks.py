@@ -44,7 +44,7 @@ class ReportBlocksTests(unittest.TestCase):
         return {"execution": "completed", "inputs": [
             {"role": "target", "file_version_id": "v1", "original_filename": "audit.xlsx", "rule_version_id":"rule1", "rule":{"title":"客户规则"}},
             {"role": "reference", "file_version_id": "v2", "original_filename": "reference.xlsx"}],
-            "findings": [{"status": "NG", "item": "签字", "suggestions": "缺少签字",
+            "findings": [{"status": "NG", "item": "签字", "classification": "资料", "priority": "P0", "suggestions": "缺少签字",
                           "locator": {"file_version_id": "v1", "locator": "Sheet1!A1",
                                       "evidence": {"sources": [{"locator": "Sheet1!A1"}, {"locator": "image 2"}]}},
                           "review": {"judgment": "接受", "rationale": "已核实", "next_step": "补签"}}]}
@@ -52,7 +52,7 @@ class ReportBlocksTests(unittest.TestCase):
     def test_preserves_machine_review_evidence_and_reference(self):
         blocks = report_blocks(self.body(), "https://example.test/?round=1")
         text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
-        for expected in ("NG · 签字", "人工复核：接受", "理由：已核实", "下一步：补签", "Sheet1!A1；image 2", "参考资料（不单独审核）：reference.xlsx", "匹配规则：客户规则", "待审文件版本：v1", "规则版本：rule1", "https://example.test/?round=1"):
+        for expected in ("NG · 签字", "分类/优先级：资料 · P0", "人工复核：接受", "理由：已核实", "下一步：补签", "Sheet1!A1；image 2", "参考资料（不单独审核）：reference.xlsx", "匹配规则：客户规则", "待审文件版本：v1", "规则版本：rule1", "https://example.test/?round=1"):
             self.assertIn(expected, text)
         for expected in ('本轮摘要', '不符合 1', '未记录人工复核 0 项', '本报告不代表正式批准', '未自动检查的规则条目会单独列出'):
             self.assertIn(expected, text)

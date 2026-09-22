@@ -233,7 +233,10 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         if source.get('rule_version_id'):
             blocks.append(_text('规则版本：' + source['rule_version_id']))
         for row in rows:
+            meta = [str(row.get("classification") or "").strip(), str(row.get("priority") or "").strip()]
             blocks.append(_heading3(str(row["status"]) + " · " + str(row.get("item") or "检查项")))
+            if any(meta):
+                blocks.append(_text("分类/优先级：" + " · ".join(part for part in meta if part)))
             if row.get("suggestions"):
                 blocks.append(_text(str(row["suggestions"])))
             locator = row.get("locator") or {}

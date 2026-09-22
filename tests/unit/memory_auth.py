@@ -523,6 +523,44 @@ class MemoryAuthStore:
         version = self.versions.get((file_id, version_id))
         return version
 
+    def round_bundle(self, round_id: str):
+        from zipfile import ZIP_DEFLATED, ZipFile
+        import tempfile
+
+        from ppap_core.bundles import archive_member_names
+
+        work = self.round_work(round_id)
+        if work is None:
+            return None
+        names = archive_member_names([(item.file_version_id, item.filename) for item in work.inputs])
+        versions = []
+        total = 0
+        for item in work.inputs:
+            version = self.get_version(item.file_id, item.file_version_id)
+            if version is None:
+                raise ValueError("bundle_source_missing")
+            total += int(version.byte_size or 0)
+            versions.append(version)
+        if total > MAX_UPLOAD_BYTES:
+            raise ValueError("bundle_too_large")
+        tmp = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+        with ZipFile(tmp, "w", compression=ZIP_DEFLATED) as archive:
+            for version, name in zip(versions, names):
+                archive.writestr(name, self.version_bytes(version))
+        tmp.seek(0)
+
+        def chunks():
+            try:
+                while True:
+                    block = tmp.read(65536)
+                    if not block:
+                        break
+                    yield block
+            finally:
+                tmp.close()
+
+        return f"ppap-round-{work.round_id[:8]}.zip", chunks()
+
     def save_review(
         self, principal: Principal, round_id: str, item_key: str, judgment: str, rationale: str, next_step: str, version: int
     ) -> dict:

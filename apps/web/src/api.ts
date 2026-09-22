@@ -67,3 +67,6 @@ export async function upload(file: File, role: Material['role']): Promise<Materi
 export function originalUrl(file: Material, roundId?: string) {
   return `${apiUrl}${roundId ? `/rounds/${encodeURIComponent(roundId)}` : ''}/files/${encodeURIComponent(file.file_id)}/versions/${encodeURIComponent(file.file_version_id)}/download`
 }
+export function bundleUrl(roundId: string) {
+  return `${apiUrl}/rounds/${encodeURIComponent(roundId)}/bundle`
+}

@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent} from 'react'
-import {request, upload, dateLabel, executionLabels, resultLabels, analysisModeLabels, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding} from './api'
+import {request, upload, bundleUrl, dateLabel, executionLabels, resultLabels, analysisModeLabels, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding} from './api'
 import {analysisNotices, clampPreviewWidth, latestRules, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from './helpers'
 import OriginalPreview, {type OriginalPreviewHandle} from './OriginalPreview'
 import DrivePicker from './DrivePicker'
@@ -680,6 +680,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
             </div>
             <div className="button-group">
               {round.predecessor_id && <a className="text-button button" data-testid="previous-round" href={'/?round=' + round.predecessor_id}>上一轮</a>}
+              <a className="text-button button" data-testid="download-bundle" href={bundleUrl(round.id)}>打包下载资料</a>
               <button type="button" className="text-button" data-testid="prepare-again" disabled={busy || ['queued', 'running'].includes(round.execution)} onClick={prepareAgain}>修改后重审</button>
             </div>
           </div>
@@ -735,7 +736,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                           <span className="sr-only">检查项</span>
                           <select data-testid="finding-picker" value={findings.some(item => item.item_key === selectedKey) ? selectedKey : ''} disabled={busy} onChange={pickFinding}>
                             {!findings.some(item => item.item_key === selectedKey) && <option value="" disabled>当前项已保存，可继续下一项</option>}
-                            {findings.map((finding, index) => <option key={finding.item_key} value={finding.item_key}>{index + 1}. {finding.item} · {resultLabels[finding.status]}{finding.review ? ' · 已记录' : ''}</option>)}
+                            {findings.map((finding, index) => <option key={finding.item_key} value={finding.item_key}>{index + 1}. {finding.item} · {resultLabels[finding.status]}{finding.classification ? ' · ' + finding.classification : ''}{finding.priority ? ' · ' + finding.priority : ''}{finding.review ? ' · 已记录' : ''}</option>)}
                           </select>
                         </label>
                         <div className="finding-arrows">
@@ -761,6 +762,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                           <span className="pc-muted finding-position">{fileFindings.findIndex(item => item.item_key === selectedKey) + 1} / {fileFindings.length}</span>
                         </div>
                         <h3 ref={detailHeading} tabIndex={-1}>{selectedFinding.item}</h3>
+                        <p className="pc-muted" data-testid="finding-classification">分类 · {selectedFinding.classification || '未记录'}</p>
+                        <p className="pc-muted" data-testid="finding-priority">优先级 · {selectedFinding.priority || '未记录'}</p>
                         <p className="finding-description" data-testid="finding-suggestion">{selectedFinding.suggestions}</p>
                         <div className="evidence" data-testid="finding-evidence">
                           <div>{selectedFinding.locator?.locator || <span data-testid="locator-gap">定位线索 · 待核实</span>}</div>

@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
-import {type Round, apiUrl, originalUrl, request, resultLabels} from './api'
+import {type Round, apiUrl, originalUrl, bundleUrl, request, resultLabels} from './api'
 
 interface Export {id: string; status: string; document_id: string | null; error_code?: string | null}
 
@@ -94,6 +94,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
           ? <ul className="report-issues">{issues.map(finding => <li key={finding.item_key}><a href={'#report-' + finding.item_key}>{finding.item}</a><span>{finding.review ? '已记录复核' : '未记录复核'}</span></li>)}</ul>
           : !issues.length ? <p>{round.findings.length ? '已返回检查项未发现不符合；不代表未检查范围也已通过。' : '尚无检查结果。'}</p> : null}
         {!!round.coverage?.unchecked?.length && <p>未检查范围：{round.coverage.unchecked.join('；')}</p>}
+        <p><a data-testid="report-download-bundle" href={bundleUrl(round.id)}>打包下载本轮资料</a></p>
       </section>
       {groups.map(group => (
         <section key={group.file.file_version_id} className="report-file">
@@ -108,6 +109,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
           {group.findings.map(finding => (
             <article key={finding.item_key} id={'report-' + finding.item_key} className="report-finding">
               <h4><span className={'badge status-' + finding.status}>{resultLabels[finding.status]}</span>{finding.item}</h4>
+              <p className="pc-muted">{[finding.classification, finding.priority].filter(Boolean).join(' · ') || '未记录分类/优先级'}</p>
               {finding.suggestions && <p>{finding.suggestions}</p>}
               {finding.locator?.locator && <p className="pc-muted">依据 · {finding.locator.locator}</p>}
               {finding.review && <div className="report-review"><strong>人工复核 · {finding.review.judgment}</strong>{finding.review.rationale && <p>{finding.review.rationale}</p>}{finding.review.next_step && <p>下一步 · {finding.review.next_step}</p>}</div>}

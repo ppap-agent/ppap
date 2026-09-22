@@ -534,7 +534,7 @@ class WebHookTests(unittest.TestCase):
             'function submit', 'function saveReview', 'function prepareAgain',
             'finding-picker', 'function pickFinding', '<OriginalPreview', '<ReportPreview',
             '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
-            'data-testid="analysis-mode"', 'analysis_mode', 'unchecked-rule-items',
+            'data-testid="analysis-mode"', 'analysis_mode', 'unchecked-rule-items', 'finding-classification', 'finding-priority', 'download-bundle',
         ):
             self.assertIn(marker, workbench)
         self.assertIn('list.concat(material)', workbench)

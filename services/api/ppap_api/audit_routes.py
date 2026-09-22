@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from fastapi import FastAPI, Request, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ppap_core.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
 from ppap_core.identity import can_read, can_review
@@ -188,6 +188,26 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "Content-Disposition": attachment_content_disposition(filename),
                 "X-Content-SHA256": version.sha256 or "",
             },
+        )
+
+    @app.get("/rounds/{round_id}/bundle")
+    def rounds_bundle(round_id: str, request: Request):
+        principal, denied = require_object(request, round_id)
+        if denied:
+            return denied
+        try:
+            bundle = store.round_bundle(round_id)
+        except ValueError as exc:
+            code = str(exc)
+            status = 413 if code == "bundle_too_large" else 409
+            return JSONResponse({"error": code}, status_code=status)
+        if bundle is None:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        filename, chunks = bundle
+        return StreamingResponse(
+            chunks,
+            media_type="application/zip",
+            headers={"Content-Disposition": attachment_content_disposition(filename)},
         )
 
     @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview")
