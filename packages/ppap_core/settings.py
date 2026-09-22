@@ -206,6 +206,7 @@ class Settings(BaseSettings):
             "profile": self.profile,
             "api_url": self.public_api_url.rstrip("/"),
             "deep_offered": self.deep_offered(),
+            "feishu_app_id": self.feishu_app_id,
         }
 
 

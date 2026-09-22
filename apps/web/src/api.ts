@@ -46,12 +46,14 @@ export interface Job<T> {id: string; status: string; result?: T & {error?: strin
 export let apiUrl = ''
 export let profile = ''
 export let deepOffered = false
+export let feishuAppId = ''
 export async function connect() {
   const runtime = await fetch('/runtime-config.json').then(r => r.json())
   apiUrl = runtime.api_url
-  const config = await request<{api_url: string; profile: string; deep_offered?: boolean}>('/public-config')
+  const config = await request<{api_url: string; profile: string; deep_offered?: boolean; feishu_app_id?: string}>('/public-config')
   apiUrl = config.api_url; profile = config.profile
   deepOffered = config.deep_offered === true
+  feishuAppId = config.feishu_app_id || ''
 }
 const messages: Record<string,string> = {
   unauthenticated: '请先登录飞书。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',

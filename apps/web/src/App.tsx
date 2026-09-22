@@ -1,5 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
-import {apiUrl, connect, profile, request} from './api'
+import {apiUrl, connect, feishuAppId, profile, request} from './api'
+import {isFeishuHost, requestHostCode} from './hostLogin'
 import Workbench from './Workbench'
 import HistoryView from './HistoryView'
 import RulesView from './RulesView'
@@ -47,7 +48,15 @@ export default function App() {
         try {
           const me = await request<{display_name: string}>('/me')
           setUser(me.display_name || '已登录用户')
-        } catch { /* Sign-in stays available. */ }
+        } catch {
+          if (isFeishuHost() && feishuAppId) {
+            try {
+              const code = await requestHostCode(feishuAppId)
+              const me = await request<{display_name: string}>('/login/feishu/host', 'POST', {code})
+              setUser(me.display_name || '已登录用户')
+            } catch { /* Browser OAuth remains available. */ }
+          }
+        }
         setReady(true)
       } catch { setError('暂时无法连接服务，请稍后刷新。') }
     })()
