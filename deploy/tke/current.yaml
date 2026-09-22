@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: e6160d892c23d4f4b3571915ee0917a372e67418
+  PPAP_BUILD_SHA: 1c28aa92b81fb5140a31cc565d10d9fa3ae95754
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_PG_HOST: ppap-current-postgres
@@ -455,7 +455,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: unregistry.xixifusi.online/ppap-worker:e6160d892c23d4f4b3571915ee0917a372e67418
+          image: unregistry.xixifusi.online/ppap-worker:1c28aa92b81fb5140a31cc565d10d9fa3ae95754
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -476,7 +476,7 @@ spec:
               cpu: "1"
               memory: 2Gi
         - name: worker
-          image: unregistry.xixifusi.online/ppap-worker:e6160d892c23d4f4b3571915ee0917a372e67418
+          image: unregistry.xixifusi.online/ppap-worker:1c28aa92b81fb5140a31cc565d10d9fa3ae95754
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
