@@ -82,4 +82,4 @@ API 与 Worker 在 production 下向 stderr 写 JSON 行，字段包括 `request
 
 该 Compose 里的对象存储是 pinned 的 [PGSTY Silo](https://github.com/pgsty/silo) classic 镜像（MinIO 协议兼容 fork，`RELEASE.2026-09-16T00-00-00Z`，digest `sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46`）。S3 只在 compose 网络内（`http://silo:9000`），不发布到宿主机；根用户仍走 Silo 保留的 `MINIO_ROOT_*`，PPAP 继续用 `PPAP_S3_*`。不用 distroless；classic 是 ubi-micro（有 `sh`/`mcli`/`curl`，没有 `tar`）。不拉 `minio/minio`，也不再本地构建 MinIO。真实生产仍可把 `PPAP_S3_ENDPOINT` 换成自有 S3。当前不含 `.doc` converter sandbox。
 
-本仓生产运行不得把 `ppap-host`、Java PPAP 服务或 `ppap-agent` HTTP 当作 runtime dependency。这不表示拆除 `ppap-agent`：该仓继续服务其它用户，并作为新算法的验证基地和参考实现。
+本仓生产运行不得把 Java PPAP 服务或 `ppap-agent` HTTP 当作 runtime dependency。这不表示拆除 `ppap-agent`：该仓继续服务其它用户，并作为新算法的验证基地和参考实现。

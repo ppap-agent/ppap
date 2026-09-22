@@ -49,8 +49,6 @@ docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/onlyof
 - 用量/历史视图
 - 浏览器与飞书宿主的必要平台适配
 
-`ppap-host` 不再承担 current PC UI 开发责任。
-
 ## Boundary
 
 Web 只调用 Product API。它不能：

@@ -26,7 +26,7 @@ class InsForgeRuntimeTests(unittest.TestCase):
         self.assertIn("host-root-equivalent", readme)
         self.assertIn("Custom Compute", readme)
         self.assertIn("Edge Function", readme)
-        self.assertIn("Do not import `ppap-host` schemas", readme)
+        self.assertIn("Do not import legacy ledgers", readme)
 
     def test_overlay_joins_insforge_network_without_bundled_postgres(self):
         compose = (INSFORGE / "compose.yaml").read_text()

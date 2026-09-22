@@ -1,6 +1,6 @@
 # Self-hosted InsForge runtime
 
-PPAP remains the product and domain authority. Self-hosted InsForge owns PostgreSQL, compute container lifecycle, secrets/env, runtime logs, and (when the OpenAI-compatible contract matches) the model gateway. This directory does not revive `ppap-host`.
+PPAP remains the product and domain authority. Self-hosted InsForge owns PostgreSQL, compute container lifecycle, secrets/env, runtime logs, and (when the OpenAI-compatible contract matches) the model gateway.
 
 Pinned InsForge release: [VERSION](VERSION) (`v2.3.2`).
 
@@ -43,7 +43,7 @@ docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.ex
 
 Fill secrets in a gitignored env file first. `init-db` is the only process that reads bootstrap/migrator credentials and runs `psql` against `migrations/bootstrap.sql` and `migrations/apply.sql`. This overlay does not start PostgreSQL; it joins the existing InsForge network.
 
-Do not import `ppap-host` schemas (`ppap_documents` / `ppap_jobs` / `ppap_findings`).
+Do not import legacy ledgers `ppap_documents` / `ppap_jobs` / `ppap_findings`.
 
 ## Custom Compute specs
 
