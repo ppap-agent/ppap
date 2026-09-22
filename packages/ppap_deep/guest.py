@@ -1,4 +1,4 @@
-"""Stdlib guest auditor. Copied into the job dir; the guest image does not install ppap_deep."""
+"""gVisor guest auditor only. Production process runtime uses auditor.py, not this heuristic."""
 from __future__ import annotations
 
 import json

@@ -23,6 +23,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
                 rule_version_id=item.rule_version_id,
                 rule_title=item.rule_title,
                 rule_body=item.rule_body,
+                rule_execution=item.rule_execution,
             )
         )
     return ExecuteRequest(

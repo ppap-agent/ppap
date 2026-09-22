@@ -25,3 +25,5 @@ kubectl -n ppap-test apply -f deploy/tke/edition-proxy.yaml
 ```
 
 No `nodeSelector`. App images are `unregistry.xixifusi.online/ppap-{api,worker,web}:<git_sha>`. Re-run init Jobs with `kubectl -n ppap-test delete job ppap-current-init-db ppap-current-init-bucket` then apply again.
+
+Worker Pod runs two containers from the same `ppap-worker` image: `deep` (`PPAP_SERVICE=deep` → `python -m ppap_deep`) and `worker`. They share `emptyDir` `/run/ppap-deep`. Controller uses `PPAP_DEEP_RUNTIME=process`. There is no Docker socket and no gVisor on TKE 1.20. Worker waits for the UDS before claiming jobs. Deep failure does not fall back to Standard.

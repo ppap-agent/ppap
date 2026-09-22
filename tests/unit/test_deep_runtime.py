@@ -14,11 +14,13 @@ from tests import pathsetup
 
 ROOT = pathsetup.ROOT
 
-from ppap_core.audits import DEEP_PROTOCOL_REVISION
+from ppap_core.audits import DEEP_PROTOCOL_REVISION, RoundInput, RoundWork
+from ppap_deep.mapping import spec_from_work
 from ppap_deep.client import DeepError
 from ppap_deep.guest import evaluate
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
-from ppap_deep.runtime import DEFAULT_DOCKER_RUNTIME, DEFAULT_GUEST_IMAGE, GvisorRuntime
+from ppap_deep.auditor import ProcessRuntime
+from ppap_deep.runtime import DEFAULT_DOCKER_RUNTIME, DEFAULT_GUEST_IMAGE, GvisorRuntime, runtime_from_env
 
 
 def _spec(*roles: str) -> ExecuteRequest:
@@ -153,3 +155,98 @@ class DeepLiveOverlayTests(unittest.TestCase):
         worker = (ROOT / "services" / "worker" / "ppap_worker" / "__init__.py").read_text()
         self.assertNotIn("GvisorRuntime", worker)
         self.assertNotIn("docker run", worker)
+        tke = (ROOT / "deploy" / "tke" / "current.yaml").read_text()
+        self.assertIn("PPAP_DEEP_RUNTIME: process", tke)
+        self.assertNotIn("docker.sock", tke)
+        self.assertIn('until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]', tke)
+        self.assertIn("python -m ppap_deep", (ROOT / "deploy" / "app" / "entrypoint.sh").read_text())
+        self.assertIn('PPAP_SERVICE" = "deep"', (ROOT / "deploy" / "app" / "entrypoint.sh").read_text())
+
+
+class ProcessRuntimeTests(unittest.TestCase):
+    def test_env_defaults_to_process_runtime(self):
+        with patch.dict("os.environ", {"PPAP_DEEP_RUNTIME": ""}, clear=False):
+            self.assertIsInstance(runtime_from_env(), ProcessRuntime)
+        with patch.dict("os.environ", {"PPAP_DEEP_RUNTIME": "gvisor"}, clear=False):
+            self.assertIsInstance(runtime_from_env(), GvisorRuntime)
+
+    def test_presence_uses_product_presence_finding_not_placeholder_copy(self):
+        spec = _spec("target", "reference")
+        result = ProcessRuntime().execute(
+            spec,
+            {
+                spec.files[0].file_version_id: b"target-bytes",
+                spec.files[1].file_version_id: b"reference-bytes",
+            },
+        )
+        self.assertEqual(result.findings[0].status, "PASS")
+        self.assertEqual(result.findings[0].item, "待审文件版本已就绪")
+        self.assertIn("report.xlsx", result.coverage.checked)
+        self.assertTrue(any("context.pdf" in row for row in result.coverage.unchecked))
+        self.assertEqual(result.note, "in-repo engine")
+
+    def test_engine_kind_calls_in_repo_engine(self):
+        from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
+        from ppap_excel_audit_engine import app_runtime
+
+        spec = _spec("target")
+        spec.files[0].rule_body = {"kind": "engine", "rule_profile": "v2", "type": "控制计划"}
+        spec.files[0].rule_title = "控制计划"
+
+        def fake_run(audit, rule, group_context=None):
+            return [
+                AuditResultItem(
+                    status="NG",
+                    classification="规则",
+                    item="控制方法",
+                    priority="P0",
+                    suggestions="缺列",
+                    evidence=AuditEvidence(
+                        required="structure",
+                        used="structure",
+                        source_format="xlsx",
+                        prepared_format="xlsx",
+                        sources=(EvidenceSource(kind="structure", locator="A1"),),
+                    ),
+                )
+            ]
+
+        with patch.object(app_runtime, "run_audit_engine", fake_run):
+            result = ProcessRuntime().execute(spec, {spec.files[0].file_version_id: b"xlsx-bytes"})
+        self.assertEqual(result.findings[0].status, "NG")
+        self.assertEqual(result.findings[0].item, "控制方法")
+        self.assertEqual(result.note, "in-repo engine")
+
+    def test_engine_failure_is_deep_error_not_standard_result(self):
+        from ppap_excel_audit_engine import app_runtime
+
+        spec = _spec("target")
+        spec.files[0].rule_body = {"kind": "engine", "rule_profile": "v2", "type": "控制计划"}
+        spec.files[0].rule_title = "控制计划"
+        with patch.object(app_runtime, "run_audit_engine", side_effect=RuntimeError("engine down")):
+            with self.assertRaises(DeepError) as raised:
+                ProcessRuntime().execute(spec, {spec.files[0].file_version_id: b"xlsx-bytes"})
+        self.assertEqual(raised.exception.code, "deep_execution_failed")
+
+    def test_spec_carries_frozen_rule_execution(self):
+        execution = {"mode": "rule_items", "items": [{"id": "keep", "coverage": "mapped"}]}
+        work = RoundWork(
+            "r1",
+            "t1",
+            [
+                RoundInput(
+                    "target",
+                    "f1",
+                    "00000000-0000-4000-8000-000000000001",
+                    "plan.xlsx",
+                    "ready",
+                    rule_version_id="00000000-0000-4000-8000-0000000000a5",
+                    rule_title="控制计划",
+                    rule_body={"kind": "engine", "type": "控制计划"},
+                    sha256="ab",
+                    rule_execution=execution,
+                )
+            ],
+        )
+        spec = spec_from_work(work, "ppap-deep", DEEP_PROTOCOL_REVISION, DEEP_PROTOCOL_REVISION)
+        self.assertEqual(spec.files[0].rule_execution, execution)

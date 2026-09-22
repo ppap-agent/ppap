@@ -17,6 +17,7 @@ class FrozenFile(BaseModel):
     rule_version_id: str | None = None
     rule_title: str | None = None
     rule_body: dict[str, Any] | None = None
+    rule_execution: dict[str, Any] | None = None
 
 
 class ExecuteRequest(BaseModel):
@@ -47,6 +48,7 @@ class DeepCoverage(BaseModel):
     checked: list[str]
     unchecked: list[str]
     locator_gap: bool
+    rule_items: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExecuteResponse(BaseModel):

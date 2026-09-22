@@ -375,6 +375,29 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["analysis_mode"], ANALYSIS_STANDARD)
 
+    def test_production_offers_deep_when_enabled(self):
+        with _clean_env(
+            PPAP_PROFILE="production",
+            PPAP_PG_API_PASSWORD="prod-api",
+            PPAP_PG_WORKER_PASSWORD="prod-worker",
+            PPAP_PG_MIGRATOR_PASSWORD="prod-migrator",
+            PPAP_PG_BOOTSTRAP_PASSWORD="prod-boot",
+            PPAP_S3_ACCESS_KEY="prod-access",
+            PPAP_S3_SECRET_KEY="prod-secret",
+            PPAP_S3_ENDPOINT="https://objects.example.internal",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            PPAP_WEB_URL="https://app.example",
+            PPAP_DEEP_CONTROLLER_SOCKET="/tmp/ppap-deep.sock",
+            PPAP_DEEP_CUSTOMER_ENABLED="true",
+        ):
+            settings = Settings()
+        self.assertTrue(settings.deep_offered())
+        client = TestClient(
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+        )
+        self.assertTrue(client.get("/public-config").json()["deep_offered"])
+
     def test_isolated_dev_still_offers_deep(self):
         self._login()
         self.assertTrue(self.settings.deep_offered())

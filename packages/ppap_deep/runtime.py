@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ppap_deep.client import DeepError
+from ppap_deep.auditor import ProcessRuntime
 from ppap_deep.protocol import ExecuteRequest, ExecuteResponse
 
 DEFAULT_DOCKER_RUNTIME = "ppap-gvisor-verify"
@@ -113,10 +114,13 @@ class GvisorRuntime:
         return argv
 
 
-def runtime_from_env() -> GvisorRuntime:
-    return GvisorRuntime(
-        docker_runtime=os.environ.get("PPAP_DEEP_DOCKER_RUNTIME", DEFAULT_DOCKER_RUNTIME),
-        image=os.environ.get("PPAP_DEEP_GUEST_IMAGE", DEFAULT_GUEST_IMAGE),
-        grok_bin=os.environ.get("PPAP_DEEP_GROK_BIN", ""),
-        grok_config=os.environ.get("PPAP_DEEP_GROK_CONFIG", ""),
-    )
+def runtime_from_env():
+    kind = os.environ.get("PPAP_DEEP_RUNTIME", "process").strip() or "process"
+    if kind == "gvisor":
+        return GvisorRuntime(
+            docker_runtime=os.environ.get("PPAP_DEEP_DOCKER_RUNTIME", DEFAULT_DOCKER_RUNTIME),
+            image=os.environ.get("PPAP_DEEP_GUEST_IMAGE", DEFAULT_GUEST_IMAGE),
+            grok_bin=os.environ.get("PPAP_DEEP_GROK_BIN", ""),
+            grok_config=os.environ.get("PPAP_DEEP_GROK_CONFIG", ""),
+        )
+    return ProcessRuntime()

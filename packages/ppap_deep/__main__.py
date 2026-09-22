@@ -7,6 +7,7 @@ import threading
 
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.settings import load_settings
+from ppap_deep.client import DEEP_REQUEST_TIMEOUT
 from ppap_deep.controller import Controller, UnixControllerServer
 from ppap_deep.runtime import runtime_from_env
 from ppap_deep.source import object_file_source
@@ -32,7 +33,7 @@ def main() -> int:
             object_file_source(settings),
             executor_revision=revision,
         ),
-        request_timeout=180,
+        request_timeout=DEEP_REQUEST_TIMEOUT,
     )
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)

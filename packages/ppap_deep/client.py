@@ -8,6 +8,7 @@ from pathlib import Path
 from ppap_deep.protocol import ErrorEnvelope, ExecuteRequest, ExecuteResponse, RequestEnvelope, ResultEnvelope
 
 MAX_FRAME = 32 * 1024 * 1024
+DEEP_REQUEST_TIMEOUT = 1000.0
 
 
 class DeepError(Exception):
@@ -47,7 +48,7 @@ def read_frame(sock: socket.socket) -> dict:
 
 
 class DeepClient:
-    def __init__(self, socket_path: str, timeout: float = 180.0):
+    def __init__(self, socket_path: str, timeout: float = DEEP_REQUEST_TIMEOUT):
         self.socket_path = str(socket_path or "").strip()
         self.timeout = timeout
 

@@ -29,6 +29,15 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertIn("storageClassName: cbs", text)
         self.assertIn('PPAP_USAGE_CHARGE_ENABLED: "false"', text)
         self.assertIn("namespace: ppap-test", text)
+        self.assertIn("PPAP_DEEP_RUNTIME: process", text)
+        self.assertIn("PPAP_DEEP_CUSTOMER_ENABLED: \"true\"", text)
+        self.assertIn("name: deep", text)
+        self.assertIn("value: deep", text)
+        self.assertIn("emptyDir", text)
+        self.assertNotIn("docker.sock", text)
+        self.assertNotIn("/var/run/docker", text)
+        self.assertIn('until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]', text)
+        self.assertIn("python -m ppap_worker.main", text)
 
     def test_edition_proxy_uses_in_cluster_current_services(self):
         conf = (TKE / "edition-proxy.conf").read_text()

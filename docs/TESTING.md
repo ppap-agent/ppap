@@ -12,7 +12,7 @@
 
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
-- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 模式（happy path / runtime unavailable / revision mismatch / fencing）在 `tests/unit/test_deep_mode.py`，不要求 live gVisor。gVisor guest 的确定性逻辑在 `tests/unit/test_deep_runtime.py`。Live Deep（isolated-dev + host Controller + gVisor）不进入默认 unit CI：需要本机 Docker runtime `ppap-gvisor-verify`，命令见下方。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 模式（happy path / runtime unavailable / revision mismatch / fencing）在 `tests/unit/test_deep_mode.py`，不要求 live gVisor。gVisor guest 与 process runtime 的确定性逻辑在 `tests/unit/test_deep_runtime.py`。Live Deep（isolated-dev + host Controller + gVisor）不进入默认 unit CI：需要本机 Docker runtime `ppap-gvisor-verify`，命令见下方。
 - **E2E**：少量完整客户路径。#7 覆盖 Web 审核闭环；#11 覆盖飞书来源进入同一产品闭环。#57 把同一条浏览器路径延伸到 PC 导航、结果/依据/预览、历史轮次、复核和用量。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/unit/test_feishu_drive.py` 与 `tests/unit/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/unit/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 的静态入口在 `tests/unit/test_web_server.py`。Web 只调 Product API 的边界在 `tests/unit/test_web_boundary.py`。InsForge overlay 与 Custom Compute 规格在 `tests/unit/test_insforge_runtime.py`（不要求 live InsForge）。
 
 规则排列组合留在低层，不复制到 E2E。
@@ -62,13 +62,13 @@ Live Deep（本机已注册 `ppap-gvisor-verify`，且 isolated-dev 已起来）
 ```sh
 mkdir -p /tmp/ppap-deep
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml up --build -d --wait
-PPAP_DEEP_CONTROLLER_SOCKET=/tmp/ppap-deep/controller.sock python -m ppap_deep
+PPAP_DEEP_RUNTIME=gvisor PPAP_DEEP_CONTROLLER_SOCKET=/tmp/ppap-deep/controller.sock python -m ppap_deep
 # 另一个 shell：
 PPAP_DEEP_LIVE=1 python -m unittest tests.live.test_deep_isolated -v
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml down -v --remove-orphans
 ```
 
-Controller 进程环境可以另给 `PPAP_DEEP_DOCKER_RUNTIME` / `PPAP_DEEP_GUEST_IMAGE`；不要把这些写进 Worker Settings。Silo 只在 `deep-live.yaml` overlay 才映射 `127.0.0.1:9000`，默认 isolated-dev 仍不发布对象存储。可选模型 grant 用 host 的 `PPAP_DEEP_GROK_BIN` 与 `PPAP_DEEP_GROK_CONFIG`，不要把 `~/.grok` 挂进 Worker。
+Controller 进程环境可以另给 `PPAP_DEEP_RUNTIME=gvisor`、`PPAP_DEEP_DOCKER_RUNTIME` / `PPAP_DEEP_GUEST_IMAGE`；不要把这些写进 Worker Settings。默认 process runtime 不需要 Docker。Silo 只在 `deep-live.yaml` overlay 才映射 `127.0.0.1:9000`，默认 isolated-dev 仍不发布对象存储。可选模型 grant 用 host 的 `PPAP_DEEP_GROK_BIN` 与 `PPAP_DEEP_GROK_CONFIG`，不要把 `~/.grok` 挂进 Worker。
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
 
