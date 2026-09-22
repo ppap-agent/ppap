@@ -52,6 +52,7 @@ from ppap_core.feishu_writeback import (
     round_return_url,
     write_round_history,
 )
+from ppap_core.writeback_targets import public_target
 from ppap_core.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
@@ -409,7 +410,7 @@ def create_app(
             code = str(exc)
             status = 409 if code in {"sha256_mismatch", "sha256_conflict", "finalize_conflict", "not_staging", "missing_object"} else 400
             return JSONResponse({"error": code}, status_code=status)
-        return JSONResponse(ready.public())
+        return JSONResponse(version_payload(ready))
 
     @app.get("/files/{file_id}/versions/{version_id}")
     def files_version_get(file_id: str, version_id: str, request: Request) -> JSONResponse:
@@ -419,7 +420,7 @@ def create_app(
         version = store.get_version(file_id, version_id)
         if version is None or version.tenant_id != principal.tenant_id:
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        return JSONResponse(version.public())
+        return JSONResponse(version_payload(version))
 
     @app.get("/files/{file_id}/versions/{version_id}/download")
     def files_download(file_id: str, version_id: str, request: Request):
@@ -482,7 +483,17 @@ def create_app(
     def persist_imported(principal, imported):
         version = store.create_staging(principal, imported.filename, imported.content_type, len(imported.data))
         store.put_blob(version, imported.data)
-        return store.finalize_version(version)
+        ready = store.finalize_version(version)
+        token = str(getattr(imported, "file_token", "") or "").strip()
+        kind = str(getattr(imported, "doc_type", "") or "").strip()
+        if token:
+            store.save_file_source(ready.id, kind or "file", token)
+        return ready
+
+    def version_payload(version):
+        body = version.public()
+        body["origin"] = public_target(store.file_source(version.id))
+        return body
 
     def feishu_material_error(exc: Exception) -> JSONResponse | None:
         if isinstance(exc, UnsupportedDocType):
@@ -551,7 +562,7 @@ def create_app(
             if mapped:
                 return mapped
             raise
-        return JSONResponse(ready.public(), status_code=201)
+        return JSONResponse(version_payload(ready), status_code=201)
 
     @app.get("/integrations/feishu/docs/links")
     def feishu_doc_links(request: Request, file_token: str = "") -> JSONResponse:
@@ -584,7 +595,8 @@ def create_app(
         )
 
     @app.get("/integrations/feishu/usage/quota")
-    def feishu_usage_quota(request: Request, ai_item_id: str = "") -> JSONResponse:
+    def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200)) -> JSONResponse:
+        from ppap_core.feishu_usage import estimate_audit
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -595,14 +607,18 @@ def create_app(
             return JSONResponse({"error": "feishu_ai_item_missing"}, status_code=409)
         consumed = store.trial_consumed_points(session.principal.tenant_id, item_id)
         remaining = remaining_trial_points(settings.feishu_free_trial_quota_points, consumed)
+        partner = None
         try:
-            item = query_tenant_ai_item(http, session.access_token, item_id)
+            partner = query_tenant_ai_item(http, session.access_token, item_id)
         except FeishuUsageError:
-            body = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
-            body["remaining_trial_ai_points"] = remaining
-            return JSONResponse(body)
-        payload = quota_payload(item, remaining)
-        return JSONResponse(payload)
+            partner = None
+        if target_count is None:
+            if partner is None:
+                body = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
+                body["remaining_trial_ai_points"] = remaining
+                return JSONResponse(body)
+            return JSONResponse(quota_payload(partner, remaining))
+        return JSONResponse(estimate_audit(target_count, remaining, partner))
 
     @app.post("/integrations/feishu/usage/events/{event_id}/report")
     def feishu_usage_report(event_id: str, request: Request) -> JSONResponse:
@@ -665,7 +681,7 @@ def create_app(
     register_office_routes(app, store, principal_of, settings)
 
     @app.post("/integrations/feishu/rounds/{round_id}/writeback")
-    def feishu_round_writeback(round_id: str, body: dict, request: Request) -> JSONResponse:
+    def feishu_round_writeback(round_id: str, request: Request) -> JSONResponse:
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -678,7 +694,10 @@ def create_app(
         round_body = store.get_round(round_id)
         if round_body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        file_token = str(body.get("file_token") or "").strip()
+        stored = store.round_writeback(round_id) or {}
+        file_token = str(stored.get("object_ref") or "").strip()
+        if not file_token:
+            return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         return_url = round_return_url(settings.canonical_web_url(), round_body["id"])
         try:
             result = write_round_history(

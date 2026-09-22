@@ -263,3 +263,20 @@ def report_partner_usage(http, user_token: str, tenant_token: str, event: dict) 
         trace_id,
         int(event["consumed_points"]),
     )
+
+
+def estimate_audit(target_count: int, remaining_trial: int, partner: PartnerAiItem | None) -> dict[str, object]:
+    points = audit_usage_points(target_count)
+    remaining = max(0, int(remaining_trial))
+    partner_ok = bool(partner and quota_sufficient(partner.enabled, partner.user_quota))
+    allowed = remaining >= points or partner_ok
+    if partner is None:
+        payload = quota_unavailable("检查额度异常", "检查AI包额度时发生异常")
+    else:
+        payload = quota_payload(partner, remaining)
+    payload["remaining_trial_ai_points"] = remaining
+    payload["target_count"] = max(0, int(target_count))
+    payload["estimated_points"] = points
+    payload["accept_allowed"] = allowed
+    payload["accept_reason"] = "" if allowed else "试用剩余不足，且 Partner AI 额度不可用"
+    return payload

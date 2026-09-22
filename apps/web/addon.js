@@ -4,7 +4,6 @@ async function readJson(url, options = {}) {
   return { ok: response.ok, status: response.status, body };
 }
 
-const AUDIT_COST_PER_FILE = 500;
 const EXCEL_EXT = /\.(xlsx|xls|xlsm)$/i;
 const HOST_TIMEOUT_MS = 31000;
 
@@ -150,11 +149,25 @@ function splitDocuments(items) {
   return { selectable, cloud, nonExcel };
 }
 
-function quotaBlocksStart(quota, selectedCount) {
-  const cost = selectedCount * AUDIT_COST_PER_FILE;
-  const remaining = Number(quota.remaining_trial_ai_points || 0);
-  const paidOk = Boolean(quota.ai_package_purchased && quota.enabled && quota.quota_sufficient);
-  return !paidOk && (remaining < cost || remaining <= 0);
+function quotaBlocksStart(quota) {
+  if (!quota || quota.unavailable) return false;
+  return quota.accept_allowed === false;
+}
+
+function writebackTarget(fileToken) {
+  if (!fileToken) return null;
+  return { provider: "feishu", object_kind: "docx", object_ref: fileToken };
+}
+
+function quotaLabel(quota) {
+  if (!quota) return "";
+  if (quota.unavailable) return "无法读取 Partner AI";
+  const parts = [];
+  if (quota.estimated_points != null) parts.push("预计 " + quota.estimated_points + " 点");
+  if (quota.remaining_trial_ai_points != null) parts.push("试用剩余 " + quota.remaining_trial_ai_points + " 点");
+  parts.push(quota.quota_sufficient ? "Partner AI 可用" : (quota.detailed_message || quota.message || "Partner AI 不可用"));
+  if (quota.accept_allowed === false && quota.accept_reason) parts.push(quota.accept_reason);
+  return parts.filter(Boolean).join(" · ");
 }
 
 function escapeHtml(value) {
@@ -222,8 +235,10 @@ async function main() {
     if (state.roundId) url.searchParams.set("round", state.roundId);
     window.history.replaceState({}, "", url);
   }
-  async function request(path, body) {
-    const result = await authorizedJson(state.api, host, `${state.api}${path}`, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  async function request(path, body, method) {
+    const verb = method || (body === undefined ? "GET" : "POST");
+    const options = verb === "GET" ? {} : { method: verb, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) };
+    const result = await authorizedJson(state.api, host, `${state.api}${path}`, options);
     if (!result.ok) throw new Error(result.body.error || "操作失败，请重试");
     return result.body;
   }
@@ -262,11 +277,13 @@ async function main() {
     }
     state.selectable.forEach((item) => selected.add(item.token));
     renderDocuments(state.selectable, selected, state.rules);
-    const quota = await authorizedJson(state.api, host, `${state.api}/integrations/feishu/usage/quota`);
-    state.quota = quota.body;
-    const quotaNode = document.getElementById("addon-quota");
-    quotaNode.textContent = quota.body.detailed_message || quota.body.message || "";
-    quotaNode.classList.toggle("hidden", !quotaNode.textContent);
+    if (!state.draftId && !state.roundId) {
+      state.draftId = (await request("/drafts", {})).id;
+      remember();
+    }
+    if (state.draftId && state.fileToken && !state.draftAccepted) {
+      await request(`/drafts/${encodeURIComponent(state.draftId)}`, { writeback_target: writebackTarget(state.fileToken) }, "PUT");
+    }
     setStatus("为每个待审文件选择规则；参考文件只提供上下文");
   } catch (error) {
     setStatus("飞书登录失败，请重试");
@@ -278,8 +295,22 @@ async function main() {
     return state.selectable.filter((item) => selected.has(item.token) && item.role === "target");
   }
 
+  async function loadQuota() {
+    const count = targets().length;
+    const quota = await authorizedJson(state.api, host, `${state.api}/integrations/feishu/usage/quota?target_count=${count}`);
+    const quotaNode = document.getElementById("addon-quota");
+    if (!quota.ok) {
+      state.quota = { unavailable: true };
+    } else {
+      state.quota = quota.body || {};
+    }
+    quotaNode.textContent = quotaLabel(state.quota);
+    quotaNode.classList.toggle("hidden", !quotaNode.textContent);
+    refreshSubmit();
+  }
+
   function refreshSubmit() {
-    const blocked = state.busy || Boolean(state.roundId) || !targets().length || quotaBlocksStart(state.quota || {}, targets().length);
+    const blocked = state.busy || Boolean(state.roundId) || !targets().length || quotaBlocksStart(state.quota);
     submit.disabled = blocked;
     document.querySelectorAll("#addon-documents input, #addon-documents select").forEach((node) => {
       const item = state.selectable.find((row) => row.token === node.closest("[data-token]").dataset.token);
@@ -299,12 +330,12 @@ async function main() {
       item.rule_version_id = null;
       renderDocuments(state.selectable, selected, state.rules);
     } else item.rule_version_id = input.value || null;
-    refreshSubmit();
+    void loadQuota();
   });
-  refreshSubmit();
+  void loadQuota();
 
   async function writeCurrentDocument() {
-    if (!state.roundId || !state.fileToken) {
+    if (!state.roundId) {
       return;
     }
     const result = await authorizedJson(
@@ -314,7 +345,7 @@ async function main() {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_token: state.fileToken }),
+        body: "{}",
       }
     );
     const node = document.getElementById("addon-writeback-result");
@@ -337,8 +368,8 @@ async function main() {
 
   async function saveImportedItems() {
     const items = state.selectable.filter((item) => selected.has(item.token) && item.file_version_id).map((item) => ({ file_version_id: item.file_version_id, role: item.role, rule_version_id: item.rule_version_id || null }));
-    const saved = await authorizedJson(state.api, host, `${state.api}/drafts/${encodeURIComponent(state.draftId)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
-    if (!saved.ok) throw new Error(saved.body.error || "草稿保存失败");
+    const payload = { items, writeback_target: writebackTarget(state.fileToken) };
+    await request(`/drafts/${encodeURIComponent(state.draftId)}`, payload, "PUT");
   }
 
   submit.addEventListener("click", async () => {

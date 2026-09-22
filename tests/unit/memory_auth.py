@@ -41,6 +41,7 @@ from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import Principal, Resource, Session, can_read, identity_key, new_token, token_hash
 from ppap_core.settings import Settings
 from ppap_core.rules import normalize_rule_body, rule_title, rule_parse_request, rule_parse_view
+from ppap_core.writeback_targets import normalize_external_ref, public_target
 
 
 def _now() -> datetime:
@@ -90,6 +91,9 @@ class MemoryAuthStore:
         self.attempts: dict[tuple[str, int], dict] = {}
         self.idempotency: dict[tuple[str, str], str] = {}
         self.usage_events: list[dict] = []
+        self.file_sources: dict[str, dict[str, str]] = {}
+        self.draft_writebacks: dict[str, dict[str, str]] = {}
+        self.round_writebacks: dict[str, dict[str, str]] = {}
 
     def save_state(self, raw_state: str, return_to: str, ttl_seconds: int = 600) -> None:
         self.states[token_hash(raw_state)] = (return_to, _now() + timedelta(seconds=ttl_seconds))
@@ -401,6 +405,8 @@ class MemoryAuthStore:
             "analysis_mode": mode,
         }
         self.draft_items[draft_id] = []
+        if predecessor_id and predecessor_id in self.round_writebacks:
+            self.draft_writebacks[draft_id] = dict(self.round_writebacks[predecessor_id])
         return self.get_draft(draft_id)
 
     def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0) -> list[dict]:
@@ -417,7 +423,8 @@ class MemoryAuthStore:
         return self._draft_public(draft_id)
 
     def save_draft(
-        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None
+        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None,
+        writeback_target=None,
     ) -> dict:
         draft = self.drafts.get(draft_id)
         if not draft or draft["tenant_id"] != principal.tenant_id:
@@ -429,6 +436,13 @@ class MemoryAuthStore:
             draft['updated_at'] = _now().isoformat()
         if analysis_mode is not None:
             draft["analysis_mode"] = normalize_analysis_mode(analysis_mode)
+            draft['updated_at'] = _now().isoformat()
+        if writeback_target is not None:
+            target = normalize_external_ref(writeback_target) if writeback_target else None
+            if target:
+                self.draft_writebacks[draft_id] = target
+            else:
+                self.draft_writebacks.pop(draft_id, None)
             draft['updated_at'] = _now().isoformat()
         return self._draft_public(draft_id)
 
@@ -825,6 +839,11 @@ class MemoryAuthStore:
         self.idempotency[(principal.tenant_id, key)] = round_id
         if source_draft_id:
             draft["status"] = DRAFT_ACCEPTED
+        target = self.draft_writebacks.get(source_draft_id) if source_draft_id else None
+        if target is None and predecessor_id:
+            target = self.round_writebacks.get(predecessor_id)
+        if target:
+            self.round_writebacks[round_id] = dict(target)
         if self.settings and self.settings.feishu_ai_item_id and principal.provider == "feishu":
             from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
             item = self.settings.feishu_ai_item_id
@@ -856,6 +875,7 @@ class MemoryAuthStore:
             "updated_at": draft.get("updated_at"),
             "predecessor_id": draft.get("predecessor_id"),
             "analysis_mode": normalize_analysis_mode(draft.get("analysis_mode")),
+            "writeback": public_target(self.draft_writebacks.get(draft_id)),
             "items": items,
         }
 
@@ -916,6 +936,7 @@ class MemoryAuthStore:
             "result_attempt": row.get("result_attempt"),
             "created_at": row.get("created_at"),
             "analysis_mode": normalize_analysis_mode(row.get("analysis_mode")),
+            "writeback": public_target(self.round_writebacks.get(round_id)),
             **extra,
             "inputs": inputs,
             "findings": findings,
@@ -956,6 +977,21 @@ class MemoryAuthStore:
         }
         self.usage_events.append(row)
         return dict(row)
+
+    def save_file_source(self, file_version_id: str, object_kind: str, object_ref: str) -> None:
+        self.file_sources[file_version_id] = {
+            "provider": "feishu",
+            "object_kind": str(object_kind or "file"),
+            "object_ref": str(object_ref),
+        }
+
+    def file_source(self, file_version_id: str) -> dict | None:
+        row = self.file_sources.get(file_version_id)
+        return dict(row) if row else None
+
+    def round_writeback(self, round_id: str) -> dict | None:
+        row = self.round_writebacks.get(round_id)
+        return dict(row) if row else None
 
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
         item = str(ai_item_id or "").strip()

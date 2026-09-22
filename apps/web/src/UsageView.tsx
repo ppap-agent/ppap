@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {dateLabel, request} from './api'
+import {dateLabel, request, type QuotaEstimate} from './api'
 
 interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string; user_id?: string}
 
@@ -10,6 +10,8 @@ export default function UsageView() {
   const [next, setNext] = useState<number | null>(null)
   const [since, setSince] = useState('')
   const [until, setUntil] = useState('')
+  const [quota, setQuota] = useState<QuotaEstimate | null>(null)
+  const [quotaError, setQuotaError] = useState('')
 
   async function load(reset = true) {
     if (busy) return
@@ -28,10 +30,21 @@ export default function UsageView() {
     } finally { setBusy(false) }
   }
 
-  useEffect(() => { void load() }, [])
+  async function loadQuota() {
+    setQuotaError('')
+    try {
+      setQuota(await request<QuotaEstimate>('/integrations/feishu/usage/quota'))
+    } catch {
+      setQuota(null)
+      setQuotaError('无法读取 Partner AI')
+    }
+  }
+
+  useEffect(() => { void load(); void loadQuota() }, [])
 
   return (
     <section className="page-content">
+      <p className="scope-note" data-testid="quota-summary">{quotaError || (quota ? `试用剩余 ${quota.remaining_trial_ai_points ?? '—'} 点 · ${quota.detailed_message || quota.message || (quota.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用')}` : '正在读取额度…')}</p>
       <form className="toolbar usage-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
         <label>起始日期<input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
         <label>截止日期<input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>

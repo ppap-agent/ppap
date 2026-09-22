@@ -216,10 +216,20 @@ class FeishuDocsAddonTests(unittest.TestCase):
         created = self.client.post("/drafts")
         self.assertEqual(created.status_code, 201)
         draft = created.json()["id"]
-        saved = self.client.put(f"/drafts/{draft}", json={"items": [
-            {"file_version_id": imported.json()["id"], "role": "target", "rule_version_id": RULE_A},
-        ]})
+        imported_id = imported.json()["id"]
+        self.assertEqual(self.store.file_sources[imported_id]["object_ref"], "xlsx-token")
+        self.assertEqual(self.store.file_sources[imported_id]["object_kind"], "file")
+        saved = self.client.put(f"/drafts/{draft}", json={
+            "items": [
+                {"file_version_id": imported_id, "role": "target", "rule_version_id": RULE_A},
+            ],
+            "writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": "current-doc"},
+        })
         self.assertEqual(saved.status_code, 200)
+        dumped = json.dumps(saved.json())
+        self.assertTrue(saved.json()["writeback"]["available"])
+        self.assertNotIn("current-doc", dumped)
+        self.assertNotIn("xlsx-token", dumped)
         return draft
 
     def test_host_code_creates_feishu_session_without_oauth_redirect(self):
@@ -241,9 +251,11 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(links.status_code, 200)
         tokens = [row["token"] for row in links.json()["doc_links"]]
         self.assertEqual(tokens, ["xlsx-token", "sheet-token"])
-        quota = self.client.get("/integrations/feishu/usage/quota")
+        quota = self.client.get("/integrations/feishu/usage/quota", params={"target_count": 1})
         self.assertEqual(quota.status_code, 200)
         self.assertTrue(quota.json()["quota_sufficient"])
+        self.assertEqual(quota.json()["estimated_points"], 500)
+        self.assertTrue(quota.json()["accept_allowed"])
         draft = self._draft_for_imported_file()
         submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-submit-1"})
         self.assertEqual(submitted.status_code, 201)
@@ -254,13 +266,15 @@ class FeishuDocsAddonTests(unittest.TestCase):
         done = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(done["execution"], "completed")
         self.assertEqual(done["findings"][0]["status"], "PASS")
-        writeback = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "current-doc"}
-        )
+        self.assertTrue(done["writeback"]["available"])
+        self.assertNotIn("current-doc", json.dumps(done))
+        writeback = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback")
         self.assertEqual(writeback.status_code, 200)
         self.assertTrue(writeback.json()["inserted"])
         self.assertIn(f"/?round={round_id}", writeback.json()["return_url"])
         self.assertTrue(any("/drive/v1/files/xlsx-token/download" in url for _method, url in self.feishu.calls))
+        self.assertTrue(any("/documents/current-doc/" in url for _method, url in self.feishu.calls))
+        self.assertFalse(any("/documents/xlsx-token/" in url for _method, url in self.feishu.calls))
 
     def test_feishu_audit_records_trial_usage_once_per_round(self):
         logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
@@ -358,6 +372,9 @@ class DocsAddonHostSdkTests(unittest.TestCase):
         self.assertIn("existingSession", addon)
         self.assertIn("ensureSession", addon)
         self.assertIn("writeCurrentDocument", addon)
+        self.assertIn("accept_allowed", addon)
+        self.assertIn("writeback_target", addon)
+        self.assertNotIn("AUDIT_COST_PER_FILE", addon)
         html = (ROOT / "apps" / "web" / "addon.html").read_text()
         self.assertIn('href="./audit-files"', html)
         self.assertNotIn("audit-files.html", html)

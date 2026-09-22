@@ -71,6 +71,7 @@ from ppap_core.identity import (
 from ppap_core.settings import Settings
 from ppap_core.rules import normalize_rule_body, rule_title, rule_parse_request, rule_parse_view
 from ppap_core.storage import S3Objects
+from ppap_core.writeback_targets import normalize_external_ref, public_target
 
 
 def _now() -> datetime:
@@ -784,6 +785,10 @@ class AuthStore:
                     """,
                     (draft_id, principal.user_id, draft_id, principal.user_id),
                 )
+                if predecessor_id:
+                    inherited = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
+                    if inherited:
+                        self.save_draft_writeback(conn, draft_id, inherited)
         return self.get_draft(draft_id)
 
     def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0) -> list[dict]:
@@ -807,7 +812,8 @@ class AuthStore:
             return self._draft_public(conn, parsed)
 
     def save_draft(
-        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None
+        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None,
+        writeback_target=None,
     ) -> dict:
         parsed = _as_uuid(draft_id)
         if not parsed:
@@ -842,6 +848,9 @@ class AuthStore:
                         (normalize_analysis_mode(analysis_mode), parsed),
                     )
                 elif items is not None:
+                    conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
+                if writeback_target is not None:
+                    self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
                 return self._draft_public(conn, parsed)
 
@@ -1408,6 +1417,10 @@ class AuthStore:
                     Jsonb(row["rule_execution"]) if row.get("rule_execution") is not None else None,
                 ),
             )
+        target = self.draft_writeback(conn, source_draft_id) if source_draft_id else None
+        if target is None and predecessor_id:
+            target = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
+        self.copy_writeback_to_round(conn, round_id, target)
         conn.execute(
             """
             INSERT INTO product.resource_grants (resource_id, user_id, capability)
@@ -1491,6 +1504,7 @@ class AuthStore:
             "updated_at": row[3].isoformat(),
             "predecessor_id": str(row[4]) if row[4] else None,
             "analysis_mode": normalize_analysis_mode(row[5]),
+            "writeback": public_target(self.draft_writeback(conn, str(row[0]))),
             "items": [
                 {
                     "role": item[0],
@@ -1604,6 +1618,7 @@ class AuthStore:
             "result_attempt": row[5],
             "created_at": row[6].isoformat() if row[6] is not None else None,
             "analysis_mode": normalize_analysis_mode(row[7]),
+            "writeback": public_target(self._target_row(conn, "round_writeback_targets", "round_id", str(row[0]))),
             **_executor_public(payload),
             "inputs": [
                 {
@@ -1646,6 +1661,64 @@ class AuthStore:
                    WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
                 (tenant_id, ai_item_id),
             ).fetchone()[0])
+
+    def file_source(self, file_version_id: str) -> dict | None:
+        vid = _as_uuid(file_version_id)
+        if not vid:
+            return None
+        with self._conn() as conn:
+            return self._target_row(conn, "file_version_sources", "file_version_id", vid)
+
+    def save_file_source(self, file_version_id: str, object_kind: str, object_ref: str) -> None:
+        vid = _as_uuid(file_version_id)
+        if not vid:
+            raise ValueError("invalid_items")
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref)
+                   VALUES (%s, 'feishu', %s, %s)
+                   ON CONFLICT (file_version_id) DO UPDATE SET object_kind = EXCLUDED.object_kind, object_ref = EXCLUDED.object_ref""",
+                (vid, object_kind, object_ref),
+            )
+
+    def save_draft_writeback(self, conn, draft_id: str, target: dict | None) -> None:
+        conn.execute("DELETE FROM product.draft_writeback_targets WHERE draft_id = %s", (draft_id,))
+        if not target:
+            return
+        conn.execute(
+            """INSERT INTO product.draft_writeback_targets (draft_id, provider, object_kind, object_ref)
+               VALUES (%s, %s, %s, %s)""",
+            (draft_id, target["provider"], target["object_kind"], target["object_ref"]),
+        )
+
+    def _target_row(self, conn, table: str, key: str, ident: str) -> dict | None:
+        row = conn.execute(
+            f"SELECT provider, object_kind, object_ref FROM product.{table} WHERE {key} = %s",
+            (ident,),
+        ).fetchone()
+        if not row:
+            return None
+        return {"provider": row[0], "object_kind": row[1], "object_ref": row[2]}
+
+    def draft_writeback(self, conn, draft_id: str) -> dict | None:
+        return self._target_row(conn, "draft_writeback_targets", "draft_id", draft_id)
+
+    def round_writeback(self, round_id: str) -> dict | None:
+        parsed = _as_uuid(round_id)
+        if not parsed:
+            return None
+        with self._conn() as conn:
+            return self._target_row(conn, "round_writeback_targets", "round_id", parsed)
+
+    def copy_writeback_to_round(self, conn, round_id: str, target: dict | None) -> None:
+        if not target:
+            return
+        conn.execute(
+            """INSERT INTO product.round_writeback_targets (round_id, provider, object_kind, object_ref)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (round_id) DO UPDATE SET object_kind = EXCLUDED.object_kind, object_ref = EXCLUDED.object_ref""",
+            (round_id, target["provider"], target["object_kind"], target["object_ref"]),
+        )
 
     def usage_event_public(self, row: dict) -> dict:
         result = {key: row.get(key) for key in (

@@ -17,6 +17,7 @@ from ppap_core.audits import RoundInput, findings_from_engine_results
 from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from ppap_core.feishu import UserTokens
 from ppap_core.feishu_writeback import FeishuWritebackError, comment_text, history_text, structured_blocks, writeback_state
+from ppap_core.writeback_targets import normalize_external_ref, public_target
 from ppap_core.fixtures import RULE_A
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
@@ -36,6 +37,18 @@ def _clean_env(**extra: str):
 
 
 class HistorySemanticsTests(unittest.TestCase):
+    def test_public_writeback_hides_object_ref(self):
+        self.assertEqual(public_target(None), {"available": False})
+        shown = public_target({"provider": "feishu", "object_kind": "docx", "object_ref": "secret-token"})
+        self.assertEqual(shown, {"available": True, "provider": "feishu", "object_kind": "docx"})
+        self.assertNotIn("object_ref", shown)
+        self.assertEqual(
+            normalize_external_ref({"provider": "feishu", "object_kind": "docx", "object_ref": " doc-1 "}),
+            {"provider": "feishu", "object_kind": "docx", "object_ref": "doc-1"},
+        )
+        with self.assertRaisesRegex(ValueError, "invalid_writeback_target"):
+            normalize_external_ref({"provider": "feishu", "object_kind": "docx"})
+
     def test_engine_ng_keeps_its_file_and_all_evidence_in_the_report(self):
         target = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
         evidence = AuditEvidence(
@@ -274,7 +287,20 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertEqual(ready.status_code, 200)
         return ready.json()
 
-    def _complete_round(self, filename: str = "report.xlsx") -> str:
+    def _bind_writeback(self, draft: str, token: str = "docx-token") -> None:
+        saved = self.client.put(
+            f"/drafts/{draft}",
+            json={"writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": token}},
+        )
+        self.assertEqual(saved.status_code, 200)
+        body = saved.json()
+        self.assertTrue(body["writeback"]["available"])
+        self.assertEqual(body["writeback"]["provider"], "feishu")
+        dumped = json.dumps(body)
+        self.assertNotIn(token, dumped)
+        self.assertNotIn("object_ref", dumped)
+
+    def _complete_round(self, filename: str = "report.xlsx", *, writeback: bool = True) -> str:
         version = self._upload(filename, b"target-bytes")
         draft = self.client.post("/drafts").json()["id"]
         saved = self.client.put(
@@ -282,6 +308,8 @@ class FeishuWritebackTests(unittest.TestCase):
             json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         self.assertEqual(saved.status_code, 200)
+        if writeback:
+            self._bind_writeback(draft)
         accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-writeback-1"})
         self.assertEqual(accepted.status_code, 201)
         claimed = self.store.claim_job("test-worker")
@@ -365,6 +393,7 @@ class FeishuWritebackTests(unittest.TestCase):
             f"/drafts/{draft}",
             json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
+        self._bind_writeback(draft)
         queued = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-writeback-queued"})
         queued_id = queued.json()["id"]
         incomplete = self.client.post(
@@ -390,6 +419,57 @@ class FeishuWritebackTests(unittest.TestCase):
             f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
         )
         self.assertEqual(denied.status_code, 403)
+
+    def test_writeback_uses_stored_target_and_ignores_caller_token(self):
+        self._login_feishu_user()
+        round_id = self._complete_round()
+        reloaded = self.client.get(f"/rounds/{round_id}").json()
+        self.assertTrue(reloaded["writeback"]["available"])
+        self.assertNotIn("object_ref", json.dumps(reloaded))
+        self.assertNotIn("docx-token", json.dumps(reloaded))
+        response = self.client.post(
+            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "other-token"}
+        )
+        self.assertEqual(response.status_code, 200)
+        insert = next(call for call in self.feishu.calls if call[0] == "POST" and call[1].endswith("/children"))
+        self.assertIn("/documents/docx-token/blocks/docx-token/children", insert[1])
+        self.assertNotIn("other-token", insert[1])
+
+    def test_writeback_without_stored_target_is_conflict(self):
+        self._login_feishu_user()
+        round_id = self._complete_round(writeback=False)
+        response = self.client.post(
+            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "writeback_target_missing")
+        self.assertEqual(self.feishu.calls, [])
+
+    def test_resubmit_keeps_predecessor_writeback_target(self):
+        self._login_feishu_user()
+        round_id = self._complete_round()
+        again = self.client.post("/drafts", json={"predecessor_id": round_id})
+        self.assertEqual(again.status_code, 201)
+        draft = again.json()
+        self.assertTrue(draft["writeback"]["available"])
+        version = self._upload("again.xlsx", b"again-bytes")
+        saved = self.client.put(
+            f"/drafts/{draft['id']}",
+            json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
+        )
+        self.assertEqual(saved.status_code, 200)
+        accepted = self.client.post(
+            f"/drafts/{draft['id']}/accept", json={"idempotency_key": "feishu-writeback-again", "predecessor_id": round_id}
+        )
+        self.assertEqual(accepted.status_code, 201)
+        claimed = self.store.claim_job("test-worker")
+        self.assertIsNotNone(claimed)
+        process_claimed(self.store, claimed, "test-worker")
+        next_id = accepted.json()["id"]
+        response = self.client.post(f"/integrations/feishu/rounds/{next_id}/writeback")
+        self.assertEqual(response.status_code, 200)
+        insert = next(call for call in self.feishu.calls if call[0] == "POST" and call[1].endswith("/children"))
+        self.assertIn("/documents/docx-token/", insert[1])
 
     def test_comment_failure_still_inserts(self):
         self._login_feishu_user()

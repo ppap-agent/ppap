@@ -14,3 +14,4 @@
 \ir 0014_draft_origin.sql
 \ir 0015_analysis_mode.sql
 \ir 0016_rule_execution.sql
+\ir 0017_origin_writeback.sql

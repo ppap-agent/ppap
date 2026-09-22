@@ -113,10 +113,11 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         items = body.get("items") if "items" in body else None
         analysis_mode = body.get("analysis_mode") if "analysis_mode" in body else None
+        writeback_target = body.get("writeback_target") if "writeback_target" in body else None
         if "rule_version_id" in body:
             return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
         try:
-            draft = store.save_draft(principal, draft_id, items, analysis_mode)
+            draft = store.save_draft(principal, draft_id, items, analysis_mode, writeback_target)
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(draft)

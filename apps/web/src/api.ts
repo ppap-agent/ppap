@@ -19,13 +19,21 @@ export interface Finding {
   locator?: {file_id?: string; file_version_id?: string; filename?: string; locator?: string; rule_item_id?: string; evidence?: {sources?: {kind: string; locator: string}[]}}
   review?: {judgment: string; rationale: string; next_step: string; version: number}
 }
+export interface WritebackTarget {available: boolean; provider?: string; object_kind?: string}
+export interface QuotaEstimate {
+  remaining_trial_ai_points?: number; estimated_points?: number; target_count?: number
+  accept_allowed?: boolean; accept_reason?: string; quota_sufficient?: boolean
+  enabled?: boolean; user_quota?: number; ai_package_purchased?: boolean
+  message?: string; detailed_message?: string; unavailable?: boolean
+}
 export interface Round {
   id: string; execution: string; inputs: Material[]; findings: Finding[]; predecessor_id?: string
   created_at?: string; result_counts?: Record<string, number>; reviewed_count?: number
   coverage?: {checked: string[]; unchecked: string[]; locator_gap: boolean; rule_items?: RuleCoverageItem[]}
   analysis_mode?: AnalysisMode; executor?: string; executor_revision?: string
+  writeback?: WritebackTarget
 }
-export interface Draft {id:string; status:string; items:Material[]; updated_at?:string; predecessor_id?:string|null; analysis_mode?: AnalysisMode}
+export interface Draft {id:string; status:string; items:Material[]; updated_at?:string; predecessor_id?:string|null; analysis_mode?: AnalysisMode; writeback?: WritebackTarget}
 export type AnalysisMode = 'standard' | 'deep'
 export const resultLabels:Record<string,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常'}
 export const executionLabels:Record<string,string> = {queued:'排队中', running:'检查中', completed:'检查完成', failed:'执行失败'}
@@ -52,7 +60,11 @@ const messages: Record<string,string> = {
 export async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
   const result = await response.json().catch(error => {if(signal?.aborted)throw error;return {}})
-  if (!response.ok) throw new Error(messages[result.error] || `请求失败（${response.status}）：${result.error || '请稍后重试'}`)
+  if (!response.ok) {
+    const error = new Error(messages[result.error] || `请求失败（${response.status}）：${result.error || '请稍后重试'}`)
+    ;(error as Error & {code?: string}).code = result.error
+    throw error
+  }
   return result as T
 }
 export async function upload(file: File, role: Material['role']): Promise<Material> {

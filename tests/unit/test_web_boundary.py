@@ -43,7 +43,21 @@ class WebProductBoundaryTests(unittest.TestCase):
     def test_usage_page_does_not_report_real_usage(self):
         usage = (WEB / "src/UsageView.tsx").read_text()
         self.assertIn("/usage?", usage)
+        self.assertIn("/integrations/feishu/usage/quota", usage)
+        self.assertIn("无法读取 Partner AI", usage)
         self.assertNotIn("/report", usage)
+
+    def test_clients_do_not_own_the_audit_cost_rate(self):
+        addon = (WEB / "addon.js").read_text()
+        workbench = (WEB / "src/Workbench.tsx").read_text()
+        usage = (WEB / "src/UsageView.tsx").read_text()
+        self.assertNotIn("AUDIT_COST_PER_FILE", addon + workbench + usage)
+        self.assertNotIn("* 500", addon)
+        self.assertIn("target_count", addon)
+        self.assertIn("accept_allowed", addon)
+        self.assertIn("target_count", workbench)
+        self.assertIn("accept_allowed", workbench)
+        self.assertIn("writeback", workbench)
 
     def test_shared_helpers_keep_review_excerpt_and_workspace_rules(self):
         helpers = (WEB / "src/helpers.ts").read_text()

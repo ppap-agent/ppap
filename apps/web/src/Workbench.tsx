@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent} from 'react'
-import {request, upload, bundleUrl, dateLabel, executionLabels, resultLabels, analysisModeLabels, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding} from './api'
+import {request, upload, bundleUrl, dateLabel, executionLabels, resultLabels, analysisModeLabels, type Draft, type Material, type Rule, type Round, type Analysis, type AnalysisMode, type Job, type Finding, type QuotaEstimate} from './api'
 import {analysisNotices, clampPreviewWidth, latestRules, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from './helpers'
 import OriginalPreview, {type OriginalPreviewHandle} from './OriginalPreview'
 import DrivePicker from './DrivePicker'
@@ -39,6 +39,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   const [previousRound, setPreviousRound] = useState<Round | null>(null)
   const [savedDraft, setSavedDraft] = useState(JSON.stringify({items: [], analysis_mode: 'standard'}))
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('standard')
+  const [estimate, setEstimate] = useState<QuotaEstimate | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const originalPreview = useRef<OriginalPreviewHandle>(null)
   const workspace = useRef<HTMLDivElement>(null)
@@ -107,6 +108,17 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   draftDirtyRef.current = draftDirty
   const missingRules = items.filter(item => item.role === 'target' && !item.rule_version_id).length
   const targetCount = items.filter(item => item.role === 'target').length
+  useEffect(() => {
+    if (round || targetCount < 1) {
+      setEstimate(null)
+      return
+    }
+    const ac = new AbortController()
+    void request<QuotaEstimate>(`/integrations/feishu/usage/quota?target_count=${targetCount}`, 'GET', undefined, ac.signal)
+      .then(body => { if (!ac.signal.aborted) setEstimate(body) })
+      .catch(() => { if (!ac.signal.aborted) setEstimate({unavailable: true}) })
+    return () => ac.abort()
+  }, [round, targetCount])
   const reviewed = round?.findings.filter(item => item.review).length || 0
   const remaining = round?.findings.filter(item => !item.review) || []
   const hasNextUnreviewed = remaining.some(item => item.item_key !== selectedKey)
@@ -643,11 +655,12 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   </label>
                   <strong>{targetCount} 份待审</strong>
                   {!!missingRules && <span className="status-NG"> · {missingRules} 份未匹配规则</span>}
+                  {!!targetCount && <small className="pc-muted" data-testid="quota-estimate">{estimate?.unavailable ? '无法读取 Partner AI' : estimate ? `预计 ${estimate.estimated_points ?? '—'} 点 · 试用剩余 ${estimate.remaining_trial_ai_points ?? '—'} 点 · ${estimate.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用'}${estimate.accept_allowed === false && estimate.accept_reason ? ` · ${estimate.accept_reason}` : ''}` : '正在读取额度…'}</small>}
                   <small className="pc-muted">{draftDirty ? '有未保存的修改' : '草稿已保存'}</small>
                 </div>
                 <div className="button-group">
                   <button type="button" data-testid="save-draft" disabled={busy || !draftDirty} onClick={() => void action(async () => { await saveDraft(); setMessage('草稿已保存。') })}>保存草稿</button>
-                  <button type="button" className="pc-primary" data-testid="submit-audit" id={predecessorId ? 'resubmit-audit' : undefined} disabled={busy || !targetCount || !!missingRules} onClick={() => void submit()}>{busy ? '处理中…' : '开始审核'}</button>
+                  <button type="button" className="pc-primary" data-testid="submit-audit" id={predecessorId ? 'resubmit-audit' : undefined} disabled={busy || !targetCount || !!missingRules || estimate?.accept_allowed === false} onClick={() => void submit()}>{busy ? '处理中…' : '开始审核'}</button>
                 </div>
               </div>
             </section>
@@ -681,6 +694,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
             <div className="button-group">
               {round.predecessor_id && <a className="text-button button" data-testid="previous-round" href={'/?round=' + round.predecessor_id}>上一轮</a>}
               <a className="text-button button" data-testid="download-bundle" href={bundleUrl(round.id)}>打包下载资料</a>
+              {round.writeback?.available && <button type="button" className="text-button" data-testid="write-feishu" disabled={busy || ['queued', 'running'].includes(round.execution)} onClick={() => void action(async () => { const result = await request<{inserted?: boolean}>(`/integrations/feishu/rounds/${round.id}/writeback`, 'POST', {}); setMessage(result.inserted ? '已写回飞书文档。' : '未写回。') })}>写回飞书文档</button>}
               <button type="button" className="text-button" data-testid="prepare-again" disabled={busy || ['queued', 'running'].includes(round.execution)} onClick={prepareAgain}>修改后重审</button>
             </div>
           </div>

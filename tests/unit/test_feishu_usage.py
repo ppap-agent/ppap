@@ -14,7 +14,7 @@ import tests.pathsetup  # noqa: F401
 from fastapi.testclient import TestClient
 
 from ppap_core.feishu import UserTokens
-from ppap_core.feishu_usage import audit_usage_points, quota_sufficient, remaining_trial_points, split_trial_and_partner
+from ppap_core.feishu_usage import PartnerAiItem, audit_usage_points, estimate_audit, quota_sufficient, remaining_trial_points, split_trial_and_partner
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
@@ -52,6 +52,20 @@ class QuotaSemanticsTests(unittest.TestCase):
         self.assertEqual(split_trial_and_partner(0, 500), [(500, False)])
         self.assertEqual(split_trial_and_partner(200, 500), [(200, True), (300, False)])
         self.assertEqual(split_trial_and_partner(10, 0), [])
+
+    def test_estimate_uses_server_cost_and_trial_or_partner(self):
+        partner = PartnerAiItem(True, 80, True)
+        body = estimate_audit(2, 400, partner)
+        self.assertEqual(body["estimated_points"], 1000)
+        self.assertEqual(body["target_count"], 2)
+        self.assertEqual(body["remaining_trial_ai_points"], 400)
+        self.assertTrue(body["accept_allowed"])
+        blocked = estimate_audit(2, 0, PartnerAiItem(False, 0, False))
+        self.assertFalse(blocked["accept_allowed"])
+        self.assertEqual(blocked["estimated_points"], 1000)
+        trial_only = estimate_audit(1, 500, None)
+        self.assertTrue(trial_only["accept_allowed"])
+        self.assertEqual(trial_only["estimated_points"], 500)
 
 
 class _PartnerMock:
@@ -216,6 +230,18 @@ class FeishuUsageTests(unittest.TestCase):
         response = self.client.get("/integrations/feishu/usage/quota")
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "feishu_user_token_missing")
+        estimate = self.client.get("/integrations/feishu/usage/quota", params={"target_count": 1})
+        self.assertEqual(estimate.status_code, 409)
+        self.assertNotIn("remaining_trial_ai_points", estimate.json())
+
+    def test_quota_estimate_includes_accept_gate(self):
+        self._login_feishu_user("alice")
+        body = self.client.get("/integrations/feishu/usage/quota", params={"target_count": 2}).json()
+        self.assertEqual(body["estimated_points"], 1000)
+        self.assertEqual(body["target_count"], 2)
+        self.assertEqual(body["remaining_trial_ai_points"], 10000)
+        self.assertTrue(body["accept_allowed"])
+        self.assertTrue(body["quota_sufficient"])
 
     def test_trial_report_is_skipped_without_partner_http(self):
         self._login_feishu_user("alice")
