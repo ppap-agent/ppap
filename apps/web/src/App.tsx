@@ -33,6 +33,12 @@ export default function App() {
   const devPage = page === '/dev'
 
   useEffect(() => {
+    if (!tenantDenied) return
+    document.cookie = 'ppap_edition=; Path=/; Max-Age=0; SameSite=Lax'
+    location.replace('/')
+  }, [tenantDenied])
+
+  useEffect(() => {
     function dismissMenus(event: Event) {
       if (event instanceof KeyboardEvent && event.key !== 'Escape') return
       if (event instanceof KeyboardEvent || !shell.current?.contains(event.target as Node)) {
@@ -85,8 +91,7 @@ export default function App() {
     <div className="app-frame">
       <div className="edition-banner" data-testid="edition-banner" role="status">
         <strong>当前：新版</strong>
-        <span>预览环境，不扣点。仅海岸线团队可登录。</span>
-        <a href="/enter-legacy">切换到旧版</a>
+        {user ? <a href="/enter-legacy">切换到旧版</a> : null}
       </div>
       <div className="app-body">
       <a className="skip-link" href="#main-content">跳到主要内容</a>
@@ -115,7 +120,7 @@ export default function App() {
       </aside>
       <main id="main-content" className="pc-main" tabIndex={-1}>
         <h1 className="sr-only">{title}</h1>
-        {tenantDenied && <p className="error" role="alert">当前仅海岸线团队可使用新版。请切换到旧版工作台。</p>}
+        {tenantDenied && <p className="error" role="alert">无法使用此入口。</p>}
         {error && <p className="error" role="alert">{error}</p>}
         {!ready && !error && <p className="loading-state" role="status">正在连接…</p>}
         {ready && devPage && (

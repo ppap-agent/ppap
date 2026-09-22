@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from ppap_core.settings import Settings
 
 SESSION_COOKIE = "ppap_session"
+EDITION_COOKIE = "ppap_edition"
 PROVIDER_FEISHU = "feishu"
 
 

@@ -461,6 +461,59 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(host.json(), {"error": "tenant_not_allowed"})
         self.assertFalse(host.cookies.get("ppap_session"))
 
+    def test_enter_edition_requires_allowlisted_session(self):
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="tk-live",
+            PPAP_WEB_URL="http://127.0.0.1:4173",
+            PPAP_PUBLIC_API_URL="http://127.0.0.1:8080",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        client = self._oauth_client(_TokenHttp(), settings)
+        missing = client.get("/enter-current", follow_redirects=False)
+        self.assertEqual(missing.status_code, 302)
+        self.assertIn("/login/feishu", missing.headers["location"])
+        self.assertIn("enter-current", missing.headers["location"])
+        self.assertFalse(missing.cookies.get("ppap_edition"))
+        denied_host = client.post("/login/feishu/host", json={"code": "host-code"})
+        self.assertEqual(denied_host.status_code, 200)
+        cookie = denied_host.cookies.get("ppap_session")
+        allowed = client.get("/enter-current", cookies={"ppap_session": cookie}, follow_redirects=False)
+        self.assertEqual(allowed.status_code, 302)
+        self.assertEqual(allowed.headers["location"], "http://127.0.0.1:4173/")
+        self.assertEqual(allowed.cookies.get("ppap_edition"), "current")
+        legacy = client.get("/enter-legacy", cookies={"ppap_session": cookie}, follow_redirects=False)
+        self.assertEqual(legacy.status_code, 302)
+        self.assertEqual(legacy.cookies.get("ppap_edition"), "legacy")
+
+    def test_enter_edition_hides_route_from_other_tenants(self):
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="2caeb428f08e175d",
+            PPAP_WEB_URL="http://127.0.0.1:4173",
+            PPAP_PUBLIC_API_URL="http://127.0.0.1:8080",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        store = MemoryAuthStore(settings)
+        store.seed_isolated_dev()
+        client = TestClient(
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store, _TokenHttp())
+        )
+        logged = client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
+        self.assertEqual(logged.status_code, 200)
+        cookie = logged.cookies.get("ppap_session")
+        hidden = client.get("/enter-current", cookies={"ppap_session": cookie}, follow_redirects=False)
+        self.assertEqual(hidden.status_code, 404)
+        self.assertFalse(hidden.cookies.get("ppap_edition"))
+        hidden_legacy = client.get("/enter-legacy", cookies={"ppap_session": cookie}, follow_redirects=False)
+        self.assertEqual(hidden_legacy.status_code, 404)
+
     def test_allowlist_accepts_listed_tenant(self):
         with _clean_env(
             FEISHU_APP_ID="cli_test",

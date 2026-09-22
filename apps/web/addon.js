@@ -101,7 +101,7 @@ async function loginWithHost(api, host) {
   });
   if (!logged.ok) {
     if (logged.status === 403 && logged.body.error === "tenant_not_allowed") {
-      throw new Error("当前仅海岸线团队可使用新版文档侧栏。请打开工作台旧版。");
+      throw new Error("无法使用此入口。");
     }
     throw new Error("飞书登录失败，请重试");
   }

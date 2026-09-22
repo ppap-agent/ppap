@@ -5,6 +5,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, Query, Request
@@ -64,7 +65,7 @@ from ppap_core.files import (
     safe_content_type,
 )
 from ppap_core.fixtures import SUBJECTS
-from ppap_core.identity import SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
+from ppap_core.identity import EDITION_COOKIE, SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
 from ppap_core.logs import QUIET_PATHS, bind, configure as configure_logs, emit, new_request_id, reset, round_id_from_path
 from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
@@ -92,6 +93,16 @@ def _start_feishu_session(store, settings: Settings, info: dict, tokens):
         return None
     principal = store.upsert_feishu_identity(info["tenant_key"], info["subject"], info["display_name"])
     return principal, store.create_session(principal, tokens)
+
+
+def _edition_cookie_kwargs(settings: Settings) -> dict:
+    return {
+        "httponly": False,
+        "samesite": "lax",
+        "secure": settings.profile == "production",
+        "max_age": 31536000,
+        "path": "/",
+    }
 
 
 def create_app(
@@ -315,6 +326,26 @@ def create_app(
         response = JSONResponse({"ok": True})
         response.delete_cookie(SESSION_COOKIE, path="/")
         return response
+
+    def _enter_edition(request: Request, edition: str) -> RedirectResponse | JSONResponse:
+        principal = principal_of(request)
+        if principal is None:
+            dest = settings.canonical_web_url() + "/enter-" + edition
+            login = settings.public_api_url.rstrip("/") + "/login/feishu?return_to=" + quote(dest, safe="")
+            return RedirectResponse(login, status_code=302)
+        if not settings.tenant_allowed(principal.tenant_key):
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        response = RedirectResponse(settings.canonical_web_url() + "/", status_code=302)
+        response.set_cookie(EDITION_COOKIE, edition, **_edition_cookie_kwargs(settings))
+        return response
+
+    @app.get("/enter-current", response_model=None)
+    def enter_current(request: Request) -> RedirectResponse | JSONResponse:
+        return _enter_edition(request, "current")
+
+    @app.get("/enter-legacy", response_model=None)
+    def enter_legacy(request: Request) -> RedirectResponse | JSONResponse:
+        return _enter_edition(request, "legacy")
 
     @app.get("/me")
     def me(request: Request) -> JSONResponse:

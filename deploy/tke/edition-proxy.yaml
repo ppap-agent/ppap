@@ -17,13 +17,29 @@ data:
         underscores_in_headers on;
 
         location = /enter-current {
-            add_header Set-Cookie "ppap_edition=current; Path=/; Max-Age=31536000; SameSite=Lax" always;
-            return 302 https://$host/;
+            proxy_http_version 1.1;
+            proxy_ssl_server_name on;
+            proxy_ssl_name ppap-agent.xixifusi.online;
+            proxy_set_header Host ppap-agent.xixifusi.online;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Cookie $http_cookie;
+            proxy_pass https://ppap-agent.xixifusi.online/ppap/enter-current;
+            proxy_read_timeout 30s;
         }
 
         location = /enter-legacy {
-            add_header Set-Cookie "ppap_edition=legacy; Path=/; Max-Age=31536000; SameSite=Lax" always;
-            return 302 https://$host/;
+            proxy_http_version 1.1;
+            proxy_ssl_server_name on;
+            proxy_ssl_name ppap-agent.xixifusi.online;
+            proxy_set_header Host ppap-agent.xixifusi.online;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Cookie $http_cookie;
+            proxy_pass https://ppap-agent.xixifusi.online/ppap/enter-legacy;
+            proxy_read_timeout 30s;
         }
 
         location /ppap/ {
@@ -78,9 +94,6 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
             proxy_pass http://web-base.ppap-test.svc.cluster.local:80;
             proxy_read_timeout 1000s;
-            sub_filter_once on;
-            sub_filter_types text/html;
-            sub_filter '<body>' '<body><div style="background:#5b3a10;color:#fff;padding:10px 16px;font:600 14px/1.4 sans-serif;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">当前：旧版 <span style="font-weight:500;">工作台仍走原审核链。</span><a href="/enter-current" style="color:#fff;margin-left:auto;">切换到新版</a></div>';
         }
     }
 ---
