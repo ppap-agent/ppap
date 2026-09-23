@@ -3,7 +3,7 @@ import {mkdtempSync, mkdirSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import test from 'node:test'
-import {lintSource, lintStylesheet, lintTree} from './design-lint.mjs'
+import {explainFailure, lintSource, lintStylesheet, lintTree} from './design-lint.mjs'
 
 test('feature violations are named and a vocabulary call is clean', () => {
   assert.deepEqual(lintSource('<div className="x" />'), ['no-classname', 'no-raw-layout'])
@@ -15,6 +15,12 @@ test('feature violations are named and a vocabulary call is clean', () => {
   assert.ok(lintSource('const gap = "12px"').includes('no-design-literals'))
   assert.deepEqual(lintSource('<Button type="button" variant="primary">保存</Button>'), [])
   assert.deepEqual(lintSource("const href = '#report-' + key"), [])
+})
+
+test('failure messages point authors at the PPAP vocabulary', () => {
+  assert.match(explainFailure('src/feature/Card.tsx: no-raw-layout'), /Box, Stack, Inline, Grid, Page/)
+  assert.match(explainFailure('src/feature/Form.tsx: no-raw-controls'), /Button, Link, Input, Select, Textarea/)
+  assert.match(explainFailure('src/feature/Icon.tsx: no-raw-icon-size'), /Icon component/)
 })
 
 test('object style and raw icon size are rejected before they reach the DOM', () => {
