@@ -3,7 +3,7 @@ import {dateLabel, request, type Rule} from '../api'
 import {latestRules} from '../helpers'
 import rulesIcon from '../assets/rules.svg'
 import {productHref, type ReturnTarget} from '../navigation/route'
-import {Badge, Button, FeedbackState, PageHeader} from '../ui/primitives'
+import {Badge, Button, Checkbox, DataTable, FeedbackState, FilterBar, Inline, Input, Link, Page, PageHeader, Select, type DataColumn} from '../ui'
 
 function belongs(rule: Rule, customer: string) {
   return customer === '未指定客户' ? !rule.customers?.length : !!rule.customers?.includes(customer)
@@ -35,33 +35,47 @@ export default function RuleLibrary({returnTo, returnLabel}: {returnTo?: ReturnT
     (!customer || belongs(rule, customer))
       && (rule.title + ' ' + rule.type).toLowerCase().includes(query.toLowerCase()),
   )
-
-  function openRule(id: string) {
-    location.href = productHref({page: 'rule-detail', ruleId: id, returnTo})
-  }
+  const columns: Array<DataColumn<Rule>> = [
+    {
+      key: 'title',
+      header: '规则名称',
+      role: 'title',
+      cell: rule => (
+        <Inline gap="sm" wrap>
+          <Button type="button" variant="ghost" disabled={busy} onClick={() => { location.href = productHref({page: 'rule-detail', ruleId: rule.id, returnTo}) }}>
+            <img src={rulesIcon} alt="" width={18} height={18} />{rule.title}
+          </Button>
+          {!currentRules.some(row => row.id === rule.id) && <Badge>历史版本</Badge>}
+        </Inline>
+      ),
+    },
+    {key: 'customers', header: '适用客户', cell: rule => rule.customers?.join('、') || '未指定'},
+    {key: 'type', header: '文件类型', cell: rule => rule.type || '未指定'},
+    {key: 'updated', header: '更新时间', cell: rule => dateLabel(rule.created_at)},
+  ]
 
   function newRule() {
     location.href = productHref({page: 'rule-import', returnTo})
   }
 
   return (
-    <section className="page-content rules-page">
-      {error && <p className="error" role="alert" id="rule-message" data-testid="rule-message">{error}</p>}
-      {returnTo && <a className="back-link" href={productHref(returnTo)}>← {returnLabel}</a>}
+    <Page>
+      {error && <FeedbackState tone="error" inline title="无法读取规则" detail={error} testId="rule-message" />}
+      {returnTo && <Link href={productHref(returnTo)}>← {returnLabel}</Link>}
       <PageHeader
         title="规则库"
         description="管理客户规则、适用范围和历史版本。审核受理后会冻结所选规则版本。"
         actions={visible.length > 0 ? <Button type="button" variant="primary" data-testid="new-rule" id="new-rule" disabled={busy} onClick={newRule}>上传规则</Button> : undefined}
       />
       {(visible.length > 0 || query || customer) && (
-        <div className="toolbar">
-          <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索规则名称或文件类型" aria-label="搜索规则" />
-          <select value={customer} aria-label="客户筛选" onChange={event => setCustomer(event.target.value)}>
+        <FilterBar onSubmit={() => undefined}>
+          <Input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索规则名称或文件类型" aria-label="搜索规则" />
+          <Select value={customer} aria-label="客户筛选" onChange={event => setCustomer(event.target.value)}>
             <option value="">全部客户</option>
             {customers.map(name => <option key={name}>{name}</option>)}
-          </select>
-          <label className="inline-check"><input type="checkbox" checked={showVersions} onChange={event => setShowVersions(event.target.checked)} />历史版本</label>
-        </div>
+          </Select>
+          <Checkbox label="历史版本" checked={showVersions} onChange={event => setShowVersions(event.target.checked)} />
+        </FilterBar>
       )}
       {busy && <FeedbackState tone="loading" detail="正在读取规则…" />}
       {!busy && !visible.length && !error && (
@@ -75,28 +89,7 @@ export default function RuleLibrary({returnTo, returnLabel}: {returnTo?: ReturnT
             : <Button type="button" variant="primary" data-testid="new-rule" id="new-rule" disabled={busy} onClick={newRule}>上传规则</Button>}
         </FeedbackState>
       )}
-      {!!visible.length && (
-        <div className="table-scroll">
-          <table className="responsive-table rules-table">
-            <thead><tr><th>规则名称</th><th>适用客户</th><th>文件类型</th><th>更新时间</th></tr></thead>
-            <tbody data-testid="rule-versions" id="rule-versions">
-              {visible.map(rule => (
-                <tr key={rule.id}>
-                  <td className="record-title">
-                    <button type="button" className="text-button" disabled={busy} onClick={() => openRule(rule.id)}>
-                      <img src={rulesIcon} alt="" width={18} height={18} />{rule.title}
-                    </button>
-                    {!currentRules.some(row => row.id === rule.id) && <Badge>历史版本</Badge>}
-                  </td>
-                  <td data-label="适用客户">{rule.customers?.join('、') || '未指定'}</td>
-                  <td data-label="文件类型">{rule.type || '未指定'}</td>
-                  <td data-label="更新时间">{dateLabel(rule.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
+      {!!visible.length && <DataTable rows={visible} columns={columns} layout="records" label="规则库" testId="rule-versions" />}
+    </Page>
   )
 }
