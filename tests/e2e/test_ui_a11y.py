@@ -13,7 +13,7 @@ class UiA11yTests(unittest.TestCase):
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            context = browser.new_context(viewport={"width": 1280, "height": 800}, reduced_motion="reduce", has_touch=True)
+            context = browser.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce", has_touch=True)
             page = context.new_page()
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
