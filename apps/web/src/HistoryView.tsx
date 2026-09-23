@@ -1,5 +1,7 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type Round} from './api'
+import {Button, ButtonLink, FeedbackState, PageHeader} from './ui/primitives'
+import {ExecutionBadge} from './audit/StatusBadge'
 
 export default function HistoryView() {
   const [rows, setRows] = useState<Round[]>([])
@@ -36,27 +38,34 @@ export default function HistoryView() {
 
   return (
     <section className="page-content">
+      <PageHeader
+        title="审核结果"
+        description="查看每轮机器检查和人工复核进度，并继续未完成的复核。"
+        actions={rows.length > 0 ? <ButtonLink variant="primary" href="/">新建审核</ButtonLink> : undefined}
+      />
       {showToolbar && (
-      <form className="toolbar history-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
-        <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
-        <select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
-          <option value="">全部状态</option>
-          {Object.entries(executionLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-        </select>
-        <label className="inline-check"><input type="checkbox" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />待复核</label>
-        <button type="submit" disabled={busy}>搜索</button>
-        {rows.length > 0 && <a className="button pc-primary toolbar-end" href="/">新建审核</a>}
-      </form>
+        <form className="toolbar history-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
+          <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
+          <select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
+            <option value="">全部状态</option>
+            {Object.entries(executionLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+          <label className="inline-check"><input type="checkbox" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />待复核</label>
+          <Button type="submit" disabled={busy}>搜索</Button>
+        </form>
       )}
-      {error && <p className="error" role="alert" data-testid="history-error">{error}</p>}
-      {busy && !rows.length && <p className="loading-state" role="status">正在加载…</p>}
+      {error && <FeedbackState tone="error" inline title="无法加载审核结果" detail={error} testId="history-error" />}
+      {busy && !rows.length && <FeedbackState tone="loading" detail="正在加载审核结果…" />}
       {!busy && !rows.length && !error && (
-        <div className="empty-state" data-testid="history-empty">
-          <h2>{filtered ? '没有符合条件的审核' : '还没有审核结果'}</h2>
+        <FeedbackState
+          title={filtered ? '没有符合条件的审核' : '还没有审核结果'}
+          detail={filtered ? '调整筛选条件，或清除筛选查看全部记录。' : '创建一次审核后，结果会保留在这里。'}
+          testId="history-empty"
+        >
           {filtered
-            ? <button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</button>
-            : <a className="button pc-primary empty-cta" href="/">新建审核</a>}
-        </div>
+            ? <Button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</Button>
+            : <ButtonLink variant="primary" className="empty-cta" href="/">新建审核</ButtonLink>}
+        </FeedbackState>
       )}
       {!!rows.length && (
         <div className="table-scroll" data-testid="history-list">
@@ -71,7 +80,7 @@ export default function HistoryView() {
                   <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time>{row.predecessor_id && <small className="repeat-label">重审</small>}{row.analysis_mode === 'deep' && <small className="repeat-label">{analysisModeLabels.deep}</small>}</td>
                   <td data-label="检查结果" data-testid="history-result">
                     {row.execution !== 'completed'
-                      ? <span className={'badge' + (row.execution === 'failed' ? ' status-ERR' : '')}>{executionLabels[row.execution] || row.execution}</span>
+                      ? <ExecutionBadge execution={row.execution} />
                       : <div className="result-counts">{['NG', 'ERR', 'PASS'].map(status => row.result_counts?.[status] ? <span key={status} className={'status-' + status}>{resultLabels[status]} {row.result_counts?.[status]}</span> : null)}{!total(row) && <span>暂无检查项</span>}</div>}
                   </td>
                   <td data-label="已复核">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</td>
@@ -82,7 +91,7 @@ export default function HistoryView() {
           </table>
         </div>
       )}
-      {next !== null && <button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</button>}
+      {next !== null && <Button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
     </section>
   )
 }
