@@ -106,6 +106,7 @@ export const size = {
   avatarSm: '28px',
   menu: '144px',
   prose: '720px',
+  page: '1400px',
 } as const
 
 export const tokens = {color, space, radius, font, shadow, control, size} as const

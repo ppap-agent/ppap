@@ -1,8 +1,14 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type Round} from './api'
 import {productHref} from './navigation/route'
-import {Button, ButtonLink, FeedbackState, PageHeader} from './ui/primitives'
 import {ExecutionBadge} from './audit/StatusBadge'
+import {Badge, Button, Checkbox, DataTable, FeedbackState, Field, FilterBar, Inline, Input, Link, Page, PageHeader, Select, Text, type BadgeTone, type DataColumn} from './ui'
+
+function countTone(status: string): BadgeTone {
+  if (status === 'PASS') return 'success'
+  if (status === 'NG') return 'warning'
+  return 'danger'
+}
 
 export default function HistoryView() {
   const [rows, setRows] = useState<Round[]>([])
@@ -36,24 +42,76 @@ export default function HistoryView() {
 
   const filtered = Boolean(query || execution || unreviewed)
   const showToolbar = rows.length > 0 || filtered
+  const columns: Array<DataColumn<Round>> = [
+    {
+      key: 'files',
+      header: '审核资料',
+      role: 'title',
+      cell: row => <Link href={productHref({page: 'audit-round', roundId: row.id})}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</Link>,
+    },
+    {
+      key: 'when',
+      header: '提交时间',
+      role: 'when',
+      testId: 'history-version',
+      cell: row => (
+        <Inline gap="xs" wrap>
+          <Text as="span" size="sm" tone="muted">{dateLabel(row.created_at)}</Text>
+          {row.predecessor_id ? <Text as="small" size="xs" tone="muted">重审</Text> : null}
+          {row.analysis_mode === 'deep' ? <Text as="small" size="xs" tone="muted">{analysisModeLabels.deep}</Text> : null}
+        </Inline>
+      ),
+    },
+    {
+      key: 'result',
+      header: '检查结果',
+      role: 'result',
+      testId: 'history-result',
+      cell: row => row.execution !== 'completed'
+        ? <ExecutionBadge execution={row.execution} />
+        : (
+          <Inline gap="sm" wrap>
+            {['NG', 'ERR', 'PASS'].map(status => row.result_counts?.[status]
+              ? <Badge key={status} tone={countTone(status)}>{resultLabels[status]} {row.result_counts[status]}</Badge>
+              : null)}
+            {!total(row) ? <Text as="span" tone="muted">暂无检查项</Text> : null}
+          </Inline>
+        ),
+    },
+    {
+      key: 'review',
+      header: '人工复核',
+      role: 'meta',
+      cell: row => <Text as="span" size="sm" tone="muted">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</Text>,
+    },
+    {
+      key: 'open',
+      header: '操作',
+      role: 'action',
+      cell: row => {
+        const pending = total(row) > (row.reviewed_count || 0)
+        return <Link href={productHref({page: 'audit-round', roundId: row.id, review: pending ? 'next' : undefined})}>{pending ? '继续复核' : '查看结果'} →</Link>
+      },
+    },
+  ]
 
   return (
-    <section className="page-content">
+    <Page>
       <PageHeader
         title="审核结果"
         description="查看每轮机器检查和人工复核进度，并继续未完成的复核。"
-        actions={rows.length > 0 ? <ButtonLink variant="primary" href={productHref({page: 'audit-new'})}>新建审核</ButtonLink> : undefined}
+        actions={rows.length > 0 ? <Link variant="primary" href={productHref({page: 'audit-new'})}>新建审核</Link> : undefined}
       />
       {showToolbar && (
-        <form className="toolbar history-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
-          <input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
-          <select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
+        <FilterBar onSubmit={() => { void load() }}>
+          <Input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
+          <Select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
             <option value="">全部状态</option>
             {Object.entries(executionLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </select>
-          <label className="inline-check"><input type="checkbox" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />待复核</label>
+          </Select>
+          <Checkbox label="待复核" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />
           <Button type="submit" disabled={busy}>搜索</Button>
-        </form>
+        </FilterBar>
       )}
       {error && <FeedbackState tone="error" inline title="无法加载审核结果" detail={error} testId="history-error" />}
       {busy && !rows.length && <FeedbackState tone="loading" detail="正在加载审核结果…" />}
@@ -65,34 +123,11 @@ export default function HistoryView() {
         >
           {filtered
             ? <Button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</Button>
-            : <ButtonLink variant="primary" href={productHref({page: 'audit-new'})}>新建审核</ButtonLink>}
+            : <Link variant="primary" href={productHref({page: 'audit-new'})}>新建审核</Link>}
         </FeedbackState>
       )}
-      {!!rows.length && (
-        <div className="table-scroll" data-testid="history-list">
-          <table className="responsive-table history-table">
-            <thead><tr><th>审核资料</th><th>提交时间</th><th>检查结果</th><th>人工复核</th><th><span className="sr-only">操作</span></th></tr></thead>
-            <tbody>
-              {rows.map(row => (
-                <tr key={row.id}>
-                  <td className="record-title">
-                    <a href={productHref({page: 'audit-round', roundId: row.id})}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</a>
-                  </td>
-                  <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time>{row.predecessor_id && <small className="repeat-label">重审</small>}{row.analysis_mode === 'deep' && <small className="repeat-label">{analysisModeLabels.deep}</small>}</td>
-                  <td data-label="检查结果" data-testid="history-result">
-                    {row.execution !== 'completed'
-                      ? <ExecutionBadge execution={row.execution} />
-                      : <div className="result-counts">{['NG', 'ERR', 'PASS'].map(status => row.result_counts?.[status] ? <span key={status} className={'status-' + status}>{resultLabels[status]} {row.result_counts?.[status]}</span> : null)}{!total(row) && <span>暂无检查项</span>}</div>}
-                  </td>
-                  <td data-label="已复核">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</td>
-                  <td className="row-action"><a href={productHref({page: 'audit-round', roundId: row.id, review: total(row) > (row.reviewed_count || 0) ? 'next' : undefined})}>{total(row) > (row.reviewed_count || 0) ? '继续复核' : '查看结果'} →</a></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {!!rows.length && <DataTable rows={rows} columns={columns} layout="records" label="审核结果" testId="history-list" />}
       {next !== null && <Button type="button" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
-    </section>
+    </Page>
   )
 }

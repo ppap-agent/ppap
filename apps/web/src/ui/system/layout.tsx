@@ -166,6 +166,10 @@ export function Heading({
   }, children)
 }
 
+export function Page({children, testId}: {children?: ReactNode; testId?: string}) {
+  return <section data-ui="page" data-testid={testId}>{children}</section>
+}
+
 export function VisuallyHidden({children, as = 'span'}: {children?: ReactNode; as?: 'span' | 'h1' | 'h2'}) {
   return createElement(as, {'data-ui': 'sr'}, children)
 }
