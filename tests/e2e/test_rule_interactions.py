@@ -13,7 +13,7 @@ BODY = {"kind": "engine", "type": "控制计划", "rule_profile": "v3", "custome
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
-    def route(self, page, *, status="succeeded", hold=False):
+    def route(self, page, *, status="succeeded", hold=False, publish_status=201):
         pending, posts = [], []
         cors = {"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "content-type"}
 
@@ -30,8 +30,15 @@ class RuleInteractionTests(unittest.TestCase):
                 route.fulfill(json={"display_name": "alice", "identity": {"subject": "fixture"}}, headers=cors)
             elif path == "/rule-types":
                 route.fulfill(json={"types": ["控制计划"]}, headers=cors)
+            elif path == "/rules" and request.method == "POST":
+                if publish_status >= 400:
+                    route.fulfill(status=publish_status, json={"error": "save_failed"}, headers=cors)
+                else:
+                    route.fulfill(status=publish_status, json={"id": "saved-rule", "title": "规则 A", "kind": "engine", "type": "控制计划", "created_at": "2026-09-23T00:00:00Z", "body": BODY, "source_file_id": SOURCE, "source_file_version_id": VERSION}, headers=cors)
             elif path == "/rules":
                 route.fulfill(json={"rules": [{"id": "version-b", "kind": "engine", "title": "规则 B", "type": "控制计划"}]}, headers=cors)
+            elif path == "/rules/saved-rule":
+                route.fulfill(json={"id": "saved-rule", "title": "规则 A", "kind": "engine", "type": "控制计划", "created_at": "2026-09-23T00:00:00Z", "body": BODY, "source_file_id": SOURCE, "source_file_version_id": VERSION}, headers=cors)
             elif path == "/files":
                 route.fulfill(status=201, json={"file_id": SOURCE, "id": VERSION}, headers=cors)
             elif path.endswith(("/blob", "/finalize")):
@@ -63,16 +70,16 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_test_id("new-rule").click()
             with page.expect_request("**/api/rules/parse"):
                 page.get_by_test_id("rule-file").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
-            expect(page.locator(".back-link")).to_be_disabled()
+            expect(page.get_by_test_id("rule-back")).to_be_disabled()
             expect(page.get_by_test_id("rule-file")).to_be_disabled()
-            page.evaluate("() => { document.querySelector('.back-link')?.click(); }")
+            page.evaluate("() => { document.querySelector('[data-testid=rule-back]')?.click(); }")
             self.assertEqual(len(pending), 1)
             pending[0].fulfill(status=202, json={"id": posts[0]["request_id"], "status": "queued"}, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"})
             page.wait_for_timeout(100)
             page.route("**/api/rules/parse/" + posts[0]["request_id"], lambda route: route.fulfill(json={"id": posts[0]["request_id"], "status": "succeeded", "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "控制计划", "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION}}, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"}))
             expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
             expect(page.locator("#rule-origin")).to_contain_text("新规则")
-            expect(page.locator(".back-link")).to_be_enabled()
+            expect(page.get_by_test_id("rule-back")).to_be_enabled()
             self.assertEqual(len(posts), 1)
             browser.close()
 
@@ -127,6 +134,73 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(posts[0]["source_file_version_id"], VERSION)
             self.assertEqual(posts[0]["document_type"], "控制计划")
             self.assertEqual([method for method in original_requests if method != "OPTIONS"], ["GET"])
+            browser.close()
+
+
+    def test_save_success_clears_the_leave_guard_before_navigation(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            dialogs = []
+
+            def on_dialog(dialog):
+                dialogs.append(dialog.type)
+                dialog.dismiss()
+
+            page.on("dialog", on_dialog)
+            page.goto(WEB + "/rules?parse=" + JOB)
+            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
+            page.get_by_test_id("publish-rule").click()
+            page.wait_for_function(
+                """() => location.search.includes('saved=1') || (document.querySelector('[data-testid=publish-rule]') || {}).textContent?.includes('打开已保存规则')""",
+                timeout=5000,
+            )
+            self.assertEqual(dialogs, [])
+            if "saved=1" not in page.url:
+                expect(page.get_by_test_id("publish-rule")).to_have_text("打开已保存规则")
+                expect(page.get_by_test_id("publish-rule")).to_be_enabled()
+            browser.close()
+
+    def test_save_failure_returns_to_the_editable_candidate(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page, publish_status=500)
+            page.goto(WEB + "/rules?parse=" + JOB)
+            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
+            page.get_by_test_id("publish-rule").click()
+            expect(page.locator("#rule-message")).to_contain_text("请求失败")
+            expect(page.get_by_test_id("publish-rule")).to_have_text("保存规则")
+            expect(page.get_by_test_id("publish-rule")).to_be_enabled()
+            expect(page.get_by_test_id("rule-title")).to_be_enabled()
+            browser.close()
+
+    def test_confirmed_abandon_leaves_without_a_second_prompt(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            dialogs = []
+
+            def on_dialog(dialog):
+                dialogs.append(dialog.type)
+                dialog.dismiss()
+
+            page.on("dialog", on_dialog)
+            page.goto(WEB + "/rules?parse=" + JOB)
+            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
+            page.get_by_test_id("rule-back").click()
+            expect(page.locator('[data-ui="modal"]')).to_be_visible()
+            page.get_by_role("button", name="放弃修改").click()
+            page.wait_for_function("() => location.pathname.endsWith('/rules') && !location.search", timeout=5000)
+            self.assertEqual(dialogs, [])
             browser.close()
 
 

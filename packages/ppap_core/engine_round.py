@@ -35,7 +35,8 @@ def _rule_execution(item: RoundInput) -> dict | None:
     return freeze_target_rule_execution(item.rule_body, item.filename)
 
 
-def _rule_input(item: RoundInput) -> RuleInput:
+def builtin_rule_input(item: RoundInput) -> RuleInput:
+    """Checker input for one target. Customer checklist text is not the checker list."""
     if not item.rule_version_id or item.rule_body is None:
         raise ValueError("rule_required")
     body = item.rule_body
@@ -105,7 +106,7 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
             or any(row.get("coverage") == COVERAGE_MAPPED for row in execution.get("items") or [])
         )
         if needs_engine:
-            rules_by_version[item.file_version_id] = _rule_input(item)
+            rules_by_version[item.file_version_id] = builtin_rule_input(item)
 
     temps: list[str] = []
     try:

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint:design": "node --experimental-strip-types scripts/design-lint.mjs && node scripts/a11y-contract.mjs",
+    "test": "node --experimental-strip-types --test src/navigation/route.test.ts src/workflow/ruleImport.test.ts src/workflow/submission.test.ts src/ui/contrast.test.ts src/ui/system/dom.test.ts scripts/design-lint.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.47.0",

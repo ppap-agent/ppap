@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, request, type QuotaEstimate} from './api'
-import {Badge, Button, FeedbackState, PageHeader} from './ui/primitives'
+import {productHref} from './navigation/route'
+import {Badge, Button, DataTable, FeedbackState, Field, FilterBar, Input, Link, Page, PageHeader, Text, Unit, type DataColumn} from './ui'
 
 interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string; user_id?: string}
 
@@ -43,41 +44,49 @@ export default function UsageView() {
 
   useEffect(() => { void load(); void loadQuota() }, [])
 
+  const columns: Array<DataColumn<Usage>> = [
+    {key: 'when', header: '时间', cell: row => dateLabel(row.created_at)},
+    {
+      key: 'points',
+      header: '用量（点）',
+      cell: row => <>{row.consumed_points.toLocaleString('zh-CN')}<Unit>点</Unit></>,
+    },
+    {
+      key: 'kind',
+      header: '类型',
+      cell: row => <Badge tone={row.is_free_trial ? 'info' : 'neutral'}>{row.is_free_trial ? '试用' : '额度'}</Badge>,
+    },
+    {key: 'user', header: '发起人', cell: row => row.user_id || '—'},
+    {
+      key: 'round',
+      header: '关联审核',
+      role: 'action',
+      cell: row => row.round_id ? <Link href={productHref({page: 'audit-round', roundId: row.round_id})}>查看审核 →</Link> : null,
+    },
+  ]
+
+  const quotaText = quota
+    ? `试用剩余 ${quota.remaining_trial_ai_points ?? '—'} 点 · ${quota.detailed_message || quota.message || (quota.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用')}`
+    : '正在读取额度…'
+
   return (
-    <section className="page-content usage-page">
+    <Page>
       <PageHeader title="用量记录" description="查看审核消耗、试用额度和关联审核。" />
       {quotaError
         ? <FeedbackState tone="notice" inline title="额度状态暂不可用" detail={quotaError} testId="quota-summary" />
-        : <p className="scope-note" data-testid="quota-summary">{quota ? `试用剩余 ${quota.remaining_trial_ai_points ?? '—'} 点 · ${quota.detailed_message || quota.message || (quota.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用')}` : '正在读取额度…'}</p>}
+        : <Text tone="muted" testId="quota-summary">{quotaText}</Text>}
       {(rows.length > 0 || since || until) && (
-        <form className="toolbar usage-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
-          <label>起始日期<input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
-          <label>截止日期<input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>
+        <FilterBar onSubmit={() => { void load() }}>
+          <Field label="起始日期"><Input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></Field>
+          <Field label="截止日期"><Input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></Field>
           <Button type="submit" disabled={busy}>查询</Button>
-        </form>
+        </FilterBar>
       )}
       {error && <FeedbackState tone="error" inline title="无法读取用量" detail={error} testId="usage-error" />}
       {busy && !rows.length && <FeedbackState tone="loading" detail="正在加载用量记录…" />}
       {!busy && !rows.length && !error && <FeedbackState title="当前范围没有用量记录" detail="有审核消耗后，用量会显示在这里。" testId="usage-empty" />}
-      {!!rows.length && (
-        <div className="table-scroll" data-testid="usage-list">
-          <table className="responsive-table usage-table">
-            <thead><tr><th>时间</th><th>用量（点）</th><th>类型</th><th>发起人</th><th><span className="sr-only">关联审核</span></th></tr></thead>
-            <tbody>
-              {rows.map(row => (
-                <tr key={row.id}>
-                  <td data-label="时间">{dateLabel(row.created_at)}</td>
-                  <td data-label="用量（点）">{row.consumed_points.toLocaleString('zh-CN')}<span className="mobile-unit">点</span></td>
-                  <td data-label="类型"><Badge tone={row.is_free_trial ? 'info' : 'neutral'}>{row.is_free_trial ? '试用' : '额度'}</Badge></td>
-                  <td data-label="发起人">{row.user_id || '—'}</td>
-                  <td className="row-action">{row.round_id && <a href={'/?round=' + row.round_id}>查看审核 →</a>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {next !== null && <Button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
-    </section>
+      {!!rows.length && <DataTable rows={rows} columns={columns} label="用量记录" testId="usage-list" />}
+      {next !== null && <Button type="button" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
+    </Page>
   )
 }

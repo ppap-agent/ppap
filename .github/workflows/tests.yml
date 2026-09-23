@@ -2,17 +2,60 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
+# push and pull_request for the same branch are different events. Keeping them
+# in one group made the later run cancel the earlier one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  web:
+    name: Web contract
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Typecheck and production build
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.30.3 --activate
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test
+          pnpm lint:design
+          pnpm build
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Set up Python
+        run: |
+          set -euo pipefail
+          uv python install 3.12
+          rm -rf .venv
+          uv venv --python 3.12 --seed .venv
+          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Web boundary tests
+        run: |
+          uv pip install -e ".[dev]"
+          python -m unittest tests.unit.test_web_boundary tests.unit.test_web_server tests.unit.test_product_experience -v
+
   test:
     runs-on: [self-hosted, linux, x64, ppap]
     timeout-minutes: 10
@@ -117,7 +160,7 @@ jobs:
             compose down -v --remove-orphans || true
             exit 1
           fi
-          python -m unittest tests.e2e.test_web_audit -v
+          python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
           compose down -v --remove-orphans
 
   schema:
@@ -141,6 +184,23 @@ jobs:
           rm -rf .venv
           uv venv --python 3.12 --seed .venv
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Ensure PostgreSQL client
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              if sudo apt-get -o Acquire::Retries=5 update \
+                && sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends postgresql-client; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "apt could not install postgresql-client" >&2
+                exit 1
+              fi
+              sleep $((attempt * 4))
+            done
+          fi
+          command -v psql
       - name: Empty and previous schema upgrade
         run: |
           set -euo pipefail

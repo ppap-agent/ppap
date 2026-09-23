@@ -5,26 +5,28 @@ import Workbench from './Workbench'
 import HistoryView from './HistoryView'
 import RulesView from './RulesView'
 import UsageView from './UsageView'
+import {isTenantDenied, parseProductRoute, productHref, shellPath} from './navigation/route'
 import AppShell, {navigationTitle} from './ui/AppShell'
+import {Button, Callout, Link, Page, PageHeader} from './ui'
 
-const page = location.pathname.replace(/\/$/, '') || '/'
+const route = parseProductRoute(location.pathname, location.search)
 
 export default function App() {
-  const [reviewing, setReviewing] = useState(page === '/' && new URLSearchParams(location.search).has('round'))
-  const activePath = reviewing ? '/audit-files' : page
+  const [reviewing, setReviewing] = useState(route.page === 'audit-round')
+  const activePath = shellPath(route, reviewing)
   const title = useMemo(() => navigationTitle(activePath), [activePath])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   const [user, setUser] = useState('')
   const [loginUrl, setLoginUrl] = useState('#')
   const [development, setDevelopment] = useState(false)
-  const tenantDenied = new URLSearchParams(location.search).get('error') === 'tenant_not_allowed'
-  const devPage = page === '/dev'
+  const tenantDenied = isTenantDenied(location.search)
+  const devPage = route.page === 'dev'
 
   useEffect(() => {
     if (!tenantDenied) return
     document.cookie = 'ppap_edition=; Path=/; Max-Age=0; SameSite=Lax'
-    location.replace('/')
+    location.replace(productHref({page: 'audit-new'}))
   }, [tenantDenied])
 
   useEffect(() => {
@@ -61,35 +63,31 @@ export default function App() {
   async function devLogin() {
     try {
       await request('/isolated-dev/sessions', 'POST', {subject: 'alice'})
-      location.href = '/'
+      location.href = productHref({page: 'audit-new'})
     } catch { setError('无法创建本地测试会话。') }
   }
 
   return (
     <AppShell activePath={activePath} title={title} user={user} onLogout={() => void logout()}>
-      {tenantDenied && <p className="error" role="alert">无法使用此入口。</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-      {!ready && !error && <p className="loading-state" role="status">正在连接…</p>}
+      <Page>
+      {tenantDenied && <Callout tone="error">无法使用此入口。</Callout>}
+      {error && <Callout tone="error">{error}</Callout>}
+      {!ready && !error && <Callout tone="loading">正在连接…</Callout>}
       {ready && devPage && (
-        <section className="empty-state">
-          {development
-            ? <><h2>本地测试身份</h2><button type="button" className="pc-primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</button></>
-            : <p>此入口不可用。</p>}
-        </section>
+        development
+          ? <PageHeader title="本地测试身份" actions={<Button type="button" variant="primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</Button>} />
+          : <PageHeader title="此入口不可用" />
       )}
       {ready && !devPage && !user && (
-        <section className="sign-in">
-          <h2>登录后开始审核</h2>
-          <p className="pc-muted">使用飞书账号访问你的资料与审核结果。</p>
-          <a className="button pc-primary" href={loginUrl}>登录飞书</a>
-        </section>
+        <PageHeader title="登录后开始审核" description="使用飞书账号访问你的资料与审核结果。" actions={<Link href={loginUrl} variant="primary">登录飞书</Link>} />
       )}
       {ready && !devPage && !!user && (
-        page === '/audit-files' ? <HistoryView />
-          : page === '/rules' ? <RulesView />
-            : page === '/usage' ? <UsageView />
+        route.page === 'audit-history' ? <HistoryView />
+          : route.page === 'rule-library' || route.page === 'rule-detail' || route.page === 'rule-import' ? <RulesView />
+            : route.page === 'usage' ? <UsageView />
               : <Workbench onReviewing={setReviewing} />
       )}
+      </Page>
     </AppShell>
   )
 }

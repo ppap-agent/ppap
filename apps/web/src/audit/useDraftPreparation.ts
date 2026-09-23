@@ -13,6 +13,8 @@ import {
   type Rule,
 } from '../api'
 import {latestRules} from '../helpers'
+import {parseProductRoute, productHref} from '../navigation/route'
+import {beginDraftAccept, beginDraftSave, finishDraft, type DraftPhase} from '../workflow/submission'
 
 type Action = (work: () => Promise<void>) => Promise<void>
 
@@ -37,8 +39,9 @@ export function useDraftPreparation({
 }) {
   const [items, setItems] = useState<Material[]>([])
   const [rules, setRules] = useState<Rule[]>([])
-  const [draftId, setDraftId] = useState(new URLSearchParams(location.search).get('draft') || '')
-  const [predecessorId, setPredecessorId] = useState(new URLSearchParams(location.search).get('from') || '')
+  const initialRoute = parseProductRoute(location.pathname, location.search)
+  const [draftId, setDraftId] = useState(initialRoute.page === 'audit-new' ? initialRoute.draftId || '' : '')
+  const [predecessorId, setPredecessorId] = useState(initialRoute.page === 'audit-new' ? initialRoute.fromRoundId || '' : '')
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [draftNext, setDraftNext] = useState<number | null>(null)
   const [draftLoading, setDraftLoading] = useState(false)
@@ -47,11 +50,13 @@ export function useDraftPreparation({
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('standard')
   const [estimate, setEstimate] = useState<QuotaEstimate | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [draftPhase, setDraftPhase] = useState<DraftPhase>('idle')
 
   const itemsRef = useRef(items)
   const draftIdRef = useRef(draftId)
   const predecessorIdRef = useRef(predecessorId)
   const analysisModeRef = useRef(analysisMode)
+  const draftPhaseRef = useRef<DraftPhase>('idle')
   const disposed = useRef(false)
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
 
@@ -97,13 +102,12 @@ export function useDraftPreparation({
     timers.current.add(timer)
   }
 
-  function replaceQuery(values: Record<string, string | null>) {
-    const url = new URL(location.href)
-    for (const [key, value] of Object.entries(values)) {
-      if (value) url.searchParams.set(key, value)
-      else url.searchParams.delete(key)
-    }
-    history.replaceState(null, '', url)
+  function showDraft(id: string) {
+    history.replaceState(null, '', productHref({
+      page: 'audit-new',
+      draftId: id,
+      fromRoundId: predecessorIdRef.current || undefined,
+    }))
   }
 
   async function ensureRules() {
@@ -111,7 +115,20 @@ export function useDraftPreparation({
     setRules((await request<{rules: Rule[]}>('/rules')).rules)
   }
 
-  async function saveDraft(list = itemsRef.current) {
+  function claimDraft(next: DraftPhase | null) {
+    if (!next || next === draftPhaseRef.current) return false
+    draftPhaseRef.current = next
+    setDraftPhase(next)
+    return true
+  }
+
+  function releaseDraft() {
+    const next = finishDraft(draftPhaseRef.current)
+    draftPhaseRef.current = next
+    setDraftPhase(next)
+  }
+
+  async function persistDraft(list = itemsRef.current) {
     let id = draftIdRef.current
     if (!id) {
       id = (await request<{id: string}>('/drafts', 'POST', {predecessor_id: predecessorIdRef.current || null})).id
@@ -122,7 +139,17 @@ export function useDraftPreparation({
     await request(`/drafts/${id}`, 'PUT', snapshot)
     const serialized = JSON.stringify(snapshot)
     setSavedDraft(serialized)
-    replaceQuery({draft: id, round: null, from: predecessorIdRef.current || null})
+    showDraft(id)
+  }
+
+  async function saveDraft(list = itemsRef.current) {
+    if (!claimDraft(beginDraftSave(draftPhaseRef.current))) return false
+    try {
+      await persistDraft(list)
+      return true
+    } finally {
+      if (draftPhaseRef.current === 'saving') releaseDraft()
+    }
   }
 
   async function readAnalysis(versionId: string, id: string) {
@@ -206,18 +233,25 @@ export function useDraftPreparation({
   }
 
   async function acceptDraft() {
-    await saveDraft()
-    const key = `ppap-idempotency-${draftIdRef.current}`
-    const idempotencyKey = sessionStorage.getItem(key) || crypto.randomUUID()
-    sessionStorage.setItem(key, idempotencyKey)
-    const result = await request<Round>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
-      idempotency_key: idempotencyKey,
-      predecessor_id: predecessorIdRef.current || null,
-    })
-    replaceQuery({round: result.id, draft: null, from: null})
-    setPredecessorId('')
-    predecessorIdRef.current = ''
-    return result
+    if (!claimDraft(beginDraftAccept(draftPhaseRef.current))) {
+      throw new Error('草稿正在保存，请稍后再提交。')
+    }
+    try {
+      await persistDraft()
+      const key = `ppap-idempotency-${draftIdRef.current}`
+      const idempotencyKey = sessionStorage.getItem(key) || crypto.randomUUID()
+      sessionStorage.setItem(key, idempotencyKey)
+      const result = await request<Round>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
+        idempotency_key: idempotencyKey,
+        predecessor_id: predecessorIdRef.current || null,
+      })
+      history.replaceState(null, '', productHref({page: 'audit-round', roundId: result.id}))
+      setPredecessorId('')
+      predecessorIdRef.current = ''
+      return result
+    } finally {
+      releaseDraft()
+    }
   }
 
   async function startReaudit(current: Round) {
@@ -239,11 +273,10 @@ export function useDraftPreparation({
   async function openRules(item?: Material) {
     await action(async () => {
       if (itemsRef.current.length) await saveDraft()
-      const next = new URLSearchParams()
-      if (draftIdRef.current) next.set('return_to', '/?draft=' + draftIdRef.current)
-      if (item?.rule_version_id) next.set('rule', item.rule_version_id)
-      else next.set('new', '1')
-      location.href = '/rules?' + next
+      const returnTo = draftIdRef.current ? {page: 'audit-new' as const, draftId: draftIdRef.current} : undefined
+      location.href = productHref(item?.rule_version_id
+        ? {page: 'rule-detail', ruleId: item.rule_version_id, returnTo}
+        : {page: 'rule-import', returnTo})
     })
   }
 
@@ -325,6 +358,7 @@ export function useDraftPreparation({
     analysisMode,
     estimate,
     dragActive,
+    draftPhase,
     draftDirty,
     targetCount,
     missingRules,

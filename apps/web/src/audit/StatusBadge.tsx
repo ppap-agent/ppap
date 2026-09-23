@@ -1,6 +1,8 @@
 import type {HTMLAttributes} from 'react'
 import {executionLabels, resultLabels, type Finding} from '../api'
-import {Badge, type BadgeTone} from '../ui/primitives'
+import {Badge, type BadgeTone, type Sealed} from '../ui/primitives'
+
+type BadgePassthrough = Sealed<HTMLAttributes<HTMLSpanElement>>
 
 function executionTone(execution: string): BadgeTone {
   if (execution === 'failed') return 'danger'
@@ -15,7 +17,7 @@ function findingTone(status: Finding['status']): BadgeTone {
   return 'danger'
 }
 
-export function ExecutionBadge({execution, ...props}: {execution: string} & HTMLAttributes<HTMLSpanElement>) {
+export function ExecutionBadge({execution, ...props}: {execution: string} & BadgePassthrough) {
   return <Badge tone={executionTone(execution)} {...props}>{executionLabels[execution] || execution}</Badge>
 }
 
@@ -26,6 +28,6 @@ export function FindingBadge({
 }: {
   status: Finding['status']
   prefix?: string
-} & HTMLAttributes<HTMLSpanElement>) {
+} & BadgePassthrough) {
   return <Badge tone={findingTone(status)} {...props}>{prefix ? prefix + ' · ' : ''}{resultLabels[status]}</Badge>
 }
