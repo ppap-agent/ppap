@@ -72,6 +72,23 @@ function collectNames(value, prefix = '', out = new Set()) {
 export const tokenNames = collectNames(tokens)
 collectNames(moreContrast, '', tokenNames)
 
+const ruleHelp = {
+  'no-raw-layout': 'use PPAP layout primitives such as Box, Stack, Inline, Grid, Page, or a semantic system component',
+  'no-raw-controls': 'use PPAP controls such as Button, Link, Input, Select, Textarea, Checkbox, or FileInput',
+  'no-classname': 'express the design intent through typed PPAP UI props instead of className',
+  'no-inline-style': 'express the design intent through typed PPAP UI props instead of inline style',
+  'no-direct-styling-backend': 'import from the public ../ui surface; feature code must not reach ui/system or CSS directly',
+  'no-design-literals': 'use a named PPAP design token or typed UI prop instead of an arbitrary visual value',
+  'no-raw-icon-size': 'use the PPAP Icon component with size="sm" | "md" | "lg"',
+  'no-feature-css': 'move reusable styling into the PPAP UI system instead of a feature stylesheet',
+  'no-legacy-alias': 'migrate the caller to the current PPAP UI vocabulary; legacy --pc-* / --ui-* aliases are retired',
+}
+
+export function explainFailure(failure) {
+  const code = Object.keys(ruleHelp).find(rule => failure.includes(rule))
+  return code ? `${failure} — ${ruleHelp[code]}` : failure
+}
+
 export function lintSource(source) {
   const violations = []
   if (/\bclassName\s*=/.test(source) || /\bclassName\s*:/.test(source)) violations.push('no-classname')
@@ -359,7 +376,7 @@ export function lintTree(root = webRoot) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const failures = lintTree()
   if (failures.length) {
-    console.error(failures.join('\n'))
+    console.error(failures.map(explainFailure).join('\n'))
     process.exit(1)
   }
 }
