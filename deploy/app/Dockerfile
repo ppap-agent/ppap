@@ -1,5 +1,16 @@
 FROM python:3.12-slim-bookworm AS converter-builder
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+RUN set -eux; \
+    i=1; \
+    while [ "$i" -le 5 ]; do \
+      if apt-get -o Acquire::Retries=5 update \
+        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends gcc libc6-dev; then \
+        break; \
+      fi; \
+      if [ "$i" -eq 5 ]; then exit 1; fi; \
+      sleep $((i * 3)); \
+      i=$((i + 1)); \
+    done; \
+    rm -rf /var/lib/apt/lists/*
 COPY packages/ppap_docops/native/legacy_doc_sandbox.c /tmp/legacy_doc_sandbox.c
 RUN gcc -O2 -Wall -Wextra -Werror /tmp/legacy_doc_sandbox.c -o /usr/local/bin/ppap-local-converter-sandbox
 
