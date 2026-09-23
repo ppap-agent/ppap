@@ -4,10 +4,10 @@ import brandIcon from '../assets/brand.svg'
 import filesIcon from '../assets/files.svg'
 import rulesIcon from '../assets/rules.svg'
 import usageIcon from '../assets/usage.svg'
-import {AccountMenu, AppBody, AppFrame, BrandLink, EditionBanner, Link, Main, MobileBar, MobileContext, PrimaryNav, Sidebar, SidebarBrand, SkipLink, VisuallyHidden} from './index'
+import {AccountMenu, AppBody, AppFrame, BrandLink, EditionBanner, Icon, Link, Main, MobileBar, MobileContext, PrimaryNav, Sidebar, SidebarBrand, SkipLink} from './index'
 
 export const navigation = [
-  {path: '/', label: '新建审核', testId: 'nav-home', icon: <CirclePlus size={20} aria-hidden="true" />},
+  {path: '/', label: '新建审核', testId: 'nav-home', icon: <Icon icon={CirclePlus} size="lg" />},
   {path: '/audit-files', label: '审核结果', testId: 'nav-audit-files', icon: <img src={filesIcon} alt="" width={20} height={20} />},
   {path: '/rules', label: '规则库', testId: 'nav-rules', icon: <img src={rulesIcon} alt="" width={20} height={20} />},
   {path: '/usage', label: '用量记录', testId: 'nav-usage', secondary: true, icon: <img src={usageIcon} alt="" width={20} height={20} />},
@@ -52,10 +52,7 @@ export default function AppShell({
           <PrimaryNav activePath={activePath} items={navigation} />
           {user ? <AccountMenu user={user} onLogout={onLogout} /> : null}
         </Sidebar>
-        <Main>
-          <VisuallyHidden as="h1">{title}</VisuallyHidden>
-          {children}
-        </Main>
+        <Main>{children}</Main>
       </AppBody>
     </AppFrame>
   )

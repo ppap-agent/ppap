@@ -1,4 +1,4 @@
-import {tokens} from '../tokens'
+import {moreContrast, tokens} from '../tokens'
 
 function declarations(prefix: string, value: unknown, out: string[]) {
   if (typeof value === 'string') {
@@ -11,12 +11,12 @@ function declarations(prefix: string, value: unknown, out: string[]) {
   }
 }
 
-const moreContrast = `@media (prefers-contrast: more){:root{--color-border-default:#8a93a3;--color-border-strong:#70798a;--color-text-primary:#121826;--color-text-secondary:#303a49;--color-text-muted:#3d4654}}`
-
 export function tokenStyleSheet() {
   const lines: string[] = []
+  const contrast: string[] = []
   declarations('', tokens, lines)
-  return `:root{${lines.join(';')}}${moreContrast}`
+  declarations('', moreContrast, contrast)
+  return `:root{${lines.join(';')}}@media (prefers-contrast: more){:root{${contrast.join(';')}}}`
 }
 
 export function installTokens() {

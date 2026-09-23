@@ -21,6 +21,8 @@ export type RuleImportState<C> =
   | {kind: 'failed'; jobId?: string; documentType: string; source?: ImportSource; message: string}
   | {kind: 'reviewing'; jobId?: string; documentType: string; source?: ImportSource; candidate: C; leavePrompt: boolean; message: string}
   | {kind: 'publishing'; jobId?: string; documentType: string; source?: ImportSource; candidate: C; leaveAfter: boolean}
+  | {kind: 'saved'; ruleId: string; destination?: string; documentType: string; source?: ImportSource; candidate: C}
+  | {kind: 'abandoned'}
 
 export const UNKNOWN_PARSE_MESSAGE = '解析结果暂不确定，请稍后刷新查看，不要重复提交。原任务可能仍会完成，再次解析可能再次消耗模型费用。'
 
@@ -30,7 +32,7 @@ export type RuleImportEvent<C> =
   | {type: 'upload-failed'; message: string}
   | {type: 'catalog-failed'; message: string}
   | {type: 'begin-parse'; jobId: string; source?: ImportSource; documentType?: string}
-  | {type: 'record-source'; source?: ImportSource; documentType?: string}
+  | {type: 'record-source'; jobId: string; source?: ImportSource; documentType?: string}
   | {type: 'observed'; job: ImportJob<C>}
   | {type: 'read-back'}
   | {type: 'begin-rerun'}
@@ -38,15 +40,22 @@ export type RuleImportEvent<C> =
   | {type: 'prompt-leave'}
   | {type: 'dismiss-leave'}
   | {type: 'begin-publish'; leaveAfter: boolean}
+  | {type: 'publish-succeeded'; ruleId: string; destination?: string}
   | {type: 'publish-failed'; message: string}
+  | {type: 'abandon'}
 
 function sourceOf<C>(state: RuleImportState<C>) {
-  return state.kind === 'idle' ? undefined : state.source
+  return state.kind === 'idle' || state.kind === 'abandoned' ? undefined : state.source
+}
+
+/** Unsaved candidate or an in-flight publish still owns the page. A saved or abandoned import does not. */
+export function importGuarded<C>(state: RuleImportState<C>) {
+  return state.kind === 'reviewing' || state.kind === 'publishing'
 }
 
 export function ruleImportReducer<C>(state: RuleImportState<C>, event: RuleImportEvent<C>): RuleImportState<C> {
   if (event.type === 'set-type') {
-    if (state.kind === 'uploading' || state.kind === 'parsing' || state.kind === 'publishing') return state
+    if (state.kind === 'uploading' || state.kind === 'parsing' || state.kind === 'publishing' || state.kind === 'saved' || state.kind === 'abandoned') return state
     return {...state, documentType: event.documentType}
   }
   if (event.type === 'begin-upload') {
@@ -72,11 +81,11 @@ export function ruleImportReducer<C>(state: RuleImportState<C>, event: RuleImpor
     }
   }
   if (event.type === 'record-source') {
-    if (state.kind === 'idle' || state.kind === 'uploading') return state
+    if (state.kind !== 'parsing' || state.jobId !== event.jobId) return state
     return {...state, documentType: event.documentType ?? state.documentType, source: event.source ?? state.source}
   }
   if (event.type === 'observed') {
-    if (state.kind !== 'parsing') return state
+    if (state.kind !== 'parsing' || event.job.id !== state.jobId) return state
     const job = event.job
     if (job.status === 'succeeded' && job.result) {
       return {kind: 'reviewing', jobId: state.jobId, documentType: state.documentType, source: state.source, candidate: job.result, leavePrompt: false, message: ''}
@@ -115,9 +124,17 @@ export function ruleImportReducer<C>(state: RuleImportState<C>, event: RuleImpor
     if (state.kind !== 'reviewing') return state
     return {kind: 'publishing', jobId: state.jobId, documentType: state.documentType, source: state.source, candidate: state.candidate, leaveAfter: event.leaveAfter}
   }
+  if (event.type === 'publish-succeeded') {
+    if (state.kind !== 'publishing') return state
+    return {kind: 'saved', ruleId: event.ruleId, destination: event.destination, documentType: state.documentType, source: state.source, candidate: state.candidate}
+  }
   if (event.type === 'publish-failed') {
     if (state.kind !== 'publishing') return state
     return {kind: 'reviewing', jobId: state.jobId, documentType: state.documentType, source: state.source, candidate: state.candidate, leavePrompt: state.leaveAfter, message: event.message}
+  }
+  if (event.type === 'abandon') {
+    if (state.kind !== 'reviewing') return state
+    return {kind: 'abandoned'}
   }
   return state
 }

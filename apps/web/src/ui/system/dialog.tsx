@@ -1,6 +1,7 @@
 import {useEffect, useId, useRef, type ReactNode} from 'react'
 import {X} from 'lucide-react'
 import {IconButton} from './controls'
+import {Icon} from './icons'
 
 export function Modal({title, busy, onClose, children}: {title: string; busy?: boolean; onClose: () => void; children: ReactNode}) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -15,7 +16,7 @@ export function Modal({title, busy, onClose, children}: {title: string; busy?: b
     <dialog ref={dialog} data-ui="modal" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); if (!busy) onClose() }}>
       <header data-ui="modal-heading">
         <h2 id={titleId}>{title}</h2>
-        <IconButton label="关闭" disabled={busy} onClick={onClose}><X size={20} aria-hidden="true" /></IconButton>
+        <IconButton label="关闭" disabled={busy} onClick={onClose}><Icon icon={X} size="lg" /></IconButton>
       </header>
       <div data-ui="modal-body">{children}</div>
     </dialog>

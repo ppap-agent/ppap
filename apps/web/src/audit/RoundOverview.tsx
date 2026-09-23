@@ -39,7 +39,7 @@ export default function RoundOverview({
       <Inline align="start" justify="between" wrap gap="lg">
         <Stack gap="xs">
           <Link href={productHref({page: 'audit-history'})} data-testid="open-history">← 审核结果</Link>
-          <Heading level={2}>{title}</Heading>
+          <Heading level={1}>{title}</Heading>
           <Inline gap="sm" wrap>
             <ExecutionBadge execution={round.execution} />
             {round.analysis_mode === 'deep' && <Badge tone="info" data-testid="round-analysis-mode">{analysisModeLabels.deep}</Badge>}

@@ -3,7 +3,7 @@ import {Search} from 'lucide-react'
 import {type Finding} from '../api'
 import {reviewJudgments} from '../helpers'
 import Help from '../Help'
-import {Badge, Button, Evidence, Field, FindingArticle, Heading, Inline, Input, LockedFields, ReviewForm, Text, Textarea, Toggle, ToggleRow} from '../ui'
+import {Badge, Button, Evidence, Field, FindingArticle, Heading, Icon, Inline, Input, LockedFields, ReviewForm, Text, Textarea, Toggle, ToggleRow} from '../ui'
 import {FindingBadge} from './StatusBadge'
 
 export interface ReviewDraft {
@@ -73,7 +73,7 @@ export default function FindingReview({
       <Evidence testId="finding-evidence">
         <Text>{finding.locator?.locator || <Badge tone="warning" data-testid="locator-gap">定位线索 · 待核实</Badge>}</Text>
         <Button type="button" variant="ghost" size="sm" onClick={onFindEvidence}>
-          <Search size={16} aria-hidden="true" />在原件中查找
+          <Icon icon={Search} size="sm" />在原件中查找
         </Button>
       </Evidence>
 

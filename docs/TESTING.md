@@ -19,7 +19,7 @@
 
 ## 当前可运行入口
 
-Web 合并契约分两段。类型、生产构建和前端边界不依赖 Docker；代表性浏览器路径仍是 isolated-dev 上的 `tests.e2e.test_web_audit`。CI 里它们分别是 `Web contract` 与 `e2e`。`push` 和 `pull_request` 使用不同的 concurrency group，同一 head 不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入、草稿提交和复核保存的合法转移在 `pnpm test`，E2E 不复制这些排列组合。`pnpm lint:design` 对 feature 代码硬失败：原始布局、原始控件、className、inline style、直接引用样式后端、feature CSS、设计字面量。对比度在 `pnpm test`。桌面/平板/手机、键盘、焦点、触控目标和减少动效的样式契约在同一条 lint；浏览器里的键盘、焦点、视口和减少动效在 `tests.e2e.test_ui_a11y`。样式只从 `src/ui/system` 进入。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。
+Web 合并契约分两段。类型、生产构建和前端边界不依赖 Docker；代表性浏览器路径在 isolated-dev 上。CI 里它们分别是 `Web contract` 与 `e2e`。`push` 只在 `main` 上触发，功能分支只由 `pull_request` 跑完整测试，避免同一次提交跑两遍；两种事件仍使用不同的 concurrency group，不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入 reducer 的合法转移在 `pnpm test`。CI 的 `e2e` 同时跑 `tests.e2e.test_web_audit`、`tests.e2e.test_ui_a11y`、`tests.e2e.test_rules` 和 `tests.e2e.test_rule_interactions`。`pnpm lint:design` 对 feature 代码硬失败：原始布局、原始控件、className、inline style、对象上的 style、直接引用 `ui/system`、数字图标尺寸、feature CSS、设计字面量。系统样式层的颜色、间距、字体、圆角和阴影必须引用 `tokens.ts` 里的 token；具体值只允许写在 token 定义处。负向样例在 `scripts/design-lint.test.mjs`，类型层的样式和 `type` 后门在 `src/ui/system/escape.contract.tsx`。对比度包含高对比调色板，在 `pnpm test`。桌面/平板/手机、键盘、焦点、触控目标和减少动效的源码契约在同一条 lint。浏览器里的键盘、焦点、视口、减少动效和粗指针计算样式在 `tests.e2e.test_ui_a11y`（含规则编辑）；审核复核的键盘与单一 H1 在 `tests.e2e.test_web_audit`。样式只从 `src/ui/system` 进入。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。
 
 ```sh
 cd apps/web

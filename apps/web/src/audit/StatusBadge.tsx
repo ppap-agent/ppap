@@ -1,8 +1,8 @@
 import type {HTMLAttributes} from 'react'
 import {executionLabels, resultLabels, type Finding} from '../api'
-import {Badge, type BadgeTone} from '../ui/primitives'
+import {Badge, type BadgeTone, type Sealed} from '../ui/primitives'
 
-type BadgePassthrough = Omit<HTMLAttributes<HTMLSpanElement>, 'className' | 'style' | 'color'>
+type BadgePassthrough = Sealed<HTMLAttributes<HTMLSpanElement>>
 
 function executionTone(execution: string): BadgeTone {
   if (execution === 'failed') return 'danger'

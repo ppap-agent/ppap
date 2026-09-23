@@ -14,7 +14,7 @@ import {useDraftPreparation} from './audit/useDraftPreparation'
 import {useRoundReview} from './audit/useRoundReview'
 import {useUnsavedGuard} from './audit/useUnsavedGuard'
 import {ArrowLeft, ArrowRight, X} from 'lucide-react'
-import {ActionBar, Badge, Button, Callout, DraftLink, Dropzone, FeedbackState, Field, FileInput, FindingContext, Heading, IconButton, Inline, Input, Link, Material as MaterialRow, Page, Pane, Region, Resizer, Select, Stack, Text, Toggle, ToggleRow, VisuallyHidden, Workspace} from './ui'
+import {ActionBar, Badge, Button, Callout, DraftLink, Dropzone, FeedbackState, Field, FileInput, FindingContext, Heading, Icon, IconButton, Inline, Input, Link, Material as MaterialRow, Page, Pane, Region, Resizer, Select, Stack, Text, Toggle, ToggleRow, VisuallyHidden, Workspace} from './ui'
 
 const filters = [{id: 'attention', label: '需关注'}, {id: 'unreviewed', label: '未记录'}, {id: '', label: '全部'}, {id: 'PASS', label: '通过'}]
 
@@ -234,7 +234,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
           <Stack gap="md">
             {!items.length && (
               <Dropzone active={dragActive} onDragOver={event => { event.preventDefault(); setDragActive(true) }} onDragLeave={event => { event.preventDefault(); setDragActive(false) }} onDrop={event => { event.preventDefault(); void dropped(event) }}>
-                <Heading level={2}>添加待审资料</Heading>
+                <Heading level={1}>添加待审资料</Heading>
                 <Text tone="muted">拖入文件，或选择本地资料</Text>
                 <FileInput label="选择文件" variant="primary" multiple disabled={busy} aria-label="选择待审文件" data-testid="source-upload" onChange={event => void addFiles(event, 'target')} />
                 <Text as="small" tone="muted">Excel、Word、PDF · 单份最大 64 MB</Text>
@@ -249,7 +249,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
           {(items.length || draftDirty) && (
             <Region id="draft-items" testId="draft-items">
               <Inline justify="between" align="center">
-                <Heading level={2}>本次资料 {items.length}</Heading>
+                <Heading level={items.length ? 1 : 2}>本次资料 {items.length}</Heading>
                 <Button type="button" variant="ghost" disabled={busy} onClick={() => void openRules()}>上传客户规则</Button>
               </Inline>
               {items.map(item => (
@@ -283,7 +283,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                       {!item.rule_version_id && <Text size="sm" tone="muted">{matchingHelp(item)}</Text>}
                     </Stack>
                   ) : <Text tone="muted">仅作参考，不单独检查</Text>}
-                  <IconButton label={'移除 ' + item.original_filename} disabled={busy} onClick={() => removeItem(item.file_version_id)}><X size={18} aria-hidden="true" /></IconButton>
+                  <IconButton label={'移除 ' + item.original_filename} disabled={busy} onClick={() => removeItem(item.file_version_id)}><Icon icon={X} size="md" /></IconButton>
                 </MaterialRow>
               ))}
               {!!targetCount && <Inline gap="xs" align="center"><Text size="sm">所选规则条目即本轮机审清单</Text><Help title="审核范围"><Text>受理后冻结所选规则版本和条目。能映射到内置检查的条目给出 PASS/NG/ERR；不能自动执行的条目进入未覆盖，需人工核对。不会改成另一套内置清单。</Text></Help></Inline>}
@@ -381,8 +381,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                           {!findings.some(item => item.item_key === selectedKey) && <option value="" disabled>当前项已保存，可继续下一项</option>}
                           {findings.map((finding, index) => <option key={finding.item_key} value={finding.item_key}>{index + 1}. {finding.item} · {resultLabels[finding.status]}{finding.classification ? ' · ' + finding.classification : ''}{finding.priority ? ' · ' + finding.priority : ''}{finding.review ? ' · 已记录' : ''}</option>)}
                         </Select>
-                        <IconButton label="上一检查项" disabled={busy || findingIndex <= 0} onClick={() => nextFinding(-1)}><ArrowLeft size={18} aria-hidden="true" /></IconButton>
-                        <IconButton label="下一检查项" disabled={busy || findingIndex >= findings.length - 1} onClick={() => nextFinding()}><ArrowRight size={18} aria-hidden="true" /></IconButton>
+                        <IconButton label="上一检查项" disabled={busy || findingIndex <= 0} onClick={() => nextFinding(-1)}><Icon icon={ArrowLeft} size="md" /></IconButton>
+                        <IconButton label="下一检查项" disabled={busy || findingIndex >= findings.length - 1} onClick={() => nextFinding()}><Icon icon={ArrowRight} size="md" /></IconButton>
                       </Inline>
                     )}
                     {!!unsupported.length && (

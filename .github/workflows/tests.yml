@@ -2,6 +2,7 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -159,7 +160,7 @@ jobs:
             compose down -v --remove-orphans || true
             exit 1
           fi
-          python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y -v
+          python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
           compose down -v --remove-orphans
 
   schema:

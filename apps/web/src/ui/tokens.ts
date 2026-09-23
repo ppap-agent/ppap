@@ -62,7 +62,14 @@ export const radius = {
 } as const
 
 export const font = {
-  family: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+  family: {
+    sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+    mono: 'ui-monospace, monospace',
+  },
+  tracking: {
+    normal: '0em',
+    tight: '-0.02em',
+  },
   size: {
     xs: '11px',
     sm: '12px',
@@ -110,6 +117,21 @@ export const size = {
   page: '1400px',
 } as const
 
+/** Stronger text and border values for prefers-contrast. Names match the base color tokens they replace. */
+export const moreContrast = {
+  color: {
+    border: {
+      default: '#8a93a3',
+      strong: '#70798a',
+    },
+    text: {
+      primary: '#121826',
+      secondary: '#303a49',
+      muted: '#3d4654',
+    },
+  },
+} as const
+
 export const tokens = {color, space, radius, font, shadow, control, size} as const
 
 /** Text/background pairs that must stay at least WCAG AA for body text. */
@@ -124,6 +146,11 @@ export const contrastPairs = [
   ['color.status.success', 'color.status.successSoft'],
   ['color.status.warning', 'color.status.warningSoft'],
   ['color.status.danger', 'color.status.dangerSoft'],
+  ['moreContrast.color.text.primary', 'color.background.surface'],
+  ['moreContrast.color.text.secondary', 'color.background.surface'],
+  ['moreContrast.color.text.muted', 'color.background.surface'],
+  ['moreContrast.color.text.primary', 'color.background.canvas'],
+  ['moreContrast.color.text.muted', 'color.background.canvas'],
 ] as const
 
 export type Space = keyof typeof space

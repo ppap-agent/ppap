@@ -4,7 +4,7 @@ import Help from '../Help'
 import Modal from '../Modal'
 import {productHref, type ReturnTarget} from '../navigation/route'
 import {ActionBar, Badge, Button, Callout, FeedbackState, Field, FileInput, Heading, Inline, Input, Link, LockedFields, Page, ReportBlock, Select, Stack, Text, Textarea} from '../ui'
-import {importBusy, ruleImportReducer, type RuleImportEvent, type RuleImportState} from '../workflow/ruleImport'
+import {importBusy, importGuarded, ruleImportReducer, type RuleImportEvent, type RuleImportState} from '../workflow/ruleImport'
 import type {RuleCandidate as Candidate, RuleDetail as Detail} from './types'
 
 function sourceMaterial(source: {file_id: string; file_version_id: string; original_filename: string} | undefined): Material | undefined {
@@ -36,8 +36,8 @@ export default function RuleImport({
 
   const backHref = productHref({page: 'rule-library', returnTo})
   const busy = importBusy(state)
-  const candidate = state.kind === 'reviewing' || state.kind === 'publishing' ? state.candidate : null
-  const source = sourceMaterial(state.kind === 'idle' ? undefined : state.source)
+  const candidate = state.kind === 'reviewing' || state.kind === 'publishing' || state.kind === 'saved' ? state.candidate : null
+  const source = sourceMaterial('source' in state ? state.source : undefined)
   const error = state.kind === 'failed' || state.kind === 'unknown' || state.kind === 'reviewing' ? state.message : ''
   const jobId = 'jobId' in state ? state.jobId : ''
   const leavePrompt = state.kind === 'reviewing' && state.leavePrompt
@@ -46,7 +46,7 @@ export default function RuleImport({
     disposed.current = false
     function guardLeave(event: BeforeUnloadEvent) {
       const current = stateRef.current
-      if (current.kind === 'reviewing' || current.kind === 'publishing') {
+      if (importGuarded(current)) {
         event.preventDefault()
         event.returnValue = ''
       }
@@ -148,7 +148,7 @@ export default function RuleImport({
       const source = job.source_file_id && job.source_file_version_id
         ? {file_id: job.source_file_id, file_version_id: job.source_file_version_id, original_filename: '规则原件'}
         : undefined
-      send({type: 'record-source', source, documentType: job.document_type})
+      send({type: 'record-source', jobId: id, source, documentType: job.document_type})
       observe(id, job)
     } catch {
       send({type: 'observed', job: {id, status: 'failed', error: '无法读取解析任务，请稍后重新读取。'}})
@@ -180,8 +180,10 @@ export default function RuleImport({
     if (publishing === previous || publishing.kind !== 'publishing') return
     try {
       const result = await request<Detail>('/rules', 'POST', {...publishing.candidate, predecessor_id: predecessor || null})
-      if (destination) location.href = destination
-      else location.replace(productHref({page: 'rule-detail', ruleId: result.id, saved: true, returnTo}))
+      const href = destination || productHref({page: 'rule-detail', ruleId: result.id, saved: true, returnTo})
+      const saved = send({type: 'publish-succeeded', ruleId: result.id, destination: href})
+      if (saved.kind !== 'saved') return
+      location.href = saved.destination || href
     } catch (caught) {
       send({type: 'publish-failed', message: caught instanceof Error ? caught.message : '保存规则失败'})
     }
@@ -191,6 +193,18 @@ export default function RuleImport({
     if (busy) return
     if (stateRef.current.kind === 'reviewing') send({type: 'prompt-leave'})
     else location.href = backHref
+  }
+
+  function confirmAbandon() {
+    const next = send({type: 'abandon'})
+    if (next.kind !== 'abandoned') return
+    location.href = backHref
+  }
+
+  function openSaved() {
+    const current = stateRef.current
+    if (current.kind !== 'saved') return
+    location.href = current.destination || productHref({page: 'rule-detail', ruleId: current.ruleId, saved: true, returnTo})
   }
 
   function setScope(field: 'customers' | 'models' | 'parts', event: ChangeEvent<HTMLInputElement>) {
@@ -203,7 +217,9 @@ export default function RuleImport({
     ? state.progress === 'queued' ? '正在排队解析…' : '正在解析规则…'
     : state.kind === 'reviewing' || state.kind === 'publishing'
       ? '解析完成，请核对并保存。'
-      : ''
+      : state.kind === 'saved'
+        ? '已保存规则'
+        : ''
   const canRerun = (state.kind === 'unknown' || state.kind === 'failed') && !!state.source
   const body = candidate?.body
 
@@ -212,11 +228,11 @@ export default function RuleImport({
       {error && <Callout tone="error" id="rule-message" testId="rule-message">{error}</Callout>}
       <Button type="button" variant="ghost" data-testid="rule-back" disabled={busy} onClick={requestBack}>← 规则库</Button>
       <Inline justify="between" align="center" wrap>
-        <Heading level={2}>{candidate ? '核对规则' : predecessor ? '上传新版本' : '上传客户规则'}</Heading>
+        <Heading level={1}>{candidate ? '核对规则' : predecessor ? '上传新版本' : '上传客户规则'}</Heading>
         {candidate && <Inline gap="xs" align="center"><Badge>机审清单</Badge><Help title="客户规则用途"><Text>保存后的规则条目是审核清单。能映射到内置检查的条目会机器执行；其余条目明确标为未覆盖，需人工核对。</Text></Help></Inline>}
       </Inline>
 
-      {state.kind !== 'reviewing' && state.kind !== 'publishing' && (
+      {state.kind !== 'reviewing' && state.kind !== 'publishing' && state.kind !== 'saved' && state.kind !== 'abandoned' && (
         <LockedFields disabled={busy}>
           <Stack gap="sm">
             <Field label="文档类型">
@@ -243,7 +259,7 @@ export default function RuleImport({
       {candidate && body && (
         <Stack gap="md">
           <Field label="规则名称">
-            <Input id="rule-title" data-testid="rule-title" value={candidate.title} disabled={busy} onChange={event => edit({...candidate, title: event.target.value})} />
+            <Input id="rule-title" data-testid="rule-title" value={candidate.title} disabled={busy || state.kind === 'saved'} onChange={event => edit({...candidate, title: event.target.value})} />
           </Field>
           <Text id="rule-origin" tone="muted">{predecessor ? '基于版本' : '新规则'}</Text>
           <Stack id="rule-metadata" gap="sm">
@@ -287,7 +303,9 @@ export default function RuleImport({
           </Stack>
           <ActionBar>
             <Text tone="muted">{body.rules.length} 项客户要求</Text>
-            <Button type="button" variant="primary" data-testid="publish-rule" id="publish-rule" disabled={busy || !candidate.title.trim()} onClick={() => void publish()}>{busy ? '正在保存…' : '保存规则'}</Button>
+            {state.kind === 'saved'
+              ? <Button type="button" variant="primary" data-testid="publish-rule" id="publish-rule" onClick={openSaved}>打开已保存规则</Button>
+              : <Button type="button" variant="primary" data-testid="publish-rule" id="publish-rule" disabled={busy || !candidate.title.trim()} onClick={() => void publish()}>{busy ? '正在保存…' : '保存规则'}</Button>}
           </ActionBar>
         </Stack>
       )}
@@ -299,7 +317,7 @@ export default function RuleImport({
             {error && <Callout tone="error">{error}</Callout>}
             <Inline gap="sm" wrap>
               <Button type="button" disabled={busy} onClick={() => send({type: 'dismiss-leave'})}>继续编辑</Button>
-              <Button type="button" disabled={busy} onClick={() => { location.href = backHref }}>放弃修改</Button>
+              <Button type="button" disabled={busy} onClick={confirmAbandon}>放弃修改</Button>
               <Button type="button" variant="primary" disabled={busy || !candidate.title.trim()} onClick={() => void publish(backHref)}>{busy ? '正在保存…' : '保存并离开'}</Button>
             </Inline>
           </Stack>

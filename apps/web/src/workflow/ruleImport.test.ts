@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {ruleImportReducer, type RuleImportState} from './ruleImport.ts'
+import {importGuarded, ruleImportReducer, type RuleImportState} from './ruleImport.ts'
 
 const idle: RuleImportState<{title: string}> = {kind: 'idle', documentType: ''}
 
@@ -32,6 +32,7 @@ test('resume records source without starting another parse', () => {
   })
   const noted = ruleImportReducer(parsing, {
     type: 'record-source',
+    jobId: 'job-1',
     documentType: '控制计划',
     source: {file_id: 'f', file_version_id: 'v', original_filename: '规则原件'},
   })
@@ -68,6 +69,58 @@ test('publish failure returns to the same candidate', () => {
     assert.equal(again.leavePrompt, true)
     assert.equal(again.message, '保存规则失败')
   }
+})
+
+test('a late result from another job cannot replace the current parse', () => {
+  const sourceB = {file_id: 'file-b', file_version_id: 'version-b', original_filename: 'b.json'}
+  const parsingB = ruleImportReducer(ruleImportReducer(idle, {type: 'begin-upload'}), {
+    type: 'begin-parse',
+    jobId: 'job-b',
+    source: sourceB,
+  })
+  const lateSuccess = ruleImportReducer(parsingB, {
+    type: 'observed',
+    job: {id: 'job-a', status: 'succeeded', result: {title: '规则 A'}},
+  })
+  assert.equal(lateSuccess, parsingB)
+  const lateFailure = ruleImportReducer(parsingB, {type: 'observed', job: {id: 'job-a', status: 'failed', error: 'bad'}})
+  assert.equal(lateFailure, parsingB)
+  const lateSource = ruleImportReducer(parsingB, {
+    type: 'record-source',
+    jobId: 'job-a',
+    source: {file_id: 'file-a', file_version_id: 'version-a', original_filename: 'a.json'},
+  })
+  assert.equal(lateSource, parsingB)
+  if (parsingB.kind === 'parsing') assert.equal(parsingB.source?.file_version_id, 'version-b')
+})
+
+test('publish success clears the unsaved guard before navigation', () => {
+  const reviewing = ruleImportReducer(
+    ruleImportReducer(ruleImportReducer(idle, {type: 'begin-upload'}), {type: 'begin-parse', jobId: 'job-1'}),
+    {type: 'observed', job: {id: 'job-1', status: 'succeeded', result: {title: '规则'}}},
+  )
+  const publishing = ruleImportReducer(reviewing, {type: 'begin-publish', leaveAfter: false})
+  assert.equal(importGuarded(publishing), true)
+  const saved = ruleImportReducer(publishing, {type: 'publish-succeeded', ruleId: 'rule-1', destination: '/rules?rule=rule-1'})
+  assert.equal(saved.kind, 'saved')
+  assert.equal(importGuarded(saved), false)
+  if (saved.kind === 'saved') {
+    assert.equal(saved.ruleId, 'rule-1')
+    assert.equal(saved.destination, '/rules?rule=rule-1')
+  }
+  assert.equal(ruleImportReducer(reviewing, {type: 'publish-succeeded', ruleId: 'rule-1'}).kind, 'reviewing')
+})
+
+test('confirming abandon leaves the unsaved state before navigation', () => {
+  const reviewing = ruleImportReducer(
+    ruleImportReducer(ruleImportReducer(idle, {type: 'begin-upload'}), {type: 'begin-parse', jobId: 'job-1'}),
+    {type: 'observed', job: {id: 'job-1', status: 'succeeded', result: {title: '规则'}}},
+  )
+  assert.equal(importGuarded(reviewing), true)
+  const abandoned = ruleImportReducer(reviewing, {type: 'abandon'})
+  assert.equal(abandoned.kind, 'abandoned')
+  assert.equal(importGuarded(abandoned), false)
+  assert.equal(ruleImportReducer(abandoned, {type: 'abandon'}).kind, 'abandoned')
 })
 
 test('publish cannot start from idle or while already publishing', () => {

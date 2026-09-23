@@ -7,41 +7,40 @@ import type {
   TextareaHTMLAttributes,
 } from 'react'
 import type {StatusTone} from '../tokens'
-
-type NoStyle<T> = Omit<T, 'className' | 'style' | 'color'>
+import {publicProps, type Locked, type Sealed} from './dom'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md'
 
-type ButtonProps = NoStyle<ButtonHTMLAttributes<HTMLButtonElement>> & {
+type ButtonProps = Sealed<ButtonHTMLAttributes<HTMLButtonElement>> & {
   variant?: ButtonVariant
   size?: ButtonSize
 }
 
 export function Button({variant = 'secondary', size = 'md', type = 'button', children, ...props}: ButtonProps) {
   return (
-    <button data-ui="button" data-variant={variant} data-size={size} type={type} {...props}>
+    <button {...publicProps(props)} data-ui="button" data-variant={variant} data-size={size} type={type}>
       {children}
     </button>
   )
 }
 
-type LinkProps = NoStyle<AnchorHTMLAttributes<HTMLAnchorElement>> & {
+type LinkProps = Sealed<AnchorHTMLAttributes<HTMLAnchorElement>> & {
   variant?: ButtonVariant | 'text'
   size?: ButtonSize
 }
 
 export function Link({variant = 'text', size = 'md', children, ...props}: LinkProps) {
   return (
-    <a data-ui={variant === 'text' ? 'link' : 'button'} data-variant={variant === 'text' ? undefined : variant} data-size={size} {...props}>
+    <a {...publicProps(props)} data-ui={variant === 'text' ? 'link' : 'button'} data-variant={variant === 'text' ? undefined : variant} data-size={size}>
       {children}
     </a>
   )
 }
 
-export function IconButton({label, children, ...props}: NoStyle<ButtonHTMLAttributes<HTMLButtonElement>> & {label: string}) {
+export function IconButton({label, children, ...props}: Locked<Sealed<ButtonHTMLAttributes<HTMLButtonElement>>, 'type'> & {label: string}) {
   return (
-    <button data-ui="icon-button" type="button" aria-label={label} title={label} {...props}>
+    <button {...publicProps(props)} data-ui="icon-button" type="button" aria-label={label} title={label}>
       {children}
     </button>
   )
@@ -57,35 +56,35 @@ export function Field({label, children, hint}: {label: ReactNode; children: Reac
   )
 }
 
-export function Input(props: NoStyle<InputHTMLAttributes<HTMLInputElement>>) {
-  return <input data-ui="input" {...props} />
+export function Input(props: Sealed<InputHTMLAttributes<HTMLInputElement>>) {
+  return <input {...publicProps(props)} data-ui="input" />
 }
 
-export function Select(props: NoStyle<SelectHTMLAttributes<HTMLSelectElement>>) {
-  return <select data-ui="select" {...props} />
+export function Select(props: Sealed<SelectHTMLAttributes<HTMLSelectElement>>) {
+  return <select {...publicProps(props)} data-ui="select" />
 }
 
-export function Textarea(props: NoStyle<TextareaHTMLAttributes<HTMLTextAreaElement>>) {
-  return <textarea data-ui="textarea" {...props} />
+export function Textarea(props: Sealed<TextareaHTMLAttributes<HTMLTextAreaElement>>) {
+  return <textarea {...publicProps(props)} data-ui="textarea" />
 }
 
 export function FileInput({
   label,
   variant = 'primary',
   ...props
-}: {label: ReactNode; variant?: ButtonVariant} & NoStyle<InputHTMLAttributes<HTMLInputElement>>) {
+}: {label: ReactNode; variant?: ButtonVariant} & Locked<Sealed<InputHTMLAttributes<HTMLInputElement>>, 'type'>) {
   return (
     <label data-ui="file">
       <span data-ui="button" data-variant={variant}>{label}</span>
-      <input data-ui="file-input" type="file" {...props} />
+      <input {...publicProps(props)} data-ui="file-input" type="file" />
     </label>
   )
 }
 
-export function Checkbox({label, ...props}: {label: ReactNode} & NoStyle<InputHTMLAttributes<HTMLInputElement>>) {
+export function Checkbox({label, ...props}: {label: ReactNode} & Locked<Sealed<InputHTMLAttributes<HTMLInputElement>>, 'type'>) {
   return (
     <label data-ui="check">
-      <input data-ui="checkbox" type="checkbox" {...props} />
+      <input {...publicProps(props)} data-ui="checkbox" type="checkbox" />
       <span>{label}</span>
     </label>
   )
@@ -93,8 +92,8 @@ export function Checkbox({label, ...props}: {label: ReactNode} & NoStyle<InputHT
 
 export type BadgeTone = StatusTone
 
-export function Badge({tone = 'neutral', children, ...props}: {tone?: BadgeTone; children?: ReactNode} & NoStyle<HTMLAttributesBridge>) {
-  return <span data-ui="badge" data-tone={tone} {...props}>{children}</span>
+export function Badge({tone = 'neutral', children, ...props}: {tone?: BadgeTone; children?: ReactNode} & Sealed<HTMLAttributesBridge>) {
+  return <span {...publicProps(props)} data-ui="badge" data-tone={tone}>{children}</span>
 }
 
 type HTMLAttributesBridge = {

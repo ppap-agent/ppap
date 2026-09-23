@@ -64,7 +64,7 @@ function RuleDetailContent({
       {error && <Callout tone="error" id="rule-message" testId="rule-message">{error}</Callout>}
       {saved && <Callout id="rule-message" testId="rule-message">已保存规则</Callout>}
       <Inline justify="between" align="center" wrap>
-        <Heading level={2}>{detail.title}</Heading>
+        <Heading level={1}>{detail.title}</Heading>
         <Inline gap="xs" align="center"><Badge>机审清单</Badge><Help title="客户规则用途"><Text>保存后的规则条目是审核清单。能映射到内置检查的条目会机器执行；其余条目明确标为未覆盖，需人工核对。</Text></Help></Inline>
       </Inline>
       <Text id="rule-origin" tone="muted">版本 · {dateLabel(detail.created_at)}</Text>

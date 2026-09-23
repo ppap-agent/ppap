@@ -1,10 +1,11 @@
 export {Badge, Button, FeedbackState, Link, PageHeader} from './index'
-export type {BadgeTone, ButtonSize, ButtonVariant, FeedbackTone} from './index'
+export type {BadgeTone, ButtonSize, ButtonVariant, FeedbackTone, Sealed} from './index'
 
 import {Link, type ButtonSize, type ButtonVariant} from './index'
 import type {AnchorHTMLAttributes, ReactNode} from 'react'
+import type {Sealed} from './system/dom'
 
-type ButtonLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'className' | 'style' | 'color'> & {
+type ButtonLinkProps = Sealed<AnchorHTMLAttributes<HTMLAnchorElement>> & {
   variant?: ButtonVariant
   size?: ButtonSize
   children?: ReactNode

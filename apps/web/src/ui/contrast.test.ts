@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {color, contrastPairs} from './tokens.ts'
+import {color, contrastPairs, moreContrast} from './tokens.ts'
 
 function channel(hex: string, shift: number) {
   const value = (parseInt(hex.slice(1), 16) >> shift) & 255
@@ -18,8 +18,10 @@ function ratio(foreground: string, background: string) {
 }
 
 function tokenColor(path: string) {
-  const [group, name] = path.split('.').slice(1)
-  return color[group as keyof typeof color][name as never] as string
+  const [root, ...rest] = path.split('.')
+  const table = root === 'moreContrast' ? moreContrast : {color}
+  const parts = root === 'moreContrast' ? rest : path.split('.').slice(0)
+  return parts.reduce((node, key) => (node as Record<string, unknown>)[key], table as unknown) as string
 }
 
 test('text and background tokens stay at WCAG AA', () => {

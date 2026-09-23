@@ -1,6 +1,5 @@
 import type {DragEvent, HTMLAttributes, ReactNode, Ref, UIEvent} from 'react'
-
-type NoStyle<T> = Omit<T, 'className' | 'style' | 'color'>
+import {publicProps, type Sealed} from './dom'
 
 export function Region({id, testId, hidden, children}: {id?: string; testId?: string; hidden?: boolean; children: ReactNode}) {
   return <section id={id} hidden={hidden} data-ui="region" data-testid={testId}>{children}</section>
@@ -68,8 +67,8 @@ export function Pane({kind, testId, children}: {kind: 'checks' | 'original'; tes
   return <section data-ui="pane" data-kind={kind} data-testid={testId}>{children}</section>
 }
 
-export function Resizer(props: NoStyle<HTMLAttributes<HTMLDivElement>>) {
-  return <div data-ui="resizer" {...props} />
+export function Resizer(props: Sealed<HTMLAttributes<HTMLDivElement>>) {
+  return <div {...publicProps(props)} data-ui="resizer" />
 }
 
 export function ViewTabs({children}: {children: ReactNode}) {
