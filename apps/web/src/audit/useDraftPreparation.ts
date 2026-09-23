@@ -13,6 +13,7 @@ import {
   type Rule,
 } from '../api'
 import {latestRules} from '../helpers'
+import {parseProductRoute, productHref} from '../navigation/route'
 
 type Action = (work: () => Promise<void>) => Promise<void>
 
@@ -37,8 +38,9 @@ export function useDraftPreparation({
 }) {
   const [items, setItems] = useState<Material[]>([])
   const [rules, setRules] = useState<Rule[]>([])
-  const [draftId, setDraftId] = useState(new URLSearchParams(location.search).get('draft') || '')
-  const [predecessorId, setPredecessorId] = useState(new URLSearchParams(location.search).get('from') || '')
+  const initialRoute = parseProductRoute(location.pathname, location.search)
+  const [draftId, setDraftId] = useState(initialRoute.page === 'audit-new' ? initialRoute.draftId || '' : '')
+  const [predecessorId, setPredecessorId] = useState(initialRoute.page === 'audit-new' ? initialRoute.fromRoundId || '' : '')
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [draftNext, setDraftNext] = useState<number | null>(null)
   const [draftLoading, setDraftLoading] = useState(false)
@@ -97,13 +99,12 @@ export function useDraftPreparation({
     timers.current.add(timer)
   }
 
-  function replaceQuery(values: Record<string, string | null>) {
-    const url = new URL(location.href)
-    for (const [key, value] of Object.entries(values)) {
-      if (value) url.searchParams.set(key, value)
-      else url.searchParams.delete(key)
-    }
-    history.replaceState(null, '', url)
+  function showDraft(id: string) {
+    history.replaceState(null, '', productHref({
+      page: 'audit-new',
+      draftId: id,
+      fromRoundId: predecessorIdRef.current || undefined,
+    }))
   }
 
   async function ensureRules() {
@@ -122,7 +123,7 @@ export function useDraftPreparation({
     await request(`/drafts/${id}`, 'PUT', snapshot)
     const serialized = JSON.stringify(snapshot)
     setSavedDraft(serialized)
-    replaceQuery({draft: id, round: null, from: predecessorIdRef.current || null})
+    showDraft(id)
   }
 
   async function readAnalysis(versionId: string, id: string) {
@@ -214,7 +215,7 @@ export function useDraftPreparation({
       idempotency_key: idempotencyKey,
       predecessor_id: predecessorIdRef.current || null,
     })
-    replaceQuery({round: result.id, draft: null, from: null})
+    history.replaceState(null, '', productHref({page: 'audit-round', roundId: result.id}))
     setPredecessorId('')
     predecessorIdRef.current = ''
     return result
@@ -239,11 +240,10 @@ export function useDraftPreparation({
   async function openRules(item?: Material) {
     await action(async () => {
       if (itemsRef.current.length) await saveDraft()
-      const next = new URLSearchParams()
-      if (draftIdRef.current) next.set('return_to', '/?draft=' + draftIdRef.current)
-      if (item?.rule_version_id) next.set('rule', item.rule_version_id)
-      else next.set('new', '1')
-      location.href = '/rules?' + next
+      const returnTo = draftIdRef.current ? {page: 'audit-new' as const, draftId: draftIdRef.current} : undefined
+      location.href = productHref(item?.rule_version_id
+        ? {page: 'rule-detail', ruleId: item.rule_version_id, returnTo}
+        : {page: 'rule-import', returnTo})
     })
   }
 

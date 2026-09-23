@@ -5,26 +5,27 @@ import Workbench from './Workbench'
 import HistoryView from './HistoryView'
 import RulesView from './RulesView'
 import UsageView from './UsageView'
+import {isTenantDenied, parseProductRoute, productHref, shellPath} from './navigation/route'
 import AppShell, {navigationTitle} from './ui/AppShell'
 
-const page = location.pathname.replace(/\/$/, '') || '/'
+const route = parseProductRoute(location.pathname, location.search)
 
 export default function App() {
-  const [reviewing, setReviewing] = useState(page === '/' && new URLSearchParams(location.search).has('round'))
-  const activePath = reviewing ? '/audit-files' : page
+  const [reviewing, setReviewing] = useState(route.page === 'audit-round')
+  const activePath = shellPath(route, reviewing)
   const title = useMemo(() => navigationTitle(activePath), [activePath])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   const [user, setUser] = useState('')
   const [loginUrl, setLoginUrl] = useState('#')
   const [development, setDevelopment] = useState(false)
-  const tenantDenied = new URLSearchParams(location.search).get('error') === 'tenant_not_allowed'
-  const devPage = page === '/dev'
+  const tenantDenied = isTenantDenied(location.search)
+  const devPage = route.page === 'dev'
 
   useEffect(() => {
     if (!tenantDenied) return
     document.cookie = 'ppap_edition=; Path=/; Max-Age=0; SameSite=Lax'
-    location.replace('/')
+    location.replace(productHref({page: 'audit-new'}))
   }, [tenantDenied])
 
   useEffect(() => {
@@ -61,7 +62,7 @@ export default function App() {
   async function devLogin() {
     try {
       await request('/isolated-dev/sessions', 'POST', {subject: 'alice'})
-      location.href = '/'
+      location.href = productHref({page: 'audit-new'})
     } catch { setError('无法创建本地测试会话。') }
   }
 
@@ -85,9 +86,9 @@ export default function App() {
         </section>
       )}
       {ready && !devPage && !!user && (
-        page === '/audit-files' ? <HistoryView />
-          : page === '/rules' ? <RulesView />
-            : page === '/usage' ? <UsageView />
+        route.page === 'audit-history' ? <HistoryView />
+          : route.page === 'rule-library' || route.page === 'rule-detail' || route.page === 'rule-import' ? <RulesView />
+            : route.page === 'usage' ? <UsageView />
               : <Workbench onReviewing={setReviewing} />
       )}
     </AppShell>

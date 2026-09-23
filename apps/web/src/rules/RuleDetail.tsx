@@ -1,14 +1,9 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, originalUrl, request} from '../api'
 import Help from '../Help'
+import {productHref, type ReturnTarget} from '../navigation/route'
 import {Badge, Button} from '../ui/primitives'
 import type {RuleDetail as Detail} from './types'
-
-function href(params: Record<string, string>, returnTo: string) {
-  const query = new URLSearchParams(params)
-  if (returnTo) query.set('return_to', returnTo)
-  return '/rules' + (query.size ? '?' + query : '')
-}
 
 export default function RuleDetail({
   ruleId,
@@ -17,14 +12,14 @@ export default function RuleDetail({
   saved,
 }: {
   ruleId: string
-  returnTo: string
+  returnTo?: ReturnTarget
   returnLabel: string
   saved: boolean
 }) {
-  const listHref = href({}, returnTo)
+  const listHref = productHref(returnTo ? {page: 'rule-library', returnTo} : {page: 'rule-library'})
   return (
     <section className="page-content rules-page">
-      <a className="back-link" data-testid="rule-return" href={returnTo || listHref}>← {returnTo ? returnLabel : '规则库'}</a>
+      <a className="back-link" data-testid="rule-return" href={returnTo ? productHref(returnTo) : listHref}>← {returnTo ? returnLabel : '规则库'}</a>
       <RuleDetailContent ruleId={ruleId} returnTo={returnTo} returnLabel={returnLabel} saved={saved} />
     </section>
   )
@@ -37,7 +32,7 @@ function RuleDetailContent({
   saved,
 }: {
   ruleId: string
-  returnTo: string
+  returnTo?: ReturnTarget
   returnLabel: string
   saved: boolean
 }) {
@@ -84,9 +79,9 @@ function RuleDetailContent({
       </dl>
       <div className="toolbar rule-detail-actions">
         <a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">原始文件 ↗</a>
-        {detail.predecessor_id && <Button type="button" disabled={busy} onClick={() => { location.href = href({rule: detail.predecessor_id!}, returnTo) }}>上一版本</Button>}
+        {detail.predecessor_id && <Button type="button" disabled={busy} onClick={() => { location.href = productHref({page: 'rule-detail', ruleId: detail.predecessor_id!, returnTo}) }}>上一版本</Button>}
         <Button type="button" disabled={busy} onClick={() => {
-          location.href = href({new: '1', predecessor: detail.id, type: body.type}, returnTo)
+          location.href = productHref({page: 'rule-import', predecessorId: detail.id, documentType: body.type, returnTo})
         }}>上传新版本</Button>
       </div>
       <div className="section-heading"><h3>客户要求</h3><span className="pc-muted">{body.rules?.length || 0} 项</span></div>

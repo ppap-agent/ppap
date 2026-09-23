@@ -1,5 +1,6 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type Round} from './api'
+import {productHref} from './navigation/route'
 import {Button, ButtonLink, FeedbackState, PageHeader} from './ui/primitives'
 import {ExecutionBadge} from './audit/StatusBadge'
 
@@ -41,7 +42,7 @@ export default function HistoryView() {
       <PageHeader
         title="审核结果"
         description="查看每轮机器检查和人工复核进度，并继续未完成的复核。"
-        actions={rows.length > 0 ? <ButtonLink variant="primary" href="/">新建审核</ButtonLink> : undefined}
+        actions={rows.length > 0 ? <ButtonLink variant="primary" href={productHref({page: 'audit-new'})}>新建审核</ButtonLink> : undefined}
       />
       {showToolbar && (
         <form className="toolbar history-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
@@ -64,7 +65,7 @@ export default function HistoryView() {
         >
           {filtered
             ? <Button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</Button>
-            : <ButtonLink variant="primary" href="/">新建审核</ButtonLink>}
+            : <ButtonLink variant="primary" href={productHref({page: 'audit-new'})}>新建审核</ButtonLink>}
         </FeedbackState>
       )}
       {!!rows.length && (
@@ -75,7 +76,7 @@ export default function HistoryView() {
               {rows.map(row => (
                 <tr key={row.id}>
                   <td className="record-title">
-                    <a href={'/?round=' + row.id}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</a>
+                    <a href={productHref({page: 'audit-round', roundId: row.id})}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</a>
                   </td>
                   <td data-label="提交时间" data-testid="history-version"><time dateTime={row.created_at}>{dateLabel(row.created_at)}</time>{row.predecessor_id && <small className="repeat-label">重审</small>}{row.analysis_mode === 'deep' && <small className="repeat-label">{analysisModeLabels.deep}</small>}</td>
                   <td data-label="检查结果" data-testid="history-result">
@@ -84,7 +85,7 @@ export default function HistoryView() {
                       : <div className="result-counts">{['NG', 'ERR', 'PASS'].map(status => row.result_counts?.[status] ? <span key={status} className={'status-' + status}>{resultLabels[status]} {row.result_counts?.[status]}</span> : null)}{!total(row) && <span>暂无检查项</span>}</div>}
                   </td>
                   <td data-label="已复核">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</td>
-                  <td className="row-action"><a href={'/?round=' + row.id + (total(row) > (row.reviewed_count || 0) ? '&review=next' : '')}>{total(row) > (row.reviewed_count || 0) ? '继续复核' : '查看结果'} →</a></td>
+                  <td className="row-action"><a href={productHref({page: 'audit-round', roundId: row.id, review: total(row) > (row.reviewed_count || 0) ? 'next' : undefined})}>{total(row) > (row.reviewed_count || 0) ? '继续复核' : '查看结果'} →</a></td>
                 </tr>
               ))}
             </tbody>

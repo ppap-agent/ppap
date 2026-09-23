@@ -1,5 +1,6 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, request, type QuotaEstimate} from './api'
+import {productHref} from './navigation/route'
 import {Badge, Button, FeedbackState, PageHeader} from './ui/primitives'
 
 interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string; user_id?: string}
@@ -70,7 +71,7 @@ export default function UsageView() {
                   <td data-label="用量（点）">{row.consumed_points.toLocaleString('zh-CN')}<span className="mobile-unit">点</span></td>
                   <td data-label="类型"><Badge tone={row.is_free_trial ? 'info' : 'neutral'}>{row.is_free_trial ? '试用' : '额度'}</Badge></td>
                   <td data-label="发起人">{row.user_id || '—'}</td>
-                  <td className="row-action">{row.round_id && <a href={'/?round=' + row.round_id}>查看审核 →</a>}</td>
+                  <td className="row-action">{row.round_id && <a href={productHref({page: 'audit-round', roundId: row.round_id})}>查看审核 →</a>}</td>
                 </tr>
               ))}
             </tbody>

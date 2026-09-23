@@ -2,19 +2,14 @@ import {useEffect, useMemo, useState} from 'react'
 import {dateLabel, request, type Rule} from '../api'
 import {latestRules} from '../helpers'
 import rulesIcon from '../assets/rules.svg'
+import {productHref, type ReturnTarget} from '../navigation/route'
 import {Badge, Button, FeedbackState, PageHeader} from '../ui/primitives'
 
 function belongs(rule: Rule, customer: string) {
   return customer === '未指定客户' ? !rule.customers?.length : !!rule.customers?.includes(customer)
 }
 
-function href(params: Record<string, string>, returnTo: string) {
-  const query = new URLSearchParams(params)
-  if (returnTo) query.set('return_to', returnTo)
-  return '/rules?' + query
-}
-
-export default function RuleLibrary({returnTo, returnLabel}: {returnTo: string; returnLabel: string}) {
+export default function RuleLibrary({returnTo, returnLabel}: {returnTo?: ReturnTarget; returnLabel: string}) {
   const [rules, setRules] = useState<Rule[]>([])
   const [query, setQuery] = useState('')
   const [customer, setCustomer] = useState('')
@@ -42,17 +37,17 @@ export default function RuleLibrary({returnTo, returnLabel}: {returnTo: string; 
   )
 
   function openRule(id: string) {
-    location.href = href({rule: id}, returnTo)
+    location.href = productHref({page: 'rule-detail', ruleId: id, returnTo})
   }
 
   function newRule() {
-    location.href = href({new: '1'}, returnTo)
+    location.href = productHref({page: 'rule-import', returnTo})
   }
 
   return (
     <section className="page-content rules-page">
       {error && <p className="error" role="alert" id="rule-message" data-testid="rule-message">{error}</p>}
-      {returnTo && <a className="back-link" href={returnTo}>← {returnLabel}</a>}
+      {returnTo && <a className="back-link" href={productHref(returnTo)}>← {returnLabel}</a>}
       <PageHeader
         title="规则库"
         description="管理客户规则、适用范围和历史版本。审核受理后会冻结所选规则版本。"

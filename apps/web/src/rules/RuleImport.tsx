@@ -2,14 +2,9 @@ import {useEffect, useRef, useState, type FormEvent} from 'react'
 import {originalUrl, request, upload, type Job, type Material} from '../api'
 import Help from '../Help'
 import Modal from '../Modal'
+import {productHref, type ReturnTarget} from '../navigation/route'
 import {Badge, Button} from '../ui/primitives'
 import type {RuleCandidate as Candidate, RuleDetail as Detail} from './types'
-
-function href(params: Record<string, string>, returnTo: string) {
-  const query = new URLSearchParams(params)
-  if (returnTo) query.set('return_to', returnTo)
-  return '/rules' + (query.size ? '?' + query : '')
-}
 
 export default function RuleImport({
   initialParseId,
@@ -20,7 +15,7 @@ export default function RuleImport({
   initialParseId: string
   predecessor: string
   initialType: string
-  returnTo: string
+  returnTo?: ReturnTarget
 }) {
   const [candidate, setCandidate] = useState<Candidate | null>(null)
   const [source, setSource] = useState<Material | undefined>()
@@ -39,7 +34,7 @@ export default function RuleImport({
   candidateRef.current = candidate
   busyRef.current = busy
 
-  const backHref = href({}, returnTo)
+  const backHref = productHref({page: 'rule-library', returnTo})
 
   useEffect(() => {
     disposed.current = false
@@ -62,11 +57,12 @@ export default function RuleImport({
   }, [])
 
   function updateParseUrl(id: string) {
-    const next = new URLSearchParams()
-    next.set('parse', id)
-    if (predecessor) next.set('predecessor', predecessor)
-    if (returnTo) next.set('return_to', returnTo)
-    history.replaceState(null, '', '/rules?' + next)
+    history.replaceState(null, '', productHref({
+      page: 'rule-import',
+      parseId: id,
+      predecessorId: predecessor || undefined,
+      returnTo,
+    }))
   }
 
   function setScope(field: 'customers' | 'models' | 'parts', event: FormEvent<HTMLInputElement>) {
@@ -191,7 +187,7 @@ export default function RuleImport({
       if (destination) {
         location.href = destination
       } else {
-        location.replace(href({rule: result.id, saved: '1'}, returnTo))
+        location.replace(productHref({page: 'rule-detail', ruleId: result.id, saved: true, returnTo}))
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '保存规则失败')

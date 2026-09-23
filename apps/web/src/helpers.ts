@@ -45,8 +45,10 @@ export function parseWorkspacePosition(raw: string | null): WorkspacePosition | 
   }
 }
 
+import {parseReturnTarget} from './navigation/route'
+
 export function isSafeReturnTo(value: string) {
-  return /^\/\?(?:draft=[a-f0-9-]+(?:&from=[a-f0-9-]+)?|round=[a-f0-9-]+)$/.test(value)
+  return parseReturnTarget(value) !== undefined
 }
 
 export const analysisNotices: Record<string, string> = {

@@ -1,5 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
 import {type Round, apiUrl, originalUrl, bundleUrl, request, resultLabels} from './api'
+import {productHref} from './navigation/route'
 
 interface Export {id: string; status: string; document_id: string | null; error_code?: string | null}
 
@@ -10,7 +11,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
   const [error, setError] = useState('')
   const path = `/integrations/feishu/rounds/${round.id}/report`
   const needsConsent = report?.error_code?.endsWith(':99991679')
-  const consentUrl = `${apiUrl}/login/feishu?purpose=report&return_to=${encodeURIComponent(`${location.origin}/?round=${round.id}`)}`
+  const consentUrl = `${apiUrl}/login/feishu?purpose=report&return_to=${encodeURIComponent(location.origin + productHref({page: 'audit-round', roundId: round.id}))}`
   const revision = useRef(0)
 
   async function readReport() {
@@ -101,7 +102,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
           <div className="section-heading">
             <div>
               <h3>{group.file.original_filename}</h3>
-              <p className="pc-muted">本轮规则 · {group.file.rule_version_id ? <a href={'/rules?rule=' + group.file.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>{group.file.rule?.title || '查看规则版本'}</a> : <span>未记录</span>}</p>
+              <p className="pc-muted">本轮规则 · {group.file.rule_version_id ? <a href={productHref({page: 'rule-detail', ruleId: group.file.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>{group.file.rule?.title || '查看规则版本'}</a> : <span>未记录</span>}</p>
             </div>
             <a href={originalUrl(group.file, round.id)} target="_blank" rel="noopener">原件 ↗</a>
           </div>

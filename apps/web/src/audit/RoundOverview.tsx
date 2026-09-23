@@ -1,4 +1,5 @@
 import {analysisModeLabels, bundleUrl, dateLabel, resultLabels, type Round} from '../api'
+import {productHref} from '../navigation/route'
 import {Badge, Button, ButtonLink} from '../ui/primitives'
 import {ExecutionBadge} from './StatusBadge'
 
@@ -31,7 +32,7 @@ export default function RoundOverview({
     <section className="audit-round-overview">
       <header className="audit-round-header">
         <div className="audit-round-copy">
-          <a className="back-link" href="/audit-files" data-testid="open-history">← 审核结果</a>
+          <a className="back-link" href={productHref({page: 'audit-history'})} data-testid="open-history">← 审核结果</a>
           <h2 title={title}>{title}</h2>
           <div className="audit-round-meta">
             <ExecutionBadge execution={round.execution} />
@@ -41,7 +42,7 @@ export default function RoundOverview({
           </div>
         </div>
         <div className="audit-round-actions">
-          {round.predecessor_id && <ButtonLink variant="ghost" size="sm" data-testid="previous-round" href={'/?round=' + round.predecessor_id}>上一轮</ButtonLink>}
+          {round.predecessor_id && <ButtonLink variant="ghost" size="sm" data-testid="previous-round" href={productHref({page: 'audit-round', roundId: round.predecessor_id})}>上一轮</ButtonLink>}
           <ButtonLink variant="ghost" size="sm" data-testid="download-bundle" href={bundleUrl(round.id)}>打包下载资料</ButtonLink>
           {round.writeback?.available && (
             <Button type="button" variant="ghost" size="sm" data-testid="write-feishu" disabled={busy || executionLocked} onClick={onWriteback}>写回飞书文档</Button>

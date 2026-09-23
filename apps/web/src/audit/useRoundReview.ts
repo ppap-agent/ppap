@@ -7,6 +7,7 @@ import {
 } from 'react'
 import {request, type Finding, type Round} from '../api'
 import {clampPreviewWidth, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
+import {parseProductRoute} from '../navigation/route'
 import type {OriginalPreviewHandle} from '../OriginalPreview'
 
 type Action = (work: () => Promise<void>) => Promise<void>
@@ -38,8 +39,9 @@ export function useRoundReview({
   const originalPreview = useRef<OriginalPreviewHandle>(null)
   const workspace = useRef<HTMLDivElement>(null)
   const detailHeading = useRef<HTMLHeadingElement>(null)
-  const resumeReview = useRef(new URLSearchParams(location.search).get('review') === 'next')
-  const activeRoundId = useRef(new URLSearchParams(location.search).get('round') || '')
+  const initialRoute = parseProductRoute(location.pathname, location.search)
+  const resumeReview = useRef(initialRoute.page === 'audit-round' && initialRoute.review === 'next')
+  const activeRoundId = useRef(initialRoute.page === 'audit-round' ? initialRoute.roundId : '')
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
   const disposed = useRef(false)
   const reviewDirtyRef = useRef(reviewDirty)

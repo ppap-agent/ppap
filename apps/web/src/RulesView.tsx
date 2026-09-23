@@ -1,35 +1,26 @@
-import {isSafeReturnTo} from './helpers'
+import {parseProductRoute, returnLabel} from './navigation/route'
 import RuleLibrary from './rules/RuleLibrary'
 import RuleDetail from './rules/RuleDetail'
 import RuleImport from './rules/RuleImport'
 
 export default function RulesView() {
-  const params = new URLSearchParams(location.search)
-  const requestedReturn = params.get('return_to') || ''
-  const returnTo = isSafeReturnTo(requestedReturn) ? requestedReturn : ''
-  const returnLabel = returnTo.startsWith('/?round=') ? '返回审核结果' : '返回审核准备'
-  const parseId = params.get('parse') || ''
-  const predecessor = params.get('predecessor') || ''
-  const ruleId = params.get('rule') || ''
+  const route = parseProductRoute(location.pathname, location.search)
 
-  if (params.has('new') || parseId) {
+  if (route.page === 'rule-import') {
     return (
       <RuleImport
-        initialParseId={parseId}
-        predecessor={predecessor}
-        initialType={params.get('type') || ''}
-        returnTo={returnTo}
+        initialParseId={route.parseId || ''}
+        predecessor={route.predecessorId || ''}
+        initialType={route.documentType || ''}
+        returnTo={route.returnTo}
       />
     )
   }
 
-  if (ruleId) {
-    return <RuleDetail ruleId={ruleId} returnTo={returnTo} returnLabel={returnLabel} saved={params.get('saved') === '1'} />
+  if (route.page === 'rule-detail') {
+    return <RuleDetail ruleId={route.ruleId} returnTo={route.returnTo} returnLabel={returnLabel(route.returnTo)} saved={!!route.saved} />
   }
 
-  if (predecessor) {
-    return <RuleImport initialParseId="" predecessor={predecessor} initialType={params.get('type') || ''} returnTo={returnTo} />
-  }
-
-  return <RuleLibrary returnTo={returnTo} returnLabel={returnLabel} />
+  const libraryReturn = route.page === 'rule-library' ? route.returnTo : undefined
+  return <RuleLibrary returnTo={libraryReturn} returnLabel={returnLabel(libraryReturn)} />
 }

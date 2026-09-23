@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState, type ChangeEvent} from 'react'
 import {dateLabel, resultLabels, analysisModeLabels, deepOffered, type Material} from './api'
 import {analysisNotices, matchesFilter} from './helpers'
+import {parseProductRoute, productHref} from './navigation/route'
 import OriginalPreview from './OriginalPreview'
 import DrivePicker from './DrivePicker'
 import ReportPreview from './ReportPreview'
@@ -168,8 +169,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   useEffect(() => {
     let active = true
     void action(async () => {
-      const roundId = new URLSearchParams(location.search).get('round')
-      if (roundId) await openRound(roundId)
+      const opened = parseProductRoute(location.pathname, location.search)
+      if (opened.page === 'audit-round') await openRound(opened.roundId)
       else await initializeDraft()
     }).then(async () => {
       if (!active) return
@@ -225,7 +226,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
       {!initialized && <p className="loading-state" role="status">正在加载资料…</p>}
       {initialized && !round && (
         <div id="audit-preparation">
-          {predecessorId && <div className="context-bar"><span>再次审核</span><a href={'/?round=' + predecessorId}>查看上一轮 →</a></div>}
+          {predecessorId && <div className="context-bar"><span>再次审核</span><a href={productHref({page: 'audit-round', roundId: predecessorId})}>查看上一轮 →</a></div>}
           <section className={'preparation-upload' + (items.length ? ' has-materials' : '')}>
             {!items.length && (
               <div className={'audit-dropzone' + (dragActive ? ' is-dragging' : '')} onDragOver={event => { event.preventDefault(); setDragActive(true) }} onDragLeave={event => { event.preventDefault(); setDragActive(false) }} onDrop={event => { event.preventDefault(); void dropped(event) }}>
@@ -304,7 +305,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
             <section className="recent-drafts">
               <div className="section-heading"><h2>继续草稿</h2></div>
               {drafts.map(draft => (
-                <a key={draft.id} className="draft-row" href={'/?draft=' + draft.id}>
+                <a key={draft.id} className="draft-row" href={productHref({page: 'audit-new', draftId: draft.id})}>
                   <div>
                     <strong>{draft.items.filter(item => item.role === 'target').map(item => item.original_filename).join('、') || draft.items.map(item => item.original_filename).join('、')}</strong>
                     <small>{draft.items.length} 份资料 · {dateLabel(draft.updated_at)}{draft.predecessor_id ? ' · 再次审核' : ''}{draft.analysis_mode === 'deep' ? ' · 深度' : ''}</small>
@@ -338,7 +339,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   {round.inputs.map(file => <option key={file.file_version_id} value={file.file_version_id}>{file.original_filename}{file.role === 'reference' ? ' · 参考资料' : ''}</option>)}
                 </select>
               </label>
-              {selectedFile?.rule_version_id && <a className="context-link" href={'/rules?rule=' + selectedFile.rule_version_id + '&return_to=' + encodeURIComponent('/?round=' + round.id)}>本轮规则 ↗</a>}
+              {selectedFile?.rule_version_id && <a className="context-link" href={productHref({page: 'rule-detail', ruleId: selectedFile.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>本轮规则 ↗</a>}
             </div>
             <div className="sr-only" data-testid="coverage-panel">{[...round.inputs.map(file => file.original_filename), ...(round.coverage?.unchecked || []), ...(round.coverage?.rule_items || []).map(item => item.rule_to_check)].join(' ')}</div>
             {workspacePanel === 'original' && selectedFinding && (
