@@ -71,7 +71,7 @@ export default function FindingReview({
       </Inline>
       <Text testId="finding-suggestion">{finding.suggestions}</Text>
       <Evidence testId="finding-evidence">
-        <div>{finding.locator?.locator || <Badge tone="warning" data-testid="locator-gap">定位线索 · 待核实</Badge>}</div>
+        <Text>{finding.locator?.locator || <Badge tone="warning" data-testid="locator-gap">定位线索 · 待核实</Badge>}</Text>
         <Button type="button" variant="ghost" size="sm" onClick={onFindEvidence}>
           <Search size={16} aria-hidden="true" />在原件中查找
         </Button>
@@ -82,7 +82,7 @@ export default function FindingReview({
           <Inline gap="xs" align="center">
             <Heading level={3}>人工复核</Heading>
             <Help title="复核与自动检查">
-              <p>记录复核不等于问题已解决，也不改变机器结论。未自动检查的规则条目单独列出，不计入机器通过。</p>
+              <Text>记录复核不等于问题已解决，也不改变机器结论。未自动检查的规则条目单独列出，不计入机器通过。</Text>
             </Help>
           </Inline>
           {saveState ? <Text as="span" size="sm" tone="muted">{saveState}</Text> : null}

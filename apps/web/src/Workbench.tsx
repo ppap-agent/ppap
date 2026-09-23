@@ -286,7 +286,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   <IconButton label={'移除 ' + item.original_filename} disabled={busy} onClick={() => removeItem(item.file_version_id)}><X size={18} aria-hidden="true" /></IconButton>
                 </MaterialRow>
               ))}
-              {!!targetCount && <Inline gap="xs" align="center"><Text size="sm">所选规则条目即本轮机审清单</Text><Help title="审核范围"><p>受理后冻结所选规则版本和条目。能映射到内置检查的条目给出 PASS/NG/ERR；不能自动执行的条目进入未覆盖，需人工核对。不会改成另一套内置清单。</p></Help></Inline>}
+              {!!targetCount && <Inline gap="xs" align="center"><Text size="sm">所选规则条目即本轮机审清单</Text><Help title="审核范围"><Text>受理后冻结所选规则版本和条目。能映射到内置检查的条目给出 PASS/NG/ERR；不能自动执行的条目进入未覆盖，需人工核对。不会改成另一套内置清单。</Text></Help></Inline>}
               <ActionBar>
                 <Stack gap="xs">
                   {deepOffered && (
@@ -347,7 +347,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
               {selectedFile?.rule_version_id && <Link data-testid="context-link" href={productHref({page: 'rule-detail', ruleId: selectedFile.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>本轮规则 ↗</Link>}
             </Inline>
             <VisuallyHidden>
-              <span data-testid="coverage-panel">{[...round.inputs.map(file => file.original_filename), ...(round.coverage?.unchecked || []), ...(round.coverage?.rule_items || []).map(item => item.rule_to_check)].join(' ')}</span>
+              <VisuallyHidden testId="coverage-panel">{[...round.inputs.map(file => file.original_filename), ...(round.coverage?.unchecked || []), ...(round.coverage?.rule_items || []).map(item => item.rule_to_check)].join(' ')}</VisuallyHidden>
             </VisuallyHidden>
             {workspacePanel === 'original' && selectedFinding && (
               <FindingContext>

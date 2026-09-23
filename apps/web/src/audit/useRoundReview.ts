@@ -9,6 +9,7 @@ import {request, type Finding, type Round} from '../api'
 import {clampPreviewWidth, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
 import {parseProductRoute} from '../navigation/route'
 import type {OriginalPreviewHandle} from '../OriginalPreview'
+import {isCompactViewport} from '../ui'
 import {beginReviewSave, markReviewClean, markReviewDirty, type ReviewPhase} from '../workflow/submission'
 
 type Action = (work: () => Promise<void>) => Promise<void>
@@ -356,7 +357,7 @@ export function useRoundReview({
   }
 
   async function findEvidence() {
-    if (matchMedia('(max-width:1023px)').matches) switchView('original')
+    if (isCompactViewport()) switchView('original')
     await Promise.resolve()
     await originalPreview.current?.findEvidence()
   }

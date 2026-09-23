@@ -35,6 +35,8 @@ jobs:
           corepack prepare pnpm@10.30.3 --activate
           pnpm install --frozen-lockfile
           pnpm typecheck
+          pnpm test
+          pnpm lint:design
           pnpm build
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -157,7 +159,7 @@ jobs:
             compose down -v --remove-orphans || true
             exit 1
           fi
-          python -m unittest tests.e2e.test_web_audit -v
+          python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y -v
           compose down -v --remove-orphans
 
   schema:

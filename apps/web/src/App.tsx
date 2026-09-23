@@ -7,6 +7,7 @@ import RulesView from './RulesView'
 import UsageView from './UsageView'
 import {isTenantDenied, parseProductRoute, productHref, shellPath} from './navigation/route'
 import AppShell, {navigationTitle} from './ui/AppShell'
+import {Button, Callout, FeedbackState, Link, Page} from './ui'
 
 const route = parseProductRoute(location.pathname, location.search)
 
@@ -68,22 +69,19 @@ export default function App() {
 
   return (
     <AppShell activePath={activePath} title={title} user={user} onLogout={() => void logout()}>
-      {tenantDenied && <p className="error" role="alert">无法使用此入口。</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-      {!ready && !error && <p className="loading-state" role="status">正在连接…</p>}
+      <Page>
+      {tenantDenied && <Callout tone="error">无法使用此入口。</Callout>}
+      {error && <Callout tone="error">{error}</Callout>}
+      {!ready && !error && <Callout tone="loading">正在连接…</Callout>}
       {ready && devPage && (
-        <section className="empty-state">
-          {development
-            ? <><h2>本地测试身份</h2><button type="button" className="pc-primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</button></>
-            : <p>此入口不可用。</p>}
-        </section>
+        development
+          ? <FeedbackState title="本地测试身份"><Button type="button" variant="primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</Button></FeedbackState>
+          : <FeedbackState title="此入口不可用" />
       )}
       {ready && !devPage && !user && (
-        <section className="sign-in">
-          <h2>登录后开始审核</h2>
-          <p className="pc-muted">使用飞书账号访问你的资料与审核结果。</p>
-          <a className="button pc-primary" href={loginUrl}>登录飞书</a>
-        </section>
+        <FeedbackState title="登录后开始审核" detail="使用飞书账号访问你的资料与审核结果。">
+          <Link href={loginUrl} variant="primary">登录飞书</Link>
+        </FeedbackState>
       )}
       {ready && !devPage && !!user && (
         route.page === 'audit-history' ? <HistoryView />
@@ -91,6 +89,7 @@ export default function App() {
             : route.page === 'usage' ? <UsageView />
               : <Workbench onReviewing={setReviewing} />
       )}
+      </Page>
     </AppShell>
   )
 }

@@ -205,3 +205,15 @@ export function ExcerptCell({address, formula, value}: {address: string; formula
     </div>
   )
 }
+
+export function PreviewFrame({title, src}: {title: string; src: string}) {
+  return <iframe data-ui="preview-frame" src={src} title={title} sandbox="allow-same-origin" referrerPolicy="no-referrer" />
+}
+
+export function PlainText({children}: {children: ReactNode}) {
+  return <pre data-ui="plain">{children}</pre>
+}
+
+export function CodeText({children}: {children: ReactNode}) {
+  return <code data-ui="code">{children}</code>
+}

@@ -4,7 +4,7 @@ import {parseExcerptCells} from './helpers'
 import OfficePreview from './OfficePreview'
 import Help from './Help'
 import {Download} from 'lucide-react'
-import {Button, Callout, ExcerptCell, ExcerptCells, ExcerptList, ExcerptRow, Field, Heading, Inline, Input, Link, Pane, Select, Stack, Text, VisuallyHidden} from './ui'
+import {Button, Callout, CodeText, ExcerptCell, ExcerptCells, ExcerptList, ExcerptRow, Field, Heading, Inline, Input, Link, Pane, PlainText, PreviewFrame, Select, Stack, Text, VisuallyHidden} from './ui'
 
 interface Excerpt {
   available: boolean; text?: string; notice: string; sheets?: string[]; sheet?: string
@@ -293,17 +293,17 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   return (
     <Pane kind="original" testId="file-preview">
       <Inline justify="between" align="center">
-        <Heading level={2}>原件<VisuallyHidden><span data-testid="file-preview-name"> · {file?.original_filename}</span></VisuallyHidden></Heading>
+        <Heading level={2}>原件<VisuallyHidden testId="file-preview-name"> · {file?.original_filename}</VisuallyHidden></Heading>
         <Inline gap="xs">
           {office && <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void showText()}>{textMode ? '排版预览' : '文字摘录'}</Button>}
-          <Help title="预览说明"><p>{file?.original_filename}</p>{notice && <p>{notice}</p>}<p>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</p></Help>
+          <Help title="预览说明"><Text>{file?.original_filename}</Text>{notice && <Text>{notice}</Text>}<Text>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</Text></Help>
           {file && <Link data-testid="open-original" href={originalUrl(file, roundId)} target="_blank" rel="noopener" aria-label="下载原件"><Download size={18} aria-hidden="true" /></Link>}
         </Inline>
       </Inline>
       {loading && <Callout tone="loading">正在加载原件…</Callout>}
       {lookupNote && !lookupRow && <Callout>{lookupNote}</Callout>}
       {office && !textMode && <OfficePreview key={file?.file_version_id} scriptUrl={office.script_url} config={office.config} onFailed={officeFailed} />}
-      {url && <iframe key={url} src={url} title={file?.original_filename || '原件预览'} sandbox="allow-same-origin" referrerPolicy="no-referrer" />}
+      {url && <PreviewFrame key={url} src={url} title={file?.original_filename || '原件预览'} />}
       {(!office || textMode) && (
         <Stack gap="sm">
           {(excerpt?.sheets?.length || sheet) && (
@@ -332,11 +332,11 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
                 {excerptRows.map(row => (
                   <ExcerptRow key={row.number} lookup={row.number === lookupRow}>
                     <Inline justify="between">
-                      <strong>第 {row.number} 行</strong>
+                      <Text as="strong" weight="semibold">第 {row.number} 行</Text>
                       {row.number === lookupRow && <Text as="span" size="sm" tone="muted">查找线索 · 请核实</Text>}
                     </Inline>
                     {rawExcerpt
-                      ? <code>{row.text}</code>
+                      ? <CodeText>{row.text}</CodeText>
                       : <ExcerptCells>{parseExcerptCells(row.text).map((cell, index) => (
                           <ExcerptCell key={index} address={cell.address || '原文'} formula={cell.formula} value={cell.value} />
                         ))}</ExcerptCells>}
@@ -349,7 +349,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
                 <Button type="button" disabled={!excerpt.next_row} onClick={() => { const nextStart = excerpt.next_row!; setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>后续行 →</Button>
               </Inline>
             </Stack>
-          ) : text ? <pre>{textLines.join('\n') || '当前摘录未找到匹配文字'}</pre> : null}
+          ) : text ? <PlainText>{textLines.join('\n') || '当前摘录未找到匹配文字'}</PlainText> : null}
         </Stack>
       )}
     </Pane>

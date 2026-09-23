@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState} from 'react'
-import {OfficeFrame} from './ui'
+import {Callout, OfficeFrame, OfficeHost} from './ui'
 
 interface Editor {destroyEditor: () => void}
 declare global {
@@ -46,5 +46,5 @@ export default function OfficePreview({scriptUrl, config, onFailed}: {scriptUrl:
     })()
     return () => { disposed = true; editor?.destroyEditor() }
   }, [scriptUrl, id])
-  return <OfficeFrame>{loading && <p role="status">正在加载 Office 排版预览…</p>}<div id={id} /></OfficeFrame>
+  return <OfficeFrame>{loading && <Callout tone="loading">正在加载 Office 排版预览…</Callout>}<OfficeHost id={id} /></OfficeFrame>
 }

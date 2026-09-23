@@ -112,7 +112,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
           <Inline justify="between" align="start">
             <Stack gap="xs">
               <Heading level={3}>{group.file.original_filename}</Heading>
-              <Text tone="muted">本轮规则 · {group.file.rule_version_id ? <Link href={productHref({page: 'rule-detail', ruleId: group.file.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>{group.file.rule?.title || '查看规则版本'}</Link> : <span>未记录</span>}</Text>
+              <Text tone="muted">本轮规则 · {group.file.rule_version_id ? <Link href={productHref({page: 'rule-detail', ruleId: group.file.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>{group.file.rule?.title || '查看规则版本'}</Link> : <Text as="span">未记录</Text>}</Text>
             </Stack>
             <Link href={originalUrl(group.file, round.id)} target="_blank" rel="noopener">原件 ↗</Link>
           </Inline>

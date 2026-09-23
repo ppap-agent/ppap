@@ -320,6 +320,7 @@
 
 [data-ui="button"]:focus-visible,
 [data-ui="link"]:focus-visible,
+[data-ui="skip"]:focus-visible,
 [data-ui="nav-link"]:focus-visible,
 [data-ui="account-button"]:focus-visible,
 [data-ui="icon-button"]:focus-visible,
@@ -488,9 +489,12 @@
 [data-ui="excerpt-cell"] dt { color: var(--color-text-muted); }
 [data-ui="excerpt-cell"] dd { margin: 0; overflow-wrap: anywhere; }
 [data-ui="excerpt-cell"] code,
+[data-ui="code"],
+[data-ui="plain"],
 [data-ui="pane"] pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-size-sm)/var(--font-line-relaxed) ui-monospace, monospace; }
 [data-ui="pane"] iframe,
 [data-ui="office"] { width: 100%; height: 68dvh; min-height: calc(var(--space-4xl) * 8); border: 0; }
+[data-ui="office-host"] { width: 100%; height: 100%; }
 [data-ui="modal"] {
   border: var(--size-border) solid var(--color-border-default);
   border-radius: var(--radius-card);

@@ -19,13 +19,14 @@
 
 ## 当前可运行入口
 
-Web 合并契约分两段。类型、生产构建和前端边界不依赖 Docker；代表性浏览器路径仍是 isolated-dev 上的 `tests.e2e.test_web_audit`。CI 里它们分别是 `Web contract` 与 `e2e`。`push` 和 `pull_request` 使用不同的 concurrency group，同一 head 不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入、草稿提交和复核保存的合法转移在 `pnpm test`，E2E 不复制这些排列组合。
+Web 合并契约分两段。类型、生产构建和前端边界不依赖 Docker；代表性浏览器路径仍是 isolated-dev 上的 `tests.e2e.test_web_audit`。CI 里它们分别是 `Web contract` 与 `e2e`。`push` 和 `pull_request` 使用不同的 concurrency group，同一 head 不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入、草稿提交和复核保存的合法转移在 `pnpm test`，E2E 不复制这些排列组合。`pnpm lint:design` 对 feature 代码硬失败：原始布局、原始控件、className、inline style、直接引用样式后端、feature CSS、设计字面量。对比度在 `pnpm test`。桌面/平板/手机、键盘、焦点、触控目标和减少动效的样式契约在同一条 lint；浏览器里的键盘、焦点、视口和减少动效在 `tests.e2e.test_ui_a11y`。`src/style.css` 与 `src/ui/foundation.css` 仍是待删除的旧样式表，除此之外的 CSS 只能留在 `src/ui/system`。
 
 ```sh
 cd apps/web
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
+pnpm lint:design
 pnpm build
 cd ../..
 python -m pip install -e ".[dev]"
@@ -66,7 +67,7 @@ python -m playwright install chromium
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake
 docker compose -f deploy/isolated-dev/compose.yaml up -d --wait
-python -m unittest tests.e2e.test_web_audit tests.e2e.test_rules tests.e2e.test_rule_interactions -v
+python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 ```
 

@@ -25,3 +25,7 @@ export function Modal({title, busy, onClose, children}: {title: string; busy?: b
 export function OfficeFrame({children}: {children: ReactNode}) {
   return <div data-ui="office">{children}</div>
 }
+
+export function OfficeHost({id}: {id: string}) {
+  return <div data-ui="office-host" id={id} />
+}
