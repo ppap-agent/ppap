@@ -1,4 +1,4 @@
-import {createElement, type ReactNode} from 'react'
+import {createElement, forwardRef, type ReactNode, type Ref} from 'react'
 import type {BackgroundTone, FontSize, TextTone} from '../tokens'
 import {type LayoutTag, type SharedProps, spaceVar} from './dom'
 
@@ -147,24 +147,31 @@ export function Text({
   }, children)
 }
 
-export function Heading({
+export const Heading = forwardRef(function Heading({
   level = 2,
   children,
   visuallyHidden = false,
   id,
+  testId,
+  tabIndex,
 }: {
   level?: 1 | 2 | 3
   children?: ReactNode
   visuallyHidden?: boolean
   id?: string
-}) {
+  testId?: string
+  tabIndex?: number
+}, ref: Ref<HTMLHeadingElement>) {
   const tag = level === 1 ? 'h1' : level === 3 ? 'h3' : 'h2'
   return createElement(tag, {
     id,
+    ref,
+    tabIndex,
     'data-ui': visuallyHidden ? 'sr' : 'heading',
     'data-level': level,
+    'data-testid': testId,
   }, children)
-}
+})
 
 export function Page({children, testId}: {children?: ReactNode; testId?: string}) {
   return <section data-ui="page" data-testid={testId}>{children}</section>

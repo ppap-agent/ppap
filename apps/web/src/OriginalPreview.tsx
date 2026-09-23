@@ -3,7 +3,8 @@ import {apiUrl, originalUrl, request, type Material, type Finding} from './api'
 import {parseExcerptCells} from './helpers'
 import OfficePreview from './OfficePreview'
 import Help from './Help'
-import {Download, Search} from 'lucide-react'
+import {Download} from 'lucide-react'
+import {Button, Callout, ExcerptCell, ExcerptCells, ExcerptList, ExcerptRow, Field, Heading, Inline, Input, Link, Pane, Select, Stack, Text, VisuallyHidden} from './ui'
 
 interface Excerpt {
   available: boolean; text?: string; notice: string; sheets?: string[]; sheet?: string
@@ -145,7 +146,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
     }
     if (pendingLookup.current) {
       pendingLookup.current = false
-      const row = excerptElement.current.querySelector<HTMLElement>('.is-lookup')
+      const row = excerptElement.current.querySelector<HTMLElement>('[data-lookup="true"]')
       row?.focus({preventScroll: true})
       const target = row || excerptElement.current
       target.scrollIntoView({block: 'start'})
@@ -290,62 +291,68 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   }
 
   return (
-    <section className="audit-original" data-testid="file-preview">
-      <header className="preview-heading"><h2 title={file?.original_filename}>原件<span className="sr-only" data-testid="file-preview-name"> · {file?.original_filename}</span></h2><div className="button-group">
-        {office && <button type="button" className="text-button" disabled={loading} onClick={() => void showText()}>{textMode ? '排版预览' : '文字摘录'}</button>}
-        <Help title="预览说明"><p>{file?.original_filename}</p>{notice && <p>{notice}</p>}<p>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</p></Help>
-        {file && <a className="icon-button" href={originalUrl(file, roundId)} target="_blank" rel="noopener" data-testid="open-original" aria-label="下载原件" title="下载原件"><Download size={18} aria-hidden="true" /></a>}
-      </div></header>
-      {loading && <p role="status">正在加载原件…</p>}
-      {lookupNote && !lookupRow && <p className="preview-notice" role="status">{lookupNote}</p>}
+    <Pane kind="original" testId="file-preview">
+      <Inline justify="between" align="center">
+        <Heading level={2}>原件<VisuallyHidden><span data-testid="file-preview-name"> · {file?.original_filename}</span></VisuallyHidden></Heading>
+        <Inline gap="xs">
+          {office && <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void showText()}>{textMode ? '排版预览' : '文字摘录'}</Button>}
+          <Help title="预览说明"><p>{file?.original_filename}</p>{notice && <p>{notice}</p>}<p>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</p></Help>
+          {file && <Link data-testid="open-original" href={originalUrl(file, roundId)} target="_blank" rel="noopener" aria-label="下载原件"><Download size={18} aria-hidden="true" /></Link>}
+        </Inline>
+      </Inline>
+      {loading && <Callout tone="loading">正在加载原件…</Callout>}
+      {lookupNote && !lookupRow && <Callout>{lookupNote}</Callout>}
       {office && !textMode && <OfficePreview key={file?.file_version_id} scriptUrl={office.script_url} config={office.config} onFailed={officeFailed} />}
       {url && <iframe key={url} src={url} title={file?.original_filename || '原件预览'} sandbox="allow-same-origin" referrerPolicy="no-referrer" />}
       {(!office || textMode) && (
-        <>
+        <Stack gap="sm">
           {(excerpt?.sheets?.length || sheet) && (
-            <form className="excerpt-toolbar" onSubmit={event => { event.preventDefault(); navigateSheet() }}>
-              <label>工作表
-                <select value={sheet} disabled={loading || searching} onChange={event => { const value = event.target.value; setSheet(value); setStartRow(1); navigateSheet(value, 1) }}>
+            <Inline gap="sm" align="end" wrap>
+              <Field label="工作表">
+                <Select value={sheet} disabled={loading || searching} onChange={event => { const value = event.target.value; setSheet(value); setStartRow(1); navigateSheet(value, 1) }}>
                   <option value="" disabled>选择工作表</option>
                   {(excerpt?.sheets || [sheet]).filter(Boolean).map(name => <option key={name} value={name}>{name}</option>)}
-                </select>
-              </label>
-              <label>起始行
-                <input value={startRow} onChange={event => setStartRow(Number(event.target.value) || 1)} type="number" min={1} max={1048576} inputMode="numeric" enterKeyHint="go" disabled={loading || searching} />
-              </label>
-              <button type="submit" disabled={!sheet || loading || searching}>定位</button>
-            </form>
+                </Select>
+              </Field>
+              <Field label="起始行">
+                <Input value={startRow} onChange={event => setStartRow(Number(event.target.value) || 1)} type="number" min={1} max={1048576} inputMode="numeric" enterKeyHint="go" disabled={loading || searching} />
+              </Field>
+              <Button type="button" disabled={!sheet || loading || searching} onClick={() => navigateSheet()}>定位</Button>
+            </Inline>
           )}
-          {text && <label className="excerpt-search"><Search size={16} aria-hidden="true" /><span className="sr-only">查找当前摘录</span><input value={search} onChange={event => setSearch(event.target.value)} type="search" placeholder="查找文字或单元格，如 A35" enterKeyHint="search" autoCapitalize="none" /></label>}
-          {notice && !text && <p className="preview-notice pc-muted" role="status">{notice}</p>}
-          {searching ? <p role="status">正在读取工作表…</p> : excerpt?.sheet ? (
-            <>
-              <div className="excerpt-caption"><span>摘录 · 第 {excerpt.start_row}–{excerpt.end_row || excerpt.start_row} 行 · 非完整原件</span><button type="button" className="text-button" aria-pressed={rawExcerpt} onClick={() => setRawExcerpt(value => !value)}>{rawExcerpt ? '分格阅读' : '原始摘录'}</button></div>
-              <div ref={excerptElement} className="excerpt-rows" aria-label="工作表原文摘录" tabIndex={0} onScroll={rememberPosition}>
+          {text && <Input aria-label="查找当前摘录" value={search} onChange={event => setSearch(event.target.value)} type="search" placeholder="查找文字或单元格，如 A35" enterKeyHint="search" autoCapitalize="none" />}
+          {notice && !text && <Callout>{notice}</Callout>}
+          {searching ? <Callout tone="loading">正在读取工作表…</Callout> : excerpt?.sheet ? (
+            <Stack gap="sm">
+              <Inline justify="between" align="center">
+                <Text size="sm" tone="muted">摘录 · 第 {excerpt.start_row}–{excerpt.end_row || excerpt.start_row} 行 · 非完整原件</Text>
+                <Button type="button" variant="ghost" size="sm" aria-pressed={rawExcerpt} onClick={() => setRawExcerpt(value => !value)}>{rawExcerpt ? '分格阅读' : '原始摘录'}</Button>
+              </Inline>
+              <ExcerptList label="工作表原文摘录" rootRef={excerptElement} onScroll={rememberPosition}>
                 {excerptRows.map(row => (
-                  <article key={row.number} className={'excerpt-row' + (row.number === lookupRow ? ' is-lookup' : '')} tabIndex={-1}>
-                    <header><strong>第 {row.number} 行</strong>{row.number === lookupRow && <span>查找线索 · 请核实</span>}</header>
+                  <ExcerptRow key={row.number} lookup={row.number === lookupRow}>
+                    <Inline justify="between">
+                      <strong>第 {row.number} 行</strong>
+                      {row.number === lookupRow && <Text as="span" size="sm" tone="muted">查找线索 · 请核实</Text>}
+                    </Inline>
                     {rawExcerpt
-                      ? <code className="excerpt-raw">{row.text}</code>
-                      : <dl className="excerpt-cells">{parseExcerptCells(row.text).map((cell, index) => (
-                          <div key={index} className={cell.formula ? 'is-formula' : undefined}>
-                            <dt>{cell.address || '原文'}{cell.formula && <span>公式</span>}</dt>
-                            <dd>{cell.formula ? <code>{cell.value}</code> : cell.value}</dd>
-                          </div>
-                        ))}</dl>}
-                  </article>
+                      ? <code>{row.text}</code>
+                      : <ExcerptCells>{parseExcerptCells(row.text).map((cell, index) => (
+                          <ExcerptCell key={index} address={cell.address || '原文'} formula={cell.formula} value={cell.value} />
+                        ))}</ExcerptCells>}
+                  </ExcerptRow>
                 ))}
-                {!excerptRows.length && <p className="empty-state compact">{search ? '当前摘录未找到匹配文字' : '此范围没有非空单元格'}</p>}
-              </div>
-              <div className="excerpt-pagination">
-                <button type="button" disabled={(excerpt.start_row || 1) <= 1} onClick={() => { const nextStart = Math.max(1, (excerpt.start_row || 1) - 200); setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>前 200 行</button>
-                <button type="button" disabled={!excerpt.next_row} onClick={() => { const nextStart = excerpt.next_row!; setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>后续行 →</button>
-              </div>
-            </>
+                {!excerptRows.length && <Text>{search ? '当前摘录未找到匹配文字' : '此范围没有非空单元格'}</Text>}
+              </ExcerptList>
+              <Inline justify="between">
+                <Button type="button" disabled={(excerpt.start_row || 1) <= 1} onClick={() => { const nextStart = Math.max(1, (excerpt.start_row || 1) - 200); setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>前 200 行</Button>
+                <Button type="button" disabled={!excerpt.next_row} onClick={() => { const nextStart = excerpt.next_row!; setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>后续行 →</Button>
+              </Inline>
+            </Stack>
           ) : text ? <pre>{textLines.join('\n') || '当前摘录未找到匹配文字'}</pre> : null}
-        </>
+        </Stack>
       )}
-    </section>
+    </Pane>
   )
 })
 

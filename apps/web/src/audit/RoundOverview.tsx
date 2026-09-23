@@ -1,7 +1,13 @@
 import {analysisModeLabels, bundleUrl, dateLabel, resultLabels, type Round} from '../api'
 import {productHref} from '../navigation/route'
-import {Badge, Button, ButtonLink} from '../ui/primitives'
+import {Badge, Button, Heading, Inline, Link, Meter, Stack, Stat, StatRow, Text, ViewTab, ViewTabs} from '../ui'
 import {ExecutionBadge} from './StatusBadge'
+
+function machineTone(status: string): 'success' | 'warning' | 'danger' {
+  if (status === 'PASS') return 'success'
+  if (status === 'NG') return 'warning'
+  return 'danger'
+}
 
 export default function RoundOverview({
   round,
@@ -29,48 +35,42 @@ export default function RoundOverview({
   const executionLocked = ['queued', 'running'].includes(round.execution)
 
   return (
-    <section className="audit-round-overview">
-      <header className="audit-round-header">
-        <div className="audit-round-copy">
-          <a className="back-link" href={productHref({page: 'audit-history'})} data-testid="open-history">← 审核结果</a>
-          <h2 title={title}>{title}</h2>
-          <div className="audit-round-meta">
+    <Stack gap="md">
+      <Inline align="start" justify="between" wrap gap="lg">
+        <Stack gap="xs">
+          <Link href={productHref({page: 'audit-history'})} data-testid="open-history">← 审核结果</Link>
+          <Heading level={2}>{title}</Heading>
+          <Inline gap="sm" wrap>
             <ExecutionBadge execution={round.execution} />
             {round.analysis_mode === 'deep' && <Badge tone="info" data-testid="round-analysis-mode">{analysisModeLabels.deep}</Badge>}
-            <span>{targets.length} 份资料</span>
-            <span>{dateLabel(round.created_at)}</span>
-          </div>
-        </div>
-        <div className="audit-round-actions">
-          {round.predecessor_id && <ButtonLink variant="ghost" size="sm" data-testid="previous-round" href={productHref({page: 'audit-round', roundId: round.predecessor_id})}>上一轮</ButtonLink>}
-          <ButtonLink variant="ghost" size="sm" data-testid="download-bundle" href={bundleUrl(round.id)}>打包下载资料</ButtonLink>
+            <Text as="span" size="sm" tone="muted">{targets.length} 份资料</Text>
+            <Text as="span" size="sm" tone="muted">{dateLabel(round.created_at)}</Text>
+          </Inline>
+        </Stack>
+        <Inline gap="xs" wrap>
+          {round.predecessor_id && <Link variant="ghost" size="sm" data-testid="previous-round" href={productHref({page: 'audit-round', roundId: round.predecessor_id})}>上一轮</Link>}
+          <Link variant="ghost" size="sm" data-testid="download-bundle" href={bundleUrl(round.id)}>打包下载资料</Link>
           {round.writeback?.available && (
             <Button type="button" variant="ghost" size="sm" data-testid="write-feishu" disabled={busy || executionLocked} onClick={onWriteback}>写回飞书文档</Button>
           )}
           <Button type="button" variant="ghost" size="sm" data-testid="prepare-again" disabled={busy || executionLocked} onClick={onPrepareAgain}>修改后重审</Button>
-        </div>
-      </header>
+        </Inline>
+      </Inline>
 
       {!!round.findings.length && roundView !== 'report' && (
-        <div className="audit-round-stats" aria-label="本轮机器检查结果" data-testid="result-summary">
+        <StatRow label="本轮机器检查结果" testId="result-summary">
           {counts.map(count => (
-            <span key={count.status} className={count.count ? 'audit-stat status-' + count.status : 'audit-stat is-muted'}>
-              <strong>{count.count}</strong>
-              <span>{resultLabels[count.status]}</span>
-            </span>
+            <Stat key={count.status} value={count.count} label={resultLabels[count.status]} tone={machineTone(count.status)} muted={!count.count} />
           ))}
-          <span className="audit-review-progress">
-            <span>复核 {reviewed} / {round.findings.length}</span>
-            <progress value={reviewed} max={round.findings.length} aria-label="已记录人工复核" />
-          </span>
-        </div>
+          <Meter value={reviewed} max={round.findings.length} label={`复核 ${reviewed} / ${round.findings.length}`} />
+        </StatRow>
       )}
 
-      <nav className="view-tabs" aria-label="审核视图">
-        <button type="button" aria-pressed={roundView === 'review' && workspacePanel === 'checks'} onClick={() => onSwitchView('review')}>检查与复核</button>
-        <button type="button" className="original-tab" aria-pressed={roundView === 'review' && workspacePanel === 'original'} onClick={() => onSwitchView('original')}>原件</button>
-        <button type="button" aria-pressed={roundView === 'report'} onClick={() => onSwitchView('report')}>审核报告</button>
-      </nav>
-    </section>
+      <ViewTabs>
+        <ViewTab pressed={roundView === 'review' && workspacePanel === 'checks'} onClick={() => onSwitchView('review')}>检查与复核</ViewTab>
+        <ViewTab kind="original" pressed={roundView === 'review' && workspacePanel === 'original'} onClick={() => onSwitchView('original')}>原件</ViewTab>
+        <ViewTab pressed={roundView === 'report'} onClick={() => onSwitchView('report')}>审核报告</ViewTab>
+      </ViewTabs>
+    </Stack>
   )
 }

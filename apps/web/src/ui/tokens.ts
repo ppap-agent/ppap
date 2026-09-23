@@ -7,6 +7,7 @@ export const color = {
     subtle: '#f9fafb',
     interactiveHover: '#f3f5f8',
     avatar: '#edf0f5',
+    overlay: 'rgba(22, 37, 61, 0.33)',
   },
   text: {
     primary: '#1b2330',
