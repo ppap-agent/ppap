@@ -1,5 +1,6 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, request, type QuotaEstimate} from './api'
+import {Badge, Button, FeedbackState, PageHeader} from './ui/primitives'
 
 interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string; user_id?: string}
 
@@ -44,19 +45,20 @@ export default function UsageView() {
 
   return (
     <section className="page-content usage-page">
+      <PageHeader title="用量记录" description="查看审核消耗、试用额度和关联审核。" />
       {quotaError
-        ? <p className="notice" role="status" data-testid="quota-summary">{quotaError}</p>
+        ? <FeedbackState tone="notice" inline title="额度状态暂不可用" detail={quotaError} testId="quota-summary" />
         : <p className="scope-note" data-testid="quota-summary">{quota ? `试用剩余 ${quota.remaining_trial_ai_points ?? '—'} 点 · ${quota.detailed_message || quota.message || (quota.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用')}` : '正在读取额度…'}</p>}
       {(rows.length > 0 || since || until) && (
-      <form className="toolbar usage-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
-        <label>起始日期<input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
-        <label>截止日期<input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>
-        <button type="submit" disabled={busy}>查询</button>
-      </form>
+        <form className="toolbar usage-toolbar" onSubmit={event => { event.preventDefault(); void load() }}>
+          <label>起始日期<input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
+          <label>截止日期<input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>
+          <Button type="submit" disabled={busy}>查询</Button>
+        </form>
       )}
-      {error && <p className="error" role="alert" data-testid="usage-error">{error}</p>}
-      {busy && !rows.length && <p className="loading-state" role="status">正在加载…</p>}
-      {!busy && !rows.length && !error && <div className="empty-state" data-testid="usage-empty"><h2>当前范围没有用量记录</h2></div>}
+      {error && <FeedbackState tone="error" inline title="无法读取用量" detail={error} testId="usage-error" />}
+      {busy && !rows.length && <FeedbackState tone="loading" detail="正在加载用量记录…" />}
+      {!busy && !rows.length && !error && <FeedbackState title="当前范围没有用量记录" detail="有审核消耗后，用量会显示在这里。" testId="usage-empty" />}
       {!!rows.length && (
         <div className="table-scroll" data-testid="usage-list">
           <table className="responsive-table usage-table">
@@ -66,7 +68,7 @@ export default function UsageView() {
                 <tr key={row.id}>
                   <td data-label="时间">{dateLabel(row.created_at)}</td>
                   <td data-label="用量（点）">{row.consumed_points.toLocaleString('zh-CN')}<span className="mobile-unit">点</span></td>
-                  <td data-label="类型">{row.is_free_trial ? '试用' : '额度'}</td>
+                  <td data-label="类型"><Badge tone={row.is_free_trial ? 'info' : 'neutral'}>{row.is_free_trial ? '试用' : '额度'}</Badge></td>
                   <td data-label="发起人">{row.user_id || '—'}</td>
                   <td className="row-action">{row.round_id && <a href={'/?round=' + row.round_id}>查看审核 →</a>}</td>
                 </tr>
@@ -75,7 +77,7 @@ export default function UsageView() {
           </table>
         </div>
       )}
-      {next !== null && <button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</button>}
+      {next !== null && <Button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
     </section>
   )
 }

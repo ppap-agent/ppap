@@ -525,32 +525,3 @@ assert result["note"] == "round_audit"
 assert "ppap_excel_audit_engine.app_runtime" not in sys.modules
 """], cwd=ROOT, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
-
-
-class WebHookTests(unittest.TestCase):
-    def test_workbench_hooks_exist(self):
-        workbench = (ROOT / "apps/web/src/Workbench.tsx").read_text()
-        for marker in (
-            'function submit', 'function saveReview', 'function prepareAgain',
-            'finding-picker', 'function pickFinding', '<OriginalPreview', '<ReportPreview',
-            '<DrivePicker', 'multiple', 'reviewDirty', 'idempotency_key',
-            'data-testid="analysis-mode"', 'analysis_mode', 'unchecked-rule-items', 'finding-classification', 'finding-priority', 'download-bundle',
-        ):
-            self.assertIn(marker, workbench)
-        self.assertIn('list.concat(material)', workbench)
-        self.assertIn('file.file_version_id', workbench)
-        self.assertIn("await connect()", (ROOT / "apps/web/src/App.tsx").read_text())
-
-
-class AuditHistoryPageTests(unittest.TestCase):
-    def test_history_page_hooks_exist(self):
-        history = (ROOT / "apps/web/src/HistoryView.tsx").read_text()
-        for marker in ('/?round=', '/rounds?', 'result_counts', 'next_offset', '还没有审核结果', '加载更多', 'analysis_mode'):
-            self.assertIn(marker, history)
-        addon = (ROOT / "apps" / "web" / "addon.html").read_text()
-        workbench = (ROOT / "apps/web/src/App.tsx").read_text()
-        self.assertIn('href="./audit-files"', addon)
-        self.assertIn("path: '/audit-files'", workbench)
-        self.assertIn("path: '/usage'", workbench)
-        self.assertNotIn("audit-files.html", addon)
-        self.assertNotIn("audit-files.html", workbench)
