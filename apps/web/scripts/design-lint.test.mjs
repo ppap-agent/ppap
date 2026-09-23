@@ -33,15 +33,27 @@ test('system css must reference tokens', () => {
   assert.ok(failures.some(item => item.includes('unknown token --made-up')))
 })
 
+test('system css tokens must match the property intent domain', () => {
+  const css = '[data-ui="bad"] { font-size: var(--space-lg); padding: var(--size-sidebar); border-radius: var(--font-size-sm); }'
+  const failures = lintStylesheet(css)
+  assert.ok(failures.some(item => item.includes('font-size') && item.includes('--space-lg')))
+  assert.ok(failures.some(item => item.includes('padding') && item.includes('--size-sidebar')))
+  assert.ok(failures.some(item => item.includes('border-radius') && item.includes('--font-size-sm')))
+})
+
 test('a system stylesheet or a direct system import fails the tree contract', () => {
   const root = mkdtempSync(join(tmpdir(), 'design-lint-'))
   mkdirSync(join(root, 'src/ui/system'), {recursive: true})
   mkdirSync(join(root, 'src/feature'), {recursive: true})
   writeFileSync(join(root, 'src/ui/system/bad.css'), '[data-ui="button"] { background: #ff00ff; padding: 17px; border-radius: 19px; }\n')
+  writeFileSync(join(root, 'src/ui/system/bad.tsx'), "export const bad = {fontSize: 17, padding: 12, margin: 0}\n")
   writeFileSync(join(root, 'src/feature/Card.tsx'), "import {Box} from '../ui/system/layout'\nexport function Card() { return <Box>x</Box> }\n")
   try {
     const failures = lintTree(root)
     assert.ok(failures.some(item => item.includes('bad.css') && item.includes('background')))
+    assert.ok(failures.some(item => item.includes('bad.tsx') && item.includes('raw numeric design value 17')))
+    assert.ok(failures.some(item => item.includes('bad.tsx') && item.includes('raw numeric design value 12')))
+    assert.ok(!failures.some(item => item.includes('bad.tsx') && item.includes('raw numeric design value 0')))
     assert.ok(failures.some(item => item.includes('Card.tsx') && item.includes('no-direct-styling-backend')))
   } finally {
     rmSync(root, {recursive: true, force: true})

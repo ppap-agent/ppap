@@ -11,12 +11,53 @@ const rawControls = ['button', 'input', 'select', 'textarea', 'a', 'label']
 const layoutPattern = new RegExp(`</?(?:${rawLayout.join('|')})\\b`)
 const controlPattern = new RegExp(`</?(?:${rawControls.join('|')})\\b`)
 
-const designRoots = ['color', 'background', 'border', 'outline', 'padding', 'margin', 'gap', 'font', 'letter-spacing', 'line-height', 'box-shadow', 'text-shadow', 'min-height', 'min-width', 'max-height', 'max-width', 'height', 'width', 'column-gap', 'row-gap', 'top', 'right', 'bottom', 'left', 'inset']
+const designRoots = ['color', 'background', 'accent-color', 'border', 'outline', 'padding', 'margin', 'gap', 'font', 'letter-spacing', 'line-height', 'box-shadow', 'text-shadow', 'min-height', 'min-width', 'max-height', 'max-width', 'height', 'width', 'column-gap', 'row-gap', 'top', 'right', 'bottom', 'left', 'inset']
 const notDesign = new Set(['border-collapse', 'border-spacing', 'font-synthesis', 'color-scheme'])
 const keywords = new Set(['transparent', 'inherit', 'initial', 'unset', 'revert', 'none', 'currentcolor', 'solid', 'dashed', 'dotted', 'double', 'auto', 'normal'])
 const viewportUnits = new Set(['dvh', 'dvw', 'vh', 'vw', 'vmin', 'vmax', 'svh', 'svw', 'lvh', 'lvw'])
 const functions = new Set(['calc', 'min', 'max', 'minmax', 'clamp'])
 const styleKeys = ['background', 'color', 'padding', 'paddingInline', 'paddingBlock', 'margin', 'gap', 'border', 'borderRadius', 'fontSize', 'fontWeight', 'fontFamily', 'lineHeight', 'letterSpacing', 'boxShadow', 'minHeight', 'minWidth', 'maxHeight', 'maxWidth', 'height', 'width', 'outline', 'outlineOffset']
+
+function tokenDomains(prop) {
+  if (prop === 'background' || prop === 'background-color') return ['color-background-', 'color-action-', 'color-status-']
+  if (prop === 'color') return ['color-text-', 'color-action-', 'color-status-']
+  if (prop === 'accent-color') return ['color-action-', 'color-status-']
+  if (prop === 'border-radius') return ['radius-']
+  if (prop.startsWith('border')) {
+    if (prop.endsWith('-color')) return ['color-border-', 'color-action-', 'color-status-']
+    return ['size-', 'color-border-', 'color-action-', 'color-status-']
+  }
+  if (prop === 'outline') return ['size-', 'color-action-', 'color-border-']
+  if (prop === 'outline-offset') return ['space-']
+  if (prop === 'font-size') return ['font-size-']
+  if (prop === 'font-weight') return ['font-weight-']
+  if (prop === 'font-family') return ['font-family-']
+  if (prop === 'letter-spacing') return ['font-tracking-']
+  if (prop === 'line-height') return ['font-line-']
+  if (prop === 'font') return ['font-size-', 'font-line-', 'font-family-', 'font-weight-']
+  if (prop === 'box-shadow' || prop === 'text-shadow') return ['shadow-']
+  if (/^(padding)(-|$)/.test(prop)) return ['space-', 'control-']
+  if (/^(margin|gap|column-gap|row-gap|top|right|bottom|left|inset)(-|$)/.test(prop)) return ['space-']
+  if (/^(min-|max-)?(width|height)$/.test(prop)) return ['size-', 'control-', 'space-', 'preview']
+  return null
+}
+
+function tokenRefs(value) {
+  return [...value.matchAll(/var\(\s*--([A-Za-z0-9-]+)/g)].map(match => match[1])
+}
+
+function lintTokenDomains(prop, value) {
+  const allowed = tokenDomains(prop)
+  if (!allowed) return []
+  const failures = []
+  for (const token of tokenRefs(value)) {
+    if (token === 'preview') continue
+    if (!allowed.some(prefix => token.startsWith(prefix))) {
+      failures.push(`${prop}: token --${token} is outside allowed domain (${allowed.join(', ')})`)
+    }
+  }
+  return failures
+}
 
 function collectNames(value, prefix = '', out = new Set()) {
   if (typeof value === 'string') {
@@ -246,6 +287,7 @@ export function lintStylesheet(css, names = tokenNames) {
       if (!isDesignProp(prop)) continue
       const problem = lintDesignValue(value, names)
       if (problem) failures.push(`${prop}: ${problem}`)
+      else failures.push(...lintTokenDomains(prop, value))
     }
   }
   return failures
@@ -254,9 +296,9 @@ export function lintStylesheet(css, names = tokenNames) {
 function lintSystemModule(source, names) {
   const failures = []
   const masked = source.replace(/var\(\s*--([A-Za-z0-9-]*)\$\{[^}]+\}/g, (full, prefix) => {
-    const legal = prefix.endsWith('-') && [...names].some(name => name.startsWith(prefix))
-    if (!legal) failures.push(`unknown token prefix --${prefix}`)
-    return 'var(--color-text-primary'
+    const representative = prefix.endsWith('-') ? [...names].find(name => name.startsWith(prefix)) : undefined
+    if (!representative) failures.push(`unknown token prefix --${prefix}`)
+    return `var(--${representative || 'color-text-primary'}`
   })
   for (const match of masked.matchAll(/var\(\s*--([A-Za-z0-9-]+)/g)) {
     if (!knownToken(match[1], names)) failures.push(`unknown token --${match[1]}`)
@@ -265,6 +307,14 @@ function lintSystemModule(source, names) {
   for (const match of masked.matchAll(pattern)) {
     const problem = lintDesignValue(match[3], names)
     if (problem) failures.push(`${match[1]}: ${problem}`)
+    else {
+      const prop = match[1].replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())
+      failures.push(...lintTokenDomains(prop, match[3]))
+    }
+  }
+  const numeric = new RegExp(`\\b(${styleKeys.join('|')})\\s*:\\s*(-?\\d+(?:\\.\\d+)?)\\b`, 'g')
+  for (const match of masked.matchAll(numeric)) {
+    if (Number(match[2]) !== 0) failures.push(`${match[1]}: raw numeric design value ${match[2]}`)
   }
   return failures
 }
