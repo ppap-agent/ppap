@@ -14,6 +14,7 @@ import {
 } from '../api'
 import {latestRules} from '../helpers'
 import {parseProductRoute, productHref} from '../navigation/route'
+import {beginDraftAccept, beginDraftSave, finishDraft, type DraftPhase} from '../workflow/submission'
 
 type Action = (work: () => Promise<void>) => Promise<void>
 
@@ -49,11 +50,13 @@ export function useDraftPreparation({
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('standard')
   const [estimate, setEstimate] = useState<QuotaEstimate | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [draftPhase, setDraftPhase] = useState<DraftPhase>('idle')
 
   const itemsRef = useRef(items)
   const draftIdRef = useRef(draftId)
   const predecessorIdRef = useRef(predecessorId)
   const analysisModeRef = useRef(analysisMode)
+  const draftPhaseRef = useRef<DraftPhase>('idle')
   const disposed = useRef(false)
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
 
@@ -112,7 +115,20 @@ export function useDraftPreparation({
     setRules((await request<{rules: Rule[]}>('/rules')).rules)
   }
 
-  async function saveDraft(list = itemsRef.current) {
+  function claimDraft(next: DraftPhase | null) {
+    if (!next || next === draftPhaseRef.current) return false
+    draftPhaseRef.current = next
+    setDraftPhase(next)
+    return true
+  }
+
+  function releaseDraft() {
+    const next = finishDraft(draftPhaseRef.current)
+    draftPhaseRef.current = next
+    setDraftPhase(next)
+  }
+
+  async function persistDraft(list = itemsRef.current) {
     let id = draftIdRef.current
     if (!id) {
       id = (await request<{id: string}>('/drafts', 'POST', {predecessor_id: predecessorIdRef.current || null})).id
@@ -124,6 +140,16 @@ export function useDraftPreparation({
     const serialized = JSON.stringify(snapshot)
     setSavedDraft(serialized)
     showDraft(id)
+  }
+
+  async function saveDraft(list = itemsRef.current) {
+    if (!claimDraft(beginDraftSave(draftPhaseRef.current))) return false
+    try {
+      await persistDraft(list)
+      return true
+    } finally {
+      if (draftPhaseRef.current === 'saving') releaseDraft()
+    }
   }
 
   async function readAnalysis(versionId: string, id: string) {
@@ -207,18 +233,25 @@ export function useDraftPreparation({
   }
 
   async function acceptDraft() {
-    await saveDraft()
-    const key = `ppap-idempotency-${draftIdRef.current}`
-    const idempotencyKey = sessionStorage.getItem(key) || crypto.randomUUID()
-    sessionStorage.setItem(key, idempotencyKey)
-    const result = await request<Round>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
-      idempotency_key: idempotencyKey,
-      predecessor_id: predecessorIdRef.current || null,
-    })
-    history.replaceState(null, '', productHref({page: 'audit-round', roundId: result.id}))
-    setPredecessorId('')
-    predecessorIdRef.current = ''
-    return result
+    if (!claimDraft(beginDraftAccept(draftPhaseRef.current))) {
+      throw new Error('草稿正在保存，请稍后再提交。')
+    }
+    try {
+      await persistDraft()
+      const key = `ppap-idempotency-${draftIdRef.current}`
+      const idempotencyKey = sessionStorage.getItem(key) || crypto.randomUUID()
+      sessionStorage.setItem(key, idempotencyKey)
+      const result = await request<Round>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
+        idempotency_key: idempotencyKey,
+        predecessor_id: predecessorIdRef.current || null,
+      })
+      history.replaceState(null, '', productHref({page: 'audit-round', roundId: result.id}))
+      setPredecessorId('')
+      predecessorIdRef.current = ''
+      return result
+    } finally {
+      releaseDraft()
+    }
   }
 
   async function startReaudit(current: Round) {
@@ -325,6 +358,7 @@ export function useDraftPreparation({
     analysisMode,
     estimate,
     dragActive,
+    draftPhase,
     draftDirty,
     targetCount,
     missingRules,

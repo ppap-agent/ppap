@@ -111,6 +111,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     analysisMode,
     estimate,
     dragActive,
+    draftPhase,
     draftDirty,
     targetCount,
     missingRules,
@@ -295,8 +296,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                   <small className="pc-muted">{draftDirty ? '有未保存的修改' : '草稿已保存'}</small>
                 </div>
                 <div className="button-group">
-                  <button type="button" data-testid="save-draft" disabled={busy || !draftDirty} onClick={() => void action(async () => { await saveDraft(); setMessage('草稿已保存。') })}>保存草稿</button>
-                  <button type="button" className="pc-primary" data-testid="submit-audit" id={predecessorId ? 'resubmit-audit' : undefined} disabled={busy || !targetCount || !!missingRules || estimate?.accept_allowed === false} onClick={() => void submit()}>{busy ? '处理中…' : '开始审核'}</button>
+                  <button type="button" data-testid="save-draft" disabled={busy || draftPhase !== 'idle' || !draftDirty} onClick={() => void action(async () => { if (await saveDraft()) setMessage('草稿已保存。') })}>保存草稿</button>
+                  <button type="button" className="pc-primary" data-testid="submit-audit" id={predecessorId ? 'resubmit-audit' : undefined} disabled={busy || draftPhase !== 'idle' || !targetCount || !!missingRules || estimate?.accept_allowed === false} onClick={() => void submit()}>{busy || draftPhase === 'accepting' ? '处理中…' : '开始审核'}</button>
                 </div>
               </div>
             </section>

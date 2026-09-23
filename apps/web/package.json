@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/navigation/route.test.ts"
+    "test": "node --experimental-strip-types --test src/navigation/route.test.ts src/workflow/ruleImport.test.ts src/workflow/submission.test.ts"
   },
   "dependencies": {
     "lucide-react": "^1.47.0",

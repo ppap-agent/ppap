@@ -9,6 +9,7 @@ import {request, type Finding, type Round} from '../api'
 import {clampPreviewWidth, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
 import {parseProductRoute} from '../navigation/route'
 import type {OriginalPreviewHandle} from '../OriginalPreview'
+import {beginReviewSave, markReviewClean, markReviewDirty, type ReviewPhase} from '../workflow/submission'
 
 type Action = (work: () => Promise<void>) => Promise<void>
 export type ReviewDraft = {judgment: string; rationale: string; next_step: string}
@@ -27,9 +28,8 @@ export function useRoundReview({
   const [selectedKey, setSelectedKey] = useState('')
   const [filter, setFilter] = useState('attention')
   const [review, setReview] = useState<ReviewDraft>({judgment: '', rationale: '', next_step: ''})
-  const [reviewDirty, setReviewDirty] = useState(false)
+  const [reviewPhase, setReviewPhase] = useState<ReviewPhase>('clean')
   const [customJudgment, setCustomJudgment] = useState(false)
-  const [savingReview, setSavingReview] = useState(false)
   const [reviewFeedback, setReviewFeedback] = useState('')
   const [workspacePanel, setWorkspacePanel] = useState('checks')
   const [roundView, setRoundView] = useState('review')
@@ -44,7 +44,8 @@ export function useRoundReview({
   const activeRoundId = useRef(initialRoute.page === 'audit-round' ? initialRoute.roundId : '')
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
   const disposed = useRef(false)
-  const reviewDirtyRef = useRef(reviewDirty)
+  const reviewPhaseRef = useRef(reviewPhase)
+  const reviewDirtyRef = useRef(reviewPhase !== 'clean')
   const reviewRef = useRef(review)
   const roundRef = useRef(round)
   const selectedFileIdRef = useRef(selectedFileId)
@@ -59,7 +60,7 @@ export function useRoundReview({
   const findingsRef = useRef<Finding[]>([])
   const fileFindingsRef = useRef<Finding[]>([])
 
-  reviewDirtyRef.current = reviewDirty
+  reviewDirtyRef.current = reviewPhaseRef.current !== 'clean'
   reviewRef.current = review
   roundRef.current = round
   selectedFileIdRef.current = selectedFileId
@@ -97,14 +98,19 @@ export function useRoundReview({
     timers.current.add(timer)
   }
 
+  function setPhase(phase: ReviewPhase) {
+    reviewPhaseRef.current = phase
+    reviewDirtyRef.current = phase !== 'clean'
+    setReviewPhase(phase)
+  }
+
   function choose(item?: Finding) {
     const judgment = item?.review?.judgment || ''
     const key = item?.item_key || ''
     selectedKeyRef.current = key
     setSelectedKey(key)
     setReview({judgment, rationale: item?.review?.rationale || '', next_step: item?.review?.next_step || ''})
-    setReviewDirty(false)
-    reviewDirtyRef.current = false
+    if (reviewPhaseRef.current !== 'saving') setPhase(markReviewClean())
     setCustomJudgment(!!judgment && !reviewJudgments.includes(judgment as typeof reviewJudgments[number]))
     setReviewFeedback('')
   }
@@ -217,10 +223,15 @@ export function useRoundReview({
     if (!reviewRef.current.judgment.trim()) return false
     let saved = false
     await action(async () => {
+      const next = beginReviewSave(reviewPhaseRef.current)
+      if (!next) return
+      setPhase(next)
       const current = roundRef.current
       const finding = current?.findings.find(item => item.item_key === selectedKeyRef.current)
-      if (!current || !finding) return
-      setSavingReview(true)
+      if (!current || !finding) {
+        setPhase('dirty')
+        return
+      }
       try {
         const result = await request<Round>(`/rounds/${current.id}/reviews`, 'PUT', {
           item_key: finding.item_key,
@@ -229,14 +240,15 @@ export function useRoundReview({
         })
         setRound(result)
         roundRef.current = result
-        setReviewDirty(false)
-        reviewDirtyRef.current = false
+        setPhase(markReviewClean())
         setReviewFeedback('复核已保存')
         saved = true
-      } finally {
-        setSavingReview(false)
+      } catch (error) {
+        if (reviewPhaseRef.current === 'saving') setPhase('dirty')
+        throw error
       }
     })
+    if (!saved && reviewPhaseRef.current === 'saving') setPhase('dirty')
     return saved
   }
 
@@ -306,8 +318,7 @@ export function useRoundReview({
   function setJudgment(value: string) {
     setCustomJudgment(false)
     setReview(current => ({...current, judgment: value}))
-    setReviewDirty(true)
-    reviewDirtyRef.current = true
+    setPhase(markReviewDirty(reviewPhaseRef.current))
     setReviewFeedback('')
   }
 
@@ -317,8 +328,7 @@ export function useRoundReview({
 
   function updateReview(field: keyof ReviewDraft, value: string) {
     setReview(current => ({...current, [field]: value}))
-    setReviewDirty(true)
-    reviewDirtyRef.current = true
+    setPhase(markReviewDirty(reviewPhaseRef.current))
     setReviewFeedback('')
   }
 
@@ -391,8 +401,7 @@ export function useRoundReview({
     roundViewRef.current = 'review'
     setWorkspacePanel('checks')
     workspacePanelRef.current = 'checks'
-    setReviewDirty(false)
-    reviewDirtyRef.current = false
+    setPhase(markReviewClean())
     setReviewFeedback('')
   }
 
@@ -410,10 +419,10 @@ export function useRoundReview({
     findingIndex,
     filter,
     review,
-    reviewDirty,
+    reviewDirty: reviewPhase !== 'clean',
     reviewDirtyRef,
     customJudgment,
-    savingReview,
+    savingReview: reviewPhase === 'saving',
     reviewFeedback,
     workspacePanel,
     roundView,
