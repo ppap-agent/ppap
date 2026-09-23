@@ -184,6 +184,23 @@ jobs:
           rm -rf .venv
           uv venv --python 3.12 --seed .venv
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Ensure PostgreSQL client
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              if sudo apt-get -o Acquire::Retries=5 update \
+                && sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends postgresql-client; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "apt could not install postgresql-client" >&2
+                exit 1
+              fi
+              sleep $((attempt * 4))
+            done
+          fi
+          command -v psql
       - name: Empty and previous schema upgrade
         run: |
           set -euo pipefail
