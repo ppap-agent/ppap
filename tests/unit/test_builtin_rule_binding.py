@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import tests.pathsetup  # noqa: F401
 
 from ppap_core.audits import RoundInput, findings_from_rule_execution
+from ppap_core.engine_round import builtin_rule_input
 from ppap_core.rule_coverage import COVERAGE_UNSUPPORTED, MODE_RULE_ITEMS
-from ppap_worker import _rule_input
 
 
 class BuiltinBindingTests(unittest.TestCase):
@@ -14,13 +14,13 @@ class BuiltinBindingTests(unittest.TestCase):
             'kind': 'engine', 'type': 'PFMEA', 'rule_profile': 'v3',
             'rules': [{'id': '99', 'category': 'customer-only', 'rule_to_check': 'arbitrary customer requirement'}]},
             rule_execution=None)
-        first = _rule_input(item)
+        first = builtin_rule_input(item)
         self.assertTrue(first.rules)
         self.assertNotIn('customer-only', str(first.rules))
         item.rule_body['rules'] = []
-        self.assertEqual(first.rules, _rule_input(item).rules)
+        self.assertEqual(first.rules, builtin_rule_input(item).rules)
         item.filename = 'PFMEA.pdf'
-        self.assertEqual(first.rules, _rule_input(item).rules)
+        self.assertEqual(first.rules, builtin_rule_input(item).rules)
 
     def test_unsupported_document_type_does_not_execute_customer_rules(self):
         from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution

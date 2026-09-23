@@ -24,7 +24,7 @@ export default function RuleDetail({
   const listHref = href({}, returnTo)
   return (
     <section className="page-content rules-page">
-      <a className="back-link" href={returnTo || listHref}>← {returnTo ? returnLabel : '规则库'}</a>
+      <a className="back-link" data-testid="rule-return" href={returnTo || listHref}>← {returnTo ? returnLabel : '规则库'}</a>
       <RuleDetailContent ruleId={ruleId} returnTo={returnTo} returnLabel={returnLabel} saved={saved} />
     </section>
   )
@@ -99,7 +99,6 @@ function RuleDetailContent({
           </article>
         ))}
       </div>
-      {returnTo && <a className="button pc-primary" href={returnTo}>{returnLabel}</a>}
     </>
   )
 }

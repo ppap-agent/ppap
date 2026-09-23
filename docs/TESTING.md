@@ -19,6 +19,18 @@
 
 ## 当前可运行入口
 
+Web 合并契约分两段。类型、生产构建和前端边界不依赖 Docker；代表性浏览器路径仍是 isolated-dev 上的 `tests.e2e.test_web_audit`。CI 里它们分别是 `Web contract` 与 `e2e`。`push` 和 `pull_request` 使用不同的 concurrency group，同一 head 不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。
+
+```sh
+cd apps/web
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm build
+cd ../..
+python -m pip install -e ".[dev]"
+python -m unittest tests.unit.test_web_boundary tests.unit.test_web_server tests.unit.test_product_experience -v
+```
+
 ```sh
 python -m pip install -e ".[dev]"
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
