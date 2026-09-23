@@ -64,7 +64,7 @@ export default function HistoryView() {
         >
           {filtered
             ? <Button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</Button>
-            : <ButtonLink variant="primary" className="empty-cta" href="/">新建审核</ButtonLink>}
+            : <ButtonLink variant="primary" href="/">新建审核</ButtonLink>}
         </FeedbackState>
       )}
       {!!rows.length && (
@@ -91,7 +91,7 @@ export default function HistoryView() {
           </table>
         </div>
       )}
-      {next !== null && <Button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
+      {next !== null && <Button type="button" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
     </section>
   )
 }

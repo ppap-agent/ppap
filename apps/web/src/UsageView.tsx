@@ -77,7 +77,7 @@ export default function UsageView() {
           </table>
         </div>
       )}
-      {next !== null && <Button type="button" className="load-more" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
+      {next !== null && <Button type="button" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
     </section>
   )
 }
