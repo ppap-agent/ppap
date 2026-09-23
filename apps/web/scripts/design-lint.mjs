@@ -2,10 +2,7 @@ import {readdirSync, readFileSync, statSync} from 'node:fs'
 import {dirname, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
-const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '../src')
-
-/** Stylesheets that still have consumers. #95 deletes these; any other feature CSS fails. */
-export const legacyStylesheets = new Set(['style.css', 'ui/foundation.css'])
+const webRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const rawLayout = ['div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside', 'form', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'ul', 'ol', 'li', 'fieldset', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'dl', 'dt', 'dd', 'pre', 'iframe', 'code', 'strong', 'em', 'small']
 const rawControls = ['button', 'input', 'select', 'textarea', 'a', 'label']
@@ -28,23 +25,24 @@ export function lintSource(source) {
   return violations
 }
 
-export function lintTree(root = srcRoot) {
+export function lintTree(root = webRoot) {
   const failures = []
   function walk(directory, relative = '') {
     for (const name of readdirSync(directory)) {
       const path = join(directory, name)
       const next = relative ? `${relative}/${name}` : name
+      if (name === 'node_modules' || name === 'dist') continue
       if (statSync(path).isDirectory()) {
-        if (next === 'ui/system') continue
         walk(path, next)
         continue
       }
-      if (name.endsWith('.css')) {
-        if (!legacyStylesheets.has(next)) failures.push(`${next}: no-feature-css`)
-        continue
-      }
-      if (next.startsWith('ui/') || !/\.tsx?$/.test(name) || name.endsWith('.test.ts')) continue
-      for (const rule of lintSource(readFileSync(path, 'utf8'))) failures.push(`${next}: ${rule}`)
+      if (!/\.(css|tsx?|html)$/.test(name)) continue
+      const text = readFileSync(path, 'utf8')
+      const backend = next.startsWith('src/ui/system/')
+      if (text.includes('--pc-') || text.includes('--ui-')) failures.push(`${next}: no-legacy-alias`)
+      if (name.endsWith('.css') && !backend) failures.push(`${next}: no-feature-css`)
+      if (backend || !next.startsWith('src/') || next.startsWith('src/ui/') || name.endsWith('.test.ts')) continue
+      for (const rule of lintSource(text)) failures.push(`${next}: ${rule}`)
     }
   }
   walk(root)

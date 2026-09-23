@@ -1,5 +1,3 @@
-import './foundation.css'
-import '../style.css'
 import './system/system.css'
 import {installTokens} from './system/tokenCss'
 

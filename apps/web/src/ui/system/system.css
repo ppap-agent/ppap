@@ -1,3 +1,31 @@
+:root { color-scheme: light; }
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--color-background-canvas);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-body);
+  overscroll-behavior: none;
+}
+#app { min-height: 100dvh; }
+button, input, select, textarea { font: inherit; }
+[data-ui="input"]::placeholder,
+[data-ui="textarea"]::placeholder { color: var(--color-text-muted); }
+[data-ui="button"],
+[data-ui="link"],
+[data-ui="nav-link"],
+[data-ui="icon-button"],
+[data-ui="tab"],
+[data-ui="toggle"] { touch-action: manipulation; }
+
 [data-ui="button"] {
   min-height: var(--control-md);
   border: var(--size-border) solid var(--color-border-strong);

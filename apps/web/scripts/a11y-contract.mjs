@@ -22,6 +22,8 @@ for (const [name, pattern] of required) if (!pattern.test(css)) failures.push(`s
 if (!tokens.includes("touch: '44px'")) failures.push('touch target token is not 44px')
 if (!tokens.includes("focus: '2px'")) failures.push('focus ring token is not 2px')
 if (!viewport.includes('1023px') || !css.includes('1023px')) failures.push('compact viewport is not shared')
+const tokensCss = readFileSync(join(root, 'system/tokenCss.ts'), 'utf8')
+if (!tokensCss.includes('prefers-contrast: more')) failures.push('increased contrast does not override tokens')
 if (failures.length) {
   console.error(failures.join('\n'))
   process.exit(1)
