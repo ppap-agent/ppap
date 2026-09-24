@@ -11,7 +11,7 @@ export {Badge, Button, Checkbox, FeedbackState, Field, FileInput, IconButton, In
 export {Icon} from './system/icons'
 export type {IconSize} from './system/icons'
 export type {BadgeTone, ButtonSize, ButtonVariant, FeedbackTone} from './system/controls'
-export {AccountMenu, AppBody, AppFrame, BrandLink, EditionBanner, Main, MobileBar, MobileContext, PrimaryNav, Sidebar, SidebarBrand, SkipLink} from './system/chrome'
+export {AccountMenu, AppBody, AppFrame, BrandLink, Main, MobileBar, PrimaryNav, Sidebar, SidebarBrand, SkipLink} from './system/chrome'
 export {Modal, OfficeFrame, OfficeHost} from './system/dialog'
 export type {Sealed} from './system/dom'
 export type {Space, StatusTone} from './tokens'

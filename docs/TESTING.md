@@ -59,7 +59,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 
 PSW 的 `.doc` 用例需要本机 LibreOffice，以及 Linux 上可执行的 `ppap-local-converter-sandbox`（由 `packages/ppap_docops/native/legacy_doc_sandbox.c` 编译）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
-#7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开当前 round 冻结原件（或看到 locator-gap）、原件预览、复核、显式重审，以及 PC 导航到用量和审核文件历史：
+#7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开本轮原件版本（或看到 locator-gap）、原件预览、复核、显式重审，以及从账号菜单查看用量和从主导航查看审核结果：
 
 ```sh
 python -m pip install -e ".[dev,e2e]"

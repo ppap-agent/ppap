@@ -99,7 +99,6 @@ export default function HistoryView() {
     <Page>
       <PageHeader
         title="审核结果"
-        description="查看每轮机器检查和人工复核进度，并继续未完成的复核。"
         actions={rows.length > 0 ? <Link variant="primary" href={productHref({page: 'audit-new'})}>新建审核</Link> : undefined}
       />
       {showToolbar && (

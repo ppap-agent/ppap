@@ -293,7 +293,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   return (
     <Pane kind="original" testId="file-preview">
       <Inline justify="between" align="center">
-        <Heading level={2}>原件<VisuallyHidden testId="file-preview-name"> · {file?.original_filename}</VisuallyHidden></Heading>
+        <Heading level={2}>{file && !loading && !url && (textMode || (!office && excerpt?.available)) ? '文字摘录' : '原件'}<VisuallyHidden testId="file-preview-name"> · {file?.original_filename}</VisuallyHidden></Heading>
         <Inline gap="xs">
           {office && <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void showText()}>{textMode ? '排版预览' : '文字摘录'}</Button>}
           <Help title="预览说明"><Text>{file?.original_filename}</Text>{notice && <Text>{notice}</Text>}<Text>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</Text></Help>

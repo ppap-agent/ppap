@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type ReactNode} from 'react'
-import {Button} from './controls'
+import {Button, Link} from './controls'
 
 export function AppFrame({children}: {children: ReactNode}) {
   return <div data-ui="app-frame">{children}</div>
@@ -22,10 +22,6 @@ export function BrandLink({label = 'PPAP 首页', mark}: {label?: string; mark: 
   )
 }
 
-export function MobileContext({children}: {children: ReactNode}) {
-  return <span data-ui="mobile-context">{children}</span>
-}
-
 export function SkipLink() {
   return <a data-ui="skip" href="#main-content">跳到主要内容</a>
 }
@@ -40,15 +36,6 @@ export function Sidebar({children, testId}: {children: ReactNode; testId?: strin
 
 export function SidebarBrand({children}: {children: ReactNode}) {
   return <div data-ui="sidebar-brand">{children}</div>
-}
-
-export function EditionBanner({signedIn}: {signedIn: boolean}) {
-  return (
-    <div data-ui="edition" data-testid="edition-banner">
-      <span>当前：新版</span>
-      {signedIn ? <a data-ui="link" href="/enter-legacy">切换到旧版</a> : null}
-    </div>
-  )
 }
 
 export function PrimaryNav({
@@ -124,6 +111,8 @@ export function AccountMenu({user, onLogout, compact = false}: {user: string; on
       </button>
       {open && (
         <div id={menuId} data-ui="account-actions">
+          <Link href="/usage" variant="ghost" data-testid="nav-usage">用量记录</Link>
+          <Link href="/enter-legacy" variant="ghost">切换到旧版</Link>
           <Button variant="ghost" onClick={onLogout}>退出登录</Button>
         </div>
       )}

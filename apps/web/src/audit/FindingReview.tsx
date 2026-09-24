@@ -55,7 +55,7 @@ export default function FindingReview({
       ? (hasNextUnreviewed ? '保存并继续' : '保存复核')
       : hasNextUnreviewed
         ? '下一未记录项 →'
-        : '复核已记录'
+        : finding.review ? '复核已记录' : '选择复核判断'
   const saveState = savingReview ? '正在保存…' : reviewDirty ? '未保存' : finding.review ? '已保存' : ''
 
   return (

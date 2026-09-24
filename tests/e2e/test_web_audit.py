@@ -130,7 +130,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 expect(page.get_by_test_id("nav-audit-files")).to_be_visible()
                 expect(page.get_by_test_id("finding-heading").first).to_be_visible()
                 expect(page.get_by_test_id("file-version-list")).to_contain_text("report.xlsx")
-                open_nav(page)
+                page.locator('[data-ui="mobile-account"] [data-ui="account-button"]').click()
                 page.get_by_test_id("nav-usage").click()
                 page.wait_for_url("**/usage")
                 page.wait_for_function(

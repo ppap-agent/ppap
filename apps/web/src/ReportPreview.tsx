@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
 import {type Round, apiUrl, originalUrl, bundleUrl, request, resultLabels} from './api'
 import {productHref} from './navigation/route'
-import {Badge, Button, Callout, Heading, Inline, Link, Page, ReportBlock, ReviewNote, Stack, Surface, Text} from './ui'
+import {Badge, Button, Callout, Heading, Inline, Link, ReportBlock, ReviewNote, Stack, Surface, Text} from './ui'
 
 interface Export {id: string; status: string; document_id: string | null; error_code?: string | null}
 
@@ -60,12 +60,11 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
   const incomplete = round.execution !== 'completed' || !groups.length || groups.some(group => !group.findings.length || group.findings.some(finding => finding.status === 'ERR'))
   const reviewed = round.findings.filter(finding => finding.review).length
   const counts = ['NG', 'ERR', 'PASS'].map(status => ({status, count: round.findings.filter(item => item.status === status).length}))
-  const pending = round.findings.filter(item => !item.review).length
   const issues = round.findings.filter(item => item.status !== 'PASS')
   const unsupported = (round.coverage?.rule_items || []).filter(item => item.coverage === 'unsupported').length
 
   return (
-    <Page>
+    <Stack as="section" gap="lg">
       <Inline justify="between" align="start" wrap>
         <Stack gap="xs">
           <Heading level={2}>审核报告</Heading>
@@ -94,18 +93,19 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
       {report?.status === 'ready' && <Callout>报告已生成，可在飞书中分享。后续复核修改不会覆盖这份报告。</Callout>}
       {incomplete && <Callout>检查尚未完整完成，暂不能生成完整报告。</Callout>}
       <Surface>
-        <Inline gap="md" wrap>
-          {counts.map(count => (
-            <Badge key={count.status} tone={count.count ? machineTone(count.status) : 'neutral'}>{resultLabels[count.status]} {count.count}</Badge>
-          ))}
-          <Text as="span" tone="muted">未记录复核 {pending} 项</Text>
-        </Inline>
-        <Text tone="muted">自动检查 {round.findings.length} 项 · 未覆盖 {unsupported} 项 · 非正式批准</Text>
-        {issues.length > 8
-          ? <Stack as="ul" gap="sm">{issues.map(finding => <Inline as="li" key={finding.item_key} justify="between"><Link href={'#report-' + finding.item_key}>{finding.item}</Link><Text as="span" size="sm" tone="muted">{finding.review ? '已记录复核' : '未记录复核'}</Text></Inline>)}</Stack>
-          : !issues.length ? <Text>{round.findings.length ? '已返回检查项未发现不符合；不代表未检查范围也已通过。' : '尚无检查结果。'}</Text> : null}
-        {!!round.coverage?.unchecked?.length && <Text>未检查范围：{round.coverage.unchecked.join('；')}</Text>}
-        <Link data-testid="report-download-bundle" href={bundleUrl(round.id)}>打包下载本轮资料</Link>
+        <Stack gap="sm">
+          <Inline gap="md" wrap>
+            {counts.filter(count => count.count > 0).map(count => (
+              <Badge key={count.status} tone={machineTone(count.status)}>{resultLabels[count.status]} {count.count}</Badge>
+            ))}
+          </Inline>
+          {unsupported > 0 && <Text tone="muted">未覆盖 {unsupported} 项</Text>}
+          {issues.length > 8
+            ? <Stack as="ul" gap="sm">{issues.map(finding => <Inline as="li" key={finding.item_key} justify="between"><Link href={'#report-' + finding.item_key}>{finding.item}</Link><Text as="span" size="sm" tone="muted">{finding.review ? '已记录复核' : '未记录复核'}</Text></Inline>)}</Stack>
+            : !issues.length ? <Text>{round.findings.length ? '已检查项目未发现不符合。' : '尚无检查结果。'}</Text> : null}
+          {!!round.coverage?.unchecked?.length && <Text>未检查范围：{round.coverage.unchecked.join('；')}</Text>}
+          <Link data-testid="report-download-bundle" href={bundleUrl(round.id)}>打包下载本轮资料</Link>
+        </Stack>
       </Surface>
       {groups.map(group => (
         <Stack key={group.file.file_version_id} gap="sm">
@@ -132,6 +132,6 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
         </Stack>
       ))}
       {round.inputs.some(file => file.role === 'reference') && <Text tone="muted">参考资料 · {round.inputs.filter(file => file.role === 'reference').map(file => file.original_filename).join('、')}</Text>}
-    </Page>
+    </Stack>
   )
 }

@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from 'react'
+import {useEffect, useState} from 'react'
 import {apiUrl, connect, feishuAppId, profile, request} from './api'
 import {isFeishuHost, requestHostCode} from './hostLogin'
 import Workbench from './Workbench'
@@ -6,7 +6,7 @@ import HistoryView from './HistoryView'
 import RulesView from './RulesView'
 import UsageView from './UsageView'
 import {isTenantDenied, parseProductRoute, productHref, shellPath} from './navigation/route'
-import AppShell, {navigationTitle} from './ui/AppShell'
+import AppShell from './ui/AppShell'
 import {Button, Callout, Link, Page, PageHeader} from './ui'
 
 const route = parseProductRoute(location.pathname, location.search)
@@ -14,7 +14,6 @@ const route = parseProductRoute(location.pathname, location.search)
 export default function App() {
   const [reviewing, setReviewing] = useState(route.page === 'audit-round')
   const activePath = shellPath(route, reviewing)
-  const title = useMemo(() => navigationTitle(activePath), [activePath])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   const [user, setUser] = useState('')
@@ -67,27 +66,32 @@ export default function App() {
     } catch { setError('无法创建本地测试会话。') }
   }
 
+  const authenticated = ready && !devPage && !!user
   return (
-    <AppShell activePath={activePath} title={title} user={user} onLogout={() => void logout()}>
-      <Page>
-      {tenantDenied && <Callout tone="error">无法使用此入口。</Callout>}
-      {error && <Callout tone="error">{error}</Callout>}
-      {!ready && !error && <Callout tone="loading">正在连接…</Callout>}
-      {ready && devPage && (
-        development
-          ? <PageHeader title="本地测试身份" actions={<Button type="button" variant="primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</Button>} />
-          : <PageHeader title="此入口不可用" />
+    <AppShell activePath={activePath} user={user} onLogout={() => void logout()}>
+      {authenticated ? (
+        <>
+          {error && <Page><Callout tone="error">{error}</Callout></Page>}
+          {route.page === 'audit-history' ? <HistoryView />
+            : route.page === 'rule-library' || route.page === 'rule-detail' || route.page === 'rule-import' ? <RulesView />
+              : route.page === 'usage' ? <UsageView />
+                : <Workbench onReviewing={setReviewing} />}
+        </>
+      ) : (
+        <Page>
+          {tenantDenied && <Callout tone="error">无法使用此入口。</Callout>}
+          {error && <Callout tone="error">{error}</Callout>}
+          {!ready && !error && <Callout tone="loading">正在连接…</Callout>}
+          {ready && devPage && (
+            development
+              ? <PageHeader title="本地测试身份" actions={<Button type="button" variant="primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</Button>} />
+              : <PageHeader title="此入口不可用" />
+          )}
+          {ready && !devPage && !user && (
+            <PageHeader title="登录后开始审核" description="使用飞书账号访问你的资料与审核结果。" actions={<Link href={loginUrl} variant="primary">登录飞书</Link>} />
+          )}
+        </Page>
       )}
-      {ready && !devPage && !user && (
-        <PageHeader title="登录后开始审核" description="使用飞书账号访问你的资料与审核结果。" actions={<Link href={loginUrl} variant="primary">登录飞书</Link>} />
-      )}
-      {ready && !devPage && !!user && (
-        route.page === 'audit-history' ? <HistoryView />
-          : route.page === 'rule-library' || route.page === 'rule-detail' || route.page === 'rule-import' ? <RulesView />
-            : route.page === 'usage' ? <UsageView />
-              : <Workbench onReviewing={setReviewing} />
-      )}
-      </Page>
     </AppShell>
   )
 }

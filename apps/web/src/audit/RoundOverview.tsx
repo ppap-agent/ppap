@@ -69,7 +69,7 @@ export default function RoundOverview({
       <ViewTabs>
         <ViewTab pressed={roundView === 'review' && workspacePanel === 'checks'} onClick={() => onSwitchView('review')}>检查与复核</ViewTab>
         <ViewTab kind="original" pressed={roundView === 'review' && workspacePanel === 'original'} onClick={() => onSwitchView('original')}>原件</ViewTab>
-        <ViewTab pressed={roundView === 'report'} onClick={() => onSwitchView('report')}>审核报告</ViewTab>
+        <ViewTab pressed={roundView === 'report'} onClick={() => onSwitchView('report')}>报告</ViewTab>
       </ViewTabs>
     </Stack>
   )

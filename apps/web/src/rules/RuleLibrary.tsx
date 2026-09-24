@@ -64,7 +64,6 @@ export default function RuleLibrary({returnTo, returnLabel}: {returnTo?: ReturnT
       {returnTo && <Link href={productHref(returnTo)}>← {returnLabel}</Link>}
       <PageHeader
         title="规则库"
-        description="管理客户规则、适用范围和历史版本。审核受理后会冻结所选规则版本。"
         actions={visible.length > 0 ? <Button type="button" variant="primary" data-testid="new-rule" id="new-rule" disabled={busy} onClick={newRule}>上传规则</Button> : undefined}
       />
       {(visible.length > 0 || query || customer) && (
