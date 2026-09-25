@@ -25,7 +25,11 @@ COPY packages /app/packages
 COPY services /app/services
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
 
+ARG PPAP_DEBIAN_MIRROR=
 RUN set -eux; \
+    if [ -n "$PPAP_DEBIAN_MIRROR" ]; then \
+      sed -i "s#^URIs: http://deb.debian.org/debian$#URIs: $PPAP_DEBIAN_MIRROR#" /etc/apt/sources.list.d/debian.sources; \
+    fi; \
     i=1; \
     while [ "$i" -le 5 ]; do \
       if apt-get -o Acquire::Retries=5 update \
