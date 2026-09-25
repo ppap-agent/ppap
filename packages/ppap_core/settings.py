@@ -86,7 +86,6 @@ class Settings(BaseSettings):
     OPENAI_REASONING_EFFORT: Optional[str] = None
     OPENAI_TEMPERATURE: Optional[float] = None
     OPENAI_TOP_P: Optional[float] = None
-    OPENAI_PRESENCE_PENALTY: Optional[float] = None
     AI_RATE_LIMIT_PER_MINUTE: int = 60
     MAX_PARALLEL_WORKERS: int = 7
     LANGFUSE_SECRET_KEY: str = ""

@@ -219,29 +219,27 @@ def extract_images_from_bytes(file_content: bytes, file_type: str, **kwargs: Any
 
 
 def create_openai_image_message(text: str, image_urls: List[str]) -> Dict[str, Any]:
-    """创建OpenAI图像消息格式
+    """创建 Responses 图像输入消息
 
     Args:
         text: 文本内容
         image_urls: base64编码的图像URL列表
 
     Returns:
-        Dict[str, Any]: OpenAI消息格式
+        Dict[str, Any]: Responses 输入消息
     """
     content: List[Dict[str, Any]] = []
 
     for image_base64 in image_urls:
         content.append(
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": image_base64,
-                    "detail": "high",  # 可以是 "low", "high", 或 "auto"
-                },
+                "type": "input_image",
+                "image_url": image_base64,
+                "detail": "high",
             }
         )
     if text:
-        content.append({"type": "text", "text": text})
+        content.append({"type": "input_text", "text": text})
     return {"role": "user", "content": content}
 
 

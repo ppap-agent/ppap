@@ -136,7 +136,8 @@ class TokenTracker:
             # logger.warning("无法记录token使用: 未找到请求ID")
             return
 
-        total_tokens = input_tokens + output_tokens + thinking_tokens
+        # Responses includes reasoning tokens in output_tokens.
+        total_tokens = input_tokens + output_tokens
         usage = TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,

@@ -9,7 +9,6 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Union
 
 from openai import OpenAI
-from openai.types.chat import ChatCompletion
 from ppap_core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -45,11 +44,11 @@ def _prepare_messages(image_input: Union[str, List[str]], text_prompt: str) -> L
     for path in paths:
         if os.path.exists(path):
             b64 = encode_image(path)
-            images_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            images_content.append({"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"})
         else:
             logger.warning(f"Image not found: {path}")
 
-    content_payload = [{"type": "text", "text": text_prompt}, *images_content]
+    content_payload = [{"type": "input_text", "text": text_prompt}, *images_content]
     return [{"role": "user", "content": content_payload}]
 
 
@@ -64,9 +63,10 @@ def call_llm(image_paths: Union[str, List[str]], prompt: str, retry_count: int =
     # 构造参数
     kwargs: dict[str, Any] = {
         "model": _get_llm_model_name(),
-        "messages": messages,
+        "input": messages,
         "temperature": 0.1 if json_mode else 0.0,  # Tagging 需要严谨，内容提取需要稳定
         "top_p": 0.95,
+        "store": False,
         "timeout": 600,
     }
 
@@ -74,16 +74,17 @@ def call_llm(image_paths: Union[str, List[str]], prompt: str, retry_count: int =
     if json_mode:
         if response_schema:
             # 如果平台支持 strict schema (如 Vertex AI / OpenAI 最新版)
-            kwargs["response_format"] = {"type": "json_schema", "json_schema": response_schema}
+            kwargs["text"] = {"format": {"type": "json_schema", **response_schema}}
         else:
             # 通用 JSON 模式
-            kwargs["response_format"] = {"type": "json_object"}
+            kwargs["text"] = {"format": {"type": "json_object"}}
 
     for attempt in range(retry_count):
         try:
-            response: ChatCompletion = _get_llm_client().chat.completions.create(**kwargs)
-            content = response.choices[0].message.content
-            content_text = content or ""
+            response = _get_llm_client().responses.create(**kwargs)
+            if response.status != "completed" or not response.output_text.strip():
+                raise RuntimeError("AI response did not complete with text")
+            content_text = response.output_text
 
             # 如果是 JSON 模式，尝试解析为字典返回
             if json_mode:

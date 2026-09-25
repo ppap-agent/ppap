@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI as BaseOpenAI
 from ppap_core.settings import get_settings
@@ -189,25 +189,25 @@ class AIClient:
         else:
             logger.debug("Langfuse未启用，无需关闭")
 
-    def chat_completion(
+    def response_text(
         self,
         messages: List[Dict[str, Any]],
         max_tokens: int = 1000,
         temperature: float = 0.1,
-        response_format: Optional[Dict[str, str]] = None,
-        operation: str = "chat_completion",
+        text_format: Optional[Dict[str, str]] = None,
+        operation: str = "response_text",
         *,
         request_timeout: float | None = None,
         retry_limit: int | None = None,
     ) -> str:
         """
-        统一的聊天完成接口，支持文本和图像
+        统一的 Responses 接口，支持文本和图像
 
         Args:
             messages: 消息列表，支持文本和图像内容
             max_tokens: 最大token数
             temperature: 温度参数
-            response_format: 响应格式
+            text_format: 输出格式
             operation: 操作描述，用于token跟踪
 
         Returns:
@@ -218,7 +218,7 @@ class AIClient:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                response_format=response_format,
+                text_format=text_format,
             )
             if request_timeout is not None:
                 request_kwargs["timeout"] = request_timeout
@@ -230,34 +230,27 @@ class AIClient:
             for attempt in range(max_retries + 1):
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
-                response = request_client.chat.completions.create(**request_kwargs)
+                response = request_client.responses.create(**request_kwargs)
 
                 try:
-                    choices = getattr(response, "choices", None)
-                    if not choices:
-                        raise _InvalidAIResponseError("AI response has no choices")
-
-                    first_choice = choices[0]
-                    message = getattr(first_choice, "message", None)
-                    if message is None:
-                        raise _InvalidAIResponseError("AI response has no message")
-
-                    content = getattr(message, "content", None)
-                    if content is None:
-                        raise _InvalidAIResponseError("AI response has no content")
+                    if getattr(response, "status", None) != "completed":
+                        raise _InvalidAIResponseError("AI response did not complete")
+                    content = getattr(response, "output_text", None)
                     if not isinstance(content, str):
                         raise TypeError("AI response content is not text")
+                    if not content.strip():
+                        raise _InvalidAIResponseError("AI response has no output text")
 
                     # 记录token使用情况
                     if hasattr(response, "usage") and response.usage:
                         usage = response.usage
-                        input_tokens = getattr(usage, "prompt_tokens", 0)
-                        output_tokens = getattr(usage, "completion_tokens", 0)
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
 
                         # 安全地获取thinking tokens
                         thinking_tokens = 0
-                        if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
-                            thinking_tokens = getattr(usage.completion_tokens_details, "reasoning_tokens", 0)
+                        if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
+                            thinking_tokens = getattr(usage.output_tokens_details, "reasoning_tokens", 0)
 
                         record_token_usage(
                             input_tokens=input_tokens,
@@ -294,27 +287,25 @@ class AIClient:
         messages: List[Dict[str, Any]],
         max_tokens: int,
         temperature: float,
-        response_format: Optional[Dict[str, str]] = None,
+        text_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         request_temperature = getattr(self.settings, "OPENAI_TEMPERATURE", None)
         kwargs: Dict[str, Any] = {
             "model": self.settings.MODEL_NAME,
-            "messages": cast(Any, messages),
-            "max_tokens": max_tokens,
+            "input": messages,
+            "max_output_tokens": max_tokens,
             "temperature": request_temperature if request_temperature is not None else temperature,
+            "store": False,
             "timeout": 900,
         }
         reasoning_effort = getattr(self.settings, "OPENAI_REASONING_EFFORT", None)
         if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
+            kwargs["reasoning"] = {"effort": reasoning_effort}
         top_p = getattr(self.settings, "OPENAI_TOP_P", None)
         if top_p is not None:
             kwargs["top_p"] = top_p
-        presence_penalty = getattr(self.settings, "OPENAI_PRESENCE_PENALTY", None)
-        if presence_penalty is not None:
-            kwargs["presence_penalty"] = presence_penalty
-        if response_format:
-            kwargs["response_format"] = cast(Any, response_format)
+        if text_format:
+            kwargs["text"] = {"format": text_format}
         if self.extra_body is not None:
             kwargs["extra_body"] = self.extra_body
         return kwargs
@@ -350,13 +341,13 @@ class AIClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        response_format = {"type": "json_object"} if json_format else None
+        text_format = {"type": "json_object"} if json_format else None
 
-        return self.chat_completion(
+        return self.response_text(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
-            response_format=response_format,
+            text_format=text_format,
             operation=operation,
             request_timeout=request_timeout,
             retry_limit=retry_limit,
@@ -492,12 +483,12 @@ class AIClient:
             image_base64_list=image_base64_list,
         )
 
-        response_format = {"type": "json_object"} if json_format else None
+        text_format = {"type": "json_object"} if json_format else None
 
-        return self.chat_completion(
+        return self.response_text(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
-            response_format=response_format,
+            text_format=text_format,
             operation=operation,
         )
