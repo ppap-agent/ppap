@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 1c28aa92b81fb5140a31cc565d10d9fa3ae95754
+  PPAP_BUILD_SHA: 405a9a35564aac7500c27e3b7b82fd3eb2233803
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_PG_HOST: ppap-current-postgres
@@ -20,7 +20,7 @@ data:
   PPAP_S3_ENDPOINT: http://ppap-current-silo:9000
   PPAP_S3_REGION: us-east-1
   PPAP_S3_BUCKET: ppap-objects
-  LLM_MODEL: qwen/qwen3.5-27b
+  LLM_MODEL: grok-4.6
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
   FEISHU_FREE_TRIAL_QUOTA_POINTS: "10000"
@@ -400,7 +400,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: unregistry.xixifusi.online/ppap-api:e6160d892c23d4f4b3571915ee0917a372e67418
+          image: unregistry.xixifusi.online/ppap-api:405a9a35564aac7500c27e3b7b82fd3eb2233803
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -455,7 +455,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: unregistry.xixifusi.online/ppap-worker:1c28aa92b81fb5140a31cc565d10d9fa3ae95754
+          image: unregistry.xixifusi.online/ppap-worker:405a9a35564aac7500c27e3b7b82fd3eb2233803
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -476,7 +476,7 @@ spec:
               cpu: "1"
               memory: 2Gi
         - name: worker
-          image: unregistry.xixifusi.online/ppap-worker:1c28aa92b81fb5140a31cc565d10d9fa3ae95754
+          image: unregistry.xixifusi.online/ppap-worker:405a9a35564aac7500c27e3b7b82fd3eb2233803
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -530,7 +530,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: unregistry.xixifusi.online/ppap-web:e6160d892c23d4f4b3571915ee0917a372e67418
+          image: unregistry.xixifusi.online/ppap-web:405a9a35564aac7500c27e3b7b82fd3eb2233803
           imagePullPolicy: Always
           ports:
             - containerPort: 4173
