@@ -26,6 +26,7 @@ COPY services /app/services
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
 
 ARG PPAP_DEBIAN_MIRROR=
+ARG PPAP_PIP_INDEX_URL=
 RUN set -eux; \
     if [ -n "$PPAP_DEBIAN_MIRROR" ]; then \
       sed -i "s#^URIs: http://deb.debian.org/debian\$#URIs: $PPAP_DEBIAN_MIRROR#" /etc/apt/sources.list.d/debian.sources; \
@@ -44,6 +45,7 @@ RUN set -eux; \
     done; \
     rm -rf /var/lib/apt/lists/*; \
     chmod +x /app/entrypoint.sh; \
+    if [ -n "$PPAP_PIP_INDEX_URL" ]; then export PIP_INDEX_URL="$PPAP_PIP_INDEX_URL"; fi; \
     pip install --no-cache-dir --upgrade pip; \
     pip install --no-cache-dir -e /app
 
