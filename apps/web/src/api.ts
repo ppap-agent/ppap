@@ -8,8 +8,10 @@ export interface Material {
   analysisReadFailed?: boolean
 }
 export class UploadResultUnknown extends Error {
-  constructor(readonly material: Material) {
+  material: Material
+  constructor(material: Material) {
     super(`上传结果未确认：${material.original_filename}。请核对该文件版本，避免重复上传。`)
+    this.material = material
   }
 }
 export interface Analysis {
@@ -65,7 +67,6 @@ export const analysisModeLabels:Record<AnalysisMode,string> = {standard:'标准'
 export function dateLabel(value?:string) {
   return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
 }
-export {latestRules} from './helpers'
 export interface Job<T> {id: string; status: string; result?: T & {error?: string}}
 export let apiUrl = ''
 export let profile = ''

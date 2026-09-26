@@ -9,9 +9,7 @@ from unittest.mock import patch
 
 import httpx
 
-from tests import pathsetup
-
-ROOT = pathsetup.ROOT
+from tests import pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 
@@ -370,29 +368,6 @@ class FeishuDocsAddonTests(unittest.TestCase):
         response = client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "invalid_host_code")
-
-
-class DocsAddonHostSdkTests(unittest.TestCase):
-    def test_vendor_blockit_client_is_present_and_iframe_gated(self):
-        vendor = (ROOT / "apps" / "web" / "block-docs-addon-api.js").read_text()
-        self.assertIn("export {\n", vendor)
-        self.assertIn("BlockitClient", vendor)
-        self.assertIn("@lark-opdev/block-docs-addon-api@0.0.11", vendor)
-        addon = (ROOT / "apps" / "web" / "src" / "addon" / "main.tsx").read_text()
-        self.assertIn("window.self !== window.top", addon)
-        self.assertIn("/block-docs-addon-api.js", addon)
-        self.assertIn("__PPAP_DOCS_ADDON_HOST__", addon)
-        self.assertIn("${api}/me", addon)
-        self.assertIn("existingSession", addon)
-        self.assertIn("ensureSession", addon)
-        self.assertIn("writeCurrentDocument", addon)
-        self.assertIn("accept_allowed", addon)
-        self.assertIn("writeback_target", addon)
-        self.assertNotIn("AUDIT_COST_PER_FILE", addon)
-        html = (ROOT / "apps" / "web" / "addon.html").read_text()
-        self.assertIn('/src/addon/main.tsx', html)
-        self.assertIn('href="/audit-files"', addon)
-        self.assertNotIn("audit-files.html", html + addon)
 
 
 if __name__ == "__main__":

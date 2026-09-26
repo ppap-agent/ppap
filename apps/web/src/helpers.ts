@@ -53,12 +53,6 @@ export function parseWorkspacePosition(raw: string | null): WorkspacePosition | 
   }
 }
 
-import {parseReturnTarget} from './navigation/route'
-
-export function isSafeReturnTo(value: string) {
-  return parseReturnTarget(value) !== undefined
-}
-
 export const analysisNotices: Record<string, string> = {
   empty_document_text: '未提取到文字，将主要按文件名匹配。',
   document_text_unavailable: '文字提取失败，请核对文件类型与规则。',

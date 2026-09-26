@@ -26,6 +26,10 @@ function defined<T extends Route>(value: T): T {
   return copy
 }
 
+export function isSafeReturnTo(value: string) {
+  return parseReturnTarget(value) !== undefined
+}
+
 export function parseReturnTarget(value: string | null): ReturnTarget | undefined {
   if (!value || value.includes('//') || value.includes('\\') || value.includes('@')) return undefined
   const match = value.match(/^\/\?(.+)$/)

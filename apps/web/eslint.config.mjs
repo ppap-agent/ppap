@@ -4,7 +4,7 @@ import {defineConfig} from 'eslint/config'
 
 export default defineConfig([
   {
-    ignores: ['dist/**', 'node_modules/**', '.pnpm-store/**', 'src/components/ui/**'],
+    ignores: ['dist/**', 'node_modules/**', '.pnpm-store/**', 'src/components/ui/**', 'e2e/**', 'playwright.config.ts', 'playwright-report/**'],
   },
   {
     files: ['src/**/*.{js,jsx,ts,tsx}'],

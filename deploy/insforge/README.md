@@ -2,7 +2,25 @@
 
 PPAP remains the product and domain authority. Self-hosted InsForge owns PostgreSQL, compute container lifecycle, secrets/env, runtime logs, and (when the OpenAI-compatible contract matches) the model gateway.
 
-Pinned InsForge release: [VERSION](VERSION) (`v2.3.2`).
+Pinned InsForge release: [VERSION](VERSION) (`v2.3.2`). Official CLI for local lifecycle: `@insforge/cli@0.2.8`.
+
+## Native checks
+
+PPAP owns the overlay contract; InsForge owns the running local instance.
+
+```sh
+node deploy/insforge/verify-config.mjs
+```
+
+This verifier is deterministic and is the default PR CI job. It checks `VERSION`, Custom Compute specs, and `compose.yaml` interpolation. It does not start InsForge.
+
+Live CLI smoke (Docker, opt-in; not every PR):
+
+```sh
+bash deploy/insforge/smoke-local.sh
+```
+
+The script pins `@insforge/cli@0.2.8` and runs `local start --json`, `local status --json`, `db query "select 1" --json`, then `local stop`. Cleanup is via `trap`. JSON is redacted so keys are not printed. CI entry is the `InsForge lifecycle` workflow (`workflow_dispatch`). Local instance state lives in `.insforge/` and is gitignored.
 
 ## Trust boundary
 

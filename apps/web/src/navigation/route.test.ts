@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {parseProductRoute, parseReturnTarget, productHref, type Route} from './route.ts'
+import {isSafeReturnTo, parseProductRoute, parseReturnTarget, productHref, type Route} from './route.ts'
 
 const round = '00000000-0000-4000-8000-000000000001'
 const draft = '00000000-0000-4000-8000-000000000002'
@@ -34,8 +34,11 @@ test('product routes round-trip without string concatenation', () => {
 })
 
 test('unsafe return targets are dropped', () => {
+  assert.equal(isSafeReturnTo('/?round=' + round), true)
+  assert.equal(isSafeReturnTo('/?draft=' + draft), true)
   for (const value of ['https://evil.example', '//evil.example', '/\\\\evil', '/rules', '/?round=ok&next=/admin', 'javascript:alert(1)']) {
     assert.equal(parseReturnTarget(value), undefined)
+    assert.equal(isSafeReturnTo(value), false)
   }
   const route = parseProductRoute('/rules', '?rule=' + rule + '&return_to=' + encodeURIComponent('https://evil.example/phish'))
   assert.equal(route.page, 'rule-detail')
