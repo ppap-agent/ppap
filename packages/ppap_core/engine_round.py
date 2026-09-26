@@ -1,4 +1,4 @@
-"""Run a 审核轮次 from frozen file bytes. Shared by Worker (Standard) and Deep process runtime."""
+"""Run a Standard 审核轮次 from its selected file and rule versions."""
 from __future__ import annotations
 
 import tempfile

@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import json
+import select
 import socket
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
-from ppap_deep.protocol import ErrorEnvelope, ExecuteRequest, ExecuteResponse, RequestEnvelope, ResultEnvelope
+from ppap_deep.limits import DEEP_TOTAL_SECONDS
+from ppap_deep.protocol import ErrorEnvelope, ExecuteRequest, ExecuteResponse, ProgressEnvelope, RequestEnvelope, ResultEnvelope
 
 MAX_FRAME = 32 * 1024 * 1024
-DEEP_REQUEST_TIMEOUT = 1000.0
+DEEP_REQUEST_TIMEOUT = DEEP_TOTAL_SECONDS + 30.0
 
 
 class DeepError(Exception):
@@ -52,7 +57,8 @@ class DeepClient:
         self.socket_path = str(socket_path or "").strip()
         self.timeout = timeout
 
-    def execute(self, spec: ExecuteRequest) -> ExecuteResponse:
+    def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None,
+                on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
         if not self.socket_path:
             raise DeepUnavailable()
         path = Path(self.socket_path)
@@ -63,7 +69,22 @@ class DeepClient:
                 sock.settimeout(self.timeout)
                 sock.connect(self.socket_path)
                 write_frame(sock, RequestEnvelope(op="execute", spec=spec).model_dump())
-                raw = read_frame(sock)
+                deadline = time.monotonic() + self.timeout
+                while True:
+                    if cancelled is not None and cancelled.is_set():
+                        raise DeepError("deep_lease_lost")
+                    if time.monotonic() >= deadline:
+                        raise DeepError("deep_timeout")
+                    readable, _, _ = select.select([sock], [], [], min(0.25, max(0, deadline - time.monotonic())))
+                    if not readable:
+                        continue
+                    sock.settimeout(min(10, max(0.01, deadline - time.monotonic())))
+                    raw = read_frame(sock)
+                    if raw.get("op") != "progress":
+                        break
+                    progress = ProgressEnvelope.model_validate(raw).progress
+                    if on_progress:
+                        on_progress(progress.model_dump(exclude_none=True))
         except DeepError:
             raise
         except (OSError, TimeoutError, json.JSONDecodeError) as exc:

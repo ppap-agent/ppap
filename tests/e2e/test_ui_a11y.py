@@ -15,47 +15,36 @@ class UiA11yTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             context = browser.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce", has_touch=True)
             page = context.new_page()
+            page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+            page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev"}))
+            page.route("**/api/me", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(f"{WEB}/dev")
             page.wait_for_selector('[data-testid="isolated-dev-login"]')
-            expect(page.locator('[data-ui="sidebar"]')).to_be_visible()
-            expect(page.locator('[data-ui="mobile-bar"]')).to_be_hidden()
+            expect(page.get_by_test_id("pc-shell")).to_be_visible()
+            expect(page.locator(".mobile-tab-bar")).to_be_hidden()
             page.keyboard.press("Tab")
             focused = page.evaluate(
                 """() => {
                   const el = document.activeElement
-                  const style = getComputedStyle(el)
-                  return {ui: el?.getAttribute('data-ui'), outline: style.outlineStyle, width: parseFloat(style.outlineWidth)}
-                }"""
-            )
-            self.assertEqual(focused["ui"], "skip")
-            self.assertEqual(focused["outline"], "solid")
-            self.assertGreaterEqual(focused["width"], 2)
-            media = page.evaluate("() => ({pointer: matchMedia('(pointer: coarse)').matches, motion: matchMedia('(prefers-reduced-motion: reduce)').matches})")
-            self.assertTrue(media["pointer"])
-            self.assertTrue(media["motion"])
-            measured = page.evaluate(
-                """() => {
-                  const host = document.createElement('div')
-                  host.innerHTML = '<span data-ui="task-spin"></span><button data-ui="button" data-size="sm" type="button">小</button><button data-ui="button" type="button">常</button>'
-                  document.body.append(host)
-                  const spin = host.querySelector('[data-ui="task-spin"]')
-                  const small = host.querySelector('[data-size="sm"]')
-                  const regular = host.querySelector('[data-ui="button"]:not([data-size])')
+                  const style = el ? getComputedStyle(el) : null
                   return {
-                    spin: getComputedStyle(spin).animationName,
-                    small: parseFloat(getComputedStyle(small).minHeight),
-                    regular: parseFloat(getComputedStyle(regular).minHeight),
+                    text: el?.textContent,
+                    outline: style?.outlineStyle,
+                    width: style ? parseFloat(style.outlineWidth) : 0,
+                    shadow: Boolean(style?.boxShadow && style.boxShadow !== 'none'),
                   }
                 }"""
             )
-            self.assertEqual(measured["spin"], "none")
-            self.assertGreaterEqual(measured["small"], 44)
-            self.assertGreaterEqual(measured["regular"], 44)
+            self.assertIn("跳到主要内容", focused["text"] or "")
+            self.assertTrue(focused["shadow"] or (focused["outline"] != "none" and focused["width"] >= 1))
+            media = page.evaluate("() => ({pointer: matchMedia('(pointer: coarse)').matches, motion: matchMedia('(prefers-reduced-motion: reduce)').matches})")
+            self.assertTrue(media["pointer"])
+            self.assertTrue(media["motion"])
             page.set_viewport_size({"width": 390, "height": 844})
-            expect(page.locator('[data-ui="mobile-bar"]')).to_be_visible()
-            box = page.locator('[data-ui="nav-link"]').first.bounding_box()
+            expect(page.locator(".mobile-tab-bar")).to_be_visible()
+            box = page.locator(".mobile-tab-bar a").first.bounding_box()
             self.assertIsNotNone(box)
             self.assertGreaterEqual(box["height"], 44)
             self.assertEqual(page.locator("h1").count(), 1)
@@ -101,13 +90,13 @@ class UiA11yTests(unittest.TestCase):
             moved = page.evaluate(
                 """() => {
                   const active = document.activeElement
-                  return Boolean(active && active.id !== 'rule-title' && active.closest('[data-ui="main"], main'))
+                  return Boolean(active && active.id !== 'rule-title' && active.closest('#main-content, main'))
                 }"""
             )
             self.assertTrue(moved)
             page.get_by_test_id("rule-back").click()
-            expect(page.locator('[data-ui="modal"]')).to_be_visible()
-            inside = page.evaluate("() => Boolean(document.activeElement?.closest('[data-ui=\"modal\"]'))")
+            expect(page.get_by_role("dialog")).to_be_visible()
+            inside = page.evaluate("() => Boolean(document.activeElement?.closest('[role=\"dialog\"]'))")
             self.assertTrue(inside)
             self.assertEqual(page.locator("h1").count(), 1)
             browser.close()

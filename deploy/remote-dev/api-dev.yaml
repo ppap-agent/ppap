@@ -1,0 +1,21 @@
+# Optional source mount and API reload for the up-live command.
+services:
+  api:
+    volumes:
+      - ../../packages:/app/packages:ro
+      - ../../services:/app/services:ro
+    command:
+      - python
+      - -m
+      - uvicorn
+      - ppap_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --reload
+      - --reload-dir
+      - /app/packages
+      - --reload-dir
+      - /app/services
+      - --no-access-log

@@ -1,252 +1,253 @@
-"""Controller gVisor runtime and guest auditor. No live Docker required."""
+"""Deep product adapter contracts. These tests do not measure model judgment."""
 from __future__ import annotations
 
+import hashlib
 import json
-import os
-import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests import pathsetup
+from tests import pathsetup  # noqa: F401
 
-ROOT = pathsetup.ROOT
-
-from ppap_core.audits import DEEP_PROTOCOL_REVISION, RoundInput, RoundWork
-from ppap_deep.mapping import spec_from_work
-from ppap_deep.client import DeepError
-from ppap_deep.guest import evaluate
+from ppap_core.audits import DEEP_PROTOCOL_REVISION
+from ppap_core.files import ObjectMissing
+from ppap_deep.auditor import SemanticRuntime, product_response, semantic_inputs
+from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient
+from ppap_deep.controller import ExecutionContext
+from ppap_deep.isolation.model_gateway import Grants, local_gateway
+from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
-from ppap_deep.auditor import ProcessRuntime
-from ppap_deep.runtime import DEFAULT_DOCKER_RUNTIME, DEFAULT_GUEST_IMAGE, GvisorRuntime, runtime_from_env
+from ppap_deep.semantic.protocol import ResultBundle
 
 
-def _spec(*roles: str) -> ExecuteRequest:
-    files = []
-    for index, role in enumerate(roles, start=1):
-        ident = f"00000000-0000-4000-8000-00000000000{index}"
-        files.append(
-            FrozenFile(
-                file_version_id=ident,
-                role=role,  # type: ignore[arg-type]
-                filename="report.xlsx" if role == "target" else "context.pdf",
-                sha256="ab",
-                rule_version_id="00000000-0000-4000-8000-0000000000a5" if role == "target" else None,
-                rule_title="资料就绪" if role == "target" else None,
-                rule_body={"kind": "presence"} if role == "target" else None,
-            )
-        )
+ENGINE = "a" * 64
+ROUND = "00000000-0000-4000-8000-000000000099"
+TARGET = "00000000-0000-4000-8000-000000000001"
+REFERENCE = "00000000-0000-4000-8000-000000000002"
+RULE = "00000000-0000-4000-8000-000000000003"
+
+
+def _clauses() -> list[dict]:
+    return [
+        {"id": "R1", "category": "控制计划", "priority": "P1", "rule_to_check": "每项频次明确"},
+        {"id": "R2", "category": "控制计划", "priority": "P0", "rule_to_check": "频次与流程一致"},
+        {"id": "R3", "category": "控制计划", "priority": "P1", "rule_to_check": "视觉标记可确认"},
+        {"id": "R4", "category": "控制计划", "priority": "P2", "rule_to_check": "附加要求适用"},
+    ]
+
+
+def _spec(*, title: str = "客户规则", tenant: str = "tenant-a", target_bytes: bytes = b"target",
+          clauses: list[dict] | None = None) -> ExecuteRequest:
+    target = FrozenFile(
+        file_version_id=TARGET, file_id="file-target", role="target", filename="plan.xlsx",
+        sha256=hashlib.sha256(target_bytes).hexdigest(), rule_version_id=RULE, rule_title=title,
+        rule_body={"kind": "engine", "rules": clauses if clauses is not None else _clauses()},
+        rule_source_file_version_id="original-rule-version",
+    )
+    reference = FrozenFile(
+        file_version_id=REFERENCE, file_id="file-reference", role="reference", filename="flow.pdf",
+        sha256=hashlib.sha256(b"reference").hexdigest(),
+    )
     return ExecuteRequest(
-        protocol_revision=DEEP_PROTOCOL_REVISION,
-        round_id="r1",
-        files=files,
-        executor="ppap-deep",
-        executor_revision=DEEP_PROTOCOL_REVISION,
+        protocol_revision=DEEP_PROTOCOL_REVISION, round_id=ROUND, tenant_id=tenant,
+        job_id="job-one", executor="ppap-deep", executor_revision=DEEP_PROTOCOL_REVISION,
+        files=[target, reference],
     )
 
 
-class GuestAuditorTests(unittest.TestCase):
-    def test_presence_target_and_reference(self):
-        spec = _spec("target", "reference").model_dump()
-        result = evaluate(
-            spec,
-            {
-                spec["files"][0]["file_version_id"]: b"target-bytes",
-                spec["files"][1]["file_version_id"]: b"reference-bytes",
-            },
-        )
-        self.assertEqual(result["findings"][0]["status"], "PASS")
-        self.assertEqual(result["findings"][0]["item"], "资料就绪")
-        self.assertIn("report.xlsx", result["coverage"]["checked"])
-        self.assertTrue(any("context.pdf" in row for row in result["coverage"]["unchecked"]))
-        self.assertTrue(str(result["note"]).startswith("deep_audit kernel="))
-
-    def test_empty_target_is_ng(self):
-        spec = _spec("target").model_dump()
-        result = evaluate(spec, {spec["files"][0]["file_version_id"]: b""})
-        self.assertEqual(result["findings"][0]["status"], "NG")
-
-
-class GvisorRuntimeTests(unittest.TestCase):
-    def test_argv_uses_named_runtime_without_host_socket_flag(self):
-        runtime = GvisorRuntime()
-        argv = runtime._argv(Path("/tmp/ppap-deep-job"))
-        self.assertEqual(argv[0], "docker")
-        self.assertIn("--runtime", argv)
-        self.assertEqual(argv[argv.index("--runtime") + 1], DEFAULT_DOCKER_RUNTIME)
-        self.assertEqual(argv[argv.index("-v") + 1], "/tmp/ppap-deep-job:/work:rw")
-        self.assertIn("--user", argv)
-        self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
-        self.assertEqual(argv[argv.index("--network") + 1], "none")
-        self.assertIn(DEFAULT_GUEST_IMAGE, argv)
-        self.assertNotIn("docker.sock", " ".join(argv))
-        joined = " ".join(argv)
-        self.assertNotIn("/var/run", joined)
-
-    def test_execute_reads_guest_result_and_cleans_job_dir(self):
-        kept: dict[str, str] = {}
-
-        def runner(argv, timeout):
-            work = Path(argv[argv.index("-v") + 1].split(":", 1)[0])
-            kept["job"] = str(work)
-            spec = json.loads((work / "spec.json").read_text(encoding="utf-8"))
-            files = {path.name: path.read_bytes() for path in (work / "files").iterdir()}
-            (work / "result.json").write_text(json.dumps(evaluate(spec, files)), encoding="utf-8")
-            self.assertTrue((work / "guest.py").is_file())
-            self.assertGreater(timeout, 0)
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
-
-        runtime = GvisorRuntime(runner=runner)
-        spec = _spec("target")
-        result = runtime.execute(spec, {spec.files[0].file_version_id: b"live-bytes"})
-        self.assertEqual(result.findings[0].status, "PASS")
-        self.assertFalse(Path(kept["job"]).exists())
-
-    def test_nonzero_docker_status_is_execution_failure(self):
-        def runner(argv, timeout):
-            return subprocess.CompletedProcess(argv, 1, b"", b"")
-
-        runtime = GvisorRuntime(runner=runner)
-        spec = _spec("target")
-        with self.assertRaises(DeepError) as raised:
-            runtime.execute(spec, {spec.files[0].file_version_id: b"x"})
-        self.assertEqual(raised.exception.code, "deep_execution_failed")
-
-    def test_cleanup_failure_does_not_return_success(self):
-        def runner(argv, timeout):
-            work = Path(argv[argv.index("-v") + 1].split(":", 1)[0])
-            spec = json.loads((work / "spec.json").read_text(encoding="utf-8"))
-            files = {path.name: path.read_bytes() for path in (work / "files").iterdir()}
-            (work / "result.json").write_text(json.dumps(evaluate(spec, files)), encoding="utf-8")
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
-
-        runtime = GvisorRuntime(runner=runner)
-        spec = _spec("target")
-        job_dir = tempfile.mkdtemp(prefix="ppap-deep-cleanup-")
-        self.addCleanup(lambda: shutil.rmtree(job_dir, ignore_errors=True))
-        with patch("ppap_deep.runtime.tempfile.mkdtemp", return_value=job_dir):
-            with patch("ppap_deep.runtime.shutil.rmtree", side_effect=OSError("busy")):
-                with self.assertRaises(DeepError) as raised:
-                    runtime.execute(spec, {spec.files[0].file_version_id: b"x"})
-        self.assertEqual(raised.exception.code, "deep_cleanup_failed")
+def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
+    rule = submission.rules[0]
+    target, reference = spec.files
+    cells = {f"A{index}": {"value": f"observed-{index}", "state": "known"} for index in range(1, 4)}
+    documents = {
+        TARGET: {"source": {"file": "document-0.xlsx", "sha256": target.sha256, "format": ".xlsx"},
+                 "tables": [{"id": "Sheet1", "rows": 3, "cols": 1, "cells": cells, "merges": []}], "limitations": []},
+        REFERENCE: {"source": {"file": "document-1.pdf", "sha256": reference.sha256, "format": ".pdf"},
+                    "tables": [], "pages": [{"page": 1, "blocks": [{"text": "flow relation"}]}], "limitations": []},
+    }
+    source = {"source": {"file": "rule-0.json", "sha256": rule.sha256, "format": ".json"},
+              "kind": "published_rule", "rule_version_id": RULE, "rule_body": target.rule_body,
+              "clauses": target.rule_body["rules"], "origin": {"file_version_id": "original-rule-version"},
+              "tables": [], "limitations": []}
+    plan = {"source_sha256": rule.sha256, "plan_revision": rule.plan_revision, "rules": [
+        {"id": clause["id"], "description": clause["rule_to_check"], "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
+         "scope": "本轮资料", "predicate": {"kind": "semantic", "question": clause["rule_to_check"]},
+         "missing_evidence": "UNABLE", "ambiguities": [],
+         "empty_scope_status": "NA" if clause["id"] == "R4" else "UNABLE",
+         "empty_scope_basis": "附加要求不适用" if clause["id"] == "R4" else "规则未规定空范围通过"}
+        for clause in target.rule_body["rules"]
+    ]}
+    cell = lambda address: {"document_id": TARGET, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}
+    pdf = {"document_id": REFERENCE, "locator": {"kind": "pdf_block", "page": 1, "block": 1}}
+    examples = [
+        ("PASS", [cell("A1")], None, 1, 0),
+        ("NG", [cell("A2"), pdf], None, 1, 0),
+        ("UNABLE", [], "unresolved_relation", 0, 1),
+        ("NA", [cell("A3")], None, 1, 0),
+    ]
+    checks, proofs = [], []
+    for clause, (status, evidence, diagnostic, checked, unknown) in zip(target.rule_body["rules"], examples, strict=True):
+        key = {"audit_id": TARGET, "rule_id": clause["id"]}
+        checks.append({**key, "status": status, "reason": "record reviewed", "total": 1,
+                       "checked": checked, "unknown": unknown, "evidence": evidence, "diagnostic": diagnostic})
+        proofs.append({"kind": "semantic", **key, "scope_basis": "one identified record",
+                       "records": [{"record_id": clause["id"], "role": "prerequisite" if not evidence else "excluded" if status == "NA" else "applicable",
+                                    **({"exclusion_basis": "The optional clause is not triggered"} if status == "NA" else
+                                       {"applicability_basis": "The clause checks this identified item"} if evidence else {}),
+                                    "status": status, "reason": "record reviewed", "evidence": evidence}]})
+    return ResultBundle.model_validate({
+        "execution_id": str(submission.execution_id), "semantic_engine_revision": ENGINE,
+        "documents": documents, "rule_sources": {RULE: source}, "plans": {RULE: plan},
+        "report": {"checks": checks}, "trace": {"bindings": [], "proofs": proofs},
+        "input_tokens": 120, "output_tokens": 30,
+    })
 
 
-class DeepLiveOverlayTests(unittest.TestCase):
-    def test_overlay_shares_uds_without_giving_worker_docker(self):
-        overlay = (ROOT / "deploy" / "isolated-dev" / "deep-live.yaml").read_text()
-        default = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
-        self.assertIn("PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock", overlay)
-        self.assertIn("${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep", overlay)
-        self.assertIn("127.0.0.1:9000:9000", overlay)
-        self.assertNotIn("docker.sock", overlay)
-        self.assertNotIn("/var/run/docker", overlay)
-        self.assertNotIn("127.0.0.1:9000:9000", default)
-        main = (ROOT / "packages" / "ppap_deep" / "__main__.py").read_text()
-        self.assertIn("runtime_from_env", main)
-        self.assertNotIn("ScriptedRuntime", main)
+class SemanticProductContractTests(unittest.TestCase):
+    def test_deep_execution_and_transport_time_limits_match(self) -> None:
+        self.assertEqual(DEEP_TOTAL_SECONDS, 40 * 60)
+        self.assertEqual(SemanticRuntime(None, None).timeout, DEEP_TOTAL_SECONDS)
+        self.assertEqual(Grants("test-model").ttl, DEEP_TOTAL_SECONDS)
+        self.assertEqual(DeepClient("unused").timeout, DEEP_TOTAL_SECONDS + 30)
+        self.assertEqual(DEEP_REQUEST_TIMEOUT, DEEP_TOTAL_SECONDS + 30)
+        with tempfile.TemporaryDirectory() as temporary:
+            with local_gateway(Path(temporary) / "gateway.sock", upstream="https://provider.example/v1",
+                               model="test-model", provider_key="test-provider-key") as gateway:
+                self.assertEqual(gateway.http.grants.ttl, DEEP_TOTAL_SECONDS)
 
-    def test_controller_cli_is_not_selected_by_worker_settings(self):
-        settings = (ROOT / "packages" / "ppap_core" / "settings.py").read_text()
-        self.assertNotIn("PPAP_DEEP_DOCKER_RUNTIME", settings)
-        self.assertNotIn("PPAP_DEEP_GUEST_IMAGE", settings)
-        self.assertNotIn("PPAP_DEEP_GROK_BIN", settings)
-        worker = (ROOT / "services" / "worker" / "ppap_worker" / "__init__.py").read_text()
-        self.assertNotIn("GvisorRuntime", worker)
-        self.assertNotIn("docker run", worker)
-        tke = (ROOT / "deploy" / "tke" / "current.yaml").read_text()
-        self.assertIn("PPAP_DEEP_RUNTIME: process", tke)
-        self.assertNotIn("docker.sock", tke)
-        self.assertIn('until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]', tke)
-        self.assertIn("python -m ppap_deep", (ROOT / "deploy" / "app" / "entrypoint.sh").read_text())
-        self.assertIn('PPAP_SERVICE" = "deep"', (ROOT / "deploy" / "app" / "entrypoint.sh").read_text())
+    def test_effective_published_rule_source_and_title_independence(self) -> None:
+        first, packets = semantic_inputs(_spec(), ENGINE)
+        renamed, renamed_packets = semantic_inputs(_spec(title="完全改名的显示标题"), ENGINE)
+        self.assertEqual(first.execution_id, renamed.execution_id)
+        self.assertEqual(packets, renamed_packets)
+        rule = first.rules[0]
+        self.assertEqual(rule.rule_version_id, RULE)
+        self.assertEqual(rule.clauses, _clauses())
+        self.assertEqual(hashlib.sha256(packets[RULE]).hexdigest(), rule.sha256)
+        source = json.loads(packets[RULE])
+        self.assertEqual(source["rule_body"]["rules"], source["clauses"])
+        self.assertEqual(source["origin"], {"file_version_id": "original-rule-version"})
+        changed = _clauses()
+        changed[0] = {**changed[0], "rule_to_check": "每项频次至少每日一次"}
+        new_rule, new_packets = semantic_inputs(_spec(clauses=changed), ENGINE)
+        self.assertNotEqual(new_packets[RULE], packets[RULE])
+        self.assertNotEqual(new_rule.rules[0].plan_revision, rule.plan_revision)
+
+    def test_all_clauses_and_cross_file_typed_evidence_reach_product(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        response = product_response(spec, _bundle(spec, submission), submission)
+        self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
+        self.assertEqual([row["rule_item_id"] for row in response.coverage.rule_items], ["R1", "R2", "R3", "R4"])
+        self.assertEqual(response.usage, {"input_tokens": 120, "output_tokens": 30, "tool_calls": 0, "completed_tool_calls": 0, "compactions": 0})
+        semantic = response.findings[1].locator["semantic"]
+        self.assertEqual(semantic["rule_text"], "频次与流程一致")
+        self.assertEqual(semantic["rule_source_file_version_id"], "original-rule-version")
+        self.assertEqual(semantic["scope"], {"total": 1, "checked": 1, "unknown": 0})
+        self.assertEqual(semantic["sources"][0]["file_version_id"], TARGET)
+        self.assertEqual(semantic["sources"][1], {
+            "file_version_id": REFERENCE, "filename": "flow.pdf", "role": "reference",
+            "locator": {"kind": "pdf_block", "page": 1, "block": 1}, "excerpt": "flow relation",
+        })
+        self.assertTrue(response.coverage.locator_gap)  # Explicit UNABLE has no source.
+
+    def test_missing_clause_and_wrong_evidence_version_are_rejected(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        missing = _bundle(spec, submission)
+        missing.report.checks.pop()
+        with self.assertRaisesRegex(ValueError, "缺项"):
+            product_response(spec, missing, submission)
+        bad_reference = _bundle(spec, submission)
+        bad_reference.report.checks[1].evidence[1].document_id = "another-version"
+        with self.assertRaisesRegex(ValueError, "证据来源"):
+            product_response(spec, bad_reference, submission)
+
+    def test_renamed_rule_flows_through_semantic_adapter_without_fixed_checker(self) -> None:
+        spec = _spec(title="标题不同但要求未变")
+        objects = _MemoryObjects()
+        with patch("ppap_excel_audit_engine.app_runtime.run_audit_engine", side_effect=AssertionError("fixed checker called")):
+            response = SemanticRuntime(_BundleRuntime(spec), objects).execute(
+                spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext()
+            )
+        self.assertEqual(response.note, "deep_semantic_audit")
+        self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
+        self.assertTrue(any(key.endswith("/bundle.json") for key in objects.writes))
 
 
-class ProcessRuntimeTests(unittest.TestCase):
-    def test_env_defaults_to_process_runtime(self):
-        with patch.dict("os.environ", {"PPAP_DEEP_RUNTIME": ""}, clear=False):
-            self.assertIsInstance(runtime_from_env(), ProcessRuntime)
-        with patch.dict("os.environ", {"PPAP_DEEP_RUNTIME": "gvisor"}, clear=False):
-            self.assertIsInstance(runtime_from_env(), GvisorRuntime)
+class _StopAfterCache(Exception):
+    pass
 
-    def test_presence_uses_product_presence_finding_not_placeholder_copy(self):
-        spec = _spec("target", "reference")
-        result = ProcessRuntime().execute(
-            spec,
-            {
-                spec.files[0].file_version_id: b"target-bytes",
-                spec.files[1].file_version_id: b"reference-bytes",
-            },
-        )
-        self.assertEqual(result.findings[0].status, "PASS")
-        self.assertEqual(result.findings[0].item, "待审文件版本已就绪")
-        self.assertIn("report.xlsx", result.coverage.checked)
-        self.assertTrue(any("context.pdf" in row for row in result.coverage.unchecked))
-        self.assertEqual(result.note, "in-repo engine")
 
-    def test_engine_kind_calls_in_repo_engine(self):
-        from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-        from ppap_excel_audit_engine import app_runtime
+class _CacheObjects:
+    def __init__(self) -> None:
+        self.reads: list[str] = []
 
-        spec = _spec("target")
-        spec.files[0].rule_body = {"kind": "engine", "rule_profile": "v2", "type": "控制计划"}
-        spec.files[0].rule_title = "控制计划"
+    def get(self, key: str) -> bytes:
+        self.reads.append(key)
+        raise ObjectMissing()
 
-        def fake_run(audit, rule, group_context=None):
-            return [
-                AuditResultItem(
-                    status="NG",
-                    classification="规则",
-                    item="控制方法",
-                    priority="P0",
-                    suggestions="缺列",
-                    evidence=AuditEvidence(
-                        required="structure",
-                        used="structure",
-                        source_format="xlsx",
-                        prepared_format="xlsx",
-                        sources=(EvidenceSource(kind="structure", locator="A1"),),
-                    ),
-                )
-            ]
+    def put_exclusive(self, key: str, body: bytes, content_type: str) -> None:
+        raise AssertionError("No artifact should be written before validation")
 
-        with patch.object(app_runtime, "run_audit_engine", fake_run):
-            result = ProcessRuntime().execute(spec, {spec.files[0].file_version_id: b"xlsx-bytes"})
-        self.assertEqual(result.findings[0].status, "NG")
-        self.assertEqual(result.findings[0].item, "控制方法")
-        self.assertEqual(result.note, "in-repo engine")
 
-    def test_engine_failure_is_deep_error_not_standard_result(self):
-        from ppap_excel_audit_engine import app_runtime
+class _MemoryObjects(_CacheObjects):
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes: dict[str, bytes] = {}
 
-        spec = _spec("target")
-        spec.files[0].rule_body = {"kind": "engine", "rule_profile": "v2", "type": "控制计划"}
-        spec.files[0].rule_title = "控制计划"
-        with patch.object(app_runtime, "run_audit_engine", side_effect=RuntimeError("engine down")):
-            with self.assertRaises(DeepError) as raised:
-                ProcessRuntime().execute(spec, {spec.files[0].file_version_id: b"xlsx-bytes"})
-        self.assertEqual(raised.exception.code, "deep_execution_failed")
+    def put_exclusive(self, key: str, body: bytes, content_type: str) -> None:
+        self.writes[key] = body
 
-    def test_spec_carries_frozen_rule_execution(self):
-        execution = {"mode": "rule_items", "items": [{"id": "keep", "coverage": "mapped"}]}
-        work = RoundWork(
-            "r1",
-            "t1",
-            [
-                RoundInput(
-                    "target",
-                    "f1",
-                    "00000000-0000-4000-8000-000000000001",
-                    "plan.xlsx",
-                    "ready",
-                    rule_version_id="00000000-0000-4000-8000-0000000000a5",
-                    rule_title="控制计划",
-                    rule_body={"kind": "engine", "type": "控制计划"},
-                    sha256="ab",
-                    rule_execution=execution,
-                )
-            ],
-        )
-        spec = spec_from_work(work, "ppap-deep", DEEP_PROTOCOL_REVISION, DEEP_PROTOCOL_REVISION)
-        self.assertEqual(spec.files[0].rule_execution, execution)
+
+class _BundleRuntime:
+    def __init__(self, spec: ExecuteRequest) -> None:
+        self.spec = spec
+
+    def engine_revision(self) -> str:
+        return ENGINE
+
+    def run(self, submission, _inputs: Path, work: Path, _deadline: float, _cancelled, *, on_progress) -> None:
+        result = work / "result"
+        result.mkdir()
+        (result / "bundle.json").write_text(_bundle(self.spec, submission).model_dump_json())
+
+
+class _CacheRuntime:
+    def __init__(self, revision: str) -> None:
+        self.revision = revision
+
+    def engine_revision(self) -> str:
+        return self.revision
+
+    def run(self, *_args, **_kwargs) -> None:
+        raise _StopAfterCache()
+
+
+class SemanticCacheContractTests(unittest.TestCase):
+    def _keys(self, spec: ExecuteRequest, *, revision: str = ENGINE, target_bytes: bytes = b"target") -> tuple[str, str]:
+        objects = _CacheObjects()
+        runtime = SemanticRuntime(_CacheRuntime(revision), objects)
+        with self.assertRaises(_StopAfterCache):
+            runtime.execute(spec, {TARGET: target_bytes, REFERENCE: b"reference"}, context=ExecutionContext())
+        snapshot = next(key for key in objects.reads if "/snapshots/" in key)
+        plan = next(key for key in objects.reads if "/plans/" in key)
+        return snapshot, plan
+
+    def test_cache_is_scoped_to_tenant_rule_document_and_engine_versions(self) -> None:
+        snapshot, plan = self._keys(_spec())
+        self.assertEqual((snapshot, plan), self._keys(_spec(title="标题改名")))
+        other_tenant = self._keys(_spec(tenant="tenant-b"))
+        self.assertNotEqual((snapshot, plan), other_tenant)
+        other_document = self._keys(_spec(target_bytes=b"changed"), target_bytes=b"changed")
+        self.assertNotEqual(snapshot, other_document[0])
+        self.assertNotEqual(plan, other_document[1])
+        changed = _clauses()
+        changed[0] = {**changed[0], "rule_to_check": "每项频次至少每日一次"}
+        self.assertNotEqual(plan, self._keys(_spec(clauses=changed))[1])
+        self.assertNotEqual(plan, self._keys(_spec(), revision="b" * 64)[1])
+
+
+if __name__ == "__main__":
+    unittest.main()

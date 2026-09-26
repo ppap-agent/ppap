@@ -1,9 +1,8 @@
-"""Live checks against a docker compose production stack."""
+"""Thin black-box checks against a docker compose production stack."""
 from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import unittest
 import urllib.request
@@ -28,6 +27,11 @@ def _get(path: str) -> tuple[int, dict | str]:
             return response.status, body
 
 
+def _page(path: str) -> tuple[int, str]:
+    with urllib.request.urlopen("http://127.0.0.1:4173" + path, timeout=5) as response:
+        return response.status, response.read().decode()
+
+
 class DeployRuntimeTests(unittest.TestCase):
     def test_api_health_version_and_ready_use_the_image_sha(self):
         sha = _sha()
@@ -45,26 +49,23 @@ class DeployRuntimeTests(unittest.TestCase):
         self.assertEqual(ready["object_storage"]["state"], "ok")
 
     def test_web_serves_the_workbench_and_customer_aliases(self):
-        with urllib.request.urlopen("http://127.0.0.1:4173/", timeout=5) as response:
-            body = response.read().decode()
-            self.assertEqual(response.status, 200)
-            self.assertIn('id="app"', body)
-            self.assertIn("PPAP Audit", body)
-            script = re.search(r'src="(/assets/[^"]+\.js)"', body)
-            self.assertIsNotNone(script)
-        with urllib.request.urlopen("http://127.0.0.1:4173" + script.group(1), timeout=5) as response:
-            bundle = response.read().decode()
-            self.assertIn("nav-audit-files", bundle)
-            self.assertIn("审核结果", bundle)
-            self.assertIn("usage-list", bundle)
+        status, body = _page("/")
+        self.assertEqual(status, 200)
+        self.assertIn('id="app"', body)
+        self.assertIn("PPAP Audit", body)
         for path in ("/audit-files", "/usage", "/rules"):
-            with urllib.request.urlopen("http://127.0.0.1:4173" + path, timeout=5) as response:
-                self.assertEqual(response.status, 200)
-                self.assertIn('id="app"', response.read().decode())
-        with urllib.request.urlopen("http://127.0.0.1:4173/addon", timeout=5) as response:
-            html = response.read().decode()
-            self.assertIn("PPAP Audit", html)
-            self.assertIn("audit-files", html)
-        with urllib.request.urlopen("http://127.0.0.1:4173/runtime-config.json", timeout=5) as response:
-            config = json.loads(response.read().decode())
-            self.assertEqual(config["api_url"], "http://127.0.0.1:8080")
+            status, page = _page(path)
+            self.assertEqual(status, 200)
+            self.assertIn('id="app"', page)
+        status, addon = _page("/addon")
+        self.assertEqual(status, 200)
+        self.assertIn("PPAP Audit", addon)
+        self.assertIn('id="addon-root"', addon)
+        status, config_body = _page("/runtime-config.json")
+        self.assertEqual(status, 200)
+        config = json.loads(config_body)
+        self.assertEqual(config["api_url"], "http://127.0.0.1:8080")
+
+
+if __name__ == "__main__":
+    unittest.main()

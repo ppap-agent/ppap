@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import select
 import socket
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -16,22 +18,35 @@ from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_deep.client import DeepError, DeepUnavailable, MAX_FRAME, read_frame, write_frame
 from ppap_deep.protocol import (
     ErrorEnvelope,
+    DeepProgress,
     ExecuteRequest,
     ExecuteResponse,
     RequestEnvelope,
+    ProgressEnvelope,
     ResultEnvelope,
 )
 
 FileSource = Callable[[str], bytes]
 
 
+@dataclass
+class ExecutionContext:
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    on_progress: Callable[[dict], None] = lambda _state: None
+
+    def progress(self, state: dict) -> None:
+        if self.cancelled.is_set():
+            raise DeepError("deep_cancelled")
+        self.on_progress(DeepProgress.model_validate(state).model_dump(exclude_none=True))
+
+
 class Runtime(Protocol):
-    def execute(self, spec: ExecuteRequest, files: dict[str, bytes]) -> ExecuteResponse:
+    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
         ...
 
 
 class UnconfiguredRuntime:
-    def execute(self, spec: ExecuteRequest, files: dict[str, bytes]) -> ExecuteResponse:
+    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
         raise DeepUnavailable()
 
 
@@ -41,7 +56,7 @@ class ScriptedRuntime:
     def __init__(self, handler: Callable[[ExecuteRequest, dict[str, bytes]], ExecuteResponse]):
         self._handler = handler
 
-    def execute(self, spec: ExecuteRequest, files: dict[str, bytes]) -> ExecuteResponse:
+    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
         return self._handler(spec, files)
 
 
@@ -53,19 +68,25 @@ class Controller:
         *,
         executor_revision: str = DEEP_PROTOCOL_REVISION,
         protocol_revision: str = DEEP_PROTOCOL_REVISION,
+        authorize: Callable[[ExecuteRequest], None] | None = None,
     ):
         self.runtime = runtime
         self.file_source = file_source
         self.executor_revision = str(executor_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.protocol_revision = str(protocol_revision or "").strip() or DEEP_PROTOCOL_REVISION
+        self.authorize = authorize
 
-    def handle(self, spec: ExecuteRequest) -> ExecuteResponse:
+    def handle(self, spec: ExecuteRequest, context: ExecutionContext | None = None) -> ExecuteResponse:
+        context = context or ExecutionContext()
         if spec.protocol_revision != self.protocol_revision:
             raise DeepError("deep_protocol_mismatch")
         if spec.executor != "ppap-deep":
             raise DeepError("deep_executor_mismatch")
         if spec.executor_revision != self.executor_revision:
             raise DeepError("executor_revision_mismatch")
+        if self.authorize:
+            self.authorize(spec)
+        context.progress({"phase": "reading"})
         blobs: dict[str, bytes] = {}
         try:
             for item in spec.files:
@@ -81,7 +102,9 @@ class Controller:
                 if digest != item.sha256:
                     raise DeepError("deep_integrity_mismatch")
                 blobs[item.file_version_id] = data
-            result = self.runtime.execute(spec, blobs)
+            result = self.runtime.execute(spec, blobs, context=context)
+            if context.cancelled.is_set():
+                raise DeepError("deep_cancelled")
             return self._validate(spec, ExecuteResponse.model_validate(result.model_dump()))
         finally:
             blobs.clear()
@@ -89,7 +112,7 @@ class Controller:
     def _validate(self, spec: ExecuteRequest, result: ExecuteResponse) -> ExecuteResponse:
         if result.round_id != spec.round_id:
             raise DeepError("deep_output_identity_mismatch")
-        if [row.file_version_id for row in result.files] != [row.file_version_id for row in spec.files]:
+        if result.protocol_revision != spec.protocol_revision or result.files != spec.files:
             raise DeepError("deep_output_identity_mismatch")
         known = {row.file_version_id for row in spec.files}
         seen: set[str] = set()
@@ -101,12 +124,19 @@ class Controller:
             version_id = locator.get("file_version_id")
             if version_id and version_id not in known:
                 raise DeepError("deep_output_identity_mismatch")
+        expected = {
+            f"{item.file_version_id}:rule:{clause.get('id') or index}"
+            for item in spec.files if item.role == "target"
+            for index, clause in enumerate((item.rule_body or {}).get("rules") or [], 1)
+        }
+        if expected and seen != expected:
+            raise DeepError("deep_output_invalid")
         return result
 
-    def handle_raw(self, payload: dict) -> dict:
+    def handle_raw(self, payload: dict, context: ExecutionContext | None = None) -> dict:
         try:
             envelope = RequestEnvelope.model_validate(payload)
-            result = self.handle(envelope.spec)
+            result = self.handle(envelope.spec, context)
             return ResultEnvelope(op="result", result=result).model_dump()
         except ValidationError:
             return ErrorEnvelope(op="error", code="deep_protocol_invalid").model_dump()
@@ -123,6 +153,9 @@ class UnixControllerServer:
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._sock: socket.socket | None = None
+        self._slots = threading.BoundedSemaphore(4)
+        self._contexts: list[ExecutionContext] = []
+        self._contexts_lock = threading.Lock()
 
     def start(self) -> None:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +174,9 @@ class UnixControllerServer:
 
     def close(self) -> None:
         self._stop.set()
+        with self._contexts_lock:
+            for context in self._contexts:
+                context.cancelled.set()
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as poke:
                 poke.settimeout(0.2)
@@ -171,16 +207,51 @@ class UnixControllerServer:
                 if self._stop.is_set():
                     return
                 continue
+            if not self._slots.acquire(blocking=False):
+                conn.close()
+                continue
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn: socket.socket) -> None:
+        context = ExecutionContext()
+        finished = threading.Event()
+        with self._contexts_lock:
+            self._contexts.append(context)
+        try:
             with conn:
+                conn.settimeout(10)
+                payload = read_frame(conn)
+
+                def watch_disconnect():
+                    while not finished.wait(0.25):
+                        try:
+                            readable, _, _ = select.select([conn], [], [], 0)
+                            if readable:
+                                # The request is complete. EOF or further input cancels it.
+                                conn.recv(1)
+                                context.cancelled.set()
+                                return
+                        except OSError:
+                            context.cancelled.set()
+                            return
+
+                def progress(state):
+                    write_frame(conn, ProgressEnvelope(op="progress", progress=DeepProgress.model_validate(state)).model_dump())
+
+                context.on_progress = progress
+                watcher = threading.Thread(target=watch_disconnect, daemon=True)
+                watcher.start()
                 try:
-                    conn.settimeout(self.request_timeout)
-                    payload = read_frame(conn)
-                    if len(json.dumps(payload).encode()) > MAX_FRAME:
-                        write_frame(conn, ErrorEnvelope(op="error", code="deep_payload_too_large").model_dump())
-                        continue
-                    write_frame(conn, self.controller.handle_raw(payload))
+                    write_frame(conn, self.controller.handle_raw(payload, context))
                 except Exception:
-                    try:
-                        write_frame(conn, ErrorEnvelope(op="error", code="deep_execution_failed").model_dump())
-                    except Exception:
-                        return
+                    write_frame(conn, ErrorEnvelope(op="error", code="deep_execution_failed").model_dump())
+                finally:
+                    finished.set()
+                    watcher.join(timeout=1)
+        except (OSError, DeepError, ValueError):
+            context.cancelled.set()
+        finally:
+            finished.set()
+            with self._contexts_lock:
+                self._contexts.remove(context)
+            self._slots.release()

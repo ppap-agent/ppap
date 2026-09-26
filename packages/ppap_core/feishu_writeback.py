@@ -1,13 +1,13 @@
 """Write common round findings back into the source Feishu doc. Not a second ledger."""
 from __future__ import annotations
 
-import json
 import re
 import uuid
 from datetime import datetime, timezone
 
-from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NG, TARGET
+from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NA, NG, PASS, TARGET, UNABLE
 from ppap_core.feishu_drive import OPEN_API
+from ppap_core.rule_coverage import REASON_MANUAL_ONLY, REASON_UNSUPPORTED, unsupported_item_note
 
 
 class FeishuWritebackError(Exception):
@@ -93,9 +93,61 @@ def _group_findings(round_body: dict) -> list[tuple[str, list[dict]]]:
     return groups
 
 
+def _semantic(finding: dict) -> dict:
+    locator = finding.get("locator")
+    semantic = locator.get("semantic") if isinstance(locator, dict) else None
+    return semantic if isinstance(semantic, dict) else {}
+
+
+def _scope(finding: dict) -> tuple[int, int, int] | None:
+    semantic = _semantic(finding)
+    values = semantic.get("scope") if isinstance(semantic.get("scope"), dict) else semantic
+    counts = tuple(values.get(key) for key in ("total", "checked", "unknown"))
+    if all(type(value) is int and value >= 0 for value in counts) and counts[1] + counts[2] <= counts[0]:
+        return counts
+    return None
+
+
+def _scope_text(rows: list[dict]) -> str:
+    scopes = [scope for row in rows if (scope := _scope(row)) is not None]
+    if not scopes:
+        return ""
+    total, checked, unknown = (sum(scope[index] for scope in scopes) for index in range(3))
+    qualification = "" if len(scopes) == len(rows) else f"（仅 {len(scopes)}/{len(rows)} 项有结构化范围）"
+    return f"条款核验记录{qualification}（按条款累计）：共 {total} 条，已判断 {checked} 条，无法判断 {unknown} 条"
+
+
+def _status_text(rows: list[dict]) -> str:
+    statuses = {row.get("status") for row in rows}
+    return "、".join(status for status in (NG, UNABLE, NA, PASS) if status in statuses)
+
+
+def _semantic_source_valid(source: dict, inputs: dict[str, dict]) -> bool:
+    version = source.get("file_version_id")
+    if not isinstance(version, str):
+        return False
+    item = inputs.get(version)
+    if item is None or source.get("filename") != item.get("original_filename") or source.get("role") != item.get("role"):
+        return False
+    locator = source.get("locator")
+    required = {
+        "xlsx_cell": ("sheet", "cell"), "xlsx_range": ("sheet", "start", "end"),
+        "docx_paragraph": ("paragraph",), "docx_cell": ("table", "row", "column"),
+        "pdf_block": ("page", "block"),
+    }
+    kind = locator.get("kind") if isinstance(locator, dict) else None
+    return (
+        isinstance(kind, str) and kind in required
+        and all(locator.get(field) is not None for field in required[kind])
+        and isinstance(source.get("excerpt"), str)
+    )
+
+
 def writeback_state(round_body: dict) -> str:
     if not isinstance(round_body, dict) or round_body.get("execution") != EXEC_COMPLETED:
         return "round_incomplete"
+    if round_body.get("failure") is not None:
+        return "round_has_errors"
     findings = round_body.get("findings") or []
     if not findings or any(not isinstance(row, dict) for row in findings):
         return "round_incomplete"
@@ -110,6 +162,30 @@ def writeback_state(round_body: dict) -> str:
     input_versions = {str(item.get("file_version_id") or "") for item in inputs}
     if "" in input_versions or any(_finding_version(row) not in input_versions for row in findings):
         return "round_incomplete"
+    by_version = {str(item["file_version_id"]): item for item in inputs}
+    for row in findings:
+        semantic = _semantic(row)
+        if not semantic:
+            if round_body.get("analysis_mode") == "deep":
+                return "round_incomplete"
+            continue
+        if _scope(row) is None:
+            return "round_incomplete"
+        target_input = by_version[_finding_version(row)]
+        rule = target_input.get("rule") or {}
+        if semantic.get("rule_version_id") != target_input.get("rule_version_id"):
+            return "round_incomplete"
+        body = rule.get("body") if isinstance(rule, dict) else None
+        clauses = body.get("rules") if isinstance(body, dict) else None
+        if round_body.get("analysis_mode") == "deep" and not isinstance(clauses, list):
+            return "round_incomplete"
+        if isinstance(clauses, list):
+            matches = [item for item in clauses if isinstance(item, dict) and item.get("id") == semantic.get("clause_id")]
+            if len(matches) != 1 or matches[0].get("rule_to_check") != semantic.get("rule_text"):
+                return "round_incomplete"
+        sources = semantic.get("sources")
+        if not isinstance(sources, list) or any(not isinstance(source, dict) or not _semantic_source_valid(source, by_version) for source in sources):
+            return "round_incomplete"
     groups = _group_findings(round_body)
     if not groups or any(not rows for _, rows in groups):
         return "round_incomplete"
@@ -140,17 +216,21 @@ def history_text(round_body: dict, return_url: str = "", *, now: datetime | None
     for name, rows in _group_findings(round_body):
         lines.append("**审核内容" + str(index) + "：" + name + "**")
         lines.append("")
-        ng_rows = [row for row in rows if row.get("status") == NG]
-        if ng_rows:
-            lines.append("审核结果：NG")
+        lines.append("审核结果：" + _status_text(rows))
+        scope = _scope_text(rows)
+        if scope:
+            lines.append(scope)
+        unresolved = [row for row in rows if row.get("status") in {NG, UNABLE, NA}]
+        if unresolved:
             lines.append("总结：")
-            for row in ng_rows:
+            for row in unresolved:
                 item = str(row.get("item") or "").strip()
                 suggestions = str(row.get("suggestions") or "").strip()
-                if suggestions:
+                if row.get("status") == NG and suggestions:
                     lines.append((item or name) + " : " + suggestions)
-        else:
-            lines.append("审核结果：PASS")
+                elif row.get("status") in {UNABLE, NA}:
+                    explanation = suggestions or ("缺少足够依据" if row.get("status") == UNABLE else "本条款不适用")
+                    lines.append((item or name) + "（" + str(row["status"]) + "）：" + explanation)
         lines.append("")
         index += 1
     url = (return_url or "").strip()
@@ -164,15 +244,19 @@ def comment_text(round_body: dict) -> str:
     lines: list[str] = []
     for name, rows in _group_findings(round_body):
         for row in rows:
-            if row.get("status") != NG:
+            if row.get("status") not in {NG, UNABLE, NA}:
                 continue
             suggestions = str(row.get("suggestions") or "").strip()
             item = str(row.get("item") or "").strip()
-            if not suggestions:
+            if row.get("status") == NG and not suggestions:
                 continue
             if not lines:
                 lines.append("总结：")
-            lines.append((item or name) + "：" + suggestions)
+            if row.get("status") == NG:
+                lines.append((item or name) + "：" + suggestions)
+            else:
+                explanation = suggestions or ("缺少足够依据" if row.get("status") == UNABLE else "本条款不适用")
+                lines.append((item or name) + "（" + str(row["status"]) + "）：" + explanation)
     return "\n".join(lines) if lines else ""
 
 
@@ -201,6 +285,40 @@ def _bullet(content: str) -> dict:
     return {"block_type": 12, "bullet": {"elements": [_text_run(content)]}}
 
 
+def _finding_title(row: dict, number: int) -> str:
+    locator = row.get("locator") if isinstance(row.get("locator"), dict) else {}
+    clause = _semantic(row).get("clause_id") or locator.get("rule_item_id") or number
+    return str(clause) + " · " + str(row.get("classification") or "条款")
+
+
+def _source_location(locator: dict) -> str:
+    kind = locator["kind"]
+    if kind == "xlsx_cell":
+        return f"{locator['sheet']}!{locator['cell']}"
+    if kind == "xlsx_range":
+        return f"{locator['sheet']}!{locator['start']}:{locator['end']}"
+    if kind == "pdf_block":
+        return f"第 {locator['page']} 页 · 文本块 {locator['block']}"
+    if kind == "docx_paragraph":
+        return f"段落 {locator['paragraph']}"
+    return f"表格 {locator['table']} · 行 {locator['row']} · 列 {locator['column']}"
+
+
+def _published_clause(clauses: object, clause_id: object, text: object) -> bool:
+    return bool(text) and isinstance(clauses, list) and any(
+        isinstance(clause, dict) and clause.get('rule_to_check') == text
+        and (not clause_id or clause.get('id') == clause_id) for clause in clauses
+    )
+
+
+def _semantic_source_text(source: dict) -> str:
+    role = "待审" if source["role"] == TARGET else "参考"
+    return (
+        f"来源：{source['filename']}（{role}；文件版本 {source['file_version_id']}）"
+        f"；位置：{_source_location(source['locator'])}；原文摘录：{source['excerpt']}"
+    )
+
+
 def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
     """Complete report, unlike the brief summary written into a source document."""
     state = writeback_state(round_body)
@@ -210,18 +328,41 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
               _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
     targets = {item['file_version_id']: item for item in round_body['inputs'] if item.get('role') == TARGET}
     findings = round_body.get('findings') or []
-    counts = {status: sum(row.get('status') == status for row in findings) for status in ('PASS', 'NG', 'ERR')}
+    counts = {status: sum(row.get('status') == status for row in findings) for status in (PASS, NG, UNABLE, NA, ERR)}
     pending = sum(not row.get('review') for row in findings)
     blocks.extend([
         _heading2('本轮摘要'),
-        _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts['PASS']}，不符合 {counts['NG']}，检查异常 {counts['ERR']}。"),
+        _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts[PASS]}，不符合 {counts[NG]}，无法判断 {counts[UNABLE]}，不适用 {counts[NA]}，检查异常 {counts[ERR]}。"),
         _text(f'未记录人工复核 {pending} 项。已记录不等于问题已解决，本报告不代表正式批准。'),
         _text('未自动检查的规则条目会单独列出，不计入机器通过。'),
     ])
-    for row in findings:
-        if row.get('status') != 'PASS':
-            blocks.append(_bullet(str(row.get('item') or '检查项') + (' · 已记录复核' if row.get('review') else ' · 未记录复核')))
-    unchecked = (round_body.get('coverage') or {}).get('unchecked') or []
+    overall_scope = _scope_text(findings)
+    if overall_scope:
+        blocks.append(_text(overall_scope))
+    for _, rows in _group_findings(round_body):
+        for number, row in enumerate(rows, 1):
+            if row.get('status') != 'PASS':
+                blocks.append(_bullet(str(row.get('status')) + ' · ' + _finding_title(row, number) + (' · 已记录复核' if row.get('review') else ' · 未记录复核')))
+    coverage = round_body.get('coverage') or {}
+    unsupported = [item for item in coverage.get('rule_items') or [] if isinstance(item, dict) and item.get('coverage') == 'unsupported']
+    if unsupported:
+        blocks.append(_text('未覆盖条款（不计入机器通过）：'))
+        for item in unsupported:
+            title = str(item.get('id') or '?') + ' · ' + str(item.get('category') or '规则条款')
+            reason = item.get('reason')
+            detail = ({REASON_MANUAL_ONLY: '无对应内置检查，需人工核对',
+                       REASON_UNSUPPORTED: '当前文档类型没有可执行检查器'}.get(reason, str(reason or '未自动检查')))
+            blocks.append(_bullet(title + '：' + detail))
+            version = item.get('file_version_id')
+            if version:
+                blocks.append(_text('待审文件版本：' + str(version)))
+            rule = (targets.get(version) or {}).get('rule') or {}
+            rule_body = rule.get('body') if isinstance(rule, dict) else None
+            clauses = rule_body.get('rules') if isinstance(rule_body, dict) else None
+            if not _published_clause(clauses, item.get('id'), item.get('rule_to_check')) and item.get('rule_to_check'):
+                blocks.append(_text('本轮有效条款：' + str(item['rule_to_check'])))
+    unchecked = [note for note in coverage.get('unchecked') or []
+                 if not any(str(note) == unsupported_item_note(item) for item in unsupported)]
     if unchecked:
         blocks.append(_text('未检查范围：' + '；'.join(map(str, unchecked))))
     for name, rows in _group_findings(round_body):
@@ -232,20 +373,52 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
         blocks.append(_text('待审文件版本：' + source['file_version_id']))
         if source.get('rule_version_id'):
             blocks.append(_text('规则版本：' + source['rule_version_id']))
-        for row in rows:
+        rule_body = rule.get('body') if isinstance(rule, dict) else None
+        published_clauses = rule_body.get('rules') if isinstance(rule_body, dict) else None
+        if isinstance(published_clauses, list):
+            blocks.append(_text('本轮已发布规则有效正文（条款 ID 与正文；不是原件坐标）：'))
+            for clause in published_clauses:
+                if isinstance(clause, dict):
+                    blocks.append(_bullet(str(clause.get('id') or '?') + '：' + str(clause.get('rule_to_check') or '')))
+        rule_origin = (rule.get('source_file_version_id') if isinstance(rule, dict) else None) or source.get('rule_source_file_version_id')
+        if rule_origin:
+            blocks.append(_text('规则原件来源版本（仅溯源，不表示修订条款位于原件）：' + str(rule_origin)))
+        for number, row in enumerate(rows, 1):
             meta = [str(row.get("classification") or "").strip(), str(row.get("priority") or "").strip()]
-            blocks.append(_heading3(str(row["status"]) + " · " + str(row.get("item") or "检查项")))
+            blocks.append(_heading3(str(row["status"]) + " · " + _finding_title(row, number)))
             if any(meta):
                 blocks.append(_text("分类/优先级：" + " · ".join(part for part in meta if part)))
             if row.get("suggestions"):
                 blocks.append(_text(str(row["suggestions"])))
-            locator = row.get("locator") or {}
-            positions = [str(locator["locator"])] if locator.get("locator") else []
-            for source in (locator.get("evidence") or {}).get("sources") or []:
-                position = str(source.get("locator") or "")
-                if position and position not in positions:
-                    positions.append(position)
-            blocks.append(_text("依据：" + "；".join(positions) if positions else "未提供精确位置，请核对原件。"))
+            semantic = _semantic(row)
+            if semantic:
+                clause_id = str(semantic.get('clause_id') or '').strip()
+                rule_text = str(semantic.get('rule_text') or '').strip()
+                if (clause_id or rule_text) and not _published_clause(published_clauses, clause_id, rule_text):
+                    blocks.append(_text('本轮有效条款：' + (clause_id + ' · ' if clause_id else '') + rule_text))
+                semantic_origin = semantic.get('rule_source_file_version_id')
+                if semantic_origin and semantic_origin != rule_origin:
+                    blocks.append(_text('规则原件来源版本（仅溯源）：' + str(semantic_origin)))
+                scope = _scope(row)
+                if scope:
+                    blocks.append(_text(f'本条核验记录：共 {scope[0]} 条，已判断 {scope[1]} 条，无法判断 {scope[2]} 条'))
+                if semantic.get('diagnostic'):
+                    blocks.append(_text('无法判断原因：' + str(semantic['diagnostic'])))
+                sources = semantic.get('sources') or []
+                if sources:
+                    blocks.extend(_text(_semantic_source_text(item)) for item in sources)
+                else:
+                    blocks.append(_text('依据：未提供可定位的资料来源。'))
+            else:
+                locator = row.get("locator") or {}
+                if row.get('item') and not _published_clause(published_clauses, locator.get('rule_item_id'), row['item']):
+                    blocks.append(_text('检查项正文：' + str(row['item'])))
+                positions = [str(locator["locator"])] if locator.get("locator") else []
+                for evidence_source in (locator.get("evidence") or {}).get("sources") or []:
+                    position = str(evidence_source.get("locator") or "")
+                    if position and position not in positions:
+                        positions.append(position)
+                blocks.append(_text("依据：" + "；".join(positions) if positions else "未提供精确位置，请核对原件。"))
             review = row.get("review") or {}
             if review.get("judgment"):
                 blocks.append(_text("人工复核：" + str(review["judgment"])))

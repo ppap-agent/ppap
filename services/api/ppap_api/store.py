@@ -106,6 +106,9 @@ def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> di
     if payload.get("executor"):
         diagnostic["executor"] = payload["executor"]
         diagnostic["executor_revision"] = payload.get("executor_revision")
+    for key in ("failure", "usage"):
+        if key in result:
+            diagnostic[key] = result[key]
     return diagnostic
 
 
@@ -1095,9 +1098,11 @@ class AuthStore:
             rows = conn.execute(
                 """
                 SELECT i.role, fv.file_id, fv.id, fv.original_filename, fv.status, fv.object_key, fv.content_type,
-                       i.rule_version_id, i.rule_title, i.rule_body, fv.sha256, i.rule_execution
+                       i.rule_version_id, i.rule_title, i.rule_body, fv.sha256, i.rule_execution,
+                       rv.source_file_version_id
                 FROM product.round_inputs i
                 JOIN product.file_versions fv ON fv.id = i.file_version_id
+                LEFT JOIN product.rule_versions rv ON rv.id = i.rule_version_id AND rv.tenant_id = fv.tenant_id
                 WHERE i.round_id = %s
                 ORDER BY i.role, fv.original_filename
                 """,
@@ -1120,6 +1125,7 @@ class AuthStore:
                     row[9],
                     row[10],
                     row[11],
+                    str(row[12]) if row[12] else None,
                 )
                 for row in rows
             ],
@@ -1189,8 +1195,26 @@ class AuthStore:
         with self._conn() as conn:
             row = conn.execute(
                 """UPDATE engine.jobs SET lease_until = now() + interval '30 seconds', updated_at = now()
-                WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased' RETURNING id""",
+                WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
+                  AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now()) RETURNING id""",
                 (claimed.id, claimed.attempt, worker_ident),
+            ).fetchone()
+            return row is not None
+
+    def audit_progress(self, claimed: ClaimedJob, worker_ident: str, progress: dict) -> bool:
+        from ppap_deep.protocol import DeepProgress
+
+        safe = DeepProgress.model_validate(progress).model_dump(exclude_none=True)
+        safe["updated_at"] = _now().isoformat()
+        with self._conn() as conn:
+            row = conn.execute(
+                """UPDATE engine.attempts a
+                   SET diagnostic = a.diagnostic || %s
+                   FROM engine.jobs j
+                   WHERE j.id = %s AND j.attempt = %s AND j.lease_owner = %s
+                     AND j.status = 'leased' AND j.lease_until > now()
+                     AND a.job_id = j.id AND a.attempt = j.attempt RETURNING a.id""",
+                (Jsonb({"progress": safe}), claimed.id, claimed.attempt, worker_ident),
             ).fetchone()
             return row is not None
 
@@ -1206,6 +1230,7 @@ class AuthStore:
                     SET status = %s, lease_until = NULL, updated_at = now(),
                         result = CASE WHEN kind IN ('rule_parse', 'file_analysis') THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
+                      AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
                     RETURNING id
                     """,
                     ("succeeded" if outcome == "succeeded" else "failed", Jsonb(result) if claimed.kind in {"rule_parse", "file_analysis"} else None, claimed.id, claimed.attempt, worker_ident),
@@ -1215,7 +1240,7 @@ class AuthStore:
                 conn.execute(
                     """
                     UPDATE engine.attempts
-                    SET finished_at = now(), outcome = %s, diagnostic = %s
+                    SET finished_at = now(), outcome = %s, diagnostic = diagnostic || %s
                     WHERE job_id = %s AND attempt = %s
                     """,
                     (
@@ -1554,7 +1579,7 @@ class AuthStore:
             "SELECT status, COUNT(*) FROM product.findings WHERE round_id = %s GROUP BY status",
             (round_id,),
         ).fetchall()
-        result_counts = {"PASS": 0, "NG": 0, "ERR": 0}
+        result_counts = {"PASS": 0, "NG": 0, "ERR": 0, "UNABLE": 0, "NA": 0}
         for status, n in counts:
             if status in result_counts:
                 result_counts[status] = int(n)
@@ -1610,16 +1635,35 @@ class AuthStore:
             """,
             (round_id,),
         ).fetchall()
+        # A clause ID is an identity, not a lexical or numeric display order.
+        clause_order = {
+            identity: position
+            for position, identity in enumerate(
+                (str(item[1]), str(clause["id"]))
+                for item in inputs
+                for clause in (item[7] or {}).get("rules", [])
+            )
+        }
+        findings.sort(key=lambda finding: (
+            clause_order.get(((finding[6] or {}).get("file_version_id"),
+                              str((finding[6] or {}).get("rule_item_id", ""))), len(clause_order)),
+            finding[0],
+        ))
         job = conn.execute(
             """
-            SELECT payload FROM engine.jobs
-            WHERE audit_round_id = %s AND kind = 'audit'
-            ORDER BY created_at
+            SELECT j.payload, a.diagnostic, j.updated_at FROM engine.jobs j
+            LEFT JOIN engine.attempts a ON a.job_id = j.id AND a.attempt = j.attempt
+            WHERE j.audit_round_id = %s AND j.kind = 'audit'
+            ORDER BY j.created_at
             LIMIT 1
             """,
             (round_id,),
         ).fetchone()
         payload = job[0] if job else {}
+        diagnostic = job[1] if job and job[1] else {}
+        progress = diagnostic.get("progress")
+        if progress and row[1] == EXEC_RUNNING:
+            progress = {**progress, "updated_at": job[2].isoformat()}
         return {
             "id": str(row[0]),
             "execution": row[1],
@@ -1631,6 +1675,8 @@ class AuthStore:
             "analysis_mode": normalize_analysis_mode(row[7]),
             "writeback": public_target(self._target_row(conn, "round_writeback_targets", "round_id", str(row[0]))),
             **_executor_public(payload),
+            "progress": progress,
+            "failure": diagnostic.get("failure"),
             "inputs": [
                 {
                     "role": item[0],

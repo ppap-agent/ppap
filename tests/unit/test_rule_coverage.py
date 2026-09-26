@@ -37,6 +37,16 @@ class RuleCoverageTests(unittest.TestCase):
         mapped = map_rule_items(items, DECLARATIONS)
         self.assertEqual(mapped[0]["coverage"], COVERAGE_UNSUPPORTED)
 
+    def test_matching_category_does_not_confirm_empty_or_different_rule_text(self):
+        items = [
+            {"id": "empty", "category": "文件类型勾选审核", "rule_to_check": ""},
+            {"id": "different", "category": "文件类型勾选审核", "rule_to_check": "必须勾选文件类型"},
+        ]
+        mapped = map_rule_items(items, DECLARATIONS)
+        self.assertEqual([item["coverage"] for item in mapped], [COVERAGE_UNSUPPORTED] * 2)
+        self.assertTrue(all(item["reason"] == REASON_MANUAL_ONLY for item in mapped))
+        self.assertTrue(all("checker_method" not in item for item in mapped))
+
     def test_empty_rules_keep_legacy_builtin_mode(self):
         frozen = freeze_rule_execution({"kind": "engine", "type": "控制计划", "rules": []}, DECLARATIONS)
         self.assertEqual(frozen["mode"], MODE_LEGACY_BUILTIN)

@@ -1,0 +1,80 @@
+# The SSH port is not exposed by a Service. run.sh reaches it through the
+# authenticated Kubernetes API and forwards only the local API to port 8080.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ppap-remote-dev-bridge
+  namespace: ppap-remote-dev
+  labels:
+    app: ppap-remote-dev-bridge
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: bridge
+      image: alpine:3.20
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          sed -i 's#dl-cdn.alpinelinux.org#mirrors.aliyun.com#g' /etc/apk/repositories
+          apk add --no-cache openssh-server
+          adduser -D -h /home/dev dev
+          passwd -d dev
+          mkdir -p /home/dev/.ssh /run/sshd
+          cp /authorized-key/authorized_keys /home/dev/.ssh/authorized_keys
+          chown -R dev:dev /home/dev/.ssh
+          chmod 700 /home/dev/.ssh
+          chmod 600 /home/dev/.ssh/authorized_keys
+          ssh-keygen -A
+          printf '%s\n' \
+            'Port 2222' \
+            'ListenAddress 0.0.0.0' \
+            'HostKey /etc/ssh/ssh_host_ed25519_key' \
+            'PubkeyAuthentication yes' \
+            'PasswordAuthentication no' \
+            'PermitRootLogin no' \
+            'AllowUsers dev' \
+            'AllowTcpForwarding remote' \
+            'GatewayPorts clientspecified' \
+            'PermitListen 0.0.0.0:8080' \
+            'X11Forwarding no' \
+            'AllowAgentForwarding no' \
+            'PermitTTY no' > /etc/ssh/sshd_config
+          exec /usr/sbin/sshd -D -e
+      ports:
+        - name: ssh
+          containerPort: 2222
+        - name: api
+          containerPort: 8080
+      readinessProbe:
+        tcpSocket:
+          port: ssh
+        periodSeconds: 2
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 250m
+          memory: 128Mi
+      volumeMounts:
+        - name: authorized-key
+          mountPath: /authorized-key
+          readOnly: true
+  volumes:
+    - name: authorized-key
+      secret:
+        secretName: ppap-remote-dev-public-key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppap-remote-dev-api
+  namespace: ppap-remote-dev
+spec:
+  type: ClusterIP
+  selector:
+    app: ppap-remote-dev-bridge
+  ports:
+    - name: http
+      port: 8080
+      targetPort: api

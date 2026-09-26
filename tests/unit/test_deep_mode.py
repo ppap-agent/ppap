@@ -181,6 +181,7 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(draft.json()["analysis_mode"], ANALYSIS_STANDARD)
 
     def test_happy_path_writes_product_findings_without_standard_engine(self):
+        # ScriptedRuntime checks transport and persistence, not semantic audit agency.
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
         reference = self._upload("context.pdf", b"reference-bytes")
@@ -206,6 +207,8 @@ class DeepModeTests(unittest.TestCase):
         self.assertTrue(any("context.pdf" in row for row in loaded["coverage"]["unchecked"]))
         diagnostic = self.store.attempts[(claimed.id, claimed.attempt)]["diagnostic"]
         self.assertEqual(diagnostic["executor"], EXECUTOR_DEEP)
+        self.assertIsNone(loaded["failure"])
+        self.assertEqual(diagnostic["usage"], {})
 
     def test_runtime_unavailable_does_not_fall_back_to_standard(self):
         self._login()
@@ -215,25 +218,30 @@ class DeepModeTests(unittest.TestCase):
             with patch("ppap_worker.engine_runner", side_effect=AssertionError("standard engine")):
                 claimed = self.store.claim_job("deep-worker")
                 result = process_claimed(self.store, claimed, "deep-worker")
-        self.assertEqual(result["findings"][0]["status"], "ERR")
-        self.assertEqual(result["findings"][0]["suggestions"], "deep_runtime_unavailable")
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["failure"]["code"], "deep_runtime_unavailable")
+        self.assertTrue(result["failure"]["retryable"])
         loaded = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(loaded["execution"], "failed")
         self.assertEqual(loaded["analysis_mode"], ANALYSIS_DEEP)
+        self.assertEqual(loaded["findings"], [])
+        self.assertEqual(loaded["failure"], result["failure"])
 
     def test_executor_revision_mismatch_requires_resubmit(self):
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
         self.settings.deep_controller_socket = self._start_controller()
         round_id = self._accept_deep(target, key="deep-revision")
-        self.settings.deep_executor_revision = "ppap-deep-v2"
+        self.settings.deep_executor_revision = "ppap-deep-v999"
         with patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")):
             claimed = self.store.claim_job("deep-worker")
             result = process_claimed(self.store, claimed, "deep-worker")
-        self.assertEqual(result["findings"][0]["suggestions"], "executor_revision_mismatch")
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["failure"]["code"], "executor_revision_mismatch")
         loaded = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(loaded["execution"], "failed")
         self.assertEqual(loaded["executor_revision"], DEEP_PROTOCOL_REVISION)
+        self.assertEqual(loaded["failure"], result["failure"])
 
     def test_technical_retry_fencing_rejects_stale_attempt(self):
         self._login()
@@ -251,29 +259,54 @@ class DeepModeTests(unittest.TestCase):
             first,
             "w1",
             {
-                "findings": [
-                    {
-                        "item_key": "target:" + target["id"],
-                        "classification": "执行",
-                        "item": "审核执行",
-                        "priority": "P0",
-                        "status": "ERR",
-                        "suggestions": "late-deep",
-                        "locator": None,
-                    }
-                ],
-                "coverage": {"checked": [], "unchecked": [], "locator_gap": True},
-                "note": "stale",
+                "findings": [],
+                "coverage": {"checked": [], "unchecked": [], "locator_gap": False},
+                "note": "deep_lease_lost",
+                "failure": {"code": "deep_lease_lost", "message": "stale", "retryable": False},
             },
+            outcome="failed",
         )
         self.assertFalse(rejected)
         process_claimed(self.store, second, "w2")
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["result_attempt"], 2)
         self.assertEqual(body["findings"][0]["status"], "PASS")
-        self.assertNotEqual(body["findings"][0]["suggestions"], "late-deep")
+        self.assertIsNone(body["failure"])
         stale = ClaimedJob(first.id, first.kind, first.payload, first.attempt, first.round_id)
         self.assertEqual(stale.round_id, round_id)
+
+    def test_progress_uses_current_lease_and_survives_failure_completion(self):
+        self._login()
+        target = self._upload("report.xlsx", b"target-bytes")
+        round_id = self._accept_deep(target, key="deep-progress")
+        first = self.store.claim_job("w1")
+        progress = {"phase": "checking", "completed_count": 1, "total_count": 3}
+        self.assertFalse(self.store.audit_progress(first, "w2", progress))
+        self.assertTrue(self.store.audit_progress(first, "w1", progress))
+        running = self.client.get(f"/rounds/{round_id}").json()
+        self.assertEqual(running["progress"]["phase"], "checking")
+        self.assertEqual(running["progress"]["completed_count"], 1)
+        self.assertIsNotNone(running["progress"]["updated_at"])
+
+        self.store.jobs[first.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        self.assertFalse(self.store.audit_progress(first, "w1", {"phase": "validating"}))
+        second = self.store.claim_job("w2")
+        self.assertEqual(second.attempt, 2)
+        self.assertFalse(self.store.audit_progress(first, "w1", {"phase": "validating"}))
+        self.assertTrue(self.store.audit_progress(second, "w2", {"phase": "validating"}))
+        failure = {"code": "deep_timeout", "message": "timeout", "retryable": False}
+        self.assertTrue(self.store.complete_job(
+            second, "w2",
+            {"findings": [], "coverage": {}, "failure": failure, "usage": {"input_tokens": 7}},
+            outcome="failed",
+        ))
+        loaded = self.client.get(f"/rounds/{round_id}").json()
+        self.assertEqual(loaded["findings"], [])
+        self.assertEqual(loaded["progress"]["phase"], "validating")
+        self.assertEqual(loaded["failure"], failure)
+        diagnostic = self.store.attempts[(second.id, second.attempt)]["diagnostic"]
+        self.assertEqual(diagnostic["usage"], {"input_tokens": 7})
+        self.assertFalse(self.store.audit_progress(second, "w2", {"phase": "validating"}))
 
     def test_same_key_different_mode_is_idempotency_conflict(self):
         self._login()

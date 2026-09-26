@@ -23,7 +23,9 @@ python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/t
 
 ## Schema / deploy / E2E
 
-#7 / #11 浏览器 E2E：`python -m unittest tests.e2e.test_web_audit -v`（需 Playwright 与 `docker compose -f deploy/isolated-dev/compose.yaml up -d --wait`）。
+#7 / #11 浏览器 E2E：`python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v`（需 `.[e2e]` Playwright 与 `docker compose -f deploy/isolated-dev/compose.yaml up -d --wait`）。
+
+InsForge 配置契约：`node deploy/insforge/verify-config.mjs`。live CLI 生命周期：`bash deploy/insforge/smoke-local.sh`（opt-in）。
 
 Schema upgrade：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait && docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db && python -m unittest tests.schema.test_upgrade -v`（测试通过本机 `psql` 连 `127.0.0.1`）。
 

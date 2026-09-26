@@ -16,6 +16,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
         files.append(
             FrozenFile(
                 file_version_id=item.file_version_id,
+                file_id=item.file_id,
                 role=TARGET if item.role == TARGET else REFERENCE,
                 filename=item.filename,
                 sha256=item.sha256 or "",
@@ -24,6 +25,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
                 rule_title=item.rule_title,
                 rule_body=item.rule_body,
                 rule_execution=item.rule_execution,
+                rule_source_file_version_id=item.rule_source_file_version_id,
             )
         )
     return ExecuteRequest(
@@ -32,6 +34,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
         files=files,
         executor="ppap-deep",
         executor_revision=executor_revision,
+        tenant_id=work.tenant_id,
     )
 
 
@@ -57,6 +60,7 @@ def product_result(response: ExecuteResponse, work: RoundWork) -> dict:
         "findings": findings,
         "coverage": coverage,
         "note": response.note or "deep_audit",
+        "usage": response.usage,
     }
 
 

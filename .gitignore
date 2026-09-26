@@ -5,6 +5,7 @@
 !.env.dev
 !.env.production
 node_modules/
+**/.pnpm-store/
 dist/
 __pycache__/
 .venv/
@@ -18,3 +19,4 @@ apps/web/runtime-config.json
 *.egg-info/
 playwright/.auth/
 test-results/
+.insforge/

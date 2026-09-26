@@ -1,7 +1,9 @@
 import {useEffect, useRef, useState} from 'react'
 import {request, type Material} from './api'
-import Modal from './Modal'
-import {Button, Checkbox, Field, FilterBar, Input, Select, Stack, Text} from './ui'
+import {Modal} from './ui/domain'
+import {Button} from '@/components/ui/button'
+import {Checkbox} from '@/components/ui/checkbox'
+import {Input} from '@/components/ui/input'
 
 interface DriveFile {token: string; name: string; type: string}
 
@@ -11,7 +13,6 @@ export default function DrivePicker({disabled, onImport, onBusy}: {disabled: boo
   const [files, setFiles] = useState<DriveFile[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [next, setNext] = useState<string | null>(null)
-  const [role, setRole] = useState<Material['role']>('target')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -68,7 +69,7 @@ export default function DrivePicker({disabled, onImport, onBusy}: {disabled: boo
           setMessage(`正在导入 ${file.name}`)
           const version = await request<{file_id: string; id: string; original_filename: string}>('/integrations/feishu/files/import', 'POST', {file_token: file.token, doc_type: file.type})
           setSelected(current => current.filter(id => id !== key(file)))
-          await onImport({file_id: version.file_id, file_version_id: version.id, original_filename: version.original_filename, role, rule_version_id: null})
+          await onImport({file_id: version.file_id, file_version_id: version.id, original_filename: version.original_filename, role: 'target', rule_version_id: null})
         }
         setMessage('导入完成。')
         setOpened(false)
@@ -81,29 +82,23 @@ export default function DrivePicker({disabled, onImport, onBusy}: {disabled: boo
       <Button type="button" disabled={disabled} onClick={() => setOpened(true)}>从飞书导入</Button>
       {opened && (
         <Modal title="从飞书导入" busy={importing} onClose={close}>
-          <Stack gap="md">
-            <FilterBar onSubmit={() => { void browse(true, folder) }}>
+          <div className="flex flex-col gap-4">
+            <form className="flex flex-wrap items-end gap-2" onSubmit={event => { event.preventDefault(); void browse(true, folder) }}>
               <Input value={folder} onChange={event => setFolder(event.target.value)} aria-label="飞书文件夹链接" placeholder="粘贴飞书文件夹链接" inputMode="url" enterKeyHint="go" autoCapitalize="none" spellCheck={false} disabled={disabled || busy} />
               <Button type="submit" disabled={disabled || busy}>打开</Button>
               <Button type="button" disabled={disabled || busy} onClick={() => { setFolder(''); void browse(true, '') }}>我的云空间</Button>
-            </FilterBar>
-            {message && <Text>{message}</Text>}
-            <Stack gap="sm">
+            </form>
+            {message && <p>{message}</p>}
+            <div className="flex flex-col gap-2">
               {files.map(file => (
                 file.type === 'folder'
                   ? <Button key={key(file)} type="button" variant="ghost" disabled={disabled || busy} onClick={() => { setFolder(file.token); void browse(true, file.token) }}>文件夹 · {file.name} →</Button>
-                  : <Checkbox key={key(file)} label={`${file.name}${supported(file) ? '' : '（不支持导入）'}`} checked={selected.includes(key(file))} disabled={!supported(file) || disabled || busy} onChange={event => setSelected(current => event.target.checked ? current.concat(key(file)) : current.filter(id => id !== key(file)))} />
+                  : <label key={key(file)} className="inline-flex min-h-9 cursor-pointer items-center gap-2 text-sm text-muted-foreground"><Checkbox checked={selected.includes(key(file))} disabled={!supported(file) || disabled || busy} onCheckedChange={checked => setSelected(current => checked ? current.concat(key(file)) : current.filter(id => id !== key(file)))} /><span>{file.name}{supported(file) ? '' : '（不支持导入）'}</span></label>
               ))}
-            </Stack>
+            </div>
             {next && <Button type="button" disabled={disabled || busy} onClick={() => void browse(false)}>加载更多</Button>}
-            <Field label="资料用途">
-              <Select value={role} disabled={disabled || busy} onChange={event => setRole(event.target.value as Material['role'])}>
-                <option value="target">待审文件</option>
-                <option value="reference">参考资料</option>
-              </Select>
-            </Field>
-            <Button variant="primary" type="button" disabled={!selected.length || disabled || busy} onClick={() => void importFiles()}>导入{selected.length ? ` ${selected.length} 份资料` : ''}</Button>
-          </Stack>
+            <Button type="button" disabled={!selected.length || disabled || busy} onClick={() => void importFiles()}>导入{selected.length ? ` ${selected.length} 份资料` : ''}</Button>
+          </div>
         </Modal>
       )}
     </>

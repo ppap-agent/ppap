@@ -20,9 +20,9 @@
 
 ## 当前命令
 
-Local 与 CI 使用同一组 native 工具：pip、unittest/pytest、git、compileall、Docker Buildx bake、Docker Compose、psql。
+Local 与 CI 使用同一组 native 工具：pip、unittest/pytest、git、compileall、pnpm、Node、Python Playwright、Docker Buildx bake、Docker Compose、psql、以及 InsForge 的 `node deploy/insforge/verify-config.mjs` 与 pinned `@insforge/cli`。
 
-唯一产品前端使用 React + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
+唯一产品前端使用 React + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`、`pnpm lint` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器 E2E 是 Python Playwright（`python -m unittest tests.e2e...`），对着 isolated-dev。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
 
 ```sh
 python -m pip install -e ".[dev]"
@@ -45,7 +45,7 @@ unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`。质量检查是 `git show --check` 与 `compileall`；测试是 unittest / pytest；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。schema / build / e2e 需要 Docker Engine、Compose 和 Buildx。self-hosted runner 上若 Engine 已可用，CI 只补 Compose/Buildx 插件，不会用 Debian `docker.io` 覆盖已安装的 `docker-ce`；仅在完全没有 Docker CLI 时才安装 `docker.io`。每次还会清掉遗留的 `iptables-legacy` FORWARD DROP，避免 Compose 用户网络丢包。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。PC 在飞书宿主中通过 `POST /login/feishu/host` 自动登录；普通浏览器仍走 `/login/feishu` OAuth。生产回调域名、事件订阅、网页可信域名和客户入口切换属于 #15，不在宿主登录代码里直接改现网。
+当前实现是 Python 3.12、单一 `pyproject.toml`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试是 unittest / pytest；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。schema / build / e2e 需要 Docker Engine、Compose 和 Buildx。self-hosted runner 上若 Engine 已可用，CI 只补 Compose/Buildx 插件，不会用 Debian `docker.io` 覆盖已安装的 `docker-ce`；仅在完全没有 Docker CLI 时才安装 `docker.io`。每次还会清掉遗留的 `iptables-legacy` FORWARD DROP，避免 Compose 用户网络丢包。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。PC 在飞书宿主中通过 `POST /login/feishu/host` 自动登录；普通浏览器仍走 `/login/feishu` OAuth。生产回调域名、事件订阅、网页可信域名和客户入口切换属于 #15，不在宿主登录代码里直接改现网。
 
 #15 剩余：把本仓客户入口切到 current `ppap`；compose 验证不等于客户 cut-over。不拆除 `ppap-agent`：它是算法验证基地和参考实现，并继续服务其它用户。
 

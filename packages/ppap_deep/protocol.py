@@ -10,6 +10,7 @@ class FrozenFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     file_version_id: str
+    file_id: str = ""
     role: Literal["target", "reference"]
     filename: str
     sha256: str
@@ -18,6 +19,7 @@ class FrozenFile(BaseModel):
     rule_title: str | None = None
     rule_body: dict[str, Any] | None = None
     rule_execution: dict[str, Any] | None = None
+    rule_source_file_version_id: str | None = None
 
 
 class ExecuteRequest(BaseModel):
@@ -28,6 +30,9 @@ class ExecuteRequest(BaseModel):
     files: list[FrozenFile]
     executor: Literal["ppap-deep"]
     executor_revision: str
+    tenant_id: str = ""
+    job_id: str = ""
+    attempt: int = Field(default=1, ge=1)
 
 
 class DeepFinding(BaseModel):
@@ -37,7 +42,7 @@ class DeepFinding(BaseModel):
     classification: str
     item: str
     priority: str
-    status: Literal["PASS", "NG", "ERR"]
+    status: Literal["PASS", "NG", "ERR", "UNABLE", "NA"]
     suggestions: str = ""
     locator: dict[str, Any] | None = None
 
@@ -60,6 +65,22 @@ class ExecuteResponse(BaseModel):
     findings: list[DeepFinding]
     coverage: DeepCoverage
     note: str = "deep_audit"
+    usage: dict[str, int] = Field(default_factory=dict)
+
+
+class DeepProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phase: Literal["reading", "planning", "checking", "validating"]
+    completed_count: int | None = Field(default=None, ge=0)
+    total_count: int | None = Field(default=None, ge=0)
+
+
+class ProgressEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["progress"]
+    progress: DeepProgress
 
 
 class RequestEnvelope(BaseModel):

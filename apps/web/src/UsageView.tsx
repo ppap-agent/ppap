@@ -1,9 +1,29 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, request, type QuotaEstimate} from './api'
 import {productHref} from './navigation/route'
-import {Badge, Button, DataTable, FeedbackState, Field, FilterBar, Input, Link, Page, PageHeader, Text, Unit, type DataColumn} from './ui'
+import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
+import {Badge} from '@/components/ui/badge'
+import {Button} from '@/components/ui/button'
+import {Input} from '@/components/ui/input'
+import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table'
+import {DataSurface, FilterBar, PageHeader, PageLayout} from './ui/PageLayout'
 
 interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string}
+
+function UsageMobileRow({row}: {row: Usage}) {
+  return (
+    <article className="grid gap-2 py-4 first:pt-0 last:pb-0">
+      <div className="flex items-start justify-between gap-4">
+        <time className="text-sm text-muted-foreground">{dateLabel(row.created_at)}</time>
+        <Badge variant={row.is_free_trial ? 'outline' : 'secondary'}>{row.is_free_trial ? '试用' : '额度'}</Badge>
+      </div>
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-xl font-semibold tracking-tight">{row.consumed_points.toLocaleString('zh-CN')} <span className="text-sm font-normal text-muted-foreground">点</span></span>
+        {row.round_id && <a className="text-sm font-medium text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: row.round_id})}>查看审核 →</a>}
+      </div>
+    </article>
+  )
+}
 
 export default function UsageView() {
   const [rows, setRows] = useState<Usage[]>([])
@@ -41,42 +61,36 @@ export default function UsageView() {
 
   useEffect(() => { void load(); void loadQuota() }, [])
 
-  const columns: Array<DataColumn<Usage>> = [
-    {key: 'when', header: '时间', cell: row => dateLabel(row.created_at)},
-    {
-      key: 'points',
-      header: '用量（点）',
-      cell: row => <>{row.consumed_points.toLocaleString('zh-CN')}<Unit>点</Unit></>,
-    },
-    {
-      key: 'kind',
-      header: '类型',
-      cell: row => <Badge tone={row.is_free_trial ? 'info' : 'neutral'}>{row.is_free_trial ? '试用' : '额度'}</Badge>,
-    },
-    {
-      key: 'round',
-      header: '关联审核',
-      role: 'action',
-      cell: row => row.round_id ? <Link href={productHref({page: 'audit-round', roundId: row.round_id})}>查看审核 →</Link> : null,
-    },
-  ]
-
   return (
-    <Page>
-      <PageHeader title="用量记录" />
-      {quota?.remaining_trial_ai_points != null && <Text tone="muted" testId="quota-summary">试用剩余 {quota.remaining_trial_ai_points.toLocaleString('zh-CN')} 点</Text>}
-      {(rows.length > 0 || since || until) && (
-        <FilterBar onSubmit={() => { void load() }}>
-          <Field label="起始日期"><Input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></Field>
-          <Field label="截止日期"><Input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></Field>
-          <Button type="submit" disabled={busy}>查询</Button>
-        </FilterBar>
-      )}
-      {error && <FeedbackState tone="error" inline title="无法读取用量" detail={error} testId="usage-error" />}
-      {busy && !rows.length && <FeedbackState tone="loading" detail="正在加载用量记录…" />}
-      {!busy && !rows.length && !error && <FeedbackState title="暂无用量记录" testId="usage-empty" />}
-      {!!rows.length && <DataTable rows={rows} columns={columns} label="用量记录" testId="usage-list" />}
+    <PageLayout>
+      <PageHeader title="用量记录" description={quota?.remaining_trial_ai_points != null && <span data-testid="quota-summary">试用剩余 {quota.remaining_trial_ai_points.toLocaleString('zh-CN')} 点</span>} />
+      <FilterBar as="form" role="search" label="筛选用量记录" className="grid gap-3 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-end" onSubmit={event => { event.preventDefault(); void load() }}>
+        <label className="grid min-w-0 gap-1.5 text-sm font-medium lg:w-60">起始日期<Input value={since} onChange={event => setSince(event.target.value)} type="date" disabled={busy} /></label>
+        <label className="grid min-w-0 gap-1.5 text-sm font-medium lg:w-60">截止日期<Input value={until} onChange={event => setUntil(event.target.value)} type="date" disabled={busy} /></label>
+        <Button type="submit" disabled={busy}>查询</Button>
+      </FilterBar>
+      {error && <Alert variant="destructive" data-testid="usage-error"><AlertTitle>无法读取用量</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+      {busy && !rows.length && <Alert><AlertDescription>正在加载用量记录…</AlertDescription></Alert>}
+      {!busy && !rows.length && !error && <Alert data-testid="usage-empty"><AlertTitle>暂无用量记录</AlertTitle></Alert>}
+      {!!rows.length && <div data-testid="usage-list">
+        <div className="hidden lg:block"><DataSurface>
+          <Table>
+            <TableHeader><TableRow><TableHead>时间</TableHead><TableHead>用量（点）</TableHead><TableHead>类型</TableHead><TableHead>关联审核</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {rows.map(row => (
+                <TableRow key={row.id}>
+                  <TableCell>{dateLabel(row.created_at)}</TableCell>
+                  <TableCell><span className="font-medium">{row.consumed_points.toLocaleString('zh-CN')} <span className="text-xs text-muted-foreground">点</span></span></TableCell>
+                  <TableCell><Badge variant={row.is_free_trial ? 'outline' : 'secondary'}>{row.is_free_trial ? '试用' : '额度'}</Badge></TableCell>
+                  <TableCell>{row.round_id ? <a className="text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: row.round_id})}>查看审核 →</a> : null}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </DataSurface></div>
+        <div className="divide-y lg:hidden">{rows.map(row => <UsageMobileRow key={row.id} row={row} />)}</div>
+      </div>}
       {next !== null && <Button type="button" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
-    </Page>
+    </PageLayout>
   )
 }

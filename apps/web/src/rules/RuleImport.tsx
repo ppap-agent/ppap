@@ -1,9 +1,15 @@
 import {useEffect, useReducer, useRef, useState, type ChangeEvent} from 'react'
 import {originalUrl, request, upload, type Job, type Material} from '../api'
-import Help from '../Help'
-import Modal from '../Modal'
+import {Modal, LockedFields, ReportBlock} from '../ui/domain'
 import {productHref, type ReturnTarget} from '../navigation/route'
-import {ActionBar, Badge, Button, Callout, FeedbackState, Field, FileInput, Heading, Inline, Input, Link, LockedFields, Page, ReportBlock, Select, Stack, Text, Textarea} from '../ui'
+import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
+import {Badge} from '@/components/ui/badge'
+import {Button} from '@/components/ui/button'
+import {Input} from '@/components/ui/input'
+import {Label} from '@/components/ui/label'
+import {NativeSelect} from '@/components/ui/native-select'
+import {Textarea} from '@/components/ui/textarea'
+import {PageHeader, PageLayout} from '../ui/PageLayout'
 import {importBusy, importGuarded, ruleImportReducer, type RuleImportEvent, type RuleImportState} from '../workflow/ruleImport'
 import type {RuleCandidate as Candidate, RuleDetail as Detail} from './types'
 
@@ -55,7 +61,7 @@ export default function RuleImport({
     void request<{types: string[]}>('/rule-types')
       .then(result => { if (!disposed.current) setTypes(result.types) })
       .catch(caught => {
-        if (!disposed.current) send({type: 'catalog-failed', message: caught instanceof Error ? caught.message : '无法读取规则类型'})
+        if (!disposed.current) send({type: 'catalog-failed', message: caught instanceof TypeError ? '无法读取规则类型，请刷新重试。' : caught instanceof Error ? caught.message : '无法读取规则类型'})
       })
     if (initialParseId) void resumeParse(initialParseId)
     return () => {
@@ -224,69 +230,58 @@ export default function RuleImport({
   const body = candidate?.body
 
   return (
-    <Page>
-      {error && <Callout tone="error" id="rule-message" testId="rule-message">{error}</Callout>}
-      <Button type="button" variant="ghost" data-testid="rule-back" disabled={busy} onClick={requestBack}>← 规则库</Button>
-      <Inline justify="between" align="center" wrap>
-        <Heading level={1}>{candidate ? '核对规则' : predecessor ? '上传新版本' : '上传客户规则'}</Heading>
-        {candidate && <Inline gap="xs" align="center"><Badge>机审清单</Badge><Help title="客户规则用途"><Text>保存后的规则条目是审核清单。能映射到内置检查的条目会机器执行；其余条目明确标为未覆盖，需人工核对。</Text></Help></Inline>}
-      </Inline>
+    <PageLayout>
+      <PageHeader
+        title={candidate ? '核对规则' : predecessor ? '上传新版本' : '上传客户规则'}
+        back={<Button type="button" variant="ghost" data-testid="rule-back" disabled={busy} onClick={requestBack}>← 规则库</Button>}
+        action={candidate && source?.file_id ? <Button asChild variant="outline" size="sm"><a id="rule-source" data-testid="rule-source" href={originalUrl(source)} target="_blank" rel="noopener">查看原始文件 ↗</a></Button> : undefined}
+      />
+      {error && <Alert variant="destructive" id="rule-message" data-testid="rule-message"><AlertDescription>{error}</AlertDescription></Alert>}
 
       {state.kind !== 'reviewing' && state.kind !== 'publishing' && state.kind !== 'saved' && state.kind !== 'abandoned' && (
         <LockedFields disabled={busy}>
-          <Stack gap="sm">
-            <Field label="文档类型">
-              <Select id="parse-type" data-testid="parse-type" value={state.documentType} onChange={event => send({type: 'set-type', documentType: event.target.value})}>
-                <option value="">自动识别</option>
-                {types.map(name => <option key={name}>{name}</option>)}
-              </Select>
-            </Field>
-            <FileInput id="rule-file" data-testid="rule-file" label="选择规则文件" aria-label="规则原件" accept=".xlsx,.xls,.xlsm,.docx,.pdf,.md,.json" disabled={busy} onChange={event => void parse(event)} />
-            <Text size="sm" tone="muted">Excel、Word、PDF、Markdown、JSON</Text>
-          </Stack>
+          <div className="grid gap-4 border-y py-5 sm:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] sm:items-end">
+            <div className="grid gap-1.5 text-sm font-medium"><Label htmlFor="parse-type">规则文件类型</Label><NativeSelect id="parse-type" data-testid="parse-type" value={state.documentType} onChange={event => send({type: 'set-type', documentType: event.target.value})}>
+              <option value="">自动识别</option>
+              {types.map(name => <option key={name}>{name}</option>)}
+            </NativeSelect></div>
+            <div className="flex flex-wrap items-end gap-3">
+              <Button asChild type="button" variant="outline"><label><span>选择规则文件</span><input id="rule-file" data-testid="rule-file" className="sr-only" type="file" aria-label="规则原件" accept=".xlsx,.xls,.xlsm,.docx,.pdf,.md,.json" disabled={busy} onChange={event => void parse(event)} /></label></Button>
+              <span className="text-sm text-muted-foreground">支持 Excel、Word、PDF、Markdown、JSON</span>
+            </div>
+          </div>
         </LockedFields>
       )}
 
-      {statusLabel && !error && <Callout id="rule-message" testId="rule-message">{statusLabel}</Callout>}
+      {statusLabel && !error && <Alert id="rule-message" data-testid="rule-message"><AlertDescription>{statusLabel}</AlertDescription></Alert>}
       {!!jobId && !candidate && (state.kind === 'unknown' || state.kind === 'failed') && <Button type="button" disabled={busy} onClick={() => void resumeParse()}>刷新解析状态</Button>}
       {canRerun && (
-        <Stack gap="sm">
-          <Text size="sm" tone="muted">原任务可能仍会完成，再次解析可能再次消耗模型费用。</Text>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">原任务可能仍会完成，再次解析可能再次消耗模型费用。</p>
           <Button type="button" id="rerun-rule" data-testid="rerun-rule" disabled={busy} onClick={() => void rerunParse()}>重新解析</Button>
-        </Stack>
+        </div>
       )}
 
       {candidate && body && (
-        <Stack gap="md">
-          <Field label="规则名称">
-            <Input id="rule-title" data-testid="rule-title" value={candidate.title} disabled={busy || state.kind === 'saved'} onChange={event => edit({...candidate, title: event.target.value})} />
-          </Field>
-          <Text id="rule-origin" tone="muted">{predecessor ? '基于版本' : '新规则'}</Text>
-          <Stack id="rule-metadata" gap="sm">
-            <Field label="文件类型">
-              <Select value={body.type} aria-label="核对规则类型" disabled={busy} onChange={event => edit({...candidate, body: {...body, type: event.target.value}})}>{types.map(name => <option key={name}>{name}</option>)}</Select>
-            </Field>
-            <Field label="适用客户">
-              <Input id="rule-customers" data-testid="rule-customers" defaultValue={body.customers.join('、')} aria-label="适用客户" disabled={busy} onChange={event => setScope('customers', event)} />
-            </Field>
-            <Field label="型号">
-              <Input defaultValue={body.models.join('、')} aria-label="型号" disabled={busy} onChange={event => setScope('models', event)} />
-            </Field>
-            <Field label="零件">
-              <Input defaultValue={body.parts.join('、')} aria-label="零件" disabled={busy} onChange={event => setScope('parts', event)} />
-            </Field>
-          </Stack>
-          {source?.file_id && <Link id="rule-source" data-testid="rule-source" href={originalUrl(source)} target="_blank" rel="noopener">原始文件 ↗</Link>}
-          <Inline justify="between"><Heading level={3}>客户要求</Heading><Text tone="muted">{body.rules.length} 项</Text></Inline>
-          {!body.rules.length && <FeedbackState title="未解析出规则条目" detail="请核对原始文件。" />}
-          <Stack id="rule-items" testId="rule-items" gap="md">
+        <div className="flex flex-col gap-4">
+          <label className="grid gap-1.5 text-sm font-medium">规则名称<Input id="rule-title" data-testid="rule-title" value={candidate.title} disabled={busy || state.kind === 'saved'} onChange={event => edit({...candidate, title: event.target.value})} /></label>
+          <span id="rule-origin" className="text-sm text-muted-foreground">{predecessor ? '基于上一版本' : '新规则'}</span>
+          <div id="rule-metadata" className="grid min-w-0 gap-3 border-y py-4 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="grid min-w-0 gap-1.5 text-sm font-medium">文件类型<NativeSelect className="w-full" value={body.type} aria-label="核对规则类型" disabled={busy} onChange={event => edit({...candidate, body: {...body, type: event.target.value}})}>{types.map(name => <option key={name}>{name}</option>)}</NativeSelect></label>
+            <label className="grid min-w-0 gap-1.5 text-sm font-medium">适用客户<Input id="rule-customers" data-testid="rule-customers" defaultValue={body.customers.join('、')} aria-label="适用客户" disabled={busy} onChange={event => setScope('customers', event)} /></label>
+            <label className="grid min-w-0 gap-1.5 text-sm font-medium">型号<Input defaultValue={body.models.join('、')} aria-label="型号" disabled={busy} onChange={event => setScope('models', event)} /></label>
+            <label className="grid min-w-0 gap-1.5 text-sm font-medium">零件<Input defaultValue={body.parts.join('、')} aria-label="零件" disabled={busy} onChange={event => setScope('parts', event)} /></label>
+          </div>
+          <div className="flex items-baseline justify-between"><h2 className="text-base font-semibold">客户要求</h2><span className="text-sm text-muted-foreground">{body.rules.length} 条</span></div>
+          {!body.rules.length && <Alert><AlertTitle>未解析出规则条目</AlertTitle><AlertDescription>请核对原始文件。</AlertDescription></Alert>}
+          <div id="rule-items" data-testid="rule-items" className="flex flex-col gap-4">
             {body.rules.map((item, index) => (
               <ReportBlock key={item.id}>
-                <Inline gap="sm" align="center">
-                  <Text as="span" tone="muted">{String(index + 1).padStart(2, '0')}</Text>
-                  <Heading level={3}>{item.category}</Heading>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
+                  <h3 className="text-lg font-semibold tracking-tight">{item.category}</h3>
                   {item.priority && <Badge>{item.priority}</Badge>}
-                </Inline>
+                </div>
                 <Textarea
                   data-field="rule_to_check"
                   value={item.rule_to_check}
@@ -300,29 +295,28 @@ export default function RuleImport({
                 />
               </ReportBlock>
             ))}
-          </Stack>
-          <ActionBar>
-            <Text tone="muted">{body.rules.length} 项客户要求</Text>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 py-4">
             {state.kind === 'saved'
-              ? <Button type="button" variant="primary" data-testid="publish-rule" id="publish-rule" onClick={openSaved}>打开已保存规则</Button>
-              : <Button type="button" variant="primary" data-testid="publish-rule" id="publish-rule" disabled={busy || !candidate.title.trim()} onClick={() => void publish()}>{busy ? '正在保存…' : '保存规则'}</Button>}
-          </ActionBar>
-        </Stack>
+              ? <Button type="button" data-testid="publish-rule" id="publish-rule" onClick={openSaved}>打开已保存规则</Button>
+              : <Button type="button" data-testid="publish-rule" id="publish-rule" disabled={busy || !candidate.title.trim()} onClick={() => void publish()}>{busy ? '正在保存…' : '保存规则'}</Button>}
+          </div>
+        </div>
       )}
 
       {leavePrompt && candidate && (
         <Modal title="保存修改后离开？" busy={busy} onClose={() => send({type: 'dismiss-leave'})}>
-          <Stack gap="md">
-            <Text>解析内容尚未保存。你可以保存后继续，也可以留在这里编辑。</Text>
-            {error && <Callout tone="error">{error}</Callout>}
-            <Inline gap="sm" wrap>
+          <div className="flex flex-col gap-4">
+            <p>解析内容尚未保存。你可以保存后继续，也可以留在这里编辑。</p>
+            {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+            <div className="flex flex-wrap gap-2">
               <Button type="button" disabled={busy} onClick={() => send({type: 'dismiss-leave'})}>继续编辑</Button>
               <Button type="button" disabled={busy} onClick={confirmAbandon}>放弃修改</Button>
-              <Button type="button" variant="primary" disabled={busy || !candidate.title.trim()} onClick={() => void publish(backHref)}>{busy ? '正在保存…' : '保存并离开'}</Button>
-            </Inline>
-          </Stack>
+              <Button type="button" disabled={busy || !candidate.title.trim()} onClick={() => void publish(backHref)}>{busy ? '正在保存…' : '保存并离开'}</Button>
+            </div>
+          </div>
         </Modal>
       )}
-    </Page>
+    </PageLayout>
   )
 }

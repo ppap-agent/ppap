@@ -1,21 +1,51 @@
-# Live Deep overlay. Default isolated-dev Compose stays unpublished Silo and
-# does not require a Controller. This file only adds the UDS mount plus a
-# loopback Silo port so a host Controller can fetch frozen file bytes.
-# Worker still does not receive a Docker control socket.
+# Live semantic Deep overlay. The dedicated Deep image owns the Controller
+# and low-privilege guest in one container. API and Worker only share its UDS.
+# The default isolated-dev Compose still needs no Deep service or Docker socket.
 
 services:
-  silo:
-    ports:
-      - "127.0.0.1:9000:9000"
-
   api:
     environment:
       PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
+      PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
     volumes:
       - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
 
   worker:
     environment:
       PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
+      PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
     volumes:
       - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
+
+  deep:
+    image: ppap-deep:${PPAP_BUILD_SHA:?set PPAP_BUILD_SHA to the 40-character git SHA}
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+      init-bucket:
+        condition: service_completed_successfully
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      PPAP_PROFILE: isolated-dev
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:?set PPAP_BUILD_SHA to the 40-character git SHA}
+      PPAP_SERVICE: deep
+      PPAP_PG_HOST: postgres
+      PPAP_PG_PORT: "5432"
+      PPAP_PG_DATABASE: ppap
+      PPAP_PG_WORKER_USER: ppap_worker
+      PPAP_PG_WORKER_PASSWORD: ppap_isolated_dev
+      PPAP_S3_ENDPOINT: http://silo:9000
+      PPAP_S3_REGION: us-east-1
+      PPAP_S3_BUCKET: ppap-objects
+      PPAP_S3_ACCESS_KEY: ppap_isolated_dev
+      PPAP_S3_SECRET_KEY: ppap_isolated_dev
+      PPAP_WEB_URL: http://127.0.0.1:4173
+      PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
+      PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
+      PPAP_DEEP_RUNTIME: container-only
+      PPAP_DEEP_SANDBOX_PROFILE: "off"
+    volumes:
+      - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
+    mem_limit: 2g

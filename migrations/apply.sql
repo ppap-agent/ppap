@@ -16,3 +16,4 @@
 \ir 0016_rule_execution.sql
 \ir 0017_origin_writeback.sql
 \ir 0018_trial_cutover_baseline.sql
+\ir 0019_semantic_findings.sql

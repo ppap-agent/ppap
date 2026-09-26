@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 405a9a35564aac7500c27e3b7b82fd3eb2233803
+  PPAP_BUILD_SHA: 13b614d71c87c7e9a46f7bb80f7155c8c650afb4
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_PG_HOST: ppap-current-postgres
@@ -28,8 +28,9 @@ data:
   PPAP_USAGE_CHARGE_ENABLED: "false"
   PPAP_DEEP_CUSTOMER_ENABLED: "true"
   PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
-  PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v1
-  PPAP_DEEP_RUNTIME: process
+  PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
+  PPAP_DEEP_RUNTIME: container-only
+  PPAP_DEEP_SANDBOX_PROFILE: "off"
   LOG_FORMAT: json
   LOG_LEVEL: INFO
   OCR_ADAPTER_MODE: auto
@@ -400,7 +401,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: unregistry.xixifusi.online/ppap-api:405a9a35564aac7500c27e3b7b82fd3eb2233803
+          image: unregistry.xixifusi.online/ppap-api:13b614d71c87c7e9a46f7bb80f7155c8c650afb4
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -455,7 +456,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: unregistry.xixifusi.online/ppap-worker:405a9a35564aac7500c27e3b7b82fd3eb2233803
+          image: unregistry.xixifusi.online/ppap-deep:13b614d71c87c7e9a46f7bb80f7155c8c650afb4
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -476,7 +477,7 @@ spec:
               cpu: "1"
               memory: 2Gi
         - name: worker
-          image: unregistry.xixifusi.online/ppap-worker:405a9a35564aac7500c27e3b7b82fd3eb2233803
+          image: unregistry.xixifusi.online/ppap-worker:13b614d71c87c7e9a46f7bb80f7155c8c650afb4
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -493,8 +494,8 @@ spec:
               until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]; do
                 i=$((i + 1))
                 if [ "$i" -ge 60 ]; then
-                  echo "deep controller socket missing" >&2
-                  exit 1
+                  echo "warning: deep controller socket unavailable after 60s; starting Worker so Standard remains available" >&2
+                  break
                 fi
                 sleep 1
               done
@@ -530,7 +531,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: unregistry.xixifusi.online/ppap-web:405a9a35564aac7500c27e3b7b82fd3eb2233803
+          image: unregistry.xixifusi.online/ppap-web:13b614d71c87c7e9a46f7bb80f7155c8c650afb4
           imagePullPolicy: Always
           ports:
             - containerPort: 4173

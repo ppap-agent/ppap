@@ -110,6 +110,30 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 Settings()
 
+    def test_remote_dev_rejects_isolated_credentials_and_disables_dev_features(self):
+        with _clean_env(PPAP_PROFILE="remote-dev"):
+            with self.assertRaises(ValidationError):
+                Settings()
+        with _clean_env(
+            PPAP_PROFILE="remote-dev",
+            PPAP_PG_API_PASSWORD="remote-api",
+            PPAP_S3_ACCESS_KEY="remote-access",
+            PPAP_S3_SECRET_KEY="remote-secret",
+            PPAP_S3_ENDPOINT="http://remote-storage:9000",
+            LLM_BASE_URL="https://llm.example",
+            LLM_MODEL="x",
+            PPAP_WEB_URL="http://127.0.0.1:4173",
+        ):
+            settings = Settings()
+        self.assertFalse(settings.deep_offered())
+        self.assertEqual(settings.public_config()["profile"], "remote-dev")
+        self.assertIn("http://localhost:4173", settings.web_origins())
+        TestClient = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient
+        client = TestClient(create_app(settings))
+        self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code, 404)
+        self.assertEqual(client.post("/isolated-dev/reap-staging", json={}).status_code, 404)
+        self.assertEqual(client.post("/login/feishu/host", json={"code": "isolated-dev:alice"}).status_code, 400)
+
     def test_production_api_does_not_need_bootstrap_or_peer_db_secrets(self):
         with _clean_env(
             PPAP_PROFILE="production",

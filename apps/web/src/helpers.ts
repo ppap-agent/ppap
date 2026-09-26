@@ -1,4 +1,4 @@
-import type {Finding, Rule} from './api'
+import type {Finding, Rule, SemanticSource} from './api'
 
 export function latestRules(rules: Rule[]) {
   const previous = new Set(rules.map(rule => rule.predecessor_id).filter(Boolean))
@@ -6,7 +6,20 @@ export function latestRules(rules: Rule[]) {
 }
 
 export function matchesFilter(item: Finding, status: string) {
-  return status === 'unreviewed' ? !item.review : status === 'attention' ? item.status !== 'PASS' : !status || item.status === status
+  return status === 'unreviewed' ? !item.review : status === 'attention' ? ['NG', 'ERR', 'UNABLE'].includes(item.status) : !status || item.status === status
+}
+
+export function findingShortTitle(item: Finding, fallbackNumber: number) {
+  return `${fallbackNumber} · ${item.classification || '条款'}`
+}
+
+export function sourceLocation(source: SemanticSource) {
+  const place = source.locator
+  if (place.kind === 'xlsx_cell') return `${place.sheet}!${place.cell}`
+  if (place.kind === 'xlsx_range') return `${place.sheet}!${place.start}:${place.end}`
+  if (place.kind === 'pdf_block') return `第 ${place.page} 页 · 文本块 ${place.block}`
+  if (place.kind === 'docx_paragraph') return `段落 ${place.paragraph}`
+  return `表格 ${place.table} · 行 ${place.row} · 列 ${place.column}`
 }
 
 export function parseExcerptCells(text: string) {
@@ -16,17 +29,12 @@ export function parseExcerptCells(text: string) {
   })
 }
 
-export function clampPreviewWidth(width: number) {
-  return Math.max(30, Math.min(65, width))
-}
-
 export interface WorkspacePosition {
   file: string
   finding: string
   filter: string
   view: string
   panel: string
-  width: number
   scroll: number
 }
 
@@ -43,12 +51,6 @@ export function parseWorkspacePosition(raw: string | null): WorkspacePosition | 
   } catch {
     return null
   }
-}
-
-import {parseReturnTarget} from './navigation/route'
-
-export function isSafeReturnTo(value: string) {
-  return parseReturnTarget(value) !== undefined
 }
 
 export const analysisNotices: Record<string, string> = {

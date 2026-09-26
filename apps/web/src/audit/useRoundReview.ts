@@ -2,14 +2,12 @@ import {
   useEffect,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from 'react'
-import {request, type Finding, type Round} from '../api'
-import {clampPreviewWidth, matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
+import {request, type Finding, type Round, type SemanticSource} from '../api'
+import {matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
 import {parseProductRoute} from '../navigation/route'
 import type {OriginalPreviewHandle} from '../OriginalPreview'
-import {isCompactViewport} from '../ui'
+import {isCompactViewport} from '../ui/domain'
 import {beginReviewSave, markReviewClean, markReviewDirty, type ReviewPhase} from '../workflow/submission'
 
 type Action = (work: () => Promise<void>) => Promise<void>
@@ -34,11 +32,9 @@ export function useRoundReview({
   const [reviewFeedback, setReviewFeedback] = useState('')
   const [workspacePanel, setWorkspacePanel] = useState('checks')
   const [roundView, setRoundView] = useState('review')
-  const [previewWidth, setPreviewWidth] = useState(50)
-  const [resizing, setResizing] = useState(false)
+  const [evidenceSource, setEvidenceSource] = useState<SemanticSource | null>(null)
 
   const originalPreview = useRef<OriginalPreviewHandle>(null)
-  const workspace = useRef<HTMLDivElement>(null)
   const detailHeading = useRef<HTMLHeadingElement>(null)
   const initialRoute = parseProductRoute(location.pathname, location.search)
   const resumeReview = useRef(initialRoute.page === 'audit-round' && initialRoute.review === 'next')
@@ -54,9 +50,7 @@ export function useRoundReview({
   const filterRef = useRef(filter)
   const roundViewRef = useRef(roundView)
   const workspacePanelRef = useRef(workspacePanel)
-  const previewWidthRef = useRef(previewWidth)
   const restoredScroll = useRef<number | null>(null)
-  const resizeStart = useRef({x: 0, width: 50})
   const viewScroll = useRef({review: 0, original: 0, report: 0})
   const findingsRef = useRef<Finding[]>([])
   const fileFindingsRef = useRef<Finding[]>([])
@@ -69,7 +63,6 @@ export function useRoundReview({
   filterRef.current = filter
   roundViewRef.current = roundView
   workspacePanelRef.current = workspacePanel
-  previewWidthRef.current = previewWidth
 
   useEffect(() => {
     disposed.current = false
@@ -83,7 +76,8 @@ export function useRoundReview({
   const fileFindings = round?.findings.filter(item => item.locator?.file_version_id === selectedFileId) || []
   const findings = fileFindings.filter(item => matchesFilter(item, filter))
   const selectedFinding = round?.findings.find(item => item.item_key === selectedKey)
-  const counts = ['NG', 'ERR', 'PASS'].map(status => ({status, count: (round?.findings || []).filter(row => row.status === status).length}))
+  const previewFile = evidenceSource ? round?.inputs.find(item => item.file_version_id === evidenceSource.file_version_id) : selectedFile
+  const counts = ['NG', 'ERR', 'UNABLE', 'NA', 'PASS'].map(status => ({status, count: (round?.findings || []).filter(row => row.status === status).length}))
   const reviewed = round?.findings.filter(item => item.review).length || 0
   const remaining = round?.findings.filter(item => !item.review) || []
   const hasNextUnreviewed = remaining.some(item => item.item_key !== selectedKey)
@@ -106,6 +100,7 @@ export function useRoundReview({
   }
 
   function choose(item?: Finding) {
+    setEvidenceSource(null)
     const judgment = item?.review?.judgment || ''
     const key = item?.item_key || ''
     selectedKeyRef.current = key
@@ -126,7 +121,6 @@ export function useRoundReview({
         filter: filterRef.current,
         view: roundViewRef.current,
         panel: workspacePanelRef.current,
-        width: previewWidthRef.current,
         scroll: window.scrollY,
       }))
     } catch {
@@ -140,7 +134,7 @@ export function useRoundReview({
       if (!saved || !result.inputs.some(file => file.file_version_id === saved.file)) return
       selectedFileIdRef.current = saved.file
       setSelectedFileId(saved.file)
-      const nextFilter = ['attention', 'unreviewed', '', 'PASS'].includes(saved.filter) ? saved.filter : 'attention'
+      const nextFilter = ['attention', 'unreviewed', '', 'PASS', 'NG', 'ERR', 'UNABLE', 'NA'].includes(saved.filter) ? saved.filter : 'attention'
       filterRef.current = nextFilter
       setFilter(nextFilter)
       const finding = result.findings.find(item => item.item_key === saved.finding && item.locator?.file_version_id === saved.file)
@@ -152,67 +146,71 @@ export function useRoundReview({
       const nextPanel = saved.panel === 'original' ? 'original' : 'checks'
       workspacePanelRef.current = nextPanel
       setWorkspacePanel(nextPanel)
-      if (Number.isFinite(saved.width)) {
-        const width = clampPreviewWidth(saved.width)
-        previewWidthRef.current = width
-        setPreviewWidth(width)
-      }
       restoredScroll.current = Number.isFinite(saved.scroll) ? Math.max(0, saved.scroll) : null
     } catch {
       // Stale local view state must not block the canonical round.
     }
   }
 
-  async function loadRound(id: string) {
+  async function loadRound(id: string, accepted?: Round) {
     if (id !== activeRoundId.current) return
+    let result: Round
     try {
-      const result = await request<Round>(`/rounds/${id}`)
+      result = accepted ?? await request<Round>(`/rounds/${id}`)
+    } catch (error) {
       if (disposed.current || id !== activeRoundId.current) return
-      const firstLoad = !roundRef.current
-      setRound(result)
-      roundRef.current = result
-      if (firstLoad && !resumeReview.current) restoreWorkspace(result)
-      if (resumeReview.current && result.findings.length) {
-        const pending = result.findings.find(item => !item.review && item.status !== 'PASS') || result.findings.find(item => !item.review)
-        if (pending) {
-          const fileId = pending.locator?.file_version_id || ''
-          selectedFileIdRef.current = fileId
-          setSelectedFileId(fileId)
-          filterRef.current = 'unreviewed'
-          setFilter('unreviewed')
-          roundViewRef.current = 'review'
-          setRoundView('review')
-          workspacePanelRef.current = 'checks'
-          setWorkspacePanel('checks')
-          choose(pending)
-        }
-        resumeReview.current = false
+      if (error instanceof TypeError) {
+        setError('暂时无法读取审核状态，正在重新连接。请勿重复提交。')
+        later(() => { void loadRound(id) })
+      } else {
+        setError(error instanceof Error ? error.message : '无法加载审核')
       }
-      if (!selectedFileIdRef.current) {
-        const fileId = result.inputs.find(item => item.role === 'target')?.file_version_id || result.inputs[0]?.file_version_id || ''
+      return
+    }
+    if (disposed.current || id !== activeRoundId.current) return
+    setError('')
+    const firstLoad = !roundRef.current
+    setRound(result)
+    roundRef.current = result
+    if (firstLoad && !resumeReview.current) restoreWorkspace(result)
+    if (resumeReview.current && result.findings.length) {
+      const pending = result.findings.find(item => !item.review && matchesFilter(item, 'attention')) || result.findings.find(item => !item.review)
+      if (pending) {
+        const fileId = pending.locator?.file_version_id || ''
         selectedFileIdRef.current = fileId
         setSelectedFileId(fileId)
-        const nextFilter = result.findings.some(item => item.locator?.file_version_id === fileId && item.status !== 'PASS') ? 'attention' : ''
-        filterRef.current = nextFilter
-        setFilter(nextFilter)
-        choose(result.findings.filter(item => item.locator?.file_version_id === fileId && matchesFilter(item, nextFilter))[0])
+        filterRef.current = 'unreviewed'
+        setFilter('unreviewed')
+        roundViewRef.current = 'review'
+        setRoundView('review')
+        workspacePanelRef.current = 'checks'
+        setWorkspacePanel('checks')
+        choose(pending)
       }
-      if (!selectedKeyRef.current && result.findings.length && !reviewDirtyRef.current) {
-        const fileId = selectedFileIdRef.current
-        const nextFilter = result.findings.some(item => item.locator?.file_version_id === fileId && item.status !== 'PASS') ? 'attention' : ''
-        filterRef.current = nextFilter
-        setFilter(nextFilter)
-        choose(result.findings.filter(item => item.locator?.file_version_id === fileId && matchesFilter(item, nextFilter))[0])
-      }
-      if (['queued', 'running'].includes(result.execution)) later(() => { void loadRound(id) })
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '无法加载审核')
+      resumeReview.current = false
     }
+    if (!selectedFileIdRef.current) {
+      const fileId = result.inputs.find(item => item.role === 'target')?.file_version_id || result.inputs[0]?.file_version_id || ''
+      selectedFileIdRef.current = fileId
+      setSelectedFileId(fileId)
+      const nextFilter = result.findings.some(item => item.locator?.file_version_id === fileId && matchesFilter(item, 'attention')) ? 'attention' : ''
+      filterRef.current = nextFilter
+      setFilter(nextFilter)
+      choose(result.findings.filter(item => item.locator?.file_version_id === fileId && matchesFilter(item, nextFilter))[0])
+    }
+    if (!selectedKeyRef.current && result.findings.length && !reviewDirtyRef.current) {
+      const fileId = selectedFileIdRef.current
+      const nextFilter = result.findings.some(item => item.locator?.file_version_id === fileId && matchesFilter(item, 'attention')) ? 'attention' : ''
+      filterRef.current = nextFilter
+      setFilter(nextFilter)
+      choose(result.findings.filter(item => item.locator?.file_version_id === fileId && matchesFilter(item, nextFilter))[0])
+    }
+    if (['queued', 'running'].includes(result.execution)) later(() => { void loadRound(id) })
   }
 
-  async function openRound(id: string) {
+  async function openRound(id: string, accepted?: Round) {
     activeRoundId.current = id
-    await loadRound(id)
+    await loadRound(id, accepted)
   }
 
   function restoreScrollPosition() {
@@ -302,7 +300,7 @@ export function useRoundReview({
       await saveReview()
       if (reviewDirtyRef.current) return
     }
-    const pending = remaining.find(item => item.item_key !== selectedKeyRef.current && item.status !== 'PASS')
+    const pending = remaining.find(item => item.item_key !== selectedKeyRef.current && matchesFilter(item, 'attention'))
       || remaining.find(item => item.item_key !== selectedKeyRef.current)
     if (!pending) return
     choose(pending)
@@ -325,6 +323,9 @@ export function useRoundReview({
 
   function enableCustomJudgment() {
     setCustomJudgment(true)
+    setReview(current => ({...current, judgment: reviewJudgments.includes(current.judgment as typeof reviewJudgments[number]) ? '' : current.judgment}))
+    setPhase(markReviewDirty(reviewPhaseRef.current))
+    setReviewFeedback('')
   }
 
   function updateReview(field: keyof ReviewDraft, value: string) {
@@ -336,56 +337,31 @@ export function useRoundReview({
   function selectFileById(fileId: string) {
     const file = roundRef.current?.inputs.find(item => item.file_version_id === fileId)
     if (!file) return
-    const nextFilter = roundRef.current?.findings.some(item => item.locator?.file_version_id === file.file_version_id && item.status !== 'PASS') ? 'attention' : ''
+    const nextFilter = roundRef.current?.findings.some(item => item.locator?.file_version_id === file.file_version_id && matchesFilter(item, 'attention')) ? 'attention' : ''
     filterRef.current = nextFilter
     setFilter(nextFilter)
     selectedFileIdRef.current = file.file_version_id
     setSelectedFileId(file.file_version_id)
-    workspacePanelRef.current = 'checks'
-    setWorkspacePanel('checks')
     choose((roundRef.current?.findings.filter(item => item.locator?.file_version_id === file.file_version_id && matchesFilter(item, nextFilter)) || [])[0])
   }
 
   function switchView(view: 'review' | 'original' | 'report') {
     const current = roundViewRef.current === 'report' ? 'report' : workspacePanelRef.current === 'original' ? 'original' : 'review'
-    viewScroll.current[current] = window.scrollY
+    const restoreScroll = isCompactViewport() || current === 'report' || view === 'report'
+    if (restoreScroll) viewScroll.current[current] = window.scrollY
     roundViewRef.current = view === 'report' ? 'report' : 'review'
     workspacePanelRef.current = view === 'original' ? 'original' : 'checks'
     setRoundView(roundViewRef.current)
     setWorkspacePanel(workspacePanelRef.current)
-    void Promise.resolve().then(() => window.scrollTo({top: viewScroll.current[view]}))
+    if (restoreScroll) void Promise.resolve().then(() => window.scrollTo({top: viewScroll.current[view]}))
   }
 
-  async function findEvidence() {
-    if (isCompactViewport()) switchView('original')
-    await Promise.resolve()
+  async function findEvidence(source?: SemanticSource) {
+    setEvidenceSource(source || null)
+    if (workspacePanelRef.current !== 'original') switchView('original')
+    if (source) return
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     await originalPreview.current?.findEvidence()
-  }
-
-  function startResize(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) return
-    event.preventDefault()
-    resizeStart.current = {x: event.clientX, width: previewWidthRef.current}
-    setResizing(true)
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }
-
-  function resizePreview(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!resizing || !workspace.current) return
-    const bounds = workspace.current.getBoundingClientRect()
-    setPreviewWidth(clampPreviewWidth(resizeStart.current.width + (resizeStart.current.x - event.clientX) / bounds.width * 100))
-  }
-
-  function resizeKey(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const change = event.key === 'ArrowLeft' ? 2 : event.key === 'ArrowRight' ? -2 : 0
-    if (change) {
-      event.preventDefault()
-      setPreviewWidth(width => clampPreviewWidth(width + change))
-    }
-  }
-
-  function stopResize() {
-    setResizing(false)
   }
 
   function clearForPreparation() {
@@ -412,6 +388,8 @@ export function useRoundReview({
     selectedFile,
     selectedKey,
     selectedFinding,
+    previewFile,
+    evidenceSource,
     fileFindings,
     findings,
     counts,
@@ -427,10 +405,7 @@ export function useRoundReview({
     reviewFeedback,
     workspacePanel,
     roundView,
-    previewWidth,
-    resizing,
     originalPreview,
-    workspace,
     detailHeading,
     openRound,
     restoreScrollPosition,
@@ -448,10 +423,6 @@ export function useRoundReview({
     selectFileById,
     switchView,
     findEvidence,
-    startResize,
-    resizePreview,
-    resizeKey,
-    stopResize,
     clearForPreparation,
   }
 }
