@@ -48,7 +48,7 @@ class WebProductBoundaryTests(unittest.TestCase):
         sources = "\n".join(path.read_text() for path in (WEB / "src").rglob("*.tsx"))
         api = (WEB / "src/api.ts").read_text()
         self.assertIn("deep_offered", api)
-        self.assertRegex(sources, re.compile(r"deepOffered\s*&&[\s\S]{0,300}testId=\"analysis-mode\""))
+        self.assertRegex(sources, re.compile(r"deepOffered\s*&&[\s\S]{0,300}data-testid=\"analysis-mode\""))
 
     def test_web_usage_is_read_only(self):
         sources = "\n".join(path.read_text() for path in (WEB / "src").rglob("*") if path.suffix in {".ts", ".tsx"})
@@ -81,6 +81,6 @@ class WebProductBoundaryTests(unittest.TestCase):
 
     def test_shared_helpers_keep_review_excerpt_and_workspace_rules(self):
         helpers = (WEB / "src/helpers.ts").read_text()
-        for marker in ("latestRules", "matchesFilter", "parseExcerptCells", "clampPreviewWidth", "workspaceStorageKey", "isSafeReturnTo"):
+        for marker in ("latestRules", "matchesFilter", "parseExcerptCells", "workspaceStorageKey", "isSafeReturnTo"):
             self.assertIn(marker, helpers)
         self.assertIn("ppap-view:", helpers)

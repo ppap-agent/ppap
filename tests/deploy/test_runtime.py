@@ -64,7 +64,13 @@ class DeployRuntimeTests(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:4173/addon", timeout=5) as response:
             html = response.read().decode()
             self.assertIn("PPAP Audit", html)
-            self.assertIn("audit-files", html)
+            self.assertIn('id="addon-root"', html)
+            addon_script = re.search(r'src="(/assets/addon-[^"]+\\.js)"', html)
+            self.assertIsNotNone(addon_script)
+        with urllib.request.urlopen("http://127.0.0.1:4173" + addon_script.group(1), timeout=5) as response:
+            addon_bundle = response.read().decode()
+            self.assertIn("addon-history", addon_bundle)
+            self.assertIn("/audit-files", addon_bundle)
         with urllib.request.urlopen("http://127.0.0.1:4173/runtime-config.json", timeout=5) as response:
             config = json.loads(response.read().decode())
             self.assertEqual(config["api_url"], "http://127.0.0.1:8080")
