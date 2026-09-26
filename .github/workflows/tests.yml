@@ -28,7 +28,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Typecheck and production build
+      - name: Typecheck, test, lint, and production build
         working-directory: apps/web
         run: |
           set -euo pipefail
@@ -37,7 +37,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm test
-          pnpm lint:design
+          pnpm lint
           pnpm build
       - name: Install uv
         uses: astral-sh/setup-uv@v7

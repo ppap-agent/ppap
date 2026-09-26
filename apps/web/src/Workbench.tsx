@@ -1,28 +1,46 @@
 import {useEffect, useRef, useState, type ChangeEvent} from 'react'
-import {dateLabel, resultLabels, analysisModeLabels, deepOffered, type Material} from './api'
-import {analysisNotices, matchesFilter} from './helpers'
+import {dateLabel, analysisModeLabels, deepOffered} from './api'
+import {analysisNotices, findingShortTitle, matchesFilter} from './helpers'
 import {parseProductRoute, productHref} from './navigation/route'
 import OriginalPreview from './OriginalPreview'
 import DrivePicker from './DrivePicker'
 import ReportPreview from './ReportPreview'
-import Modal from './Modal'
 import Help from './Help'
 import FindingReview from './audit/FindingReview'
 import ExecutionState from './audit/ExecutionState'
 import RoundOverview from './audit/RoundOverview'
+import {FindingBadge} from './audit/StatusBadge'
 import {useDraftPreparation} from './audit/useDraftPreparation'
 import {useRoundReview} from './audit/useRoundReview'
 import {useUnsavedGuard} from './audit/useUnsavedGuard'
-import {ArrowLeft, ArrowRight, X} from 'lucide-react'
-import {ActionBar, Badge, Button, Callout, DraftLink, Dropzone, FeedbackState, Field, FileInput, FindingContext, Heading, Icon, IconButton, Inline, Input, Link, Material as MaterialRow, Page, Pane, Region, Resizer, Select, Stack, Text, Toggle, ToggleRow, VisuallyHidden, Workspace} from './ui'
+import {PageLayout} from './ui/PageLayout'
+import {ArrowLeft, ArrowRight, BookOpen, FileSpreadsheet, FileText, Files, Plus, X} from 'lucide-react'
+import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
+import {Badge} from '@/components/ui/badge'
+import {Button} from '@/components/ui/button'
+import {Checkbox} from '@/components/ui/checkbox'
+import {Input} from '@/components/ui/input'
+import {NativeSelect} from '@/components/ui/native-select'
+import {Tabs, TabsList, TabsTrigger} from '@/components/ui/tabs'
+import {Modal, DraftLink, Pane, ReviewBack, ReviewColumns, ReviewDetail, ReviewItem, ReviewList, Workspace} from './ui/domain'
+import {PageHeader} from './ui/PageLayout'
 
-const filters = [{id: 'attention', label: '需关注'}, {id: 'unreviewed', label: '未记录'}, {id: '', label: '全部'}, {id: 'PASS', label: '通过'}]
+const filters = [{id: 'attention', label: '需关注'}, {id: 'unreviewed', label: '未记录'}, {id: '', label: '全部'}, {id: 'NG', label: '不符合'}, {id: 'UNABLE', label: '无法判断'}, {id: 'NA', label: '不适用'}, {id: 'ERR', label: '检查异常'}, {id: 'PASS', label: '通过'}]
+
+function materialIcon(filename: string) {
+  return /\.(xlsx?|xlsm|csv)$/i.test(filename) ? FileSpreadsheet : FileText
+}
 
 export default function Workbench({onReviewing}: {onReviewing: (value: boolean) => void}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [initialized, setInitialized] = useState(false)
+  const [mobileDetail, setMobileDetail] = useState(() => {
+    const opened = parseProductRoute(location.pathname, location.search)
+    return opened.page === 'audit-round'
+  })
+  const listScroll = useRef(0)
   const busyRef = useRef(false)
 
   async function action(work: () => Promise<void>) {
@@ -33,7 +51,9 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     try {
       await work()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '操作失败，请重试。')
+      setError(caught instanceof TypeError && caught.message === 'Failed to fetch'
+        ? '网络连接失败，请检查网络后重试。'
+        : caught instanceof Error ? caught.message : '操作失败，请重试。')
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -52,6 +72,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     selectedFile,
     selectedKey,
     selectedFinding,
+    previewFile,
+    evidenceSource,
     fileFindings,
     findings,
     counts,
@@ -66,10 +88,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     reviewFeedback,
     workspacePanel,
     roundView,
-    previewWidth,
-    resizing,
     originalPreview,
-    workspace,
     detailHeading,
     openRound,
     restoreScrollPosition,
@@ -87,10 +106,6 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     selectFileById,
     switchView,
     findEvidence,
-    startResize,
-    resizePreview,
-    resizeKey,
-    stopResize,
     clearForPreparation,
   } = reviewModel
 
@@ -108,10 +123,10 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     drafts,
     draftNext,
     draftLoading,
-    previousRound,
     analysisMode,
     estimate,
     dragActive,
+    pendingUpload,
     draftPhase,
     draftDirty,
     targetCount,
@@ -125,19 +140,22 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     loadDrafts,
     openRules,
     addFiles,
+    checkPendingUpload,
+    discardPendingUpload,
     dropped,
     setRole,
     setRule,
     removeItem,
     setMode,
     matchingHelp,
+    reloadAnalysis,
     availableRules,
-    unchanged,
     markCurrentClean,
   } = draftModel
 
   async function saveCurrent() {
     if (round) return saveReview()
+    if (pendingUpload) return false
     let saved = false
     await action(async () => {
       await saveDraft()
@@ -148,7 +166,10 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
 
   function discardCurrent() {
     if (round) discardReview()
-    else markCurrentClean()
+    else {
+      discardPendingUpload()
+      markCurrentClean()
+    }
   }
 
   const {
@@ -157,7 +178,7 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
     guardChange,
     resolveChange,
   } = useUnsavedGuard({
-    dirty: reviewDirty || draftDirty,
+    dirty: reviewDirty || draftDirty || !!pendingUpload,
     busy,
     remember: rememberWorkspace,
     saveCurrent,
@@ -186,7 +207,8 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
   async function submit() {
     await action(async () => {
       const accepted = await acceptDraft()
-      await openRound(accepted.id)
+      await openRound(accepted.id, accepted)
+      setMobileDetail(true)
     })
   }
 
@@ -197,121 +219,122 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
         rememberWorkspace()
         await startReaudit(round)
         clearForPreparation()
+        setMobileDetail(false)
       })
     })
   }
 
   function chooseFilter(status: string) {
-    guardChange(() => chooseFilterDirect(status))
+    guardChange(() => { listScroll.current = 0; chooseFilterDirect(status); setMobileDetail(false) })
   }
 
   function nextFinding(direction = 1) {
     guardChange(() => nextFindingDirect(direction))
   }
 
-  function pickFinding(event: ChangeEvent<HTMLSelectElement>) {
-    const key = event.currentTarget.value
-    event.currentTarget.value = selectedKey
-    guardChange(() => selectFindingByKey(key))
-  }
-
   function selectFile(event: ChangeEvent<HTMLSelectElement>) {
     const fileId = event.currentTarget.value
     event.currentTarget.value = selectedFileId
-    guardChange(() => selectFileById(fileId))
+    guardChange(() => { listScroll.current = 0; selectFileById(fileId); setMobileDetail(false) })
+  }
+
+  function selectFromList(key: string) {
+    listScroll.current = window.scrollY
+    if (key === selectedKey) {
+      setMobileDetail(true)
+      return
+    }
+    guardChange(() => { selectFindingByKey(key); setMobileDetail(true) })
+  }
+
+  function backToList() {
+    setMobileDetail(false)
+    requestAnimationFrame(() => window.scrollTo({top: listScroll.current}))
   }
 
   const unsupported = (round?.coverage?.rule_items || []).filter(item => item.coverage === 'unsupported' && (!selectedFile || item.file_version_id === selectedFile.file_version_id || (item.item_key || '').startsWith(selectedFile.file_version_id + ':')))
+  const noFindings = !!round && round.findings.length === 0
+  const showFilePicker = !!round && (workspacePanel === 'original' || round.inputs.filter(file => file.role === 'target').length > 1 || selectedFile?.role === 'reference')
+  const route = parseProductRoute(location.pathname, location.search)
 
   return (
-    <Page>
-      {error && (!round || roundView === 'report') && <Callout tone="error">{error}</Callout>}
-      {message && <Callout>{message}</Callout>}
-      {!initialized && <Callout tone="loading">正在加载资料…</Callout>}
-      {initialized && !round && (
-        <Region id="audit-preparation">
-          {predecessorId && <Inline gap="sm"><Text>再次审核</Text><Link href={productHref({page: 'audit-round', roundId: predecessorId})}>查看上一轮 →</Link></Inline>}
-          <Stack gap="md">
-            {!items.length && (
-              <Dropzone active={dragActive} onDragOver={event => { event.preventDefault(); setDragActive(true) }} onDragLeave={event => { event.preventDefault(); setDragActive(false) }} onDrop={event => { event.preventDefault(); void dropped(event) }}>
-                <Heading level={1}>添加待审资料</Heading>
-                <Text tone="muted">拖入文件，或选择本地资料</Text>
-                <FileInput label="选择文件" variant="primary" multiple disabled={busy} aria-label="选择待审文件" data-testid="source-upload" onChange={event => void addFiles(event, 'target')} />
-                <Text as="small" tone="muted">Excel、Word、PDF · 单份最大 64 MB</Text>
-              </Dropzone>
-            )}
-            <Inline gap="sm" wrap>
-              {!!items.length && <FileInput label="添加待审文件" multiple disabled={busy} aria-label="添加待审文件" data-testid="source-upload" onChange={event => void addFiles(event, 'target')} />}
-              <FileInput label="添加参考资料" variant="secondary" multiple disabled={busy} aria-label="添加参考资料" data-testid="reference-upload" onChange={event => void addFiles(event, 'reference')} />
-              <DrivePicker disabled={busy} onImport={imported} onBusy={value => { busyRef.current = value; setBusy(value) }} />
-            </Inline>
-          </Stack>
-          {(items.length || draftDirty) && (
-            <Region id="draft-items" testId="draft-items">
-              <Inline justify="between" align="center">
-                <Heading level={items.length ? 1 : 2}>本次资料 {items.length}</Heading>
-                <Button type="button" variant="ghost" disabled={busy} onClick={() => void openRules()}>上传客户规则</Button>
-              </Inline>
-              {items.map(item => (
-                <MaterialRow key={item.file_version_id}>
-                  <Stack gap="xs">
-                    <Text as="strong">{item.original_filename}</Text>
-                    {previousRound && <Badge>{unchanged(item) ? '沿用原件' : '本轮新增'}</Badge>}
-                    {item.analysis && <Text as="small" tone="muted">{[item.analysis.metadata.customer, item.analysis.metadata.model, item.analysis.metadata.part].filter(Boolean).join(' · ')}</Text>}
-                    {['queued', 'leased'].includes(item.analysisStatus || '') && <Text as="small" tone="muted">正在识别并匹配…</Text>}
-                    {['failed', 'unknown'].includes(item.analysisStatus || '') && <Text as="small" tone="muted">自动匹配未完成，请手动选择。</Text>}
-                    {(item.analysis?.notices || []).filter(notice => notice !== 'metadata_uses_excerpt').map(notice => <Text as="small" key={notice} tone="muted">{analysisNotices[notice] || notice}</Text>)}
-                  </Stack>
-                  <Field label="用途">
-                    <Select value={item.role} disabled={busy} onChange={event => setRole(item.file_version_id, event.target.value as Material['role'])}>
-                      <option value="target">待审文件</option>
-                      <option value="reference">参考资料</option>
-                    </Select>
-                  </Field>
-                  {item.role === 'target' ? (
-                    <Stack gap="xs">
-                      <Field label="审核规则">
-                        <Select data-testid="item-rule" value={item.rule_version_id || ''} disabled={busy} aria-label={item.original_filename + '的匹配规则'} onChange={event => setRule(item.file_version_id, event.target.value || null)}>
-                          <option value="">选择匹配规则</option>
+    <PageLayout className="gap-4">
+      {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+      {message && <Alert><AlertDescription>{message}</AlertDescription></Alert>}
+      {pendingUpload && !round && <Alert><AlertDescription><div className="flex flex-wrap items-center gap-2"><span>待核对：{pendingUpload.material.original_filename}。{pendingUpload.remaining ? `本批次还有 ${pendingUpload.remaining} 份文件未上传。` : ''}</span><Button type="button" disabled={busy} onClick={() => void checkPendingUpload()}>核对上传结果</Button><Button type="button" variant="ghost" disabled={busy} onClick={() => { discardPendingUpload(); setError('') }}>暂不加入</Button></div></AlertDescription></Alert>}
+      {!initialized && <Alert><AlertDescription>正在加载资料…</AlertDescription></Alert>}
+      {initialized && !round && route.page === 'audit-round' && (
+        <Alert><AlertTitle>正在读取审核</AlertTitle><AlertDescription><div className="flex flex-wrap items-center gap-2"><span>本轮已提交，无需再次开始审核。</span><Button type="button" disabled={busy} onClick={() => void action(() => openRound(route.roundId))}>刷新状态</Button></div></AlertDescription></Alert>
+      )}
+      {initialized && !round && route.page !== 'audit-round' && (
+        <section id="audit-preparation" className="flex flex-col gap-8">
+          <PageHeader
+            back={predecessorId && <a className="text-sm text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: predecessorId})}>← 上一轮审核</a>}
+            title={<span className="flex items-center gap-2">审核资料{!!items.length && <Badge variant="secondary">{items.length}</Badge>}</span>}
+            action={<div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void openRules()}>上传规则</Button>
+              {!!items.length && <Button asChild type="button" variant="outline" size="sm"><label><Plus className="size-4" aria-hidden="true" />添加文件<input className="sr-only" type="file" multiple disabled={busy || !!pendingUpload} aria-label="添加文件" data-testid="source-upload" onChange={event => void addFiles(event, 'target')} /></label></Button>}
+              <DrivePicker disabled={busy || !!pendingUpload} onImport={imported} onBusy={value => { busyRef.current = value; setBusy(value) }} />
+            </div>}
+          />
+          <section id={items.length || draftDirty ? 'draft-items' : undefined} data-testid={items.length || draftDirty ? 'draft-items' : undefined} aria-label="审核资料列表" className="flex min-w-0 flex-col">
+              {items.length ? <div role="list" className="flex min-w-0 flex-col divide-y border-y">
+                {items.map(item => {
+                  const MaterialIcon = materialIcon(item.original_filename)
+                  return <div key={item.file_version_id} role="listitem" className="grid min-w-0 gap-3 py-4 sm:grid-cols-[2rem_minmax(0,1fr)_minmax(0,15rem)_auto] sm:items-center">
+                    <div className="grid size-8 place-items-center rounded-lg bg-muted text-muted-foreground" aria-hidden="true"><MaterialIcon className="size-5" /></div>
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <strong className="break-words text-base">{item.original_filename}</strong>
+                      {item.analysis && <small className="text-muted-foreground">{[item.analysis.metadata.customer, item.analysis.metadata.model, item.analysis.metadata.part].filter(Boolean).join(' · ')}</small>}
+                      {item.analysisReadFailed ? (
+                        <div className="flex flex-wrap items-center gap-1"><small className="text-muted-foreground">识别结果暂不可用</small><Button variant="ghost" size="sm" disabled={busy} aria-label={`重新读取 ${item.original_filename} 的识别结果`} onClick={() => void action(() => reloadAnalysis(item))}>重试</Button></div>
+                      ) : <>
+                        {['queued', 'leased'].includes(item.analysisStatus || '') && <small className="text-muted-foreground">正在识别…</small>}
+                        {['failed', 'unknown'].includes(item.analysisStatus || '') && <small className="text-muted-foreground">识别未完成，请核对原件</small>}
+                      </>}
+                      {(item.analysis?.notices || []).filter(notice => notice !== 'metadata_uses_excerpt').map(notice => <small className="text-muted-foreground" key={notice}>{analysisNotices[notice] || notice}</small>)}
+                    </div>
+                    {item.role === 'target' && <div className="grid min-w-0 gap-1 sm:col-start-3">
+                      <div className="flex items-center gap-1">
+                        <NativeSelect data-testid="item-rule" value={item.rule_version_id || ''} disabled={busy} aria-label={item.original_filename + '的匹配规则'} onChange={event => setRule(item.file_version_id, event.target.value || null)}>
+                          <option value="">选择规则</option>
                           {availableRules(item).map(rule => <option key={rule.id} value={rule.id}>{rule.title}{currentRules.some(current => current.id === rule.id) ? '' : '（历史版本）'}</option>)}
-                        </Select>
-                      </Field>
-                      <Inline gap="sm">
-                        {item.rule_version_id && <Text as="span" size="sm" tone="muted">{rules.find(rule => rule.id === item.rule_version_id)?.type || '按规则类型'}</Text>}
-                        {item.rule_version_id && <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void openRules(item)}>查看规则</Button>}
-                      </Inline>
-                      {!item.rule_version_id && <Text size="sm" tone="muted">{matchingHelp(item)}</Text>}
-                    </Stack>
-                  ) : <Text tone="muted">仅作参考，不单独检查</Text>}
-                  <IconButton label={'移除 ' + item.original_filename} disabled={busy} onClick={() => removeItem(item.file_version_id)}><Icon icon={X} size="md" /></IconButton>
-                </MaterialRow>
-              ))}
-              {!!targetCount && <Inline gap="xs" align="center"><Text size="sm">所选规则条目即本轮机审清单</Text><Help title="审核范围"><Text>受理后冻结所选规则版本和条目。能映射到内置检查的条目给出 PASS/NG/ERR；不能自动执行的条目进入未覆盖，需人工核对。不会改成另一套内置清单。</Text></Help></Inline>}
-              <ActionBar>
-                <Stack gap="xs">
-                  {deepOffered && (
-                    <Field label="审核模式">
-                      <Select data-testid="analysis-mode" value={analysisMode} disabled={busy} aria-label="审核模式" onChange={event => setMode(event.target.value)}>
-                        <option value="standard">{analysisModeLabels.standard}</option>
-                        <option value="deep">{analysisModeLabels.deep}</option>
-                      </Select>
-                    </Field>
-                  )}
-                  <Text as="strong">{targetCount} 份待审</Text>
-                  {!!missingRules && <Text as="span" tone="muted">{missingRules} 份未匹配规则</Text>}
-                  {!!targetCount && <Text as="small" tone="muted" testId="quota-estimate">{estimate?.unavailable ? '无法读取 Partner AI' : estimate ? `预计 ${estimate.estimated_points ?? '—'} 点 · 试用剩余 ${estimate.remaining_trial_ai_points ?? '—'} 点 · ${estimate.quota_sufficient ? 'Partner AI 可用' : 'Partner AI 不可用'}${estimate.accept_allowed === false && estimate.accept_reason ? ` · ${estimate.accept_reason}` : ''}` : '正在读取额度…'}</Text>}
-                  <Text as="small" tone="muted">{draftDirty ? '有未保存的修改' : '草稿已保存'}</Text>
-                </Stack>
-                <Inline gap="sm">
-                  <Button type="button" data-testid="save-draft" disabled={busy || draftPhase !== 'idle' || !draftDirty} onClick={() => void action(async () => { if (await saveDraft()) setMessage('草稿已保存。') })}>保存草稿</Button>
-                  <Button type="button" variant="primary" data-testid="submit-audit" id={predecessorId ? 'resubmit-audit' : undefined} disabled={busy || draftPhase !== 'idle' || !targetCount || !!missingRules || estimate?.accept_allowed === false} onClick={() => void submit()}>{busy || draftPhase === 'accepting' ? '处理中…' : '开始审核'}</Button>
-                </Inline>
-              </ActionBar>
-            </Region>
-          )}
+                        </NativeSelect>
+                        {item.rule_version_id && <Button variant="ghost" size="icon" aria-label={'查看 ' + item.original_filename + ' 的规则'} disabled={busy} onClick={() => void openRules(item)}><BookOpen className="size-4" /></Button>}
+                      </div>
+                      {!item.rule_version_id && <small className="text-muted-foreground">{matchingHelp(item)}</small>}
+                    </div>}
+                    <div className="flex items-center gap-1 sm:justify-end">
+                      <label className="inline-flex items-center gap-2 text-sm"><Checkbox data-testid={`audit-target-${item.file_version_id}`} aria-label={`参与审核：${item.original_filename}`} checked={item.role === 'target'} disabled={busy} onCheckedChange={checked => setRole(item.file_version_id, checked === true ? 'target' : 'reference')} /><span>审核</span></label>
+                      <Button variant="ghost" size="icon" aria-label={'移除 ' + item.original_filename} disabled={busy} onClick={() => removeItem(item.file_version_id)}><X className="size-4" /></Button>
+                    </div>
+                  </div>
+                })}
+              </div> : <div className={"flex min-h-56 flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-muted/20 p-8 text-center transition-colors " + (dragActive ? 'border-primary bg-primary/5' : '')} onDragOver={event => { event.preventDefault(); setDragActive(true) }} onDragLeave={event => { event.preventDefault(); setDragActive(false) }} onDrop={event => { event.preventDefault(); void dropped(event) }}>
+                <Files className="size-8 text-muted-foreground" aria-hidden="true" />
+                <h2 className="text-base font-semibold">添加审核资料</h2>
+                <p className="m-0 text-sm text-muted-foreground">支持 Excel、Word、PDF，单份最大 64 MB</p>
+                <Button asChild type="button" variant="outline" size="sm"><label><Plus className="size-4" aria-hidden="true" />选择文件<input className="sr-only" type="file" multiple disabled={busy || !!pendingUpload} aria-label="选择待审文件" data-testid="source-upload" onChange={event => void addFiles(event, 'target')} /></label></Button>
+              </div>}
+            {(items.length || draftDirty) && <div className="mt-4 flex flex-col items-stretch gap-4 border-t pt-4 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex flex-col gap-2">
+                {deepOffered && <fieldset data-testid="analysis-mode" className="grid gap-1.5 border-0 p-0"><legend className="text-xs text-muted-foreground">审核模式</legend><Tabs value={analysisMode} onValueChange={setMode}><TabsList><TabsTrigger value="standard">{analysisModeLabels.standard}</TabsTrigger><TabsTrigger value="deep">{analysisModeLabels.deep}</TabsTrigger></TabsList></Tabs><input type="hidden" name="analysis-mode" value={analysisMode} readOnly /></fieldset>}
+                <small className="text-muted-foreground">{targetCount}/{items.length} 份参与审核</small>
+              </div>
+              <div className="flex flex-col items-start gap-2 sm:items-end">
+                {!!missingRules && <small className="text-muted-foreground">请为 {missingRules} 份文件选择规则</small>}
+                {estimate?.accept_allowed === false && <Alert variant="destructive"><AlertDescription>{estimate.accept_reason || '当前额度不足，暂无法提交审核。'}</AlertDescription></Alert>}
+                {estimate?.accept_allowed !== false && !!estimate?.estimated_points && <small data-testid="quota-estimate" className="text-muted-foreground">预计 {estimate.estimated_points} 点</small>}
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="ghost" data-testid="save-draft" disabled={busy || !!pendingUpload || draftPhase !== 'idle' || !draftDirty} onClick={() => void action(async () => { if (await saveDraft()) setMessage('草稿已保存。') })}>保存草稿</Button>
+                  <Button type="button" data-testid="submit-audit" id={predecessorId ? 'resubmit-audit' : undefined} disabled={busy || !!pendingUpload || draftPhase !== 'idle' || !targetCount || !!missingRules || estimate?.accept_allowed === false} onClick={() => void submit()}>{draftPhase === 'accepting' ? '正在提交…' : '开始审核'}<ArrowRight className="size-4" /></Button>
+                </div>
+              </div>
+            </div>}
+          </section>
           {!items.length && !!drafts.length && (
-            <Stack gap="sm">
-              <Heading level={2}>继续草稿</Heading>
+            <section className="flex flex-col gap-2" aria-labelledby="drafts-heading">
+              <h2 id="drafts-heading" className="text-sm font-semibold text-muted-foreground">继续草稿</h2>
               {drafts.map(draft => (
                 <DraftLink
                   key={draft.id}
@@ -322,12 +345,12 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
                 />
               ))}
               {draftNext !== null && <Button type="button" disabled={draftLoading} onClick={() => void action(() => loadDrafts(true))}>更多草稿</Button>}
-            </Stack>
+            </section>
           )}
-        </Region>
+        </section>
       )}
       {initialized && round && (
-        <Stack gap="md">
+        <section className="flex flex-col gap-4">
           <RoundOverview
             round={round}
             counts={counts}
@@ -336,107 +359,134 @@ export default function Workbench({onReviewing}: {onReviewing: (value: boolean) 
             workspacePanel={workspacePanel}
             busy={busy}
             onWriteback={() => { void writeBack() }}
+            onRefresh={() => { void openRound(round.id) }}
             onPrepareAgain={prepareAgain}
             onSwitchView={switchView}
           />
-          <Region hidden={roundView !== 'review'}>
-            <Inline justify="between" align="center" gap="md">
-              <Select data-testid="file-version-list" title={selectedFile?.original_filename} aria-label="审核资料" value={selectedFileId} disabled={busy} onChange={selectFile}>
-                {round.inputs.map(file => <option key={file.file_version_id} value={file.file_version_id}>{file.original_filename}{file.role === 'reference' ? ' · 参考资料' : ''}</option>)}
-              </Select>
-              {selectedFile?.rule_version_id && <Link data-testid="context-link" href={productHref({page: 'rule-detail', ruleId: selectedFile.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>本轮规则 ↗</Link>}
-            </Inline>
-            <VisuallyHidden>
-              <VisuallyHidden testId="coverage-panel">{[...round.inputs.map(file => file.original_filename), ...(round.coverage?.unchecked || []), ...(round.coverage?.rule_items || []).map(item => item.rule_to_check)].join(' ')}</VisuallyHidden>
-            </VisuallyHidden>
-            {workspacePanel === 'original' && selectedFinding && (
-              <FindingContext>
-                <Text as="strong">{selectedFinding.item}</Text>
-                <Button type="button" onClick={() => switchView('review')}>返回复核</Button>
-              </FindingContext>
+          <section hidden={roundView !== 'review'} className="flex flex-col gap-4">
+            {noFindings && workspacePanel === 'original' && (
+              <div id="audit-state-original" className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2 border-b pb-3">
+                  <NativeSelect className="min-w-0 flex-1 basis-64" data-testid="file-version-list" title={selectedFile?.original_filename} aria-label="审核资料" value={selectedFileId} disabled={busy} onChange={selectFile}>
+                    {round.inputs.map(file => <option key={file.file_version_id} value={file.file_version_id}>{file.original_filename}{file.role === 'reference' ? ' · 参考资料' : ''}</option>)}
+                  </NativeSelect>
+                  {selectedFile?.rule_version_id && <Button asChild variant="link"><a href={productHref({page: 'rule-detail', ruleId: selectedFile.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>本轮规则 ↗</a></Button>}
+                </div>
+                <OriginalPreview ref={originalPreview} file={previewFile} roundId={round.id} finding={selectedFinding} source={evidenceSource} />
+              </div>
             )}
-            <Workspace preview={previewWidth} panel={workspacePanel} resizing={resizing} rootRef={workspace}>
+            {noFindings && workspacePanel !== 'original' && <div className="flex flex-col gap-3">
+              <ExecutionState
+                execution={round.execution}
+                fileFindingCount={0}
+                progress={round.progress}
+                failure={round.failure}
+                busy={busy}
+                onShowAll={() => chooseFilter('')}
+                onShowOriginal={() => switchView('original')}
+                onPrepareAgain={prepareAgain}
+              />
+              {selectedFile?.rule_version_id && <div className="border-t pt-3"><Button asChild variant="link"><a href={productHref({page: 'rule-detail', ruleId: selectedFile.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>本轮规则 ↗</a></Button></div>}
+            </div>}
+            {!noFindings && <>
+            <div className="flex flex-wrap items-center gap-2 border-b pb-3">
+              {showFilePicker && <NativeSelect className="min-w-0 flex-1 basis-64" data-testid="file-version-list" title={selectedFile?.original_filename} aria-label="审核资料" value={selectedFileId} disabled={busy} onChange={selectFile}>
+                {round.inputs.map(file => <option key={file.file_version_id} value={file.file_version_id}>{file.original_filename}{file.role === 'reference' ? ' · 参考资料' : ''}</option>)}
+              </NativeSelect>}
+              {selectedFile?.rule_version_id && <Button asChild variant="link" data-testid="context-link"><a href={productHref({page: 'rule-detail', ruleId: selectedFile.rule_version_id, returnTo: {page: 'audit-round', roundId: round.id}})}>本轮规则 ↗</a></Button>}
+              {workspacePanel === 'original' && selectedFinding && <div className="ml-auto flex items-center gap-2 text-sm"><strong className="max-w-[min(60vw,28rem)] truncate">{findingShortTitle(selectedFinding, fileFindings.findIndex(item => item.item_key === selectedFinding.item_key) + 1)}</strong><Button type="button" size="sm" onClick={() => switchView('review')}>返回复核</Button></div>}
+            </div>
+            <Workspace panel={workspacePanel}>
               <Pane kind="checks">
                 {selectedFile?.role === 'reference' ? (
-                  <FeedbackState title="参考资料" detail="用于对照，不包含在机器检查结果中。">
-                    <Button type="button" onClick={() => switchView('original')}>查看原件</Button>
-                  </FeedbackState>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-y py-3">
+                    <span className="text-sm text-muted-foreground">参考资料 · 不参与机器检查</span>
+                    <Button type="button" size="sm" variant="outline" onClick={() => switchView('original')}>查看原件</Button>
+                  </div>
                 ) : (
-                  <Stack gap="sm">
-                    {error && <Callout tone="error">{error}</Callout>}
-                    <ToggleRow label="结果筛选">
-                      {filters.map(entry => <Toggle key={entry.id || 'all'} testId={'filter-' + (entry.id || 'all')} disabled={busy} pressed={filter === entry.id} onClick={() => chooseFilter(entry.id)}>{entry.label} {fileFindings.filter(item => matchesFilter(item, entry.id)).length}</Toggle>)}
-                    </ToggleRow>
+                  <div className="flex flex-col gap-3">
+                    {!!fileFindings.length && <div role="group" aria-label="结果筛选" className="flex flex-wrap gap-1">
+                      {filters.map(entry => ({...entry, count: fileFindings.filter(item => matchesFilter(item, entry.id)).length}))
+                        .filter(entry => entry.count > 0 || ['', 'attention', 'unreviewed', filter].includes(entry.id))
+                        .map(entry => <Button key={entry.id || 'all'} data-testid={'filter-' + (entry.id || 'all')} disabled={busy} variant={filter === entry.id ? 'secondary' : 'outline'} aria-pressed={filter === entry.id} size="sm" onClick={() => chooseFilter(entry.id)}>{entry.label} {entry.count}</Button>)}
+                    </div>}
                     {!findings.length && (
                       <ExecutionState
-                        execution={round.execution}
-                        analysisMode={round.analysis_mode}
+                        execution={round.execution === 'failed' ? 'completed' : round.execution}
                         fileFindingCount={fileFindings.length}
-                        onShowAll={() => chooseFilter('')}
-                      />
-                    )}
-                    {!!findings.length && (
-                      <Inline gap="sm" align="center">
-                        <Select data-testid="finding-picker" aria-label="检查项" value={findings.some(item => item.item_key === selectedKey) ? selectedKey : ''} disabled={busy} onChange={pickFinding}>
-                          {!findings.some(item => item.item_key === selectedKey) && <option value="" disabled>当前项已保存，可继续下一项</option>}
-                          {findings.map((finding, index) => <option key={finding.item_key} value={finding.item_key}>{index + 1}. {finding.item} · {resultLabels[finding.status]}{finding.classification ? ' · ' + finding.classification : ''}{finding.priority ? ' · ' + finding.priority : ''}{finding.review ? ' · 已记录' : ''}</option>)}
-                        </Select>
-                        <IconButton label="上一检查项" disabled={busy || findingIndex <= 0} onClick={() => nextFinding(-1)}><Icon icon={ArrowLeft} size="md" /></IconButton>
-                        <IconButton label="下一检查项" disabled={busy || findingIndex >= findings.length - 1} onClick={() => nextFinding()}><Icon icon={ArrowRight} size="md" /></IconButton>
-                      </Inline>
-                    )}
-                    {!!unsupported.length && (
-                      <FeedbackState compact title="未自动检查" testId="unchecked-rule-items">
-                        <Stack as="ul" gap="xs">
-                          {unsupported.map(item => <Text as="span" key={item.id}>{item.rule_to_check} · 需人工核对</Text>)}
-                        </Stack>
-                      </FeedbackState>
-                    )}
-                    {selectedFinding && (
-                      <FindingReview
-                        finding={selectedFinding}
-                        position={fileFindings.findIndex(item => item.item_key === selectedKey) + 1}
-                        total={fileFindings.length}
+                        progress={round.progress}
+                        failure={round.failure}
                         busy={busy}
-                        review={review}
-                        customJudgment={customJudgment}
-                        savingReview={savingReview}
-                        reviewDirty={reviewDirty}
-                        reviewFeedback={reviewFeedback}
-                        hasNextUnreviewed={hasNextUnreviewed}
-                        headingRef={detailHeading}
-                        onFindEvidence={() => { void findEvidence() }}
-                        onJudgment={setJudgment}
-                        onEnableCustomJudgment={enableCustomJudgment}
-                        onReviewChange={updateReview}
-                        onSave={() => { void saveReview() }}
-                        onContinue={() => { void nextUnreviewed() }}
+                        emptyTitle="此资料没有检查结果"
+                        onShowAll={() => chooseFilter('')}
+                        onShowOriginal={() => switchView('original')}
+                        onPrepareAgain={prepareAgain}
                       />
                     )}
-                  </Stack>
+                    {!!findings.length && <ReviewColumns count={findings.length} detail={mobileDetail} onDetailChange={setMobileDetail}>
+                      <ReviewList>
+                        {findings.map(finding => (
+                          <ReviewItem key={finding.item_key} selected={finding.item_key === selectedKey} onClick={() => selectFromList(finding.item_key)}>
+                            <strong>{findingShortTitle(finding, fileFindings.findIndex(item => item.item_key === finding.item_key) + 1)}</strong>
+                            <span className="flex flex-wrap items-center gap-1"><FindingBadge status={finding.status} />{finding.review && <Badge variant="secondary">复核已记录</Badge>}</span>
+                          </ReviewItem>
+                        ))}
+                      </ReviewList>
+                      <ReviewDetail>
+                        <div className="flex items-center justify-between gap-2">
+                          <ReviewBack onClick={backToList}>← 检查项</ReviewBack>
+                          <div className="flex items-center gap-1"><span className="text-sm text-muted-foreground">{findingIndex + 1} / {findings.length}</span><Button variant="ghost" size="icon" aria-label="上一检查项" disabled={busy || findingIndex <= 0} onClick={() => nextFinding(-1)}><ArrowLeft className="size-4" /></Button><Button variant="ghost" size="icon" aria-label="下一检查项" disabled={busy || findingIndex >= findings.length - 1} onClick={() => nextFinding()}><ArrowRight className="size-4" /></Button></div>
+                        </div>
+                        {selectedFinding && <FindingReview
+                          finding={selectedFinding}
+                          position={fileFindings.findIndex(item => item.item_key === selectedKey) + 1}
+                          busy={busy}
+                          review={review}
+                          customJudgment={customJudgment}
+                          savingReview={savingReview}
+                          reviewDirty={reviewDirty}
+                          reviewFeedback={reviewFeedback}
+                          hasNextUnreviewed={hasNextUnreviewed}
+                          headingRef={detailHeading}
+                          onFindEvidence={source => { void findEvidence(source) }}
+                          onJudgment={setJudgment}
+                          onEnableCustomJudgment={enableCustomJudgment}
+                          onReviewChange={updateReview}
+                          onSave={() => { void saveReview() }}
+                          onContinue={() => { void nextUnreviewed() }}
+                        />}
+                      </ReviewDetail>
+                    </ReviewColumns>}
+                    {!!unsupported.length && <section data-testid="unchecked-rule-items" className="flex flex-col gap-2 border-t pt-3">
+                      <h2 className="text-base font-semibold">未自动检查 · {unsupported.length}</h2>
+                      <ul className="m-0 flex list-none flex-col gap-2 p-0">{unsupported.map(item => <li className="flex items-center gap-2" key={item.id}><span>{item.id} · {item.category || '规则条款'}</span><Help title="完整规则"><p className="m-0">{item.rule_to_check}</p></Help></li>)}</ul>
+                    </section>}
+                  </div>
                 )}
               </Pane>
-              <Resizer role="separator" tabIndex={0} aria-label="调整原件预览宽度" aria-orientation="vertical" aria-valuenow={Math.round(previewWidth)} aria-valuemin={30} aria-valuemax={65} onPointerDown={startResize} onPointerMove={resizePreview} onPointerUp={stopResize} onPointerCancel={stopResize} onLostPointerCapture={stopResize} onKeyDown={resizeKey} />
-              <OriginalPreview ref={originalPreview} file={selectedFile} roundId={round.id} finding={selectedFinding} />
+              {workspacePanel === 'original' && <OriginalPreview ref={originalPreview} file={previewFile} roundId={round.id} finding={selectedFinding} source={evidenceSource} />}
             </Workspace>
-          </Region>
+            </>}
+          </section>
           {roundView === 'report' && <ReportPreview round={round} unsavedReview={reviewDirty} onReview={() => switchView('review')} />}
-        </Stack>
+        </section>
       )}
       {pendingChange && (
-        <Modal title="保存修改后离开？" busy={busy} onClose={() => setPendingChange(null)}>
-          <Stack gap="md">
-            <Text>{round ? '这条复核还有未保存的修改。' : '审核资料还有未保存的修改。'}你可以保存后继续，也可以留在这里编辑。</Text>
-            {error && <Callout tone="error">{error}</Callout>}
-            {round && !review.judgment.trim() && <Text tone="muted">请先填写复核判断，才能保存。</Text>}
-            <Inline gap="sm" wrap>
-              <Button type="button" disabled={busy} onClick={() => setPendingChange(null)}>继续编辑</Button>
-              <Button type="button" disabled={busy} onClick={() => void resolveChange(false)}>放弃修改</Button>
-              <Button type="button" variant="primary" disabled={busy || (!!round && !review.judgment.trim())} onClick={() => void resolveChange(true)}>{busy ? '正在保存…' : '保存并离开'}</Button>
-            </Inline>
-          </Stack>
+        <Modal title={pendingUpload ? '离开前处理待核对文件？' : '保存修改后离开？'} busy={busy} onClose={() => setPendingChange(null)}>
+          <div className="flex flex-col gap-3">
+            <p className="m-0">{pendingUpload
+              ? `“${pendingUpload.material.original_filename}”尚未加入草稿。离开会放弃这次核对，已保存资料仍保留。${draftDirty ? '其他未保存修改也会放弃。' : ''}`
+              : `${round ? '这条复核还有未保存的修改。' : '审核资料还有未保存的修改。'}你可以保存后继续，也可以留在这里编辑。`}</p>
+            {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+            {round && !review.judgment.trim() && <p className="m-0 text-sm text-muted-foreground">请先填写复核判断，才能保存。</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" disabled={busy} onClick={() => setPendingChange(null)}>{pendingUpload ? '继续核对' : '继续编辑'}</Button>
+              <Button type="button" disabled={busy} onClick={() => void resolveChange(false)}>{pendingUpload ? '暂不加入并离开' : '放弃修改'}</Button>
+              {!pendingUpload && <Button type="button" disabled={busy || (!!round && !review.judgment.trim())} onClick={() => void resolveChange(true)}>{busy ? '正在保存…' : '保存并离开'}</Button>}
+            </div>
+          </div>
         </Modal>
       )}
-    </Page>
+    </PageLayout>
   )
 }

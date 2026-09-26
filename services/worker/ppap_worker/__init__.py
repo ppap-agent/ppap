@@ -5,6 +5,7 @@ import signal
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ppap_api.store import AuthStore
@@ -127,7 +128,7 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
         if work.tenant_id:
             tokens.extend(bind(tenant_id=work.tenant_id))
         if work.analysis_mode == ANALYSIS_DEEP:
-            result, outcome = run_deep_round(store, claimed, work)
+            result, outcome = run_deep_round(store, claimed, work, ident)
             accepted = store.complete_job(claimed, ident, result, outcome)
             emit(
                 "job_completed" if accepted else "job_result_discarded",
@@ -154,11 +155,44 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
         reset(tokens)
 
 
-def run_deep_round(store: AuthStore, claimed, work) -> tuple[dict, str]:
+@contextmanager
+def audit_lease(store, claimed, ident):
+    """Keep ownership throughout model work; uncertainty stops paid work."""
+    stopped, cancelled = threading.Event(), threading.Event()
+
+    def renew():
+        due = time.monotonic() + 10
+        while not stopped.wait(0.5):
+            if STOP:
+                cancelled.set()
+                return
+            if time.monotonic() < due:
+                continue
+            try:
+                if not store.renew_job_lease(claimed, ident):
+                    cancelled.set()
+                    return
+            except Exception:
+                cancelled.set()
+                emit("audit_lease_unknown", job_id=claimed.id, attempt=claimed.attempt)
+                return
+            due = time.monotonic() + 10
+
+    renewal = threading.Thread(target=renew, daemon=True)
+    renewal.start()
+    try:
+        yield cancelled
+    finally:
+        stopped.set()
+        renewal.join(timeout=1)
+
+
+def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[dict, str]:
     """Deep execution boundary. Never falls back to the in-repo Standard engine."""
-    from ppap_core.audits import DEEP_PROTOCOL_REVISION, EXECUTOR_DEEP, execution_error_result, frozen_executor
+    from ppap_core.audits import DEEP_PROTOCOL_REVISION, EXECUTOR_DEEP, frozen_executor
     from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
     from ppap_deep.mapping import product_result, spec_from_work
+    from ppap_deep.failures import failure_result
 
     settings = getattr(store, "settings", None)
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
@@ -169,22 +203,33 @@ def run_deep_round(store: AuthStore, claimed, work) -> tuple[dict, str]:
         getattr(settings, "deep_executor_revision", "") if settings else "",
     )
     if work.analysis_mode != ANALYSIS_DEEP or executor != EXECUTOR_DEEP:
-        return execution_error_result("deep_executor_mismatch"), "failed"
+        return failure_result("deep_executor_mismatch"), "failed"
     if revision != expected_revision:
-        return execution_error_result("executor_revision_mismatch"), "failed"
+        return failure_result("executor_revision_mismatch"), "failed"
     socket_path = str(getattr(settings, "deep_controller_socket", "") if settings else "").strip()
     if not socket_path:
-        return execution_error_result("deep_runtime_unavailable"), "failed"
+        return failure_result("deep_runtime_unavailable"), "failed"
     try:
         spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION)
-        response = DeepClient(socket_path, timeout=DEEP_REQUEST_TIMEOUT).execute(spec)
+        spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
+        with audit_lease(store, claimed, ident) as cancelled:
+            def progress(state):
+                if not store.audit_progress(claimed, ident, state):
+                    cancelled.set()
+                    raise DeepError("deep_lease_lost")
+
+            response = DeepClient(socket_path, timeout=DEEP_REQUEST_TIMEOUT).execute(
+                spec, cancelled=cancelled, on_progress=progress,
+            )
+            if cancelled.is_set():
+                raise DeepError("deep_lease_lost")
         result = product_result(response, work)
         result["note"] = result.get("note") or "deep_audit"
         return result, "succeeded"
     except DeepError as exc:
-        return execution_error_result(exc.code), "failed"
+        return failure_result(exc.code), "failed"
     except Exception:
-        return execution_error_result("deep_execution_failed"), "failed"
+        return failure_result("deep_execution_failed"), "failed"
 
 
 def run() -> None:

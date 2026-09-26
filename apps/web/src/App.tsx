@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react'
+import {useEffect, useState, type ReactNode} from 'react'
 import {apiUrl, connect, feishuAppId, profile, request} from './api'
 import {isFeishuHost, requestHostCode} from './hostLogin'
 import Workbench from './Workbench'
@@ -7,7 +7,9 @@ import RulesView from './RulesView'
 import UsageView from './UsageView'
 import {isTenantDenied, parseProductRoute, productHref, shellPath} from './navigation/route'
 import AppShell from './ui/AppShell'
-import {Button, Callout, Link, Page, PageHeader} from './ui'
+import {PageLayout} from './ui/PageLayout'
+import {Alert, AlertDescription} from '@/components/ui/alert'
+import {Button} from '@/components/ui/button'
 
 const route = parseProductRoute(location.pathname, location.search)
 
@@ -67,30 +69,32 @@ export default function App() {
   }
 
   const authenticated = ready && !devPage && !!user
+  const page = (content: ReactNode) => <PageLayout>{content}</PageLayout>
+  const message = (content: ReactNode, destructive = false) => <Alert variant={destructive ? 'destructive' : 'default'}><AlertDescription>{content}</AlertDescription></Alert>
   return (
-    <AppShell activePath={activePath} user={user} onLogout={() => void logout()}>
+    <AppShell activePath={activePath} user={user} development={development} onLogout={() => void logout()}>
       {authenticated ? (
         <>
-          {error && <Page><Callout tone="error">{error}</Callout></Page>}
+          {error && page(message(error, true))}
           {route.page === 'audit-history' ? <HistoryView />
             : route.page === 'rule-library' || route.page === 'rule-detail' || route.page === 'rule-import' ? <RulesView />
               : route.page === 'usage' ? <UsageView />
                 : <Workbench onReviewing={setReviewing} />}
         </>
       ) : (
-        <Page>
-          {tenantDenied && <Callout tone="error">无法使用此入口。</Callout>}
-          {error && <Callout tone="error">{error}</Callout>}
-          {!ready && !error && <Callout tone="loading">正在连接…</Callout>}
+        page(<>
+          {tenantDenied && message('无法使用此入口。', true)}
+          {error && message(error, true)}
+          {!ready && !error && message('正在连接…')}
           {ready && devPage && (
             development
-              ? <PageHeader title="本地测试身份" actions={<Button type="button" variant="primary" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</Button>} />
-              : <PageHeader title="此入口不可用" />
+              ? <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><h1 className="text-2xl font-semibold tracking-tight">本地测试身份</h1><Button type="button" data-testid="isolated-dev-login" onClick={() => void devLogin()}>使用隔离测试身份</Button></header>
+              : <h1 className="text-2xl font-semibold tracking-tight">此入口不可用</h1>
           )}
           {ready && !devPage && !user && (
-            <PageHeader title="登录后开始审核" description="使用飞书账号访问你的资料与审核结果。" actions={<Link href={loginUrl} variant="primary">登录飞书</Link>} />
+            <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><h1 className="text-2xl font-semibold tracking-tight">登录后开始审核</h1><p className="mt-1 max-w-prose text-sm text-muted-foreground">使用飞书账号访问你的资料与审核结果。</p></div><Button asChild><a href={loginUrl}>登录飞书</a></Button></header>
           )}
-        </Page>
+        </>)
       )}
     </AppShell>
   )

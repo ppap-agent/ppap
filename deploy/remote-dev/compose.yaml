@@ -1,0 +1,72 @@
+# Local web and API against the current TKE PostgreSQL/S3 services.
+# Start through run.sh: it supplies port forwards and current credentials.
+services:
+  api:
+    image: ppap-api:remote-dev
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+      args:
+        PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+        PPAP_SERVICE: api
+    env_file:
+      - path: ../../.env
+        required: true
+    environment:
+      PPAP_PROFILE: remote-dev
+      PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+      PPAP_SERVICE: api
+      PPAP_PG_HOST: host.docker.internal
+      PPAP_PG_PORT: "15432"
+      PPAP_PG_DATABASE: ${PPAP_REMOTE_PG_DATABASE:?run through deploy/remote-dev/run.sh}
+      PPAP_PG_API_USER: ${PPAP_REMOTE_PG_API_USER:?run through deploy/remote-dev/run.sh}
+      PPAP_PG_API_PASSWORD: ${PPAP_REMOTE_PG_API_PASSWORD:?run through deploy/remote-dev/run.sh}
+      PPAP_CURRENT_TENANT_ALLOWLIST: ${PPAP_REMOTE_TENANT_ALLOWLIST?run through deploy/remote-dev/run.sh}
+      PPAP_DEEP_CUSTOMER_ENABLED: ${PPAP_REMOTE_DEEP_CUSTOMER_ENABLED:?run through deploy/remote-dev/run.sh}
+      PPAP_DEEP_EXECUTOR_REVISION: ${PPAP_REMOTE_DEEP_EXECUTOR_REVISION:?run through deploy/remote-dev/run.sh}
+      PPAP_S3_ENDPOINT: http://host.docker.internal:19000
+      PPAP_S3_REGION: ${PPAP_REMOTE_S3_REGION:?run through deploy/remote-dev/run.sh}
+      PPAP_S3_BUCKET: ${PPAP_REMOTE_S3_BUCKET:?run through deploy/remote-dev/run.sh}
+      PPAP_S3_ACCESS_KEY: ${PPAP_REMOTE_S3_ACCESS_KEY:?run through deploy/remote-dev/run.sh}
+      PPAP_S3_SECRET_KEY: ${PPAP_REMOTE_S3_SECRET_KEY:?run through deploy/remote-dev/run.sh}
+      PPAP_WEB_URL: http://127.0.0.1:4173
+      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+      PPAP_ONLYOFFICE_URL: https://onlyoffice.icoastline.com
+      PPAP_ONLYOFFICE_API_URL: http://ppap-remote-dev-api.ppap-remote-dev.svc.cluster.local:8080
+      PPAP_ONLYOFFICE_SECRET: ${PPAP_REMOTE_ONLYOFFICE_SECRET:?run through deploy/remote-dev/run.sh}
+      PPAP_USAGE_CHARGE_ENABLED: "false"
+      LOG_FORMAT: text
+    command:
+      - python
+      - -m
+      - uvicorn
+      - ppap_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --no-access-log
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  web:
+    image: ppap-web:remote-dev
+    build:
+      context: ../..
+      dockerfile: deploy/web/Dockerfile
+      args:
+        PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+    ports:
+      - "127.0.0.1:4173:4173"

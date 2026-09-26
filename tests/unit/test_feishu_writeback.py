@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from ppap_core.audits import RoundInput, findings_from_engine_results
 from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from ppap_core.feishu import UserTokens
-from ppap_core.feishu_writeback import FeishuWritebackError, comment_text, history_text, structured_blocks, writeback_state
+from ppap_core.feishu_writeback import FeishuWritebackError, comment_text, history_text, report_blocks, structured_blocks, writeback_state
 from ppap_core.writeback_targets import normalize_external_ref, public_target
 from ppap_core.fixtures import RULE_A
 from ppap_core.identity import SESSION_COOKIE
@@ -213,6 +213,49 @@ class HistorySemanticsTests(unittest.TestCase):
             "findings": [{"status": "ERR", "suggestions": "engine_error"}],
         }
         self.assertEqual(writeback_state(errored), "round_has_errors")
+
+    def test_deep_unable_and_na_are_not_written_as_pass(self):
+        body = {
+            "analysis_mode": "deep", "execution": "completed",
+            "inputs": [
+                {"role": "target", "file_version_id": "target-v", "original_filename": "plan.xlsx", "rule_version_id": "rule-v",
+                 "rule": {"title": "客户规则", "source_file_version_id": "original-v", "body": {"rules": [
+                     {"id": "R1", "rule_to_check": "频次须明确"}, {"id": "R2", "rule_to_check": "参考资料适用性"},
+                 ]}}},
+                {"role": "reference", "file_version_id": "reference-v", "original_filename": "flow.pdf"},
+            ],
+            "findings": [
+                {"item": "频次须明确", "status": "UNABLE", "suggestions": "请提供图例", "locator": {"file_version_id": "target-v", "semantic": {
+                    "rule_version_id": "rule-v", "clause_id": "R1", "rule_text": "频次须明确", "scope": {"total": 5, "checked": 3, "unknown": 2},
+                    "sources": [{"file_version_id": "target-v", "filename": "plan.xlsx", "role": "target", "locator": {"kind": "xlsx_cell", "sheet": "控制计划", "cell": "B2"}, "excerpt": "待确认"}],
+                }}},
+                {"item": "参考资料适用性", "status": "NA", "suggestions": "此组不适用", "locator": {"file_version_id": "target-v", "semantic": {
+                    "rule_version_id": "rule-v", "clause_id": "R2", "rule_text": "参考资料适用性", "scope": {"total": 1, "checked": 1, "unknown": 0},
+                    "sources": [{"file_version_id": "reference-v", "filename": "flow.pdf", "role": "reference", "locator": {"kind": "pdf_block", "page": 2, "block": 3}, "excerpt": "不适用"}],
+                }}},
+            ],
+        }
+        self.assertEqual(writeback_state(body), "ready")
+        summary = history_text(body)
+        self.assertIn("审核结果：UNABLE、NA", summary)
+        self.assertIn("条款核验记录（按条款累计）：共 6 条，已判断 4 条，无法判断 2 条", summary)
+        report_text = "\n".join(
+            element["text_run"]["content"]
+            for block in report_blocks(body)
+            for element in (block.get("text") or {}).get("elements", [])
+        )
+        self.assertIn("条款核验记录（按条款累计）：共 6 条，已判断 4 条，无法判断 2 条", report_text)
+        self.assertIn("本条核验记录：共 5 条，已判断 3 条，无法判断 2 条", report_text)
+        self.assertNotIn("审核结果：PASS", summary)
+        self.assertIn("频次须明确（UNABLE）：请提供图例", comment_text(body))
+        self.assertIn("参考资料适用性（NA）：此组不适用", comment_text(body))
+
+    def test_deep_global_failure_does_not_create_a_fake_finding(self):
+        body = {"analysis_mode": "deep", "execution": "failed", "failure": {"code": "MODEL_TIMEOUT"},
+                "inputs": [{"role": "target", "file_version_id": "v1", "original_filename": "plan.xlsx"}], "findings": []}
+        self.assertEqual(writeback_state(body), "round_incomplete")
+        with self.assertRaises(FeishuWritebackError):
+            history_text(body)
 
 
 class _WritebackMock:

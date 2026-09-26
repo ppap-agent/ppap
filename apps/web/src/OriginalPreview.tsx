@@ -1,14 +1,60 @@
 import {forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState} from 'react'
-import {apiUrl, originalUrl, request, type Material, type Finding} from './api'
-import {parseExcerptCells} from './helpers'
+import {apiUrl, originalUrl, request, type Material, type Finding, type SemanticSource} from './api'
+import {parseExcerptCells, sourceLocation} from './helpers'
 import OfficePreview from './OfficePreview'
 import Help from './Help'
 import {Download} from 'lucide-react'
-import {Button, Callout, CodeText, ExcerptCell, ExcerptCells, ExcerptList, ExcerptRow, Field, Heading, Icon, Inline, Input, Link, Pane, PlainText, PreviewFrame, Select, Stack, Text, VisuallyHidden} from './ui'
+import {Alert, AlertDescription} from '@/components/ui/alert'
+import {Button} from '@/components/ui/button'
+import {Input} from '@/components/ui/input'
+import {NativeSelect} from '@/components/ui/native-select'
+import {CodeText, ExcerptCell, ExcerptCells, ExcerptList, ExcerptRow, Pane, PlainText, PreviewFrame} from './ui/domain'
 
 interface Excerpt {
   available: boolean; text?: string; notice: string; sheets?: string[]; sheet?: string
   rows?: {number: number; text: string}[]; start_row?: number; end_row?: number; next_row?: number | null
+}
+
+interface OfficePreviewConfig {
+  available: boolean
+  script_url: string
+  config: Record<string, unknown>
+}
+
+interface OfficePreviewCacheEntry {
+  value: OfficePreviewConfig
+  expiresAt: number
+}
+
+// Office tickets are deliberately short-lived (the API issues them for ten
+// minutes). Keep the config in memory only, and for at most five minutes, so
+// revisiting the same file does not create another ticket while never turning
+// signed file URLs into persistent browser data.
+const officePreviewCache = new Map<string, OfficePreviewCacheEntry>()
+const OFFICE_PREVIEW_CACHE_MS = 5 * 60 * 1000
+
+function officePreviewCacheKey(file: Material, roundId?: string) {
+  return `${roundId || 'draft'}:${file.file_id}:${file.file_version_id}`
+}
+
+function officePreviewCacheExpiry(value: OfficePreviewConfig) {
+  const now = Date.now()
+  const configuredExpiry = typeof value.config.exp === 'number' ? value.config.exp * 1000 - 30_000 : now + OFFICE_PREVIEW_CACHE_MS
+  return Math.min(now + OFFICE_PREVIEW_CACHE_MS, configuredExpiry)
+}
+
+async function readOfficePreview(file: Material, roundId?: string): Promise<OfficePreviewConfig | null> {
+  const key = officePreviewCacheKey(file, roundId)
+  const cached = officePreviewCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  if (cached) officePreviewCache.delete(key)
+
+  const result = await request<OfficePreviewConfig>(`/files/${file.file_id}/versions/${file.file_version_id}/office${roundId ? `?round_id=${encodeURIComponent(roundId)}` : ''}`)
+  if (result.available) {
+    const expiresAt = officePreviewCacheExpiry(result)
+    if (expiresAt > Date.now()) officePreviewCache.set(key, {value: result, expiresAt})
+  }
+  return result
 }
 
 interface PreviewPosition {
@@ -28,7 +74,7 @@ function readPosition(key: string): PreviewPosition | null {
 
 export interface OriginalPreviewHandle {findEvidence: () => Promise<void>}
 
-const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roundId?: string; finding?: Finding}>(function OriginalPreview({file, roundId, finding}, ref) {
+const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roundId?: string; finding?: Finding; source?: SemanticSource | null}>(function OriginalPreview({file, roundId, finding, source}, ref) {
   const [excerpt, setExcerpt] = useState<Excerpt | null>(null)
   const [sheet, setSheet] = useState('')
   const [startRow, setStartRow] = useState(1)
@@ -43,7 +89,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
   const [notice, setNotice] = useState('请选择一份文件。')
   const [loading, setLoading] = useState(false)
   const [textMode, setTextMode] = useState(false)
-  const [office, setOffice] = useState<{available: boolean; script_url: string; config: Record<string, unknown>} | null>(null)
+  const [office, setOffice] = useState<OfficePreviewConfig | null>(null)
   const storageKey = `ppap-view:preview:${roundId || 'draft'}:${file?.file_version_id || ''}`
   const [readyKey, setReadyKey] = useState('')
   const pendingLookup = useRef(false)
@@ -217,6 +263,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
 
   function officeFailed() {
     setOffice(null)
+    if (fileRef.current) officePreviewCache.delete(officePreviewCacheKey(fileRef.current, roundRef.current))
     if (fileRef.current) void fallback(fileRef.current, revision.current, 'Office 预览暂不可用，以下为文字摘录。')
   }
 
@@ -251,8 +298,8 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
           const mime = ({pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp'} as Record<string, string>)[extension]
           setUrl(URL.createObjectURL(new Blob([data], {type: mime || 'application/octet-stream'})))
         } else {
-          let result: {available: boolean; script_url: string; config: Record<string, unknown>} | null = null
-          try { result = await request(`/files/${target.file_id}/versions/${target.file_version_id}/office${roundId ? `?round_id=${encodeURIComponent(roundId)}` : ''}`) }
+          let result: OfficePreviewConfig | null = null
+          try { result = await readOfficePreview(target, roundId) }
           catch { /* Keep the authorized text preview available. */ }
           if (current !== revision.current) return
           if (result?.available) setOffice(result)
@@ -284,6 +331,33 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
     return () => { revision.current += 1; controller.current?.abort() }
   }, [file?.file_version_id, roundId])
 
+  const sourceKey = source ? `${source.file_version_id}:${JSON.stringify(source.locator)}` : ''
+  useEffect(() => {
+    if (!source || !file || source.file_version_id !== file.file_version_id || readyKey !== storageKey || loading) return
+    excerptRevision.current += 1
+    pendingLookup.current = false
+    const position = source.locator
+    if (position.kind === 'xlsx_cell' || position.kind === 'xlsx_range') {
+      const address = position.kind === 'xlsx_cell' ? position.cell : position.start
+      const row = Number(address.match(/\d+/)?.[0])
+      if (!Number.isInteger(row) || row < 1) {
+        setLookupNote('证据坐标无法用于摘录定位，请按来源说明核对原件。')
+        return
+      }
+      const nextStart = Math.max(1, row - 2)
+      setTextMode(true)
+      setSheet(position.sheet)
+      setStartRow(nextStart)
+      setLookupRow(row)
+      setLookupNote(`按来源坐标 ${sourceLocation(source)} 打开相应行；请核对单元格与原件。`)
+      pendingLookup.current = true
+      void readSheet(position.sheet, nextStart)
+    } else {
+      setLookupRow(null)
+      setLookupNote(`来源位置：${sourceLocation(source)}。当前阅读器不支持精确跳转，请结合下方摘录核对原件。`)
+    }
+  }, [sourceKey, readyKey, storageKey, loading])
+
   function navigateSheet(nextSheet = sheet, nextStart = startRow) {
     setLookupRow(null)
     setLookupNote('')
@@ -292,65 +366,47 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
 
   return (
     <Pane kind="original" testId="file-preview">
-      <Inline justify="between" align="center">
-        <Heading level={2}>{file && !loading && !url && (textMode || (!office && excerpt?.available)) ? '文字摘录' : '原件'}<VisuallyHidden testId="file-preview-name"> · {file?.original_filename}</VisuallyHidden></Heading>
-        <Inline gap="xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
+        <h2 className="text-lg font-semibold tracking-tight">{file && !loading && !url && (textMode || (!office && excerpt?.available)) ? '文字摘录' : '原件'}<span data-testid="file-preview-name" className="sr-only"> · {file?.original_filename}</span></h2>
+        <div className="flex items-center gap-1">
           {office && <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void showText()}>{textMode ? '排版预览' : '文字摘录'}</Button>}
-          <Help title="预览说明"><Text>{file?.original_filename}</Text>{notice && <Text>{notice}</Text>}<Text>文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</Text></Help>
-          {file && <Link data-testid="open-original" href={originalUrl(file, roundId)} target="_blank" rel="noopener" aria-label="下载原件"><Icon icon={Download} size="md" /></Link>}
-        </Inline>
-      </Inline>
-      {loading && <Callout tone="loading">正在加载原件…</Callout>}
-      {lookupNote && !lookupRow && <Callout>{lookupNote}</Callout>}
+          <Help title="预览说明"><p className="m-0">{file?.original_filename}</p>{notice && <p className="m-0">{notice}</p>}<p className="m-0">文字摘录不保留完整排版和图片；公式不执行，含宏文件不运行宏。请以原件为准。</p></Help>
+          {file && <Button asChild variant="ghost" size="icon" data-testid="open-original"><a href={originalUrl(file, roundId)} target="_blank" rel="noopener" aria-label="下载原件"><Download className="size-4" /></a></Button>}
+        </div>
+      </div>
+      {loading && <p className="m-0 py-2 text-sm text-muted-foreground" role="status">正在准备原件…</p>}
+      {source && source.file_version_id !== file?.file_version_id && <Alert variant="destructive"><AlertDescription>本轮无法读取该来源文件版本。</AlertDescription></Alert>}
+      {lookupNote && <p className="m-0 border-l-2 border-primary/40 py-1 pl-3 text-sm text-muted-foreground" role="status">{lookupNote}</p>}
+      {source?.excerpt && <div className="border-l-2 border-muted-foreground/30 pl-3"><strong className="text-sm">引用摘录 · {source.role === 'target' ? '待审文件' : '参考资料'} · {sourceLocation(source)}</strong><PlainText>{source.excerpt}</PlainText></div>}
       {office && !textMode && <OfficePreview key={file?.file_version_id} scriptUrl={office.script_url} config={office.config} onFailed={officeFailed} />}
       {url && <PreviewFrame key={url} src={url} title={file?.original_filename || '原件预览'} />}
       {(!office || textMode) && (
-        <Stack gap="sm">
+        <div className="flex flex-col gap-3 pt-1">
           {(excerpt?.sheets?.length || sheet) && (
-            <Inline gap="sm" align="end" wrap>
-              <Field label="工作表">
-                <Select value={sheet} disabled={loading || searching} onChange={event => { const value = event.target.value; setSheet(value); setStartRow(1); navigateSheet(value, 1) }}>
-                  <option value="" disabled>选择工作表</option>
-                  {(excerpt?.sheets || [sheet]).filter(Boolean).map(name => <option key={name} value={name}>{name}</option>)}
-                </Select>
-              </Field>
-              <Field label="起始行">
-                <Input value={startRow} onChange={event => setStartRow(Number(event.target.value) || 1)} type="number" min={1} max={1048576} inputMode="numeric" enterKeyHint="go" disabled={loading || searching} />
-              </Field>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="grid gap-1.5 text-sm font-medium">工作表<NativeSelect value={sheet} disabled={loading || searching} onChange={event => { const value = event.target.value; setSheet(value); setStartRow(1); navigateSheet(value, 1) }}><option value="" disabled>选择工作表</option>{(excerpt?.sheets || [sheet]).filter(Boolean).map(name => <option key={name} value={name}>{name}</option>)}</NativeSelect></label>
+              <label className="grid gap-1.5 text-sm font-medium">起始行<Input value={startRow} onChange={event => setStartRow(Number(event.target.value) || 1)} type="number" min={1} max={1048576} inputMode="numeric" enterKeyHint="go" disabled={loading || searching} /></label>
               <Button type="button" disabled={!sheet || loading || searching} onClick={() => navigateSheet()}>定位</Button>
-            </Inline>
+            </div>
           )}
           {text && <Input aria-label="查找当前摘录" value={search} onChange={event => setSearch(event.target.value)} type="search" placeholder="查找文字或单元格，如 A35" enterKeyHint="search" autoCapitalize="none" />}
-          {notice && !text && <Callout>{notice}</Callout>}
-          {searching ? <Callout tone="loading">正在读取工作表…</Callout> : excerpt?.sheet ? (
-            <Stack gap="sm">
-              <Inline justify="between" align="center">
-                <Text size="sm" tone="muted">摘录 · 第 {excerpt.start_row}–{excerpt.end_row || excerpt.start_row} 行 · 非完整原件</Text>
-                <Button type="button" variant="ghost" size="sm" aria-pressed={rawExcerpt} onClick={() => setRawExcerpt(value => !value)}>{rawExcerpt ? '分格阅读' : '原始摘录'}</Button>
-              </Inline>
+          {notice && !text && <p className="m-0 text-sm text-muted-foreground">{notice}</p>}
+          {searching ? <p className="m-0 text-sm text-muted-foreground" role="status">正在读取工作表…</p> : excerpt?.sheet ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm text-muted-foreground">摘录 · 第 {excerpt.start_row}–{excerpt.end_row || excerpt.start_row} 行 · 非完整原件</span><Button type="button" variant="ghost" size="sm" aria-pressed={rawExcerpt} onClick={() => setRawExcerpt(value => !value)}>{rawExcerpt ? '分格阅读' : '原始摘录'}</Button></div>
               <ExcerptList label="工作表原文摘录" rootRef={excerptElement} onScroll={rememberPosition}>
                 {excerptRows.map(row => (
                   <ExcerptRow key={row.number} lookup={row.number === lookupRow}>
-                    <Inline justify="between">
-                      <Text as="strong" weight="semibold">第 {row.number} 行</Text>
-                      {row.number === lookupRow && <Text as="span" size="sm" tone="muted">查找线索 · 请核实</Text>}
-                    </Inline>
-                    {rawExcerpt
-                      ? <CodeText>{row.text}</CodeText>
-                      : <ExcerptCells>{parseExcerptCells(row.text).map((cell, index) => (
-                          <ExcerptCell key={index} address={cell.address || '原文'} formula={cell.formula} value={cell.value} />
-                        ))}</ExcerptCells>}
+                    <div className="flex items-center justify-between gap-2"><strong>第 {row.number} 行</strong>{row.number === lookupRow && <span className="text-sm text-muted-foreground">查找线索 · 请核实</span>}</div>
+                    {rawExcerpt ? <CodeText>{row.text}</CodeText> : <ExcerptCells>{parseExcerptCells(row.text).map((cell, index) => <ExcerptCell key={index} address={cell.address || '原文'} formula={cell.formula} value={cell.value} />)}</ExcerptCells>}
                   </ExcerptRow>
                 ))}
-                {!excerptRows.length && <Text>{search ? '当前摘录未找到匹配文字' : '此范围没有非空单元格'}</Text>}
+                {!excerptRows.length && <p className="m-0 p-3">{search ? '当前摘录未找到匹配文字' : '此范围没有非空单元格'}</p>}
               </ExcerptList>
-              <Inline justify="between">
-                <Button type="button" disabled={(excerpt.start_row || 1) <= 1} onClick={() => { const nextStart = Math.max(1, (excerpt.start_row || 1) - 200); setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>前 200 行</Button>
-                <Button type="button" disabled={!excerpt.next_row} onClick={() => { const nextStart = excerpt.next_row!; setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>后续行 →</Button>
-              </Inline>
-            </Stack>
+              <div className="flex items-center justify-between gap-2"><Button type="button" disabled={(excerpt.start_row || 1) <= 1} onClick={() => { const nextStart = Math.max(1, (excerpt.start_row || 1) - 200); setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>前 200 行</Button><Button type="button" disabled={!excerpt.next_row} onClick={() => { const nextStart = excerpt.next_row!; setStartRow(nextStart); navigateSheet(sheet, nextStart) }}>后续行 →</Button></div>
+            </div>
           ) : text ? <PlainText>{textLines.join('\n') || '当前摘录未找到匹配文字'}</PlainText> : null}
-        </Stack>
+        </div>
       )}
     </Pane>
   )

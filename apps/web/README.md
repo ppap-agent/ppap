@@ -1,6 +1,6 @@
 # Web Client
 
-浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。isolated-dev 通过 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动本地 Web。
+浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。生产构建包含 `/manifest.webmanifest`、应用图标和根作用域 service worker；service worker 只缓存应用壳与静态资源，不缓存 API 响应、上传内容、审核结果或 Office 签名地址。离线时只允许查看已加载页面，上传、审核提交和复核会明确提示需要联网。isolated-dev 通过 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动本地 Web。
 
 ## 当前 main
 
@@ -10,9 +10,11 @@
 
 在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。Docs-addon 的 `/addon` 宿主适配仍保留，继续进入同一产品 API，不是第二套 PC 界面。
 
+设计约束运行 `pnpm lint`。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件、Tailwind v4 主题和产品语义组合；`src/ui/domain.tsx` 只保留审核工作区、证据阅读和 OnlyOffice 等 PPAP 专属组合，不提供通用基础控件。`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。
+
 ## 规则准备
 
-PC 多选文件默认待审，参考资料可另行添加或修改角色。上传自动完成文件准备；后台任务提取客户、型号、零件并建议匹配规则，用户确认后提交。首页从 API 读取当前用户可访问的未提交草稿；URL 可回访草稿和审核，刷新不重新上传或提交。再次审核的来源轮次保存在草稿中，不依赖浏览器 URL。进入规则详情前保存当前资料，详情提供返回审核准备入口。
+多选文件默认参与审核；取消文件行的“审核”勾选后，该文件作为联合审核参考资料。上传自动完成文件准备；后台任务提取客户、型号、零件并建议匹配规则，用户确认后提交。首页从 API 读取当前用户可访问的未提交草稿；URL 可回访草稿和审核，刷新不重新上传或提交。再次审核的来源轮次保存在草稿中，不依赖浏览器 URL。进入规则详情前保存当前资料，详情提供返回审核准备入口。
 
 规则准备入口是 `/rules`：选择文档类型并上传 Excel、Word、文本 PDF、Markdown 或结构化 JSON → Worker 解析 → 核对适用范围，修正文件类型、名称与检查条目 → 保存规则。搜索、客户与历史版本筛选合并在列表上方，默认展示最新版本。`/rules?rule=<id>` 可直接回访详情。已保存规则可上传新版本，原版本与旧审核引用保持不变；来源原件独立检查文件权限。
 

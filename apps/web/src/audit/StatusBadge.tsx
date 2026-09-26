@@ -1,24 +1,25 @@
 import type {HTMLAttributes} from 'react'
 import {executionLabels, resultLabels, type Finding} from '../api'
-import {Badge, type BadgeTone, type Sealed} from '../ui/primitives'
+import {Badge} from '@/components/ui/badge'
 
-type BadgePassthrough = Sealed<HTMLAttributes<HTMLSpanElement>>
+type BadgePassthrough = HTMLAttributes<HTMLSpanElement>
 
-function executionTone(execution: string): BadgeTone {
-  if (execution === 'failed') return 'danger'
-  if (execution === 'completed') return 'success'
-  if (execution === 'queued' || execution === 'running') return 'info'
-  return 'neutral'
+function executionVariant(execution: string): 'destructive' | 'default' | 'outline' | 'secondary' {
+  if (execution === 'failed') return 'destructive'
+  if (execution === 'completed') return 'default'
+  if (execution === 'queued' || execution === 'running') return 'outline'
+  return 'secondary'
 }
 
-function findingTone(status: Finding['status']): BadgeTone {
-  if (status === 'PASS') return 'success'
-  if (status === 'NG') return 'warning'
-  return 'danger'
+function findingVariant(status: Finding['status']): 'destructive' | 'default' | 'outline' | 'secondary' {
+  if (status === 'PASS') return 'default'
+  if (status === 'NG' || status === 'UNABLE') return 'outline'
+  if (status === 'ERR') return 'destructive'
+  return 'secondary'
 }
 
 export function ExecutionBadge({execution, ...props}: {execution: string} & BadgePassthrough) {
-  return <Badge tone={executionTone(execution)} {...props}>{executionLabels[execution] || execution}</Badge>
+  return <Badge variant={executionVariant(execution)} {...props}>{executionLabels[execution] || execution}</Badge>
 }
 
 export function FindingBadge({
@@ -29,5 +30,5 @@ export function FindingBadge({
   status: Finding['status']
   prefix?: string
 } & BadgePassthrough) {
-  return <Badge tone={findingTone(status)} {...props}>{prefix ? prefix + ' · ' : ''}{resultLabels[status]}</Badge>
+  return <Badge variant={findingVariant(status)} {...props}>{prefix ? prefix + ' · ' : ''}{resultLabels[status]}</Badge>
 }

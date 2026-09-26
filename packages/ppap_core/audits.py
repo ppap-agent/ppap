@@ -21,7 +21,9 @@ EXEC_FAILED = "failed"
 PASS = "PASS"
 NG = "NG"
 ERR = "ERR"
-FINDING_STATUSES = {PASS, NG, ERR}
+UNABLE = "UNABLE"
+NA = "NA"
+FINDING_STATUSES = {PASS, NG, ERR, UNABLE, NA}
 
 KIND_PRESENCE = "presence"
 KIND_ENGINE = "engine"
@@ -33,7 +35,7 @@ ANALYSIS_MODES = {ANALYSIS_STANDARD, ANALYSIS_DEEP}
 EXECUTOR_STANDARD = "ppap-standard"
 EXECUTOR_DEEP = "ppap-deep"
 STANDARD_EXECUTOR_REVISION = "in-repo-engine-v1"
-DEEP_PROTOCOL_REVISION = "ppap-deep-v1"
+DEEP_PROTOCOL_REVISION = "ppap-deep-v2"
 
 
 def normalize_idempotency_key(value: Any) -> str:
@@ -99,6 +101,7 @@ class RoundInput:
     rule_body: dict[str, Any] | None = None
     sha256: str | None = None
     rule_execution: dict[str, Any] | None = None
+    rule_source_file_version_id: str | None = None
 
     def rule_kind(self) -> str:
         return str((self.rule_body or {}).get("kind") or KIND_ENGINE)

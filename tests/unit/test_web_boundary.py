@@ -29,7 +29,7 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertIn("h5-js-sdk", html)
         for required in ("/login/feishu/host", "/login/feishu?return_to=", "isFeishuHost", "/enter-legacy", "tenant_not_allowed"):
             self.assertIn(required, sources)
-        self.assertNotIn("仅海岸线", sources + (WEB / "addon.js").read_text())
+        self.assertNotIn("仅海岸线", sources)
         self.assertNotIn("X-Token", sources)
         self.assertNotIn("/uac/", sources)
         for obsolete in ("app.js", "audit-files.html", "rules.html", "usage.html", "product-api.js"):
@@ -48,7 +48,7 @@ class WebProductBoundaryTests(unittest.TestCase):
         sources = "\n".join(path.read_text() for path in (WEB / "src").rglob("*.tsx"))
         api = (WEB / "src/api.ts").read_text()
         self.assertIn("deep_offered", api)
-        self.assertRegex(sources, re.compile(r"deepOffered\s*&&[\s\S]{0,300}data-testid=\"analysis-mode\""))
+        self.assertRegex(sources, re.compile(r"deepOffered\s*&&[\s\S]{0,300}testId=\"analysis-mode\""))
 
     def test_web_usage_is_read_only(self):
         sources = "\n".join(path.read_text() for path in (WEB / "src").rglob("*") if path.suffix in {".ts", ".tsx"})
@@ -57,7 +57,7 @@ class WebProductBoundaryTests(unittest.TestCase):
         self.assertNotIn("/integrations/feishu/usage/report", sources)
 
     def test_clients_do_not_own_the_audit_cost_rate(self):
-        addon = (WEB / "addon.js").read_text()
+        addon = (WEB / "src/addon/main.tsx").read_text()
         sources = "\n".join(path.read_text() for path in (WEB / "src").rglob("*") if path.suffix in {".ts", ".tsx"})
         self.assertNotIn("AUDIT_COST_PER_FILE", addon + sources)
         self.assertNotIn("* 500", addon)

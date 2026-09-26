@@ -1,8 +1,10 @@
 import {useEffect, useState} from 'react'
 import {dateLabel, originalUrl, request} from '../api'
-import Help from '../Help'
 import {productHref, type ReturnTarget} from '../navigation/route'
-import {Badge, Button, Callout, FeedbackState, Heading, Inline, Link, Page, ReportBlock, Stack, Text} from '../ui'
+import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
+import {Badge} from '@/components/ui/badge'
+import {Button} from '@/components/ui/button'
+import {PageHeader, PageLayout} from '../ui/PageLayout'
 import type {RuleDetail as Detail} from './types'
 
 export default function RuleDetail({
@@ -16,27 +18,29 @@ export default function RuleDetail({
   returnLabel: string
   saved: boolean
 }) {
-  const listHref = productHref(returnTo ? {page: 'rule-library', returnTo} : {page: 'rule-library'})
   return (
-    <Page>
-      <Link data-testid="rule-return" href={returnTo ? productHref(returnTo) : listHref}>← {returnTo ? returnLabel : '规则库'}</Link>
-      <RuleDetailContent ruleId={ruleId} returnTo={returnTo} saved={saved} />
-    </Page>
+    <PageLayout>
+      <RuleDetailContent ruleId={ruleId} returnTo={returnTo} returnLabel={returnLabel} saved={saved} />
+    </PageLayout>
   )
 }
 
 function RuleDetailContent({
   ruleId,
   returnTo,
+  returnLabel,
   saved,
 }: {
   ruleId: string
   returnTo?: ReturnTarget
+  returnLabel: string
   saved: boolean
 }) {
   const [detail, setDetail] = useState<Detail | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
+  const listHref = productHref(returnTo ? {page: 'rule-library', returnTo} : {page: 'rule-library'})
+  const back = <a data-testid="rule-return" className="text-primary underline-offset-4 hover:underline" href={returnTo ? productHref(returnTo) : listHref}>← {returnTo ? returnLabel : '规则库'}</a>
 
   useEffect(() => {
     let active = true
@@ -47,8 +51,8 @@ function RuleDetailContent({
     return () => { active = false }
   }, [ruleId])
 
-  if (busy) return <Callout tone="loading">正在读取规则…</Callout>
-  if (!detail) return <Callout tone="error" id="rule-message" testId="rule-message">{error || '规则不存在'}</Callout>
+  if (busy) return <><PageHeader title="规则详情" back={back} /><Alert><AlertDescription>正在读取规则…</AlertDescription></Alert></>
+  if (!detail) return <><PageHeader title="规则详情" back={back} /><Alert variant="destructive" id="rule-message" data-testid="rule-message"><AlertDescription>{error || '规则不存在'}</AlertDescription></Alert></>
 
   const body = detail.body
   const isPresence = body.kind === 'presence'
@@ -61,44 +65,45 @@ function RuleDetailContent({
   }
 
   return (
-    <Stack gap="md">
-      {error && <Callout tone="error" id="rule-message" testId="rule-message">{error}</Callout>}
-      {saved && <Callout id="rule-message" testId="rule-message">已保存规则</Callout>}
-      <Inline justify="between" align="center" wrap>
-        <Heading level={1}>{detail.title}</Heading>
-        <Inline gap="xs" align="center"><Badge>{isPresence ? '资料就绪检测' : '机审清单'}</Badge>{!isPresence && <Help title="客户规则用途"><Text>保存后的规则条目是审核清单。能映射到内置检查的条目会机器执行；其余条目明确标为未覆盖，需人工核对。</Text></Help>}</Inline>
-      </Inline>
-      {isPresence ? <Text>仅确认待审文件可用于审核，不检查文件内容。</Text> : <>
-        <Text id="rule-origin" tone="muted">版本 · {dateLabel(detail.created_at)}</Text>
-        <Stack id="rule-metadata" gap="xs">
-          <Text>文件类型 · {body.type || '未指定'}</Text>
-          {!!body.customers?.length && <Text>适用客户 · {body.customers.join('、')}</Text>}
-          {!!body.models?.length && <Text>型号 · {body.models.join('、')}</Text>}
-          {!!body.parts?.length && <Text>零件 · {body.parts.join('、')}</Text>}
-          {!body.customers?.length && !body.models?.length && !body.parts?.length && <Text>适用范围 · 未填写</Text>}
-        </Stack>
-        <Inline gap="sm" wrap>
-          <Link id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">原始文件 ↗</Link>
-          {detail.predecessor_id && <Button type="button" disabled={busy} onClick={() => { location.href = productHref({page: 'rule-detail', ruleId: detail.predecessor_id!, returnTo}) }}>上一版本</Button>}
-          <Button type="button" disabled={busy} onClick={() => {
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title={detail.title}
+        back={back}
+        trailing={isPresence && <Badge>资料就绪检测</Badge>}
+        description={isPresence ? '仅确认待审文件可用于审核，不检查文件内容。' : undefined}
+        action={!isPresence && <>
+          <Button asChild variant="outline" size="sm"><a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">查看原件 ↗</a></Button>
+          {detail.predecessor_id && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => { location.href = productHref({page: 'rule-detail', ruleId: detail.predecessor_id!, returnTo}) }}>上一版本</Button>}
+          <Button type="button" size="sm" disabled={busy} onClick={() => {
             location.href = productHref({page: 'rule-import', predecessorId: detail.id, documentType: body.type, returnTo})
           }}>上传新版本</Button>
-        </Inline>
-        <Inline justify="between"><Heading level={2}>客户要求</Heading><Text tone="muted">{body.rules?.length || 0} 项</Text></Inline>
-        {!body.rules?.length && <FeedbackState title="未解析出规则条目" detail="请核对原始文件。" />}
-        <Stack id="rule-items" testId="rule-items" gap="md">
+        </>}
+      />
+      {error && <Alert variant="destructive" id="rule-message" data-testid="rule-message"><AlertDescription>{error}</AlertDescription></Alert>}
+      {saved && <Alert id="rule-message" data-testid="rule-message"><AlertDescription>已保存规则</AlertDescription></Alert>}
+      {!isPresence && <>
+        <div id="rule-metadata" className="flex flex-wrap gap-x-5 gap-y-1 border-y py-3 text-sm text-muted-foreground">
+          <span id="rule-origin">版本 · {dateLabel(detail.created_at)}</span>
+          <span>文件类型 · {body.type || '未指定'}</span>
+          {!!body.customers?.length && <span>客户 · {body.customers.join('、')}</span>}
+          {!!body.models?.length && <span>型号 · {body.models.join('、')}</span>}
+          {!!body.parts?.length && <span>零件 · {body.parts.join('、')}</span>}
+        </div>
+        <div className="flex items-baseline justify-between"><h2 className="text-base font-semibold">客户要求</h2><span className="text-sm text-muted-foreground">{body.rules?.length || 0} 条</span></div>
+        {!body.rules?.length && <Alert><AlertTitle>未解析出规则条目</AlertTitle><AlertDescription>请核对原始文件。</AlertDescription></Alert>}
+        <div id="rule-items" data-testid="rule-items" className="divide-y border-y">
           {(body.rules || []).map((item, index) => (
-            <ReportBlock key={item.id}>
-              <Inline gap="sm" align="center">
-                <Text as="span" tone="muted">{String(index + 1).padStart(2, '0')}</Text>
-                <Heading level={3}>{item.category}</Heading>
+            <article key={item.id} className="flex flex-col gap-1 px-3 py-4">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
+                <h3 className="text-base font-semibold">{item.category}</h3>
                 {item.priority && <Badge>{item.priority}</Badge>}
-              </Inline>
-              <Text>{item.rule_to_check}</Text>
-            </ReportBlock>
+              </div>
+              <p className="m-0 leading-relaxed">{item.rule_to_check}</p>
+            </article>
           ))}
-        </Stack>
+        </div>
       </>}
-    </Stack>
+    </div>
   )
 }

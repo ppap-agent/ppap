@@ -5,6 +5,7 @@
 !.env.dev
 !.env.production
 node_modules/
+**/.pnpm-store/
 dist/
 __pycache__/
 .venv/

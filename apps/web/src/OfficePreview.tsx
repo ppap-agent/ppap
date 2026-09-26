@@ -1,5 +1,6 @@
 import {useEffect, useId, useRef, useState} from 'react'
-import {Callout, OfficeFrame, OfficeHost} from './ui'
+import {LoaderCircle} from 'lucide-react'
+import {OfficeFrame, OfficeHost} from './ui/domain'
 
 interface Editor {destroyEditor: () => void}
 declare global {
@@ -46,5 +47,13 @@ export default function OfficePreview({scriptUrl, config, onFailed}: {scriptUrl:
     })()
     return () => { disposed = true; editor?.destroyEditor() }
   }, [scriptUrl, id])
-  return <OfficeFrame>{loading && <Callout tone="loading">正在加载 Office 排版预览…</Callout>}<OfficeHost id={id} /></OfficeFrame>
+  return <OfficeFrame>
+    <OfficeHost id={id} />
+    {loading && <div className="absolute inset-0 grid place-items-center bg-background/80" role="status">
+      <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground shadow-sm">
+        <LoaderCircle className="size-4 animate-spin text-primary" aria-hidden="true" />
+        <span>正在加载 Office 排版预览…</span>
+      </div>
+    </div>}
+  </OfficeFrame>
 }

@@ -1,13 +1,50 @@
 import {useEffect, useState} from 'react'
-import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type Round} from './api'
+import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type FindingStatus, type Round} from './api'
 import {productHref} from './navigation/route'
 import {ExecutionBadge} from './audit/StatusBadge'
-import {Badge, Button, Checkbox, DataTable, FeedbackState, Field, FilterBar, Inline, Input, Link, Page, PageHeader, Select, Text, type BadgeTone, type DataColumn} from './ui'
+import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
+import {Badge} from '@/components/ui/badge'
+import {Button} from '@/components/ui/button'
+import {Checkbox} from '@/components/ui/checkbox'
+import {Input} from '@/components/ui/input'
+import {NativeSelect} from '@/components/ui/native-select'
+import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table'
+import {DataSurface, FilterBar, PageHeader, PageLayout} from './ui/PageLayout'
 
-function countTone(status: string): BadgeTone {
-  if (status === 'PASS') return 'success'
-  if (status === 'NG') return 'warning'
-  return 'danger'
+function countVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'ERR') return 'destructive'
+  if (status === 'PASS') return 'default'
+  if (status === 'NG' || status === 'UNABLE') return 'outline'
+  return 'secondary'
+}
+
+const resultOrder: FindingStatus[] = ['NG', 'ERR', 'UNABLE', 'NA', 'PASS']
+type HistoryFilters = {query: string; execution: string; unreviewed: boolean}
+
+function targetName(row: Round) {
+  return row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、') || '未命名审核'
+}
+
+function HistoryMobileRow({row}: {row: Round}) {
+  const count = Object.values(row.result_counts || {}).reduce((sum, value) => sum + value, 0)
+  const pending = count > (row.reviewed_count || 0)
+  return <article data-testid="history-version" className="flex flex-col gap-3 border-b py-4 last:border-b-0">
+    <div className="flex min-w-0 items-start justify-between gap-3">
+      <div className="min-w-0">
+        <a className="block truncate font-medium text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: row.id})}>{targetName(row)}</a>
+        <p className="m-0 text-sm text-muted-foreground">{[dateLabel(row.created_at), row.analysis_mode === 'deep' ? analysisModeLabels.deep : null, row.predecessor_id ? '重审' : null].filter(Boolean).join(' · ')}</p>
+      </div>
+      {row.execution !== 'completed' && <ExecutionBadge execution={row.execution} />}
+    </div>
+    {row.execution === 'completed' && <div className="flex flex-wrap gap-2">
+      {resultOrder.map(status => row.result_counts?.[status] ? <Badge key={status} variant={countVariant(status)}>{resultLabels[status]} {row.result_counts[status]}</Badge> : null)}
+      {!count && <span className="text-sm text-muted-foreground">暂无检查项</span>}
+    </div>}
+    <div className="flex items-center justify-between gap-3 border-t pt-3 text-sm">
+      <span className="text-muted-foreground">{count ? `复核 ${row.reviewed_count || 0} / ${count}` : '暂无复核项'}</span>
+      <a className="shrink-0 text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: row.id, review: pending ? 'next' : undefined})}>{pending ? '继续复核 →' : '查看结果 →'}</a>
+    </div>
+  </article>
 }
 
 export default function HistoryView() {
@@ -15,17 +52,23 @@ export default function HistoryView() {
   const [query, setQuery] = useState('')
   const [execution, setExecution] = useState('')
   const [unreviewed, setUnreviewed] = useState(false)
+  const [applied, setApplied] = useState<HistoryFilters>({query: '', execution: '', unreviewed: false})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [next, setNext] = useState<number | null>(null)
 
-  async function load(reset = true, nextQuery = query, nextExecution = execution, nextUnreviewed = unreviewed) {
+  async function load(reset = true, filters = applied) {
     if (busy) return
+    if (reset) {
+      setRows([])
+      setNext(null)
+      setApplied(filters)
+    }
     setBusy(true)
     setError('')
     try {
       const result = await request<{rounds: Round[]; next_offset: number | null}>('/rounds?' + new URLSearchParams({
-        q: nextQuery, execution: nextExecution, unreviewed: String(nextUnreviewed), offset: String(reset ? 0 : next || 0),
+        q: filters.query, execution: filters.execution, unreviewed: String(filters.unreviewed), offset: String(reset ? 0 : next || 0),
       }))
       setRows(current => reset ? result.rounds : current.concat(result.rounds))
       setNext(result.next_offset)
@@ -40,93 +83,33 @@ export default function HistoryView() {
     return Object.values(row.result_counts || {}).reduce((sum, n) => sum + n, 0)
   }
 
-  const filtered = Boolean(query || execution || unreviewed)
-  const showToolbar = rows.length > 0 || filtered
-  const columns: Array<DataColumn<Round>> = [
-    {
-      key: 'files',
-      header: '审核资料',
-      role: 'title',
-      cell: row => <Link href={productHref({page: 'audit-round', roundId: row.id})}>{row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、')}</Link>,
-    },
-    {
-      key: 'when',
-      header: '提交时间',
-      role: 'when',
-      testId: 'history-version',
-      cell: row => (
-        <Inline gap="xs" wrap>
-          <Text as="span" size="sm" tone="muted">{dateLabel(row.created_at)}</Text>
-          {row.predecessor_id ? <Text as="small" size="xs" tone="muted">重审</Text> : null}
-          {row.analysis_mode === 'deep' ? <Text as="small" size="xs" tone="muted">{analysisModeLabels.deep}</Text> : null}
-        </Inline>
-      ),
-    },
-    {
-      key: 'result',
-      header: '检查结果',
-      role: 'result',
-      testId: 'history-result',
-      cell: row => row.execution !== 'completed'
-        ? <ExecutionBadge execution={row.execution} />
-        : (
-          <Inline gap="sm" wrap>
-            {['NG', 'ERR', 'PASS'].map(status => row.result_counts?.[status]
-              ? <Badge key={status} tone={countTone(status)}>{resultLabels[status]} {row.result_counts[status]}</Badge>
-              : null)}
-            {!total(row) ? <Text as="span" tone="muted">暂无检查项</Text> : null}
-          </Inline>
-        ),
-    },
-    {
-      key: 'review',
-      header: '人工复核',
-      role: 'meta',
-      cell: row => <Text as="span" size="sm" tone="muted">{total(row) ? (row.reviewed_count || 0) + ' / ' + total(row) : '—'}</Text>,
-    },
-    {
-      key: 'open',
-      header: '操作',
-      role: 'action',
-      cell: row => {
-        const pending = total(row) > (row.reviewed_count || 0)
-        return <Link href={productHref({page: 'audit-round', roundId: row.id, review: pending ? 'next' : undefined})}>{pending ? '继续复核' : '查看结果'} →</Link>
-      },
-    },
-  ]
-
+  const filtered = Boolean(applied.query || applied.execution || applied.unreviewed)
   return (
-    <Page>
-      <PageHeader
-        title="审核结果"
-        actions={rows.length > 0 ? <Link variant="primary" href={productHref({page: 'audit-new'})}>新建审核</Link> : undefined}
-      />
-      {showToolbar && (
-        <FilterBar onSubmit={() => { void load() }}>
-          <Input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} />
-          <Select value={execution} aria-label="执行状态" disabled={busy} onChange={event => { const value = event.target.value; setExecution(value); void load(true, query, value, unreviewed) }}>
-            <option value="">全部状态</option>
-            {Object.entries(executionLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </Select>
-          <Checkbox label="待复核" checked={unreviewed} disabled={busy} onChange={event => { const value = event.target.checked; setUnreviewed(value); void load(true, query, execution, value) }} />
-          <Button type="submit" disabled={busy}>搜索</Button>
-        </FilterBar>
-      )}
-      {error && <FeedbackState tone="error" inline title="无法加载审核结果" detail={error} testId="history-error" />}
-      {busy && !rows.length && <FeedbackState tone="loading" detail="正在加载审核结果…" />}
+    <PageLayout>
+      <PageHeader title="审核结果" action={<Button asChild size="sm"><a href={productHref({page: 'audit-new'})}>新建审核</a></Button>} />
+      <FilterBar as="form" role="search" label="筛选审核结果" className="grid items-center gap-2 lg:grid-cols-[minmax(0,1fr)_14rem_auto]" onSubmit={event => { event.preventDefault(); void load(true, {query, execution, unreviewed}) }}>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2"><Input value={query} onChange={event => setQuery(event.target.value)} type="search" placeholder="搜索文件或规则" aria-label="搜索审核结果" disabled={busy} /><Button type="submit" variant="outline" disabled={busy}>搜索</Button></div>
+        <NativeSelect value={execution} aria-label="执行状态" disabled={busy} onChange={event => setExecution(event.target.value)}>
+          <option value="">全部执行状态</option>
+          {Object.entries(executionLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </NativeSelect>
+        <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 text-sm text-muted-foreground"><Checkbox checked={unreviewed} disabled={busy} onCheckedChange={checked => setUnreviewed(checked === true)} /><span>仅待复核</span></label>
+      </FilterBar>
+      {error && <Alert variant="destructive" data-testid="history-error"><AlertTitle>无法加载审核结果</AlertTitle><AlertDescription><div className="flex flex-wrap items-center gap-2">{error}<Button type="button" variant="outline" disabled={busy} onClick={() => { void load(true, {query, execution, unreviewed}) }}>重试</Button></div></AlertDescription></Alert>}
+      {busy && !rows.length && <Alert><AlertDescription>正在加载审核结果…</AlertDescription></Alert>}
       {!busy && !rows.length && !error && (
-        <FeedbackState
-          title={filtered ? '没有符合条件的审核' : '还没有审核结果'}
-          detail={filtered ? '调整筛选条件，或清除筛选查看全部记录。' : '创建一次审核后，结果会保留在这里。'}
-          testId="history-empty"
-        >
-          {filtered
-            ? <Button type="button" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, '', '', false) }}>清除筛选</Button>
-            : <Link variant="primary" href={productHref({page: 'audit-new'})}>新建审核</Link>}
-        </FeedbackState>
+        <Alert data-testid="history-empty"><AlertTitle>{filtered ? '没有符合条件的审核' : '还没有审核结果'}</AlertTitle><AlertDescription>{filtered ? '调整筛选条件，或清除筛选查看全部记录。' : '创建一次审核后，结果会保留在这里。'}{filtered && <Button type="button" className="mt-2" onClick={() => { setQuery(''); setExecution(''); setUnreviewed(false); void load(true, {query: '', execution: '', unreviewed: false}) }}>清除筛选</Button>}</AlertDescription></Alert>
       )}
-      {!!rows.length && <DataTable rows={rows} columns={columns} layout="records" label="审核结果" testId="history-list" />}
+      {!!rows.length && <div data-testid="history-list">
+        <div data-testid="history-result" className="min-w-0">
+        <div className="hidden lg:block"><DataSurface><Table><TableHeader><TableRow><TableHead>审核资料</TableHead><TableHead>检查结果</TableHead><TableHead>人工复核</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{rows.map(row => {
+          const pending = total(row) > (row.reviewed_count || 0)
+          return <TableRow key={row.id}><TableCell><div className="flex flex-col gap-1"><a className="text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: row.id})}>{targetName(row)}</a><span className="text-sm text-muted-foreground">{[dateLabel(row.created_at), row.analysis_mode === 'deep' ? analysisModeLabels.deep : null, row.predecessor_id ? '重审' : null].filter(Boolean).join(' · ')}</span></div></TableCell><TableCell>{row.execution !== 'completed' ? <ExecutionBadge execution={row.execution} /> : <div className="flex flex-wrap gap-2">{resultOrder.map(status => row.result_counts?.[status] ? <Badge key={status} variant={countVariant(status)}>{resultLabels[status]} {row.result_counts[status]}</Badge> : null)}{!total(row) && <span className="text-muted-foreground">暂无检查项</span>}</div>}</TableCell><TableCell><span className="text-sm text-muted-foreground">{total(row) ? <>复核 {row.reviewed_count || 0} / {total(row)}</> : '—'}</span></TableCell><TableCell><a className="text-primary underline-offset-4 hover:underline" href={productHref({page: 'audit-round', roundId: row.id, review: pending ? 'next' : undefined})}>{pending ? '继续复核' : '查看结果'} →</a></TableCell></TableRow>
+        })}</TableBody></Table></DataSurface></div>
+        <div className="lg:hidden"><div className="divide-y">{rows.map(row => <HistoryMobileRow key={row.id} row={row} />)}</div></div>
+        </div>
+      </div>}
       {next !== null && <Button type="button" disabled={busy} onClick={() => void load(false)}>加载更多</Button>}
-    </Page>
+    </PageLayout>
   )
 }

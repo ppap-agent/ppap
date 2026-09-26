@@ -29,11 +29,10 @@ def map_rule_items(items: Sequence[dict[str, Any]], declarations: Sequence[tuple
         }
         if not item["id"]:
             continue
-        needles = {normalize_match_text(item["rule_to_check"]), normalize_match_text(item["category"])}
-        needles.discard("")
+        rule_text = normalize_match_text(item["rule_to_check"])
         match_offset = None
         for offset, (position, (method, description)) in enumerate(unused):
-            if normalize_match_text(description) in needles:
+            if rule_text and normalize_match_text(description) == rule_text:
                 match_offset = offset
                 item.update(
                     coverage=COVERAGE_MAPPED,

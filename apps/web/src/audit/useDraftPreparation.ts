@@ -3,6 +3,7 @@ import {
   deepOffered,
   request,
   upload,
+  UploadResultUnknown,
   type Analysis,
   type AnalysisMode,
   type Draft,
@@ -45,11 +46,11 @@ export function useDraftPreparation({
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [draftNext, setDraftNext] = useState<number | null>(null)
   const [draftLoading, setDraftLoading] = useState(false)
-  const [previousRound, setPreviousRound] = useState<Round | null>(null)
   const [savedDraft, setSavedDraft] = useState(JSON.stringify({items: [], analysis_mode: 'standard'}))
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('standard')
   const [estimate, setEstimate] = useState<QuotaEstimate | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [pendingUpload, setPendingUpload] = useState<{material: Material; remaining: number} | null>(null)
   const [draftPhase, setDraftPhase] = useState<DraftPhase>('idle')
 
   const itemsRef = useRef(items)
@@ -158,7 +159,7 @@ export function useDraftPreparation({
       if (disposed.current) return
       setItems(current => current.map(item => {
         if (item.file_version_id !== versionId) return item
-        const next = {...item, analysisStatus: job.status}
+        const next = {...item, analysisStatus: job.status, analysisReadFailed: false}
         if (job.status === 'succeeded' && job.result) {
           next.analysis = job.result
           if (item.role === 'target' && !item.rule_version_id) next.rule_version_id = job.result.matched_rule_id
@@ -167,7 +168,20 @@ export function useDraftPreparation({
       }))
       if (['queued', 'leased'].includes(job.status)) later(() => { void readAnalysis(versionId, id) })
     } catch {
-      setItems(current => current.map(item => item.file_version_id === versionId ? {...item, analysisStatus: 'failed'} : item))
+      if (!disposed.current) setItems(current => current.map(item => item.file_version_id === versionId ? {...item, analysisReadFailed: true} : item))
+    }
+  }
+
+  async function reloadAnalysis(item: Material) {
+    try {
+      const saved = await request<{analysis: Job<Analysis> | null}>(`/files/${item.file_id}/versions/${item.file_version_id}/analysis`)
+      if (disposed.current) return
+      setItems(current => current.map(row => row.file_version_id === item.file_version_id
+        ? {...row, analysisId: saved.analysis?.id, analysisReadFailed: false} : row))
+      if (saved.analysis) await readAnalysis(item.file_version_id, saved.analysis.id)
+    } catch {
+      if (!disposed.current) setItems(current => current.map(row => row.file_version_id === item.file_version_id
+        ? {...row, analysisReadFailed: true} : row))
     }
   }
 
@@ -219,14 +233,7 @@ export function useDraftPreparation({
       predecessorIdRef.current = from
       const serialized = JSON.stringify(draftSnapshot(draft.items, nextMode))
       setSavedDraft(serialized)
-          if (from) setPreviousRound(await request<Round>(`/rounds/${from}`))
-      for (const item of draft.items) {
-        const saved = await request<{analysis: Job<Analysis> | null}>(`/files/${item.file_id}/versions/${item.file_version_id}/analysis`)
-        if (saved.analysis) {
-          setItems(current => current.map(row => row.file_version_id === item.file_version_id ? {...row, analysisId: saved.analysis!.id} : row))
-          void readAnalysis(item.file_version_id, saved.analysis.id)
-        }
-      }
+      void Promise.all(draft.items.map(reloadAnalysis))
       return
     }
     await loadDrafts()
@@ -256,7 +263,6 @@ export function useDraftPreparation({
 
   async function startReaudit(current: Round) {
     await ensureRules()
-    setPreviousRound(current)
     setPredecessorId(current.id)
     predecessorIdRef.current = current.id
     const nextItems = current.inputs.map(item => ({...item}))
@@ -281,19 +287,58 @@ export function useDraftPreparation({
   }
 
   async function uploadFiles(files: File[], role: Material['role']) {
+    if (pendingUpload) return
     await action(async () => {
-      let list = itemsRef.current
-      for (const file of files) {
-        setMessage('正在上传 ' + file.name)
-        const material = await upload(file, role)
-        list = list.concat(material)
-        setItems(list)
-        itemsRef.current = list
-        await saveDraft(list)
-        void analyze(material)
+      try {
+        let list = itemsRef.current
+        for (const [index, file] of files.entries()) {
+          setMessage('正在上传 ' + file.name)
+          let material: Material
+          try {
+            material = await upload(file, role)
+          } catch (error) {
+            if (error instanceof UploadResultUnknown) {
+              setPendingUpload({material: error.material, remaining: files.length - index - 1})
+              throw error
+            }
+            if (error instanceof TypeError) throw new Error(`上传失败：${file.name}。请检查网络后重新选择文件。`)
+            throw error
+          }
+          list = list.concat(material)
+          setItems(list)
+          itemsRef.current = list
+          await saveDraft(list)
+          void analyze(material)
+        }
+      } finally {
+        setMessage('')
       }
-      setMessage('')
     })
+  }
+
+  async function checkPendingUpload() {
+    if (!pendingUpload) return
+    await action(async () => {
+      const material = pendingUpload.material
+      let status: string
+      try {
+        status = (await request<{status: string}>(`/files/${material.file_id}/versions/${material.file_version_id}`)).status
+      } catch {
+        throw new Error(`暂时无法读取 ${material.original_filename} 的上传结果，请稍后再次核对。`)
+      }
+      if (status !== 'ready') throw new Error(`${material.original_filename} 仍未就绪，请稍后再次核对。`)
+      const list = itemsRef.current.some(item => item.file_version_id === material.file_version_id)
+        ? itemsRef.current : itemsRef.current.concat(material)
+      setItems(list)
+      itemsRef.current = list
+      await saveDraft(list)
+      setPendingUpload(null)
+      void analyze(material)
+    })
+  }
+
+  function discardPendingUpload() {
+    setPendingUpload(null)
   }
 
   async function addFiles(event: ChangeEvent<HTMLInputElement>, role: Material['role']) {
@@ -304,7 +349,7 @@ export function useDraftPreparation({
 
   async function dropped(event: DragEvent) {
     setDragActive(false)
-    if (isBusy() || !event.dataTransfer?.files.length) return
+    if (isBusy() || pendingUpload || !event.dataTransfer?.files.length) return
     await uploadFiles(Array.from(event.dataTransfer.files), 'target')
   }
 
@@ -325,19 +370,15 @@ export function useDraftPreparation({
   }
 
   function matchingHelp(item: Material) {
-    if (['queued', 'leased'].includes(item.analysisStatus || '')) return '正在匹配。也可以先手动选择适用规则。'
-    if (!currentRules.length) return '规则库暂无规则，请先上传客户规则。'
-    if (['failed', 'unknown'].includes(item.analysisStatus || '') || item.analysis?.matching_status === 'failed') return '自动匹配未完成，请手动核对并选择规则。'
-    if (item.analysis?.document_type && !currentRules.some(rule => rule.type === item.analysis?.document_type)) return `识别为「${item.analysis.document_type}」，规则库暂无同类型规则。请核对类型或上传适用规则。`
-    return '请选择适用规则，或上传新规则。'
+    if (['queued', 'leased'].includes(item.analysisStatus || '')) return '匹配中，可手动选择'
+    if (!currentRules.length) return '规则库为空'
+    if (['failed', 'unknown'].includes(item.analysisStatus || '') || item.analysis?.matching_status === 'failed') return '匹配失败，请手动选择'
+    if (item.analysis?.document_type && !currentRules.some(rule => rule.type === item.analysis?.document_type)) return `无「${item.analysis.document_type}」规则`
+    return '未匹配规则'
   }
 
   function availableRules(item: Material) {
     return rules.filter(rule => currentRules.some(current => current.id === rule.id) || rule.id === item.rule_version_id)
-  }
-
-  function unchanged(item: Material) {
-    return previousRound?.inputs.some(previous => previous.file_version_id === item.file_version_id) || false
   }
 
   function markCurrentClean() {
@@ -354,10 +395,10 @@ export function useDraftPreparation({
     drafts,
     draftNext,
     draftLoading,
-    previousRound,
     analysisMode,
     estimate,
     dragActive,
+    pendingUpload,
     draftPhase,
     draftDirty,
     targetCount,
@@ -371,14 +412,16 @@ export function useDraftPreparation({
     loadDrafts,
     openRules,
     addFiles,
+    checkPendingUpload,
+    discardPendingUpload,
     dropped,
     setRole,
     setRule,
     removeItem,
     setMode,
     matchingHelp,
+    reloadAnalysis,
     availableRules,
-    unchanged,
     markCurrentClean,
   }
 }

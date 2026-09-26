@@ -20,7 +20,7 @@ def _held_production_secret(value: str) -> bool:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", populate_by_name=True, case_sensitive=True, env_file=None)
 
-    profile: Literal["isolated-dev", "production"] = Field(default="isolated-dev", alias="PPAP_PROFILE")
+    profile: Literal["isolated-dev", "remote-dev", "production"] = Field(default="isolated-dev", alias="PPAP_PROFILE")
     git_sha: str = Field(default="", alias="PPAP_BUILD_SHA")
 
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
@@ -107,7 +107,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
-        if self.profile != "production":
+        if self.profile == "isolated-dev":
             if not self.llm_base_url.strip():
                 self.llm_base_url = ISOLATED_DEV_LLM_BASE_URL
             if not self.llm_model.strip():
@@ -199,7 +199,7 @@ class Settings(BaseSettings):
         return origins
 
     def deep_offered(self) -> bool:
-        return self.profile != "production" or self.deep_customer_enabled
+        return self.profile == "isolated-dev" or self.deep_customer_enabled
 
     def allowed_tenant_keys(self) -> frozenset[str]:
         return frozenset(part.strip() for part in self.current_tenant_allowlist.split(",") if part.strip())

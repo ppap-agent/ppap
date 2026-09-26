@@ -1,0 +1,237 @@
+"""Business-only controller protocol. No caller-selected paths or commands."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Annotated, Any, Literal
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+from pydantic import Field, model_validator
+
+from .models import Artifact, AuditReport, RulePlan
+from .trace import AuditTrace
+
+Sha256 = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+FileFormat = Literal[".xlsx", ".xlsm", ".xls", ".docx", ".pdf"]
+RuleFormat = Literal[".xlsx", ".xlsm", ".xls", ".docx", ".pdf", ".json"]
+BusinessId = Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class DocumentRef(Artifact):
+    audit_id: BusinessId
+    filename: str = ""
+    sha256: Sha256
+    format: FileFormat
+    role: Literal["target", "context"]
+
+
+class RuleRef(Artifact):
+    rule_id: BusinessId
+    sha256: Sha256
+    format: RuleFormat
+    rule_version_id: BusinessId | None = None
+    plan_revision: Sha256
+    # Navigation from frozen rule ingestion; never an instruction or host capability.
+    clauses: list[dict[str, Any]] = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def published_source_identity(self) -> RuleRef:
+        if self.format == ".json" and self.rule_version_id is None:
+            raise ValueError("Published rule requires a rule version identity")
+        return self
+
+
+class SubmissionSpec(Artifact):
+    execution_id: UUID
+    submission_id: UUID
+    project_id: BusinessId
+    documents: list[DocumentRef] = Field(min_length=1, max_length=64)
+    rules: list[RuleRef] = Field(min_length=1, max_length=32)
+    targets: dict[BusinessId, BusinessId]
+    policy_revision: Sha256
+    semantic_engine_revision: Sha256
+
+    def expected_execution_id(self) -> UUID:
+        payload = self.model_dump(mode="json", exclude={"execution_id"})
+        data = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        return uuid5(NAMESPACE_URL, hashlib.sha256(data).hexdigest())
+
+    @model_validator(mode="after")
+    def exact_inputs(self) -> SubmissionSpec:
+        docs = {item.audit_id: item for item in self.documents}
+        rules = {item.rule_id: item for item in self.rules}
+        if len(docs) != len(self.documents) or len(rules) != len(self.rules):
+            raise ValueError("Duplicate input identity")
+        if not self.targets or set(self.targets) != {item.audit_id for item in self.documents if item.role == "target"}:
+            raise ValueError("Targets must exactly match target documents")
+        if set(self.targets.values()) != set(rules):
+            raise ValueError("Rules must exactly match target rules")
+        for rule in self.rules:
+            ids = [str(item.get("id") or i) for i, item in enumerate(rule.clauses, 1)]
+            if len(set(ids)) != len(ids):
+                raise ValueError("Duplicate rule clause identity")
+        return self
+
+
+class CompileSpec(Artifact):
+    execution_id: UUID
+    project_id: BusinessId
+    rules: list[RuleRef] = Field(min_length=1, max_length=32)
+    policy_revision: Sha256
+    semantic_engine_revision: Sha256
+
+    def expected_execution_id(self) -> UUID:
+        payload = self.model_dump(mode="json", exclude={"execution_id"})
+        data = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        return uuid5(NAMESPACE_URL, "compile:" + hashlib.sha256(data).hexdigest())
+
+    @model_validator(mode="after")
+    def exact_rules(self) -> CompileSpec:
+        identities = {item.rule_id for item in self.rules}
+        if len(identities) != len(self.rules):
+            raise ValueError("Duplicate rule identity")
+        for rule in self.rules:
+            ids = [str(item.get("id") or i) for i, item in enumerate(rule.clauses, 1)]
+            if len(set(ids)) != len(ids):
+                raise ValueError("Duplicate rule clause identity")
+        return self
+
+
+class SnapshotSpec(Artifact):
+    execution_id: UUID
+    submission_id: UUID
+    project_id: BusinessId
+    sha256: Sha256
+    format: FileFormat
+    semantic_engine_revision: Sha256
+
+    def expected_execution_id(self) -> UUID:
+        payload = self.model_dump(mode="json", exclude={"execution_id"})
+        return uuid5(NAMESPACE_URL, "snapshot:" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest())
+
+
+class SnapshotBundle(Artifact):
+    execution_id: UUID
+    semantic_engine_revision: Sha256
+    snapshot: dict[str, Any]
+
+
+class SnapshotRequest(Artifact):
+    method: Literal["snapshot_source"]
+    spec: SnapshotSpec
+    consumer_id: UUID
+
+
+ErrorCode = Literal[
+    "CONTROLLER_UNAVAILABLE",
+    "ISOLATION_UNAVAILABLE",
+    "INPUT_INTEGRITY_ERROR",
+    "PARSER_LIMIT",
+    "MODEL_TIMEOUT",
+    "MODEL_PROTOCOL_ERROR",
+    "OUTPUT_VALIDATION_ERROR",
+    "EVIDENCE_VALIDATION_ERROR",
+    "CANCELLED",
+    "RESOURCE_LIMIT",
+    "INVALID_REQUEST",
+]
+
+
+CompileValidationReason = Literal["coverage_mismatch", "source_locator_unresolved", "source_locator_empty"]
+
+
+class CompileDiagnostic(Artifact):
+    """Small reason for a failed compile repair. Not the rejected plan."""
+
+    stage: Literal["compile_repair_validation"]
+    reason: CompileValidationReason
+    rule_id: BusinessId
+    clause_id: str | None = Field(default=None, max_length=128)
+
+
+class CompileFailureRecord(Artifact):
+    """Host-side copy that survives guest cleanup."""
+
+    rule_id: BusinessId
+    source_sha256: Sha256
+    plan_revision: Sha256
+    engine_revision: Sha256
+    stage: Literal["compile_repair_validation"]
+    reason: CompileValidationReason
+    clause_id: str | None = Field(default=None, max_length=128)
+
+
+class GuestFault(Artifact):
+    """Bounded guest diagnostics; no exception text or caller-controlled payload."""
+
+    ok: Literal[False] = False
+    code: Literal["INPUT_INTEGRITY_ERROR", "PARSER_LIMIT", "MODEL_TIMEOUT", "MODEL_PROTOCOL_ERROR", "OUTPUT_VALIDATION_ERROR", "EVIDENCE_VALIDATION_ERROR", "RESOURCE_LIMIT"]
+    diagnostic: CompileDiagnostic | None = None
+
+
+class ControllerFault(RuntimeError):
+    def __init__(self, code: ErrorCode, diagnostic: CompileDiagnostic | None = None) -> None:
+        self.code = code
+        self.diagnostic = diagnostic
+        super().__init__(code)
+
+
+class ResultBundle(Artifact):
+    execution_id: UUID
+    semantic_engine_revision: Sha256
+    documents: dict[str, dict[str, Any]]
+    rule_sources: dict[str, dict[str, Any]]
+    plans: dict[str, RulePlan]
+    report: AuditReport
+    trace: AuditTrace
+    input_tokens: int = Field(default=0, ge=0, strict=True)
+    output_tokens: int = Field(default=0, ge=0, strict=True)
+    tool_calls: int = Field(default=0, ge=0, strict=True)
+    completed_tool_calls: int = Field(default=0, ge=0, strict=True)
+    compactions: int = Field(default=0, ge=0, strict=True)
+
+
+class CompileBundle(Artifact):
+    execution_id: UUID
+    semantic_engine_revision: Sha256
+    rule_sources: dict[str, dict[str, Any]]
+    plans: dict[str, RulePlan]
+    input_tokens: int = Field(default=0, ge=0, strict=True)
+    output_tokens: int = Field(default=0, ge=0, strict=True)
+
+
+class HealthRequest(Artifact):
+    method: Literal["health"]
+    operation: Literal["snapshot", "compile", "audit"] = "audit"
+
+
+class RunRequest(Artifact):
+    method: Literal["run_submission"]
+    spec: SubmissionSpec
+    consumer_id: UUID
+
+
+class CompileRequest(Artifact):
+    method: Literal["compile_rules"]
+    spec: CompileSpec
+    consumer_id: UUID
+
+
+class CancelRequest(Artifact):
+    method: Literal["cancel_submission"]
+    execution_id: UUID
+    consumer_id: UUID
+
+
+Request = Annotated[HealthRequest | RunRequest | CompileRequest | CancelRequest | SnapshotRequest, Field(discriminator="method")]
+
+
+class Response(Artifact):
+    ok: bool
+    code: ErrorCode | None = None
+    ready: bool | None = None
+    engine_revision: Sha256 | None = None
+    result: ResultBundle | None = None
+    compile_result: CompileBundle | None = None
+    snapshot_result: SnapshotBundle | None = None

@@ -378,9 +378,9 @@ class DocsAddonHostSdkTests(unittest.TestCase):
         self.assertIn("export {\n", vendor)
         self.assertIn("BlockitClient", vendor)
         self.assertIn("@lark-opdev/block-docs-addon-api@0.0.11", vendor)
-        addon = (ROOT / "apps" / "web" / "addon.js").read_text()
+        addon = (ROOT / "apps" / "web" / "src" / "addon" / "main.tsx").read_text()
         self.assertIn("window.self !== window.top", addon)
-        self.assertIn("./block-docs-addon-api.js", addon)
+        self.assertIn("/block-docs-addon-api.js", addon)
         self.assertIn("__PPAP_DOCS_ADDON_HOST__", addon)
         self.assertIn("${api}/me", addon)
         self.assertIn("existingSession", addon)
@@ -390,8 +390,9 @@ class DocsAddonHostSdkTests(unittest.TestCase):
         self.assertIn("writeback_target", addon)
         self.assertNotIn("AUDIT_COST_PER_FILE", addon)
         html = (ROOT / "apps" / "web" / "addon.html").read_text()
-        self.assertIn('href="./audit-files"', html)
-        self.assertNotIn("audit-files.html", html)
+        self.assertIn('/src/addon/main.tsx', html)
+        self.assertIn('href="/audit-files"', addon)
+        self.assertNotIn("audit-files.html", html + addon)
 
 
 if __name__ == "__main__":

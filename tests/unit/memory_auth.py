@@ -674,36 +674,53 @@ class MemoryAuthStore:
 
     def renew_job_lease(self, claimed, worker_ident):
         job = self.jobs.get(claimed.id)
-        if not job or job["attempt"] != claimed.attempt or job.get("lease_owner") != worker_ident or job["status"] != "leased":
+        if not job or job["attempt"] != claimed.attempt or job.get("lease_owner") != worker_ident or job["status"] != "leased" or (claimed.kind == 'audit' and claimed.payload.get('analysis_mode') == 'deep' and (not job.get("lease_until") or job["lease_until"] <= _now())):
             return False
         job["lease_until"] = _now() + timedelta(seconds=30)
         return True
 
+    def audit_progress(self, claimed: ClaimedJob, worker_ident: str, progress: dict) -> bool:
+        from ppap_deep.protocol import DeepProgress
+
+        safe = DeepProgress.model_validate(progress).model_dump(exclude_none=True)
+        safe["updated_at"] = _now().isoformat()
+        job = self.jobs.get(claimed.id)
+        attempt = self.attempts.get((claimed.id, claimed.attempt))
+        if (
+            not job
+            or job["attempt"] != claimed.attempt
+            or job.get("lease_owner") != worker_ident
+            or job["status"] != "leased"
+            or job.get("lease_until") is None
+            or job["lease_until"] <= _now()
+            or attempt is None
+        ):
+            return False
+        attempt["diagnostic"]["progress"] = safe
+        job["updated_at"] = safe["updated_at"]
+        return True
+
     def complete_job(self, claimed: ClaimedJob, worker_ident: str, result: dict, outcome: str = "succeeded") -> bool:
         job = self.jobs.get(claimed.id)
-        if not job or job["attempt"] != claimed.attempt or job.get("lease_owner") != worker_ident or job["status"] != "leased":
+        if not job or job["attempt"] != claimed.attempt or job.get("lease_owner") != worker_ident or job["status"] != "leased" or (claimed.kind == 'audit' and claimed.payload.get('analysis_mode') == 'deep' and (not job.get("lease_until") or job["lease_until"] <= _now())):
             return False
         job["status"] = "succeeded" if outcome == "succeeded" else "failed"
         job["lease_until"] = None
         if claimed.kind in {"rule_parse", "file_analysis"}:
             job["result"] = result
         findings = result.get("findings") or []
-        self.attempts[(claimed.id, claimed.attempt)] = {
-            "worker_id": worker_ident,
-            "diagnostic": {
-                "note": result.get("note") or "round_audit",
-                "finding_count": len(findings),
-                **(
-                    {
-                        "executor": claimed.payload.get("executor"),
-                        "executor_revision": claimed.payload.get("executor_revision"),
-                    }
-                    if isinstance(claimed.payload, dict) and claimed.payload.get("executor")
-                    else {}
-                ),
-            },
-            "outcome": outcome,
-        }
+        attempt = self.attempts[(claimed.id, claimed.attempt)]
+        diagnostic = attempt["diagnostic"]
+        diagnostic.update({"note": result.get("note") or "round_audit", "finding_count": len(findings)})
+        if isinstance(claimed.payload, dict) and claimed.payload.get("executor"):
+            diagnostic.update({
+                "executor": claimed.payload["executor"],
+                "executor_revision": claimed.payload.get("executor_revision"),
+            })
+        for key in ("failure", "usage"):
+            if key in result:
+                diagnostic[key] = result[key]
+        attempt["outcome"] = outcome
         if not claimed.round_id:
             return True
         if claimed.round_id not in self.rounds:
@@ -931,15 +948,23 @@ class MemoryAuthStore:
                 }
             )
         payload = {}
+        diagnostic = {}
+        job_updated_at = None
         for job in self.jobs.values():
             if job.get("kind") == "audit" and isinstance(job.get("payload"), dict) and job["payload"].get("round_id") == round_id:
                 payload = job["payload"]
+                attempt = self.attempts.get((job["id"], job["attempt"]))
+                diagnostic = attempt["diagnostic"] if attempt else {}
+                job_updated_at = job.get("updated_at")
                 break
         extra = {}
         if payload.get("executor"):
             extra["executor"] = payload["executor"]
         if payload.get("executor_revision"):
             extra["executor_revision"] = payload["executor_revision"]
+        progress = diagnostic.get("progress")
+        if progress and row["execution"] == EXEC_RUNNING and job_updated_at:
+            progress = {**progress, "updated_at": job_updated_at}
         return {
             "id": round_id,
             "execution": row["execution"],
@@ -951,6 +976,8 @@ class MemoryAuthStore:
             "analysis_mode": normalize_analysis_mode(row.get("analysis_mode")),
             "writeback": public_target(self.round_writebacks.get(round_id)),
             **extra,
+            "progress": progress,
+            "failure": diagnostic.get("failure"),
             "inputs": inputs,
             "findings": findings,
         }
