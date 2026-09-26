@@ -88,8 +88,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Ensure Docker
-        uses: ./.github/actions/ensure-docker
+      - name: Assert Docker
+        uses: ./.github/actions/assert-docker
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -129,8 +129,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Ensure Docker
-        uses: ./.github/actions/ensure-docker
+      - name: Assert Docker
+        uses: ./.github/actions/assert-docker
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -170,8 +170,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Ensure Docker
-        uses: ./.github/actions/ensure-docker
+      - name: Assert Docker
+        uses: ./.github/actions/assert-docker
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -257,9 +257,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Ensure Docker
-        uses: ./.github/actions/ensure-docker
-      - name: Run PSW corpus in worker image
+      - name: Assert Docker
+        uses: ./.github/actions/assert-docker
+      - name: Run PSW corpus in purpose-built test image
         env:
           PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -273,10 +273,14 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx bake worker
+          docker build \
+            --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
+            --build-context psw-tests=tests \
+            --build-context psw-assets="assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书" \
+            -f tests/corpus/Dockerfile.psw \
+            -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
+            .
           docker run --rm \
-            --entrypoint sh \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
             -e OPENAI_API_KEY \
             -e OPENAI_BASE_URL \
             -e MODEL_NAME \
@@ -285,10 +289,5 @@ jobs:
             -e OCR_OPENAI_API_KEY \
             -e OCR_OPENAI_BASE_URL \
             -e OCR_MODEL_NAME \
-            "ppap-worker:${PPAP_BUILD_SHA}" \
-            -c 'set -eu
-                unset PYTHONPATH
-                command -v soffice
-                command -v ppap-local-converter-sandbox
-                python -m pip install --no-cache-dir pytest==7.4.3 pytest-asyncio==0.21.1
-                python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q'
+            "ppap-psw-test:${PPAP_BUILD_SHA}" \
+            python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q

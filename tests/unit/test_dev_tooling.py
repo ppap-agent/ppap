@@ -334,35 +334,61 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.sha", workflow)
 
     def test_ci_asserts_docker_capability_without_host_repair(self):
-        ensure = (ROOT / ".github" / "actions" / "ensure-docker" / "action.yml").read_text()
-        self.assertIn("runner does not satisfy ppap-docker capability", ensure)
-        self.assertIn("command -v docker", ensure)
-        self.assertIn("docker info", ensure)
-        self.assertIn("docker compose version", ensure)
-        self.assertIn("docker buildx version", ensure)
-        for needle in (
-            "sudo",
-            "apt-get",
-            "yum ",
-            "apk ",
-            "systemctl",
-            "dockerd",
-            "iptables",
-            "ppap-icc-probe",
-            "chmod",
-        ):
-            self.assertNotIn(needle, ensure)
+        self.assertFalse((ROOT / ".github" / "actions" / "ensure-docker").exists())
+        action = (ROOT / ".github" / "actions" / "assert-docker" / "action.yml").read_text()
+        self.assertIn("runner does not satisfy ppap-docker capability", action)
+        self.assertIn("command -v docker", action)
+        self.assertIn("docker info", action)
+        self.assertIn("docker compose version", action)
+        self.assertIn("docker buildx version", action)
+        github_yaml = [
+            path.read_text()
+            for path in (ROOT / ".github").rglob("*")
+            if path.is_file() and path.suffix in {".yml", ".yaml"}
+        ]
+        self.assertTrue(github_yaml)
+        for text in github_yaml:
+            for needle in (
+                "sudo",
+                "apt-get",
+                "yum ",
+                "apk ",
+                "systemctl",
+                "dockerd",
+                "iptables",
+                "ppap-icc-probe",
+                "chmod",
+            ):
+                self.assertNotIn(needle, text)
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
-        self.assertEqual(workflow.count("uses: ./.github/actions/ensure-docker"), 4)
-        self.assertEqual(lifecycle.count("uses: ./.github/actions/ensure-docker"), 1)
+        self.assertEqual(workflow.count("uses: ./.github/actions/assert-docker"), 4)
+        self.assertEqual(lifecycle.count("uses: ./.github/actions/assert-docker"), 1)
+        self.assertNotIn("ensure-docker", workflow)
+        self.assertNotIn("ensure-docker", lifecycle)
         self.assertNotIn("postgresql-client", workflow)
         self.assertNotIn("libreoffice-writer", workflow)
-        self.assertNotIn("apt-get", workflow)
         self.assertNotIn("libc6-dev", workflow)
         self.assertNotIn("legacy_doc_sandbox.c", workflow)
+        self.assertNotIn("${GITHUB_WORKSPACE}:/workspace", workflow)
+        self.assertNotIn("$PWD:/workspace", workflow)
         self.assertIn("docker buildx bake worker", workflow)
         self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", workflow)
+        self.assertIn("ppap-psw-test:${PPAP_BUILD_SHA}", workflow)
+        self.assertIn("tests/corpus/Dockerfile.psw", workflow)
+        self.assertIn("--build-context psw-tests=tests", workflow)
+        self.assertIn("--build-context psw-assets=", workflow)
+        dockerfile = (ROOT / "tests" / "corpus" / "Dockerfile.psw").read_text()
+        self.assertIn("ARG PPAP_WORKER_IMAGE=ppap-worker:unknown", dockerfile)
+        self.assertIn("FROM ${PPAP_WORKER_IMAGE}", dockerfile)
+        self.assertIn("COPY --from=psw-tests", dockerfile)
+        self.assertIn("COPY --from=psw-assets", dockerfile)
+        self.assertIn("pytest==7.4.3", dockerfile)
+        self.assertIn("pytest-asyncio==0.21.1", dockerfile)
+        self.assertNotIn("apt-get", dockerfile)
+        app = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
+        self.assertNotIn("Dockerfile.psw", app)
+        self.assertNotIn("pytest==7.4.3", app)
         upgrade = (ROOT / "tests" / "schema" / "test_upgrade.py").read_text()
         self.assertIn("container-native psql", upgrade)
         self.assertIn('"exec"', upgrade)

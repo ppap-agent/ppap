@@ -18,13 +18,19 @@ python -m pytest tests/corpus/v2_assets --ftype excel -q
 python -m pytest tests/corpus/v2_assets --ftype pdf -q
 python -m pytest tests/corpus/v2_assets --ftype scanned -q
 python -m pytest tests/corpus/v3_poc -q
-# PSW .doc 用例在 ppap-worker 镜像中运行（含 LibreOffice 与 sandbox）
+# PSW .doc 用例在从 ppap-worker 派生的测试镜像中运行（含 LibreOffice 与 sandbox）
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake worker
-docker run --rm --entrypoint sh \
-  -v "$PWD":/workspace -w /workspace \
-  "ppap-worker:${PPAP_BUILD_SHA}" \
-  -c 'unset PYTHONPATH; python -m pip install --no-cache-dir pytest==7.4.3 pytest-asyncio==0.21.1 && python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q'
+docker build \
+  --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
+  --build-context psw-tests=tests \
+  --build-context psw-assets="assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书" \
+  -f tests/corpus/Dockerfile.psw \
+  -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
+  .
+docker run --rm \
+  "ppap-psw-test:${PPAP_BUILD_SHA}" \
+  python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
 ## Schema / deploy / E2E

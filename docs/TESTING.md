@@ -24,7 +24,8 @@ CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 - **user-space**：workflow 可以安装 uv/Python、Node、Corepack/pnpm、项目依赖和 Playwright。
 - **Docker**：`command -v docker`、`docker info`、`docker compose version`、`docker buildx version` 必须已经可用。缺任一能力时 fail-fast：`runner does not satisfy ppap-docker capability`。workflow 不安装 Docker、不启动 daemon、不 chmod socket、不修改 iptables。
 - **schema**：使用 isolated-dev PostgreSQL 容器内的 `psql`（`docker compose exec -T postgres psql`），不要求 host `psql`。
-- **PSW `.doc`**：在已有的 `ppap-worker` 镜像中运行（镜像已含 LibreOffice 与 `ppap-local-converter-sandbox`），不在 host 上 apt-install LibreOffice 或 gcc。
+- **PSW `.doc`**：从已构建的 `ppap-worker` 派生一次性测试镜像，通过 build context COPY tests/fixtures（不 bind-mount 仓库路径），并只安装 pytest。生产 worker 镜像不变，也不在 host 上 apt-install LibreOffice 或 gcc。
+- **Compose 路径**：现有 Compose stack 仍会把仓库内 `migrations/` bind-mount 进容器。这些 job 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，由 #100 处理；本契约不新增 host-workspace bind mount。
 - **非 Docker job**：Web contract、Python unit、InsForge config 和普通 corpus 不要求 Docker。
 
 ## 当前可运行入口
@@ -56,10 +57,16 @@ python -m pytest tests/corpus/v2_assets --ftype scanned -q
 python -m pytest tests/corpus/v3_poc -q
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake worker
-docker run --rm --entrypoint sh \
-  -v "$PWD":/workspace -w /workspace \
-  "ppap-worker:${PPAP_BUILD_SHA}" \
-  -c 'unset PYTHONPATH; python -m pip install --no-cache-dir pytest==7.4.3 pytest-asyncio==0.21.1 && python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q'
+docker build \
+  --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
+  --build-context psw-tests=tests \
+  --build-context psw-assets="assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书" \
+  -f tests/corpus/Dockerfile.psw \
+  -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
+  .
+docker run --rm \
+  "ppap-psw-test:${PPAP_BUILD_SHA}" \
+  python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
@@ -74,7 +81,7 @@ python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
 
-PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再在 `ppap-worker` 镜像里跑 pytest（镜像构建已包含 LibreOffice 与 sandbox）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
+PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
 #7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开本轮原件版本（或看到 locator-gap）、原件预览、复核、显式重审，以及从账号菜单查看用量和从主导航查看审核结果：
 
