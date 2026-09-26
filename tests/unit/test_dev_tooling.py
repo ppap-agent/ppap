@@ -328,14 +328,46 @@ class DeployContractTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         self.assertIn("up -d postgres --wait", workflow)
         self.assertIn("run --rm init-db", workflow)
-        ensure = (ROOT / ".github" / "actions" / "ensure-docker" / "action.yml").read_text()
-        self.assertIn("not installing docker.io", ensure)
-        self.assertIn("iptables-legacy", ensure)
-        self.assertIn("ppap-icc-probe", ensure)
         isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
         self.assertNotIn("127.0.0.1:9000:9000", isolated)
         self.assertNotIn("127.0.0.1:9001:9001", isolated)
         self.assertIn("github.event.pull_request.head.sha", workflow)
+
+    def test_ci_asserts_docker_capability_without_host_repair(self):
+        ensure = (ROOT / ".github" / "actions" / "ensure-docker" / "action.yml").read_text()
+        self.assertIn("runner does not satisfy ppap-docker capability", ensure)
+        self.assertIn("command -v docker", ensure)
+        self.assertIn("docker info", ensure)
+        self.assertIn("docker compose version", ensure)
+        self.assertIn("docker buildx version", ensure)
+        for needle in (
+            "sudo",
+            "apt-get",
+            "yum ",
+            "apk ",
+            "systemctl",
+            "dockerd",
+            "iptables",
+            "ppap-icc-probe",
+            "chmod",
+        ):
+            self.assertNotIn(needle, ensure)
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
+        self.assertEqual(workflow.count("uses: ./.github/actions/ensure-docker"), 4)
+        self.assertEqual(lifecycle.count("uses: ./.github/actions/ensure-docker"), 1)
+        self.assertNotIn("postgresql-client", workflow)
+        self.assertNotIn("libreoffice-writer", workflow)
+        self.assertNotIn("apt-get", workflow)
+        self.assertNotIn("libc6-dev", workflow)
+        self.assertNotIn("legacy_doc_sandbox.c", workflow)
+        self.assertIn("docker buildx bake worker", workflow)
+        self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", workflow)
+        upgrade = (ROOT / "tests" / "schema" / "test_upgrade.py").read_text()
+        self.assertIn("container-native psql", upgrade)
+        self.assertIn('"exec"', upgrade)
+        self.assertIn("/migrations/", upgrade)
+        self.assertNotIn('["psql"', upgrade)
 
 
 if __name__ == "__main__":

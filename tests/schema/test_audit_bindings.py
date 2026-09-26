@@ -7,7 +7,7 @@ import unittest
 import uuid
 
 import tests.pathsetup  # noqa: F401
-from tests.schema.test_upgrade import MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password, _migrator_user, _psql, _require
+from tests.schema.test_upgrade import MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password, _migrator_user, _psql, _require, _require_postgres
 
 
 class AuditDatabaseCase(unittest.TestCase):
@@ -18,9 +18,7 @@ class AuditDatabaseCase(unittest.TestCase):
         from ppap_core.settings import Settings
         from tests.unit.memory_auth import MemoryObjects
 
-        probe = _psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-Atc", "SELECT 1")
-        if probe.returncode:
-            self.skipTest("postgres is not reachable with native psql")
+        _require_postgres(self)
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
         _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {_migrator_user()}"), "create isolated audit DB")
         self.addCleanup(lambda: _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))

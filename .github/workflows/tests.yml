@@ -184,38 +184,10 @@ jobs:
           rm -rf .venv
           uv venv --python 3.12 --seed .venv
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
-      - name: Ensure PostgreSQL client
-        run: |
-          set -euo pipefail
-          if ! command -v psql >/dev/null 2>&1; then
-            for attempt in 1 2 3; do
-              if sudo apt-get -o Acquire::Retries=5 update \
-                && sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends postgresql-client; then
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
-                echo "apt could not install postgresql-client" >&2
-                exit 1
-              fi
-              sleep $((attempt * 4))
-            done
-          fi
-          command -v psql
       - name: Empty and previous schema upgrade
         run: |
           set -euo pipefail
           uv pip install -e ".[dev]"
-          export PGHOST=127.0.0.1
-          export PGPORT=5432
-          export PGUSER=ppap
-          export PGPASSWORD=ppap_isolated_dev
-          export PPAP_PG_DATABASE=ppap
-          export PPAP_PG_MIGRATOR_USER=ppap_migrator
-          export PPAP_PG_MIGRATOR_PASSWORD=ppap_isolated_dev
-          export PPAP_PG_API_USER=ppap_api
-          export PPAP_PG_API_PASSWORD=ppap_isolated_dev
-          export PPAP_PG_WORKER_USER=ppap_worker
-          export PPAP_PG_WORKER_PASSWORD=ppap_isolated_dev
           compose() { docker compose -f deploy/isolated-dev/compose.yaml "$@"; }
           dump() { compose ps -a || true; compose logs --no-color --timestamps postgres init-db || true; }
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
@@ -240,20 +212,13 @@ jobs:
       matrix:
         include:
           - name: V2 4.8 excel
-            extra: ""
             args: tests/corpus/v2_assets --ftype excel -q
           - name: V2 4.8 pdf
-            extra: ""
             args: tests/corpus/v2_assets --ftype pdf -q
           - name: V2 4.8 scanned
-            extra: ""
             args: tests/corpus/v2_assets --ftype scanned -q
           - name: V3 POC grouped
-            extra: ""
             args: tests/corpus/v3_poc -q
-          - name: PSW cross-format
-            extra: libreoffice
-            args: tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -272,31 +237,6 @@ jobs:
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Canonical install
         run: uv pip install -e ".[dev]"
-      - name: Install LibreOffice and DOC sandbox
-        if: matrix.extra == 'libreoffice'
-        run: |
-          set -euo pipefail
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
-          if ! command -v soffice >/dev/null; then
-            for attempt in 1 2 3 4 5; do
-              if sudo apt-get -o Acquire::Retries=5 update \
-                && sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends libreoffice-writer gcc libc6-dev; then
-                break
-              fi
-              if [ "$attempt" -eq 5 ]; then
-                echo "apt could not install libreoffice-writer" >&2
-                exit 1
-              fi
-              sleep $((attempt * 4))
-            done
-          elif ! command -v gcc >/dev/null; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends gcc libc6-dev
-          fi
-          sudo gcc -O2 -Wall -Wextra -Werror \
-            -o /usr/local/bin/ppap-local-converter-sandbox \
-            packages/ppap_docops/native/legacy_doc_sandbox.c
-          command -v soffice
-          test -x /usr/local/bin/ppap-local-converter-sandbox
       - name: Run in-repo corpus pytest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -308,3 +248,47 @@ jobs:
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
         run: uv run pytest ${{ matrix.args }}
+
+  psw:
+    name: PSW cross-format
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Ensure Docker
+        uses: ./.github/actions/ensure-docker
+      - name: Run PSW corpus in worker image
+        env:
+          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
+          PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
+          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
+          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
+          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+        run: |
+          set -euo pipefail
+          docker buildx bake worker
+          docker run --rm \
+            --entrypoint sh \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            -e OPENAI_API_KEY \
+            -e OPENAI_BASE_URL \
+            -e MODEL_NAME \
+            -e PADDLE_OCR_URL \
+            -e PADDLE_TOKEN \
+            -e OCR_OPENAI_API_KEY \
+            -e OCR_OPENAI_BASE_URL \
+            -e OCR_MODEL_NAME \
+            "ppap-worker:${PPAP_BUILD_SHA}" \
+            -c 'set -eu
+                unset PYTHONPATH
+                command -v soffice
+                command -v ppap-local-converter-sandbox
+                python -m pip install --no-cache-dir pytest==7.4.3 pytest-asyncio==0.21.1
+                python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q'

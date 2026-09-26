@@ -9,7 +9,7 @@ from unittest.mock import patch
 import tests.pathsetup  # noqa: F401
 from tests.schema.test_upgrade import (
     MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password,
-    _migrator_user, _psql, _require,
+    _migrator_user, _psql, _require, _require_postgres,
 )
 
 
@@ -24,9 +24,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
         from tests.unit.memory_auth import MemoryObjects
         from tests.unit.test_rules import rule_body
 
-        probe = _psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-Atc", "SELECT 1")
-        if probe.returncode:
-            self.skipTest("postgres is not reachable with native psql")
+        _require_postgres(self)
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]
         _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {_migrator_user()}"), "create isolated rule parse DB")
         try:
