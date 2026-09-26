@@ -19,6 +19,4 @@ apps/web/runtime-config.json
 *.egg-info/
 playwright/.auth/
 test-results/
-playwright-report/
-blob-report/
 .insforge/

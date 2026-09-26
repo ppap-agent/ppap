@@ -30,8 +30,6 @@ jobs:
           node-version: 22
       - name: Typecheck, test, lint, and production build
         working-directory: apps/web
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: |
           set -euo pipefail
           corepack enable
@@ -133,21 +131,25 @@ jobs:
           persist-credentials: false
       - name: Ensure Docker
         uses: ./.github/actions/ensure-docker
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          node-version: 22
-      - name: Isolated-dev compose and Playwright
+          version: "0.9.26"
+          enable-cache: true
+      - name: Set up Python
+        run: |
+          set -euo pipefail
+          uv python install 3.12
+          rm -rf .venv
+          uv venv --python 3.12 --seed .venv
+          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Isolated-dev compose and browser loop
         env:
           PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          corepack enable
-          corepack prepare pnpm@10.30.3 --activate
-          cd apps/web
-          pnpm install --frozen-lockfile
-          pnpm exec playwright install chromium
-          cd ../..
+          uv pip install -e ".[dev,e2e]"
+          python -m playwright install chromium
           compose() { docker compose -f deploy/isolated-dev/compose.yaml "$@"; }
           dump() { compose ps -a || true; compose logs --no-color --timestamps postgres silo init-db init-bucket api worker web || true; }
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
@@ -158,7 +160,7 @@ jobs:
             compose down -v --remove-orphans || true
             exit 1
           fi
-          (cd apps/web && pnpm test:e2e)
+          python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
           compose down -v --remove-orphans
 
   schema:

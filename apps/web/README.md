@@ -10,7 +10,7 @@
 
 在本目录运行 `pnpm install --frozen-lockfile`、`pnpm dev` 或 `pnpm build`。开发服务器从本地 4173 端口代理读取 runtime-config；Docker 构建运行同一套类型检查与 Vite 构建，将产物交给 nginx。Docs-addon 的 `/addon` 宿主适配仍保留，继续进入同一产品 API，不是第二套 PC 界面。
 
-设计约束运行 `pnpm lint`。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件、Tailwind v4 主题和产品语义组合；`src/ui/domain.tsx` 只保留审核工作区、证据阅读和 OnlyOffice 等 PPAP 专属组合，不提供通用基础控件。`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。helper、路由、reducer 与 public-config 门控由 `pnpm test` 覆盖。浏览器路径由 `pnpm test:e2e`（`@playwright/test`）对着 isolated-dev 产品栈执行，含 route mock 的规则互斥与 deep-mode 控件。
+设计约束运行 `pnpm lint`。页面直接使用 `src/components/ui` 中的 shadcn/ui 源码组件、Tailwind v4 主题和产品语义组合；`src/ui/domain.tsx` 只保留审核工作区、证据阅读和 OnlyOffice 等 PPAP 专属组合，不提供通用基础控件。`pnpm typecheck`、`pnpm test`、`pnpm lint` 与 `pnpm build` 是前端合并门槛。helper、路由、reducer 与 public-config 门控由 `pnpm test` 覆盖。跨栈浏览器路径由仓库根目录的 Python Playwright（`tests/e2e`）对着 isolated-dev 产品栈执行，含 route mock 的规则互斥与 deep-mode 控件。
 
 ## 规则准备
 
