@@ -19,7 +19,7 @@ function filesUnder(root: string): string[] {
 
 function shippedSources() {
   return filesUnder(join(web, 'src'))
-    .filter(path => path.endsWith('.ts') || path.endsWith('.tsx'))
+    .filter(path => (path.endsWith('.ts') || path.endsWith('.tsx')) && !path.endsWith('.test.ts') && !path.endsWith('.test.tsx'))
     .map(path => readFileSync(path, 'utf8'))
     .join('\n')
 }
