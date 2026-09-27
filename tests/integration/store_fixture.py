@@ -87,6 +87,16 @@ def seed_usage_event(
     """Insert explicit fixture data without reimplementing usage business rules."""
     event_id = str(uuid.uuid4())
     with store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+        if trace_id:
+            cur.execute(
+                """SELECT * FROM product.usage_events
+                   WHERE tenant_id = %s AND trace_id = %s
+                   LIMIT 1""",
+                (principal.tenant_id, trace_id),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                return store.usage_event_public(existing)
         cur.execute(
             """
             INSERT INTO product.usage_events
