@@ -281,7 +281,7 @@ class FeishuImportTests(unittest.TestCase):
         self.assertEqual(version["status"], "ready")
         self.assertEqual(version["original_filename"], "report.xlsx")
         self.assertEqual(version["byte_size"], len(b"target-bytes"))
-        self.assertEqual(self.store.file_sources[version["id"]]["object_ref"], "xlsx-token")
+        self.assertEqual(self.store.file_source(version["id"])["object_ref"], "xlsx-token")
         self.assertTrue(version["origin"]["available"])
         self.assertEqual(version["origin"]["object_kind"], "file")
         self.assertNotIn("object_ref", json.dumps(version))
