@@ -117,6 +117,14 @@ class RuleApiTests(unittest.TestCase):
         self.ai_boundary.stop()
         self.env.stop()
 
+    def _scalar(self, query: str, params=()):
+        with self.store._conn() as conn:
+            return conn.execute(query, params).fetchone()[0]
+
+    def _execute(self, query: str, params=()) -> None:
+        with self.store._conn() as conn:
+            conn.execute(query, params)
+
     def login(self, subject):
         self.client.cookies.clear()
         self.assertEqual(self.client.post("/isolated-dev/sessions", json={"subject": subject}).status_code, 200)
@@ -244,12 +252,15 @@ class RuleApiTests(unittest.TestCase):
         accepted = self.submit_parse(source, request_id)
         self.assertEqual(accepted.status_code, 202)
         self.assertEqual(self.submit_parse(source, request_id).json()["id"], request_id)
-        self.assertEqual(len(self.store.jobs), 1)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 1)
         self.assertEqual(self.submit_parse(source, request_id, document_type="控制计划").status_code, 409)
         job = self.store.claim_job("first")
         self.assertFalse(self.store.renew_job_lease(job, "other"))
         self.assertTrue(self.store.renew_job_lease(job, "first"))
-        self.store.jobs[job.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        self._execute(
+            "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
+            (job.id,),
+        )
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json()["status"], "unknown")
         self.assertIsNone(self.store.claim_job("second"))
         self.assertEqual(self.submit_parse(source, request_id).json()["status"], "unknown")
@@ -262,7 +273,7 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json(), loaded)
         second = self.submit_parse(source)
         self.assertNotEqual(second.json()["id"], request_id)
-        self.assertEqual(len(self.store.jobs), 2)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 2)
 
     def test_parse_result_requires_current_source_access_and_same_tenant(self):
         source = self.upload()
@@ -273,7 +284,10 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
         self.assertEqual(self.submit_parse(self.upload(), completed["id"]).status_code, 403)
         self.login("alice")
-        self.store.grant_table[(source["file_id"], self.store.principal_for_fixture("alice").user_id)] = set()
+        self._execute(
+            "DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
+            (source["file_id"], self.store.principal_for_fixture("alice").user_id),
+        )
         self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
 
 
