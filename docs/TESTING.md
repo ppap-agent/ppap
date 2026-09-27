@@ -72,9 +72,10 @@ docker run --rm \
 export COMPOSE_PROJECT_NAME=ppap-schema
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync python -m unittest tests.schema.test_upgrade tests.schema.test_rule_parse -v
+uv run --no-sync python -m unittest discover -s tests/schema -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
-# schema tests use container-native psql via docker compose exec -T postgres psql
+# schema CI collects tests/schema/test_*.py against isolated-dev PostgreSQL.
+# tests use container-native psql via docker compose exec -T postgres psql
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 export COMPOSE_PROJECT_NAME=ppap-prod
@@ -121,4 +122,4 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
 
-`tests/unit/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`tests/unit/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。`tests/schema/test_rule_parse.py` 在独立临时 PostgreSQL 数据库验证并发重复受理、未知租约、迟到完成和来源权限读回。`tests/e2e/test_rules.py` 使用结构化规则文件走真实上传、人工编辑、发布和重访；`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
+`tests/unit/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`tests/unit/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `unittest discover -s tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_rules.py` 使用结构化规则文件走真实上传、人工编辑、发布和重访；`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。

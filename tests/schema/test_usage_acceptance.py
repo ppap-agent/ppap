@@ -39,7 +39,10 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         late = self.store.settle_usage_external(self.alice, pending["id"], next(c for c in claims if c), "confirmed", "test-record")
         self.assertEqual(late["external_status"], "confirmed")
         bob = self.store.principal_for_fixture("bob")
-        self.assertIsNone(self.store.usage_event(bob, pending["id"]))
+        self.assertEqual(str(self.store.usage_event(bob, pending["id"])["id"]), pending["id"])
+        self.assertIsNone(self.store.claim_usage_report(bob, pending["id"]))
+        carol = self.store.principal_for_fixture("carol")
+        self.assertIsNone(self.store.usage_event(carol, pending["id"]))
 
     def test_usage_error_rolls_back_round_and_job(self):
         draft = self.prepared()
