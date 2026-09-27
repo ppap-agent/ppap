@@ -15,7 +15,16 @@ from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
 from tests.integration.memory_auth import MemoryAuthStore
-from services.api.tests.test_core_stack import _clean_env
+
+
+def _clean_env(**extra: str):
+    keep = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
+    }
+    keep.update(extra)
+    return patch.dict(os.environ, keep, clear=True)
 
 
 def _json_logger() -> io.StringIO:
