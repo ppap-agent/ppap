@@ -20,25 +20,24 @@
 
 ## 当前命令
 
-Local 与 CI 使用同一组 user-space 工具：uv、unittest/pytest、git、compileall、pnpm、Node、Python Playwright，以及 InsForge 的 `node deploy/insforge/verify-config.mjs` 与 pinned `@insforge/cli`。`verify-config.mjs` 是 static config contract：Compose 语法与插值由 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example config` 拥有，只需要 Docker Compose CLI，不需要 daemon 或 Buildx，也不启动容器。live native lifecycle 是 `bash deploy/insforge/smoke-local.sh`，需要 `local start` 使用的 runtime Docker capability。Docker Engine、Compose 和 Buildx 是 runner/platform capability，由宿主提供；需要完整 Docker 的 job 只做 fail-fast 检测。schema 通过 isolated-dev PostgreSQL 容器内的 `psql` 执行 `migrations/`。
+Local 与 CI 使用同一组 user-space 工具：uv、pytest、git、compileall、pnpm、Node、Python Playwright，以及 InsForge 的 `node deploy/insforge/verify-config.mjs` 与 pinned `@insforge/cli`。`verify-config.mjs` 是 static config contract：Compose 语法与插值由 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example config` 拥有，只需要 Docker Compose CLI，不需要 daemon 或 Buildx，也不启动容器。live native lifecycle 是 `bash deploy/insforge/smoke-local.sh`，需要 `local start` 使用的 runtime Docker capability。Docker Engine、Compose 和 Buildx 是 runner/platform capability，由宿主提供；需要完整 Docker 的 job 只做 fail-fast 检测。schema 通过 isolated-dev PostgreSQL 容器内的 `psql` 执行 `migrations/`。
 
-唯一产品前端使用 React + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`、`pnpm lint` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器 E2E 是 Python Playwright（`uv run --no-sync python -m unittest tests.e2e...`），对着 isolated-dev。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
+唯一产品前端使用 React + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`、`pnpm lint` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器 E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
-uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
-uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
-uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
-uv run --no-sync python -m unittest discover -s tests/repository -v
+uv run --no-sync pytest \
+  packages/ppap_core/tests \
+  packages/ppap_deep/tests \
+  packages/ppap_excel_audit_engine/tests \
+  packages/ppap_ocr_adapter/tests \
+  tests/repository
 
 COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync python -m unittest discover -s services/api/tests -v
-uv run --no-sync python -m unittest discover -s services/worker/tests -v
-uv run --no-sync python -m unittest discover -s tests/integration -v
+uv run --no-sync pytest services/api/tests services/worker/tests tests/integration
 COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -50,13 +49,13 @@ COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml
 COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`，跨 owner deterministic tests 位于 `tests/integration` / `tests/repository`；当前入口见 [TESTING](TESTING.md)。需要产品持久化状态的 API/Worker/integration tests 直接使用 production `AuthStore` + isolated-dev PostgreSQL；`tests/integration/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。schema 用 `uv run --no-sync python -m unittest discover -s tests/schema -v`（isolated-dev PostgreSQL，容器内 `psql`）。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。Python 依赖由已提交的 `uv.lock` 拥有；`pyproject.toml` 是声明，`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`，跨 owner deterministic tests 位于 `tests/integration` / `tests/repository`；当前入口见 [TESTING](TESTING.md)。需要产品持久化状态的 API/Worker/integration tests 直接使用 production `AuthStore` + isolated-dev PostgreSQL；`tests/integration/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。schema 用 `uv run --no-sync pytest tests/schema`（isolated-dev PostgreSQL，容器内 `psql`）。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。Python 依赖由已提交的 `uv.lock` 拥有；`pyproject.toml` 是声明，`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试是 unittest / pytest；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。
+当前实现是 Python 3.12、单一 `pyproject.toml`、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试统一由 pytest collect/execute；现有 `unittest.TestCase` 仅作为测试类写法保留；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。
 
 CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装语义：
 
