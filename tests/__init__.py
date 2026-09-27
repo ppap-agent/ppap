@@ -1,1 +1,1 @@
-"""Test package so `import tests.pathsetup` works from the repo root."""
+"""Cross-owner test package for shared integration/schema fixtures."""
