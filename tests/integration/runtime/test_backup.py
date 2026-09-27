@@ -10,7 +10,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = ROOT / "deploy" / "compose.yaml"
 COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
 

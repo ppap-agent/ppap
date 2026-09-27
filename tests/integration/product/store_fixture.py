@@ -68,23 +68,19 @@ def auth_store(
 ) -> AuthStore:
     """Return production AuthStore semantics against the prepared test PostgreSQL.
 
-    Product-facing settings are preserved. Only PostgreSQL connection fields are
-    rebound to the isolated test database so production-profile contract tests do
-    not require fake production credentials to be valid database credentials.
+    The caller's Settings object is kept. Only its PostgreSQL connection fields
+    are rebound to the isolated test database, so later product-field changes
+    stay visible to the store.
     """
     settings = settings or Settings()
-    store_settings = settings.model_copy(
-        update={
-            "pg_host": "127.0.0.1",
-            "pg_port": 5432,
-            "pg_database": "ppap",
-            "pg_migrator_user": "ppap_migrator",
-            "pg_migrator_password": ISOLATED_DEV_SECRET,
-        }
-    )
+    settings.pg_host = "127.0.0.1"
+    settings.pg_port = 5432
+    settings.pg_database = "ppap"
+    settings.pg_migrator_user = "ppap_migrator"
+    settings.pg_migrator_password = ISOLATED_DEV_SECRET
     if reset:
-        reset_product_database(store_settings)
-    return AuthStore(store_settings, objects or MemoryObjects(), role=role)
+        reset_product_database(settings)
+    return AuthStore(settings, objects or MemoryObjects(), role=role)
 
 
 def seed_usage_event(

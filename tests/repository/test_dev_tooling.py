@@ -812,7 +812,11 @@ class DeployContractTests(unittest.TestCase):
 
         text_suffixes = {".py", ".md", ".yml", ".yaml", ".toml", ".sh", ".mjs", ".json", ".hcl"}
         for path in ROOT.rglob("*"):
-            if not path.is_file() or path.suffix not in text_suffixes:
+            if (
+                not path.is_file()
+                or path.suffix not in text_suffixes
+                or any(part.startswith(".") or part in {"__pycache__", "node_modules"} for part in path.parts)
+            ):
                 continue
             if any(part.startswith(".") or part in {"__pycache__", "node_modules"} for part in path.parts):
                 continue
