@@ -545,7 +545,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(_run_scoped_idents(coverage)), 3)
         self.assertIn("tests/deploy/test_runtime.py", coverage)
         self.assertIn("tests/deploy/test_backup.py", coverage)
-        self.assertIn("tests.e2e", coverage)
+        self.assertIn("tests/e2e", coverage)
 
         isolated_full_up = [
             step
