@@ -176,7 +176,7 @@ jobs:
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Empty and previous schema upgrade
+      - name: Schema PostgreSQL contracts
         run: |
           set -euo pipefail
           uv sync --locked --extra dev
@@ -184,7 +184,7 @@ jobs:
             up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             run --rm init-db
-          uv run --no-sync python -m unittest tests.schema.test_upgrade -v
+          uv run --no-sync python -m unittest discover -s tests/schema -v
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics
