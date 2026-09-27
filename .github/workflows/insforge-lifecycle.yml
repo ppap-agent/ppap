@@ -1,7 +1,27 @@
 name: InsForge lifecycle
 
+# Live authority for InsForge CLI local start/status/db query/stop.
+# Static overlay/compute contracts stay in Tests → InsForge config
+# (`docker compose config` + PPAP invariants). This job starts a throwaway
+# local instance, so it is not part of every unrelated PR.
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - deploy/insforge/**
+      - .github/workflows/insforge-lifecycle.yml
+      - .node-version
+  push:
+    branches: [main]
+    paths:
+      - deploy/insforge/**
+      - .github/workflows/insforge-lifecycle.yml
+      - .node-version
+  # Weekly: `local start` fetches upstream setup.sh and runtime images, so
+  # pinning @insforge/cli@0.2.8 does not freeze that stack. One run per week
+  # is low-frequency enough for this self-hosted runner.
+  schedule:
+    - cron: "27 3 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

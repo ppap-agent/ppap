@@ -20,6 +20,32 @@ export default defineConfig([
       'shadcn/require-static-classes': 'error',
       'shadcn/no-unknown-classes': 'error',
       'shadcn/no-restyle': ['error', {allow: ['layout']}],
+      'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: '@insforge/sdk',
+            message: 'Web calls the Product API only. Do not import InsForge SDK.',
+          },
+          {
+            name: 'postgrest',
+            message: 'Web calls the Product API only. Do not use a PostgREST client.',
+          },
+          {
+            name: 'postgrest-js',
+            message: 'Web calls the Product API only. Do not use a PostgREST client.',
+          },
+          {
+            name: '@supabase/postgrest-js',
+            message: 'Web calls the Product API only. Do not use a PostgREST client.',
+          },
+        ],
+        patterns: [
+          {
+            group: ['@insforge/*'],
+            message: 'Web calls the Product API only. Do not import InsForge clients.',
+          },
+        ],
+      }],
     },
   },
 ])

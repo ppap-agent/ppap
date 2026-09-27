@@ -456,7 +456,41 @@ class DeployContractTests(unittest.TestCase):
         self.assertTrue(docker_jobs)
         for body in docker_jobs:
             self.assertIn("uses: ./.github/actions/assert-docker", body)
+        self.assertIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
+
+    def test_insforge_config_uses_native_compose_not_a_parser(self):
+        source = (ROOT / "deploy" / "insforge" / "verify-config.mjs").read_text()
+        self.assertIn("compose", source)
+        self.assertIn("--env-file", source)
+        self.assertIn("config", source)
+        self.assertIn("--format", source)
+        self.assertIn("json", source)
+        self.assertNotIn("function interpolate(", source)
+        self.assertNotIn("function composeServices(", source)
+        self.assertNotIn("function parseDotenv(", source)
+        self.assertNotIn("function serviceEnvironment(", source)
+        self.assertNotIn("function interpolatedEnvironment(", source)
+        jobs = _workflow_jobs((ROOT / ".github" / "workflows" / "tests.yml").read_text())
+        self.assertIn("node deploy/insforge/verify-config.mjs", jobs["insforge-config"])
+        self.assertIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
+
+    def test_insforge_lifecycle_is_path_filtered_live_authority(self):
+        lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
+        self.assertIn("workflow_dispatch:", lifecycle)
+        self.assertIn("pull_request:", lifecycle)
+        self.assertIn("schedule:", lifecycle)
+        self.assertIn("deploy/insforge/**", lifecycle)
+        self.assertIn(".github/workflows/insforge-lifecycle.yml", lifecycle)
+        self.assertIn(".node-version", lifecycle)
+        self.assertIn("bash deploy/insforge/smoke-local.sh", lifecycle)
+        self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
+        self.assertRegex(lifecycle, r"cron:\s*[\"']27 3 \* \* 1[\"']")
+        smoke = (ROOT / "deploy" / "insforge" / "smoke-local.sh").read_text()
+        self.assertIn("redact_json", smoke)
+        self.assertIn("trap cleanup EXIT", smoke)
+        self.assertIn("local stop", smoke)
+        self.assertIn("@insforge/cli@${CLI_VERSION}", smoke)
 
     def test_ci_docker_integration_bakes_once_and_always_cleans(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
