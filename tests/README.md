@@ -4,7 +4,7 @@ Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只�
 
 ## Module / deterministic
 
-Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is reserved for cross-owner/system contracts; `tests/integration` and `tests/repository` are the current deterministic root groups.
+Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is reserved for cross-owner/system contracts; `tests/integration` and `tests/repository` are the current deterministic root groups. Product-state tests use the production `AuthStore` against isolated-dev PostgreSQL; only external boundaries such as object storage/HTTP/model calls are faked.
 
 ```sh
 uv sync --locked --extra dev
@@ -14,10 +14,15 @@ uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
+uv run --no-sync python -m unittest discover -s tests/repository -v
+
+export COMPOSE_PROJECT_NAME=ppap-product-tests
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
 uv run --no-sync python -m unittest discover -s services/api/tests -v
 uv run --no-sync python -m unittest discover -s services/worker/tests -v
 uv run --no-sync python -m unittest discover -s tests/integration -v
-uv run --no-sync python -m unittest discover -s tests/repository -v
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
 ## Corpus
