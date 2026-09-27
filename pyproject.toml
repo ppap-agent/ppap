@@ -65,3 +65,7 @@ include = [
     "ppap_api*",
     "ppap_worker*",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true
