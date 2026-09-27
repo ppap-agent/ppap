@@ -654,7 +654,11 @@ class DeployContractTests(unittest.TestCase):
 
     def test_root_tests_are_system_level_contracts(self):
         tests_root = ROOT / "tests"
-        top_level_dirs = {path.name for path in tests_root.iterdir() if path.is_dir()}
+        top_level_dirs = {
+            path.name
+            for path in tests_root.iterdir()
+            if path.is_dir() and not path.name.startswith((".", "_"))
+        }
         self.assertEqual(
             top_level_dirs,
             {"repository", "schema", "corpus", "integration", "e2e", "live"},
@@ -677,7 +681,11 @@ class DeployContractTests(unittest.TestCase):
 
         text_suffixes = {".py", ".md", ".yml", ".yaml", ".toml", ".sh", ".mjs", ".json", ".hcl"}
         for path in ROOT.rglob("*"):
-            if not path.is_file() or path.suffix not in text_suffixes:
+            if (
+                not path.is_file()
+                or path.suffix not in text_suffixes
+                or any(part.startswith(".") or part in {"__pycache__", "node_modules"} for part in path.parts)
+            ):
                 continue
             text = path.read_text(errors="ignore")
             for legacy in legacy_paths:

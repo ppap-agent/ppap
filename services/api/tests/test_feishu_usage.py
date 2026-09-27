@@ -17,7 +17,7 @@ from ppap_core.feishu_usage import PartnerAiItem, audit_usage_points, estimate_a
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.store_fixture import auth_store, seed_usage_event, set_trial_baseline
+from tests.integration.product.store_fixture import auth_store, seed_usage_event, set_trial_baseline
 
 
 def _clean_env(**extra: str):

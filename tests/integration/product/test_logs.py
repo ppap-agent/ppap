@@ -103,13 +103,14 @@ class LogTests(unittest.TestCase):
         with _clean_env(PPAP_BUILD_SHA="a" * 40):
             settings = Settings()
         store = auth_store(settings)
-        claimed = ClaimedJob("job-log", "heartbeat", {}, 3, None, TENANT_A)
+        job_id = "00000000-0000-4000-8000-0000000000b1"
+        claimed = ClaimedJob(job_id, "heartbeat", {}, 3, None, TENANT_A)
         buf = _json_logger()
         process_claimed(store, claimed, "worker-1")
         lines = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
         claimed_log = next(row for row in lines if row["event"] == "job_claimed")
         done = next(row for row in lines if row["event"] == "job_completed")
-        self.assertEqual(claimed_log["job_id"], "job-log")
+        self.assertEqual(claimed_log["job_id"], job_id)
         self.assertEqual(claimed_log["attempt"], "3")
         self.assertEqual(claimed_log["tenant_id"], TENANT_A)
         self.assertEqual(done["outcome"], "succeeded")

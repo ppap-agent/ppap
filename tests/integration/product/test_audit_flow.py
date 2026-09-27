@@ -453,7 +453,7 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in listed], [round_id])
         self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
         self.assertTrue(listed[0]["inputs"][0]["file_version_id"])
-        self.assertEqual(set(listed[0]["result_counts"]), {"PASS", "NG", "ERR"})
+        self.assertEqual(set(listed[0]["result_counts"]), {"PASS", "NG", "ERR", "UNABLE", "NA"})
         self.assertNotIn("findings", listed[0])
         self._finish_worker()
         done = self.client.get("/rounds").json()["rounds"]

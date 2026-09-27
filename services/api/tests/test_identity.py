@@ -23,7 +23,7 @@ from ppap_core.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
 from ppap_core.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.store_fixture import auth_store
+from tests.integration.product.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):

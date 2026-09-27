@@ -15,7 +15,7 @@ class AuditDatabaseCase(unittest.TestCase):
     def setUp(self):
         from ppap_api.store import AuthStore
         from ppap_core.settings import Settings
-        from tests.integration.store_fixture import MemoryObjects
+        from tests.integration.product.store_fixture import MemoryObjects
 
         _require_postgres(self)
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
@@ -69,7 +69,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
     def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
         from ppap_core.fixtures import RULE_A
-        from tests.integration.test_rules import rule_body
+        from tests.integration.product.test_rules import rule_body
 
         first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
         rule = self.store.publish_rule(self.alice, "客户规则", rule_body(), reference.id)
@@ -94,7 +94,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
     def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
         from ppap_core.fixtures import RULE_A
-        from tests.integration.test_rules import rule_body
+        from tests.integration.product.test_rules import rule_body
 
         first, reference = self.upload("a.xlsx"), self.upload("context.xlsx")
         items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]
