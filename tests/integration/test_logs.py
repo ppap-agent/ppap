@@ -4,7 +4,9 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import unittest
+from unittest.mock import patch
 
 import tests.pathsetup  # noqa: F401
 

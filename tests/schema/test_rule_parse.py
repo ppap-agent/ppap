@@ -21,8 +21,8 @@ class RuleParseDatabaseTests(unittest.TestCase):
         from ppap_core.db import connect
         from ppap_core.settings import Settings
         from ppap_worker import process_claimed
-        from tests.unit.memory_auth import MemoryObjects
-        from tests.unit.test_rules import rule_body
+        from tests.integration.memory_auth import MemoryObjects
+        from tests.integration.test_rules import rule_body
 
         _require_postgres(self)
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]

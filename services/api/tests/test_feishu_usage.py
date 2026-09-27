@@ -251,7 +251,7 @@ class FeishuUsageTests(unittest.TestCase):
 
     def test_cutover_baseline_sql_records_wanxiang_lian_dian_and_baolong(self):
         from pathlib import Path as P
-        sql = (P(__file__).resolve().parents[2] / "migrations" / "0018_trial_cutover_baseline.sql").read_text()
+        sql = (P(__file__).resolve().parents[3] / "migrations" / "0018_trial_cutover_baseline.sql").read_text()
         self.assertIn("'1406548d3c95175d'", sql)
         self.assertIn("'1629d31db550975f'", sql)
         self.assertIn("'11c1ad08115b175e'", sql)
