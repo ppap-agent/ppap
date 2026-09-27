@@ -97,7 +97,7 @@ class RuleApiTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
         from ppap_core.settings import Settings
-        from tests.integration.store_fixture import auth_store
+        from tests.integration.product.store_fixture import auth_store
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)

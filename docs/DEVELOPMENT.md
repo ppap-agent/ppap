@@ -26,7 +26,7 @@ Local 与 CI 使用同一组 user-space 工具：uv、pytest、git、compileall�
 
 ```sh
 uv sync --locked --extra dev
-git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
+git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 uv run --no-sync pytest \
   packages/ppap_core/tests \
@@ -37,7 +37,7 @@ uv run --no-sync pytest \
 
 COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests tests/integration
+uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
 COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -49,7 +49,7 @@ COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml
 COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`，跨 owner deterministic tests 位于 `tests/integration` / `tests/repository`；当前入口见 [TESTING](TESTING.md)。需要产品持久化状态的 API/Worker/integration tests 直接使用 production `AuthStore` + isolated-dev PostgreSQL；`tests/integration/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。schema 用 `uv run --no-sync pytest tests/schema`（isolated-dev PostgreSQL，容器内 `psql`）。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。Python 依赖由已提交的 `uv.lock` 拥有；`pyproject.toml` 是声明，`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority；`tests/integration/product` 是跨 owner deterministic product contracts，`tests/integration/runtime` 是 production runtime/backup，`tests/live` 不进入默认 deterministic CI；当前入口见 [TESTING](TESTING.md)。需要产品持久化状态的 API/Worker/integration tests 直接使用 production `AuthStore` + isolated-dev PostgreSQL；`tests/integration/product/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。schema 用 `uv run --no-sync pytest tests/schema`（isolated-dev PostgreSQL，容器内 `psql`）。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。Python 依赖由已提交的 `uv.lock` 拥有；`pyproject.toml` 是声明，`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 

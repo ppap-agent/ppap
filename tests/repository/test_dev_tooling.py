@@ -543,8 +543,8 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("deploy/compose.yaml", coverage)
         self.assertIn("deploy/isolated-dev/compose.yaml", coverage)
         self.assertGreaterEqual(len(_run_scoped_idents(coverage)), 3)
-        self.assertIn("tests/deploy/test_runtime.py", coverage)
-        self.assertIn("tests/deploy/test_backup.py", coverage)
+        self.assertIn("pytest tests/integration/runtime", coverage)
+        self.assertNotIn("tests/deploy", coverage)
         self.assertIn("tests/e2e", coverage)
 
         isolated_full_up = [
@@ -590,6 +590,31 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("test_audit_bindings.py", modules)
         self.assertIn("test_usage_acceptance.py", modules)
 
+
+    def test_root_tests_are_system_level_contracts(self):
+        tests_root = ROOT / "tests"
+        top_level_dirs = {path.name for path in tests_root.iterdir() if path.is_dir()}
+        self.assertEqual(
+            top_level_dirs,
+            {"repository", "schema", "corpus", "integration", "e2e", "live"},
+        )
+        self.assertFalse((tests_root / "unit").exists())
+        self.assertFalse((tests_root / "deploy").exists())
+        self.assertFalse((tests_root / "fixtures").exists())
+        self.assertTrue((tests_root / "corpus" / "fixtures" / "legacy_doc").is_dir())
+        self.assertTrue((tests_root / "corpus" / "fixtures" / "ocr_cache").is_dir())
+        self.assertTrue((tests_root / "integration" / "product").is_dir())
+        self.assertTrue((tests_root / "integration" / "runtime").is_dir())
+
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        self.assertIn(
+            "pytest services/api/tests services/worker/tests tests/integration/product",
+            workflow,
+        )
+        self.assertIn("pytest tests/integration/runtime", workflow)
+        self.assertNotIn("tests/deploy", workflow)
+        self.assertNotIn("tests/fixtures", workflow)
+        self.assertNotIn("tests/live", workflow)
 
     def test_python_tests_use_pytest_and_installed_imports(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())

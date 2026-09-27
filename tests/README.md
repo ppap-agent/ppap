@@ -4,11 +4,11 @@ Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只�
 
 ## Module / deterministic
 
-Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is reserved for cross-owner/system contracts; `tests/integration` and `tests/repository` are the current deterministic root groups. Product-state tests use the production `AuthStore` against isolated-dev PostgreSQL; only external boundaries such as object storage/HTTP/model calls are faked.
+Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is reserved for system-level authority only: `repository`, `schema`, `corpus`, `integration`, `e2e`, and `live`. `integration/product` owns cross-owner production-store contracts, `integration/runtime` owns production runtime/backup, `corpus/fixtures` owns regression fixtures, and `live` is explicit-only outside deterministic CI. Product-state tests use the production `AuthStore` against isolated-dev PostgreSQL; only external boundaries such as object storage/HTTP/model calls are faked.
 
 ```sh
 uv sync --locked --extra dev
-git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
+git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 uv run --no-sync pytest \
   packages/ppap_core/tests \
@@ -20,7 +20,7 @@ uv run --no-sync pytest \
 export COMPOSE_PROJECT_NAME=ppap-product-tests
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests tests/integration
+uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
@@ -54,4 +54,4 @@ InsForge static config contract：`node deploy/insforge/verify-config.mjs`（原
 
 Schema PostgreSQL contracts：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait && docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db && uv run --no-sync pytest tests/schema`。CI 与本地都用该 discovery 收集 `tests/schema/test_*.py`（含 upgrade、rule parse、audit bindings、usage acceptance）；测试通过 `docker compose exec -T postgres psql` 使用容器内 `psql`。新增真实 PostgreSQL schema 契约放到 `tests/schema/test_*.py`。
 
-Production compose：`PPAP_BUILD_SHA="$(git rev-parse HEAD)" docker buildx bake && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait && uv run --no-sync pytest tests/deploy/test_runtime.py tests/deploy/test_backup.py && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans`。
+Production compose：`PPAP_BUILD_SHA="$(git rev-parse HEAD)" docker buildx bake && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait && uv run --no-sync pytest tests/integration/runtime && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans`。
