@@ -2,7 +2,6 @@ import json
 import unittest
 import uuid
 
-import tests.pathsetup  # noqa: F401
 from ppap_core.file_analysis import analyze_file, latest_rule_versions
 from ppap_core.rule_matching import RuleMatchingAIService
 from tests.integration.test_rules import RuleApiTests, excel_rule, rule_body
