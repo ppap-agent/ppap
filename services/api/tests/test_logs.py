@@ -14,8 +14,8 @@ from ppap_core.logs import JsonFormatter, LOGGER, bind, emit, new_request_id, re
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.unit.memory_auth import MemoryAuthStore
-from tests.unit.test_core_stack import _clean_env
+from tests.integration.memory_auth import MemoryAuthStore
+from services.api.tests.test_core_stack import _clean_env
 
 
 def _json_logger() -> io.StringIO:

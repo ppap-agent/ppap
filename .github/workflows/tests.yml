@@ -82,7 +82,14 @@ jobs:
           uv sync --locked --extra dev
           git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
           uv run --no-sync python -m compileall -q packages services tests
-          uv run --no-sync python -m unittest discover -s tests/unit -v
+          uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
+          uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
+          uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
+          uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
+          uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
+          uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
+          uv run --no-sync python -m unittest discover -s tests/integration -t . -v
+          uv run --no-sync python -m unittest discover -s tests/repository -t . -v
 
   integration:
     name: Docker integration

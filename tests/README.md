@@ -2,13 +2,22 @@
 
 Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只记录当前可执行入口。
 
-## Unit
+## Module / deterministic
+
+Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is reserved for cross-owner/system contracts; `tests/integration` and `tests/repository` are the current deterministic root groups.
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s tests/unit -v
+uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
+uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
+uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
+uv run --no-sync python -m unittest discover -s tests/integration -t . -v
+uv run --no-sync python -m unittest discover -s tests/repository -t . -v
 ```
 
 ## Corpus

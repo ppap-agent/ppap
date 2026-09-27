@@ -12,8 +12,8 @@
 
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
-- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/unit/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `tests/unit/test_deep_runtime.py`、`tests/unit/test_deep_semantic.py`、`tests/unit/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 unit CI。
-- **E2E**：少量完整客户路径。#7 覆盖 Web 审核闭环；#11 覆盖飞书来源进入同一产品闭环。#57 把同一条浏览器路径延伸到 PC 导航、结果/依据/预览、历史轮次、复核和用量。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/unit/test_feishu_drive.py` 与 `tests/unit/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/unit/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 的静态入口在 `tests/unit/test_web_server.py`。Web 只调 Product API 的仓库边界、helper、路由、reducer 与 public-config 都由 `apps/web` 的 `pnpm test` 拥有；跨栈黑盒浏览器行为由 Python Playwright（`tests.e2e`）拥有。InsForge overlay 的 **static config contract** 由 `node deploy/insforge/verify-config.mjs` 拥有：Compose 语法与插值交给 `docker compose config`，再检查 Compose 无法知道的少量 PPAP invariant。**live native lifecycle** 是 `bash deploy/insforge/smoke-local.sh`（`@insforge/cli local start/status/db query/stop`），只在 InsForge 相关 path 变化、手动 `workflow_dispatch` 或每周 schedule 上运行。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/ppap_deep/tests/test_deep_runtime.py`、`packages/ppap_deep/tests/test_deep_semantic.py`、`packages/ppap_deep/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 unit CI。
+- **E2E**：少量完整客户路径。#7 覆盖 Web 审核闭环；#11 覆盖飞书来源进入同一产品闭环。#57 把同一条浏览器路径延伸到 PC 导航、结果/依据/预览、历史轮次、复核和用量。飞书 Drive 导入与文档关联文件的确定性回归在 `services/api/tests/test_feishu_drive.py` 与 `services/api/tests/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `services/api/tests/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 的静态入口在 `tests/repository/test_web_server.py`。Web 只调 Product API 的仓库边界、helper、路由、reducer 与 public-config 都由 `apps/web` 的 `pnpm test` 拥有；跨栈黑盒浏览器行为由 Python Playwright（`tests.e2e`）拥有。InsForge overlay 的 **static config contract** 由 `node deploy/insforge/verify-config.mjs` 拥有：Compose 语法与插值交给 `docker compose config`，再检查 Compose 无法知道的少量 PPAP invariant。**live native lifecycle** 是 `bash deploy/insforge/smoke-local.sh`（`@insforge/cli local start/status/db query/stop`），只在 InsForge 相关 path 变化、手动 `workflow_dispatch` 或每周 schedule 上运行。
 
 规则排列组合留在低层，不复制到 E2E。
 
@@ -33,7 +33,9 @@ CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 
 ## 当前可运行入口
 
-Web 合并契约分两段。类型、生产构建和前端白盒/契约单测不依赖 Docker；代表性浏览器路径在 isolated-dev 上。CI 里它们分别是 `Web contract` 与 `Docker integration`（同一 SHA 只 `docker buildx bake` 一次，先 production runtime/backup，再 isolated-dev Python Playwright E2E）。Python unit 只跑 `compileall` 与 `unittest discover`。`push` 只在 `main` 上触发，功能分支只由 `pull_request` 跑完整测试，避免同一次提交跑两遍；两种事件仍使用不同的 concurrency group，不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入 reducer、helpers、host login 与 public-config 门控在 `pnpm test`。CI 的浏览器 E2E 跑 Python Playwright：`tests.e2e.test_web_audit`、`tests.e2e.test_ui_a11y`、`tests.e2e.test_rules` 和 `tests.e2e.test_rule_interactions`（isolated-dev 产品路径与 route mock）。`pnpm lint` 使用 `@shadcn/lint` 检查 Tailwind 组件的重绘、颜色、任意值、内联样式、静态 class 和未知 class，并用 ESLint `no-restricted-imports` 禁止直接导入 `@insforge/sdk` 与 PostgREST 客户端；基础 shadcn 源码目录作为组件实现排除，业务页面与 PPAP 组合层必须通过。浏览器里的键盘、焦点、视口、减少动效和粗指针计算样式在 `tests.e2e.test_ui_a11y`（含规则编辑）；审核复核的键盘与单一 H1 在 `tests.e2e.test_web_audit`。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。默认 PR CI 跑 `node deploy/insforge/verify-config.mjs`（static config contract：原生 `docker compose config` + PPAP invariant）。InsForge `local start/status/db query/stop` 是 live native lifecycle：`InsForge lifecycle` workflow 在 `deploy/insforge/**`、该 workflow 本身或 `.node-version` 变化时自动运行，并保留 `workflow_dispatch` 与每周 schedule（`local start` 会拉取上游 setup.sh/镜像，CLI pin 不能冻结该 runtime；self-hosted runner 上每周一次足够低频）。无关 PR 不跑 live lifecycle。
+Single-owner Python tests 与 production owner co-locate：`packages/*/tests` 或 `services/*/tests`。根 `tests/` 只承载跨 owner/system-level contracts；当前已使用 `tests/integration` 与 `tests/repository`，其余根级目录继续保持各自既有职责。
+
+Web 合并契约分两段。类型、生产构建和前端白盒/契约单测不依赖 Docker；代表性浏览器路径在 isolated-dev 上。CI 里它们分别是 `Web contract` 与 `Docker integration`（同一 SHA 只 `docker buildx bake` 一次，先 production runtime/backup，再 isolated-dev Python Playwright E2E）。Python deterministic tests 先按 production owner 物理归档；当前 CI 仍用 `unittest discover` 执行这些 owner directories，并保留 `compileall`。`push` 只在 `main` 上触发，功能分支只由 `pull_request` 跑完整测试，避免同一次提交跑两遍；两种事件仍使用不同的 concurrency group，不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入 reducer、helpers、host login 与 public-config 门控在 `pnpm test`。CI 的浏览器 E2E 跑 Python Playwright：`tests.e2e.test_web_audit`、`tests.e2e.test_ui_a11y`、`tests.e2e.test_rules` 和 `tests.e2e.test_rule_interactions`（isolated-dev 产品路径与 route mock）。`pnpm lint` 使用 `@shadcn/lint` 检查 Tailwind 组件的重绘、颜色、任意值、内联样式、静态 class 和未知 class，并用 ESLint `no-restricted-imports` 禁止直接导入 `@insforge/sdk` 与 PostgREST 客户端；基础 shadcn 源码目录作为组件实现排除，业务页面与 PPAP 组合层必须通过。浏览器里的键盘、焦点、视口、减少动效和粗指针计算样式在 `tests.e2e.test_ui_a11y`（含规则编辑）；审核复核的键盘与单一 H1 在 `tests.e2e.test_web_audit`。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。默认 PR CI 跑 `node deploy/insforge/verify-config.mjs`（static config contract：原生 `docker compose config` + PPAP invariant）。InsForge `local start/status/db query/stop` 是 live native lifecycle：`InsForge lifecycle` workflow 在 `deploy/insforge/**`、该 workflow 本身或 `.node-version` 变化时自动运行，并保留 `workflow_dispatch` 与每周 schedule（`local start` 会拉取上游 setup.sh/镜像，CLI pin 不能冻结该 runtime；self-hosted runner 上每周一次足够低频）。无关 PR 不跑 live lifecycle。
 
 ```sh
 cd apps/web
@@ -46,14 +48,28 @@ cd ../..
 node deploy/insforge/verify-config.mjs
 uv sync --locked --extra dev
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s tests/unit -v
+uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
+uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
+uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
+uv run --no-sync python -m unittest discover -s tests/integration -t . -v
+uv run --no-sync python -m unittest discover -s tests/repository -t . -v
 ```
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s tests/unit -v
+uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
+uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
+uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
+uv run --no-sync python -m unittest discover -s tests/integration -t . -v
+uv run --no-sync python -m unittest discover -s tests/repository -t . -v
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
@@ -124,4 +140,4 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
 
-`tests/unit/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`tests/unit/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `unittest discover -s tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_rules.py` 使用结构化规则文件走真实上传、人工编辑、发布和重访；`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
+`services/api/tests/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`packages/ppap_excel_audit_engine/tests/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `unittest discover -s tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_rules.py` 使用结构化规则文件走真实上传、人工编辑、发布和重访；`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。

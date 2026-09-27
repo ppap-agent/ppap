@@ -104,7 +104,7 @@ class ProductExperienceTests(unittest.TestCase):
     def setUp(self):
         from ppap_api import create_app
         from ppap_core.settings import Settings
-        from tests.unit.memory_auth import MemoryAuthStore
+        from tests.integration.memory_auth import MemoryAuthStore
         from fastapi.testclient import TestClient
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("PPAP_", "FEISHU_", "LLM_", "OPENAI_"))}
         env = patch.dict(os.environ, clean, clear=True)
