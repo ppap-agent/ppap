@@ -1,7 +1,6 @@
 import unittest
 from types import SimpleNamespace
 
-import tests.pathsetup  # noqa: F401
 
 from ppap_core.audits import RoundInput, RoundWork, findings_from_rule_execution
 from ppap_core.engine_round import builtin_rule_input, run_round_from_bytes

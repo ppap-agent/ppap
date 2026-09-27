@@ -2,7 +2,6 @@ import io
 import unittest
 import zipfile
 
-import tests.pathsetup  # noqa: F401
 
 from ppap_core.bundles import archive_member_names
 from ppap_core.fixtures import RULE_A

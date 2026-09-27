@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import httpx
 
-import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 

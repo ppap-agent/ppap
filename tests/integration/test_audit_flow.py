@@ -5,12 +5,11 @@ import os
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from tests import pathsetup
-
-ROOT = pathsetup.ROOT
+ROOT = Path(__file__).resolve().parents[2]
 
 from fastapi.testclient import TestClient
 
@@ -530,7 +529,6 @@ class PresenceEvaluationTests(unittest.TestCase):
     def test_presence_does_not_import_engine(self):
         # Engine tests can run first in discovery. Verify lazy imports in a fresh interpreter.
         result = subprocess.run([sys.executable, "-c", """
-from tests import pathsetup
 import sys
 from ppap_core.audits import RoundInput, RoundWork, evaluate_round
 work = RoundWork('r1', 't1', [RoundInput('target', 'f1', 'v1', 'a.xlsx', 'ready',
@@ -542,7 +540,6 @@ assert 'ppap_excel_audit_engine' not in sys.modules
 
     def test_round_payload_does_not_import_engine(self):
         result = subprocess.run([sys.executable, "-c", """
-from tests import pathsetup
 import sys
 from ppap_worker import run_claimed_job
 result = run_claimed_job("audit", {"round_id": "abc"})

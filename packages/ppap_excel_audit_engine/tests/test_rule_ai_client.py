@@ -3,7 +3,6 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 
 
 class SDK:

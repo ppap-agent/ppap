@@ -1,6 +1,5 @@
 import unittest
 
-import tests.pathsetup  # noqa: F401
 
 from ppap_core.rule_coverage import (
     COVERAGE_MAPPED,

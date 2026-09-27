@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 
 from ppap_worker import run_claimed_job
 

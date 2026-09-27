@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
-import tests.pathsetup  # noqa: F401
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from ppap_core.logs import RedactQuery

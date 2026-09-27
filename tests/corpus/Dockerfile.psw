@@ -3,7 +3,7 @@ FROM ${PPAP_WORKER_IMAGE}
 
 WORKDIR /workspace
 
-COPY pytest.ini /workspace/pytest.ini
+COPY pyproject.toml /workspace/pyproject.toml
 COPY --from=psw-tests . /workspace/tests
 COPY --from=psw-assets . /workspace/assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书
 
@@ -13,4 +13,4 @@ RUN python -m pip install --no-cache-dir pytest==7.4.3 pytest-asyncio==0.21.1 \
 
 ENV PYTHONPATH=
 ENTRYPOINT []
-CMD ["python", "-m", "pytest", "tests/corpus/test_psw_cross_format_regression.py", "tests/corpus/test_psw_cross_format_audit.py", "-q"]
+CMD ["pytest", "tests/corpus/test_psw_cross_format_regression.py", "tests/corpus/test_psw_cross_format_audit.py", "-q"]

@@ -9,7 +9,6 @@ import zipfile
 from unittest.mock import patch
 from urllib.parse import quote, urlsplit
 
-import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 

@@ -8,7 +8,6 @@ import os
 import unittest
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 
 from ppap_core.audits import ClaimedJob
 from ppap_core.fixtures import TENANT_A

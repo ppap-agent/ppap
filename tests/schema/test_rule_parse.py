@@ -6,7 +6,6 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 from tests.schema.test_upgrade import (
     MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password,
     _migrator_user, _psql, _require, _require_postgres,

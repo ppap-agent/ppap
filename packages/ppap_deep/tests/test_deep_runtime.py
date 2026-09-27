@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests import pathsetup  # noqa: F401
 
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.files import ObjectMissing

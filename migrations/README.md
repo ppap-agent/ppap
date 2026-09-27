@@ -16,7 +16,7 @@ psql -d ppap -v ON_ERROR_STOP=1 -f migrations/apply.sql
 
 `bootstrap.sql` creates least-privilege roles (`ppap_migrator`, `ppap_api`, `ppap_worker`) and the application database from `PPAP_PG_*` environment variables. `apply.sql` `\ir`s the numbered files in order. Each numbered file records itself in `product.schema_migrations` and is safe to re-run.
 
-Compose `init-db` retries the same two `psql` invocations until Postgres has finished its first-boot restart. Empty → latest、previous → latest 以及其余真实 PostgreSQL 契约：`python -m unittest discover -s tests/schema -v`（需要 isolated-dev postgres；测试使用容器内 `psql`，不要求 host `psql`）。
+Compose `init-db` retries the same two `psql` invocations until Postgres has finished its first-boot restart. Empty → latest、previous → latest 以及其余真实 PostgreSQL 契约：`pytest tests/schema`（需要 isolated-dev postgres；测试使用容器内 `psql`，不要求 host `psql`）。
 
 Rules:
 
