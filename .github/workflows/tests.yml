@@ -82,11 +82,7 @@ jobs:
           uv sync --locked --extra dev
           git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
           uv run --no-sync python -m compileall -q packages services tests
-          uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
-          uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
-          uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
-          uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
-          uv run --no-sync python -m unittest discover -s tests/repository -v
+          uv run --no-sync pytest             packages/ppap_core/tests             packages/ppap_deep/tests             packages/ppap_excel_audit_engine/tests             packages/ppap_ocr_adapter/tests             tests/repository
 
   integration:
     name: Docker integration
@@ -120,9 +116,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
-          uv run --no-sync python -m unittest discover -s services/api/tests -v
-          uv run --no-sync python -m unittest discover -s services/worker/tests -v
-          uv run --no-sync python -m unittest discover -s tests/integration -v
+          uv run --no-sync pytest services/api/tests services/worker/tests tests/integration
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake api, worker, and web images
         run: |
@@ -140,7 +134,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             up -d --wait --wait-timeout 180
-          uv run --no-sync python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
+          uv run --no-sync pytest tests/deploy/test_runtime.py tests/deploy/test_backup.py
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans
       - name: Isolated-dev browser E2E
@@ -150,7 +144,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             up -d --wait --wait-timeout 180 --no-build
-          uv run --no-sync python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
+          uv run --no-sync pytest tests/e2e
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics
@@ -202,7 +196,7 @@ jobs:
             up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             run --rm init-db
-          uv run --no-sync python -m unittest discover -s tests/schema -v
+          uv run --no-sync pytest tests/schema
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics
