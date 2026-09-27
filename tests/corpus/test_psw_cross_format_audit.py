@@ -34,7 +34,7 @@ from tests.corpus.psw_cross_format_regression import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PAIR_ROOT = _REPO_ROOT / "assets" / "V2.0测试" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
-_LEGACY_DOC = _REPO_ROOT / "tests" / "fixtures" / "legacy_doc" / "psw.doc"
+_LEGACY_DOC = _REPO_ROOT / "tests" / "corpus" / "fixtures" / "legacy_doc" / "psw.doc"
 
 
 class _DeterministicRuntime(_AppAuditRuntime):

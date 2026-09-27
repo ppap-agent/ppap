@@ -80,7 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --locked --extra dev
-          git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
+          git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages services tests
           uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests packages/ppap_excel_audit_engine/tests packages/ppap_ocr_adapter/tests tests/repository
 
@@ -116,7 +116,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
-          uv run --no-sync pytest services/api/tests services/worker/tests tests/integration
+          uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake api, worker, and web images
         run: |
@@ -134,7 +134,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             up -d --wait --wait-timeout 180
-          uv run --no-sync pytest tests/deploy/test_runtime.py tests/deploy/test_backup.py
+          uv run --no-sync pytest tests/integration/runtime
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans
       - name: Isolated-dev browser E2E

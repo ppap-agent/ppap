@@ -11,7 +11,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 _DEFAULT_V2_ROOT = _REPO / "assets" / "v2.0plus"
 _DEFAULT_V2_CSV = _REPO / "assets" / "全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"
-_DEFAULT_OCR_CACHE = _REPO / "tests" / "fixtures" / "ocr_cache"
+_DEFAULT_OCR_CACHE = _REPO / "tests" / "corpus" / "fixtures" / "ocr_cache"
 
 # Same V2 cases that failed on ppap-agent@53a5bd2b. Not a second oracle: expected CSV is unchanged.
 BASELINE_XFAIL_IDS = frozenset(
