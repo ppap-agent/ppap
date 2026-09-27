@@ -28,14 +28,14 @@ Local 与 CI 使用同一组 user-space 工具：uv、unittest/pytest、git、co
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
-uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
-uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
-uv run --no-sync python -m unittest discover -s tests/integration -t . -v
-uv run --no-sync python -m unittest discover -s tests/repository -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
+uv run --no-sync python -m unittest discover -s services/api/tests -v
+uv run --no-sync python -m unittest discover -s services/worker/tests -v
+uv run --no-sync python -m unittest discover -s tests/integration -v
+uv run --no-sync python -m unittest discover -s tests/repository -v
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake
