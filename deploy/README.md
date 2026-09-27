@@ -47,7 +47,7 @@ Shared customer host `https://ppap.icoastline.com` is split by `deploy/tke/editi
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
-python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
+uv run --no-sync pytest tests/integration/runtime
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
 
@@ -71,7 +71,7 @@ docker compose -f deploy/compose.yaml --env-file "$ENV" run --rm -T --no-deps \
 docker compose -f deploy/compose.yaml --env-file "$ENV" up -d --no-deps --wait api worker web
 ```
 
-Silo classic 基于 ubi-micro，容器里没有 `tar`；把 `silo-data` 挂到 `init-db`（postgres 镜像）里打包。Restore 在停应用后 `DROP`/`CREATE DATABASE`、`psql` 灌入 dump、清空并解开对象归档，然后 `docker compose restart silo` 并拉起 API/Worker/Web。`tests/deploy/test_backup.py` 按这条路径检查。
+Silo classic 基于 ubi-micro，容器里没有 `tar`；把 `silo-data` 挂到 `init-db`（postgres 镜像）里打包。Restore 在停应用后 `DROP`/`CREATE DATABASE`、`psql` 灌入 dump、清空并解开对象归档，然后 `docker compose restart silo` 并拉起 API/Worker/Web。`tests/integration/runtime/test_backup.py` 按这条路径检查。
 
 InsForge overlay 没有 compose `postgres` 服务，对 `PPAP_PG_HOST` 用 `init-db` 镜像做 `pg_dump` / `psql`：
 

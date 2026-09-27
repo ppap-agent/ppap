@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -167,6 +168,80 @@ def _github_yaml_files() -> list[Path]:
         for path in (ROOT / ".github").rglob("*")
         if path.is_file() and path.suffix in {".yml", ".yaml"}
     ]
+
+
+def _owner_python_test_directories(root: Path) -> set[str]:
+    found: set[str] = set()
+    for kind in ("packages", "services"):
+        base = root / kind
+        if not base.is_dir():
+            continue
+        for owner in base.iterdir():
+            if not owner.is_dir() or owner.name.startswith("."):
+                continue
+            tests_dir = owner / "tests"
+            if not tests_dir.is_dir():
+                continue
+            for path in tests_dir.rglob("*.py"):
+                if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
+                    continue
+                if path.name.startswith("test_") or path.name.endswith("_test.py"):
+                    found.add(f"{kind}/{owner.name}/tests")
+                    break
+    return found
+
+
+def _module_matrix_paths(modules_job: str) -> list[str]:
+    paths: list[str] = []
+    for line in modules_job.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("- "):
+            stripped = stripped[2:].strip()
+        if not stripped.startswith("paths:"):
+            continue
+        paths.extend(stripped.partition(":")[2].split())
+    return paths
+
+
+def _module_matrix_coverage_problems(root: Path, workflow: str) -> list[str]:
+    listed = _module_matrix_paths(_workflow_jobs(workflow).get("python_modules", ""))
+    owners = _owner_python_test_directories(root)
+    problems: list[str] = []
+    seen: set[str] = set()
+    for path in listed:
+        if path in seen:
+            problems.append(f"duplicate matrix path: {path}")
+        seen.add(path)
+        if not (root / path).is_dir():
+            problems.append(f"matrix path does not exist: {path}")
+    for path in sorted(owners - set(listed)):
+        problems.append(f"owner tests not in module matrix: {path}")
+    for path in sorted(set(listed) - owners):
+        if (root / path).is_dir():
+            problems.append(f"matrix path is not an owner Python test directory: {path}")
+    return problems
+
+
+def _modules_workflow(*path_groups: str) -> str:
+    lines = [
+        "jobs:",
+        "  python_modules:",
+        "    strategy:",
+        "      matrix:",
+        "        include:",
+    ]
+    for index, paths in enumerate(path_groups):
+        lines.append(f"          - id: group-{index}")
+        lines.append(f"            paths: {paths}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_python_test(root: Path, rel: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def test_ok():\n    assert True\n")
 
 
 class DeployContractTests(unittest.TestCase):
@@ -583,13 +658,9 @@ class DeployContractTests(unittest.TestCase):
 
         modules = jobs["python_modules"]
         self.assertIn("name: core/deep", modules)
-        self.assertIn("paths: packages/ppap_core/tests packages/ppap_deep/tests", modules)
         self.assertIn("name: documents", modules)
-        self.assertIn("paths: packages/ppap_ocr_adapter/tests", modules)
         self.assertIn("name: engine", modules)
-        self.assertIn("paths: packages/ppap_excel_audit_engine/tests", modules)
         self.assertIn("name: services", modules)
-        self.assertIn("paths: services/api/tests services/worker/tests", modules)
         self.assertIn("postgres: true", modules)
         self.assertIn("pytest ${{ matrix.paths }}", modules)
 
@@ -628,6 +699,66 @@ class DeployContractTests(unittest.TestCase):
             self.assertIn("tests/integration/product", text, str(path))
             self.assertIn("services/api/tests services/worker/tests", text, str(path))
 
+    def test_ci_module_matrix_covers_physical_owners(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        self.assertEqual(_module_matrix_coverage_problems(ROOT, workflow), [])
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _write_python_test(root, "packages/ppap_core/tests/test_core.py")
+            _write_python_test(root, "packages/ppap_new/tests/test_new.py")
+            missing = _module_matrix_coverage_problems(
+                root,
+                _modules_workflow("packages/ppap_core/tests"),
+            )
+            self.assertTrue(any("owner tests not in module matrix: packages/ppap_new/tests" in item for item in missing), missing)
+
+            duplicated = _module_matrix_coverage_problems(
+                root,
+                _modules_workflow("packages/ppap_core/tests", "packages/ppap_core/tests packages/ppap_new/tests"),
+            )
+            self.assertTrue(any("duplicate matrix path: packages/ppap_core/tests" in item for item in duplicated), duplicated)
+
+            nonexistent = _module_matrix_coverage_problems(
+                root,
+                _modules_workflow("packages/ppap_core/tests packages/ppap_new/tests packages/missing/tests"),
+            )
+            self.assertTrue(any("matrix path does not exist: packages/missing/tests" in item for item in nonexistent), nonexistent)
+
+    def test_merge_contract_is_required_not_deterministic(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        jobs = _workflow_jobs(workflow)
+        gate = jobs["ci_gate"]
+        self.assertIn("name: CI Gate", gate)
+        self.assertIn("- corpus", gate)
+        self.assertIn("needs.corpus.result", gate)
+        self.assertIn("Require merge contract jobs to succeed", gate)
+        self.assertNotIn("deterministic", gate)
+
+        forbidden = (
+            "deterministic groups",
+            "required deterministic",
+            "default deterministic",
+            "Require deterministic",
+            "默认 unit CI",
+        )
+        for path in (
+            ROOT / ".github" / "workflows" / "tests.yml",
+            ROOT / "docs" / "TESTING.md",
+            ROOT / "docs" / "DEVELOPMENT.md",
+            ROOT / "tests" / "README.md",
+        ):
+            text = path.read_text()
+            for phrase in forbidden:
+                self.assertNotIn(phrase, text, str(path))
+
+        testing = (ROOT / "docs" / "TESTING.md").read_text()
+        self.assertIn("默认 merge contract", testing)
+        self.assertIn("required groups", testing)
+        self.assertIn("cache miss 时可以调用真实 OCR / model", testing)
+        self.assertIn("不进入默认 merge contract、需要显式执行", testing)
+        self.assertIn("外部依赖本身不改变 test ownership", testing)
+
     def test_schema_ci_discovers_authoritative_postgres_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         testing = (ROOT / "docs" / "TESTING.md").read_text()
@@ -654,7 +785,11 @@ class DeployContractTests(unittest.TestCase):
 
     def test_root_tests_are_system_level_contracts(self):
         tests_root = ROOT / "tests"
-        top_level_dirs = {path.name for path in tests_root.iterdir() if path.is_dir()}
+        top_level_dirs = {
+            path.name
+            for path in tests_root.iterdir()
+            if path.is_dir() and not path.name.startswith((".", "_"))
+        }
         self.assertEqual(
             top_level_dirs,
             {"repository", "schema", "corpus", "integration", "e2e", "live"},
@@ -678,6 +813,8 @@ class DeployContractTests(unittest.TestCase):
         text_suffixes = {".py", ".md", ".yml", ".yaml", ".toml", ".sh", ".mjs", ".json", ".hcl"}
         for path in ROOT.rglob("*"):
             if not path.is_file() or path.suffix not in text_suffixes:
+                continue
+            if any(part.startswith(".") or part in {"__pycache__", "node_modules"} for part in path.parts):
                 continue
             text = path.read_text(errors="ignore")
             for legacy in legacy_paths:

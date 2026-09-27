@@ -12,7 +12,7 @@ Single-owner tests live with their production owner under `packages/*/tests` or 
 - `integration/product`: cross-owner production-store contracts
 - `integration/runtime`: production runtime and backup/restore
 - `e2e`: Python Playwright full-product black-box paths
-- `live`: explicit real external service/model/environment tests; not part of deterministic CI
+- `live`: explicit real-environment validation that is outside the default merge contract; not a bucket for every external-backed test
 
 CI consumes these physical owners. It does not maintain a second test manifest.
 
@@ -122,8 +122,8 @@ uv run --no-sync pytest tests/e2e
 PPAP_DEEP_LIVE=1 uv run --no-sync pytest tests/live/test_deep_isolated.py
 ```
 
-The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default deterministic `CI Gate`.
+The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default `CI Gate`.
 
 ## CI Gate
 
-Every PR runs the deterministic groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. The final `CI Gate` runs no tests; it succeeds only when every required deterministic group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.
+The default merge contract is the required groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.

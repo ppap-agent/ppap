@@ -91,7 +91,9 @@ jobs:
             postgres: false
           - id: documents
             name: documents
-            # Only current physical owner directories are listed; the other document packages have no tests/ yet.
+            # Matrix lists physical owner test directories. Repository contract
+            # fails if a packages/*/tests or services/*/tests tree with Python
+            # tests is missing, duplicated, or not present on disk.
             paths: packages/ppap_ocr_adapter/tests
             postgres: false
           - id: engine
@@ -365,7 +367,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, ppap]
     timeout-minutes: 5
     steps:
-      - name: Require deterministic jobs to succeed
+      - name: Require merge contract jobs to succeed
         env:
           WEB_RESULT: ${{ needs.web.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}

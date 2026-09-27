@@ -64,7 +64,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 Excel/PDF/scanned/V3/PSW 命令见 [TESTING](TESTING.md)。
 
-默认 `Tests` workflow 每个 PR 都执行 Web、Repository contract、Python modules、Schema、Corpus、Product integration；最终 `CI Gate` 只汇总这些 deterministic groups。当前不做 change-aware path skipping。`tests/live` 与 InsForge native lifecycle 不进入默认 Gate。
+默认 merge contract 是 required groups：Web、Repository contract、Python modules、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
 single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。
 
