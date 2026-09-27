@@ -145,10 +145,12 @@ def set_trial_baseline(
         conn.execute(
             """
             INSERT INTO product.trial_cutover_baselines
-                (provider, tenant_key, ai_item_id, consumed_points)
-            VALUES ('feishu', %s, %s, %s)
+                (provider, tenant_key, ai_item_id, consumed_points, source, recorded_at)
+            VALUES ('feishu', %s, %s, %s, 'test fixture', now())
             ON CONFLICT (provider, tenant_key, ai_item_id)
-            DO UPDATE SET consumed_points = EXCLUDED.consumed_points
+            DO UPDATE SET consumed_points = EXCLUDED.consumed_points,
+                          source = EXCLUDED.source,
+                          recorded_at = EXCLUDED.recorded_at
             """,
             (tenant_key, ai_item_id, int(consumed_points)),
         )
