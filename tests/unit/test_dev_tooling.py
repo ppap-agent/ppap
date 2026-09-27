@@ -514,6 +514,18 @@ class DeployContractTests(unittest.TestCase):
         )
         self.assertLessEqual(len(_full_canonical_bakes(production_e2e)), 1)
 
+    def test_schema_ci_discovers_authoritative_postgres_suite(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        testing = (ROOT / "docs" / "TESTING.md").read_text()
+        tests_readme = (ROOT / "tests" / "README.md").read_text()
+        entry = "python -m unittest discover -s tests/schema"
+        self.assertIn("uv run --no-sync " + entry, workflow)
+        self.assertIn(entry, testing)
+        self.assertIn(entry, tests_readme)
+        modules = {path.name for path in (ROOT / "tests" / "schema").glob("test_*.py")}
+        self.assertIn("test_upgrade.py", modules)
+        self.assertIn("test_rule_parse.py", modules)
+
     def test_ci_uses_uv_lock_as_python_dependency_authority(self):
         lock = ROOT / "uv.lock"
         self.assertTrue(lock.is_file())

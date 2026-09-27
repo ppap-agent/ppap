@@ -187,13 +187,13 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
             conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
         for _ in range(2):
             _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
+        _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
         loaded = self.store.get_round(round_id)
         by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
         self.assertEqual(by_id[target.id]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})
         self.assertIsNone(by_id[reference.id]["rule"])
         self.assertEqual(loaded["findings"][0]["status"], "NG")
         self.assertEqual(loaded["findings"][0]["review"]["judgment"], "保留人工判断")
-        _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
         self.assertEqual(self.store.accept_draft(self.alice, draft, "old-key")["id"], round_id)
         with self.store._conn() as conn:
             fingerprint = conn.execute("SELECT request_fingerprint FROM product.audit_rounds WHERE id=%s", (round_id,)).fetchone()[0]
