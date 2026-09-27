@@ -43,7 +43,7 @@ docker build \
   .
 docker run --rm \
   "ppap-psw-test:${PPAP_BUILD_SHA}" \
-  python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+  pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
 ## Schema / deploy / E2E
