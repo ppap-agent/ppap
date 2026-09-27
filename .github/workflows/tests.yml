@@ -118,12 +118,12 @@ jobs:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
         run: |
           set -euo pipefail
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml             up -d postgres --wait --wait-timeout 120
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml             run --rm init-db
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
           uv run --no-sync python -m unittest discover -s services/api/tests -v
           uv run --no-sync python -m unittest discover -s services/worker/tests -v
           uv run --no-sync python -m unittest discover -s tests/integration -v
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml             down -v --remove-orphans
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake api, worker, and web images
         run: |
           set -euo pipefail
@@ -172,6 +172,7 @@ jobs:
       - name: Clean Compose stacks
         if: always()
         run: |
+          docker compose -p "$PPAP_COMPOSE_TEST" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
           docker compose -p "$PPAP_COMPOSE_PROD" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans || true
           docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \
