@@ -22,66 +22,73 @@
 CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 
 - **user-space**：workflow 可以安装 uv/Python、Node、Corepack/pnpm、项目依赖和 Playwright。
-- **Docker**：需要启动容器或 Buildx 的 job（schema / Docker integration / PSW / InsForge lifecycle）要求 `command -v docker`、`docker info`、`docker compose version`、`docker buildx version` 已经可用。缺任一能力时 fail-fast：`runner does not satisfy ppap-docker capability`。workflow 不安装 Docker、不启动 daemon、不 chmod socket、不修改 iptables。
+- **Docker**：需要启动容器或 Buildx 的 job（service modules / schema / Corpus PSW / Product integration / InsForge lifecycle）要求 `command -v docker`、`docker info`、`docker compose version`、`docker buildx version` 已经可用。缺任一能力时 fail-fast：`runner does not satisfy ppap-docker capability`。workflow 不安装 Docker、不启动 daemon、不 chmod socket、不修改 iptables。
 - **schema**：使用 isolated-dev PostgreSQL 容器内的 `psql`（`docker compose exec -T postgres psql`），不要求 host `psql`。
 - **PSW `.doc`**：从已构建的 `ppap-worker` 派生一次性测试镜像，通过 build context COPY tests/corpus/fixtures（不 bind-mount 仓库路径），并只安装 pytest。生产 worker 镜像不变，也不在 host 上 apt-install LibreOffice 或 gcc。
-- **Compose 路径**：现有 Compose stack 仍会把仓库内 `migrations/` bind-mount 进容器。因此 schema / Docker integration / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，不新增 host-workspace bind mount。
+- **Compose 路径**：现有 Compose stack 仍会把仓库内 `migrations/` bind-mount 进容器。因此 service modules / schema / Product integration / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，不新增 host-workspace bind mount。
 - **Compose isolation**：CI 为 production、isolated-dev E2E 和 schema 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 Compose project name，避免默认目录名互相污染。cleanup 在独立 `if: always()` step；失败时先 dump `compose ps -a` 和对应 stack 的 service logs。
-- **非 Docker job**：Web contract、Python unit 和普通 corpus 不要求 Docker。
+- **非 Docker job**：Web、Repository contract、无 PostgreSQL 的 Python modules 和普通 Corpus 不要求 Docker。
 - **InsForge static config**：只需要 Docker Compose CLI（`docker compose config`）。不需要 Docker daemon 或 Buildx，也不启动容器。CLI 缺失时由 `verify-config.mjs` 给出明确错误。
 - **InsForge live lifecycle**：需要 `local start` 使用的 runtime Docker capability（CI 用 `assert-docker` fail-fast）。
 
 ## 当前可运行入口
 
-Single-owner Python tests 与 production owner co-locate：`packages/*/tests` 或 `services/*/tests`。根 `tests/` 只承载跨 owner/system-level authority：`tests/repository`（repository/build/config/tooling）、`tests/schema`（real PostgreSQL contracts）、`tests/corpus`（assembled engine regression + fixtures）、`tests/integration`（跨 owner product/runtime contracts）、`tests/e2e`（Python Playwright 黑盒）和 `tests/live`（真实外部服务/model/environment）。`tests/integration/product` 运行 production store-backed 跨 owner contracts；`tests/integration/runtime` 运行 production runtime/backup。`tests/live` 不属于默认 deterministic CI。
+Single-owner Python tests 与 production owner co-locate：`packages/*/tests` 或 `services/*/tests`。根 `tests/` 只承载 system-level authority：`repository`、`schema`、`corpus`、`integration`、`e2e`、`live`。CI 直接消费这些物理 owner，不维护第二套 test manifest。
 
-Web 合并契约分两段。类型、生产构建和前端白盒/契约单测不依赖 Docker；代表性浏览器路径在 isolated-dev 上。CI 里它们分别是 `Web contract` 与 `Docker integration`（同一 SHA 只 `docker buildx bake` 一次，先 production runtime/backup，再 isolated-dev Python Playwright E2E）。Python deterministic tests 先按 production owner 物理归档；纯 package/repository tests 保持无 Docker。依赖 files/rules/drafts/rounds/jobs/usage/auth 产品状态的 API/Worker/cross-owner tests 使用 production `AuthStore` + isolated-dev PostgreSQL，进入 `Docker integration`；测试侧只保留 object storage、HTTP/OpenAPI、model gateway 等真正 external boundary fake，不再维护 `MemoryAuthStore`。Python test runner authority 统一为 pytest；`unittest.TestCase` 可继续作为测试类写法，但不再作为执行入口。`push` 只在 `main` 上触发，功能分支只由 `pull_request` 跑完整测试，避免同一次提交跑两遍；两种事件仍使用不同的 concurrency group，不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入 reducer、helpers、host login 与 public-config 门控在 `pnpm test`。CI 的浏览器 E2E 跑 Python Playwright：`tests.e2e.test_web_audit`、`tests.e2e.test_ui_a11y`、`tests.e2e.test_rules` 和 `tests.e2e.test_rule_interactions`（isolated-dev 产品路径与 route mock）。`pnpm lint` 使用 `@shadcn/lint` 检查 Tailwind 组件的重绘、颜色、任意值、内联样式、静态 class 和未知 class，并用 ESLint `no-restricted-imports` 禁止直接导入 `@insforge/sdk` 与 PostgREST 客户端；基础 shadcn 源码目录作为组件实现排除，业务页面与 PPAP 组合层必须通过。浏览器里的键盘、焦点、视口、减少动效和粗指针计算样式在 `tests.e2e.test_ui_a11y`（含规则编辑）；审核复核的键盘与单一 H1 在 `tests.e2e.test_web_audit`。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。默认 PR CI 跑 `node deploy/insforge/verify-config.mjs`（static config contract：原生 `docker compose config` + PPAP invariant）。InsForge `local start/status/db query/stop` 是 live native lifecycle：`InsForge lifecycle` workflow 在 `deploy/insforge/**`、该 workflow 本身或 `.node-version` 变化时自动运行，并保留 `workflow_dispatch` 与每周 schedule（`local start` 会拉取上游 setup.sh/镜像，CLI pin 不能冻结该 runtime；self-hosted runner 上每周一次足够低频）。无关 PR 不跑 live lifecycle。
+默认 `Tests` workflow 每个 PR 都运行全部 deterministic groups：
 
-```sh
-cd apps/web
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm lint
-pnpm build
-cd ../..
-node deploy/insforge/verify-config.mjs
-uv sync --locked --extra dev
-uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync pytest \
-  packages/ppap_core/tests \
-  packages/ppap_deep/tests \
-  packages/ppap_excel_audit_engine/tests \
-  packages/ppap_ocr_adapter/tests \
-  tests/repository
+- **Web**：`apps/web` typecheck / test / lint / build。
+- **Repository contract**：`tests/repository`，并包含 repository/build/config/tooling checks 与 InsForge static config contract。
+- **Python modules**：约 4 个 matrix group：`core/deep`、`documents`、`engine`、`services`。matrix 只列当前真实存在的 owner test directories；services variant 使用 isolated-dev PostgreSQL。
+- **Schema**：`tests/schema`，继续使用 real PostgreSQL。
+- **Corpus**：Excel / PDF / scanned / V3 / PSW format matrix；PSW 继续使用 purpose-built worker-derived container。
+- **Product integration**：`tests/integration/product` + canonical single bake + `tests/integration/runtime` + Python Playwright `tests/e2e`。
+- **CI Gate**：不运行测试，只汇总以上 deterministic groups；任一 required group failed / cancelled / skipped 时 Gate 失败。
 
-export COMPOSE_PROJECT_NAME=ppap-product-tests
-docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
-docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
-docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-```
+`tests/live` 和 InsForge native live lifecycle 不进入默认 `CI Gate`。当前不做 git-diff/path-aware skipping；deterministic groups 每个 PR 都执行。
+
+Repository contract：
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync pytest \
-  packages/ppap_core/tests \
-  packages/ppap_deep/tests \
-  packages/ppap_excel_audit_engine/tests \
-  packages/ppap_ocr_adapter/tests \
-  tests/repository
+node deploy/insforge/verify-config.mjs
+uv run --no-sync pytest tests/repository
+```
 
-export COMPOSE_PROJECT_NAME=ppap-product-tests
+Python module groups：
+
+```sh
+uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+
+export COMPOSE_PROJECT_NAME=ppap-services
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
+uv run --no-sync pytest services/api/tests services/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
+
+Cross-owner product contracts：
+
+```sh
+export COMPOSE_PROJECT_NAME=ppap-product-integration
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest tests/integration/product
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
+
+Corpus：
+
+```sh
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
+
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake worker
 docker build \
@@ -91,24 +98,44 @@ docker build \
   -f tests/corpus/Dockerfile.psw \
   -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
   .
-docker run --rm \
-  "ppap-psw-test:${PPAP_BUILD_SHA}" \
+docker run --rm "ppap-psw-test:${PPAP_BUILD_SHA}" \
   pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+```
 
+Schema：
+
+```sh
 export COMPOSE_PROJECT_NAME=ppap-schema
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
 uv run --no-sync pytest tests/schema
-docker compose -f deploy/isolated-dev/compose.yaml down -v
-# schema CI collects tests/schema/test_*.py against isolated-dev PostgreSQL.
-# tests use container-native psql via docker compose exec -T postgres psql
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
 
+Product integration 使用 #100 的单次完整 bake 与隔离 Compose 生命周期：
+
+```sh
+uv sync --locked --extra dev --extra e2e
+uv run --no-sync python -m playwright install chromium
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
-export COMPOSE_PROJECT_NAME=ppap-prod
+
+export COMPOSE_PROJECT_NAME=ppap-product-integration
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest tests/integration/product
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+
 docker buildx bake
+
+export COMPOSE_PROJECT_NAME=ppap-prod
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
 uv run --no-sync pytest tests/integration/runtime
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
+
+export COMPOSE_PROJECT_NAME=ppap-e2e
+docker compose -f deploy/isolated-dev/compose.yaml up -d --wait --no-build
+uv run --no-sync pytest tests/e2e
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
 PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/corpus/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。

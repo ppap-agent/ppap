@@ -20,38 +20,53 @@
 
 ## 当前命令
 
-Local 与 CI 使用同一组 user-space 工具：uv、pytest、git、compileall、pnpm、Node、Python Playwright，以及 InsForge 的 `node deploy/insforge/verify-config.mjs` 与 pinned `@insforge/cli`。`verify-config.mjs` 是 static config contract：Compose 语法与插值由 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example config` 拥有，只需要 Docker Compose CLI，不需要 daemon 或 Buildx，也不启动容器。live native lifecycle 是 `bash deploy/insforge/smoke-local.sh`，需要 `local start` 使用的 runtime Docker capability。Docker Engine、Compose 和 Buildx 是 runner/platform capability，由宿主提供；需要完整 Docker 的 job 只做 fail-fast 检测。schema 通过 isolated-dev PostgreSQL 容器内的 `psql` 执行 `migrations/`。
+Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测试分类。
 
-唯一产品前端使用 React + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`、`pnpm lint` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器 E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
+Repository contract：
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync pytest \
-  packages/ppap_core/tests \
-  packages/ppap_deep/tests \
-  packages/ppap_excel_audit_engine/tests \
-  packages/ppap_ocr_adapter/tests \
-  tests/repository
-
-COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
-COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
-COMPOSE_PROJECT_NAME=ppap-product-tests docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-
-export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
-docker buildx bake
-COMPOSE_PROJECT_NAME=ppap-prod docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
-COMPOSE_PROJECT_NAME=ppap-prod docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
-
-COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
-COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+node deploy/insforge/verify-config.mjs
+uv run --no-sync pytest tests/repository
 ```
 
-single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority；`tests/integration/product` 是跨 owner deterministic product contracts，`tests/integration/runtime` 是 production runtime/backup，`tests/live` 不进入默认 deterministic CI；当前入口见 [TESTING](TESTING.md)。需要产品持久化状态的 API/Worker/integration tests 直接使用 production `AuthStore` + isolated-dev PostgreSQL；`tests/integration/product/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。schema 用 `uv run --no-sync pytest tests/schema`（isolated-dev PostgreSQL，容器内 `psql`）。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。Python 依赖由已提交的 `uv.lock` 拥有；`pyproject.toml` 是声明，`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+Python module groups：
 
-完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
+```sh
+uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+
+export COMPOSE_PROJECT_NAME=ppap-services
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest services/api/tests services/worker/tests
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
+
+Root system contracts：
+
+```sh
+export COMPOSE_PROJECT_NAME=ppap-product-integration
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest tests/integration/product
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+
+export COMPOSE_PROJECT_NAME=ppap-schema
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest tests/schema
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
+
+Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 Excel/PDF/scanned/V3/PSW 命令见 [TESTING](TESTING.md)。
+
+默认 `Tests` workflow 每个 PR 都执行 Web、Repository contract、Python modules、Schema、Corpus、Product integration；最终 `CI Gate` 只汇总这些 deterministic groups。当前不做 change-aware path skipping。`tests/live` 与 InsForge native lifecycle 不进入默认 Gate。
+
+single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。
 
 ## 工程工具链
 
@@ -59,7 +74,7 @@ single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`�
 
 CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装语义：
 
-- Python 依赖：`uv.lock`。unit / schema / corpus 使用 `uv sync --locked --extra dev`；Docker integration / Playwright E2E 另加 `--extra e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 按默认 extra 再 sync 一次。
+- Python 依赖：`uv.lock`。Repository contract / Python modules / schema / corpus 使用 `uv sync --locked --extra dev`；Product integration / Playwright E2E 另加 `--extra e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 按默认 extra 再 sync 一次。
 - Python 解释器：`.python-version`（3.12）。`pyproject.toml` 的 `requires-python = ">=3.12"` 是兼容范围。
 - Node：`.node-version`（22）。workflow 通过 `actions/setup-node` 的 `node-version-file` 读取。
 - pnpm：`apps/web/package.json` 的 `packageManager`。`corepack enable` 后 Corepack 直接使用该字段；workflow、Web Dockerfile 和 isolated-dev Vite overlay 不再重复 `pnpm@…` 字面量。安装仍是 `pnpm install --frozen-lockfile`。
