@@ -9,7 +9,7 @@ from ppap_core.fixtures import RULE_A
 from ppap_core.settings import Settings
 from fastapi.testclient import TestClient
 from ppap_api import create_app
-from tests.unit.memory_auth import MemoryAuthStore
+from tests.integration.memory_auth import MemoryAuthStore
 from unittest.mock import patch
 import os
 

@@ -24,7 +24,7 @@ from ppap_core.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
 from ppap_core.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.unit.memory_auth import MemoryAuthStore
+from tests.integration.memory_auth import MemoryAuthStore
 
 
 def _clean_env(**extra: str):

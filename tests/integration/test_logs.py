@@ -4,7 +4,9 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import unittest
+from unittest.mock import patch
 
 import tests.pathsetup  # noqa: F401
 
@@ -14,8 +16,17 @@ from ppap_core.logs import JsonFormatter, LOGGER, bind, emit, new_request_id, re
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.unit.memory_auth import MemoryAuthStore
-from tests.unit.test_core_stack import _clean_env
+from tests.integration.memory_auth import MemoryAuthStore
+
+
+def _clean_env(**extra: str):
+    keep = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
+    }
+    keep.update(extra)
+    return patch.dict(os.environ, keep, clear=True)
 
 
 def _json_logger() -> io.StringIO:

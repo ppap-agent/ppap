@@ -10,7 +10,7 @@ import tests.pathsetup  # noqa: F401
 
 from ppap_worker import run_claimed_job
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class ClaimedJobTests(unittest.TestCase):

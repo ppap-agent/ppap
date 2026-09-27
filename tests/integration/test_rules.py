@@ -98,7 +98,7 @@ class RuleApiTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
         from ppap_core.settings import Settings
-        from tests.unit.memory_auth import MemoryAuthStore
+        from tests.integration.memory_auth import MemoryAuthStore
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
@@ -237,7 +237,7 @@ class RuleApiTests(unittest.TestCase):
 
     def test_same_request_resumes_one_job_and_unknown_is_not_automatically_reexecuted(self):
         from ppap_worker import process_claimed
-        from tests.unit.memory_auth import _now
+        from tests.integration.memory_auth import _now
 
         source = self.upload()
         request_id = str(uuid.uuid4())

@@ -19,7 +19,7 @@ from ppap_core.fixtures import RULE_A, USER_BOB
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.unit.memory_auth import MemoryAuthStore
+from tests.integration.memory_auth import MemoryAuthStore
 
 
 def _clean_env(**extra: str):
@@ -450,7 +450,7 @@ class AuditFlowTests(unittest.TestCase):
         from ppap_excel_audit_engine import app_runtime
         from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
         from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-        from tests.unit.test_rules import rule_body
+        from tests.integration.test_rules import rule_body
 
         self._login("alice")
         source = self._upload("rules.json", b"{}")
