@@ -456,7 +456,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertTrue(docker_jobs)
         for body in docker_jobs:
             self.assertIn("uses: ./.github/actions/assert-docker", body)
-        self.assertIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
+        self.assertNotIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
 
     def test_insforge_config_uses_native_compose_not_a_parser(self):
@@ -471,9 +471,14 @@ class DeployContractTests(unittest.TestCase):
         self.assertNotIn("function parseDotenv(", source)
         self.assertNotIn("function serviceEnvironment(", source)
         self.assertNotIn("function interpolatedEnvironment(", source)
+        self.assertNotIn("docker info", source)
+        self.assertNotIn("docker buildx", source)
+        self.assertIn("Compose CLI", source)
         jobs = _workflow_jobs((ROOT / ".github" / "workflows" / "tests.yml").read_text())
         self.assertIn("node deploy/insforge/verify-config.mjs", jobs["insforge-config"])
-        self.assertIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
+        self.assertNotIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
+        self.assertNotIn("docker info", jobs["insforge-config"])
+        self.assertNotIn("buildx", jobs["insforge-config"])
 
     def test_insforge_lifecycle_is_path_filtered_live_authority(self):
         lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
@@ -485,7 +490,19 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn(".node-version", lifecycle)
         self.assertIn("bash deploy/insforge/smoke-local.sh", lifecycle)
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
-        self.assertRegex(lifecycle, r"cron:\s*[\"']27 3 \* \* 1[\"']")
+        crons = re.findall(r"cron:\s*[\"']([^\"']+)[\"']", lifecycle)
+        self.assertEqual(len(crons), 1, lifecycle)
+        fields = crons[0].split()
+        self.assertEqual(len(fields), 5, crons[0])
+        minute, hour, day_of_month, _month, day_of_week = fields
+        self.assertNotEqual(minute, "*")
+        self.assertNotEqual(hour, "*")
+        self.assertFalse(minute.startswith("*/"), crons[0])
+        self.assertFalse(hour.startswith("*/"), crons[0])
+        self.assertTrue(
+            day_of_week != "*" or day_of_month != "*",
+            msg="InsForge lifecycle schedule must be weekly or coarser",
+        )
         smoke = (ROOT / "deploy" / "insforge" / "smoke-local.sh").read_text()
         self.assertIn("redact_json", smoke)
         self.assertIn("trap cleanup EXIT", smoke)

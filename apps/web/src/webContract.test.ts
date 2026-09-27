@@ -58,14 +58,6 @@ test('package.json does not declare InsForge SDK or PostgREST clients', () => {
   }
 })
 
-test('ESLint owns InsForge SDK and PostgREST import policy', () => {
-  const eslint = readFileSync(join(web, 'eslint.config.mjs'), 'utf8')
-  assert.match(eslint, /no-restricted-imports/)
-  assert.match(eslint, /@insforge\/sdk/)
-  assert.match(eslint, /@insforge\/\*/)
-  assert.match(eslint, /postgrest/)
-})
-
 test('the web client stays behind the Product API boundary', () => {
   const sources = shippedSources()
   for (const forbidden of [

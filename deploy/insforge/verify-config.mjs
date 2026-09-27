@@ -57,30 +57,54 @@ function composeEnv(overrides) {
   return {...env, ...overrides}
 }
 
-function nativeComposeConfig(overrides) {
-  const result = spawnSync(
-    'docker',
-    [
-      'compose',
-      '--progress',
-      'quiet',
-      '-f',
-      composeFile,
-      '--env-file',
-      envFile,
-      'config',
-      '--format',
-      'json',
-    ],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      env: composeEnv(overrides),
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  )
+function spawnCompose(args, env = process.env) {
+  return spawnSync('docker', ['compose', ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    env,
+    maxBuffer: 10 * 1024 * 1024,
+  })
+}
+
+function missingComposeCli(result) {
   if (result.error?.code === 'ENOENT') {
-    fail('native Docker Compose is required to validate deploy/insforge/compose.yaml')
+    return 'Docker CLI not found. Static InsForge config needs the Docker Compose CLI (`docker compose config`); it does not start containers and does not need a Docker daemon or Buildx.'
+  }
+  const detail = String(result.stderr || result.stdout || result.error || '').trim()
+  if (
+    result.status !== 0 &&
+    /compose/i.test(detail) &&
+    /not a docker command|unknown command|plugin/i.test(detail)
+  ) {
+    return `Docker Compose CLI is required for static InsForge config (Compose CLI only; no daemon or Buildx):\n${detail}`
+  }
+  return null
+}
+
+function requireComposeCli() {
+  const result = spawnCompose(['version'])
+  const missing = missingComposeCli(result)
+  if (missing) {
+    fail(missing)
+    return false
+  }
+  if (result.status !== 0) {
+    fail(
+      `Docker Compose CLI is required for static InsForge config (Compose CLI only; no daemon or Buildx):\n${result.stderr || result.stdout || result.error || 'docker compose version failed'}`,
+    )
+    return false
+  }
+  return true
+}
+
+function nativeComposeConfig(overrides) {
+  const result = spawnCompose(
+    ['--progress', 'quiet', '-f', composeFile, '--env-file', envFile, 'config', '--format', 'json'],
+    composeEnv(overrides),
+  )
+  const missing = missingComposeCli(result)
+  if (missing) {
+    fail(missing)
     return null
   }
   if (result.status !== 0) {
@@ -136,7 +160,7 @@ const selected = {
   FEISHU_APP_SECRET: 'feishu-secret',
 }
 
-const config = nativeComposeConfig(selected)
+const config = requireComposeCli() ? nativeComposeConfig(selected) : null
 if (config) {
   const services = config.services || {}
   assertEqual(

@@ -37,7 +37,7 @@ docker run --rm \
 
 #7 / #11 浏览器 E2E：`uv run --no-sync python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v`（需 `uv sync --locked --extra dev --extra e2e` 与 `docker compose -f deploy/isolated-dev/compose.yaml up -d --wait`）。
 
-InsForge static config contract：`node deploy/insforge/verify-config.mjs`（原生 `docker compose config` + PPAP invariant）。live native lifecycle：`bash deploy/insforge/smoke-local.sh`（相关 path / `workflow_dispatch` / 每周 schedule，不是每个无关 PR）。
+InsForge static config contract：`node deploy/insforge/verify-config.mjs`（原生 `docker compose config` + PPAP invariant；只需 Docker Compose CLI，不需要 daemon/Buildx，不启动容器）。live native lifecycle：`bash deploy/insforge/smoke-local.sh`（需要 `local start` 的 runtime Docker capability；相关 path / `workflow_dispatch` / 每周 schedule，不是每个无关 PR）。
 
 Schema PostgreSQL contracts：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait && docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db && uv run --no-sync python -m unittest discover -s tests/schema -v`。CI 与本地都用该 discovery 收集 `tests/schema/test_*.py`（含 upgrade、rule parse、audit bindings、usage acceptance）；测试通过 `docker compose exec -T postgres psql` 使用容器内 `psql`。新增真实 PostgreSQL schema 契约放到 `tests/schema/test_*.py`。
 

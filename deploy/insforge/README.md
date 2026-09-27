@@ -17,7 +17,7 @@ node deploy/insforge/verify-config.mjs
 
 `verify-config.mjs` calls native `docker compose ... config --format json` with `deploy/insforge/env.example`. Compose is the authority for YAML syntax and `${VAR}` interpolation. The script then checks only PPAP-specific invariants Compose cannot know: no bundled `postgres` service, least-privilege API/Worker env, external `insforge-network`, pinned Silo digest, named object volume.
 
-`@insforge/cli@0.2.8` has no offline validator for `compute/api.json` and `compute/worker.json`. `compute *` talks to a live backend; `config plan/apply` is `insforge.toml`. The remaining JSON checks are those product invariants (Custom Compute kind, ingress, role-separated env). This job is default PR CI. It needs Docker Compose and does not start InsForge.
+`@insforge/cli@0.2.8` has no offline validator for `compute/api.json` and `compute/worker.json`. `compute *` talks to a live backend; `config plan/apply` is `insforge.toml`. The remaining JSON checks are those product invariants (Custom Compute kind, ingress, role-separated env). This job is default PR CI. It needs the Docker Compose CLI only. It does not start containers and does not need a Docker daemon or Buildx. If the CLI is missing, `verify-config.mjs` fails with a clear error.
 
 ### Live native lifecycle
 
@@ -25,13 +25,13 @@ node deploy/insforge/verify-config.mjs
 bash deploy/insforge/smoke-local.sh
 ```
 
-The script pins `@insforge/cli@0.2.8` and runs `local start --json`, `local status --json`, `db query "select 1" --json`, then `local stop`. Cleanup is via `trap`. JSON is redacted so keys are not printed. Local instance state lives in `.insforge/` and is gitignored.
+The script pins `@insforge/cli@0.2.8` and runs `local start --json`, `local status --json`, `db query "select 1" --json`, then `local stop`. That live path needs the runtime Docker capability `local start` uses: a running engine that can start containers. Cleanup is via `trap`. JSON is redacted so keys are not printed. Local instance state lives in `.insforge/` and is gitignored.
 
 CI entry is the `InsForge lifecycle` workflow. It runs on:
 
 - `workflow_dispatch`
 - `pull_request` / `push` to `main` when `deploy/insforge/**`, the workflow file, or `.node-version` change
-- weekly `schedule` (`27 3 * * 1` UTC)
+- weekly `schedule`
 
 Schedule exists because `local start` fetches upstream `setup.sh` and runtime images; pinning the CLI does not freeze that stack. Weekly is low-frequency enough for this self-hosted runner. Unrelated PRs do not run live lifecycle.
 
