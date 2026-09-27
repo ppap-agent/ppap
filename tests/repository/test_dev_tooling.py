@@ -841,6 +841,15 @@ class DeployContractTests(unittest.TestCase):
             self.assertNotIn(item, seen)
             seen.add(item)
 
+    def test_required_v3_corpus_does_not_skip_missing_assets(self):
+        grouped = (ROOT / "tests" / "corpus" / "v3_poc" / "test_poc_assets_grouped.py").read_text()
+        self.assertNotIn("pytest.skip", grouped)
+        self.assertNotIn("allow_module_level", grouped)
+        oracle = (ROOT / "tests" / "corpus" / "v3_poc" / "poc_oracle.py").read_text()
+        self.assertIn("Required V3 dataset is missing", oracle)
+        self.assertIn("Required V3 expected XLSX is missing", oracle)
+        self.assertIn("No valid V3 cases", oracle)
+
     def test_python_tests_use_pytest_and_installed_imports(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
         pytest_config = project.get("tool", {}).get("pytest", {}).get("ini_options", {})

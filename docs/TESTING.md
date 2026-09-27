@@ -41,7 +41,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 - **Repository contract**：`tests/repository`，并包含 repository/build/config/tooling checks 与 InsForge static config contract。该 contract 还校验 Python module matrix 覆盖每一个含 Python tests 的 `packages/*/tests` / `services/*/tests`，且每个目录恰好出现一次。
 - **Python modules**：约 4 个 matrix group：`core/deep`、`documents`、`engine`、`services`。matrix 直接列出物理 owner test directories；services variant 使用 isolated-dev PostgreSQL。
 - **Schema**：`tests/schema`，继续使用 real PostgreSQL。
-- **Corpus**：Excel / PDF / scanned / V3 / PSW format matrix；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child：cache miss 时可以调用真实 OCR / model，这不把它变成 live 或 optional。
+- **Corpus**：Excel / PDF / scanned / V3 / PSW format matrix；PSW 继续使用 purpose-built worker-derived container。Corpus 是 CI Gate 的 required child：cache miss 时可以调用真实 OCR / model，这不把它变成 live 或 optional。默认 V3 dataset / expected XLSX 缺失或解析后无有效 case 时 fail closed，不 skip。
 - **Product integration**：`tests/integration/product` + canonical single bake + `tests/integration/runtime` + Python Playwright `tests/e2e`。
 - **CI Gate**：不运行测试，只汇总以上 required groups；任一 required group failed / cancelled / skipped 时 Gate 失败。
 

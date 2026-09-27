@@ -211,12 +211,7 @@ def pytest_generate_tests(metafunc: Any) -> None:
     if "case" not in metafunc.fixturenames:
         return
 
-    try:
-        cases = _build_selected_cases(metafunc.config)
-    except FileNotFoundError as exc:
-        pytest.skip(str(exc), allow_module_level=True)
-        return
-
+    cases = _build_selected_cases(metafunc.config)
     if not cases:
         raise AssertionError("No POC test cases found after applying filters.")
 
