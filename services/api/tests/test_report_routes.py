@@ -1,7 +1,6 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-import tests.pathsetup  # noqa: F401
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from ppap_api.report_routes import register_report_routes
