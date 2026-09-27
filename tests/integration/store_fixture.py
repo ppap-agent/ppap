@@ -64,7 +64,7 @@ def auth_store(
     objects=None,
     *,
     reset: bool = True,
-    role: str = "migrator",
+    role: str = "api",
 ) -> AuthStore:
     """Return the production AuthStore against the prepared test PostgreSQL."""
     settings = settings or Settings()
