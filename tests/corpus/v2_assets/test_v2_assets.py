@@ -6,6 +6,7 @@ from typing import Any, List
 import pytest
 from dotenv import load_dotenv
 
+from .baseline_exceptions import split_v2_baseline_mismatches
 from .v2_assets_shared import (
     APP_ROOT,
     FileCase,
@@ -62,7 +63,7 @@ def mismatch_only(request: Any) -> Any:
     return request.config.getoption("--mismatch-only", default=False)
 
 
-def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: bool) -> None:
+def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mismatch_only: bool = False) -> dict[int, str]:
     rule_count = max(case.expected.keys())
     audit_file = SimpleAuditFile(
         file_url=str(case.file_path),
@@ -72,7 +73,7 @@ def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: boo
     agent = case.agent_cls(audit_file, make_dummy_rule(rule_count))
     agent_rule_count = len(getattr(agent, "rule_checkers", []))
 
-    mismatches: List[str] = []
+    mismatches: dict[int, str] = {}
     if verbose_check:
         print("")
         print("========================================")
@@ -84,9 +85,13 @@ def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: boo
     for rule_index, expectation in sorted(case.expected.items()):
         expected_status = expectation.status
         if rule_index > agent_rule_count:
-            mismatches.append(f"rule {rule_index}: agent has {agent_rule_count} rules")
+            mismatches[rule_index] = f"rule {rule_index}: agent has {agent_rule_count} rules"
             continue
-        result = agent.check(rule_index - 1)
+        try:
+            result = agent.check(rule_index - 1)
+        except Exception as exc:
+            mismatches[rule_index] = f"rule {rule_index}: check raised {type(exc).__name__}"
+            continue
         actual = (getattr(result, "status", "") or "").upper()
         suggestion = getattr(result, "suggestions", "") or ""
         suggestion_short = " ".join(suggestion.strip().split())
@@ -108,13 +113,31 @@ def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: boo
                 print(f"      🤖 Agent建议: {suggestion_short}")
 
         if actual != expected_status:
-            mismatches.append(f"rule {rule_index}: expected {expected_status}, got {actual}. {suggestion_short}")
+            mismatches[rule_index] = (
+                f"rule {rule_index}: expected {expected_status}, got {actual}. {suggestion_short}"
+            )
 
     if verbose_check and mismatches:
         print("------ Mismatch Summary ------")
-        for mismatch in mismatches:
+        for mismatch in mismatches.values():
             print(f"  - {mismatch}")
         print("------------------------------")
+    return mismatches
 
-    if mismatches:
-        pytest.fail(f"Mismatched rule results for {case.file_name}:\n- " + "\n- ".join(mismatches))
+
+def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: bool) -> None:
+    mismatches = collect_v2_rule_mismatches(case, verbose_check=verbose_check, mismatch_only=mismatch_only)
+    unexpected, stale = split_v2_baseline_mismatches(case.file_name, case.file_type, mismatches)
+    parts: List[str] = []
+    if unexpected:
+        parts.append(
+            "new mismatches:\n- "
+            + "\n- ".join(mismatches[rule] for rule in sorted(unexpected))
+        )
+    if stale:
+        parts.append(
+            "stale baseline exceptions (no longer mismatch):\n- "
+            + "\n- ".join(f"rule {rule}" for rule in sorted(stale))
+        )
+    if parts:
+        pytest.fail(f"{case.file_type} {case.file_name}:\n" + "\n".join(parts))

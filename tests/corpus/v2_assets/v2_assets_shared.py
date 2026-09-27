@@ -153,6 +153,7 @@ class FileCase:
     file_path: Path
     expected: Dict[int, RuleExpectation]
     agent_cls: type
+    file_type: str
 
 
 def normalize_file_name(name: str) -> str:
@@ -353,7 +354,7 @@ def build_cases(
         if is_excel:
             file_type = "excel"
         elif is_pdf:
-            file_type = "pdf"
+            file_type = "pdf" if ftype_filter != "scanned" else "scanned"
         else:
             continue
         agent_cls = resolve_agent_cls(doc_key, file_type=file_type)
@@ -365,6 +366,7 @@ def build_cases(
                 file_path=file_path,
                 expected=rule_map,
                 agent_cls=agent_cls,
+                file_type=file_type,
             )
         )
 
@@ -504,6 +506,7 @@ def build_cases_from_long_feedback(
                 group_key,
                 {
                     "agent_cls": agent_cls,
+                    "file_type": agent_file_type,
                     "expected": {},
                 },
             )
@@ -543,6 +546,7 @@ def build_cases_from_long_feedback(
                 file_path=resolved_path,
                 expected=expected_map,
                 agent_cls=state["agent_cls"],
+                file_type=state["file_type"],
             )
         )
 
