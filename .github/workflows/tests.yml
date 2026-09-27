@@ -81,9 +81,14 @@ jobs:
           python -m compileall -q packages services tests
           python -m unittest discover -s tests/unit -v
 
-  build:
+  integration:
+    name: Docker integration
     runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 40
+    timeout-minutes: 80
+    env:
+      PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PPAP_COMPOSE_PROD: ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}
+      PPAP_COMPOSE_E2E: ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -102,70 +107,68 @@ jobs:
           rm -rf .venv
           uv venv --python 3.12 --seed .venv
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
-      - name: Bake images, compose up, runtime and backup checks
-        env:
-          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          uv pip install -e ".[dev]"
-          compose() { docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example "$@"; }
-          dump() { compose ps -a || true; compose logs --no-color --timestamps postgres silo init-db init-bucket api worker web || true; }
-          compose down -v --remove-orphans || true
-          docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
-          docker buildx bake
-          if ! compose up -d --wait --wait-timeout 180; then
-            dump
-            compose down -v --remove-orphans || true
-            exit 1
-          fi
-          python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
-          compose down -v --remove-orphans
-
-  e2e:
-    name: Web browser E2E
-    runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Assert Docker
-        uses: ./.github/actions/assert-docker
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.9.26"
-          enable-cache: true
-      - name: Set up Python
-        run: |
-          set -euo pipefail
-          uv python install 3.12
-          rm -rf .venv
-          uv venv --python 3.12 --seed .venv
-          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
-      - name: Isolated-dev compose and browser loop
-        env:
-          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install Python deps and browser
         run: |
           set -euo pipefail
           uv pip install -e ".[dev,e2e]"
           python -m playwright install chromium
-          compose() { docker compose -f deploy/isolated-dev/compose.yaml "$@"; }
-          dump() { compose ps -a || true; compose logs --no-color --timestamps postgres silo init-db init-bucket api worker web || true; }
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
-          compose down -v --remove-orphans || true
+      - name: Bake api, worker, and web images
+        run: |
+          set -euo pipefail
           docker buildx bake
-          if ! compose up -d --wait --wait-timeout 180; then
-            dump
-            compose down -v --remove-orphans || true
-            exit 1
-          fi
+          docker image inspect \
+            "ppap-api:${PPAP_BUILD_SHA}" \
+            "ppap-worker:${PPAP_BUILD_SHA}" \
+            "ppap-web:${PPAP_BUILD_SHA}" \
+            >/dev/null
+      - name: Production runtime and backup
+        env:
+          COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_PROD }}
+        run: |
+          set -euo pipefail
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
+            up -d --wait --wait-timeout 180
+          python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
+            down -v --remove-orphans
+      - name: Isolated-dev browser E2E
+        env:
+          COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_E2E }}
+        run: |
+          set -euo pipefail
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            up -d --wait --wait-timeout 180 --no-build
           python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
-          compose down -v --remove-orphans
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans
+      - name: Dump Compose diagnostics
+        if: failure()
+        run: |
+          dump() {
+            local project="$1"
+            local file="$2"
+            shift 2
+            echo "=== ${project} ps ==="
+            docker compose -p "$project" -f "$file" "$@" ps -a || true
+            echo "=== ${project} logs ==="
+            docker compose -p "$project" -f "$file" "$@" logs --no-color --timestamps \
+              postgres silo init-db init-bucket api worker web || true
+          }
+          dump "$PPAP_COMPOSE_PROD" deploy/compose.yaml --env-file deploy/compose.env.example
+          dump "$PPAP_COMPOSE_E2E" deploy/isolated-dev/compose.yaml
+      - name: Clean Compose stacks
+        if: always()
+        run: |
+          docker compose -p "$PPAP_COMPOSE_PROD" -f deploy/compose.yaml --env-file deploy/compose.env.example \
+            down -v --remove-orphans || true
+          docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans || true
 
   schema:
     runs-on: [self-hosted, linux, x64, ppap]
     timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: ppap-ci-schema-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -188,20 +191,26 @@ jobs:
         run: |
           set -euo pipefail
           uv pip install -e ".[dev]"
-          compose() { docker compose -f deploy/isolated-dev/compose.yaml "$@"; }
-          dump() { compose ps -a || true; compose logs --no-color --timestamps postgres init-db || true; }
-          docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans || true
-          compose down -v --remove-orphans || true
-          if ! compose up -d postgres --wait --wait-timeout 120; then
-            dump
-            exit 1
-          fi
-          if ! compose run --rm init-db; then
-            dump
-            exit 1
-          fi
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            up -d postgres --wait --wait-timeout 120
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            run --rm init-db
           python -m unittest tests.schema.test_upgrade -v
-          compose down -v --remove-orphans
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans
+      - name: Dump Compose diagnostics
+        if: failure()
+        run: |
+          echo "=== ${COMPOSE_PROJECT_NAME} ps ==="
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
+          echo "=== ${COMPOSE_PROJECT_NAME} logs ==="
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            logs --no-color --timestamps postgres init-db || true
+      - name: Clean Compose stack
+        if: always()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans || true
 
   corpus:
     name: ${{ matrix.name }}

@@ -399,9 +399,51 @@ class DeployContractTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
         jobs = _workflow_jobs(workflow)
-        for name in ("build", "e2e", "schema", "psw"):
+        for name in ("integration", "schema", "psw"):
             self.assertIn("uses: ./.github/actions/assert-docker", jobs[name])
+        self.assertNotIn("build", jobs)
+        self.assertNotIn("e2e", jobs)
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
+
+    def test_ci_docker_integration_bakes_once_and_always_cleans(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        jobs = _workflow_jobs(workflow)
+        integration = jobs["integration"]
+        schema = jobs["schema"]
+        psw = jobs["psw"]
+
+        integration_bakes = [
+            line.strip()
+            for line in integration.splitlines()
+            if "docker buildx bake" in line
+        ]
+        self.assertEqual(integration_bakes, ["docker buildx bake"])
+        self.assertIn('ppap-api:${PPAP_BUILD_SHA}', integration)
+        self.assertIn('ppap-worker:${PPAP_BUILD_SHA}', integration)
+        self.assertIn('ppap-web:${PPAP_BUILD_SHA}', integration)
+        self.assertIn("--no-build", integration)
+        self.assertNotIn("up --build", integration)
+        self.assertIn("if: always()", integration)
+        self.assertIn("if: failure()", integration)
+        self.assertIn("ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}", integration)
+        self.assertIn("ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}", integration)
+        self.assertIn("COMPOSE_PROJECT_NAME", integration)
+        self.assertIn("tests.deploy.test_runtime tests.deploy.test_backup", integration)
+        self.assertIn(
+            "tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions",
+            integration,
+        )
+
+        self.assertIn("if: always()", schema)
+        self.assertIn("if: failure()", schema)
+        self.assertIn("ppap-ci-schema-${{ github.run_id }}-${{ github.run_attempt }}", schema)
+        self.assertIn("COMPOSE_PROJECT_NAME", schema)
+        self.assertIn("tests.schema.test_upgrade", schema)
+        self.assertNotIn("tests.schema.test_rule_parse", schema)
+
+        self.assertIn("docker buildx bake worker", psw)
+        bakes = [line.strip() for line in workflow.splitlines() if "docker buildx bake" in line]
+        self.assertEqual(bakes, ["docker buildx bake", "docker buildx bake worker"])
 
 
 if __name__ == "__main__":
