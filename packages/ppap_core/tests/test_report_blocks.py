@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import Mock
 import httpx
 
-import tests.pathsetup  # noqa: F401
 from ppap_core.feishu_writeback import FeishuWritebackError, report_blocks, create_report_document, append_report_blocks
 
 
