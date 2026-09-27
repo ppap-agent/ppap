@@ -293,4 +293,4 @@ jobs:
             -e OCR_OPENAI_BASE_URL \
             -e OCR_MODEL_NAME \
             "ppap-psw-test:${PPAP_BUILD_SHA}" \
-            python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+            pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
