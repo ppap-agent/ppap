@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 
 from ppap_ocr_adapter.doc_cache import llm_service
 
