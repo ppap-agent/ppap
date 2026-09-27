@@ -25,7 +25,7 @@ CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 - **Docker**：`command -v docker`、`docker info`、`docker compose version`、`docker buildx version` 必须已经可用。缺任一能力时 fail-fast：`runner does not satisfy ppap-docker capability`。workflow 不安装 Docker、不启动 daemon、不 chmod socket、不修改 iptables。
 - **schema**：使用 isolated-dev PostgreSQL 容器内的 `psql`（`docker compose exec -T postgres psql`），不要求 host `psql`。
 - **PSW `.doc`**：从已构建的 `ppap-worker` 派生一次性测试镜像，通过 build context COPY tests/fixtures（不 bind-mount 仓库路径），并只安装 pytest。生产 worker 镜像不变，也不在 host 上 apt-install LibreOffice 或 gcc。
-- **Compose 路径**：现有 Compose stack 仍会把仓库内 `migrations/` bind-mount 进容器。这些 job 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，由 #100 处理；本契约不新增 host-workspace bind mount。
+- **Compose 路径**：现有 Compose stack 仍会把仓库内 `migrations/` bind-mount 进容器。因此 schema / build / e2e / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，由 #100 处理；本契约不新增 host-workspace bind mount。
 - **非 Docker job**：Web contract、Python unit、InsForge config 和普通 corpus 不要求 Docker。
 
 ## 当前可运行入口

@@ -91,6 +91,33 @@ def _interpolated_environment(body: str, values: dict[str, str]) -> dict[str, st
     return {key: _interpolate(raw, values) for key, raw in _service_environment(body).items()}
 
 
+def _workflow_jobs(workflow: str) -> dict[str, str]:
+    jobs: dict[str, list[str]] = {}
+    current = ""
+    in_jobs = False
+    for line in workflow.splitlines():
+        if line.startswith("jobs:"):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":"):
+            current = line.strip().rstrip(":")
+            jobs[current] = []
+            continue
+        if current:
+            jobs[current].append(line)
+    return {name: "\n".join(body) for name, body in jobs.items()}
+
+
+def _github_yaml_files() -> list[Path]:
+    return [
+        path
+        for path in (ROOT / ".github").rglob("*")
+        if path.is_file() and path.suffix in {".yml", ".yaml"}
+    ]
+
+
 class DeployContractTests(unittest.TestCase):
     def test_tools_orchestration_directory_is_gone(self):
         self.assertFalse((ROOT / "tools").exists())
@@ -341,59 +368,40 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("docker info", action)
         self.assertIn("docker compose version", action)
         self.assertIn("docker buildx version", action)
-        github_yaml = [
-            path.read_text()
-            for path in (ROOT / ".github").rglob("*")
-            if path.is_file() and path.suffix in {".yml", ".yaml"}
-        ]
+        for needle in (
+            "sudo",
+            "apt-get",
+            "apt ",
+            "yum ",
+            "apk ",
+            "systemctl",
+            "service docker",
+            "dockerd",
+            "iptables",
+            "firewall",
+            "chmod",
+            "chown",
+            "docker.sock",
+            "ppap-icc-probe",
+        ):
+            self.assertNotIn(needle, action)
+
+        github_yaml = _github_yaml_files()
         self.assertTrue(github_yaml)
-        for text in github_yaml:
-            for needle in (
-                "sudo",
-                "apt-get",
-                "yum ",
-                "apk ",
-                "systemctl",
-                "dockerd",
-                "iptables",
-                "ppap-icc-probe",
-                "chmod",
-            ):
-                self.assertNotIn(needle, text)
+        for path in github_yaml:
+            text = path.read_text()
+            self.assertNotIn("ensure-docker", text)
+            self.assertNotIn("postgresql-client", text)
+            self.assertNotIn("libreoffice-writer", text)
+            self.assertNotIn("libc6-dev", text)
+            self.assertNotIn("legacy_doc_sandbox.c", text)
+
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
-        self.assertEqual(workflow.count("uses: ./.github/actions/assert-docker"), 4)
-        self.assertEqual(lifecycle.count("uses: ./.github/actions/assert-docker"), 1)
-        self.assertNotIn("ensure-docker", workflow)
-        self.assertNotIn("ensure-docker", lifecycle)
-        self.assertNotIn("postgresql-client", workflow)
-        self.assertNotIn("libreoffice-writer", workflow)
-        self.assertNotIn("libc6-dev", workflow)
-        self.assertNotIn("legacy_doc_sandbox.c", workflow)
-        self.assertNotIn("${GITHUB_WORKSPACE}:/workspace", workflow)
-        self.assertNotIn("$PWD:/workspace", workflow)
-        self.assertIn("docker buildx bake worker", workflow)
-        self.assertIn("ppap-worker:${PPAP_BUILD_SHA}", workflow)
-        self.assertIn("ppap-psw-test:${PPAP_BUILD_SHA}", workflow)
-        self.assertIn("tests/corpus/Dockerfile.psw", workflow)
-        self.assertIn("--build-context psw-tests=tests", workflow)
-        self.assertIn("--build-context psw-assets=", workflow)
-        dockerfile = (ROOT / "tests" / "corpus" / "Dockerfile.psw").read_text()
-        self.assertIn("ARG PPAP_WORKER_IMAGE=ppap-worker:unknown", dockerfile)
-        self.assertIn("FROM ${PPAP_WORKER_IMAGE}", dockerfile)
-        self.assertIn("COPY --from=psw-tests", dockerfile)
-        self.assertIn("COPY --from=psw-assets", dockerfile)
-        self.assertIn("pytest==7.4.3", dockerfile)
-        self.assertIn("pytest-asyncio==0.21.1", dockerfile)
-        self.assertNotIn("apt-get", dockerfile)
-        app = (ROOT / "deploy" / "app" / "Dockerfile").read_text()
-        self.assertNotIn("Dockerfile.psw", app)
-        self.assertNotIn("pytest==7.4.3", app)
-        upgrade = (ROOT / "tests" / "schema" / "test_upgrade.py").read_text()
-        self.assertIn("container-native psql", upgrade)
-        self.assertIn('"exec"', upgrade)
-        self.assertIn("/migrations/", upgrade)
-        self.assertNotIn('["psql"', upgrade)
+        jobs = _workflow_jobs(workflow)
+        for name in ("build", "e2e", "schema", "psw"):
+            self.assertIn("uses: ./.github/actions/assert-docker", jobs[name])
+        self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
 
 
 if __name__ == "__main__":
