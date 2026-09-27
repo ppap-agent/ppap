@@ -615,6 +615,9 @@ class DeployContractTests(unittest.TestCase):
             self.assertNotIn("unittest discover", text, str(path))
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         self.assertIn("uv run --no-sync pytest", workflow)
+        psw = (ROOT / "tests" / "corpus" / "Dockerfile.psw").read_text()
+        self.assertNotIn("pytest.ini", psw)
+        self.assertIn("COPY pyproject.toml", psw)
 
     def test_ci_uses_uv_lock_as_python_dependency_authority(self):
         lock = ROOT / "uv.lock"
