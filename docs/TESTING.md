@@ -42,20 +42,20 @@ pnpm lint
 pnpm build
 cd ../..
 node deploy/insforge/verify-config.mjs
-python -m pip install -e ".[dev]"
-python -m compileall -q packages services tests
-python -m unittest discover -s tests/unit -v
+uv sync --locked --extra dev
+uv run --no-sync python -m compileall -q packages services tests
+uv run --no-sync python -m unittest discover -s tests/unit -v
 ```
 
 ```sh
-python -m pip install -e ".[dev]"
+uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
-python -m compileall -q packages services tests
-python -m unittest discover -s tests/unit -v
-python -m pytest tests/corpus/v2_assets --ftype excel -q
-python -m pytest tests/corpus/v2_assets --ftype pdf -q
-python -m pytest tests/corpus/v2_assets --ftype scanned -q
-python -m pytest tests/corpus/v3_poc -q
+uv run --no-sync python -m compileall -q packages services tests
+uv run --no-sync python -m unittest discover -s tests/unit -v
+uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
+uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
+uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
+uv run --no-sync pytest tests/corpus/v3_poc -q
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake worker
 docker build \
@@ -72,7 +72,7 @@ docker run --rm \
 export COMPOSE_PROJECT_NAME=ppap-schema
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-python -m unittest tests.schema.test_upgrade tests.schema.test_rule_parse -v
+uv run --no-sync python -m unittest tests.schema.test_upgrade tests.schema.test_rule_parse -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 # schema tests use container-native psql via docker compose exec -T postgres psql
 
@@ -80,7 +80,7 @@ export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 export COMPOSE_PROJECT_NAME=ppap-prod
 docker buildx bake
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
-python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
+uv run --no-sync python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
 
@@ -89,13 +89,13 @@ PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-co
 #7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开本轮原件版本（或看到 locator-gap）、原件预览、复核、显式重审，以及从账号菜单查看用量和从主导航查看审核结果：
 
 ```sh
-python -m pip install -e ".[dev,e2e]"
-python -m playwright install chromium
+uv sync --locked --extra dev --extra e2e
+uv run --no-sync python -m playwright install chromium
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 export COMPOSE_PROJECT_NAME=ppap-e2e
 docker buildx bake
 docker compose -f deploy/isolated-dev/compose.yaml up -d --wait --no-build
-python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
+uv run --no-sync python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
 docker compose -f deploy/isolated-dev/compose.yaml down -v
 ```
 
@@ -109,7 +109,7 @@ docker buildx build --platform linux/amd64 --load \
   -f deploy/deep/Dockerfile -t "ppap-deep:$PPAP_BUILD_SHA" .
 mkdir -p /tmp/ppap-deep
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml up --build -d --wait
-PPAP_DEEP_LIVE=1 python -m unittest tests.live.test_deep_isolated -v
+PPAP_DEEP_LIVE=1 uv run --no-sync python -m unittest tests.live.test_deep_isolated -v
 docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/deep-live.yaml down -v --remove-orphans
 ```
 

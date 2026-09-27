@@ -1,6 +1,7 @@
 """Deploy contracts: compose interpolation, bake tags, nginx aliases, SQL migrations."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -512,6 +513,78 @@ class DeployContractTests(unittest.TestCase):
             if "deploy/compose.yaml" in body or "tests.e2e" in body
         )
         self.assertLessEqual(len(_full_canonical_bakes(production_e2e)), 1)
+
+    def test_ci_uses_uv_lock_as_python_dependency_authority(self):
+        lock = ROOT / "uv.lock"
+        self.assertTrue(lock.is_file())
+        lock_text = lock.read_text()
+        self.assertIn('name = "playwright"', lock_text)
+        self.assertIn("sha256:", lock_text)
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+        self.assertIn("playwright", project["project"]["optional-dependencies"]["e2e"])
+        self.assertTrue((ROOT / ".python-version").read_text().strip())
+
+        github_yaml = _github_yaml_files()
+        self.assertTrue(github_yaml)
+        for path in github_yaml:
+            text = path.read_text()
+            self.assertNotIn("uv pip install", text)
+            self.assertNotIn("pip install -e", text)
+            self.assertNotIn("rm -rf .venv", text)
+            self.assertNotIn("uv venv", text)
+            self.assertNotIn(".venv/bin", text)
+
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        jobs = _workflow_jobs(workflow)
+        python_jobs = [body for body in jobs.values() if "setup-uv" in body]
+        self.assertTrue(python_jobs)
+        for body in python_jobs:
+            self.assertIn("uv sync --locked", body)
+            self.assertIn("--extra dev", body)
+            self.assertIn("uv run --no-sync", body)
+            self.assertNotIn("uv python install", body)
+        self.assertTrue(any("--extra e2e" in body for body in python_jobs))
+        self.assertTrue(any("playwright install" in body for body in python_jobs))
+        self.assertTrue(any("pytest" in body for body in python_jobs))
+
+    def test_pnpm_version_authority_is_package_manager_metadata(self):
+        package = json.loads((ROOT / "apps" / "web" / "package.json").read_text())
+        self.assertRegex(package["packageManager"], r"^pnpm@\d+\.\d+\.\d+$")
+        self.assertTrue((ROOT / ".node-version").read_text().strip())
+        for path in (
+            ROOT / ".github" / "workflows" / "tests.yml",
+            ROOT / ".github" / "workflows" / "insforge-lifecycle.yml",
+            ROOT / "deploy" / "web" / "Dockerfile",
+            ROOT / "deploy" / "isolated-dev" / "web-dev.yaml",
+        ):
+            text = path.read_text()
+            self.assertNotIn("corepack prepare pnpm@", text)
+            self.assertNotIn("node-version: 22", text)
+        node_jobs = "\n".join(
+            [
+                (ROOT / ".github" / "workflows" / "tests.yml").read_text(),
+                (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text(),
+            ]
+        )
+        self.assertIn("node-version-file: .node-version", node_jobs)
+        self.assertIn("pnpm install --frozen-lockfile", node_jobs)
+        web = (ROOT / "deploy" / "web" / "Dockerfile").read_text()
+        self.assertIn("corepack enable", web)
+        self.assertIn("pnpm install --frozen-lockfile", web)
+
+    def test_third_party_actions_are_sha_pinned(self):
+        uses = re.compile(r"^\s+uses:\s+(\S+)", re.M)
+        sha_ref = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$")
+        for path in _github_yaml_files():
+            for match in uses.finditer(path.read_text()):
+                ref = match.group(1)
+                if ref.startswith("./") or ref.startswith(".github/"):
+                    continue
+                self.assertRegex(
+                    ref,
+                    sha_ref,
+                    msg=f"{path}: {ref} must be an immutable commit SHA",
+                )
 
 
 if __name__ == "__main__":
