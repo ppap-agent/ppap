@@ -21,7 +21,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
         from ppap_core.db import connect
         from ppap_core.settings import Settings
         from ppap_worker import process_claimed
-        from tests.integration.memory_auth import MemoryObjects
+        from tests.integration.store_fixture import MemoryObjects
         from tests.integration.test_rules import rule_body
 
         _require_postgres(self)

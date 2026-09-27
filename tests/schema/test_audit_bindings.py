@@ -16,7 +16,7 @@ class AuditDatabaseCase(unittest.TestCase):
     def setUp(self):
         from ppap_api.store import AuthStore
         from ppap_core.settings import Settings
-        from tests.integration.memory_auth import MemoryObjects
+        from tests.integration.store_fixture import MemoryObjects
 
         _require_postgres(self)
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]

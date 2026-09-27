@@ -39,7 +39,7 @@ from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServ
 from ppap_deep.mapping import passing_response
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
 from ppap_worker import process_claimed
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -110,7 +110,7 @@ class DeepModeTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
@@ -121,6 +121,20 @@ class DeepModeTests(unittest.TestCase):
         for server in self._servers:
             server.close()
         self._env.stop()
+
+    def _scalar(self, query: str, params=()):
+        with self.store._conn() as conn:
+            return conn.execute(query, params).fetchone()[0]
+
+    def _execute(self, query: str, params=()) -> None:
+        with self.store._conn() as conn:
+            conn.execute(query, params)
+
+    def _attempt_diagnostic(self, job_id: str, attempt: int) -> dict:
+        return self._scalar(
+            "SELECT diagnostic FROM engine.attempts WHERE job_id = %s AND attempt = %s",
+            (job_id, attempt),
+        )
 
     def _login(self) -> None:
         self.client.cookies.clear()
@@ -159,7 +173,12 @@ class DeepModeTests(unittest.TestCase):
         path = str(Path(tmp) / "c.sock")
 
         def source(file_version_id: str) -> bytes:
-            version = self.store.versions_by_id[file_version_id]
+            file_id = str(self._scalar(
+                "SELECT file_id FROM product.file_versions WHERE id = %s",
+                (file_version_id,),
+            ))
+            version = self.store.get_version(file_id, file_version_id)
+            self.assertIsNotNone(version)
             return self.store.version_bytes(version)
 
         server = UnixControllerServer(
@@ -205,7 +224,7 @@ class DeepModeTests(unittest.TestCase):
         self.assertTrue(any(row["item"] == "深度审核已完成" for row in loaded["findings"]))
         self.assertIn("report.xlsx", loaded["coverage"]["checked"])
         self.assertTrue(any("context.pdf" in row for row in loaded["coverage"]["unchecked"]))
-        diagnostic = self.store.attempts[(claimed.id, claimed.attempt)]["diagnostic"]
+        diagnostic = self._attempt_diagnostic(claimed.id, claimed.attempt)
         self.assertEqual(diagnostic["executor"], EXECUTOR_DEEP)
         self.assertIsNone(loaded["failure"])
         self.assertEqual(diagnostic["usage"], {})
@@ -251,7 +270,10 @@ class DeepModeTests(unittest.TestCase):
         first = self.store.claim_job("w1")
         self.assertEqual(first.attempt, 1)
         self.assertIsNone(self.store.claim_job("w2"))
-        self.store.jobs[first.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        self._execute(
+            "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
+            (first.id,),
+        )
         second = self.store.claim_job("w2")
         self.assertIsNotNone(second)
         self.assertEqual(second.attempt, 2)
@@ -288,7 +310,10 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(running["progress"]["completed_count"], 1)
         self.assertIsNotNone(running["progress"]["updated_at"])
 
-        self.store.jobs[first.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        self._execute(
+            "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
+            (first.id,),
+        )
         self.assertFalse(self.store.audit_progress(first, "w1", {"phase": "validating"}))
         second = self.store.claim_job("w2")
         self.assertEqual(second.attempt, 2)
@@ -304,7 +329,7 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(loaded["findings"], [])
         self.assertEqual(loaded["progress"]["phase"], "validating")
         self.assertEqual(loaded["failure"], failure)
-        diagnostic = self.store.attempts[(second.id, second.attempt)]["diagnostic"]
+        diagnostic = self._attempt_diagnostic(second.id, second.attempt)
         self.assertEqual(diagnostic["usage"], {"input_tokens": 7})
         self.assertFalse(self.store.audit_progress(second, "w2", {"phase": "validating"}))
 
@@ -388,10 +413,10 @@ class DeepModeTests(unittest.TestCase):
         self.assertFalse(settings.deep_offered())
         self.assertFalse(settings.public_config()["deep_offered"])
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings))
         )
         self.assertFalse(client.get("/public-config").json()["deep_offered"])
-        store = MemoryAuthStore(settings)
+        store = auth_store(settings)
         store.seed_isolated_dev()
         client = TestClient(
             create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
@@ -427,7 +452,7 @@ class DeepModeTests(unittest.TestCase):
             settings = Settings()
         self.assertTrue(settings.deep_offered())
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings))
         )
         self.assertTrue(client.get("/public-config").json()["deep_offered"])
 

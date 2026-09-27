@@ -19,7 +19,7 @@ from ppap_core.fixtures import RULE_A, USER_BOB
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -37,7 +37,7 @@ class AuditFlowTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
@@ -45,6 +45,14 @@ class AuditFlowTests(unittest.TestCase):
 
     def tearDown(self):
         self._env.stop()
+
+    def _scalar(self, query: str, params=()):
+        with self.store._conn() as conn:
+            return conn.execute(query, params).fetchone()[0]
+
+    def _execute(self, query: str, params=()) -> None:
+        with self.store._conn() as conn:
+            conn.execute(query, params)
 
     def _login(self, subject: str) -> None:
         self.client.cookies.clear()
@@ -88,7 +96,10 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json=payload).json()['id'], second.json()['id'])
         self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json={'idempotency_key':'second-report'}).status_code, 409)
         third_draft = draft()
-        self.store.grant_table[(first['id'], self.store.principal_for_fixture('alice').user_id)] = set()
+        self._execute(
+            "DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
+            (first["id"], self.store.principal_for_fixture("alice").user_id),
+        )
         third = self.client.post(f'/drafts/{third_draft}/accept', json={'idempotency_key':'third-report','predecessor_id':first['id']})
         self.assertEqual(third.status_code, 201)
         self.assertEqual(third.json()['predecessor_id'], first['id'])
@@ -106,8 +117,8 @@ class AuditFlowTests(unittest.TestCase):
         )
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["status"], "open")
-        self.assertEqual(self.store.jobs, {})
-        self.assertEqual(self.store.rounds, {})
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 0)
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_rounds"), 0)
         missing = self.client.get(f"/rounds/{draft.json()['id']}")
         self.assertEqual(missing.status_code, 403)
 
@@ -130,8 +141,8 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(first.status_code, 201)
         self.assertEqual(replay.status_code, 201)
         self.assertEqual(first.json()["id"], replay.json()["id"])
-        self.assertEqual(len(self.store.rounds), 1)
-        self.assertEqual(len(self.store.jobs), 1)
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_rounds"), 1)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 1)
         conflict = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "submit-2"})
         self.assertEqual(conflict.status_code, 409)
         self.assertEqual(conflict.json()["error"], "draft_already_accepted")
@@ -189,7 +200,13 @@ class AuditFlowTests(unittest.TestCase):
         )
         self.assertEqual(reviewed.status_code, 200)
         self.assertEqual(reviewed.json()["findings"][0]["review"]["judgment"], "同意")
-        self.assertEqual(self.store.reviews[(round_id, finding["item_key"])]["user_id"], USER_BOB)
+        self.assertEqual(
+            str(self._scalar(
+                "SELECT user_id FROM product.reviews WHERE round_id = %s AND item_key = %s",
+                (round_id, finding["item_key"]),
+            )),
+            USER_BOB,
+        )
 
     def test_drafts_stay_personal_while_rounds_are_tenant_owned(self):
         self._login("alice")
@@ -323,8 +340,10 @@ class AuditFlowTests(unittest.TestCase):
         from ppap_core.audits import ClaimedJob
 
         stale_write = ClaimedJob(stale.id, stale.kind, stale.payload, stale.attempt, stale.round_id)
-        self.store.jobs[stale.id]["status"] = "leased"
-        self.store.jobs[stale.id]["lease_owner"] = "late"
+        self._execute(
+            "UPDATE engine.jobs SET status = 'leased', lease_owner = 'late' WHERE id = %s",
+            (stale.id,),
+        )
         overwritten = self.store.complete_job(
             ClaimedJob(stale.id, stale.kind, stale.payload, 0, stale.round_id),
             "late",
@@ -360,7 +379,10 @@ class AuditFlowTests(unittest.TestCase):
         first = self.store.claim_job("w1")
         self.assertEqual(first.attempt, 1)
         self.assertIsNone(self.store.claim_job("w2"))
-        self.store.jobs[first.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        self._execute(
+            "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
+            (first.id,),
+        )
         second = self.store.claim_job("w2")
         self.assertIsNotNone(second)
         self.assertEqual(second.id, first.id)
@@ -467,7 +489,10 @@ class AuditFlowTests(unittest.TestCase):
         self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": published.json()["id"]}]})
         accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rule-items-1"})
         self.assertEqual(accepted.status_code, 201)
-        frozen = self.store.round_inputs[accepted.json()["id"]][0]["rule_execution"]
+        frozen = self._scalar(
+            "SELECT rule_execution FROM product.round_inputs WHERE round_id = %s AND role = 'target'",
+            (accepted.json()["id"],),
+        )
         self.assertEqual(frozen["mode"], "rule_items")
         self.assertEqual([row["id"] for row in frozen["items"]], ["keep", "extra"])
         self.assertEqual(frozen["items"][0]["coverage"], "mapped")

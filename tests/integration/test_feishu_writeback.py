@@ -23,7 +23,7 @@ from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -289,7 +289,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.feishu = _WritebackMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
@@ -306,6 +306,28 @@ class FeishuWritebackTests(unittest.TestCase):
     def tearDown(self):
         self.http.close()
         self._env.stop()
+
+    def _set_findings(self, round_id: str, status: str, suggestions: str | None = None, item: str | None = None) -> None:
+        with self.store._conn() as conn:
+            conn.execute(
+                """
+                UPDATE product.findings
+                SET status = %s,
+                    suggestions = COALESCE(%s, suggestions),
+                    item = COALESCE(%s, item)
+                WHERE round_id = %s
+                """,
+                (status, suggestions, item, round_id),
+            )
+
+    def _set_unmapped_locator(self, round_id: str) -> None:
+        with self.store._conn() as conn:
+            conn.execute(
+                """UPDATE product.findings
+                   SET locator = '{"filename":"report.xlsx"}'::jsonb
+                   WHERE round_id = %s""",
+                (round_id,),
+            )
 
     def _login_fixture(self, subject: str) -> None:
         self.client.cookies.clear()
@@ -393,10 +415,7 @@ class FeishuWritebackTests(unittest.TestCase):
     def test_ng_round_comments_and_err_does_not_write(self):
         self._login_feishu_user()
         round_id = self._complete_round("plan.xlsx")
-        for row in self.store.findings[round_id].values():
-            row["status"] = "NG"
-            row["suggestions"] = "缺项"
-            row["item"] = "零件号"
+        self._set_findings(round_id, "NG", "缺项", "零件号")
         response = self.client.post(
             f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
         )
@@ -407,8 +426,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertIn("缺项", json.dumps(comment[2], ensure_ascii=False))
 
         self.feishu.calls.clear()
-        for row in self.store.findings[round_id].values():
-            row["status"] = "ERR"
+        self._set_findings(round_id, "ERR")
         blocked = self.client.post(
             f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
         )
@@ -419,8 +437,7 @@ class FeishuWritebackTests(unittest.TestCase):
     def test_unmapped_results_do_not_send_external_writes(self):
         self._login_feishu_user()
         round_id = self._complete_round()
-        for row in self.store.findings[round_id].values():
-            row["locator"] = {"filename": "report.xlsx"}
+        self._set_unmapped_locator(round_id)
         response = self.client.post(
             f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
         )
@@ -517,10 +534,7 @@ class FeishuWritebackTests(unittest.TestCase):
     def test_comment_failure_still_inserts(self):
         self._login_feishu_user()
         round_id = self._complete_round("plan.xlsx")
-        for row in self.store.findings[round_id].values():
-            row["status"] = "NG"
-            row["suggestions"] = "缺项"
-            row["item"] = "零件号"
+        self._set_findings(round_id, "NG", "缺项", "零件号")
         self.feishu.fail_comment = True
         response = self.client.post(
             f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}

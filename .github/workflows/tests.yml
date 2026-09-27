@@ -86,9 +86,6 @@ jobs:
           uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
           uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
           uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
-          uv run --no-sync python -m unittest discover -s services/api/tests -v
-          uv run --no-sync python -m unittest discover -s services/worker/tests -v
-          uv run --no-sync python -m unittest discover -s tests/integration -v
           uv run --no-sync python -m unittest discover -s tests/repository -v
 
   integration:
@@ -97,6 +94,7 @@ jobs:
     timeout-minutes: 80
     env:
       PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PPAP_COMPOSE_TEST: ppap-ci-product-tests-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_COMPOSE_PROD: ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_COMPOSE_E2E: ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -115,6 +113,17 @@ jobs:
           set -euo pipefail
           uv sync --locked --extra dev --extra e2e
           uv run --no-sync python -m playwright install chromium
+      - name: Product store-backed contracts
+        env:
+          COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
+        run: |
+          set -euo pipefail
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
+          uv run --no-sync python -m unittest discover -s services/api/tests -v
+          uv run --no-sync python -m unittest discover -s services/worker/tests -v
+          uv run --no-sync python -m unittest discover -s tests/integration -v
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake api, worker, and web images
         run: |
           set -euo pipefail
@@ -157,11 +166,13 @@ jobs:
             docker compose -p "$project" -f "$file" "$@" logs --no-color --timestamps \
               postgres silo init-db init-bucket api worker web || true
           }
+          dump "$PPAP_COMPOSE_TEST" deploy/isolated-dev/compose.yaml
           dump "$PPAP_COMPOSE_PROD" deploy/compose.yaml --env-file deploy/compose.env.example
           dump "$PPAP_COMPOSE_E2E" deploy/isolated-dev/compose.yaml
       - name: Clean Compose stacks
         if: always()
         run: |
+          docker compose -p "$PPAP_COMPOSE_TEST" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
           docker compose -p "$PPAP_COMPOSE_PROD" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans || true
           docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \

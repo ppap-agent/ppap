@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store, seed_usage_event
 
 
 def _clean_env(**extra: str):
@@ -29,7 +29,7 @@ class UsageReadTests(unittest.TestCase):
         self._env = _clean_env(PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
@@ -50,9 +50,9 @@ class UsageReadTests(unittest.TestCase):
     def test_usage_lists_tenant_events_and_keeps_initiator(self):
         alice = self.store.principal_for_fixture("alice")
         bob = self.store.principal_for_fixture("bob")
-        self.store.record_usage_event(alice, "item-a", 400, True, trace_id="alice-1")
-        self.store.record_usage_event(alice, "item-a", 50, False, trace_id="alice-2")
-        self.store.record_usage_event(bob, "item-a", 10, True, trace_id="bob-1")
+        seed_usage_event(self.store, alice, "item-a", 400, True, "none", trace_id="alice-1")
+        seed_usage_event(self.store, alice, "item-a", 50, False, "pending", trace_id="alice-2")
+        seed_usage_event(self.store, bob, "item-a", 10, True, "none", trace_id="bob-1")
 
         self._login("alice")
         listed = self.client.get("/usage")

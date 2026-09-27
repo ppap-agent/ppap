@@ -29,7 +29,7 @@ from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -214,7 +214,7 @@ class FeishuImportTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.feishu = _DriveMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
@@ -281,7 +281,7 @@ class FeishuImportTests(unittest.TestCase):
         self.assertEqual(version["status"], "ready")
         self.assertEqual(version["original_filename"], "report.xlsx")
         self.assertEqual(version["byte_size"], len(b"target-bytes"))
-        self.assertEqual(self.store.file_sources[version["id"]]["object_ref"], "xlsx-token")
+        self.assertEqual(self.store.file_source(version["id"])["object_ref"], "xlsx-token")
         self.assertTrue(version["origin"]["available"])
         self.assertEqual(version["origin"]["object_kind"], "file")
         self.assertNotIn("object_ref", json.dumps(version))

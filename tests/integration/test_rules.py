@@ -98,13 +98,13 @@ class RuleApiTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
         from ppap_core.settings import Settings
-        from tests.integration.memory_auth import MemoryAuthStore
+        from tests.integration.store_fixture import auth_store
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
         self.ai_boundary = patch("ppap_excel_audit_engine.checkers.client.AIClient", return_value=self.ai)
@@ -116,6 +116,14 @@ class RuleApiTests(unittest.TestCase):
         self.client.close()
         self.ai_boundary.stop()
         self.env.stop()
+
+    def _scalar(self, query: str, params=()):
+        with self.store._conn() as conn:
+            return conn.execute(query, params).fetchone()[0]
+
+    def _execute(self, query: str, params=()) -> None:
+        with self.store._conn() as conn:
+            conn.execute(query, params)
 
     def login(self, subject):
         self.client.cookies.clear()
@@ -237,19 +245,22 @@ class RuleApiTests(unittest.TestCase):
 
     def test_same_request_resumes_one_job_and_unknown_is_not_automatically_reexecuted(self):
         from ppap_worker import process_claimed
-        from tests.integration.memory_auth import _now
+        from datetime import datetime, timezone
 
         source = self.upload()
         request_id = str(uuid.uuid4())
         accepted = self.submit_parse(source, request_id)
         self.assertEqual(accepted.status_code, 202)
         self.assertEqual(self.submit_parse(source, request_id).json()["id"], request_id)
-        self.assertEqual(len(self.store.jobs), 1)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 1)
         self.assertEqual(self.submit_parse(source, request_id, document_type="控制计划").status_code, 409)
         job = self.store.claim_job("first")
         self.assertFalse(self.store.renew_job_lease(job, "other"))
         self.assertTrue(self.store.renew_job_lease(job, "first"))
-        self.store.jobs[job.id]["lease_until"] = _now() - timedelta(seconds=1)
+        self._execute(
+            "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
+            (job.id,),
+        )
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json()["status"], "unknown")
         self.assertIsNone(self.store.claim_job("second"))
         self.assertEqual(self.submit_parse(source, request_id).json()["status"], "unknown")
@@ -262,7 +273,7 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json(), loaded)
         second = self.submit_parse(source)
         self.assertNotEqual(second.json()["id"], request_id)
-        self.assertEqual(len(self.store.jobs), 2)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 2)
 
     def test_parse_result_requires_current_source_access_and_same_tenant(self):
         source = self.upload()
@@ -273,7 +284,10 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
         self.assertEqual(self.submit_parse(self.upload(), completed["id"]).status_code, 403)
         self.login("alice")
-        self.store.grant_table[(source["file_id"], self.store.principal_for_fixture("alice").user_id)] = set()
+        self._execute(
+            "DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
+            (source["file_id"], self.store.principal_for_fixture("alice").user_id),
+        )
         self.assertEqual(self.client.get("/rules/parse/" + completed["id"]).status_code, 403)
 
 
