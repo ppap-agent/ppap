@@ -78,8 +78,10 @@ class LogTests(unittest.TestCase):
     def test_http_request_sets_header_and_skips_health(self):
         with _clean_env(PPAP_BUILD_SHA="a" * 40, LOG_FORMAT="json"):
             settings = Settings()
+        store = auth_store(settings)
+        store.seed_isolated_dev()
         client = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings))
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
         )
         buf = _json_logger()
         health = client.get("/health")
