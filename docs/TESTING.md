@@ -35,7 +35,7 @@ CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 
 Single-owner Python tests 与 production owner co-locate：`packages/*/tests` 或 `services/*/tests`。根 `tests/` 只承载跨 owner/system-level contracts；当前已使用 `tests/integration` 与 `tests/repository`，其余根级目录继续保持各自既有职责。
 
-Web 合并契约分两段。类型、生产构建和前端白盒/契约单测不依赖 Docker；代表性浏览器路径在 isolated-dev 上。CI 里它们分别是 `Web contract` 与 `Docker integration`（同一 SHA 只 `docker buildx bake` 一次，先 production runtime/backup，再 isolated-dev Python Playwright E2E）。Python deterministic tests 先按 production owner 物理归档；当前 CI 仍用 `unittest discover` 执行这些 owner directories，并保留 `compileall`。`push` 只在 `main` 上触发，功能分支只由 `pull_request` 跑完整测试，避免同一次提交跑两遍；两种事件仍使用不同的 concurrency group，不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入 reducer、helpers、host login 与 public-config 门控在 `pnpm test`。CI 的浏览器 E2E 跑 Python Playwright：`tests.e2e.test_web_audit`、`tests.e2e.test_ui_a11y`、`tests.e2e.test_rules` 和 `tests.e2e.test_rule_interactions`（isolated-dev 产品路径与 route mock）。`pnpm lint` 使用 `@shadcn/lint` 检查 Tailwind 组件的重绘、颜色、任意值、内联样式、静态 class 和未知 class，并用 ESLint `no-restricted-imports` 禁止直接导入 `@insforge/sdk` 与 PostgREST 客户端；基础 shadcn 源码目录作为组件实现排除，业务页面与 PPAP 组合层必须通过。浏览器里的键盘、焦点、视口、减少动效和粗指针计算样式在 `tests.e2e.test_ui_a11y`（含规则编辑）；审核复核的键盘与单一 H1 在 `tests.e2e.test_web_audit`。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。默认 PR CI 跑 `node deploy/insforge/verify-config.mjs`（static config contract：原生 `docker compose config` + PPAP invariant）。InsForge `local start/status/db query/stop` 是 live native lifecycle：`InsForge lifecycle` workflow 在 `deploy/insforge/**`、该 workflow 本身或 `.node-version` 变化时自动运行，并保留 `workflow_dispatch` 与每周 schedule（`local start` 会拉取上游 setup.sh/镜像，CLI pin 不能冻结该 runtime；self-hosted runner 上每周一次足够低频）。无关 PR 不跑 live lifecycle。
+Web 合并契约分两段。类型、生产构建和前端白盒/契约单测不依赖 Docker；代表性浏览器路径在 isolated-dev 上。CI 里它们分别是 `Web contract` 与 `Docker integration`（同一 SHA 只 `docker buildx bake` 一次，先 production runtime/backup，再 isolated-dev Python Playwright E2E）。Python deterministic tests 先按 production owner 物理归档；纯 package/repository tests 保持无 Docker。依赖 files/rules/drafts/rounds/jobs/usage/auth 产品状态的 API/Worker/cross-owner tests 使用 production `AuthStore` + isolated-dev PostgreSQL，进入 `Docker integration`；测试侧只保留 object storage、HTTP/OpenAPI、model gateway 等真正 external boundary fake，不再维护 `MemoryAuthStore`。当前 runner 仍是 `unittest discover`，统一 pytest 入口由 #112 收敛。`push` 只在 `main` 上触发，功能分支只由 `pull_request` 跑完整测试，避免同一次提交跑两遍；两种事件仍使用不同的 concurrency group，不会互相取消。corpus 仍会跑，不因为一次 Web 改动被跳过。规则导入 reducer、helpers、host login 与 public-config 门控在 `pnpm test`。CI 的浏览器 E2E 跑 Python Playwright：`tests.e2e.test_web_audit`、`tests.e2e.test_ui_a11y`、`tests.e2e.test_rules` 和 `tests.e2e.test_rule_interactions`（isolated-dev 产品路径与 route mock）。`pnpm lint` 使用 `@shadcn/lint` 检查 Tailwind 组件的重绘、颜色、任意值、内联样式、静态 class 和未知 class，并用 ESLint `no-restricted-imports` 禁止直接导入 `@insforge/sdk` 与 PostgREST 客户端；基础 shadcn 源码目录作为组件实现排除，业务页面与 PPAP 组合层必须通过。浏览器里的键盘、焦点、视口、减少动效和粗指针计算样式在 `tests.e2e.test_ui_a11y`（含规则编辑）；审核复核的键盘与单一 H1 在 `tests.e2e.test_web_audit`。`/enter-legacy`、OnlyOffice 回退和现有 deep link 仍是有消费者的兼容能力，不由这条样式契约删除。默认 PR CI 跑 `node deploy/insforge/verify-config.mjs`（static config contract：原生 `docker compose config` + PPAP invariant）。InsForge `local start/status/db query/stop` 是 live native lifecycle：`InsForge lifecycle` workflow 在 `deploy/insforge/**`、该 workflow 本身或 `.node-version` 变化时自动运行，并保留 `workflow_dispatch` 与每周 schedule（`local start` 会拉取上游 setup.sh/镜像，CLI pin 不能冻结该 runtime；self-hosted runner 上每周一次足够低频）。无关 PR 不跑 live lifecycle。
 
 ```sh
 cd apps/web
@@ -52,10 +52,15 @@ uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
+uv run --no-sync python -m unittest discover -s tests/repository -v
+
+export COMPOSE_PROJECT_NAME=ppap-product-tests
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
 uv run --no-sync python -m unittest discover -s services/api/tests -v
 uv run --no-sync python -m unittest discover -s services/worker/tests -v
 uv run --no-sync python -m unittest discover -s tests/integration -v
-uv run --no-sync python -m unittest discover -s tests/repository -v
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
 ```sh
@@ -66,10 +71,15 @@ uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
 uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
+uv run --no-sync python -m unittest discover -s tests/repository -v
+
+export COMPOSE_PROJECT_NAME=ppap-product-tests
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
 uv run --no-sync python -m unittest discover -s services/api/tests -v
 uv run --no-sync python -m unittest discover -s services/worker/tests -v
 uv run --no-sync python -m unittest discover -s tests/integration -v
-uv run --no-sync python -m unittest discover -s tests/repository -v
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
