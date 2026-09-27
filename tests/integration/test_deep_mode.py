@@ -39,7 +39,7 @@ from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServ
 from ppap_deep.mapping import passing_response
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
 from ppap_worker import process_claimed
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -110,7 +110,7 @@ class DeepModeTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
@@ -388,10 +388,10 @@ class DeepModeTests(unittest.TestCase):
         self.assertFalse(settings.deep_offered())
         self.assertFalse(settings.public_config()["deep_offered"])
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings))
         )
         self.assertFalse(client.get("/public-config").json()["deep_offered"])
-        store = MemoryAuthStore(settings)
+        store = auth_store(settings)
         store.seed_isolated_dev()
         client = TestClient(
             create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
@@ -427,7 +427,7 @@ class DeepModeTests(unittest.TestCase):
             settings = Settings()
         self.assertTrue(settings.deep_offered())
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings))
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings))
         )
         self.assertTrue(client.get("/public-config").json()["deep_offered"])
 
