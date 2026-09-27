@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import Mock, patch
 
 import httpx
-import tests.pathsetup  # noqa: F401
 from ppap_core.preview import document_preview
 from ppap_core.feishu_drive import FeishuMetaError, list_drive_folder
 
