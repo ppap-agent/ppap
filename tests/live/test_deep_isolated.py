@@ -13,7 +13,6 @@ from http.cookiejar import CookieJar
 
 from openpyxl import Workbook
 
-from tests import pathsetup
 
 from ppap_core.db import connect
 from ppap_core.settings import Settings
