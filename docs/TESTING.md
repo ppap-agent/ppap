@@ -93,7 +93,7 @@ docker build \
   .
 docker run --rm \
   "ppap-psw-test:${PPAP_BUILD_SHA}" \
-  python -m pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+  pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 
 export COMPOSE_PROJECT_NAME=ppap-schema
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
