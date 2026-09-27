@@ -8,7 +8,7 @@ from psycopg.rows import dict_row
 from ppap_api.store import AuthStore
 from ppap_core.db import connect
 from ppap_core.files import ObjectExists, ObjectMissing
-from ppap_core.settings import Settings
+from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
 
 
 class MemoryObjects:
@@ -66,11 +66,25 @@ def auth_store(
     reset: bool = True,
     role: str = "migrator",
 ) -> AuthStore:
-    """Return the production AuthStore against the prepared test PostgreSQL."""
+    """Return production AuthStore semantics against the prepared test PostgreSQL.
+
+    Product-facing settings are preserved. Only PostgreSQL connection fields are
+    rebound to the isolated test database so production-profile contract tests do
+    not require fake production credentials to be valid database credentials.
+    """
     settings = settings or Settings()
+    store_settings = settings.model_copy(
+        update={
+            "pg_host": "127.0.0.1",
+            "pg_port": 5432,
+            "pg_database": "ppap",
+            "pg_migrator_user": "ppap_migrator",
+            "pg_migrator_password": ISOLATED_DEV_SECRET,
+        }
+    )
     if reset:
-        reset_product_database(settings)
-    return AuthStore(settings, objects or MemoryObjects(), role=role)
+        reset_product_database(store_settings)
+    return AuthStore(store_settings, objects or MemoryObjects(), role=role)
 
 
 def seed_usage_event(
