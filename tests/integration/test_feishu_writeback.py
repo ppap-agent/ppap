@@ -534,10 +534,7 @@ class FeishuWritebackTests(unittest.TestCase):
     def test_comment_failure_still_inserts(self):
         self._login_feishu_user()
         round_id = self._complete_round("plan.xlsx")
-        for row in self.store.findings[round_id].values():
-            row["status"] = "NG"
-            row["suggestions"] = "缺项"
-            row["item"] = "零件号"
+        self._set_findings(round_id, "NG", "缺项", "零件号")
         self.feishu.fail_comment = True
         response = self.client.post(
             f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
