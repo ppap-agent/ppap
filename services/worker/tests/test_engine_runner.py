@@ -5,7 +5,6 @@ import os
 import unittest
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 
