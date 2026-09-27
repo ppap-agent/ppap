@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   web:
-    name: Web contract
+    name: Web
     runs-on: [self-hosted, linux, x64, ppap]
     timeout-minutes: 20
     steps:
@@ -49,10 +49,10 @@ jobs:
           pnpm lint
           pnpm build
 
-  insforge-config:
-    name: InsForge config
+  repository:
+    name: Repository contract
     runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -61,31 +61,211 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
-      - name: Verify PPAP-owned InsForge contract
-        run: node deploy/insforge/verify-config.mjs
-
-  test:
-    runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Install, quality, and unit tests
+      - name: Repository, config, and tooling contracts
         run: |
           set -euo pipefail
           uv sync --locked --extra dev
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages services tests
-          uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests packages/ppap_excel_audit_engine/tests packages/ppap_ocr_adapter/tests tests/repository
+          node deploy/insforge/verify-config.mjs
+          uv run --no-sync pytest tests/repository
+
+  python_modules:
+    name: Python modules / ${{ matrix.name }}
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: ppap-ci-modules-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: core-deep
+            name: core/deep
+            paths: packages/ppap_core/tests packages/ppap_deep/tests
+            postgres: false
+          - id: documents
+            name: documents
+            # Only current physical owner directories are listed; the other document packages have no tests/ yet.
+            paths: packages/ppap_ocr_adapter/tests
+            postgres: false
+          - id: engine
+            name: engine
+            paths: packages/ppap_excel_audit_engine/tests
+            postgres: false
+          - id: services
+            name: services
+            paths: services/api/tests services/worker/tests
+            postgres: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assert Docker
+        if: ${{ matrix.postgres }}
+        uses: ./.github/actions/assert-docker
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Canonical install
+        run: uv sync --locked --extra dev
+      - name: Start service PostgreSQL fixture
+        if: ${{ matrix.postgres }}
+        run: |
+          set -euo pipefail
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
+      - name: Run module tests
+        run: uv run --no-sync pytest ${{ matrix.paths }}
+      - name: Dump PostgreSQL diagnostics
+        if: failure() && matrix.postgres
+        run: |
+          echo "=== ${COMPOSE_PROJECT_NAME} ps ==="
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
+          echo "=== ${COMPOSE_PROJECT_NAME} logs ==="
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            logs --no-color --timestamps postgres init-db || true
+      - name: Clean PostgreSQL fixture
+        if: always() && matrix.postgres
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans || true
+
+  schema:
+    name: Schema
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: ppap-ci-schema-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assert Docker
+        uses: ./.github/actions/assert-docker
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Schema PostgreSQL contracts
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            up -d postgres --wait --wait-timeout 120
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            run --rm init-db
+          uv run --no-sync pytest tests/schema
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans
+      - name: Dump Compose diagnostics
+        if: failure()
+        run: |
+          echo "=== ${COMPOSE_PROJECT_NAME} ps ==="
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
+          echo "=== ${COMPOSE_PROJECT_NAME} logs ==="
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            logs --no-color --timestamps postgres init-db || true
+      - name: Clean Compose stack
+        if: always()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans || true
+
+  corpus:
+    name: Corpus / ${{ matrix.name }}
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Excel
+            mode: pytest
+            args: tests/corpus/v2_assets --ftype excel -q
+          - name: PDF
+            mode: pytest
+            args: tests/corpus/v2_assets --ftype pdf -q
+          - name: scanned
+            mode: pytest
+            args: tests/corpus/v2_assets --ftype scanned -q
+          - name: V3
+            mode: pytest
+            args: tests/corpus/v3_poc -q
+          - name: PSW
+            mode: psw
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install uv
+        if: ${{ matrix.mode == 'pytest' }}
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Canonical install
+        if: ${{ matrix.mode == 'pytest' }}
+        run: uv sync --locked --extra dev
+      - name: Run in-repo corpus pytest
+        if: ${{ matrix.mode == 'pytest' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
+          PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
+          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
+          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
+          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+        run: uv run --no-sync pytest ${{ matrix.args }}
+      - name: Assert Docker
+        if: ${{ matrix.mode == 'psw' }}
+        uses: ./.github/actions/assert-docker
+      - name: Run PSW corpus in purpose-built test image
+        if: ${{ matrix.mode == 'psw' }}
+        env:
+          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
+          PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
+          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
+          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
+          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+        run: |
+          set -euo pipefail
+          docker buildx bake worker
+          docker build \
+            --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
+            --build-context psw-tests=tests \
+            --build-context psw-assets="assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书" \
+            -f tests/corpus/Dockerfile.psw \
+            -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
+            .
+          docker run --rm \
+            -e OPENAI_API_KEY \
+            -e OPENAI_BASE_URL \
+            -e MODEL_NAME \
+            -e PADDLE_OCR_URL \
+            -e PADDLE_TOKEN \
+            -e OCR_OPENAI_API_KEY \
+            -e OCR_OPENAI_BASE_URL \
+            -e OCR_MODEL_NAME \
+            "ppap-psw-test:${PPAP_BUILD_SHA}" \
+            pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 
   integration:
-    name: Docker integration
+    name: Product integration
     runs-on: [self-hosted, linux, x64, ppap]
     timeout-minutes: 80
     env:
@@ -109,14 +289,14 @@ jobs:
           set -euo pipefail
           uv sync --locked --extra dev --extra e2e
           uv run --no-sync python -m playwright install chromium
-      - name: Product store-backed contracts
+      - name: Cross-owner product contracts
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
         run: |
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
-          uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
+          uv run --no-sync pytest tests/integration/product
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake api, worker, and web images
         run: |
@@ -172,125 +352,44 @@ jobs:
           docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans || true
 
-  schema:
+  ci_gate:
+    name: CI Gate
+    if: always()
+    needs:
+      - web
+      - repository
+      - python_modules
+      - schema
+      - corpus
+      - integration
     runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 20
-    env:
-      COMPOSE_PROJECT_NAME: ppap-ci-schema-${{ github.run_id }}-${{ github.run_attempt }}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Assert Docker
-        uses: ./.github/actions/assert-docker
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          version: "0.9.26"
-          enable-cache: true
-      - name: Schema PostgreSQL contracts
+      - name: Require deterministic jobs to succeed
+        env:
+          WEB_RESULT: ${{ needs.web.result }}
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+          PYTHON_MODULES_RESULT: ${{ needs.python_modules.result }}
+          SCHEMA_RESULT: ${{ needs.schema.result }}
+          CORPUS_RESULT: ${{ needs.corpus.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            up -d postgres --wait --wait-timeout 120
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            run --rm init-db
-          uv run --no-sync pytest tests/schema
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans
-      - name: Dump Compose diagnostics
-        if: failure()
-        run: |
-          echo "=== ${COMPOSE_PROJECT_NAME} ps ==="
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
-          echo "=== ${COMPOSE_PROJECT_NAME} logs ==="
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            logs --no-color --timestamps postgres init-db || true
-      - name: Clean Compose stack
-        if: always()
-        run: |
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans || true
-
-  corpus:
-    name: ${{ matrix.name }}
-    runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: V2 4.8 excel
-            args: tests/corpus/v2_assets --ftype excel -q
-          - name: V2 4.8 pdf
-            args: tests/corpus/v2_assets --ftype pdf -q
-          - name: V2 4.8 scanned
-            args: tests/corpus/v2_assets --ftype scanned -q
-          - name: V3 POC grouped
-            args: tests/corpus/v3_poc -q
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          version: "0.9.26"
-          enable-cache: true
-      - name: Canonical install
-        run: uv sync --locked --extra dev
-      - name: Run in-repo corpus pytest
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          MODEL_NAME: ${{ secrets.MODEL_NAME }}
-          PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
-          PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
-          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
-          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
-          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
-        run: uv run --no-sync pytest ${{ matrix.args }}
-
-  psw:
-    name: PSW cross-format
-    runs-on: [self-hosted, linux, x64, ppap]
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Assert Docker
-        uses: ./.github/actions/assert-docker
-      - name: Run PSW corpus in purpose-built test image
-        env:
-          PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          MODEL_NAME: ${{ secrets.MODEL_NAME }}
-          PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
-          PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
-          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
-          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
-          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
-        run: |
-          set -euo pipefail
-          docker buildx bake worker
-          docker build \
-            --build-arg PPAP_WORKER_IMAGE="ppap-worker:${PPAP_BUILD_SHA}" \
-            --build-context psw-tests=tests \
-            --build-context psw-assets="assets/V2.0测试/模拟测试文件V2-01/16-零件提交保证书" \
-            -f tests/corpus/Dockerfile.psw \
-            -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
-            .
-          docker run --rm \
-            -e OPENAI_API_KEY \
-            -e OPENAI_BASE_URL \
-            -e MODEL_NAME \
-            -e PADDLE_OCR_URL \
-            -e PADDLE_TOKEN \
-            -e OCR_OPENAI_API_KEY \
-            -e OCR_OPENAI_BASE_URL \
-            -e OCR_MODEL_NAME \
-            "ppap-psw-test:${PPAP_BUILD_SHA}" \
-            pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+          failed=0
+          for result in \
+            "$WEB_RESULT" \
+            "$REPOSITORY_RESULT" \
+            "$PYTHON_MODULES_RESULT" \
+            "$SCHEMA_RESULT" \
+            "$CORPUS_RESULT" \
+            "$INTEGRATION_RESULT"
+          do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            printf 'required results: web=%s repository=%s python_modules=%s schema=%s corpus=%s integration=%s\n' \
+              "$WEB_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_RESULT"
+            exit 1
+          fi

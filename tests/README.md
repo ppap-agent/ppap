@@ -1,26 +1,59 @@
 # Tests
 
-Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只记录当前可执行入口。
+Canonical 测试策略见 [docs/TESTING.md](../docs/TESTING.md)。本目录只记录当前 ownership 和可执行入口。
 
-## Module / deterministic
+## Ownership
 
-Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is reserved for system-level authority only: `repository`, `schema`, `corpus`, `integration`, `e2e`, and `live`. `integration/product` owns cross-owner production-store contracts, `integration/runtime` owns production runtime/backup, `corpus/fixtures` owns regression fixtures, and `live` is explicit-only outside deterministic CI. Product-state tests use the production `AuthStore` against isolated-dev PostgreSQL; only external boundaries such as object storage/HTTP/model calls are faked.
+Single-owner tests live with their production owner under `packages/*/tests` or `services/*/tests`. Root `tests/` is system-level authority only:
+
+- `repository`: repository/build/config/tooling contracts
+- `schema`: real PostgreSQL contracts
+- `corpus`: assembled engine regression and regression fixtures
+- `integration/product`: cross-owner production-store contracts
+- `integration/runtime`: production runtime and backup/restore
+- `e2e`: Python Playwright full-product black-box paths
+- `live`: explicit real external service/model/environment tests; not part of deterministic CI
+
+CI consumes these physical owners. It does not maintain a second test manifest.
+
+## Repository and Python modules
+
+Repository contract:
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync pytest \
-  packages/ppap_core/tests \
-  packages/ppap_deep/tests \
-  packages/ppap_excel_audit_engine/tests \
-  packages/ppap_ocr_adapter/tests \
-  tests/repository
+node deploy/insforge/verify-config.mjs
+uv run --no-sync pytest tests/repository
+```
 
-export COMPOSE_PROJECT_NAME=ppap-product-tests
+Python module groups:
+
+```sh
+uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
+# documents: current physical owner test directory; docops/pdf_to_excel/vision have no tests/ yet
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+```
+
+The services group needs the real isolated-dev PostgreSQL fixture:
+
+```sh
+export COMPOSE_PROJECT_NAME=ppap-services
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests tests/integration/product
+uv run --no-sync pytest services/api/tests services/worker/tests
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
+
+Cross-owner product integration uses the same PostgreSQL authority but remains a root system contract:
+
+```sh
+export COMPOSE_PROJECT_NAME=ppap-product-integration
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest tests/integration/product
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
@@ -31,7 +64,7 @@ uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
-# PSW .doc 用例在从 ppap-worker 派生的测试镜像中运行（含 LibreOffice 与 sandbox）
+
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake worker
 docker build \
@@ -46,12 +79,51 @@ docker run --rm \
   pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
-## Schema / deploy / E2E
+PSW remains a purpose-built container entry in the same CI Corpus matrix.
 
-#7 / #11 浏览器 E2E：`uv run --no-sync pytest tests/e2e`（需 `uv sync --locked --extra dev --extra e2e` 与 `docker compose -f deploy/isolated-dev/compose.yaml up -d --wait`）。
+## Schema
 
-InsForge static config contract：`node deploy/insforge/verify-config.mjs`（原生 `docker compose config` + PPAP invariant；只需 Docker Compose CLI，不需要 daemon/Buildx，不启动容器）。live native lifecycle：`bash deploy/insforge/smoke-local.sh`（需要 `local start` 的 runtime Docker capability；相关 path / `workflow_dispatch` / 每周 schedule，不是每个无关 PR）。
+```sh
+export COMPOSE_PROJECT_NAME=ppap-schema
+docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
+docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
+uv run --no-sync pytest tests/schema
+docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+```
 
-Schema PostgreSQL contracts：`docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait && docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db && uv run --no-sync pytest tests/schema`。CI 与本地都用该 discovery 收集 `tests/schema/test_*.py`（含 upgrade、rule parse、audit bindings、usage acceptance）；测试通过 `docker compose exec -T postgres psql` 使用容器内 `psql`。新增真实 PostgreSQL schema 契约放到 `tests/schema/test_*.py`。
+Schema tests use container-native `psql`. New real PostgreSQL schema contracts belong under `tests/schema/test_*.py`.
 
-Production compose：`PPAP_BUILD_SHA="$(git rev-parse HEAD)" docker buildx bake && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait && uv run --no-sync pytest tests/integration/runtime && docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans`。
+## Product integration and E2E
+
+Production runtime/backup:
+
+```sh
+export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
+export COMPOSE_PROJECT_NAME=ppap-prod
+docker buildx bake
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
+uv run --no-sync pytest tests/integration/runtime
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
+```
+
+Browser E2E uses the same canonical baked API/Worker/Web images in isolated-dev and runs:
+
+```sh
+uv sync --locked --extra dev --extra e2e
+uv run --no-sync python -m playwright install chromium
+uv run --no-sync pytest tests/e2e
+```
+
+## Live
+
+`tests/live` is explicit-only. For the current Deep live smoke:
+
+```sh
+PPAP_DEEP_LIVE=1 uv run --no-sync pytest tests/live/test_deep_isolated.py
+```
+
+The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default deterministic `CI Gate`.
+
+## CI Gate
+
+Every PR runs the deterministic groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. The final `CI Gate` runs no tests; it succeeds only when every required deterministic group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.

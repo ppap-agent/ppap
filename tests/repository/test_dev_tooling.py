@@ -458,7 +458,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertTrue(docker_jobs)
         for body in docker_jobs:
             self.assertIn("uses: ./.github/actions/assert-docker", body)
-        self.assertNotIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
+        self.assertNotIn("uses: ./.github/actions/assert-docker", jobs["repository"])
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
 
     def test_insforge_config_uses_native_compose_not_a_parser(self):
@@ -477,10 +477,10 @@ class DeployContractTests(unittest.TestCase):
         self.assertNotIn("docker buildx", source)
         self.assertIn("Compose CLI", source)
         jobs = _workflow_jobs((ROOT / ".github" / "workflows" / "tests.yml").read_text())
-        self.assertIn("node deploy/insforge/verify-config.mjs", jobs["insforge-config"])
-        self.assertNotIn("uses: ./.github/actions/assert-docker", jobs["insforge-config"])
-        self.assertNotIn("docker info", jobs["insforge-config"])
-        self.assertNotIn("buildx", jobs["insforge-config"])
+        self.assertIn("node deploy/insforge/verify-config.mjs", jobs["repository"])
+        self.assertNotIn("uses: ./.github/actions/assert-docker", jobs["repository"])
+        self.assertNotIn("docker info", jobs["repository"])
+        self.assertNotIn("buildx", jobs["repository"])
 
     def test_insforge_lifecycle_is_path_filtered_live_authority(self):
         lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
@@ -567,6 +567,67 @@ class DeployContractTests(unittest.TestCase):
         )
         self.assertLessEqual(len(_full_canonical_bakes(production_e2e)), 1)
 
+    def test_ci_uses_physical_ownership_matrix_and_stable_gate(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        jobs = _workflow_jobs(workflow)
+
+        self.assertEqual(
+            set(jobs),
+            {"web", "repository", "python_modules", "schema", "corpus", "integration", "ci_gate"},
+        )
+
+        repository = jobs["repository"]
+        self.assertIn("name: Repository contract", repository)
+        self.assertIn("pytest tests/repository", repository)
+        self.assertIn("node deploy/insforge/verify-config.mjs", repository)
+
+        modules = jobs["python_modules"]
+        self.assertIn("name: core/deep", modules)
+        self.assertIn("paths: packages/ppap_core/tests packages/ppap_deep/tests", modules)
+        self.assertIn("name: documents", modules)
+        self.assertIn("paths: packages/ppap_ocr_adapter/tests", modules)
+        self.assertIn("name: engine", modules)
+        self.assertIn("paths: packages/ppap_excel_audit_engine/tests", modules)
+        self.assertIn("name: services", modules)
+        self.assertIn("paths: services/api/tests services/worker/tests", modules)
+        self.assertIn("postgres: true", modules)
+        self.assertIn("pytest ${{ matrix.paths }}", modules)
+
+        corpus = jobs["corpus"]
+        for name in ("Excel", "PDF", "scanned", "V3", "PSW"):
+            self.assertIn(f"name: {name}", corpus)
+        self.assertIn("tests/corpus/Dockerfile.psw", corpus)
+
+        integration = jobs["integration"]
+        self.assertIn("name: Product integration", integration)
+        self.assertIn("pytest tests/integration/product", integration)
+        self.assertIn("pytest tests/integration/runtime", integration)
+        self.assertIn("pytest tests/e2e", integration)
+        self.assertEqual(len(_full_canonical_bakes(integration)), 1)
+
+        gate = jobs["ci_gate"]
+        self.assertIn("name: CI Gate", gate)
+        self.assertIn("if: always()", gate)
+        for dependency in ("web", "repository", "python_modules", "schema", "corpus", "integration"):
+            self.assertIn(f"- {dependency}", gate)
+            self.assertIn(f"needs.{dependency}.result", gate)
+        self.assertIn('if [ "$result" != "success" ]', gate)
+
+        self.assertNotIn("dorny/paths-filter", workflow)
+        self.assertNotIn("changed-files", workflow)
+        self.assertNotIn("git diff", workflow)
+        self.assertNotIn("tests/live", workflow)
+
+        for path in (
+            ROOT / "docs" / "TESTING.md",
+            ROOT / "docs" / "DEVELOPMENT.md",
+            ROOT / "tests" / "README.md",
+        ):
+            text = path.read_text()
+            self.assertIn("CI Gate", text, str(path))
+            self.assertIn("tests/integration/product", text, str(path))
+            self.assertIn("services/api/tests services/worker/tests", text, str(path))
+
     def test_schema_ci_discovers_authoritative_postgres_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         testing = (ROOT / "docs" / "TESTING.md").read_text()
@@ -607,10 +668,8 @@ class DeployContractTests(unittest.TestCase):
         self.assertTrue((tests_root / "integration" / "runtime").is_dir())
 
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
-        self.assertIn(
-            "pytest services/api/tests services/worker/tests tests/integration/product",
-            workflow,
-        )
+        self.assertIn("paths: services/api/tests services/worker/tests", workflow)
+        self.assertIn("pytest tests/integration/product", workflow)
         self.assertIn("pytest tests/integration/runtime", workflow)
         legacy_paths = ("tests/" + "unit", "tests/" + "deploy", "tests/" + "fixtures")
         for legacy in legacy_paths:
