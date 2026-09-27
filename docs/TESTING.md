@@ -45,7 +45,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 - **Product integration**：`tests/integration/product` + canonical single bake + `tests/integration/runtime` + Python Playwright `tests/e2e`。
 - **CI Gate**：不运行测试，只汇总以上 required groups；任一 required group failed / cancelled / skipped 时 Gate 失败。
 
-外部依赖本身不改变 test ownership，也不决定测试是否 required。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是“所有带外部依赖的测试”。InsForge native live lifecycle 同样不进入默认 `CI Gate`。当前不做 git-diff/path-aware skipping；required groups 每个 PR 都执行。
+外部依赖本身不改变 test ownership，也不决定测试是否 required。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是“所有带外部依赖的测试”。InsForge native live lifecycle 同样不进入默认 `CI Gate`。LLM readiness 与 Feishu readiness 是真实 endpoint / credential probe：保留 `workflow_dispatch`，并每周 schedule 一次；它们不进入默认 PR `CI Gate`，也不复制产品业务测试。当前不做 git-diff/path-aware skipping；required groups 每个 PR 都执行。
 
 Repository contract：
 

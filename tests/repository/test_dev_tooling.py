@@ -136,6 +136,21 @@ def _workflow_steps(job: str) -> list[str]:
     return ["\n".join(body) for body in steps]
 
 
+def _schedule_crons(source: str) -> list[str]:
+    return re.findall(r"cron:\s*[\"']([^\"']+)[\"']", source)
+
+
+def _assert_weekly_or_coarser(testcase: unittest.TestCase, cron: str, *, msg: str) -> None:
+    fields = cron.split()
+    testcase.assertEqual(len(fields), 5, cron)
+    minute, hour, day_of_month, _month, day_of_week = fields
+    testcase.assertNotEqual(minute, "*")
+    testcase.assertNotEqual(hour, "*")
+    testcase.assertFalse(minute.startswith("*/"), cron)
+    testcase.assertFalse(hour.startswith("*/"), cron)
+    testcase.assertTrue(day_of_week != "*" or day_of_month != "*", msg=msg)
+
+
 def _run_scoped_idents(text: str) -> set[str]:
     idents: set[str] = set()
     for line in text.splitlines():
@@ -567,17 +582,11 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn(".node-version", lifecycle)
         self.assertIn("bash deploy/insforge/smoke-local.sh", lifecycle)
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
-        crons = re.findall(r"cron:\s*[\"']([^\"']+)[\"']", lifecycle)
+        crons = _schedule_crons(lifecycle)
         self.assertEqual(len(crons), 1, lifecycle)
-        fields = crons[0].split()
-        self.assertEqual(len(fields), 5, crons[0])
-        minute, hour, day_of_month, _month, day_of_week = fields
-        self.assertNotEqual(minute, "*")
-        self.assertNotEqual(hour, "*")
-        self.assertFalse(minute.startswith("*/"), crons[0])
-        self.assertFalse(hour.startswith("*/"), crons[0])
-        self.assertTrue(
-            day_of_week != "*" or day_of_month != "*",
+        _assert_weekly_or_coarser(
+            self,
+            crons[0],
             msg="InsForge lifecycle schedule must be weekly or coarser",
         )
         smoke = (ROOT / "deploy" / "insforge" / "smoke-local.sh").read_text()
@@ -840,6 +849,49 @@ class DeployContractTests(unittest.TestCase):
             self.assertGreaterEqual(rule_index, 1)
             self.assertNotIn(item, seen)
             seen.add(item)
+
+    def test_llm_and_feishu_readiness_are_scheduled_outside_gate(self):
+        llm = (ROOT / ".github" / "workflows" / "llm-readiness.yml").read_text()
+        feishu = (ROOT / ".github" / "workflows" / "feishu-readiness.yml").read_text()
+        tests = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        jobs = _workflow_jobs(tests)
+        gate = jobs["ci_gate"]
+
+        for name, source in (("LLM readiness", llm), ("Feishu readiness", feishu)):
+            self.assertIn("workflow_dispatch:", source, name)
+            self.assertIn("schedule:", source, name)
+            self.assertNotIn("pull_request:", source, name)
+            crons = _schedule_crons(source)
+            self.assertEqual(len(crons), 1, name)
+            _assert_weekly_or_coarser(self, crons[0], msg=f"{name} schedule must be weekly or coarser")
+
+        self.assertIn("secrets.OPENAI_API_KEY", llm)
+        self.assertIn("secrets.OPENAI_BASE_URL", llm)
+        self.assertIn("secrets.MODEL_NAME", llm)
+        self.assertIn("${LLM_BASE_URL%/}/responses", llm)
+        self.assertIn(":?missing OPENAI_API_KEY", llm)
+        self.assertNotIn("localhost", llm)
+
+        self.assertIn("secrets.FEISHU_APP_ID", feishu)
+        self.assertIn("secrets.FEISHU_APP_SECRET", feishu)
+        self.assertIn("https://open.feishu.cn/open-apis/auth/v3/app_ticket/resend", feishu)
+        self.assertIn(":?missing FEISHU_APP_ID", feishu)
+        self.assertNotIn("localhost", feishu)
+
+        self.assertNotIn("llm-readiness", tests)
+        self.assertNotIn("feishu-readiness", tests)
+        self.assertNotIn("LLM readiness", gate)
+        self.assertNotIn("Feishu readiness", gate)
+
+        testing = (ROOT / "docs" / "TESTING.md").read_text()
+        readme = (ROOT / "tests" / "README.md").read_text()
+        development = (ROOT / "docs" / "DEVELOPMENT.md").read_text()
+        self.assertIn("workflow_dispatch", testing)
+        self.assertIn("workflow_dispatch", readme)
+        for text in (testing, readme, development):
+            self.assertIn("CI Gate", text)
+            self.assertIn("LLM", text)
+            self.assertIn("Feishu", text)
 
     def test_required_v3_corpus_does_not_skip_missing_assets(self):
         grouped = (ROOT / "tests" / "corpus" / "v3_poc" / "test_poc_assets_grouped.py").read_text()

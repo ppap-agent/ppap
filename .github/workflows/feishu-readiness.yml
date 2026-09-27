@@ -2,6 +2,10 @@ name: Feishu readiness
 
 on:
   workflow_dispatch:
+  # Weekly: catch Feishu app credential / Open API drift without running this
+  # probe on every PR. Uses the same real secrets and endpoint as dispatch.
+  schedule:
+    - cron: "13 4 * * 4"
 
 permissions: {}
 

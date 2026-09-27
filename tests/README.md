@@ -122,7 +122,7 @@ uv run --no-sync pytest tests/e2e
 PPAP_DEEP_LIVE=1 uv run --no-sync pytest tests/live/test_deep_isolated.py
 ```
 
-The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default `CI Gate`.
+The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default `CI Gate`. LLM readiness and Feishu readiness keep `workflow_dispatch` and add a weekly schedule; they probe real credentials and endpoints and stay outside the default `CI Gate`.
 
 ## CI Gate
 
