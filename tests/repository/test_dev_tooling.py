@@ -597,7 +597,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertFalse((ROOT / "tests" / "pathsetup.py").exists())
 
         for path in ROOT.rglob("*.py"):
-            if ".venv" in path.parts:
+            if ".venv" in path.parts or path.resolve() == Path(__file__).resolve():
                 continue
             text = path.read_text(errors="ignore")
             self.assertNotIn("import tests.pathsetup", text, str(path))
