@@ -541,8 +541,8 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("deploy/compose.yaml", coverage)
         self.assertIn("deploy/isolated-dev/compose.yaml", coverage)
         self.assertGreaterEqual(len(_run_scoped_idents(coverage)), 3)
-        self.assertIn("tests.deploy.test_runtime", coverage)
-        self.assertIn("tests.deploy.test_backup", coverage)
+        self.assertIn("tests/deploy/test_runtime.py", coverage)
+        self.assertIn("tests/deploy/test_backup.py", coverage)
         self.assertIn("tests.e2e", coverage)
 
         isolated_full_up = [
@@ -571,7 +571,7 @@ class DeployContractTests(unittest.TestCase):
         tests_readme = (ROOT / "tests" / "README.md").read_text()
         development = (ROOT / "docs" / "DEVELOPMENT.md").read_text()
         migrations = (ROOT / "migrations" / "README.md").read_text()
-        entry = "python -m unittest discover -s tests/schema"
+        entry = "pytest tests/schema"
         self.assertIn("uv run --no-sync " + entry, workflow)
         self.assertIn(entry, testing)
         self.assertIn(entry, tests_readme)
@@ -581,12 +581,40 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("up -d postgres --wait", schema_job)
         self.assertIn("run --rm init-db", schema_job)
         self.assertNotIn("postgresql-client", schema_job)
-        self.assertNotIn("tests.schema.test_upgrade -v", schema_job)
+        self.assertNotIn("python -m unittest", schema_job)
         modules = {path.name for path in (ROOT / "tests" / "schema").glob("test_*.py")}
         self.assertIn("test_upgrade.py", modules)
         self.assertIn("test_rule_parse.py", modules)
         self.assertIn("test_audit_bindings.py", modules)
         self.assertIn("test_usage_acceptance.py", modules)
+
+
+    def test_python_tests_use_pytest_and_installed_imports(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+        pytest_config = project.get("tool", {}).get("pytest", {}).get("ini_options", {})
+        self.assertEqual(pytest_config.get("asyncio_mode"), "strict")
+        self.assertFalse((ROOT / "pytest.ini").exists())
+        self.assertFalse((ROOT / "tests" / "pathsetup.py").exists())
+
+        for path in ROOT.rglob("*.py"):
+            if ".venv" in path.parts:
+                continue
+            text = path.read_text(errors="ignore")
+            self.assertNotIn("import tests.pathsetup", text, str(path))
+            self.assertNotIn("from tests import pathsetup", text, str(path))
+
+        for path in [
+            ROOT / ".github" / "workflows" / "tests.yml",
+            ROOT / "docs" / "TESTING.md",
+            ROOT / "docs" / "DEVELOPMENT.md",
+            ROOT / "tests" / "README.md",
+            ROOT / "migrations" / "README.md",
+        ]:
+            text = path.read_text()
+            self.assertNotIn("python -m unittest", text, str(path))
+            self.assertNotIn("unittest discover", text, str(path))
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        self.assertIn("uv run --no-sync pytest", workflow)
 
     def test_ci_uses_uv_lock_as_python_dependency_authority(self):
         lock = ROOT / "uv.lock"
