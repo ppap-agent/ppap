@@ -110,6 +110,54 @@ def _workflow_jobs(workflow: str) -> dict[str, str]:
     return {name: "\n".join(body) for name, body in jobs.items()}
 
 
+def _workflow_steps(job: str) -> list[str]:
+    steps: list[list[str]] = []
+    current: list[str] = []
+    in_steps = False
+    for line in job.splitlines():
+        if line.startswith("    steps:"):
+            in_steps = True
+            continue
+        if not in_steps:
+            continue
+        if line.startswith("      -"):
+            if current:
+                steps.append(current)
+            current = [line]
+            continue
+        if current:
+            current.append(line)
+    if current:
+        steps.append(current)
+    return ["\n".join(body) for body in steps]
+
+
+def _run_scoped_idents(text: str) -> set[str]:
+    idents: set[str] = set()
+    for line in text.splitlines():
+        if "github.run_id" not in line:
+            continue
+        value = line.partition(":")[2]
+        if "github.run_id" not in value:
+            value = line.partition("=")[2]
+        value = value.strip().strip("\"'")
+        if "github.run_id" in value:
+            idents.add(value)
+    return idents
+
+
+def _full_canonical_bakes(text: str) -> list[str]:
+    found: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped.startswith("docker buildx bake"):
+            continue
+        rest = stripped[len("docker buildx bake") :].strip()
+        if not rest or rest.startswith("-"):
+            found.append(stripped)
+    return found
+
+
 def _github_yaml_files() -> list[Path]:
     return [
         path
@@ -399,9 +447,71 @@ class DeployContractTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
         jobs = _workflow_jobs(workflow)
-        for name in ("build", "e2e", "schema", "psw"):
-            self.assertIn("uses: ./.github/actions/assert-docker", jobs[name])
+        docker_jobs = [
+            body
+            for body in jobs.values()
+            if "docker compose" in body or "docker buildx" in body or "docker build " in body
+        ]
+        self.assertTrue(docker_jobs)
+        for body in docker_jobs:
+            self.assertIn("uses: ./.github/actions/assert-docker", body)
         self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
+
+    def test_ci_docker_integration_bakes_once_and_always_cleans(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        jobs = _workflow_jobs(workflow)
+        lifecycle = [
+            body
+            for body in jobs.values()
+            if "deploy/compose.yaml" in body or "deploy/isolated-dev/compose.yaml" in body
+        ]
+        self.assertTrue(lifecycle)
+
+        for body in lifecycle:
+            self.assertTrue("COMPOSE_PROJECT_NAME" in body or "docker compose -p" in body)
+            self.assertIn("github.run_id", body)
+            self.assertTrue(
+                any(
+                    "if: always()" in step
+                    and "docker compose" in step
+                    and re.search(r"\bdown\b", step)
+                    for step in _workflow_steps(body)
+                )
+            )
+            self.assertTrue(
+                any(
+                    "if: failure()" in step and "ps" in step and "logs" in step
+                    for step in _workflow_steps(body)
+                )
+            )
+
+        coverage = "\n".join(lifecycle)
+        self.assertIn("deploy/compose.yaml", coverage)
+        self.assertIn("deploy/isolated-dev/compose.yaml", coverage)
+        self.assertGreaterEqual(len(_run_scoped_idents(coverage)), 3)
+        self.assertIn("tests.deploy.test_runtime", coverage)
+        self.assertIn("tests.deploy.test_backup", coverage)
+        self.assertIn("tests.e2e", coverage)
+
+        isolated_full_up = [
+            step
+            for body in lifecycle
+            for step in _workflow_steps(body)
+            if "deploy/isolated-dev/compose.yaml" in step
+            and re.search(r"\bup\b", step)
+            and "up -d postgres" not in step
+        ]
+        self.assertTrue(isolated_full_up)
+        for step in isolated_full_up:
+            self.assertIn("--no-build", step)
+            self.assertNotIn("up --build", step)
+
+        production_e2e = "\n".join(
+            body
+            for body in jobs.values()
+            if "deploy/compose.yaml" in body or "tests.e2e" in body
+        )
+        self.assertLessEqual(len(_full_canonical_bakes(production_e2e)), 1)
 
 
 if __name__ == "__main__":

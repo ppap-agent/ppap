@@ -32,11 +32,11 @@ python -m unittest discover -s tests/unit -v
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 docker buildx bake
-docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
-docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
+COMPOSE_PROJECT_NAME=ppap-prod docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
+COMPOSE_PROJECT_NAME=ppap-prod docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 
-docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
-docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
+COMPOSE_PROJECT_NAME=ppap-dev docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
 unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
@@ -47,7 +47,7 @@ unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2
 
 当前实现是 Python 3.12、单一 `pyproject.toml`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试是 unittest / pytest；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。
 
-CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。schema / build / e2e / PSW corpus / InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web contract、Python unit、InsForge config 和普通 corpus 不要求 Docker。PSW 从已构建的 `ppap-worker` 派生测试镜像（LibreOffice 与 sandbox 已在其中），通过 build context COPY 测试文件，不 bind-mount 仓库路径。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 schema / build / e2e / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，由 #100 处理；本契约不新增 host-workspace bind mount。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。PC 在飞书宿主中通过 `POST /login/feishu/host` 自动登录；普通浏览器仍走 `/login/feishu` OAuth。生产回调域名、事件订阅、网页可信域名和客户入口切换属于 #15，不在宿主登录代码里直接改现网。
+CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。schema / Docker integration / PSW corpus / InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web contract、Python unit、InsForge config 和普通 corpus 不要求 Docker。`Docker integration` 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，打 `ppap-api` / `ppap-worker` / `ppap-web`，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 仍单独 `docker buildx bake worker`，从该 worker 镜像派生测试镜像（LibreOffice 与 sandbox 已在其中），通过 build context COPY 测试文件，不 bind-mount 仓库路径。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 schema / Docker integration / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，不新增 host-workspace bind mount。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。PC 在飞书宿主中通过 `POST /login/feishu/host` 自动登录；普通浏览器仍走 `/login/feishu` OAuth。生产回调域名、事件订阅、网页可信域名和客户入口切换属于 #15，不在宿主登录代码里直接改现网。
 
 #15 剩余：把本仓客户入口切到 current `ppap`；compose 验证不等于客户 cut-over。不拆除 `ppap-agent`：它是算法验证基地和参考实现，并继续服务其它用户。
 
