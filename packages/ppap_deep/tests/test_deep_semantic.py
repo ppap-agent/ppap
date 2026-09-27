@@ -13,7 +13,6 @@ from datetime import date, datetime, time
 from pathlib import Path
 from unittest.mock import patch
 
-from tests import pathsetup  # noqa: F401
 
 from ppap_deep.semantic.document_tools import snapshot
 from ppap_deep.semantic.checker_tools import CheckRequest, check_fields
