@@ -15,6 +15,14 @@ concurrency:
 permissions:
   contents: read
 
+# Toolchain authority is project metadata, not workflow literals:
+#   Python deps: uv.lock via `uv sync --locked` and `uv run --no-sync`
+#   Python interpreter: .python-version
+#   Node: .node-version
+#   pnpm: apps/web/package.json packageManager (Corepack)
+# Third-party/official actions are pinned to an immutable commit SHA with the
+# released tag in a trailing comment. Local composite actions use paths.
+
 jobs:
   web:
     name: Web contract
@@ -25,15 +33,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .node-version
       - name: Typecheck, test, lint, and production build
         working-directory: apps/web
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
           set -euo pipefail
           corepack enable
-          corepack prepare pnpm@10.30.3 --activate
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm test
@@ -49,9 +58,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .node-version
       - name: Verify PPAP-owned InsForge contract
         run: node deploy/insforge/verify-config.mjs
 
@@ -63,23 +72,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Set up Python
-        run: |
-          set -euo pipefail
-          uv python install 3.12
-          rm -rf .venv
-          uv venv --python 3.12 --seed .venv
-          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Install, quality, and unit tests
         run: |
-          uv pip install -e ".[dev]"
+          set -euo pipefail
+          uv sync --locked --extra dev
           git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
-          python -m compileall -q packages services tests
-          python -m unittest discover -s tests/unit -v
+          uv run --no-sync python -m compileall -q packages services tests
+          uv run --no-sync python -m unittest discover -s tests/unit -v
 
   integration:
     name: Docker integration
@@ -96,22 +99,15 @@ jobs:
       - name: Assert Docker
         uses: ./.github/actions/assert-docker
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Set up Python
-        run: |
-          set -euo pipefail
-          uv python install 3.12
-          rm -rf .venv
-          uv venv --python 3.12 --seed .venv
-          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Install Python deps and browser
         run: |
           set -euo pipefail
-          uv pip install -e ".[dev,e2e]"
-          python -m playwright install chromium
+          uv sync --locked --extra dev --extra e2e
+          uv run --no-sync python -m playwright install chromium
       - name: Bake api, worker, and web images
         run: |
           set -euo pipefail
@@ -128,7 +124,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             up -d --wait --wait-timeout 180
-          python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
+          uv run --no-sync python -m unittest tests.deploy.test_runtime tests.deploy.test_backup -v
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans
       - name: Isolated-dev browser E2E
@@ -138,7 +134,7 @@ jobs:
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             up -d --wait --wait-timeout 180 --no-build
-          python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
+          uv run --no-sync python -m unittest tests.e2e.test_web_audit tests.e2e.test_ui_a11y tests.e2e.test_rules tests.e2e.test_rule_interactions -v
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics
@@ -176,26 +172,19 @@ jobs:
       - name: Assert Docker
         uses: ./.github/actions/assert-docker
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Set up Python
-        run: |
-          set -euo pipefail
-          uv python install 3.12
-          rm -rf .venv
-          uv venv --python 3.12 --seed .venv
-          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Empty and previous schema upgrade
         run: |
           set -euo pipefail
-          uv pip install -e ".[dev]"
+          uv sync --locked --extra dev
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             run --rm init-db
-          python -m unittest tests.schema.test_upgrade -v
+          uv run --no-sync python -m unittest tests.schema.test_upgrade -v
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics
@@ -233,19 +222,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Set up Python
-        run: |
-          set -euo pipefail
-          uv python install 3.12
-          rm -rf .venv
-          uv venv --python 3.12 --seed .venv
-          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
       - name: Canonical install
-        run: uv pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
       - name: Run in-repo corpus pytest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -256,7 +238,7 @@ jobs:
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
-        run: uv run pytest ${{ matrix.args }}
+        run: uv run --no-sync pytest ${{ matrix.args }}
 
   psw:
     name: PSW cross-format

@@ -1,6 +1,7 @@
 FROM node:22-alpine AS web-build
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 COPY apps/web/package.json apps/web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY apps/web ./
