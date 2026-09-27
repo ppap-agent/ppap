@@ -9,7 +9,6 @@ import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
-import tests.pathsetup  # noqa: F401
 
 
 def rule_body():
