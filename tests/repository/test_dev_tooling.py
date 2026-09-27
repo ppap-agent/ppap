@@ -544,7 +544,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("deploy/isolated-dev/compose.yaml", coverage)
         self.assertGreaterEqual(len(_run_scoped_idents(coverage)), 3)
         self.assertIn("pytest tests/integration/runtime", coverage)
-        self.assertNotIn("tests/deploy", coverage)
+        self.assertNotIn("tests/" + "deploy", coverage)
         self.assertIn("tests/e2e", coverage)
 
         isolated_full_up = [
@@ -612,8 +612,17 @@ class DeployContractTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("pytest tests/integration/runtime", workflow)
-        self.assertNotIn("tests/deploy", workflow)
-        self.assertNotIn("tests/fixtures", workflow)
+        legacy_paths = ("tests/" + "unit", "tests/" + "deploy", "tests/" + "fixtures")
+        for legacy in legacy_paths:
+            self.assertNotIn(legacy, workflow)
+
+        text_suffixes = {".py", ".md", ".yml", ".yaml", ".toml", ".sh", ".mjs", ".json", ".hcl"}
+        for path in ROOT.rglob("*"):
+            if not path.is_file() or path.suffix not in text_suffixes:
+                continue
+            text = path.read_text(errors="ignore")
+            for legacy in legacy_paths:
+                self.assertNotIn(legacy, text, str(path))
         self.assertNotIn("tests/live", workflow)
 
     def test_python_tests_use_pytest_and_installed_imports(self):
