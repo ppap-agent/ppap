@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import tomllib
 import unittest
 from pathlib import Path
@@ -618,6 +620,23 @@ class DeployContractTests(unittest.TestCase):
         psw = (ROOT / "tests" / "corpus" / "Dockerfile.psw").read_text()
         self.assertNotIn("pytest.ini", psw)
         self.assertIn("COPY pyproject.toml", psw)
+
+        imported = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import ppap_core, ppap_deep, ppap_docops, "
+                    "ppap_excel_audit_engine, ppap_ocr_adapter, "
+                    "ppap_pdf_to_excel, ppap_vision, ppap_api, ppap_worker"
+                ),
+            ],
+            cwd=ROOT / "tests",
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(imported.returncode, 0, imported.stderr)
 
     def test_ci_uses_uv_lock_as_python_dependency_authority(self):
         lock = ROOT / "uv.lock"
