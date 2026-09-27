@@ -213,7 +213,7 @@ class PswPdfEvidenceMixin:
     ) -> AuditResult:
         trace_audit = audit or self._host().audit_file
         if audit is None:
-            metadata = dict(trace_audit.file_metadata)
+            metadata = dict(trace_audit.file_metadata or {})
             metadata.setdefault("source_pdf_url", trace_audit.file_url)
             artifact = getattr(self, "conversion_artifact", None)
             metadata.setdefault(

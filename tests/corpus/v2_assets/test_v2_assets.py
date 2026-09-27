@@ -68,7 +68,7 @@ def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mism
     audit_file = SimpleAuditFile(
         file_url=str(case.file_path),
         audit_id=case.file_name,
-        file_metadata=None,
+        file_metadata={},
     )
     agent = case.agent_cls(audit_file, make_dummy_rule(rule_count))
     agent_rule_count = len(getattr(agent, "rule_checkers", []))
