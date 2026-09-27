@@ -49,13 +49,20 @@ test('legacy page files are gone', () => {
   }
 })
 
+test('package.json does not declare InsForge SDK or PostgREST clients', () => {
+  const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
+  const declared = {...pkg.dependencies, ...pkg.devDependencies}
+  for (const name of Object.keys(declared)) {
+    assert.equal(name.startsWith('@insforge/'), false, name)
+    assert.equal(/postgrest/i.test(name), false, name)
+  }
+})
+
 test('the web client stays behind the Product API boundary', () => {
   const sources = shippedSources()
   for (const forbidden of [
     '/uac/',
     'transformer/file-audit',
-    '@insforge/sdk',
-    'postgrest',
     '/rest/v1',
     'ppap_documents',
     'ppap_jobs',
