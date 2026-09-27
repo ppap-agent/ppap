@@ -11,9 +11,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from tests import pathsetup
-
-ROOT = pathsetup.ROOT
+ROOT = Path(__file__).resolve().parents[2]
 
 from fastapi.testclient import TestClient
 
