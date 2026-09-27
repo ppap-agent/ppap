@@ -39,7 +39,7 @@ from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServ
 from ppap_deep.mapping import passing_response
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
 from ppap_worker import process_claimed
-from tests.unit.memory_auth import MemoryAuthStore
+from tests.integration.memory_auth import MemoryAuthStore
 
 
 def _clean_env(**extra: str):

@@ -18,7 +18,7 @@ from ppap_core.feishu_usage import PartnerAiItem, audit_usage_points, estimate_a
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.unit.memory_auth import MemoryAuthStore
+from tests.integration.memory_auth import MemoryAuthStore
 
 
 def _clean_env(**extra: str):
