@@ -10,7 +10,6 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-import tests.pathsetup  # noqa: F401
 
 from fastapi.testclient import TestClient
 
