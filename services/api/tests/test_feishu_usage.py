@@ -18,7 +18,7 @@ from ppap_core.feishu_usage import PartnerAiItem, audit_usage_points, estimate_a
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -130,7 +130,7 @@ class FeishuUsageTests(unittest.TestCase):
         )
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.partner = _PartnerMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.partner.handler))
