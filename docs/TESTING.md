@@ -48,28 +48,28 @@ cd ../..
 node deploy/insforge/verify-config.mjs
 uv sync --locked --extra dev
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
-uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
-uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
-uv run --no-sync python -m unittest discover -s tests/integration -t . -v
-uv run --no-sync python -m unittest discover -s tests/repository -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
+uv run --no-sync python -m unittest discover -s services/api/tests -v
+uv run --no-sync python -m unittest discover -s services/worker/tests -v
+uv run --no-sync python -m unittest discover -s tests/integration -v
+uv run --no-sync python -m unittest discover -s tests/repository -v
 ```
 
 ```sh
 uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
-uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -t . -v
-uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -t . -v
-uv run --no-sync python -m unittest discover -s services/api/tests -t . -v
-uv run --no-sync python -m unittest discover -s services/worker/tests -t . -v
-uv run --no-sync python -m unittest discover -s tests/integration -t . -v
-uv run --no-sync python -m unittest discover -s tests/repository -t . -v
+uv run --no-sync python -m unittest discover -s packages/ppap_core/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_deep/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_excel_audit_engine/tests -v
+uv run --no-sync python -m unittest discover -s packages/ppap_ocr_adapter/tests -v
+uv run --no-sync python -m unittest discover -s services/api/tests -v
+uv run --no-sync python -m unittest discover -s services/worker/tests -v
+uv run --no-sync python -m unittest discover -s tests/integration -v
+uv run --no-sync python -m unittest discover -s tests/repository -v
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
