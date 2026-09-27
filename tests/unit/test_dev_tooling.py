@@ -91,6 +91,33 @@ def _interpolated_environment(body: str, values: dict[str, str]) -> dict[str, st
     return {key: _interpolate(raw, values) for key, raw in _service_environment(body).items()}
 
 
+def _workflow_jobs(workflow: str) -> dict[str, str]:
+    jobs: dict[str, list[str]] = {}
+    current = ""
+    in_jobs = False
+    for line in workflow.splitlines():
+        if line.startswith("jobs:"):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":"):
+            current = line.strip().rstrip(":")
+            jobs[current] = []
+            continue
+        if current:
+            jobs[current].append(line)
+    return {name: "\n".join(body) for name, body in jobs.items()}
+
+
+def _github_yaml_files() -> list[Path]:
+    return [
+        path
+        for path in (ROOT / ".github").rglob("*")
+        if path.is_file() and path.suffix in {".yml", ".yaml"}
+    ]
+
+
 class DeployContractTests(unittest.TestCase):
     def test_tools_orchestration_directory_is_gone(self):
         self.assertFalse((ROOT / "tools").exists())
@@ -328,14 +355,53 @@ class DeployContractTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         self.assertIn("up -d postgres --wait", workflow)
         self.assertIn("run --rm init-db", workflow)
-        ensure = (ROOT / ".github" / "actions" / "ensure-docker" / "action.yml").read_text()
-        self.assertIn("not installing docker.io", ensure)
-        self.assertIn("iptables-legacy", ensure)
-        self.assertIn("ppap-icc-probe", ensure)
         isolated = (ROOT / "deploy" / "isolated-dev" / "compose.yaml").read_text()
         self.assertNotIn("127.0.0.1:9000:9000", isolated)
         self.assertNotIn("127.0.0.1:9001:9001", isolated)
         self.assertIn("github.event.pull_request.head.sha", workflow)
+
+    def test_ci_asserts_docker_capability_without_host_repair(self):
+        self.assertFalse((ROOT / ".github" / "actions" / "ensure-docker").exists())
+        action = (ROOT / ".github" / "actions" / "assert-docker" / "action.yml").read_text()
+        self.assertIn("runner does not satisfy ppap-docker capability", action)
+        self.assertIn("command -v docker", action)
+        self.assertIn("docker info", action)
+        self.assertIn("docker compose version", action)
+        self.assertIn("docker buildx version", action)
+        for needle in (
+            "sudo",
+            "apt-get",
+            "apt ",
+            "yum ",
+            "apk ",
+            "systemctl",
+            "service docker",
+            "dockerd",
+            "iptables",
+            "firewall",
+            "chmod",
+            "chown",
+            "docker.sock",
+            "ppap-icc-probe",
+        ):
+            self.assertNotIn(needle, action)
+
+        github_yaml = _github_yaml_files()
+        self.assertTrue(github_yaml)
+        for path in github_yaml:
+            text = path.read_text()
+            self.assertNotIn("ensure-docker", text)
+            self.assertNotIn("postgresql-client", text)
+            self.assertNotIn("libreoffice-writer", text)
+            self.assertNotIn("libc6-dev", text)
+            self.assertNotIn("legacy_doc_sandbox.c", text)
+
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        lifecycle = (ROOT / ".github" / "workflows" / "insforge-lifecycle.yml").read_text()
+        jobs = _workflow_jobs(workflow)
+        for name in ("build", "e2e", "schema", "psw"):
+            self.assertIn("uses: ./.github/actions/assert-docker", jobs[name])
+        self.assertIn("uses: ./.github/actions/assert-docker", lifecycle)
 
 
 if __name__ == "__main__":

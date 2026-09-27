@@ -1,4 +1,4 @@
-"""Upgrade an empty database and the previous schema to latest via psql."""
+"""Upgrade an empty database and the previous schema to latest via container psql."""
 from __future__ import annotations
 
 import os
@@ -9,6 +9,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "migrations"
+COMPOSE = (
+    "docker",
+    "compose",
+    "-f",
+    str(ROOT / "deploy" / "isolated-dev" / "compose.yaml"),
+)
 
 
 def migration_files() -> list[Path]:
@@ -29,15 +35,6 @@ def previous_version() -> str:
     return files[-2].name
 
 
-def _pg_env(user: str, password: str) -> dict[str, str]:
-    env = dict(os.environ)
-    env["PGHOST"] = os.environ.get("PGHOST", "127.0.0.1")
-    env["PGPORT"] = os.environ.get("PGPORT", "5432")
-    env["PGUSER"] = user
-    env["PGPASSWORD"] = password
-    return env
-
-
 def _bootstrap_user() -> str:
     return os.environ.get("PPAP_PG_BOOTSTRAP_USER") or os.environ.get("PGUSER") or "ppap"
 
@@ -54,20 +51,78 @@ def _migrator_password() -> str:
     return os.environ.get("PPAP_PG_MIGRATOR_PASSWORD", "ppap_isolated_dev")
 
 
+def _sql_file_in_container(host_path: str) -> str:
+    path = Path(host_path)
+    path = path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+    try:
+        relative = path.relative_to(MIGRATIONS)
+    except ValueError as exc:
+        raise RuntimeError(f"schema SQL must live under migrations/: {host_path}") from exc
+    return f"/migrations/{relative.as_posix()}"
+
+
+def _container_psql_args(args: tuple[str, ...]) -> list[str]:
+    mapped: list[str] = []
+    expect_file = False
+    for arg in args:
+        if expect_file:
+            mapped.append(_sql_file_in_container(arg))
+            expect_file = False
+            continue
+        mapped.append(arg)
+        expect_file = arg == "-f"
+    return mapped
+
+
 def _psql(user: str, password: str, database: str, *args: str) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
-        ["psql", "-d", database, "-v", "ON_ERROR_STOP=1", *args],
-        cwd=str(ROOT),
-        env=_pg_env(user, password),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    command = [
+        *COMPOSE,
+        "exec",
+        "-T",
+        "-e",
+        "PGHOST=127.0.0.1",
+        "-e",
+        "PGPORT=5432",
+        "-e",
+        f"PGUSER={user}",
+        "-e",
+        f"PGPASSWORD={password}",
+        "postgres",
+        "psql",
+        "-d",
+        database,
+        "-v",
+        "ON_ERROR_STOP=1",
+        *_container_psql_args(args),
+    ]
+    try:
+        return subprocess.run(
+            command,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
 
 
 def _require(proc: subprocess.CompletedProcess[bytes], action: str) -> None:
     if proc.returncode != 0:
         raise RuntimeError(f"{action}: {(proc.stderr or proc.stdout or b'').decode(errors='replace')[-4000:]}")
+
+
+def _require_postgres(test: unittest.TestCase) -> None:
+    probe = _psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-Atc", "SELECT 1")
+    if probe.returncode == 0:
+        return
+    detail = (probe.stderr or probe.stdout or b"").decode(errors="replace").strip()[-2000:]
+    message = "postgres container is not reachable with container-native psql"
+    if detail:
+        message = f"{message}: {detail}"
+    if os.environ.get("CI"):
+        test.fail(message)
+    test.skipTest(message)
 
 
 def _applied(database: str) -> list[str]:
@@ -94,11 +149,14 @@ class SchemaUpgradeTests(unittest.TestCase):
         apply = (MIGRATIONS / "apply.sql").read_text()
         for name in versions:
             self.assertIn(f"\\ir {name}", apply)
+        self.assertEqual(_sql_file_in_container(str(MIGRATIONS / "apply.sql")), "/migrations/apply.sql")
+        self.assertEqual(
+            _container_psql_args(("-f", str(MIGRATIONS / "apply.sql"), "-Atc", "SELECT 1")),
+            ["-f", "/migrations/apply.sql", "-Atc", "SELECT 1"],
+        )
 
     def test_empty_and_previous_schema_reach_latest(self):
-        probe = _psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-Atc", "SELECT 1")
-        if probe.returncode != 0:
-            self.skipTest("postgres is not reachable with native psql")
+        _require_postgres(self)
         versions = [path.name for path in migration_files()]
         empty = "ppap_schema_empty_" + uuid.uuid4().hex[:8]
         previous = "ppap_schema_prev_" + uuid.uuid4().hex[:8]

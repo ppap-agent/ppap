@@ -20,7 +20,7 @@
 
 ## 当前命令
 
-Local 与 CI 使用同一组 native 工具：pip、unittest/pytest、git、compileall、pnpm、Node、Python Playwright、Docker Buildx bake、Docker Compose、psql、以及 InsForge 的 `node deploy/insforge/verify-config.mjs` 与 pinned `@insforge/cli`。
+Local 与 CI 使用同一组 user-space 工具：pip/uv、unittest/pytest、git、compileall、pnpm、Node、Python Playwright，以及 InsForge 的 `node deploy/insforge/verify-config.mjs` 与 pinned `@insforge/cli`。Docker Engine、Compose 和 Buildx 是 runner/platform capability，由宿主提供；workflow 只做 fail-fast 检测。schema 通过 isolated-dev PostgreSQL 容器内的 `psql` 执行 `migrations/`。
 
 唯一产品前端使用 React + TypeScript。在 `apps/web` 中运行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`、`pnpm lint` 和 `pnpm build`，详情见 [Web Client](../apps/web/README.md)。浏览器 E2E 是 Python Playwright（`python -m unittest tests.e2e...`），对着 isolated-dev。浏览器联调的页面来源必须在 API 的允许来源中；本地 Compose 使用 `http://127.0.0.1:4173`。
 
@@ -39,13 +39,15 @@ docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
+unit 用 `python -m unittest discover -s tests/unit -v`。corpus 与浏览器 E2E 见 [TESTING](TESTING.md)。生产镜像由 `docker buildx bake` 打 `ppap-api` / `ppap-worker` / `ppap-web`，标签为同一 `PPAP_BUILD_SHA`。`deploy/app/Dockerfile` 在装完 Debian/pip 之后才接收 `PPAP_BUILD_SHA`，apt 对 502 会重试，这样换 Git SHA 不会重跑 `apt-get`。schema 由 PostgreSQL 容器内的 `psql` 执行 `migrations/`；空库先跑 `migrations/bootstrap.sql`。依赖由根目录 `pyproject.toml` 拥有；`requirements.txt` 是同一组 pin 的可读副本，不要另写安装入口。
 
 完整 corpus 命令见 [TESTING](TESTING.md)。以上是合入后的真实入口。
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试是 unittest / pytest；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。schema / build / e2e 需要 Docker Engine、Compose 和 Buildx。self-hosted runner 上若 Engine 已可用，CI 只补 Compose/Buildx 插件，不会用 Debian `docker.io` 覆盖已安装的 `docker-ce`；仅在完全没有 Docker CLI 时才安装 `docker.io`。每次还会清掉遗留的 `iptables-legacy` FORWARD DROP，避免 Compose 用户网络丢包。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。PC 在飞书宿主中通过 `POST /login/feishu/host` 自动登录；普通浏览器仍走 `/login/feishu` OAuth。生产回调域名、事件订阅、网页可信域名和客户入口切换属于 #15，不在宿主登录代码里直接改现网。
+当前实现是 Python 3.12、单一 `pyproject.toml`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试是 unittest / pytest；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。CI 的 CPython 安装与 [ppap-agent](https://github.com/ppap-agent/ppap-agent) 相同：`astral-sh/setup-uv@v7`（uv 0.9.26）+ `uv python install 3.12`；本仓没有 `uv.lock`，所以用 `uv pip install -e ".[dev]"`，不用 `uv sync --frozen`。
+
+CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。schema / build / e2e / PSW corpus / InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web contract、Python unit、InsForge config 和普通 corpus 不要求 Docker。PSW 从已构建的 `ppap-worker` 派生测试镜像（LibreOffice 与 sandbox 已在其中），通过 build context COPY 测试文件，不 bind-mount 仓库路径。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 schema / build / e2e / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，由 #100 处理；本契约不新增 host-workspace bind mount。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用那些 CLI，不另起 PPAP dispatcher。PC 在飞书宿主中通过 `POST /login/feishu/host` 自动登录；普通浏览器仍走 `/login/feishu` OAuth。生产回调域名、事件订阅、网页可信域名和客户入口切换属于 #15，不在宿主登录代码里直接改现网。
 
 #15 剩余：把本仓客户入口切到 current `ppap`；compose 验证不等于客户 cut-over。不拆除 `ppap-agent`：它是算法验证基地和参考实现，并继续服务其它用户。
 

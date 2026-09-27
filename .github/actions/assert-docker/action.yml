@@ -1,0 +1,21 @@
+name: Assert Docker capability
+description: Fail fast unless the runner already provides Docker Engine, Compose, and Buildx
+
+runs:
+  using: composite
+  steps:
+    - name: Assert ppap-docker capability
+      shell: bash
+      run: |
+        set -euo pipefail
+        fail() {
+          echo "runner does not satisfy ppap-docker capability" >&2
+          exit 1
+        }
+        command -v docker >/dev/null 2>&1 || fail
+        docker info >/dev/null 2>&1 || fail
+        docker compose version >/dev/null 2>&1 || fail
+        docker buildx version >/dev/null 2>&1 || fail
+        docker version
+        docker compose version
+        docker buildx version
