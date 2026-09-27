@@ -19,7 +19,7 @@ from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.store_fixture import auth_store
+from tests.integration.store_fixture import auth_store, seed_usage_event
 
 
 def _clean_env(**extra: str):
@@ -206,6 +206,25 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.http.close()
         self._env.stop()
 
+    def _usage_events(self):
+        with self.store._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT trace_id, consumed_points, is_free_trial, external_status
+                FROM product.usage_events
+                ORDER BY created_at, id
+                """
+            ).fetchall()
+        return [
+            {
+                "trace_id": row[0],
+                "consumed_points": int(row[1]),
+                "is_free_trial": bool(row[2]),
+                "external_status": row[3],
+            }
+            for row in rows
+        ]
+
     def _draft_for_imported_file(self):
         imported = self.client.post(
             "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
@@ -215,8 +234,9 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201)
         draft = created.json()["id"]
         imported_id = imported.json()["id"]
-        self.assertEqual(self.store.file_sources[imported_id]["object_ref"], "xlsx-token")
-        self.assertEqual(self.store.file_sources[imported_id]["object_kind"], "file")
+        source = self.store.file_source(imported_id)
+        self.assertEqual(source["object_ref"], "xlsx-token")
+        self.assertEqual(source["object_kind"], "file")
         saved = self.client.put(f"/drafts/{draft}", json={
             "items": [
                 {"file_version_id": imported_id, "role": "target", "rule_version_id": RULE_A},
@@ -291,7 +311,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(still["remaining_trial_ai_points"], 9500)
         events = [
             row
-            for row in self.store.usage_events
+            for row in self._usage_events()
             if row["trace_id"] == submitted.json()["id"] + ":trial"
         ]
         self.assertEqual(len(events), 1)
@@ -303,13 +323,14 @@ class FeishuDocsAddonTests(unittest.TestCase):
         logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(logged.status_code, 200)
         principal = self.store.principal_for_fixture("alice")
-        self.store.record_usage_event(principal, "ai-item-1", 9800, True, trace_id="pre-trial")
+        seed_usage_event(self.store, principal, "ai-item-1", 9800, True, "none", trace_id="pre-trial")
         draft = self._draft_for_imported_file()
         submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
         self.assertEqual(submitted.status_code, 201)
         round_id = submitted.json()["id"]
-        trial = [row for row in self.store.usage_events if row["trace_id"] == round_id + ":trial"]
-        partner = [row for row in self.store.usage_events if row["trace_id"] == round_id + ":partner"]
+        events = self._usage_events()
+        trial = [row for row in events if row["trace_id"] == round_id + ":trial"]
+        partner = [row for row in events if row["trace_id"] == round_id + ":partner"]
         self.assertEqual(trial[0]["consumed_points"], 200)
         self.assertTrue(trial[0]["is_free_trial"])
         self.assertEqual(trial[0]["external_status"], "none")
@@ -323,7 +344,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.settings.usage_charge_enabled = False
         logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(logged.status_code, 200)
-        before = list(self.store.usage_events)
+        before = self._usage_events()
         quota = self.client.get("/integrations/feishu/usage/quota", params={"target_count": 1})
         self.assertEqual(quota.status_code, 200)
         self.assertEqual(quota.json()["estimated_points"], 0)
@@ -331,7 +352,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         draft = self._draft_for_imported_file()
         submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-preview-no-charge"})
         self.assertEqual(submitted.status_code, 201)
-        self.assertEqual(self.store.usage_events, before)
+        self.assertEqual(self._usage_events(), before)
 
     def test_empty_code_and_isolated_dev_fixture_host_login(self):
         missing = self.client.post("/login/feishu/host", json={})
