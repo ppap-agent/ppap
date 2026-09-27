@@ -82,7 +82,7 @@ jobs:
           uv sync --locked --extra dev
           git show --format= --check HEAD -- . ':!assets' ':!tests/fixtures'
           uv run --no-sync python -m compileall -q packages services tests
-          uv run --no-sync pytest             packages/ppap_core/tests             packages/ppap_deep/tests             packages/ppap_excel_audit_engine/tests             packages/ppap_ocr_adapter/tests             tests/repository
+          uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests packages/ppap_excel_audit_engine/tests packages/ppap_ocr_adapter/tests tests/repository
 
   integration:
     name: Docker integration
