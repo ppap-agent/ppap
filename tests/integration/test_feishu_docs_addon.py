@@ -19,7 +19,7 @@ from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -188,7 +188,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         )
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.feishu = _AddonMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
@@ -363,7 +363,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         ):
             settings = Settings()
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, MemoryAuthStore(settings), self.http)
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings), self.http)
         )
         response = client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(response.status_code, 400)
