@@ -32,7 +32,8 @@ Python module groups:
 
 ```sh
 uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_docops/tests packages/ppap_pdf_to_excel/tests packages/ppap_ocr_adapter/tests packages/ppap_vision/tests
+# documents: current physical owner test directory; docops/pdf_to_excel/vision have no tests/ yet
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
 ```
 
