@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -29,7 +29,7 @@ class UsageReadTests(unittest.TestCase):
         self._env = _clean_env(PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
