@@ -98,13 +98,13 @@ class RuleApiTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
         from ppap_core.settings import Settings
-        from tests.integration.memory_auth import MemoryAuthStore
+        from tests.integration.store_fixture import auth_store
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
         self.ai_boundary = patch("ppap_excel_audit_engine.checkers.client.AIClient", return_value=self.ai)
@@ -237,7 +237,7 @@ class RuleApiTests(unittest.TestCase):
 
     def test_same_request_resumes_one_job_and_unknown_is_not_automatically_reexecuted(self):
         from ppap_worker import process_claimed
-        from tests.integration.memory_auth import _now
+        from datetime import datetime, timezone
 
         source = self.upload()
         request_id = str(uuid.uuid4())
@@ -249,7 +249,7 @@ class RuleApiTests(unittest.TestCase):
         job = self.store.claim_job("first")
         self.assertFalse(self.store.renew_job_lease(job, "other"))
         self.assertTrue(self.store.renew_job_lease(job, "first"))
-        self.store.jobs[job.id]["lease_until"] = _now() - timedelta(seconds=1)
+        self.store.jobs[job.id]["lease_until"] = datetime.now(timezone.utc) - timedelta(seconds=1)
         self.assertEqual(self.client.get("/rules/parse/" + request_id).json()["status"], "unknown")
         self.assertIsNone(self.store.claim_job("second"))
         self.assertEqual(self.submit_parse(source, request_id).json()["status"], "unknown")
