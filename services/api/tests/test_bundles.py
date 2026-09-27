@@ -9,7 +9,7 @@ from ppap_core.fixtures import RULE_A
 from ppap_core.settings import Settings
 from fastapi.testclient import TestClient
 from ppap_api import create_app
-from tests.integration.memory_auth import MemoryAuthStore
+from tests.integration.store_fixture import auth_store
 from unittest.mock import patch
 import os
 
@@ -40,7 +40,7 @@ class RoundBundleTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = MemoryAuthStore(self.settings)
+        self.store = auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
 
