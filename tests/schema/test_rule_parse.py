@@ -3,12 +3,19 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import unittest
+
+import pytest
 import uuid
 from unittest.mock import patch
 
 
 
 class RuleParseDatabaseTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _schema_support(self, schema_tools, memory_objects_type, sample_rule_body_factory):
+        self.schema = schema_tools
+        self.memory_objects_type = memory_objects_type
+        self.rule_body = sample_rule_body_factory
     def test_idempotent_acceptance_unknown_lease_late_result_and_current_source_authorization(self):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
@@ -17,16 +24,16 @@ class RuleParseDatabaseTests(unittest.TestCase):
         from ppap_core.settings import Settings
         from ppap_worker import process_claimed
 
-        self._require_postgres(self)
+        self.schema.require_postgres()
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]
-        self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self._migrator_user()}"), "create isolated rule parse DB")
+        self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self.schema.migrator_user()}"), "create isolated rule parse DB")
         try:
-            self._require(self._psql(self._migrator_user(), self._migrator_password(), database, "-f", str(self.MIGRATIONS / "apply.sql")), "apply rule parse schema")
+            self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), database, "-f", str(self.schema.MIGRATIONS / "apply.sql")), "apply rule parse schema")
             settings = Settings(
                 pg_database=database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")),
-                pg_migrator_user=self._migrator_user(), pg_migrator_password=self._migrator_password(),
+                pg_migrator_user=self.schema.migrator_user(), pg_migrator_password=self.schema.migrator_password(),
             )
-            objects = self.MemoryObjects()
+            objects = self.memory_objects_type()
             api = AuthStore(settings, objects)
             worker = AuthStore(settings, objects, role="worker")
             api.seed_isolated_dev()
@@ -77,7 +84,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
                     conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (source.file_id, alice.user_id))
                 self.assertEqual(client.get("/rules/parse/" + job.id).status_code, 403)
         finally:
-            self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB")
+            self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB")
 
 
 if __name__ == "__main__":
