@@ -113,10 +113,17 @@ def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> di
 
 
 class AuthStore:
-    def __init__(self, settings: Settings, objects=None, role: str = "api") -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        objects=None,
+        role: str = "api",
+        rule_execution_factory=None,
+    ) -> None:
         self.settings = settings
         self.objects = objects or S3Objects(settings)
         self.role = role
+        self.rule_execution_factory = rule_execution_factory
 
     def _conn(self) -> psycopg.Connection:
         return connect(self.settings, self.role)
@@ -1202,9 +1209,7 @@ class AuthStore:
             return row is not None
 
     def audit_progress(self, claimed: ClaimedJob, worker_ident: str, progress: dict) -> bool:
-        from ppap_deep.protocol import DeepProgress
-
-        safe = DeepProgress.model_validate(progress).model_dump(exclude_none=True)
+        safe = dict(progress)
         safe["updated_at"] = _now().isoformat()
         with self._conn() as conn:
             row = conn.execute(
@@ -1346,9 +1351,8 @@ class AuthStore:
                     if not rule:
                         raise ValueError("unknown_rule")
             execution = None
-            if rule:
-                from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution
-                execution = freeze_target_rule_execution(rule[2], row.get("original_filename") or "")
+            if rule and self.rule_execution_factory is not None:
+                execution = self.rule_execution_factory(rule[2], row.get("original_filename") or "")
             row.update(
                 rule_version_id=str(rule[0]) if rule else None,
                 rule_title=rule[1] if rule else None,

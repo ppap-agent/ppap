@@ -4,15 +4,17 @@ version = "0.1.0"
 description = "PPAP audit worker"
 requires-python = "==3.12.*"
 dependencies = [
+    "ppap-application",
     "ppap-core",
-    "ppap-api",
+    "ppap-product-store",
     "ppap-deep",
     "ppap-excel-audit-engine",
 ]
 
 [tool.uv.sources]
+ppap-application = { workspace = true }
 ppap-core = { workspace = true }
-ppap-api = { workspace = true }
+ppap-product-store = { workspace = true }
 ppap-deep = { workspace = true }
 ppap-excel-audit-engine = { workspace = true }
 

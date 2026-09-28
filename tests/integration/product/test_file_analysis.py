@@ -2,7 +2,7 @@ import io
 import json
 import unittest
 
-from ppap_core.file_analysis import analyze_file, latest_rule_versions
+from ppap_application import analyze_file, latest_rule_versions
 from ppap_core.rule_matching import RuleMatchingAIService
 
 

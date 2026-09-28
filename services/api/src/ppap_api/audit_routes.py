@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ppap_core.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
 from ppap_core.identity import can_read, can_review
-from ppap_api.store import AuthStore
+from ppap_product_store import AuthStore
 
 
 def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:

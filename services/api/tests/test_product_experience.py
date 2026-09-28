@@ -74,7 +74,7 @@ class PreviewTests(unittest.TestCase):
 
 class ProductExperienceTests(unittest.TestCase):
     def test_round_findings_follow_effective_clause_order_not_lexical_ids(self):
-        from ppap_api.store import AuthStore
+        from ppap_product_store import AuthStore
 
         clauses = [{"id": str(number)} for number in (1, 2, 6, 10, 11)]
         inputs = [("target", "file-version", "file", "report.xlsx", "ready", "rule-version", "客户规则", {"rules": clauses})]

@@ -35,6 +35,29 @@ def _member_dirs() -> set[Path]:
     return found
 
 
+def _dependency_name(spec: str) -> str:
+    match = re.match(r"[A-Za-z0-9_.-]+", spec)
+    if match is None:
+        raise AssertionError(f"invalid dependency spec: {spec}")
+    return match.group(0).lower().replace("_", "-")
+
+
+def _production_graph() -> dict[str, set[str]]:
+    projects = {}
+    for member in _member_dirs():
+        project = _pyproject(member / "pyproject.toml")["project"]
+        projects[project["name"]] = project
+    names = set(projects)
+    return {
+        name: {
+            dependency
+            for spec in project.get("dependencies", [])
+            if (dependency := _dependency_name(spec)) in names
+        }
+        for name, project in projects.items()
+    }
+
+
 class ArchitectureTests(unittest.TestCase):
     def test_workspace_members_match_physical_owners(self):
         root = _pyproject(ROOT / "pyproject.toml")
@@ -61,6 +84,50 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("ppap-corpus-contracts", dev)
         self.assertNotIn("ppap-corpus-contracts", root["project"]["dependencies"])
         self.assertNotIn("pytest", root["dependency-groups"]["e2e"])
+
+    def test_production_dependency_graph_is_acyclic_and_owner_directed(self):
+        graph = _production_graph()
+        visiting: list[str] = []
+        visited: set[str] = set()
+
+        def visit(name: str) -> None:
+            if name in visiting:
+                cycle = visiting[visiting.index(name):] + [name]
+                self.fail("production dependency cycle: " + " -> ".join(cycle))
+            if name in visited:
+                return
+            visiting.append(name)
+            for dependency in sorted(graph[name]):
+                visit(dependency)
+            visiting.pop()
+            visited.add(name)
+
+        for name in sorted(graph):
+            visit(name)
+
+        self.assertNotIn("ppap-excel-audit-engine", graph["ppap-core"])
+        self.assertNotIn("ppap-api", graph["ppap-worker"])
+        self.assertIn("ppap-product-store", graph["ppap-api"])
+        self.assertIn("ppap-product-store", graph["ppap-worker"])
+        self.assertIn("ppap-application", graph["ppap-api"])
+        self.assertIn("ppap-application", graph["ppap-worker"])
+
+        core_source = "\n".join(
+            path.read_text()
+            for path in (ROOT / "packages/ppap_core/src/ppap_core").glob("*.py")
+        )
+        worker_source = "\n".join(
+            path.read_text()
+            for path in (ROOT / "services/worker/src/ppap_worker").glob("*.py")
+        )
+        store_source = "\n".join(
+            path.read_text()
+            for path in (ROOT / "packages/ppap_product_store/src/ppap_product_store").glob("*.py")
+        )
+        self.assertNotIn("ppap_excel_audit_engine", core_source)
+        self.assertNotIn("ppap_api", worker_source)
+        self.assertNotIn("ppap_excel_audit_engine", store_source)
+        self.assertNotIn("ppap_deep", store_source)
 
     def test_pytest_importlib_is_the_only_import_authority(self):
         options = _pyproject(ROOT / "pyproject.toml")["tool"]["pytest"]["ini_options"]

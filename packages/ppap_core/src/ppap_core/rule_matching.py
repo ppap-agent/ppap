@@ -14,8 +14,6 @@ from hashlib import sha256
 from typing import Any, Dict, List, Optional, Tuple
 
 from ppap_core.types import PpapDocumentType, PpapDocumentTypeMatch
-from ppap_excel_audit_engine.checkers.client import AIClient
-from ppap_excel_audit_engine.checkers.prompts import PromptManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +28,9 @@ class RuleMatchingAIService:
     _cache_lock = threading.Lock()
     _match_cache: "OrderedDict[str, Tuple[float, str]]" = OrderedDict()
 
-    def __init__(self, ai=None) -> None:
-        self.client = ai if ai is not None else AIClient()
-        self.prompt_manager = PromptManager()
+    def __init__(self, ai=None, prompt_manager=None) -> None:
+        self.client = ai
+        self.prompt_manager = prompt_manager
 
     @staticmethod
     def _summarize_type_matches(matches: List[PpapDocumentTypeMatch]) -> List[Dict[str, Any]]:
@@ -401,6 +399,9 @@ class RuleMatchingAIService:
                 if matched_rule_id:
                     logger.debug("规则匹配缓存命中（candidateId=%s）", cached_candidate_id)
                     return matched_rule_id
+
+            if self.client is None or self.prompt_manager is None:
+                raise ValueError("rule_matching_ai_unavailable")
 
             # 构建提示
             system_prompt = self.prompt_manager.get_system_prompt("rule_matcher")

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 
 from ppap_core.audits import RoundInput, findings_from_rule_execution
-from ppap_core.engine_round import builtin_rule_input
+from ppap_application import builtin_rule_input
 from ppap_core.rule_coverage import COVERAGE_UNSUPPORTED, MODE_RULE_ITEMS
 
 

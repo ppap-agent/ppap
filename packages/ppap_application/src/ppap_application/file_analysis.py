@@ -1,4 +1,4 @@
-"""Pre-audit metadata and rule suggestions; never executes customer rule text."""
+"""Application-level pre-audit metadata and rule suggestions."""
 from __future__ import annotations
 
 import json
@@ -76,7 +76,7 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None) -
     matching = "unmatched"
     if candidates:
         try:
-            matched_id = RuleMatchingAIService(ai).get_matched_rule_id(filename, excerpt, [
+            matched_id = RuleMatchingAIService(ai, PromptManager()).get_matched_rule_id(filename, excerpt, [
                 {"candidateId": f"R{index:02d}", "ruleId": rule["id"], "rule_file_name": rule["title"], "type": rule.get("type") or ""}
                 for index, rule in enumerate(candidates, start=1)
             ])

@@ -1,4 +1,4 @@
-"""Run a Standard 审核轮次 from its selected file and rule versions."""
+"""Application orchestration for a Standard audit round."""
 from __future__ import annotations
 
 import tempfile
@@ -189,3 +189,16 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
     finally:
         for path in temps:
             Path(path).unlink(missing_ok=True)
+
+
+def run_standard_round(store, work: RoundWork) -> dict:
+    """Load persisted inputs, then execute the Standard engine outside process adapters."""
+    blobs: dict[str, bytes] = {}
+    for item in work.inputs:
+        version = store.get_version(item.file_id, item.file_version_id)
+        if version is None:
+            if item.role == TARGET:
+                raise ValueError("missing_file")
+            continue
+        blobs[item.file_version_id] = store.version_bytes(version)
+    return run_round_from_bytes(work, blobs)

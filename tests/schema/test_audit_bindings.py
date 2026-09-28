@@ -12,7 +12,7 @@ class AuditDatabaseCase(unittest.TestCase):
     previous_schema = False
 
     def setUp(self):
-        from ppap_api.store import AuthStore
+        from ppap_application import build_product_store
         from ppap_core.settings import Settings
 
         self._require_postgres(self)
@@ -28,7 +28,7 @@ class AuditDatabaseCase(unittest.TestCase):
         else:
             self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "apply.sql")), "apply audit schema")
         self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=self._migrator_user(), pg_migrator_password=self._migrator_password())
-        self.store = AuthStore(self.settings, self.MemoryObjects())
+        self.store = build_product_store(self.settings, objects=self.MemoryObjects())
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
 
