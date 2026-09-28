@@ -102,7 +102,7 @@ test('Web wire schemas are generated from FastAPI OpenAPI', () => {
     assert.doesNotMatch(api, legacy)
   }
 
-  for (const behavior of ['fetch(', '请求失败', '请先登录', 'retry', 'setTimeout(']) {
+  for (const behavior of ['fetch(', 'setTimeout(', 'navigator.', '请求失败', '请先登录']) {
     assert.equal(generated.includes(behavior), false, `generated OpenAPI artifact contains frontend behavior: ${behavior}`)
   }
 })
