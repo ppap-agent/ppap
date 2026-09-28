@@ -63,6 +63,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
+uv run --no-sync pytest tests/corpus/v2_assets/test_cross_format_pairs.py tests/corpus/v2_assets/test_cross_format_contract.py --cross-format -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -79,7 +80,7 @@ docker run --rm \
   pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
-PSW remains a purpose-built container entry in the same CI Corpus matrix.
+Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF / scanned variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix.
 
 ## Schema
 

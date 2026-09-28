@@ -199,6 +199,9 @@ jobs:
           - name: scanned
             mode: pytest
             args: tests/corpus/v2_assets --ftype scanned -q
+          - name: Pairs
+            mode: pytest
+            args: tests/corpus/v2_assets/test_cross_format_pairs.py tests/corpus/v2_assets/test_cross_format_contract.py --cross-format -q
           - name: V3
             mode: pytest
             args: tests/corpus/v3_poc -q

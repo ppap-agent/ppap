@@ -45,6 +45,12 @@ def pytest_addoption(parser: Any) -> None:
         default=str(_DEFAULT_V2_CSV),
         help="V2 human expected CSV (defaults to in-repo 4.8 feedback table)",
     )
+    parser.addoption(
+        "--cross-format",
+        action="store_true",
+        default=False,
+        help="Run V2 PDF↔Excel pair execution (Corpus Pairs variant)",
+    )
 
 
 def pytest_collection_modifyitems(items: Any) -> None:
@@ -55,6 +61,8 @@ def pytest_collection_modifyitems(items: Any) -> None:
 def pytest_make_parametrize_id(config: Any, val: Any, argname: Any) -> Any:
     if isinstance(val, str):
         return val
+    if hasattr(val, "pair_id"):
+        return val.pair_id
     if hasattr(val, "file_name"):
         return val.file_name
     return None

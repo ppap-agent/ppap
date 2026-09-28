@@ -674,7 +674,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("pytest ${{ matrix.paths }}", modules)
 
         corpus = jobs["corpus"]
-        for name in ("Excel", "PDF", "scanned", "V3", "PSW"):
+        for name in ("Excel", "PDF", "scanned", "Pairs", "V3", "PSW"):
             self.assertIn(f"name: {name}", corpus)
         self.assertIn("tests/corpus/Dockerfile.psw", corpus)
 
@@ -896,6 +896,54 @@ class DeployContractTests(unittest.TestCase):
             self.assertIn("CI Gate", text)
             self.assertIn("LLM", text)
             self.assertIn("Feishu", text)
+
+    def test_v2_cross_format_pairs_are_required_corpus_contract(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+        corpus = _workflow_jobs(workflow)["corpus"]
+        self.assertIn("name: Pairs", corpus)
+        self.assertIn(
+            "args: tests/corpus/v2_assets/test_cross_format_pairs.py "
+            "tests/corpus/v2_assets/test_cross_format_contract.py --cross-format -q",
+            corpus,
+        )
+        self.assertIn("args: tests/corpus/v2_assets --ftype excel -q", corpus)
+        self.assertIn("args: tests/corpus/v2_assets --ftype pdf -q", corpus)
+        self.assertIn("args: tests/corpus/v2_assets --ftype scanned -q", corpus)
+        self.assertEqual(corpus.count("--cross-format"), 1)
+        self.assertNotIn("compare_local_pdf_excel_pairs", corpus)
+
+        from tests.corpus.v2_assets.cross_format import KnownPairDivergence
+        from tests.corpus.v2_assets.cross_format_baseline import KNOWN_PAIR_DIVERGENCES
+
+        source = (ROOT / "tests" / "corpus" / "v2_assets" / "cross_format.py").read_text()
+        baseline_source = (
+            ROOT / "tests" / "corpus" / "v2_assets" / "cross_format_baseline.py"
+        ).read_text()
+        self.assertIn("def discover_v2_cross_format_pairs", source)
+        self.assertIn("pair_id_for_file_name", source)
+        self.assertNotIn("suggestions", source)
+        self.assertNotIn("PAIR_REGISTRY", source)
+        self.assertIn("Not a second PASS/NG oracle", baseline_source)
+        self.assertTrue(KNOWN_PAIR_DIVERGENCES, "known PDF/Excel divergences must be recorded")
+        seen: set[tuple[str, int]] = set()
+        for item in KNOWN_PAIR_DIVERGENCES:
+            self.assertIsInstance(item, KnownPairDivergence)
+            self.assertTrue(item.pair_id)
+            self.assertGreaterEqual(item.rule_index, 1)
+            self.assertNotEqual(
+                (item.pdf_status, item.pdf_execution_class, item.pdf_failure_class),
+                (item.excel_status, item.excel_execution_class, item.excel_failure_class),
+                item,
+            )
+            self.assertNotIn(item.location, seen)
+            seen.add(item.location)
+
+        testing = (ROOT / "docs" / "TESTING.md").read_text()
+        readme = (ROOT / "tests" / "README.md").read_text()
+        self.assertIn("--cross-format", testing)
+        self.assertIn("--cross-format", readme)
+        self.assertIn("pair+rule", testing)
+        self.assertIn("不是第二套 human oracle", testing)
 
     def test_required_v2_corpus_reconciles_oracle_assets(self):
         shared = (ROOT / "tests" / "corpus" / "v2_assets" / "v2_assets_shared.py").read_text()
