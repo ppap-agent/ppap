@@ -8,7 +8,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from ppap_api.store import AuthStore
+from ppap_application import analyze_file, build_product_store, parse_rule_file, run_standard_round
+from ppap_product_store import AuthStore
 from ppap_core.audits import (
     ANALYSIS_DEEP,
     evaluate_round,
@@ -45,23 +46,12 @@ def run_claimed_job(kind: str, payload: dict) -> dict:
 
 
 def engine_runner(work, store: AuthStore):
-    from ppap_core.engine_round import run_round_from_bytes
-    from ppap_core.audits import TARGET
-
-    blobs: dict[str, bytes] = {}
-    for item in work.inputs:
-        version = store.get_version(item.file_id, item.file_version_id)
-        if version is None:
-            if item.role == TARGET:
-                raise ValueError("missing_file")
-            continue
-        blobs[item.file_version_id] = store.version_bytes(version)
-    return run_round_from_bytes(work, blobs)
+    return run_standard_round(store, work)
 
 
 def process_rule_parse(store, claimed, ident, ai=None) -> dict:
     from ppap_core.files import READY
-    from ppap_core.rules import RuleParseError, parse_rule_file
+    from ppap_core.rules import RuleParseError
 
     stopped = threading.Event()
 
@@ -83,8 +73,6 @@ def process_rule_parse(store, claimed, ident, ai=None) -> dict:
             if version is None or version.tenant_id != claimed.tenant_id or version.status != READY:
                 raise RuleParseError("file_not_ready")
             if claimed.kind == "file_analysis":
-                from ppap_core.file_analysis import analyze_file
-
                 result = analyze_file(version.original_filename, store.version_bytes(version), store.list_rules(claimed.tenant_id), ai=ai)
                 result["source_file_version_id"] = version.id
             else:
@@ -193,6 +181,7 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
     from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
     from ppap_deep.mapping import product_result, spec_from_work
     from ppap_deep.failures import failure_result
+    from ppap_deep.protocol import DeepProgress
 
     settings = getattr(store, "settings", None)
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
@@ -214,7 +203,8 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
         with audit_lease(store, claimed, ident) as cancelled:
             def progress(state):
-                if not store.audit_progress(claimed, ident, state):
+                safe = DeepProgress.model_validate(state).model_dump(exclude_none=True)
+                if not store.audit_progress(claimed, ident, safe):
                     cancelled.set()
                     raise DeepError("deep_lease_lost")
 
@@ -239,7 +229,7 @@ def run() -> None:
     configure_logs(settings)
     ident = worker_id(settings.worker_id)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    store = AuthStore(settings, role="worker")
+    store = build_product_store(settings, role="worker")
     while not STOP:
         try:
             with connect(settings, "worker") as conn:

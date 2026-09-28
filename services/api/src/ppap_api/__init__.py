@@ -69,7 +69,8 @@ from ppap_core.identity import EDITION_COOKIE, SESSION_COOKIE, can_read, can_rev
 from ppap_core.logs import QUIET_PATHS, bind, configure as configure_logs, emit, new_request_id, reset, round_id_from_path
 from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
-from ppap_api.store import AuthStore
+from ppap_application import build_product_store
+from ppap_product_store import AuthStore
 from ppap_api.audit_routes import register_audit_routes
 from ppap_api.rule_routes import register_rule_routes
 from ppap_api.report_routes import register_report_routes
@@ -115,7 +116,7 @@ def create_app(
     settings = settings or load_settings()
     postgres_probe = postgres_probe or postgres_ready
     object_store_probe = object_store_probe or object_store_ready
-    store = auth_store or AuthStore(settings)
+    store = auth_store or build_product_store(settings)
     http = http or httpx.Client()
     app = FastAPI(title="PPAP Product API", docs_url=None, redoc_url=None)
     app.add_middleware(
