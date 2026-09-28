@@ -77,6 +77,36 @@ test('the web client stays behind the Product API boundary', () => {
   assert.match(readFileSync(join(repo, 'deploy', 'web', 'Dockerfile'), 'utf8'), /COPY --from=web-build \/app\/dist/)
 })
 
+test('Web wire schemas are generated from FastAPI OpenAPI', () => {
+  const generated = readFileSync(join(web, 'src', 'generated', 'openapi.ts'), 'utf8')
+  const api = readFileSync(join(web, 'src', 'api.ts'), 'utf8')
+  const ruleTypes = readFileSync(join(web, 'src', 'rules', 'types.ts'), 'utf8')
+  const generator = readFileSync(join(repo, 'scripts', 'generate_web_contract.py'), 'utf8')
+
+  assert.match(generated, /GENERATED FILE\. Source authority: FastAPI app\.openapi\(\)/)
+  assert.match(generator, /app\.openapi\(\)/)
+  assert.match(generator, /--check/)
+  assert.match(api, /from ['"]\.\/generated\/openapi['"]/)
+  assert.match(api, /type MaterialWire = Schema<'MaterialWire'>/)
+  assert.match(ruleTypes, /export type \{RuleBody, RuleCandidate, RuleDetail, RuleItem\} from ['"]\.\.\/api['"]/)
+
+  for (const legacy of [
+    /export interface Rule\b/,
+    /export interface Analysis\b/,
+    /export interface Finding\b/,
+    /export interface Round\b/,
+    /export interface Draft\b/,
+    /export interface QuotaEstimate\b/,
+    /export interface Job\b/,
+  ]) {
+    assert.doesNotMatch(api, legacy)
+  }
+
+  for (const behavior of ['fetch(', '请求失败', '请先登录', 'retry', 'setTimeout(']) {
+    assert.equal(generated.includes(behavior), false, `generated OpenAPI artifact contains frontend behavior: ${behavior}`)
+  }
+})
+
 test('usage stays read-only and the client does not own audit pricing', () => {
   const sources = shippedSources()
   assert.match(sources, /\/usage\?/)

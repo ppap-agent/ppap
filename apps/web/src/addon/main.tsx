@@ -86,7 +86,7 @@ async function loginWithHost(api: string, host: AddonHost) {
   const code = await waitForHostLogin(host)
   const logged = await readJson<PrincipalPublic>(`${api}/login/feishu/host`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code})})
   if (!logged.ok) {
-    if (logged.status === 403 && (logged.body as PrincipalPublic | ApiFailure).error === 'tenant_not_allowed') throw new Error('无法使用此入口。')
+    if (logged.status === 403 && (logged.body as ApiFailure).error === 'tenant_not_allowed') throw new Error('无法使用此入口。')
     throw new Error('飞书登录失败，请重试')
   }
   return logged.body
