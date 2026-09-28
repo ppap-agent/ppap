@@ -454,29 +454,37 @@ wheels = [
 ]
 
 [[package]]
-name = "ppap-core"
-version = "0.1.0"
-source = { editable = "packages/ppap_core" }
+name = "ppap"
+version = "0.0.0"
+source = { virtual = "." }
 dependencies = [
-    { name = "boto3" },
-    { name = "botocore" },
-    { name = "httpx" },
-    { name = "openpyxl" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
+    { name = "ppap-api" },
+    { name = "ppap-worker" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ppap-corpus-contracts" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+e2e = [
+    { name = "playwright" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", specifier = ">=1.36.16" },
-    { name = "botocore", specifier = ">=1.36.16" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "openpyxl", specifier = ">=3.1.2" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.6" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-settings", specifier = ">=2.7.1" },
+    { name = "ppap-api", editable = "services/api" },
+    { name = "ppap-worker", editable = "services/worker" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ppap-corpus-contracts", editable = "packages/ppap_corpus_contracts" },
+    { name = "pytest", specifier = "==7.4.3" },
+    { name = "pytest-asyncio", specifier = "==0.21.1" },
+]
+e2e = [{ name = "playwright" }]
 
 [[package]]
 name = "ppap-api"
@@ -485,7 +493,9 @@ source = { editable = "services/api" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "ppap-application" },
     { name = "ppap-core" },
+    { name = "ppap-product-store" },
     { name = "pydantic" },
     { name = "python-multipart" },
     { name = "starlette" },
@@ -496,7 +506,9 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.8" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "ppap-application", editable = "packages/ppap_application" },
     { name = "ppap-core", editable = "packages/ppap_core" },
+    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "starlette", specifier = ">=0.45.3" },
@@ -531,7 +543,6 @@ dependencies = [
     { name = "botocore" },
     { name = "httpx" },
     { name = "openpyxl" },
-    { name = "ppap-excel-audit-engine" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -543,7 +554,6 @@ requires-dist = [
     { name = "botocore", specifier = ">=1.36.16" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openpyxl", specifier = ">=3.1.2" },
-    { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.6" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pydantic-settings", specifier = ">=2.7.1" },
