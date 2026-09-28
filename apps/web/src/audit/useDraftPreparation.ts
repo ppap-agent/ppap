@@ -7,7 +7,11 @@ import {
   type AnalysisJob,
   type AnalysisMode,
   type Draft,
+  type DraftAcceptRequest,
+  type DraftCreateRequest,
+  type DraftSaveRequest,
   type DraftList,
+  type FileAnalysisRequest,
   type FileVersion,
   type LatestAnalysis,
   type Material,
@@ -135,12 +139,12 @@ export function useDraftPreparation({
   async function persistDraft(list = itemsRef.current) {
     let id = draftIdRef.current
     if (!id) {
-      id = (await request<Draft>('/drafts', 'POST', {predecessor_id: predecessorIdRef.current || null})).id
+      id = (await request<Draft, DraftCreateRequest>('/drafts', 'POST', {predecessor_id: predecessorIdRef.current || null})).id
       setDraftId(id)
       draftIdRef.current = id
     }
     const snapshot = draftSnapshot(list)
-    await request(`/drafts/${id}`, 'PUT', snapshot)
+    await request<Draft, DraftSaveRequest>(`/drafts/${id}`, 'PUT', snapshot)
     const serialized = JSON.stringify(snapshot)
     setSavedDraft(serialized)
     showDraft(id)
@@ -191,7 +195,7 @@ export function useDraftPreparation({
   async function analyze(item: Material) {
     setItems(current => current.map(row => row.file_version_id === item.file_version_id ? {...row, analysisStatus: 'queued'} : row))
     try {
-      const job = await request<AnalysisJob>('/file-analyses', 'POST', {
+      const job = await request<AnalysisJob, FileAnalysisRequest>('/file-analyses', 'POST', {
         request_id: crypto.randomUUID(),
         source_file_id: item.file_id,
         source_file_version_id: item.file_version_id,
@@ -251,7 +255,7 @@ export function useDraftPreparation({
       const key = `ppap-idempotency-${draftIdRef.current}`
       const idempotencyKey = sessionStorage.getItem(key) || crypto.randomUUID()
       sessionStorage.setItem(key, idempotencyKey)
-      const result = await request<Round>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
+      const result = await request<Round, DraftAcceptRequest>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
         idempotency_key: idempotencyKey,
         predecessor_id: predecessorIdRef.current || null,
       })

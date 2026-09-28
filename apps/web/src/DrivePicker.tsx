@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {request, type DriveFile, type DriveFilesList, type FileVersion, type Material} from './api'
+import {request, type DriveFile, type DriveFilesList, type FeishuFileImportRequest, type FileVersion, type Material} from './api'
 import {Modal} from './ui/domain'
 import {Button} from '@/components/ui/button'
 import {Checkbox} from '@/components/ui/checkbox'
@@ -66,7 +66,7 @@ export default function DrivePicker({disabled, onImport, onBusy}: {disabled: boo
         const chosen = files.filter(file => selected.includes(key(file)))
         for (const file of chosen) {
           setMessage(`正在导入 ${file.name}`)
-          const version = await request<FileVersion>('/integrations/feishu/files/import', 'POST', {file_token: file.token, doc_type: file.type})
+          const version = await request<FileVersion, FeishuFileImportRequest>('/integrations/feishu/files/import', 'POST', {file_token: file.token, doc_type: file.type})
           setSelected(current => current.filter(id => id !== key(file)))
           await onImport({file_id: version.file_id, file_version_id: version.id, original_filename: version.original_filename, role: 'target', rule_version_id: null})
         }

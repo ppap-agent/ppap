@@ -1,5 +1,5 @@
 import {useEffect, useReducer, useRef, useState, type ChangeEvent} from 'react'
-import {originalUrl, request, upload, type Material, type RuleParseJob, type RuleTypes} from '../api'
+import {originalUrl, request, upload, type Material, type RuleParseJob, type RuleParseRequest, type RulePublishRequest, type RuleTypes} from '../api'
 import {Modal, LockedFields, ReportBlock} from '../ui/domain'
 import {productHref, type ReturnTarget} from '../navigation/route'
 import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
@@ -131,7 +131,7 @@ export default function RuleImport({
     if (started === previous || started.kind !== 'uploading') return
     try {
       const uploaded = await upload(file, 'reference')
-      const job = await request<RuleParseJob>('/rules/parse', 'POST', {
+      const job = await request<RuleParseJob, RuleParseRequest>('/rules/parse', 'POST', {
         request_id: crypto.randomUUID(),
         source_file_id: uploaded.file_id,
         source_file_version_id: uploaded.file_version_id,
@@ -171,7 +171,7 @@ export default function RuleImport({
     const started = send({type: 'begin-rerun'})
     if (started === previous || started.kind !== 'uploading' || !started.source) return
     try {
-      const job = await request<RuleParseJob>('/rules/parse', 'POST', {
+      const job = await request<RuleParseJob, RuleParseRequest>('/rules/parse', 'POST', {
         request_id: crypto.randomUUID(),
         source_file_id: started.source.file_id,
         source_file_version_id: started.source.file_version_id,
@@ -190,7 +190,7 @@ export default function RuleImport({
     const publishing = send({type: 'begin-publish', leaveAfter: !!destination})
     if (publishing === previous || publishing.kind !== 'publishing') return
     try {
-      const result = await request<Detail>('/rules', 'POST', {...publishing.candidate, predecessor_id: predecessor || null})
+      const result = await request<Detail, RulePublishRequest>('/rules', 'POST', {...publishing.candidate, predecessor_id: predecessor || null})
       const href = destination || productHref({page: 'rule-detail', ruleId: result.id, saved: true, returnTo})
       const saved = send({type: 'publish-succeeded', ruleId: result.id, destination: href})
       if (saved.kind !== 'saved') return

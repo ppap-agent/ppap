@@ -38,6 +38,16 @@ export type RuleDetail = Schema<'RuleDetail'>
 export type RuleBody = Schema<'RuleBody'>
 export type RuleItem = Schema<'RuleItem'>
 export type RuleCandidate = Schema<'RuleCandidate'>
+export type HostLoginRequest = Schema<'HostLoginRequest'>
+export type FileCreateRequest = Schema<'FileCreateRequest'>
+export type FeishuFileImportRequest = Schema<'FeishuFileImportRequest'>
+export type DraftCreateRequest = Schema<'DraftCreateRequest'>
+export type DraftSaveRequest = Schema<'DraftSaveRequest'>
+export type DraftAcceptRequest = Schema<'DraftAcceptRequest'>
+export type FileAnalysisRequest = Schema<'FileAnalysisRequest'>
+export type ReviewRequest = Schema<'ReviewRequest'>
+export type RuleParseRequest = Schema<'RuleParseRequest'>
+export type RulePublishRequest = Schema<'RulePublishRequest'>
 
 type MaterialWire = Schema<'MaterialWire'>
 export type Material = MaterialWire & {
@@ -79,7 +89,7 @@ const messages: Record<string,string> = {
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
 }
-export async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+export async function request<T, B = unknown>(path: string, method = 'GET', body?: B, signal?: AbortSignal): Promise<T> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('当前处于离线状态，请联网后重试。')
   const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
   const result = await response.json().catch(error => {
@@ -96,7 +106,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, s
 }
 export async function upload(file: File, role: Material['role']): Promise<Material> {
   if (file.size > 64 * 1024 * 1024) throw new Error(`${file.name} 超过 64 MiB。`)
-  const version = await request<FileVersion>('/files', 'POST', {original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream'})
+  const version = await request<FileVersion, FileCreateRequest>('/files', 'POST', {original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream'})
   const material = {file_id: version.file_id, file_version_id: version.id, original_filename: file.name, role, rule_version_id: null}
   const path = `/files/${version.file_id}/versions/${version.id}`
   const response = await fetch(apiUrl + path + '/blob', {method: 'PUT', credentials: 'include', headers: {'Content-Type': file.type || 'application/octet-stream'}, body: file})

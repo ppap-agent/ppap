@@ -3,7 +3,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import {request, type Finding, type Round, type SemanticSource, type WritebackResponse} from '../api'
+import {request, type Finding, type ReviewRequest, type Round, type SemanticSource, type WritebackResponse} from '../api'
 import {matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
 import {parseProductRoute} from '../navigation/route'
 import type {OriginalPreviewHandle} from '../OriginalPreview'
@@ -232,7 +232,7 @@ export function useRoundReview({
         return
       }
       try {
-        const result = await request<Round>(`/rounds/${current.id}/reviews`, 'PUT', {
+        const result = await request<Round, ReviewRequest>(`/rounds/${current.id}/reviews`, 'PUT', {
           item_key: finding.item_key,
           ...reviewRef.current,
           version: finding.review?.version || 0,
