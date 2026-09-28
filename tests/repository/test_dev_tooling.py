@@ -830,25 +830,29 @@ class DeployContractTests(unittest.TestCase):
                 self.assertNotIn(legacy, text, str(path))
         self.assertNotIn("tests/live", workflow)
 
-    def test_v2_corpus_baseline_exceptions_are_per_rule(self):
+    def test_v2_corpus_baseline_exceptions_are_behavior_contracts(self):
         conftest = (ROOT / "tests" / "corpus" / "conftest.py").read_text()
         self.assertNotIn("BASELINE_XFAIL_IDS", conftest)
         self.assertNotIn("pytest.mark.xfail", conftest)
-        from tests.corpus.v2_assets.baseline_exceptions import BASELINE_RULE_MISMATCHES
+        from tests.corpus.v2_assets.baseline_exceptions import (
+            BASELINE_RULE_BEHAVIORS,
+            BaselineRuleBehavior,
+        )
 
-        self.assertTrue(BASELINE_RULE_MISMATCHES, "V2 baseline exceptions must be recorded")
+        self.assertTrue(BASELINE_RULE_BEHAVIORS, "V2 baseline exceptions must be recorded")
+        source = (ROOT / "tests" / "corpus" / "v2_assets" / "baseline_exceptions.py").read_text()
+        self.assertNotIn("suggestions", source)
         seen: set[tuple[str, str, int]] = set()
-        for item in BASELINE_RULE_MISMATCHES:
-            self.assertIsInstance(item, tuple)
-            self.assertEqual(len(item), 3, item)
-            file_name, file_type, rule_index = item
-            self.assertIsInstance(file_name, str)
-            self.assertTrue(file_name)
-            self.assertIn(file_type, {"excel", "pdf", "scanned"})
-            self.assertIsInstance(rule_index, int)
-            self.assertGreaterEqual(rule_index, 1)
-            self.assertNotIn(item, seen)
-            seen.add(item)
+        for item in BASELINE_RULE_BEHAVIORS:
+            self.assertIsInstance(item, BaselineRuleBehavior)
+            self.assertTrue(item.file_name)
+            self.assertIn(item.file_type, {"excel", "pdf", "scanned"})
+            self.assertGreaterEqual(item.rule_index, 1)
+            self.assertIn(item.expected_status, {"PASS", "NG"})
+            self.assertIn(item.actual_status, {"PASS", "NG", "ERR"})
+            self.assertNotEqual(item.expected_status, item.actual_status, item)
+            self.assertNotIn(item.location, seen)
+            seen.add(item.location)
 
     def test_llm_and_feishu_readiness_are_scheduled_outside_gate(self):
         llm = (ROOT / ".github" / "workflows" / "llm-readiness.yml").read_text()

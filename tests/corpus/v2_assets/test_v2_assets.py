@@ -6,7 +6,10 @@ from typing import Any, List
 import pytest
 from dotenv import load_dotenv
 
-from .baseline_exceptions import split_v2_baseline_mismatches
+from .baseline_exceptions import (
+    ObservedRuleOutcome,
+    classify_v2_baseline_outcomes,
+)
 from .v2_assets_shared import (
     APP_ROOT,
     FileCase,
@@ -63,7 +66,45 @@ def mismatch_only(request: Any) -> Any:
     return request.config.getoption("--mismatch-only", default=False)
 
 
-def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mismatch_only: bool = False) -> dict[int, str]:
+def _failure_class_from_result(result: Any) -> str | None:
+    status = (getattr(result, "status", "") or "").upper()
+    if status != "ERR":
+        return None
+    evidence = getattr(result, "evidence", None)
+    diagnostics = getattr(evidence, "diagnostics", ()) or ()
+    codes = [
+        str(getattr(item, "code", "") or "")
+        for item in diagnostics
+        if str(getattr(item, "severity", "") or "") == "error" and str(getattr(item, "code", "") or "")
+    ]
+    return codes[0] if codes else None
+
+
+def observe_v2_rule_outcome(case: FileCase, rule_index: int, agent: Any, agent_rule_count: int) -> ObservedRuleOutcome:
+    expected_status = (case.expected[rule_index].status or "").upper()
+    if rule_index > agent_rule_count:
+        return ObservedRuleOutcome(
+            expected_status=expected_status,
+            actual_status="ERR",
+            failure_class="missing_agent_rule",
+        )
+    try:
+        result = agent.check(rule_index - 1)
+    except Exception as exc:
+        return ObservedRuleOutcome(
+            expected_status=expected_status,
+            actual_status="ERR",
+            failure_class=f"raised:{type(exc).__name__}",
+        )
+    actual_status = (getattr(result, "status", "") or "").upper() or "ERR"
+    return ObservedRuleOutcome(
+        expected_status=expected_status,
+        actual_status=actual_status,
+        failure_class=_failure_class_from_result(result),
+    )
+
+
+def collect_v2_rule_outcomes(case: FileCase, verbose_check: bool = False, mismatch_only: bool = False) -> dict[int, ObservedRuleOutcome]:
     rule_count = max(case.expected.keys())
     audit_file = SimpleAuditFile(
         file_url=str(case.file_path),
@@ -73,7 +114,7 @@ def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mism
     agent = case.agent_cls(audit_file, make_dummy_rule(rule_count))
     agent_rule_count = len(getattr(agent, "rule_checkers", []))
 
-    mismatches: dict[int, str] = {}
+    outcomes: dict[int, ObservedRuleOutcome] = {}
     if verbose_check:
         print("")
         print("========================================")
@@ -83,25 +124,14 @@ def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mism
         print(f"🧾 规则数量: expected={rule_count}, agent={agent_rule_count}")
         print("========================================")
     for rule_index, expectation in sorted(case.expected.items()):
-        expected_status = expectation.status
-        if rule_index > agent_rule_count:
-            mismatches[rule_index] = f"rule {rule_index}: agent has {agent_rule_count} rules"
-            continue
-        try:
-            result = agent.check(rule_index - 1)
-        except Exception as exc:
-            mismatches[rule_index] = f"rule {rule_index}: check raised {type(exc).__name__}"
-            continue
-        actual = (getattr(result, "status", "") or "").upper()
-        suggestion = getattr(result, "suggestions", "") or ""
-        suggestion_short = " ".join(suggestion.strip().split())
-        if len(suggestion_short) > 160:
-            suggestion_short = suggestion_short[:157] + "..."
-
-        is_mismatch = actual != expected_status
-        if verbose_check and (not mismatch_only or is_mismatch):
-            status_mark = "✓" if actual == expected_status else "✗"
-            print(f"  [{status_mark}] Rule {rule_index}: expected={expected_status}, actual={actual}")
+        outcome = observe_v2_rule_outcome(case, rule_index, agent, agent_rule_count)
+        outcomes[rule_index] = outcome
+        if verbose_check and (not mismatch_only or outcome.is_mismatch):
+            status_mark = "✓" if not outcome.is_mismatch else "✗"
+            print(
+                f"  [{status_mark}] Rule {rule_index}: expected={outcome.expected_status}, "
+                f"actual={outcome.actual_status}"
+            )
             if expectation.rule_desc:
                 rule_desc_short = expectation.rule_desc
                 if len(rule_desc_short) > 120:
@@ -109,30 +139,57 @@ def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mism
                 print(f"      📋 规则: {rule_desc_short}")
             if expectation.manual_reason:
                 print(f"      📝 人工判定依据: {expectation.manual_reason}")
-            if suggestion_short:
-                print(f"      🤖 Agent建议: {suggestion_short}")
+            if outcome.failure_class:
+                print(f"      ⚙ failure_class: {outcome.failure_class}")
 
-        if actual != expected_status:
-            mismatches[rule_index] = (
-                f"rule {rule_index}: expected {expected_status}, got {actual}. {suggestion_short}"
-            )
+    if verbose_check:
+        mismatches = [rule for rule, outcome in outcomes.items() if outcome.is_mismatch]
+        if mismatches:
+            print("------ Mismatch Summary ------")
+            for rule in mismatches:
+                outcome = outcomes[rule]
+                extra = f" class={outcome.failure_class}" if outcome.failure_class else ""
+                print(
+                    f"  - rule {rule}: expected {outcome.expected_status}, "
+                    f"got {outcome.actual_status}{extra}"
+                )
+            print("------------------------------")
+    return outcomes
 
-    if verbose_check and mismatches:
-        print("------ Mismatch Summary ------")
-        for mismatch in mismatches.values():
-            print(f"  - {mismatch}")
-        print("------------------------------")
-    return mismatches
+
+def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mismatch_only: bool = False) -> dict[int, str]:
+    outcomes = collect_v2_rule_outcomes(case, verbose_check=verbose_check, mismatch_only=mismatch_only)
+    return {
+        rule: (
+            f"rule {rule}: expected {outcome.expected_status}, got {outcome.actual_status}"
+            + (f" class={outcome.failure_class}" if outcome.failure_class else "")
+        )
+        for rule, outcome in outcomes.items()
+        if outcome.is_mismatch
+    }
 
 
 def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: bool) -> None:
-    mismatches = collect_v2_rule_mismatches(case, verbose_check=verbose_check, mismatch_only=mismatch_only)
-    unexpected, stale = split_v2_baseline_mismatches(case.file_name, case.file_type, mismatches)
+    outcomes = collect_v2_rule_outcomes(case, verbose_check=verbose_check, mismatch_only=mismatch_only)
+    new_mismatches, drifted, stale = classify_v2_baseline_outcomes(case.file_name, case.file_type, outcomes)
     parts: List[str] = []
-    if unexpected:
+    if new_mismatches:
         parts.append(
             "new mismatches:\n- "
-            + "\n- ".join(mismatches[rule] for rule in sorted(unexpected))
+            + "\n- ".join(
+                f"rule {rule}: expected {outcomes[rule].expected_status}, got {outcomes[rule].actual_status}"
+                + (f" class={outcomes[rule].failure_class}" if outcomes[rule].failure_class else "")
+                for rule in sorted(new_mismatches)
+            )
+        )
+    if drifted:
+        parts.append(
+            "baseline behavior changed:\n- "
+            + "\n- ".join(
+                f"rule {rule}: expected {outcomes[rule].expected_status}, got {outcomes[rule].actual_status}"
+                + (f" class={outcomes[rule].failure_class}" if outcomes[rule].failure_class else "")
+                for rule in sorted(drifted)
+            )
         )
     if stale:
         parts.append(
