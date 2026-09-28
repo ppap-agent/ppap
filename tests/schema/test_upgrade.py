@@ -46,9 +46,24 @@ class SchemaUpgradeTests(unittest.TestCase):
                     f"create {name}",
                 )
 
-            self.schema.require(self.schema.apply(empty), "apply empty")
+            first_apply = self.schema.apply(empty)
+            self.schema.require(first_apply, "apply empty")
+            executed = [
+                line.removeprefix("applying ")
+                for line in (first_apply.stdout or b"").decode().splitlines()
+                if line.startswith("applying ")
+            ]
+            self.assertEqual(executed, versions)
             self.assertEqual(self.schema.applied(empty), versions)
-            self.schema.require(self.schema.apply(empty), "re-apply empty")
+
+            second_apply = self.schema.apply(empty)
+            self.schema.require(second_apply, "re-apply empty")
+            repeated = [
+                line.removeprefix("applying ")
+                for line in (second_apply.stdout or b"").decode().splitlines()
+                if line.startswith("applying ")
+            ]
+            self.assertEqual(repeated, versions)
             self.assertEqual(self.schema.applied(empty), versions)
 
             for name in versions[:-1]:
@@ -64,7 +79,14 @@ class SchemaUpgradeTests(unittest.TestCase):
                 )
             self.assertEqual(self.schema.applied(previous), versions[:-1])
 
-            self.schema.require(self.schema.apply(previous), "upgrade previous")
+            previous_apply = self.schema.apply(previous)
+            self.schema.require(previous_apply, "upgrade previous")
+            executed = [
+                line.removeprefix("applying ")
+                for line in (previous_apply.stdout or b"").decode().splitlines()
+                if line.startswith("applying ")
+            ]
+            self.assertEqual(executed, versions)
             self.assertEqual(self.schema.applied(previous), versions)
 
             tables = self.schema.psql(

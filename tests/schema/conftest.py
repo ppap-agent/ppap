@@ -62,7 +62,7 @@ class SchemaTools:
     )
 
     def migration_files(self) -> list[Path]:
-        return sorted(path for path in self.MIGRATIONS.glob("*.sql") if path.name[:4].isdigit())
+        return sorted(self.MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql"))
 
     def latest_version(self) -> str:
         files = self.migration_files()
