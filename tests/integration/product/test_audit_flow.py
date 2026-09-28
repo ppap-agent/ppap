@@ -471,7 +471,7 @@ class AuditFlowTests(unittest.TestCase):
         from ppap_excel_audit_engine import app_runtime
         from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
         from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-        from sample_rule import rule_body
+        from test_rules import rule_body
 
         self._login("alice")
         source = self._upload("rules.json", b"{}")
