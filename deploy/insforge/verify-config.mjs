@@ -184,9 +184,17 @@ if (config) {
 
   const api = services.api || {}
   const worker = services.worker || {}
+  const web = services.web || {}
   const initDb = services['init-db'] || {}
   const initBucket = services['init-bucket'] || {}
   const silo = services.silo || {}
+  assertEqual(api.image, 'ppap-api:verify-config', 'api canonical image')
+  assertEqual(worker.image, 'ppap-worker:verify-config', 'worker canonical image')
+  assertEqual(web.image, 'ppap-web:verify-config', 'web canonical image')
+  assert(!api.build, 'api compose does not define a build graph')
+  assert(!worker.build, 'worker compose does not define a build graph')
+  assert(!web.build, 'web compose does not define a build graph')
+
   const apiEnv = envOf(api)
   const workerEnv = envOf(worker)
   const initDbEnv = envOf(initDb)

@@ -2,19 +2,13 @@
 # Start through run.sh: it supplies port forwards and current credentials.
 services:
   api:
-    image: ppap-api:remote-dev
-    build:
-      context: ../..
-      dockerfile: deploy/app/Dockerfile
-      args:
-        PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
-        PPAP_SERVICE: api
+    image: ppap-api:${PPAP_BUILD_SHA:-remote-dev}
     env_file:
       - path: ../../.env
-        required: true
+        required: false
     environment:
       PPAP_PROFILE: remote-dev
-      PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-remote-dev}
       PPAP_SERVICE: api
       PPAP_PG_HOST: host.docker.internal
       PPAP_PG_PORT: "15432"
@@ -56,17 +50,12 @@ services:
       start_period: 10s
 
   web:
-    image: ppap-web:remote-dev
-    build:
-      context: ../..
-      dockerfile: deploy/web/Dockerfile
-      args:
-        PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+    image: ppap-web:${PPAP_BUILD_SHA:-remote-dev}
     depends_on:
       api:
         condition: service_healthy
     environment:
-      PPAP_BUILD_SHA: ${PPAP_REMOTE_BUILD_SHA:-remote-dev}
+      PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-remote-dev}
       PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
     ports:
       - "127.0.0.1:4173:4173"
