@@ -11,9 +11,8 @@ docker info >/dev/null
 
 kubectl -n ppap-test get secret ppap-current >/dev/null
 
-# Migration files remain a runtime payload prerequisite until #138 changes
-# migration ordering authority. The Kubernetes workload graph itself is
-# rendered and applied only through the canonical Kustomize target below.
+# The migration ConfigMap carries the canonical numbered SQL files plus
+# migrations/apply.sh. Filename order is the single migration authority.
 kubectl -n ppap-test create configmap ppap-current-migrations \
   --from-file="$ROOT/migrations" --dry-run=client -o yaml | kubectl apply -f -
 

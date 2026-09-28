@@ -4,9 +4,10 @@ set -eu
 : "${PPAP_PG_DATABASE:?PPAP_PG_DATABASE is required}"
 LC_ALL=C
 export LC_ALL
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}"
 
 found=0
-for migration in /migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+for migration in "$MIGRATIONS_DIR"/[0-9][0-9][0-9][0-9]_*.sql; do
   if [ ! -f "$migration" ]; then
     continue
   fi
@@ -16,6 +17,6 @@ for migration in /migrations/[0-9][0-9][0-9][0-9]_*.sql; do
 done
 
 if [ "$found" -ne 1 ]; then
-  echo "no numbered migrations found under /migrations" >&2
+  echo "no numbered migrations found under $MIGRATIONS_DIR" >&2
   exit 1
 fi

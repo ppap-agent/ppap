@@ -141,7 +141,7 @@ class SchemaTools:
         except FileNotFoundError as exc:
             return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
 
-    def apply(self, database: str) -> subprocess.CompletedProcess[bytes]:
+    def apply(self, database: str, *, migrations_dir: str = "/migrations") -> subprocess.CompletedProcess[bytes]:
         command = [
             *self.COMPOSE,
             "exec",
@@ -156,10 +156,25 @@ class SchemaTools:
             f"PGPASSWORD={self.migrator_password()}",
             "-e",
             f"PPAP_PG_DATABASE={database}",
+            "-e",
+            f"MIGRATIONS_DIR={migrations_dir}",
             "postgres",
             "sh",
             "/migrations/apply.sh",
         ]
+        try:
+            return subprocess.run(
+                command,
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
+
+    def container_sh(self, script: str) -> subprocess.CompletedProcess[bytes]:
+        command = [*self.COMPOSE, "exec", "-T", "postgres", "sh", "-c", script]
         try:
             return subprocess.run(
                 command,
