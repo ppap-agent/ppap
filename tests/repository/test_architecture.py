@@ -156,6 +156,10 @@ class ArchitectureTests(unittest.TestCase):
             rel = path.relative_to(ROOT)
             if SYS_PATH.search(text):
                 offenders.append(f"sys.path mutation in {rel}")
+            if "tests" in rel.parts:
+                for token in ("spec_from_file_location", "exec_module("):
+                    if token in text:
+                        offenders.append(f"dynamic test loader in {rel}: {token}")
             if "tests" not in rel.parts or path.name.startswith("conftest"):
                 continue
             if "__init__.py" in rel.parts and "tests" in rel.parts:
