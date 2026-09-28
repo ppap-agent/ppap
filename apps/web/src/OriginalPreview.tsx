@@ -301,7 +301,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
           const mime = ({pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp'} as Record<string, string>)[extension]
           setUrl(URL.createObjectURL(new Blob([data], {type: mime || 'application/octet-stream'})))
         } else {
-          let result: OfficePreviewConfig | null = null
+          let result: OfficePreviewResponse | null = null
           try { result = await readOfficePreview(target, roundId) }
           catch { /* Keep the authorized text preview available. */ }
           if (current !== revision.current) return
