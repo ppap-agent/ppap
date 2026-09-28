@@ -38,4 +38,3 @@ done
 for service in ppap-current-postgres ppap-current-silo ppap-current-api ppap-current-web edition-proxy; do
   kubectl -n ppap-test get "service/$service" >/dev/null
 done
-kubectl -n ppap-test get configmap/edition-proxy >/dev/null

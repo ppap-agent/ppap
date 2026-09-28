@@ -10,5 +10,3 @@ configMapGenerator:
     files:
       - default.conf=edition-proxy.conf
 
-generatorOptions:
-  disableNameSuffixHash: true

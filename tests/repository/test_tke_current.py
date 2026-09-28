@@ -63,6 +63,7 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertNotIn("kind: ConfigMap", workload)
         self.assertIn("configMapGenerator:", kustomization)
         self.assertIn("default.conf=edition-proxy.conf", kustomization)
+        self.assertNotIn("disableNameSuffixHash", kustomization)
 
     def test_kustomize_render_matches_schema_and_ppap_policy(self):
         rendered = _run([str(TKE / "render-current.sh")])
@@ -138,8 +139,22 @@ class TkeCurrentDeployTests(unittest.TestCase):
         )
         self.assertEqual(next(item["value"] for item in deep["env"] if item["name"] == "PPAP_SERVICE"), "deep")
         self.assertTrue(any("emptyDir" in json.dumps(doc.get("spec", {})) for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker"))
-        proxy_conf = next(doc for doc in docs if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == "edition-proxy")
+        proxy_conf = next(
+            doc
+            for doc in docs
+            if doc.get("kind") == "ConfigMap"
+            and doc["metadata"]["name"].startswith("edition-proxy-")
+        )
         self.assertEqual(proxy_conf["data"]["default.conf"].strip(), (TKE / "edition-proxy.conf").read_text().strip())
+        proxy_deployment = next(
+            doc
+            for doc in docs
+            if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "edition-proxy"
+        )
+        proxy_volume = next(
+            volume for volume in proxy_deployment["spec"]["template"]["spec"]["volumes"] if volume["name"] == "conf"
+        )
+        self.assertEqual(proxy_volume["configMap"]["name"], proxy_conf["metadata"]["name"])
         service = next(doc for doc in docs if doc.get("kind") == "Service" and doc["metadata"]["name"] == "edition-proxy")
         self.assertEqual(service["spec"]["type"], "NodePort")
         nginx = _run(
