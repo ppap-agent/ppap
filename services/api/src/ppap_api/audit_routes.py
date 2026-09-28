@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ppap_core.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
 from ppap_core.identity import can_read, can_review
 from ppap_product_store import AuthStore
+from ppap_api import web_contract as wc
 
 
 def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
@@ -41,15 +42,15 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         } else 400
         return JSONResponse({"error": code}, status_code=status)
 
-    @app.get("/rules")
+    @app.get("/rules", response_model=wc.RulesList)
     def rules_list(request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
         return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
 
-    @app.post("/drafts")
-    def drafts_create(request: Request, body: dict | None = None) -> JSONResponse:
+    @app.post("/drafts", response_model=wc.Draft, status_code=201)
+    def drafts_create(request: Request, body: wc.DraftCreateRequest | None = None) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -58,7 +59,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.get("/drafts")
+    @app.get("/drafts", response_model=wc.DraftList)
     def drafts_list(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0)) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
@@ -66,8 +67,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         rows = store.list_drafts(principal, limit + 1, offset)
         return JSONResponse({"drafts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
-    @app.post("/file-analyses")
-    def files_analyze(body: dict, request: Request) -> JSONResponse:
+    @app.post("/file-analyses", response_model=wc.AnalysisJob, status_code=202)
+    def files_analyze(body: wc.FileAnalysisRequest, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -77,7 +78,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(result, status_code=202)
 
-    @app.get("/file-analyses/{analysis_id}")
+    @app.get("/file-analyses/{analysis_id}", response_model=wc.AnalysisJob)
     def files_analysis_get(analysis_id: str, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
@@ -87,7 +88,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.get("/files/{file_id}/versions/{version_id}/analysis")
+    @app.get("/files/{file_id}/versions/{version_id}/analysis", response_model=wc.LatestAnalysis)
     def files_latest_analysis(file_id: str, version_id: str, request: Request):
         principal, denied = require_principal(request)
         if denied:
@@ -97,7 +98,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.get("/drafts/{draft_id}")
+    @app.get("/drafts/{draft_id}", response_model=wc.Draft)
     def drafts_get(draft_id: str, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)
         if denied:
@@ -107,8 +108,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(draft)
 
-    @app.put("/drafts/{draft_id}")
-    def drafts_save(draft_id: str, body: dict, request: Request) -> JSONResponse:
+    @app.put("/drafts/{draft_id}", response_model=wc.Draft)
+    def drafts_save(draft_id: str, body: wc.DraftSaveRequest, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)
         if denied:
             return denied
@@ -123,8 +124,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(draft)
 
-    @app.post("/drafts/{draft_id}/accept")
-    def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
+    @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201)
+    def drafts_accept(draft_id: str, body: wc.DraftAcceptRequest, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)
         if denied:
             return denied
@@ -134,7 +135,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(round_body, status_code=201)
 
-    @app.get("/rounds")
+    @app.get("/rounds", response_model=wc.RoundList)
     def rounds_list(request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0),
                     q: str = Query("", max_length=200), execution: str = "", unreviewed: bool = False) -> JSONResponse:
         principal, denied = require_principal(request)
@@ -145,7 +146,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         rows = store.list_rounds(principal, limit + 1, offset, q, execution, unreviewed)
         return JSONResponse({"rounds": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
-    @app.get("/usage")
+    @app.get("/usage", response_model=wc.UsageList)
     def usage_list(request: Request, limit: int = Query(50, ge=1, le=50),
                    offset: int = Query(0, ge=0), since: date | None = None,
                    until: date | None = None) -> JSONResponse:
@@ -157,7 +158,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         rows = store.list_usage_events(principal, limit + 1, offset, since, until)
         return JSONResponse({"events": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
-    @app.get("/rounds/{round_id}")
+    @app.get("/rounds/{round_id}", response_model=wc.Round)
     def rounds_get(round_id: str, request: Request) -> JSONResponse:
         principal, denied = require_object(request, round_id)
         if denied:
@@ -212,7 +213,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             headers={"Content-Disposition": attachment_content_disposition(filename)},
         )
 
-    @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview")
+    @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview", response_model=wc.PreviewResponse)
     def rounds_preview(round_id: str, file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
         principal, denied = require_object(request, round_id)
@@ -228,8 +229,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except Exception:
             return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
 
-    @app.post("/rounds/{round_id}/resubmit")
-    def rounds_resubmit(round_id: str, body: dict, request: Request) -> JSONResponse:
+    @app.post("/rounds/{round_id}/resubmit", response_model=wc.Round, status_code=201)
+    def rounds_resubmit(round_id: str, body: wc.ResubmitRequest, request: Request) -> JSONResponse:
         principal, denied = require_object(request, round_id)
         if denied:
             return denied
@@ -247,8 +248,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(created, status_code=201)
 
-    @app.put("/rounds/{round_id}/reviews")
-    def rounds_review(round_id: str, body: dict, request: Request) -> JSONResponse:
+    @app.put("/rounds/{round_id}/reviews", response_model=wc.Round)
+    def rounds_review(round_id: str, body: wc.ReviewRequest, request: Request) -> JSONResponse:
         principal, denied = require_object(request, round_id, review=True)
         if denied:
             return denied
