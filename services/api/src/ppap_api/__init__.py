@@ -75,6 +75,7 @@ from ppap_api.audit_routes import register_audit_routes
 from ppap_api.rule_routes import register_rule_routes
 from ppap_api.report_routes import register_report_routes
 from ppap_api.office_routes import register_office_routes
+from ppap_api import web_contract as wc
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -202,7 +203,7 @@ def create_app(
     def version() -> dict[str, str]:
         return {"git_sha": settings.git_sha}
 
-    @app.get("/public-config")
+    @app.get("/public-config", response_model=wc.PublicConfig)
     def public_config() -> dict[str, object]:
         cfg = settings.public_config()
         cfg["login"] = "feishu" if settings.feishu_app_id and settings.feishu_app_secret else "disabled"
@@ -279,8 +280,8 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
-    @app.post("/login/feishu/host")
-    def login_feishu_host(body: dict) -> JSONResponse:
+    @app.post("/login/feishu/host", response_model=wc.PrincipalPublic)
+    def login_feishu_host(body: wc.HostLoginRequest) -> JSONResponse:
         code = str(body.get("code") or "").strip()
         if not code:
             return JSONResponse({"error": "invalid_host_code"}, status_code=400)
@@ -348,7 +349,7 @@ def create_app(
     def enter_legacy(request: Request) -> RedirectResponse | JSONResponse:
         return _enter_edition(request, "legacy")
 
-    @app.get("/me")
+    @app.get("/me", response_model=wc.PrincipalPublic)
     def me(request: Request) -> JSONResponse:
         principal = principal_of(request)
         if not principal:
@@ -371,8 +372,8 @@ def create_app(
             "review_allowed": can_review(principal, resource, grants),
         })
 
-    @app.post("/files")
-    def files_create(body: dict, request: Request) -> JSONResponse:
+    @app.post("/files", response_model=wc.FileVersion, status_code=201)
+    def files_create(body: wc.FileCreateRequest, request: Request) -> JSONResponse:
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -387,8 +388,8 @@ def create_app(
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         return JSONResponse(version.public(), status_code=201)
 
-    @app.post("/files/{file_id}/versions")
-    def files_new_version(file_id: str, body: dict, request: Request) -> JSONResponse:
+    @app.post("/files/{file_id}/versions", response_model=wc.FileVersion, status_code=201)
+    def files_new_version(file_id: str, body: wc.FileCreateRequest, request: Request) -> JSONResponse:
         principal, denied = require_file_read(request, file_id)
         if denied:
             return denied
@@ -458,7 +459,7 @@ def create_app(
             return JSONResponse({"error": code}, status_code=status)
         return JSONResponse(version_payload(ready))
 
-    @app.get("/files/{file_id}/versions/{version_id}")
+    @app.get("/files/{file_id}/versions/{version_id}", response_model=wc.FileVersion)
     def files_version_get(file_id: str, version_id: str, request: Request) -> JSONResponse:
         principal, denied = require_file_read(request, file_id)
         if denied:
@@ -493,7 +494,7 @@ def create_app(
             },
         )
 
-    @app.get("/files/{file_id}/versions/{version_id}/preview")
+    @app.get("/files/{file_id}/versions/{version_id}/preview", response_model=wc.PreviewResponse)
     def files_preview(file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
         principal, denied = require_file_read(request, file_id)
@@ -574,7 +575,7 @@ def create_app(
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return None
 
-    @app.get("/integrations/feishu/files")
+    @app.get("/integrations/feishu/files", response_model=wc.DriveFilesList)
     def feishu_files_list(request: Request, folder_token: str = "", page_token: str = ""):
         from ppap_core.feishu_drive import list_drive_folder
         session = session_of(request)
@@ -589,8 +590,8 @@ def create_app(
         except FeishuMetaError:
             return JSONResponse({"error": "feishu_folder_failed"}, status_code=502)
 
-    @app.post("/integrations/feishu/files/import")
-    def feishu_files_import(body: dict, request: Request) -> JSONResponse:
+    @app.post("/integrations/feishu/files/import", response_model=wc.FileVersion, status_code=201)
+    def feishu_files_import(body: wc.FeishuFileImportRequest, request: Request) -> JSONResponse:
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -640,7 +641,7 @@ def create_app(
             }
         )
 
-    @app.get("/integrations/feishu/usage/quota")
+    @app.get("/integrations/feishu/usage/quota", response_model=wc.QuotaEstimate)
     def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200)) -> JSONResponse:
         from ppap_core.feishu_usage import estimate_audit
         session = session_of(request)
@@ -729,7 +730,7 @@ def create_app(
     register_report_routes(app, store, session_of, http, settings)
     register_office_routes(app, store, principal_of, settings)
 
-    @app.post("/integrations/feishu/rounds/{round_id}/writeback")
+    @app.post("/integrations/feishu/rounds/{round_id}/writeback", response_model=wc.WritebackResponse)
     def feishu_round_writeback(round_id: str, request: Request) -> JSONResponse:
         session = session_of(request)
         if not session:
