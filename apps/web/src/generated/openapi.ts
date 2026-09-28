@@ -13,7 +13,7 @@ export interface components {
     };
     "AnalysisJob": {
       "id": string;
-      "result"?: components["schemas"]["Analysis"] | components["schemas"]["JobError"];
+      "result"?: components["schemas"]["Analysis"] | components["schemas"]["JobError"] | null;
       "status": string;
     };
     "DocxCellLocator": {
@@ -324,7 +324,7 @@ export interface components {
     "RuleParseJob": {
       "document_type"?: string;
       "id": string;
-      "result"?: components["schemas"]["JobError"] | components["schemas"]["RuleCandidate"];
+      "result"?: components["schemas"]["JobError"] | components["schemas"]["RuleCandidate"] | null;
       "source_file_id"?: string;
       "source_file_version_id"?: string;
       "status": string;

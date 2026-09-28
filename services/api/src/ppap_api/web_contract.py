@@ -146,7 +146,7 @@ class JobError(TypedDict):
 class AnalysisJob(TypedDict):
     id: str
     status: str
-    result: NotRequired[Analysis | JobError]
+    result: NotRequired[Analysis | JobError | None]
 
 
 class LatestAnalysis(TypedDict):
@@ -162,7 +162,7 @@ class FileAnalysisRequest(TypedDict):
 class RuleParseJob(TypedDict):
     id: str
     status: str
-    result: NotRequired[RuleCandidate | JobError]
+    result: NotRequired[RuleCandidate | JobError | None]
     source_file_id: NotRequired[str]
     source_file_version_id: NotRequired[str]
     document_type: NotRequired[str]
