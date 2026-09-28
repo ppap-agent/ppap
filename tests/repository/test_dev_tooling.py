@@ -834,25 +834,26 @@ class DeployContractTests(unittest.TestCase):
         conftest = (ROOT / "tests" / "corpus" / "conftest.py").read_text()
         self.assertNotIn("BASELINE_XFAIL_IDS", conftest)
         self.assertNotIn("pytest.mark.xfail", conftest)
-        from tests.corpus.v2_assets.baseline_exceptions import (
-            BASELINE_RULE_BEHAVIORS,
-            BaselineRuleBehavior,
-        )
-
-        self.assertTrue(BASELINE_RULE_BEHAVIORS, "V2 baseline exceptions must be recorded")
         source = (ROOT / "tests" / "corpus" / "v2_assets" / "baseline_exceptions.py").read_text()
+        outcome_source = (ROOT / "tests" / "corpus" / "v2_assets" / "execution_outcome.py").read_text()
+        self.assertIn("class ExecutionOutcome", outcome_source)
+        self.assertIn("execution_class", outcome_source)
         self.assertNotIn("suggestions", source)
-        seen: set[tuple[str, str, int]] = set()
-        for item in BASELINE_RULE_BEHAVIORS:
-            self.assertIsInstance(item, BaselineRuleBehavior)
-            self.assertTrue(item.file_name)
-            self.assertIn(item.file_type, {"excel", "pdf", "scanned"})
-            self.assertGreaterEqual(item.rule_index, 1)
-            self.assertIn(item.expected_status, {"PASS", "NG"})
-            self.assertIn(item.actual_status, {"PASS", "NG", "ERR"})
-            self.assertNotEqual(item.expected_status, item.actual_status, item)
-            self.assertNotIn(item.location, seen)
-            seen.add(item.location)
+        self.assertNotIn("suggestions", outcome_source)
+        self.assertIn("from execution_outcome import", source)
+        self.assertIn("actual: ExecutionOutcome", source)
+        self.assertRegex(source, r'B\("[^"]+", "pdf", \d+, "PASS", "NG"\)')
+        self.assertIn('execution_class=MISSING_RULE', outcome_source)
+        locations = re.findall(
+            r'B\("([^"]+)", "(excel|pdf|scanned)", (\d+),',
+            source,
+        )
+        self.assertTrue(locations, "V2 baseline exceptions must be recorded")
+        seen: set[tuple[str, str, str]] = set()
+        for file_name, file_type, rule in locations:
+            key = (file_name, file_type, rule)
+            self.assertNotIn(key, seen)
+            seen.add(key)
 
     def test_llm_and_feishu_readiness_are_scheduled_outside_gate(self):
         llm = (ROOT / ".github" / "workflows" / "llm-readiness.yml").read_text()
@@ -912,31 +913,28 @@ class DeployContractTests(unittest.TestCase):
         self.assertEqual(corpus.count("--cross-format"), 1)
         self.assertNotIn("compare_local_pdf_excel_pairs", corpus)
 
-        from tests.corpus.v2_assets.cross_format import KnownPairDivergence
-        from tests.corpus.v2_assets.cross_format_baseline import KNOWN_PAIR_DIVERGENCES
-
         source = (ROOT / "tests" / "corpus" / "v2_assets" / "cross_format.py").read_text()
         baseline_source = (
             ROOT / "tests" / "corpus" / "v2_assets" / "cross_format_baseline.py"
         ).read_text()
+        outcome_source = (ROOT / "tests" / "corpus" / "v2_assets" / "execution_outcome.py").read_text()
         self.assertIn("def discover_v2_cross_format_pairs", source)
         self.assertIn("pair_id_for_file_name", source)
+        self.assertIn("from execution_outcome import", source)
+        self.assertIn("from execution_outcome import", baseline_source)
+        self.assertEqual(outcome_source.count("class ExecutionOutcome"), 1)
         self.assertNotIn("suggestions", source)
         self.assertNotIn("PAIR_REGISTRY", source)
         self.assertIn("Not a second PASS/NG oracle", baseline_source)
-        self.assertTrue(KNOWN_PAIR_DIVERGENCES, "known PDF/Excel divergences must be recorded")
-        seen: set[tuple[str, int]] = set()
-        for item in KNOWN_PAIR_DIVERGENCES:
-            self.assertIsInstance(item, KnownPairDivergence)
-            self.assertTrue(item.pair_id)
-            self.assertGreaterEqual(item.rule_index, 1)
-            self.assertNotEqual(
-                (item.pdf_status, item.pdf_execution_class, item.pdf_failure_class),
-                (item.excel_status, item.excel_execution_class, item.excel_failure_class),
-                item,
-            )
-            self.assertNotIn(item.location, seen)
-            seen.add(item.location)
+        self.assertIn("KNOWN_PAIR_DIVERGENCES", baseline_source)
+        self.assertIn("O(", baseline_source)
+        locations = re.findall(r'D\("([^"]+)", (\d+),', baseline_source)
+        self.assertTrue(locations, "known PDF/Excel divergences must be recorded")
+        seen: set[tuple[str, str]] = set()
+        for pair_id, rule in locations:
+            key = (pair_id, rule)
+            self.assertNotIn(key, seen)
+            seen.add(key)
 
         testing = (ROOT / "docs" / "TESTING.md").read_text()
         readme = (ROOT / "tests" / "README.md").read_text()
@@ -944,6 +942,7 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("--cross-format", readme)
         self.assertIn("pair+rule", testing)
         self.assertIn("不是第二套 human oracle", testing)
+        self.assertIn("ExecutionOutcome", testing)
 
     def test_required_v2_corpus_reconciles_oracle_assets(self):
         shared = (ROOT / "tests" / "corpus" / "v2_assets" / "v2_assets_shared.py").read_text()
@@ -969,15 +968,39 @@ class DeployContractTests(unittest.TestCase):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
         pytest_config = project.get("tool", {}).get("pytest", {}).get("ini_options", {})
         self.assertEqual(pytest_config.get("asyncio_mode"), "strict")
+        self.assertNotIn("pythonpath", pytest_config)
         self.assertFalse((ROOT / "pytest.ini").exists())
         self.assertFalse((ROOT / "tests" / "pathsetup.py").exists())
+        self.assertFalse((ROOT / "tests" / "__init__.py").exists())
+        self.assertFalse((ROOT / "tests" / "common").exists())
+        self.assertEqual(
+            [str(path.relative_to(ROOT)) for path in (ROOT / "tests").rglob("__init__.py")],
+            [],
+        )
 
-        for path in ROOT.rglob("*.py"):
-            if ".venv" in path.parts or path.resolve() == Path(__file__).resolve():
-                continue
-            text = path.read_text(errors="ignore")
-            self.assertNotIn("import tests.pathsetup", text, str(path))
-            self.assertNotIn("from tests import pathsetup", text, str(path))
+        import_owner = re.compile(r"^\s*(from tests[\s.]|import tests[\s.])", re.M)
+        path_mutation = re.compile(r"sys\.path\.(insert|append|extend)\s*\(")
+        test_roots = [
+            ROOT / "tests",
+            ROOT / "packages",
+            ROOT / "services",
+        ]
+        for root in test_roots:
+            for path in root.rglob("*.py"):
+                if ".venv" in path.parts or "__pycache__" in path.parts:
+                    continue
+                if "tests" not in path.parts and root != ROOT / "tests":
+                    continue
+                if root != ROOT / "tests" and "tests" not in path.parts:
+                    continue
+                text = path.read_text(errors="ignore")
+                self.assertIsNone(import_owner.search(text), f"cross-owner tests import in {path}")
+                if path.resolve() == Path(__file__).resolve():
+                    continue
+                self.assertNotIn("import tests.pathsetup", text, str(path))
+                self.assertNotIn("from tests import pathsetup", text, str(path))
+                if "tests" in path.parts:
+                    self.assertIsNone(path_mutation.search(text), f"sys.path mutation in {path}")
 
         for path in [
             ROOT / ".github" / "workflows" / "tests.yml",
@@ -991,9 +1014,11 @@ class DeployContractTests(unittest.TestCase):
             self.assertNotIn("unittest discover", text, str(path))
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
         self.assertIn("uv run --no-sync pytest", workflow)
+        self.assertNotIn("PYTHONPATH", workflow)
         psw = (ROOT / "tests" / "corpus" / "Dockerfile.psw").read_text()
         self.assertNotIn("pytest.ini", psw)
         self.assertIn("COPY pyproject.toml", psw)
+        self.assertIn("ENV PYTHONPATH=", psw)
 
         imported = subprocess.run(
             [

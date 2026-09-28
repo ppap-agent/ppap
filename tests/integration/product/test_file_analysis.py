@@ -4,7 +4,7 @@ import uuid
 
 from ppap_core.file_analysis import analyze_file, latest_rule_versions
 from ppap_core.rule_matching import RuleMatchingAIService
-from tests.integration.product.test_rules import RuleApiTests, excel_rule, rule_body
+from test_rules import RuleApiTests, excel_rule, rule_body
 
 
 class AnalysisAI:

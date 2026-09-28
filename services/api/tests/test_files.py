@@ -24,7 +24,7 @@ from ppap_core.files import (
 )
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.product.store_fixture import auth_store
+from store_fixture import auth_store
 
 
 def _clean_env(**extra: str):

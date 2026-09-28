@@ -103,7 +103,7 @@ class ProductExperienceTests(unittest.TestCase):
     def setUp(self):
         from ppap_api import create_app
         from ppap_core.settings import Settings
-        from tests.integration.product.store_fixture import auth_store
+        from store_fixture import auth_store
         from fastapi.testclient import TestClient
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("PPAP_", "FEISHU_", "LLM_", "OPENAI_"))}
         env = patch.dict(os.environ, clean, clear=True)

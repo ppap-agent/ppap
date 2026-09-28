@@ -6,7 +6,7 @@ import time
 import unittest
 import uuid
 
-from tests.schema.test_upgrade import MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password, _migrator_user, _psql, _require, _require_postgres
+from test_upgrade import MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password, _migrator_user, _psql, _require, _require_postgres
 
 
 class AuditDatabaseCase(unittest.TestCase):
@@ -15,14 +15,14 @@ class AuditDatabaseCase(unittest.TestCase):
     def setUp(self):
         from ppap_api.store import AuthStore
         from ppap_core.settings import Settings
-        from tests.integration.product.store_fixture import MemoryObjects
+        from memory_objects import MemoryObjects
 
         _require_postgres(self)
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
         _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {_migrator_user()}"), "create isolated audit DB")
         self.addCleanup(lambda: _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))
         if self.previous_schema:
-            from tests.schema.test_upgrade import migration_files
+            from test_upgrade import migration_files
 
             for migration in migration_files():
                 if migration.name >= "0010":
@@ -69,7 +69,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
     def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
         from ppap_core.fixtures import RULE_A
-        from tests.integration.product.test_rules import rule_body
+        from sample_rule import rule_body
 
         first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
         rule = self.store.publish_rule(self.alice, "客户规则", rule_body(), reference.id)
@@ -94,7 +94,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
     def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
         from ppap_core.fixtures import RULE_A
-        from tests.integration.product.test_rules import rule_body
+        from sample_rule import rule_body
 
         first, reference = self.upload("a.xlsx"), self.upload("context.xlsx")
         items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]

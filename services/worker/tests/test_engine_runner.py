@@ -12,7 +12,7 @@ from ppap_core.audits import RoundInput, RoundWork
 from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.product.store_fixture import auth_store
+from store_fixture import auth_store
 
 
 def _clean_env(**extra: str):

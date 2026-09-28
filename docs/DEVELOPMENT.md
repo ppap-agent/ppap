@@ -66,7 +66,7 @@ Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对
 
 默认 merge contract 是 required groups：Web、Repository contract、Python modules、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
-single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。
+single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
 
 ## 工程工具链
 

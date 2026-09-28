@@ -2,10 +2,8 @@
 
 This is not a second expected-status oracle. The human CSV remains the only
 PASS/NG authority. Each record freezes one observed baseline behavior at a
-(file, file_type, rule) location: CSV expected status, engine actual status,
-and an optional stable failure class for ERR. Suggestion text is not authority.
-A new mismatch, a different actual status/class, or a healed listed mismatch
-fails the required V2 corpus.
+(file, file_type, rule) location: CSV expected status plus the canonical
+ExecutionOutcome. Suggestion text is not authority.
 """
 
 from __future__ import annotations
@@ -13,16 +11,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
+from execution_outcome import ExecutionOutcome, O
+
 
 @dataclass(frozen=True)
 class ObservedRuleOutcome:
     expected_status: str
-    actual_status: str
-    failure_class: str | None = None
+    actual: ExecutionOutcome
 
     @property
     def is_mismatch(self) -> bool:
-        return self.expected_status != self.actual_status
+        return str(self.expected_status or "").strip().upper() != self.actual.status
 
 
 @dataclass(frozen=True)
@@ -31,8 +30,7 @@ class BaselineRuleBehavior:
     file_type: str
     rule_index: int
     expected_status: str
-    actual_status: str
-    failure_class: str | None = None
+    actual: ExecutionOutcome
 
     @property
     def location(self) -> tuple[str, str, int]:
@@ -44,13 +42,10 @@ def _norm_status(value: str) -> str:
 
 
 def behavior_matches(known: BaselineRuleBehavior, observed: ObservedRuleOutcome) -> bool:
-    if _norm_status(known.expected_status) != _norm_status(observed.expected_status):
-        return False
-    if _norm_status(known.actual_status) != _norm_status(observed.actual_status):
-        return False
-    if known.failure_class is None:
-        return True
-    return known.failure_class == observed.failure_class
+    return (
+        _norm_status(known.expected_status) == _norm_status(observed.expected_status)
+        and known.actual.semantic == observed.actual.semantic
+    )
 
 
 def classify_v2_baseline_outcomes(
@@ -85,22 +80,23 @@ def B(
     rule_index: int,
     expected_status: str,
     actual_status: str,
-    failure_class: str | None = None,
+    diagnostic_code: str | None = None,
+    *,
+    execution_class: str | None = None,
 ) -> BaselineRuleBehavior:
+    actual = O(actual_status, execution_class, diagnostic_code)
     return BaselineRuleBehavior(
         file_name=file_name,
         file_type=file_type,
         rule_index=rule_index,
         expected_status=_norm_status(expected_status),
-        actual_status=_norm_status(actual_status),
-        failure_class=failure_class,
+        actual=actual,
     )
 
 
 # Observed from the current required V2 corpus. Human CSV remains expected
-# authority; actual_status freezes the known miss. raised:* exception names are
-# not stored — they are environment-unstable. Product EvidenceDiagnostic codes
-# may be stored as failure_class when present.
+# authority. ERR records freeze execution_failure without raised:* types.
+# Product EvidenceDiagnostic codes may be stored on ExecutionOutcome when stable.
 BASELINE_RULE_BEHAVIORS: frozenset[BaselineRuleBehavior] = frozenset(
     {
         B("1-全功能检验报告_巨一.pdf", "pdf", 3, "PASS", "NG"),

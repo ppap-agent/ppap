@@ -6,7 +6,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from tests.schema.test_upgrade import (
+from test_upgrade import (
     MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password,
     _migrator_user, _psql, _require, _require_postgres,
 )
@@ -20,8 +20,8 @@ class RuleParseDatabaseTests(unittest.TestCase):
         from ppap_core.db import connect
         from ppap_core.settings import Settings
         from ppap_worker import process_claimed
-        from tests.integration.product.store_fixture import MemoryObjects
-        from tests.integration.product.test_rules import rule_body
+        from memory_objects import MemoryObjects
+        from sample_rule import rule_body
 
         _require_postgres(self)
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]

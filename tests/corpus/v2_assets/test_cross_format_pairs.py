@@ -5,14 +5,14 @@ from typing import Any
 
 import pytest
 
-from tests.corpus.v2_assets.cross_format import (
+from cross_format import (
     classify_pair_rules,
     discover_v2_cross_format_pairs,
-    to_format_outcome,
 )
-from tests.corpus.v2_assets.cross_format_baseline import KNOWN_PAIR_DIVERGENCES
-from tests.corpus.v2_assets.test_v2_assets import collect_v2_rule_outcomes
-from tests.corpus.v2_assets.v2_assets_shared import build_cases
+from cross_format_baseline import KNOWN_PAIR_DIVERGENCES
+from execution_outcome import MISSING_OUTCOME
+from v2_assets_shared import build_cases
+from v2_observe import collect_v2_rule_outcomes
 
 
 def pytest_generate_tests(metafunc: Any) -> None:
@@ -31,12 +31,11 @@ def pytest_generate_tests(metafunc: Any) -> None:
 
 
 def _format_verdict(verdict: Any) -> str:
-    return (
-        f"rule {verdict.rule_index}: pdf={verdict.pdf.status}/{verdict.pdf.execution_class}"
-        f"{f'/{verdict.pdf.failure_class}' if verdict.pdf.failure_class else ''}"
-        f" excel={verdict.excel.status}/{verdict.excel.execution_class}"
-        f"{f'/{verdict.excel.failure_class}' if verdict.excel.failure_class else ''}"
-    )
+    def side(outcome: Any) -> str:
+        extra = f"/{outcome.diagnostic_code}" if outcome.diagnostic_code else ""
+        return f"{outcome.status}/{outcome.execution_class}{extra}"
+
+    return f"rule {verdict.rule_index}: pdf={side(verdict.pdf)} excel={side(verdict.excel)}"
 
 
 def test_v2_cross_format_pair(pair: Any) -> None:
@@ -46,8 +45,12 @@ def test_v2_cross_format_pair(pair: Any) -> None:
     rules = sorted(set(pair.excel.expected) | set(pair.pdf.expected))
     pdf_observed = collect_v2_rule_outcomes(pair.pdf)
     excel_observed = collect_v2_rule_outcomes(pair.excel)
-    pdf_outcomes = {rule: to_format_outcome(pdf_observed.get(rule)) for rule in rules}
-    excel_outcomes = {rule: to_format_outcome(excel_observed.get(rule)) for rule in rules}
+    pdf_outcomes = {
+        rule: pdf_observed[rule].actual if rule in pdf_observed else MISSING_OUTCOME for rule in rules
+    }
+    excel_outcomes = {
+        rule: excel_observed[rule].actual if rule in excel_observed else MISSING_OUTCOME for rule in rules
+    }
     verdicts = classify_pair_rules(pair.pair_id, pdf_outcomes, excel_outcomes, KNOWN_PAIR_DIVERGENCES)
 
     new = [item for item in verdicts if item.kind == "new"]

@@ -37,7 +37,7 @@ from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServ
 from ppap_deep.mapping import passing_response
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
 from ppap_worker import process_claimed
-from tests.integration.product.store_fixture import auth_store
+from store_fixture import auth_store
 
 
 def _clean_env(**extra: str):

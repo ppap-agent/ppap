@@ -15,7 +15,7 @@ from ppap_core.logs import JsonFormatter, LOGGER, bind, emit, new_request_id, re
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.product.store_fixture import auth_store
+from store_fixture import auth_store
 
 
 def _clean_env(**extra: str):

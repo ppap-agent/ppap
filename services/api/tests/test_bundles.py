@@ -8,7 +8,7 @@ from ppap_core.fixtures import RULE_A
 from ppap_core.settings import Settings
 from fastapi.testclient import TestClient
 from ppap_api import create_app
-from tests.integration.product.store_fixture import auth_store
+from store_fixture import auth_store
 from unittest.mock import patch
 import os
 

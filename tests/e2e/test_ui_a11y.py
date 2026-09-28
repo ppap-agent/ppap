@@ -2,8 +2,8 @@
 
 import unittest
 
-from tests.e2e.test_rule_interactions import BODY, JOB, SOURCE, VERSION
-from tests.e2e.test_web_audit import WEB, sync_playwright
+from test_rule_interactions import BODY, JOB, SOURCE, VERSION
+from test_web_audit import WEB, sync_playwright
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")

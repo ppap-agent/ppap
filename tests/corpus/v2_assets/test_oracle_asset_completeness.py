@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.corpus.v2_assets.v2_assets_shared import (
+from v2_assets_shared import (
     APP_ROOT,
     build_cases,
     build_cases_from_long_feedback,

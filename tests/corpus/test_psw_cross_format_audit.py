@@ -26,7 +26,7 @@ from ppap_excel_audit_engine.app_runtime import _AppAuditRuntime
 from ppap_excel_audit_engine.app_runtime import run_audit_engine
 from ppap_excel_audit_engine.checkers.agents.psw_excel_agent import PswExcelAgent
 from ppap_excel_audit_engine.rule_engine import Table
-from tests.corpus.psw_cross_format_regression import (
+from psw_cross_format_regression import (
     DifferenceKind,
     PswAuditSnapshot,
     compare_psw_snapshots,

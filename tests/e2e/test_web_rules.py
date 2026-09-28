@@ -5,7 +5,7 @@ import json
 import unittest
 import uuid
 
-from tests.e2e.test_web_audit import WEB, isolated_dev_login, sync_playwright
+from test_web_audit import WEB, isolated_dev_login, sync_playwright
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")

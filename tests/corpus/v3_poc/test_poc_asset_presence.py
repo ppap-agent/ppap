@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tests.corpus.v3_poc.poc_oracle import (
+from poc_oracle import (
     DEFAULT_POC_DATASET_ROOT,
     DEFAULT_POC_EXPECTED_XLSX,
     PocCase,

@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
-from tests.schema.test_audit_bindings import AuditDatabaseCase
+from test_audit_bindings import AuditDatabaseCase
 
 
 class UsageAcceptanceTests(AuditDatabaseCase):

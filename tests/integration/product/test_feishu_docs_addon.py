@@ -18,7 +18,7 @@ from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.product.store_fixture import auth_store, seed_usage_event
+from store_fixture import auth_store, seed_usage_event
 
 
 def _clean_env(**extra: str):

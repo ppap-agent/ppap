@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from tests.e2e.test_web_audit import WEB, sync_playwright
+from test_web_audit import WEB, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 JOB = "00000000-0000-4000-8000-000000000001"
