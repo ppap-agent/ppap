@@ -78,6 +78,10 @@ WEB_SCHEMA_NAMES = (
     "XlsxCellLocator",
     "XlsxRangeLocator",
     "Coverage",
+    "BoundRule",
+    "RoundSummaryRule",
+    "RoundSummaryInput",
+    "RoundSummary",
 )
 
 REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {

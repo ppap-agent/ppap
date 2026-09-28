@@ -109,9 +109,9 @@ export interface components {
       "classification": string;
       "item": string;
       "item_key": string;
-      "locator"?: components["schemas"]["FindingLocator"];
-      "priority"?: string;
-      "review"?: components["schemas"]["Review"];
+      "locator": components["schemas"]["FindingLocator"] | null;
+      "priority": null | string;
+      "review": components["schemas"]["Review"] | null;
       "status": "ERR" | "NA" | "NG" | "PASS" | "UNABLE";
       "suggestions": string;
     };
@@ -145,8 +145,9 @@ export interface components {
       "file_version_id": string;
       "original_filename": string;
       "role": "reference" | "target";
-      "rule"?: components["schemas"]["Rule"];
+      "rule": components["schemas"]["BoundRule"] | null;
       "rule_version_id": null | string;
+      "status"?: string;
     };
     "Metadata": {
       "customer": null | string;
@@ -237,16 +238,16 @@ export interface components {
     "Round": {
       "analysis_mode"?: "deep" | "standard";
       "coverage"?: components["schemas"]["Coverage"];
-      "created_at"?: string;
+      "created_at"?: null | string;
       "execution": string;
       "executor"?: string;
       "executor_revision"?: string;
-      "failure"?: components["schemas"]["RoundFailure"];
+      "failure"?: components["schemas"]["RoundFailure"] | null;
       "findings": Array<components["schemas"]["Finding"]>;
       "id": string;
       "inputs": Array<components["schemas"]["MaterialWire"]>;
-      "predecessor_id"?: string;
-      "progress"?: components["schemas"]["RoundProgress"];
+      "predecessor_id"?: null | string;
+      "progress"?: components["schemas"]["RoundProgress"] | null;
       "result_counts"?: Record<string, number>;
       "reviewed_count"?: number;
       "writeback"?: components["schemas"]["WritebackTarget"];
@@ -258,7 +259,7 @@ export interface components {
     };
     "RoundList": {
       "next_offset": null | number;
-      "rounds": Array<components["schemas"]["Round"]>;
+      "rounds": Array<components["schemas"]["RoundSummary"]>;
     };
     "RoundProgress": {
       "completed_count"?: number;
@@ -268,14 +269,14 @@ export interface components {
     };
     "Rule": {
       "created_at": string;
-      "customers"?: Array<string>;
+      "customers"?: Array<string> | null;
       "id": string;
       "kind": string;
-      "models"?: Array<string>;
-      "parts"?: Array<string>;
+      "models"?: Array<string> | null;
+      "parts"?: Array<string> | null;
       "predecessor_id"?: null | string;
       "title": string;
-      "type"?: string;
+      "type"?: null | string;
     };
     "EngineRuleBody": {
       "customers": Array<string>;
@@ -403,10 +404,35 @@ export interface components {
       "start": string;
     };
     "Coverage": {
-      "checked": Array<string>;
-      "locator_gap": boolean;
+      "checked"?: Array<string>;
+      "locator_gap"?: boolean;
       "rule_items"?: Array<components["schemas"]["RuleCoverageItem"]>;
-      "unchecked": Array<string>;
+      "unchecked"?: Array<string>;
+    };
+    "BoundRule": {
+      "body": components["schemas"]["EngineRuleBody"] | components["schemas"]["PresenceRuleBody"];
+      "id": string;
+      "title": string;
+    };
+    "RoundSummaryRule": {
+      "id": string;
+      "title": string;
+    };
+    "RoundSummaryInput": {
+      "file_version_id": string;
+      "original_filename": string;
+      "role": "reference" | "target";
+      "rule": components["schemas"]["RoundSummaryRule"] | null;
+    };
+    "RoundSummary": {
+      "analysis_mode": "deep" | "standard";
+      "created_at": null | string;
+      "execution": string;
+      "id": string;
+      "inputs": Array<components["schemas"]["RoundSummaryInput"]>;
+      "predecessor_id": null | string;
+      "result_counts": Record<string, number>;
+      "reviewed_count": number;
     };
   }
 }

@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type FindingStatus, type Round, type RoundList} from './api'
+import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type FindingStatus, type RoundList, type RoundSummary} from './api'
 import {productHref} from './navigation/route'
 import {ExecutionBadge} from './audit/StatusBadge'
 import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
@@ -21,11 +21,11 @@ function countVariant(status: string): 'default' | 'secondary' | 'destructive' |
 const resultOrder: FindingStatus[] = ['NG', 'ERR', 'UNABLE', 'NA', 'PASS']
 type HistoryFilters = {query: string; execution: string; unreviewed: boolean}
 
-function targetName(row: Round) {
+function targetName(row: RoundSummary) {
   return row.inputs.filter(item => item.role === 'target').map(item => item.original_filename).join('、') || '未命名审核'
 }
 
-function HistoryMobileRow({row}: {row: Round}) {
+function HistoryMobileRow({row}: {row: RoundSummary}) {
   const count = Object.values(row.result_counts || {}).reduce((sum, value) => sum + value, 0)
   const pending = count > (row.reviewed_count || 0)
   return <article data-testid="history-version" className="flex flex-col gap-3 border-b py-4 last:border-b-0">
@@ -48,7 +48,7 @@ function HistoryMobileRow({row}: {row: Round}) {
 }
 
 export default function HistoryView() {
-  const [rows, setRows] = useState<Round[]>([])
+  const [rows, setRows] = useState<RoundSummary[]>([])
   const [query, setQuery] = useState('')
   const [execution, setExecution] = useState('')
   const [unreviewed, setUnreviewed] = useState(false)
@@ -79,7 +79,7 @@ export default function HistoryView() {
 
   useEffect(() => { void load() }, [])
 
-  function total(row: Round) {
+  function total(row: RoundSummary) {
     return Object.values(row.result_counts || {}).reduce((sum, n) => sum + n, 0)
   }
 

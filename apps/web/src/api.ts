@@ -21,6 +21,7 @@ export type PrincipalPublic = Schema<'PrincipalPublic'>
 export type FileVersion = Schema<'FileVersion'>
 export type DraftList = Schema<'DraftList'>
 export type RoundList = Schema<'RoundList'>
+export type RoundSummary = Schema<'RoundSummary'>
 export type UsageEvent = Schema<'UsageEvent'>
 export type UsageList = Schema<'UsageList'>
 export type RulesList = Schema<'RulesList'>

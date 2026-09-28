@@ -72,11 +72,11 @@ class Rule(TypedDict):
     title: str
     kind: str
     created_at: str
-    type: NotRequired[str]
+    type: NotRequired[str | None]
     predecessor_id: NotRequired[str | None]
-    customers: NotRequired[list[str]]
-    models: NotRequired[list[str]]
-    parts: NotRequired[list[str]]
+    customers: NotRequired[list[str] | None]
+    models: NotRequired[list[str] | None]
+    parts: NotRequired[list[str] | None]
 
 
 class RuleItem(TypedDict):
@@ -99,6 +99,12 @@ class EngineRuleBody(TypedDict):
 
 class PresenceRuleBody(TypedDict):
     kind: Literal["presence"]
+
+
+class BoundRule(TypedDict):
+    id: str
+    title: str
+    body: EngineRuleBody | PresenceRuleBody
 
 
 class RuleDetail(TypedDict):
@@ -174,7 +180,8 @@ class MaterialWire(TypedDict):
     original_filename: str
     role: MaterialRole
     rule_version_id: str | None
-    rule: NotRequired[Rule]
+    rule: BoundRule | None
+    status: NotRequired[str]
 
 
 class WritebackTarget(TypedDict):
@@ -309,9 +316,9 @@ class Finding(TypedDict):
     item: str
     classification: str
     suggestions: str
-    priority: NotRequired[str]
-    locator: NotRequired[FindingLocator]
-    review: NotRequired[Review]
+    priority: str | None
+    locator: FindingLocator | None
+    review: Review | None
 
 
 class RuleCoverageItem(TypedDict):
@@ -326,7 +333,7 @@ class RuleCoverageItem(TypedDict):
     status: NotRequired[FindingStatus]
 
 
-class Coverage(TypedDict):
+class Coverage(TypedDict, total=False):
     checked: list[str]
     unchecked: list[str]
     locator_gap: bool
@@ -351,21 +358,44 @@ class Round(TypedDict):
     execution: str
     inputs: list[MaterialWire]
     findings: list[Finding]
-    predecessor_id: NotRequired[str]
-    created_at: NotRequired[str]
+    predecessor_id: NotRequired[str | None]
+    created_at: NotRequired[str | None]
     result_counts: NotRequired[dict[str, int]]
     reviewed_count: NotRequired[int]
     coverage: NotRequired[Coverage]
     analysis_mode: NotRequired[AnalysisMode]
     executor: NotRequired[str]
     executor_revision: NotRequired[str]
-    progress: NotRequired[RoundProgress]
-    failure: NotRequired[RoundFailure]
+    progress: NotRequired[RoundProgress | None]
+    failure: NotRequired[RoundFailure | None]
     writeback: NotRequired[WritebackTarget]
 
 
+class RoundSummaryRule(TypedDict):
+    id: str
+    title: str
+
+
+class RoundSummaryInput(TypedDict):
+    role: MaterialRole
+    original_filename: str
+    file_version_id: str
+    rule: RoundSummaryRule | None
+
+
+class RoundSummary(TypedDict):
+    id: str
+    execution: str
+    predecessor_id: str | None
+    created_at: str | None
+    analysis_mode: AnalysisMode
+    inputs: list[RoundSummaryInput]
+    result_counts: dict[str, int]
+    reviewed_count: int
+
+
 class RoundList(TypedDict):
-    rounds: list[Round]
+    rounds: list[RoundSummary]
     next_offset: int | None
 
 
