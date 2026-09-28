@@ -65,6 +65,16 @@ export interface components {
       "files": Array<components["schemas"]["DriveFile"]>;
       "next_page_token"?: string;
     };
+    "DocLink": {
+      "doc_type": string;
+      "name": string;
+      "token": string;
+      "type": string;
+      "url": string;
+    };
+    "DocLinksResponse": {
+      "doc_links": Array<components["schemas"]["DocLink"]>;
+    };
     "Evidence": {
       "sources"?: Array<components["schemas"]["EvidenceSource"]>;
     };
@@ -118,6 +128,12 @@ export interface components {
       "code": string;
       "redirect_uri"?: string;
     };
+    "IdentityPublic": {
+      "app_id": string;
+      "provider": string;
+      "subject": string;
+      "tenant_key": string;
+    };
     "JobError": {
       "error": string;
     };
@@ -165,9 +181,10 @@ export interface components {
     };
     "PrincipalPublic": {
       "display_name": string;
-      "tenant_id"?: string;
-      "tenant_key"?: string;
-      "user_id"?: string;
+      "identity": components["schemas"]["IdentityPublic"];
+      "membership": string;
+      "tenant_id": string;
+      "user_id": string;
     };
     "PublicConfig": {
       "api_url": string;

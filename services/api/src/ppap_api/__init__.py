@@ -611,7 +611,7 @@ def create_app(
             raise
         return JSONResponse(version_payload(ready), status_code=201)
 
-    @app.get("/integrations/feishu/docs/links")
+    @app.get("/integrations/feishu/docs/links", response_model=wc.DocLinksResponse)
     def feishu_doc_links(request: Request, file_token: str = "") -> JSONResponse:
         session = session_of(request)
         if not session:

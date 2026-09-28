@@ -22,11 +22,19 @@ class PublicConfig(TypedDict):
     feishu_app_id: NotRequired[str]
 
 
+class IdentityPublic(TypedDict):
+    provider: str
+    app_id: str
+    tenant_key: str
+    subject: str
+
+
 class PrincipalPublic(TypedDict):
+    user_id: str
+    tenant_id: str
+    membership: str
     display_name: str
-    user_id: NotRequired[str]
-    tenant_id: NotRequired[str]
-    tenant_key: NotRequired[str]
+    identity: IdentityPublic
 
 
 class FileVersion(TypedDict):
@@ -415,6 +423,18 @@ class DriveFile(TypedDict):
 class DriveFilesList(TypedDict):
     files: list[DriveFile]
     next_page_token: NotRequired[str]
+
+
+class DocLink(TypedDict):
+    token: str
+    name: str
+    doc_type: str
+    type: str
+    url: str
+
+
+class DocLinksResponse(TypedDict):
+    doc_links: list[DocLink]
 
 
 class FeishuFileImportRequest(TypedDict):
