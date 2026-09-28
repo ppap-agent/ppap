@@ -11,11 +11,7 @@ dependencies = [
     "botocore>=1.36.16",
     "httpx>=0.28.1",
     "openpyxl>=3.1.2",
-    "ppap-excel-audit-engine",
 ]
-
-[tool.uv.sources]
-ppap-excel-audit-engine = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

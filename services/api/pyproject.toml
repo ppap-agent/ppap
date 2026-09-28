@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "PPAP Product API"
 requires-python = "==3.12.*"
 dependencies = [
+    "ppap-application",
     "ppap-core",
+    "ppap-product-store",
     "fastapi>=0.115.8",
     "uvicorn>=0.34.0",
     "starlette>=0.45.3",
@@ -14,7 +16,9 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+ppap-application = { workspace = true }
 ppap-core = { workspace = true }
+ppap-product-store = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -23,12 +23,14 @@ package = false
 
 [tool.uv.workspace]
 members = [
+    "packages/ppap_application",
     "packages/ppap_core",
     "packages/ppap_deep",
     "packages/ppap_docops",
     "packages/ppap_excel_audit_engine",
     "packages/ppap_ocr_adapter",
     "packages/ppap_pdf_to_excel",
+    "packages/ppap_product_store",
     "packages/ppap_vision",
     "services/api",
     "services/worker",
@@ -36,12 +38,14 @@ members = [
 ]
 
 [tool.uv.sources]
+ppap-application = { workspace = true }
 ppap-core = { workspace = true }
 ppap-deep = { workspace = true }
 ppap-docops = { workspace = true }
 ppap-excel-audit-engine = { workspace = true }
 ppap-ocr-adapter = { workspace = true }
 ppap-pdf-to-excel = { workspace = true }
+ppap-product-store = { workspace = true }
 ppap-vision = { workspace = true }
 ppap-api = { workspace = true }
 ppap-worker = { workspace = true }
