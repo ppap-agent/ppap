@@ -427,30 +427,30 @@ class PreviewRow(TypedDict):
     text: str
 
 
-class PreviewResponse(TypedDict, total=False):
-    available: bool
-    text: str
-    notice: str
-    sheets: list[str]
-    sheet: str
-    start_row: int
-    end_row: int
-    rows: list[PreviewRow]
-    next_row: int | None
-
-
-class OfficePreviewResponse(TypedDict, total=False):
+class PreviewResponse(TypedDict):
     available: bool
     notice: str
-    script_url: str
-    config: dict[str, Any]
+    text: NotRequired[str]
+    sheets: NotRequired[list[str]]
+    sheet: NotRequired[str]
+    start_row: NotRequired[int]
+    end_row: NotRequired[int]
+    rows: NotRequired[list[PreviewRow]]
+    next_row: NotRequired[int | None]
 
 
-class ReportExport(TypedDict, total=False):
+class OfficePreviewResponse(TypedDict):
+    available: bool
+    notice: NotRequired[str]
+    script_url: NotRequired[str]
+    config: NotRequired[dict[str, Any]]
+
+
+class ReportExport(TypedDict):
     id: str
     status: str
     document_id: str | None
-    error_code: str | None
+    error_code: NotRequired[str | None]
 
 
 class ReportEnvelope(TypedDict):

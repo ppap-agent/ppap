@@ -138,7 +138,7 @@ export interface components {
       "part": null | string;
     };
     "OfficePreviewResponse": {
-      "available"?: boolean;
+      "available": boolean;
       "config"?: Record<string, unknown>;
       "notice"?: string;
       "script_url"?: string;
@@ -149,10 +149,10 @@ export interface components {
       "page": number;
     };
     "PreviewResponse": {
-      "available"?: boolean;
+      "available": boolean;
       "end_row"?: number;
       "next_row"?: null | number;
-      "notice"?: string;
+      "notice": string;
       "rows"?: Array<components["schemas"]["PreviewRow"]>;
       "sheet"?: string;
       "sheets"?: Array<string>;
@@ -195,10 +195,10 @@ export interface components {
       "report": components["schemas"]["ReportExport"] | null;
     };
     "ReportExport": {
-      "document_id"?: null | string;
+      "document_id": null | string;
       "error_code"?: null | string;
-      "id"?: string;
-      "status"?: string;
+      "id": string;
+      "status": string;
     };
     "ResubmitRequest": {
       "idempotency_key"?: string;
