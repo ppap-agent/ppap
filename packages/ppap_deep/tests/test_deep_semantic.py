@@ -298,7 +298,8 @@ class SemanticBoundaryTests(unittest.TestCase):
         self.assertEqual(len(result.violations), 64)
 
     def test_narrow_field_checker_command_writes_complete_result(self) -> None:
-        tool = Path(__file__).resolve().parents[3] / "packages/ppap_deep/semantic/checker_tools.py"
+        import ppap_deep.semantic.checker_tools as checker_tools
+        tool = Path(checker_tools.__file__)
         with tempfile.TemporaryDirectory() as directory:
             location = Path(directory)
             source, request, output = (location / name for name in ("snapshot.json", "request.json", "result.json"))

@@ -1,9 +1,18 @@
 """Keyboard, focus, touch size, and reduced-motion checks for the product UI."""
 
+import os
 import unittest
 
-from test_rule_interactions import BODY, JOB, SOURCE, VERSION
-from test_web_audit import WEB, sync_playwright
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
+    sync_playwright = None
+
+WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+JOB = "00000000-0000-4000-8000-000000000001"
+SOURCE = "00000000-0000-4000-8000-000000000002"
+VERSION = "00000000-0000-4000-8000-000000000003"
+BODY = {"kind": "engine", "type": "控制计划", "rule_profile": "v3", "customers": [], "models": [], "parts": [], "rules": [{"id": "1", "category": "A", "priority": None, "rule_to_check": "检查 A", "type_of_rule": "table"}]}
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")

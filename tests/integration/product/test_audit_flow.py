@@ -18,7 +18,14 @@ from ppap_core.fixtures import RULE_A, USER_BOB
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from store_fixture import auth_store
+
+
+def rule_body():
+    return {
+        "kind": "engine", "rule_profile": "v3", "type": "控制计划",
+        "customers": ["测试客户"], "models": ["M1"], "parts": ["P1"],
+        "rules": [{"id": "1", "category": "基本信息", "priority": "P0", "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
+    }
 
 
 def _clean_env(**extra: str):
@@ -36,7 +43,7 @@ class AuditFlowTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = auth_store(self.settings)
+        self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
@@ -471,7 +478,6 @@ class AuditFlowTests(unittest.TestCase):
         from ppap_excel_audit_engine import app_runtime
         from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
         from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
-        from test_rules import rule_body
 
         self._login("alice")
         source = self._upload("rules.json", b"{}")

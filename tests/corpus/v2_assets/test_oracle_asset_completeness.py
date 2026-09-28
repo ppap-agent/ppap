@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from v2_assets_shared import (
+from ppap_corpus_contracts.v2_assets_shared import (
     APP_ROOT,
     build_cases,
     build_cases_from_long_feedback,
@@ -55,7 +55,9 @@ def _write_manifest(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 def test_required_v2_entry_does_not_skip_missing_oracle_assets() -> None:
-    source = Path(__file__).with_name("v2_assets_shared.py").read_text()
+    import ppap_corpus_contracts.v2_assets_shared as v2_assets_shared
+
+    source = Path(v2_assets_shared.__file__).read_text()
     assert "def reconcile_v2_oracle_assets" in source
     assert "V2 oracle assets missing" in source
     assert "long-feedback files not found" not in source

@@ -2,10 +2,22 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 import uuid
 
-from test_web_audit import WEB, isolated_dev_login, sync_playwright
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
+    sync_playwright = None
+
+WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
+
+
+def isolated_dev_login(page):
+    page.goto(f"{WEB}/dev")
+    page.get_by_test_id("isolated-dev-login").click()
+    page.wait_for_selector('[data-testid="session-user"]', state="attached")
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")

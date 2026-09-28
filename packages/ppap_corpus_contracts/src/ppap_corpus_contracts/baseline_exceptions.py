@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from execution_outcome import ExecutionOutcome, O
+from ppap_corpus_contracts.execution_outcome import ExecutionOutcome, O
 
 
 @dataclass(frozen=True)

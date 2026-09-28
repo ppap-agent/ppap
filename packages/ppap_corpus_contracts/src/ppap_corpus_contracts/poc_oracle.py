@@ -26,7 +26,7 @@ POC_SEQ_TO_DOC_TYPE = {
     "11": PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST,
 }
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 ASSETS_ROOT = Path(os.getenv("PPAP_ASSETS_ROOT", REPO_ROOT / "assets"))
 DEFAULT_POC_DATASET_ROOT = Path(os.getenv("PPAP_POC_DATASET_ROOT", ASSETS_ROOT / "poc测试" / "POC测试样本"))
 DEFAULT_POC_EXPECTED_XLSX = Path(os.getenv("PPAP_POC_EXPECTED_XLSX", ASSETS_ROOT / "poc测试" / "poc-测试数据统计表.xlsx"))

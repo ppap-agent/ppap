@@ -8,7 +8,7 @@ from ppap_core.contracts import (
     EvidenceDiagnostic,
     EvidenceSource,
 )
-from psw_cross_format_regression import (
+from ppap_corpus_contracts.psw_cross_format_regression import (
     DifferenceKind,
     PswAuditSnapshot,
     compare_psw_snapshots,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from execution_outcome import (
+from ppap_corpus_contracts.execution_outcome import (
     EXECUTION_FAILURE,
     EXECUTION_RESULT,
     MISSING_RULE,

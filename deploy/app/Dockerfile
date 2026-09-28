@@ -20,7 +20,7 @@ COPY --from=converter-builder /usr/local/bin/ppap-local-converter-sandbox /usr/l
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
-COPY pyproject.toml /app/
+COPY pyproject.toml uv.lock /app/
 COPY packages /app/packages
 COPY services /app/services
 COPY deploy/app/entrypoint.sh /app/entrypoint.sh
@@ -47,12 +47,13 @@ RUN set -eux; \
     chmod +x /app/entrypoint.sh; \
     if [ -n "$PPAP_PIP_INDEX_URL" ]; then export PIP_INDEX_URL="$PPAP_PIP_INDEX_URL"; fi; \
     pip install --no-cache-dir --upgrade pip; \
-    pip install --no-cache-dir -e /app
+    pip install --no-cache-dir uv==0.9.26; \
+    UV_LINK_MODE=copy uv sync --frozen --no-dev --compile-bytecode
 
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api
 ENV PPAP_BUILD_SHA=${PPAP_BUILD_SHA}
 ENV PPAP_SERVICE=${PPAP_SERVICE}
-ENV PYTHONPATH=/app/packages:/app/packages/ppap_docops/src:/app/packages/ppap_excel_audit_engine/src:/app/packages/ppap_ocr_adapter/src:/app/packages/ppap_pdf_to_excel/src:/app/packages/ppap_vision/src:/app/services/api:/app/services/worker
+ENV PATH="/app/.venv/bin:${PATH}"
 EXPOSE 8080
 ENTRYPOINT ["/app/entrypoint.sh"]

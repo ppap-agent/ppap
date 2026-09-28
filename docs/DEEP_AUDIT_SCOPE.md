@@ -44,13 +44,13 @@
 
 | 能力 | 已验证事实与源码依据 | 缺口 | 推荐处理 | 验证方法 |
 | --- | --- | --- | --- | --- |
-| 真实语义执行 | 新版 [auditor.py](../packages/ppap_deep/auditor.py) 调用固定引擎；旧 [guest.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/guest.py) 已有读取、编译、执行、验证和修正链。 | 迁入了执行边界，但未接入真实语义核心。 | 在既有 Deep 边界内接入旧核心和薄适配，不静默回退 Standard。 | 无对应 checker 的条款也有真实执行、证据和结论。 |
-| 客户条款覆盖 | 新版 [rule_coverage.py](../packages/ppap_core/rule_coverage.py) 按标题或全文精确匹配；[engine_round.py](../packages/ppap_core/engine_round.py) 只投影映射结果。 | 显示名称决定可执行性。 | Deep 编译并处理全部有效条款；Standard 使用明确、已确认的规则绑定。 | 改名不改语义，结果和覆盖不变；改语义后结果相应变化。 |
+| 真实语义执行 | 新版 [auditor.py](../packages/ppap_deep/src/ppap_deep/auditor.py) 调用固定引擎；旧 [guest.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/guest.py) 已有读取、编译、执行、验证和修正链。 | 迁入了执行边界，但未接入真实语义核心。 | 在既有 Deep 边界内接入旧核心和薄适配，不静默回退 Standard。 | 无对应 checker 的条款也有真实执行、证据和结论。 |
+| 客户条款覆盖 | 新版 [rule_coverage.py](../packages/ppap_core/src/ppap_core/rule_coverage.py) 按标题或全文精确匹配；[engine_round.py](../packages/ppap_core/src/ppap_core/engine_round.py) 只投影映射结果。 | 显示名称决定可执行性。 | Deep 编译并处理全部有效条款；Standard 使用明确、已确认的规则绑定。 | 改名不改语义，结果和覆盖不变；改语义后结果相应变化。 |
 | 文档与联合审核 | 旧 [document_tools.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/document_tools.py) 已有 Excel/Word/PDF 快照、绑定、视图和受限查询工具。 | 新协议未完整承接规则来源、联合关系与多来源证据。 | 传入目标/参考角色、规则有效正文与来源版本，复用已有工具。 | CP/PFD/PFMEA 联合样例及错误关联反例。 |
 | grok-build | 旧 [guest_model.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/guest_model.py) 调用真实 CLI、工具循环和 Responses，并控制时间、回合及最终输出。 | 新版未使用这条执行链；固定 CLI 与当前网关的完整兼容性待验证。 | 迁入运行适配器，不重写循环。 | 连续工具调用、终止凭据、压缩及超时真实验证。 |
 | 证据与结果验证 | 旧 [validation.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/validation.py)、[trace.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/trace.py) 检查条款集合、来源、计数及部分确定性判断。 | 新版结果合同与 UI 没有完整保留这些语义。 | 保留类型化引用、范围计数、无法判断原因，验证后再提交产品结果。 | 无效引用、漏项、含未知范围的 PASS 被拒绝。 |
-| 版本复用 | 旧 [controller.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/controller.py) 已有快照/计划缓存和重新验证。新版 [round_work()](../services/api/ppap_api/store.py) 传入规则正文，但未传齐原始来源。 | 有效正文、来源及缓存版本尚未闭合。 | 薄适配补齐来源；先做同版本复用，不做通用模板记忆平台。 | 文件/规则变化使相关缓存失效；租户间不混用。 |
-| 长任务与失败 | 旧实现有失败分类和有界修正。新版 [Worker](../services/worker/ppap_worker/__init__.py) 的 audit 路径缺少规则解析路径已有的续租；数据库租约短于典型 Deep 时长。 | 可能被再次领取，浪费模型成本；阶段与恢复信息不足。 | 补审核续租、心跳、停止和晚到结果保护，不另建队列。 | 长任务、租约丢失、超时及重复领取场景。 |
+| 版本复用 | 旧 [controller.py](../../ppap-agent/ppap_agent/app/services/semantic_audit/controller.py) 已有快照/计划缓存和重新验证。新版 [round_work()](../services/api/src/ppap_api/store.py) 传入规则正文，但未传齐原始来源。 | 有效正文、来源及缓存版本尚未闭合。 | 薄适配补齐来源；先做同版本复用，不做通用模板记忆平台。 | 文件/规则变化使相关缓存失效；租户间不混用。 |
+| 长任务与失败 | 旧实现有失败分类和有界修正。新版 [Worker](../services/worker/src/ppap_worker/__init__.py) 的 audit 路径缺少规则解析路径已有的续租；数据库租约短于典型 Deep 时长。 | 可能被再次领取，浪费模型成本；阶段与恢复信息不足。 | 补审核续租、心跳、停止和晚到结果保护，不另建队列。 | 长任务、租约丢失、超时及重复领取场景。 |
 | UI | [Workbench](../apps/web/src/Workbench.tsx) 重复长规则；[OriginalPreview](../apps/web/src/OriginalPreview.tsx) 从文本猜定位；[ExecutionState](../apps/web/src/audit/ExecutionState.tsx) 阶段信息有限。 | 用户难以理解覆盖、证据和下一步。 | 完整覆盖概览、紧凑条款列表、结构化证据、针对性恢复。 | 桌面/平板/手机完整审核与复核路径。 |
 
 底层 [V3 Excel checker](../packages/ppap_excel_audit_engine/src/ppap_excel_audit_engine/checkers/agents_v3_overlay/excel_agent.py) 允许规则显示名称不同，校验的是既定规则集的数量、ID 和顺序。新版外层精确文本门槛不是底层必需条件。但是，不能因此使用模糊标题或相同序号去猜测任意客户规则与 checker 等价。

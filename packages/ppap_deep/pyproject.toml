@@ -1,0 +1,19 @@
+[project]
+name = "ppap-deep"
+version = "0.1.0"
+description = "Bounded Deep execution protocol. Independent of ppap-agent orchestration."
+requires-python = "==3.12.*"
+dependencies = [
+    "pydantic>=2.10.6",
+    "ppap-core",
+]
+
+[tool.uv.sources]
+ppap-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppap_deep"]

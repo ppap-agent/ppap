@@ -11,6 +11,8 @@ Do not change the load balancer ID, TLS secret, or `ppap.api.xixifusi.online`.
 
 TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy` stays NodePort.
 
+Validation renders `kustomization.yaml` with Kustomize and checks the result with kubeconform. Apply still uses the commands below.
+
 ## Apply current stack
 
 Secret `ppap-current` is not in git. Create it once from the production env file (passwords, LLM, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services.

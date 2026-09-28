@@ -6,7 +6,6 @@ import time
 import unittest
 import uuid
 
-from test_upgrade import MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password, _migrator_user, _psql, _require, _require_postgres
 
 
 class AuditDatabaseCase(unittest.TestCase):
@@ -15,23 +14,21 @@ class AuditDatabaseCase(unittest.TestCase):
     def setUp(self):
         from ppap_api.store import AuthStore
         from ppap_core.settings import Settings
-        from memory_objects import MemoryObjects
 
-        _require_postgres(self)
+        self._require_postgres(self)
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
-        _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {_migrator_user()}"), "create isolated audit DB")
-        self.addCleanup(lambda: _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))
+        self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self._migrator_user()}"), "create isolated audit DB")
+        self.addCleanup(lambda: self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))
         if self.previous_schema:
-            from test_upgrade import migration_files
 
-            for migration in migration_files():
+            for migration in self.migration_files():
                 if migration.name >= "0010":
                     break
-                _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
+                self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
         else:
-            _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "apply.sql")), "apply audit schema")
-        self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=_migrator_user(), pg_migrator_password=_migrator_password())
-        self.store = AuthStore(self.settings, MemoryObjects())
+            self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "apply.sql")), "apply audit schema")
+        self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=self._migrator_user(), pg_migrator_password=self._migrator_password())
+        self.store = AuthStore(self.settings, self.MemoryObjects())
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
 
@@ -69,20 +66,19 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
     def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
         from ppap_core.fixtures import RULE_A
-        from sample_rule import rule_body
 
         first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
-        rule = self.store.publish_rule(self.alice, "客户规则", rule_body(), reference.id)
+        rule = self.store.publish_rule(self.alice, "客户规则", self.rule_body(), reference.id)
         items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": second.id, "role": "target", "rule_version_id": rule["id"]}, {"file_version_id": reference.id, "role": "reference"}]
         draft = self.draft(items)
         accepted = self.store.accept_draft(self.alice, draft, "per-input")
         by_id = {item["file_version_id"]: item for item in accepted["inputs"]}
         self.assertEqual(by_id[first.id]["rule"]["id"], RULE_A)
-        self.assertEqual(by_id[second.id]["rule"]["body"], rule_body())
+        self.assertEqual(by_id[second.id]["rule"]["body"], self.rule_body())
         self.assertIsNone(by_id[reference.id]["rule"])
         self.assertNotIn("rule", accepted)
         self.assertEqual(self.store.accept_draft(self.alice, draft, "per-input")["id"], accepted["id"])
-        changed = rule_body()
+        changed = self.rule_body()
         changed["rules"][0]["rule_to_check"] = "新版检查要求"
         newer = self.store.publish_rule(self.alice, "新版客户规则", changed, reference.id, rule["id"])
         next_items = [{**item, "rule_version_id": newer["id"]} if item["file_version_id"] == second.id else item for item in items]
@@ -94,7 +90,6 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
     def test_same_key_concurrent_acceptance_and_conflicts_check_bindings_roles_and_round_access(self):
         from ppap_core.fixtures import RULE_A
-        from sample_rule import rule_body
 
         first, reference = self.upload("a.xlsx"), self.upload("context.xlsx")
         items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]
@@ -133,7 +128,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         changed_roles = [{"file_version_id": first.id, "role": "reference"}, {"file_version_id": reference.id, "role": "target", "rule_version_id": RULE_A}]
         with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
             self.store.accept_draft(self.alice, self.draft(changed_roles), key)
-        rule = self.store.publish_rule(self.alice, "客户规则", rule_body(), reference.id)
+        rule = self.store.publish_rule(self.alice, "客户规则", self.rule_body(), reference.id)
         changed_rule = [{**items[0], "rule_version_id": rule["id"]}, items[1]]
         with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
             self.store.accept_draft(self.alice, self.draft(changed_rule), key)
@@ -185,8 +180,8 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
             conn.execute("INSERT INTO product.findings (id,round_id,item_key,classification,item,status) VALUES (%s,%s,'check','A','Original result','NG')", (str(uuid.uuid4()), round_id))
             conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
         for _ in range(2):
-            _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
-        _require(_psql(_migrator_user(), _migrator_password(), self.database, "-f", str(MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
+            self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
+        self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
         loaded = self.store.get_round(round_id)
         by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
         self.assertEqual(by_id[target.id]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})
@@ -197,6 +192,57 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
         with self.store._conn() as conn:
             fingerprint = conn.execute("SELECT request_fingerprint FROM product.audit_rounds WHERE id=%s", (round_id,)).fetchone()[0]
         self.assertEqual(fingerprint, request_fingerprint([{"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]))
+
+
+class UsageAcceptanceTests(AuditDatabaseCase):
+    def setUp(self):
+        super().setUp()
+        self.settings.feishu_ai_item_id = "test-item"
+        self.settings.feishu_free_trial_quota_points = 700
+
+    def prepared(self):
+        from ppap_core.fixtures import RULE_A
+        target, reference = self.upload("target.xlsx"), self.upload("reference.pdf")
+        return self.draft([
+            {"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A},
+            {"file_version_id": reference.id, "role": "reference"},
+        ])
+
+    def test_concurrent_rounds_share_trial_and_replay_does_not_charge(self):
+        drafts = [self.prepared(), self.prepared()]
+        with ThreadPoolExecutor(2) as pool:
+            rounds = list(pool.map(lambda d: self.store.accept_draft(self.alice, d, d), drafts))
+        self.store.accept_draft(self.alice, drafts[0], drafts[0])
+        events = self.store.list_usage_events(self.alice)
+        self.assertEqual(sum(e["consumed_points"] for e in events), 1000)
+        self.assertEqual(sum(e["consumed_points"] for e in events if e["is_free_trial"]), 700)
+        self.assertEqual({e["round_id"] for e in events}, {r["id"] for r in rounds})
+        pending = next(e for e in events if not e["is_free_trial"])
+        with ThreadPoolExecutor(2) as pool:
+            claims = list(pool.map(lambda _: self.store.claim_usage_report(self.alice, pending["id"]), range(2)))
+        self.assertEqual(sum(c is not None for c in claims), 1)
+        with self.store._conn() as conn:
+            conn.execute("UPDATE product.usage_events SET reporting_at = now() - INTERVAL '3 minutes' WHERE id = %s", (pending["id"],))
+        self.assertEqual(self.store.usage_event_public(self.store.usage_event(self.alice, pending["id"]))["external_status"], "unknown")
+        self.assertIsNone(self.store.claim_usage_report(self.alice, pending["id"]))
+        late = self.store.settle_usage_external(self.alice, pending["id"], next(c for c in claims if c), "confirmed", "test-record")
+        self.assertEqual(late["external_status"], "confirmed")
+        bob = self.store.principal_for_fixture("bob")
+        self.assertEqual(str(self.store.usage_event(bob, pending["id"])["id"]), pending["id"])
+        self.assertIsNone(self.store.claim_usage_report(bob, pending["id"]))
+        carol = self.store.principal_for_fixture("carol")
+        self.assertIsNone(self.store.usage_event(carol, pending["id"]))
+
+    def test_usage_error_rolls_back_round_and_job(self):
+        from unittest.mock import patch
+        draft = self.prepared()
+        with patch.object(self.store, "_record_round_usage", side_effect=RuntimeError("test rollback")):
+            with self.assertRaises(RuntimeError):
+                self.store.accept_draft(self.alice, draft, "rollback")
+        with self.store._conn() as conn:
+            for table in ("product.audit_rounds", "engine.jobs", "product.usage_events"):
+                self.assertEqual(conn.execute("SELECT count(*) FROM " + table).fetchone()[0], 0)
+        self.assertEqual(self.store.get_draft(draft)["status"], "open")
 
 
 if __name__ == "__main__":

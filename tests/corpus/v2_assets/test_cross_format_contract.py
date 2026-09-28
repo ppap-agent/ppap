@@ -4,15 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from cross_format import (
+from ppap_corpus_contracts.cross_format import (
     D,
     classify_pair_rule,
     classify_pair_rules,
     discover_v2_cross_format_pairs,
     pair_id_for_file_name,
 )
-from cross_format_baseline import KNOWN_PAIR_DIVERGENCES
-from execution_outcome import (
+from ppap_corpus_contracts.cross_format_baseline import KNOWN_PAIR_DIVERGENCES
+from ppap_corpus_contracts.execution_outcome import (
     EXECUTION_FAILURE,
     EXECUTION_RESULT,
     MISSING_RULE,
@@ -20,7 +20,7 @@ from execution_outcome import (
     O,
     outcome_from_agent_rule,
 )
-from v2_assets_shared import FileCase, RuleExpectation
+from ppap_corpus_contracts.v2_assets_shared import FileCase, RuleExpectation
 
 
 def _case(file_name: str, file_type: str, rules: list[int] | None = None) -> FileCase:
@@ -140,7 +140,9 @@ def test_missing_rule_is_structured_not_pass() -> None:
 
 
 def test_comparison_does_not_use_suggestion_text() -> None:
-    source = Path(__file__).with_name("cross_format.py").read_text()
+    import ppap_corpus_contracts.cross_format as cross_format
+
+    source = Path(cross_format.__file__).read_text()
     assert "suggestions" not in source
     assert "ExecutionOutcome" in source
 

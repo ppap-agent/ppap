@@ -49,8 +49,8 @@ class RuntimeConfig(Artifact):
     app_revision: str = Field(pattern=r"^[a-f0-9]{40}$")
     # Explicit deployment decision. `off` is needed on the current TKE kernel.
     sandbox_profile: str = Field(pattern=r"^(off|ppap)$")
-    python_executable: Path = Path("/usr/local/bin/python")
-    pythonpath: Path = Path("/app/packages")
+    python_executable: Path = Path("/app/.venv/bin/python")
+    pythonpath: Path = Path("/app/.venv/lib/python3.12/site-packages")
     grok_executable: Path = Path("/usr/local/bin/grok")
     setpriv_executable: Path = Path("/usr/bin/setpriv")
     prlimit_executable: Path = Path("/usr/bin/prlimit")
@@ -230,6 +230,8 @@ class ContainerRuntime:
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "HOME": str(run / "work"),
             "LANG": "C.UTF-8",
+            # Guest interpreter boundary: PATH excludes the venv, so this
+            # process env points only at the installed site-packages.
             "PYTHONPATH": str(self.config.pythonpath),
             "PYTHONDONTWRITEBYTECODE": "1",
             "PPAP_GUEST_ISOLATION": "container-only",

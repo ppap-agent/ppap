@@ -6,10 +6,6 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from test_upgrade import (
-    MIGRATIONS, _bootstrap_password, _bootstrap_user, _migrator_password,
-    _migrator_user, _psql, _require, _require_postgres,
-)
 
 
 class RuleParseDatabaseTests(unittest.TestCase):
@@ -20,24 +16,22 @@ class RuleParseDatabaseTests(unittest.TestCase):
         from ppap_core.db import connect
         from ppap_core.settings import Settings
         from ppap_worker import process_claimed
-        from memory_objects import MemoryObjects
-        from sample_rule import rule_body
 
-        _require_postgres(self)
+        self._require_postgres(self)
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]
-        _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {_migrator_user()}"), "create isolated rule parse DB")
+        self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self._migrator_user()}"), "create isolated rule parse DB")
         try:
-            _require(_psql(_migrator_user(), _migrator_password(), database, "-f", str(MIGRATIONS / "apply.sql")), "apply rule parse schema")
+            self._require(self._psql(self._migrator_user(), self._migrator_password(), database, "-f", str(self.MIGRATIONS / "apply.sql")), "apply rule parse schema")
             settings = Settings(
                 pg_database=database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")),
-                pg_migrator_user=_migrator_user(), pg_migrator_password=_migrator_password(),
+                pg_migrator_user=self._migrator_user(), pg_migrator_password=self._migrator_password(),
             )
-            objects = MemoryObjects()
+            objects = self.MemoryObjects()
             api = AuthStore(settings, objects)
             worker = AuthStore(settings, objects, role="worker")
             api.seed_isolated_dev()
             alice = api.principal_for_fixture("alice")
-            content = json.dumps(rule_body()).encode()
+            content = json.dumps(self.rule_body()).encode()
             source = api.create_staging(alice, "rules.json", "application/json", len(content))
             api.put_blob(source, content)
             api.finalize_version(source)
@@ -66,7 +60,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
                 process_claimed(worker, job, "owner")
             result = api.get_rule_parse(alice, job.id)
             self.assertEqual(result["status"], "succeeded")
-            self.assertEqual(result["result"]["body"], rule_body())
+            self.assertEqual(result["result"]["body"], self.rule_body())
             self.assertFalse(worker.complete_job(job, "other", {"error": "late"}, "failed"))
             self.assertEqual(api.get_rule_parse(alice, job.id), result)
             with worker._conn() as conn:
@@ -83,7 +77,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
                     conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (source.file_id, alice.user_id))
                 self.assertEqual(client.get("/rules/parse/" + job.id).status_code, 403)
         finally:
-            _require(_psql(_bootstrap_user(), _bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB")
+            self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB")
 
 
 if __name__ == "__main__":

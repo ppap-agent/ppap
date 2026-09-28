@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from cross_format import D, KnownPairDivergence
-from execution_outcome import O
+from ppap_corpus_contracts.cross_format import D, KnownPairDivergence
+from ppap_corpus_contracts.execution_outcome import O
 
 KNOWN_PAIR_DIVERGENCES: frozenset[KnownPairDivergence] = frozenset(
     {

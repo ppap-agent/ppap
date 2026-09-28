@@ -11,6 +11,5 @@ RUN python -m pip install --no-cache-dir pytest==7.4.3 pytest-asyncio==0.21.1 \
  && command -v soffice \
  && command -v ppap-local-converter-sandbox
 
-ENV PYTHONPATH=
 ENTRYPOINT []
 CMD ["pytest", "tests/corpus/test_psw_cross_format_regression.py", "tests/corpus/test_psw_cross_format_audit.py", "-q"]

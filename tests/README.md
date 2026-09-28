@@ -25,25 +25,32 @@ uv sync --locked --extra dev
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 node deploy/insforge/verify-config.mjs
+docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
+docker buildx bake --print >/dev/null
+docker buildx bake --check
 uv run --no-sync pytest tests/repository
 ```
 
 Python module groups:
 
 ```sh
-uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
-# documents: current physical owner test directory; docops/pdf_to_excel/vision have no tests/ yet
+# One pytest process per physical owner. CI discovers packages/*/tests and services/*/tests.
+uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_deep/tests
 uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
 ```
 
-The services group needs the real isolated-dev PostgreSQL fixture:
+API and Worker each need the real isolated-dev PostgreSQL fixture, in separate processes:
 
 ```sh
-export COMPOSE_PROJECT_NAME=ppap-services
+export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests
+uv run --no-sync pytest services/api/tests
+export COMPOSE_PROJECT_NAME=ppap-worker
+uv run --no-sync pytest services/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
@@ -127,4 +134,4 @@ The separate InsForge native lifecycle remains path-filtered / manual / schedule
 
 ## CI Gate
 
-The default merge contract is the required groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from installed packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.
+The default merge contract is the required groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.

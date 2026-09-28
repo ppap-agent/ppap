@@ -68,7 +68,7 @@ from ppap_excel_audit_engine.checkers.agents.xir_assembly_issue_agent import (
     XirAssemblyIssueAgent,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 APP_ROOT = REPO_ROOT
 
 RULE_GROUPS = 12

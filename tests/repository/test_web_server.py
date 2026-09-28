@@ -1,38 +1,102 @@
-"""Customer path aliases are owned by the nginx config, not a Python server."""
+"""Customer path aliases are nginx behavior, checked by nginx itself."""
 from __future__ import annotations
 
+import subprocess
+import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CONF = (ROOT / "deploy" / "web" / "nginx.conf").read_text()
+CONF = ROOT / "deploy" / "web" / "nginx.conf"
+IMAGE = "nginx:1.27-alpine"
+CURL = "curlimages/curl:8.10.1"
+
+
+def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, check=False, capture_output=True, text=True, **kwargs)
 
 
 class WebAliasTests(unittest.TestCase):
-    def test_aliased_paths_match_baseline_customer_entries(self):
-        self.assertIn("location = /audit-files", CONF)
-        self.assertIn("location = /audit-files {\n        try_files /index.html =404", CONF)
-        self.assertIn("location = /addon", CONF)
-        self.assertIn("try_files /addon.html =404", CONF)
-        self.assertIn("location = /usage", CONF)
-        self.assertIn("location = /usage {\n        try_files /index.html =404", CONF)
-        self.assertIn("location = /rules", CONF)
-        self.assertIn("location = /rules {\n        try_files /index.html =404", CONF)
-        self.assertNotIn("location = /v2", CONF)
-        self.assertNotIn("try_files $uri /index.html", CONF)
+    def test_nginx_accepts_the_config_and_serves_customer_aliases(self):
+        name = "ppap-nginx-contract-" + uuid.uuid4().hex[:12]
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            html = Path(tmp)
+            html.chmod(0o755)
+            (html / "index.html").write_text("workbench")
+            (html / "addon.html").write_text("addon-page")
+            started = _run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--name",
+                    name,
+                    "-v",
+                    f"{CONF}:/etc/nginx/conf.d/default.conf:ro",
+                    "-v",
+                    f"{html}:/usr/share/nginx/html:ro",
+                    IMAGE,
+                ]
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            try:
+                syntax = _run(["docker", "exec", name, "nginx", "-t"])
+                self.assertEqual(syntax.returncode, 0, syntax.stderr)
+                self.assertEqual(_fetch(name, "/audit-files"), (200, "workbench"))
+                self.assertEqual(_fetch(name, "/usage"), (200, "workbench"))
+                self.assertEqual(_fetch(name, "/rules"), (200, "workbench"))
+                self.assertEqual(_fetch(name, "/addon"), (200, "addon-page"))
+                self.assertEqual(_redirect(name, "/audit-files/"), "/audit-files")
+                self.assertEqual(_redirect(name, "/addon/"), "/addon")
+                self.assertEqual(_redirect(name, "/usage/"), "/usage")
+                self.assertEqual(_redirect(name, "/rules/"), "/rules")
+                self.assertEqual(_fetch(name, "/missing-customer-path")[0], 404)
+                self.assertEqual(_fetch(name, "/v2")[0], 404)
+                self.assertNotIn("workbench", _fetch(name, "/missing-customer-path")[1])
+            finally:
+                _run(["docker", "rm", "-f", name])
 
-    def test_directory_aliases_redirect_without_html_suffix(self):
-        self.assertIn("location = /audit-files/", CONF)
-        self.assertIn("return 301 /audit-files$is_args$args", CONF)
-        self.assertIn("location = /addon/", CONF)
-        self.assertIn("return 301 /addon$is_args$args", CONF)
-        self.assertIn("location = /usage/", CONF)
-        self.assertIn("return 301 /usage$is_args$args", CONF)
-        self.assertIn("return 301 /rules$is_args$args", CONF)
 
-    def test_unknown_path_is_not_rewritten_to_the_workbench(self):
-        self.assertIn("try_files $uri $uri/ =404", CONF)
+def _request(name: str, path: str) -> tuple[int, str, str]:
+    completed = _run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            f"container:{name}",
+            CURL,
+            "-sS",
+            "--max-redirs",
+            "0",
+            "-D",
+            "-",
+            "-o",
+            "-",
+            f"http://127.0.0.1:4173{path}",
+        ]
+    )
+    header, _, body = completed.stdout.partition("\n\n")
+    status = 0
+    location = ""
+    for line in header.splitlines():
+        if line.startswith("HTTP/"):
+            status = int(line.split()[1])
+        if line.lower().startswith("location:"):
+            location = line.split(":", 1)[1].strip().split("?", 1)[0]
+    if status == 0:
+        raise AssertionError(completed.stderr or completed.stdout)
+    return status, body, location
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _fetch(name: str, path: str) -> tuple[int, str]:
+    status, body, _location = _request(name, path)
+    return status, body
+
+
+def _redirect(name: str, path: str) -> str:
+    status, _body, location = _request(name, path)
+    if status != 301 or not location:
+        raise AssertionError((status, location))
+    return location

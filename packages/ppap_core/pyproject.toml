@@ -1,0 +1,25 @@
+[project]
+name = "ppap-core"
+version = "0.1.0"
+description = "Shared product and audit-engine library. Not a network service."
+requires-python = "==3.12.*"
+dependencies = [
+    "pydantic>=2.10.6",
+    "pydantic-settings>=2.7.1",
+    "psycopg[binary]>=3.2.6",
+    "boto3>=1.36.16",
+    "botocore>=1.36.16",
+    "httpx>=0.28.1",
+    "openpyxl>=3.1.2",
+    "ppap-excel-audit-engine",
+]
+
+[tool.uv.sources]
+ppap-excel-audit-engine = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppap_core"]

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from baseline_exceptions import (
+from ppap_corpus_contracts.baseline_exceptions import (
     B,
     BASELINE_RULE_BEHAVIORS,
     ObservedRuleOutcome,
     behavior_matches,
     classify_v2_baseline_outcomes,
 )
-from execution_outcome import (
+from ppap_corpus_contracts.execution_outcome import (
     EXECUTION_FAILURE,
     EXECUTION_RESULT,
     MISSING_RULE,
@@ -130,7 +130,9 @@ def test_corpus_conftest_does_not_blanket_xfail_files() -> None:
     source = (Path(__file__).resolve().parents[1] / "conftest.py").read_text()
     assert "BASELINE_XFAIL_IDS" not in source
     assert "pytest.mark.xfail" not in source
-    exceptions = Path(__file__).with_name("baseline_exceptions.py").read_text()
+    import ppap_corpus_contracts.baseline_exceptions as baseline_exceptions
+
+    exceptions = Path(baseline_exceptions.__file__).read_text()
     assert "BaselineRuleBehavior" in exceptions
     assert "ExecutionOutcome" in exceptions
     assert "suggestions" not in exceptions

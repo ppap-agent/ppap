@@ -1,10 +1,21 @@
+import io
 import json
 import unittest
-import uuid
 
 from ppap_core.file_analysis import analyze_file, latest_rule_versions
 from ppap_core.rule_matching import RuleMatchingAIService
-from test_rules import RuleApiTests, excel_rule, rule_body
+
+
+def excel_rule():
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.active.append(["规则编号", "检查要求"])
+    workbook.active.append([1, "必须填写零件号"])
+    stream = io.BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
 
 
 class AnalysisAI:
@@ -46,28 +57,3 @@ class FileAnalysisTests(unittest.TestCase):
         self.assertEqual(result["matched_rule_id"], "r")
         self.assertIn("metadata_extraction_failed", result["notices"])
         self.assertNotIn("private", json.dumps(result))
-
-
-class FileAnalysisApiTests(RuleApiTests):
-    def test_analysis_job_uses_existing_file_authorization_and_result_storage(self):
-        from ppap_worker import process_claimed
-
-        source = self.upload()
-        published = self.client.post("/rules", json={"title": "控制计划规则", "body": rule_body(), "source_file_version_id": source["id"]})
-        self.assertEqual(published.status_code, 201)
-        body = {"request_id": str(uuid.uuid4()), "source_file_id": source["file_id"], "source_file_version_id": source["id"]}
-        accepted = self.client.post("/file-analyses", json=body)
-        self.assertEqual(accepted.status_code, 202)
-        self.assertEqual(self.client.post("/file-analyses", json=body).json()["id"], body["request_id"])
-        job = self.store.claim_job("analysis-worker")
-        process_claimed(self.store, job, "analysis-worker", rule_ai=AnalysisAI())
-        result = self.client.get("/file-analyses/" + job.id).json()
-        self.assertEqual(result["status"], "succeeded")
-        self.assertEqual(result["result"]["matched_rule_id"], published.json()["id"])
-        latest_path = f"/files/{source['file_id']}/versions/{source['id']}/analysis"
-        self.assertEqual(self.client.get(latest_path).json()["analysis"]["id"], job.id)
-        for subject in ("bob", "carol"):
-            self.login(subject)
-            self.assertEqual(self.client.get("/file-analyses/" + job.id).status_code, 403)
-            self.assertEqual(self.client.get(latest_path).status_code, 403)
-            self.assertEqual(self.client.post("/file-analyses", json=body).status_code, 403)

@@ -18,7 +18,6 @@ from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from store_fixture import auth_store, seed_usage_event
 
 
 def _clean_env(**extra: str):
@@ -187,7 +186,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         )
         self._env.start()
         self.settings = Settings()
-        self.store = auth_store(self.settings)
+        self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.feishu = _AddonMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))
@@ -322,7 +321,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(logged.status_code, 200)
         principal = self.store.principal_for_fixture("alice")
-        seed_usage_event(self.store, principal, "ai-item-1", 9800, True, "none", trace_id="pre-trial")
+        self.seed_usage_event(self.store, principal, "ai-item-1", 9800, True, "none", trace_id="pre-trial")
         draft = self._draft_for_imported_file()
         submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
         self.assertEqual(submitted.status_code, 201)
@@ -383,7 +382,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         ):
             settings = Settings()
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings), self.http)
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings), self.http)
         )
         response = client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(response.status_code, 400)

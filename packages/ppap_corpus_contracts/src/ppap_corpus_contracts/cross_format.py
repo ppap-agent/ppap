@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from execution_outcome import MISSING_OUTCOME, ExecutionOutcome, O
-from v2_assets_shared import FileCase, normalize_file_name
+from ppap_corpus_contracts.execution_outcome import MISSING_OUTCOME, ExecutionOutcome, O
+from ppap_corpus_contracts.v2_assets_shared import FileCase, normalize_file_name
 
 
 def pair_id_for_file_name(file_name: str) -> str:
