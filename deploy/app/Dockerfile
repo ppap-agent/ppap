@@ -16,6 +16,7 @@ RUN gcc -O2 -Wall -Wextra -Werror /tmp/legacy_doc_sandbox.c -o /usr/local/bin/pp
 
 FROM python:3.12-slim-bookworm
 COPY --from=converter-builder /usr/local/bin/ppap-local-converter-sandbox /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.9.26@sha256:9a23023be68b2ed09750ae636228e903a54a05ea56ed03a934d00fe9fbeded4b /uv /uvx /bin/
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
@@ -45,10 +46,8 @@ RUN set -eux; \
     done; \
     rm -rf /var/lib/apt/lists/*; \
     chmod +x /app/entrypoint.sh; \
-    if [ -n "$PPAP_PIP_INDEX_URL" ]; then export PIP_INDEX_URL="$PPAP_PIP_INDEX_URL"; fi; \
-    pip install --no-cache-dir --upgrade pip; \
-    pip install --no-cache-dir uv==0.9.26; \
-    UV_LINK_MODE=copy uv sync --frozen --no-dev --compile-bytecode
+    if [ -n "$PPAP_PIP_INDEX_URL" ]; then export UV_DEFAULT_INDEX="$PPAP_PIP_INDEX_URL"; fi; \
+    UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable
 
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api

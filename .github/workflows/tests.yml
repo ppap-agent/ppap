@@ -71,7 +71,7 @@ jobs:
       - name: Repository, config, and tooling contracts
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev
+          uv sync --locked
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages services tests
           node deploy/insforge/verify-config.mjs
@@ -151,7 +151,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
       - name: Canonical install
-        run: uv sync --locked --extra dev
+        run: uv sync --locked
       - name: Start service PostgreSQL fixture
         if: ${{ matrix.postgres }}
         run: |
@@ -194,7 +194,7 @@ jobs:
       - name: Schema PostgreSQL contracts
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev
+          uv sync --locked
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             up -d postgres --wait --wait-timeout 120
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
@@ -253,7 +253,7 @@ jobs:
           enable-cache: true
       - name: Canonical install
         if: ${{ matrix.mode == 'pytest' }}
-        run: uv sync --locked --extra dev
+        run: uv sync --locked
       - name: Run in-repo corpus pytest
         if: ${{ matrix.mode == 'pytest' }}
         env:
@@ -326,7 +326,7 @@ jobs:
       - name: Install Python deps and browser
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev --extra e2e
+          uv sync --locked --group e2e
           uv run --no-sync python -m playwright install chromium
       - name: Cross-owner product contracts
         env:

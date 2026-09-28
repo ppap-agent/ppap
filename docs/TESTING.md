@@ -50,7 +50,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 Repository contract：
 
 ```sh
-uv sync --locked --extra dev
+uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 node deploy/insforge/verify-config.mjs
@@ -124,7 +124,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 Product integration 使用 #100 的单次完整 bake 与隔离 Compose 生命周期：
 
 ```sh
-uv sync --locked --extra dev --extra e2e
+uv sync --locked --group e2e
 uv run --no-sync python -m playwright install chromium
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 
@@ -147,12 +147,12 @@ uv run --no-sync pytest tests/e2e
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
-PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/corpus/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。这仍是 required corpus regression，不是 live。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
+PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试镜像对同一 `uv.lock` 执行 `uv sync --frozen --no-editable`，装上默认 dev dependency group；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/corpus/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。这仍是 required corpus regression，不是 live。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
 #7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开本轮原件版本（或看到 locator-gap）、原件预览、复核、显式重审，以及从账号菜单查看用量和从主导航查看审核结果：
 
 ```sh
-uv sync --locked --extra dev --extra e2e
+uv sync --locked --group e2e
 uv run --no-sync python -m playwright install chromium
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 export COMPOSE_PROJECT_NAME=ppap-e2e

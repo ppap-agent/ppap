@@ -56,9 +56,11 @@ class ArchitectureTests(unittest.TestCase):
             )
             self.assertTrue((member / "src" / import_name / "__init__.py").is_file())
             self.assertFalse((member / import_name).exists())
-        dev = root["project"]["optional-dependencies"]["dev"]
+        self.assertNotIn("optional-dependencies", root.get("project", {}))
+        dev = root["dependency-groups"]["dev"]
         self.assertIn("ppap-corpus-contracts", dev)
         self.assertNotIn("ppap-corpus-contracts", root["project"]["dependencies"])
+        self.assertNotIn("pytest", root["dependency-groups"]["e2e"])
 
     def test_pytest_importlib_is_the_only_import_authority(self):
         options = _pyproject(ROOT / "pyproject.toml")["tool"]["pytest"]["ini_options"]
@@ -110,9 +112,14 @@ class ArchitectureTests(unittest.TestCase):
 
     def test_production_image_installs_the_workspace_without_path_bootstrap(self):
         app = (ROOT / "deploy/app/Dockerfile").read_text()
-        self.assertIn("uv sync --frozen --no-dev", app)
-        self.assertNotIn("pip install -e", app)
+        self.assertIn("ghcr.io/astral-sh/uv:0.9.26", app)
+        self.assertIn("uv sync --frozen --no-dev --no-editable", app)
+        self.assertNotIn("pip install", app)
         self.assertNotIn("PYTHONPATH", app)
+        psw = (ROOT / "tests/corpus/Dockerfile.psw").read_text()
+        self.assertIn("uv sync --project /app --frozen --no-editable", psw)
+        self.assertNotIn("pip", psw)
+        self.assertNotIn("--inexact", psw)
         bootstrap = re.compile(r"(?m)ENV\s+PYTHONPATH|^(?!\s*#).*[\"']PYTHONPATH[\"']\s*:")
         for path in ROOT.rglob("*"):
             if not path.is_file():

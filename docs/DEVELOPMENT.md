@@ -25,7 +25,7 @@ Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测
 Repository contract：
 
 ```sh
-uv sync --locked --extra dev
+uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 node deploy/insforge/verify-config.mjs
@@ -81,7 +81,7 @@ single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`�
 
 CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装语义：
 
-- Python 依赖：`uv.lock`。Repository contract / Python modules / schema / corpus 使用 `uv sync --locked --extra dev`；Product integration / Playwright E2E 另加 `--extra e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 按默认 extra 再 sync 一次。
+- Python 依赖：`uv.lock`。`dev` 是默认 dependency group，Repository contract / Python modules / schema / corpus 使用 `uv sync --locked`。Product integration / Playwright E2E 另加 `--group e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 再 sync 一次。
 - Python 解释器：`.python-version`（3.12）。`pyproject.toml` 的 `requires-python = ">=3.12"` 是兼容范围。
 - Node：`.node-version`（22）。workflow 通过 `actions/setup-node` 的 `node-version-file` 读取。
 - pnpm：`apps/web/package.json` 的 `packageManager`。`corepack enable` 后 Corepack 直接使用该字段；workflow、Web Dockerfile 和 isolated-dev Vite overlay 不再重复 `pnpm@…` 字面量。安装仍是 `pnpm install --frozen-lockfile`。
@@ -90,7 +90,7 @@ CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装�
 
 有意保留的重复（消除它们需要模板化 Dockerfile 或另做包装层）：
 
-- `deploy/app/Dockerfile` 继续用 `python:3.12-slim-bookworm`。生产安装是镜像内 `uv sync --frozen --no-dev`，不设置 `PYTHONPATH`，也不 `pip install -e`。
+- `deploy/app/Dockerfile` 继续用 `python:3.12-slim-bookworm`。uv 来自钉死 digest 的 `ghcr.io/astral-sh/uv:0.9.26`。生产安装是镜像内 `uv sync --frozen --no-dev --no-editable`，不设置 `PYTHONPATH`，也不用 pip。
 - `deploy/web/Dockerfile` 的 `node:22-alpine` 与 `deploy/isolated-dev/web-dev.yaml` 的 `node:22-bookworm` 仍写在镜像 tag 里。
 - `deploy/deep/Dockerfile` 用 npm 安装 `@xai-official/grok@1.0.40`，`npm audit signatures` 校验 registry 签名，再由 `verify-grok.mjs` 固定解压后的 guest 二进制。
 

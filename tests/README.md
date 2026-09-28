@@ -21,7 +21,7 @@ CI consumes these physical owners. It does not maintain a second test manifest.
 Repository contract:
 
 ```sh
-uv sync --locked --extra dev
+uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 node deploy/insforge/verify-config.mjs
@@ -87,7 +87,7 @@ docker run --rm \
   pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
-Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF / scanned variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix.
+Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF / scanned variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix. Its image starts from the production worker install and runs `uv sync --frozen --no-editable` so the default dev dependency group comes from the same lock.
 
 ## Schema
 
@@ -117,7 +117,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 Browser E2E uses the same canonical baked API/Worker/Web images in isolated-dev and runs:
 
 ```sh
-uv sync --locked --extra dev --extra e2e
+uv sync --locked --group e2e
 uv run --no-sync python -m playwright install chromium
 uv run --no-sync pytest tests/e2e
 ```

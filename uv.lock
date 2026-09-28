@@ -462,7 +462,7 @@ dependencies = [
     { name = "ppap-worker" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "ppap-corpus-contracts" },
     { name = "pytest" },
@@ -474,14 +474,17 @@ e2e = [
 
 [package.metadata]
 requires-dist = [
-    { name = "playwright", marker = "extra == 'e2e'" },
     { name = "ppap-api", editable = "services/api" },
-    { name = "ppap-corpus-contracts", marker = "extra == 'dev'", editable = "packages/ppap_corpus_contracts" },
     { name = "ppap-worker", editable = "services/worker" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = "==7.4.3" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==0.21.1" },
 ]
-provides-extras = ["dev", "e2e"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ppap-corpus-contracts", editable = "packages/ppap_corpus_contracts" },
+    { name = "pytest", specifier = "==7.4.3" },
+    { name = "pytest-asyncio", specifier = "==0.21.1" },
+]
+e2e = [{ name = "playwright" }]
 
 [[package]]
 name = "ppap-api"
