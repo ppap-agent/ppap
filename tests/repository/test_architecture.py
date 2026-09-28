@@ -181,6 +181,8 @@ class ArchitectureTests(unittest.TestCase):
         app = (ROOT / "deploy/app/Dockerfile").read_text()
         self.assertIn("ghcr.io/astral-sh/uv:0.9.26", app)
         self.assertIn("uv sync --frozen --no-dev --no-editable", app)
+        self.assertIn("cd /;", app)
+        self.assertIn("import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker", app)
         self.assertNotIn("pip install", app)
         self.assertNotIn("PYTHONPATH", app)
         psw = (ROOT / "tests/corpus/Dockerfile.psw").read_text()
@@ -202,6 +204,20 @@ class ArchitectureTests(unittest.TestCase):
         guest = GUEST_ENV.read_text()
         self.assertIn("Guest interpreter boundary", guest)
         self.assertIn('"PYTHONPATH"', guest)
+
+    def test_distribution_closure_ci_uses_wheels_and_clean_environments(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        script = (ROOT / "scripts/validate_distribution.py").read_text()
+        section = workflow.split("  distribution_closure:", 1)[1].split("\n  python_modules:", 1)[0]
+        self.assertIn("scripts/validate_distribution.py --member", section)
+        self.assertIn("--prove-missing-dependency", section)
+        self.assertNotIn("uv sync", section)
+        self.assertIn("uv build", script)
+        self.assertIn("uv venv", script)
+        self.assertIn("uv pip", script)
+        self.assertIn('cwd="/tmp"', script)
+        self.assertNotIn("sys.path.", script)
+        self.assertIn("distribution_closure", workflow.split("  ci_gate:", 1)[1])
 
     def test_owner_ci_discovers_physical_test_directories(self):
         # actionlint checks workflow syntax. It does not know that each

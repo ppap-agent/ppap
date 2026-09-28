@@ -47,7 +47,9 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     chmod +x /app/entrypoint.sh; \
     if [ -n "$PPAP_PIP_INDEX_URL" ]; then export UV_DEFAULT_INDEX="$PPAP_PIP_INDEX_URL"; fi; \
-    UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable
+    UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable; \
+    cd /; \
+    /app/.venv/bin/python -c "import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker"
 
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api
