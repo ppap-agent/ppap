@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type FindingStatus, type Round} from './api'
+import {dateLabel, executionLabels, resultLabels, analysisModeLabels, request, type FindingStatus, type Round, type RoundList} from './api'
 import {productHref} from './navigation/route'
 import {ExecutionBadge} from './audit/StatusBadge'
 import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
@@ -67,7 +67,7 @@ export default function HistoryView() {
     setBusy(true)
     setError('')
     try {
-      const result = await request<{rounds: Round[]; next_offset: number | null}>('/rounds?' + new URLSearchParams({
+      const result = await request<RoundList>('/rounds?' + new URLSearchParams({
         q: filters.query, execution: filters.execution, unreviewed: String(filters.unreviewed), offset: String(reset ? 0 : next || 0),
       }))
       setRows(current => reset ? result.rounds : current.concat(result.rounds))

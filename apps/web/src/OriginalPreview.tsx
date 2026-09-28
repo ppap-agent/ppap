@@ -1,5 +1,5 @@
 import {forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState} from 'react'
-import {apiUrl, originalUrl, request, type Material, type Finding, type SemanticSource} from './api'
+import {apiUrl, originalUrl, request, type Material, type Finding, type OfficePreviewResponse, type PreviewResponse, type SemanticSource} from './api'
 import {parseExcerptCells, sourceLocation} from './helpers'
 import OfficePreview from './OfficePreview'
 import Help from './Help'
@@ -10,13 +10,9 @@ import {Input} from '@/components/ui/input'
 import {NativeSelect} from '@/components/ui/native-select'
 import {CodeText, ExcerptCell, ExcerptCells, ExcerptList, ExcerptRow, Pane, PlainText, PreviewFrame} from './ui/domain'
 
-interface Excerpt {
-  available: boolean; text?: string; notice: string; sheets?: string[]; sheet?: string
-  rows?: {number: number; text: string}[]; start_row?: number; end_row?: number; next_row?: number | null
-}
-
-interface OfficePreviewConfig {
-  available: boolean
+type Excerpt = PreviewResponse
+type OfficePreviewConfig = OfficePreviewResponse & {
+  available: true
   script_url: string
   config: Record<string, unknown>
 }
@@ -43,16 +39,23 @@ function officePreviewCacheExpiry(value: OfficePreviewConfig) {
   return Math.min(now + OFFICE_PREVIEW_CACHE_MS, configuredExpiry)
 }
 
-async function readOfficePreview(file: Material, roundId?: string): Promise<OfficePreviewConfig | null> {
+async function readOfficePreview(file: Material, roundId?: string): Promise<OfficePreviewResponse | null> {
   const key = officePreviewCacheKey(file, roundId)
   const cached = officePreviewCache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.value
   if (cached) officePreviewCache.delete(key)
 
-  const result = await request<OfficePreviewConfig>(`/files/${file.file_id}/versions/${file.file_version_id}/office${roundId ? `?round_id=${encodeURIComponent(roundId)}` : ''}`)
-  if (result.available) {
-    const expiresAt = officePreviewCacheExpiry(result)
-    if (expiresAt > Date.now()) officePreviewCache.set(key, {value: result, expiresAt})
+  const result = await request<OfficePreviewResponse>(`/files/${file.file_id}/versions/${file.file_version_id}/office${roundId ? `?round_id=${encodeURIComponent(roundId)}` : ''}`)
+  if (result.available && result.script_url && result.config) {
+    const ready: OfficePreviewConfig = {
+      ...result,
+      available: true,
+      script_url: result.script_url,
+      config: result.config,
+    }
+    const expiresAt = officePreviewCacheExpiry(ready)
+    if (expiresAt > Date.now()) officePreviewCache.set(key, {value: ready, expiresAt})
+    return ready
   }
   return result
 }
@@ -75,7 +78,7 @@ function readPosition(key: string): PreviewPosition | null {
 export interface OriginalPreviewHandle {findEvidence: () => Promise<void>}
 
 const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roundId?: string; finding?: Finding; source?: SemanticSource | null}>(function OriginalPreview({file, roundId, finding, source}, ref) {
-  const [excerpt, setExcerpt] = useState<Excerpt | null>(null)
+  const [excerpt, setExcerpt] = useState<PreviewResponse | null>(null)
   const [sheet, setSheet] = useState('')
   const [startRow, setStartRow] = useState(1)
   const [search, setSearch] = useState('')
@@ -141,7 +144,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
     const lookup = ++excerptRevision.current
     try {
       const href = originalUrl(target, roundRef.current)
-      const result = await request<Excerpt>(href.slice(apiUrl.length).replace(/\/download$/, '/preview'))
+      const result = await request<PreviewResponse>(href.slice(apiUrl.length).replace(/\/download$/, '/preview'))
       if (current !== revision.current || lookup !== excerptRevision.current) return null
       setExcerpt(result)
       setText(result.available ? result.text || '' : '')
@@ -160,7 +163,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
     setSearching(true)
     try {
       const href = originalUrl(target, roundRef.current)
-      const result = await request<Excerpt>(href.slice(apiUrl.length).replace(/\/download$/, '/preview') + '?' + new URLSearchParams({
+      const result = await request<PreviewResponse>(href.slice(apiUrl.length).replace(/\/download$/, '/preview') + '?' + new URLSearchParams({
         sheet: nextSheet,
         start_row: String(Math.max(1, Math.min(1048576, Number(nextStart) || 1))),
       }))
@@ -302,7 +305,7 @@ const OriginalPreview = forwardRef<OriginalPreviewHandle, {file?: Material; roun
           try { result = await readOfficePreview(target, roundId) }
           catch { /* Keep the authorized text preview available. */ }
           if (current !== revision.current) return
-          if (result?.available) setOffice(result)
+          if (result?.available && result.script_url && result.config) setOffice({...result, available: true, script_url: result.script_url, config: result.config})
           const saved = readPosition(storageKey)
           if (saved?.textMode) {
             setTextMode(true)
