@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import unittest
+
+import pytest
 from unittest.mock import patch
 
 
@@ -39,6 +41,10 @@ def _json_logger() -> io.StringIO:
 
 
 class LogTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def tearDown(self):
         reset(bind(request_id="", tenant_id="", round_id="", job_id="", attempt=""))
         LOGGER.handlers.clear()

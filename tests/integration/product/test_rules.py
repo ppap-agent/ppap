@@ -5,6 +5,8 @@ import io
 import json
 import os
 import unittest
+
+import pytest
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
@@ -95,6 +97,10 @@ class RuleParsingTests(unittest.TestCase):
 
 
 class RuleApiTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def setUp(self):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
