@@ -5,6 +5,7 @@ import json
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from ppap_core.identity import can_read
+from ppap_api import web_contract as wc
 from ppap_core.feishu_writeback import (
     FeishuWritebackError, report_blocks, round_return_url,
     create_report_document, append_report_blocks,
@@ -28,14 +29,14 @@ def register_report_routes(app, store, session_of, http, settings):
         fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         return session, blocks, fingerprint, None
 
-    @app.get('/integrations/feishu/rounds/{round_id}/report')
+    @app.get('/integrations/feishu/rounds/{round_id}/report', response_model=wc.ReportEnvelope)
     def get_report(round_id: str, request: Request):
         session, blocks, fingerprint, denied = prepare(round_id, request)
         if denied is not None:
             return denied
         return {"report": store.get_report(session.principal, round_id, fingerprint)}
 
-    @app.post('/integrations/feishu/rounds/{round_id}/report')
+    @app.post('/integrations/feishu/rounds/{round_id}/report', response_model=wc.ReportEnvelope)
     def create_report(round_id: str, request: Request):
         session, blocks, fingerprint, denied = prepare(round_id, request)
         if denied is not None:

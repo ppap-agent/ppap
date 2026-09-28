@@ -2,11 +2,12 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.files import ObjectMissing, attachment_content_disposition, safe_content_type
 from ppap_core.identity import can_read
+from ppap_api import web_contract as wc
 from ppap_core.office_preview import preview_config, read_ticket
 
 
 def register_office_routes(app, store, principal_of, settings):
-    @app.get('/files/{file_id}/versions/{version_id}/office')
+    @app.get('/files/{file_id}/versions/{version_id}/office', response_model=wc.OfficePreviewResponse)
     def office_config(file_id: str, version_id: str, request: Request, round_id: str | None = None):
         principal = principal_of(request)
         if not principal:
