@@ -87,8 +87,8 @@ class RuleItem(TypedDict):
     type_of_rule: str
 
 
-class RuleBody(TypedDict):
-    kind: str
+class EngineRuleBody(TypedDict):
+    kind: Literal["engine"]
     type: str
     rule_profile: str
     customers: list[str]
@@ -97,24 +97,23 @@ class RuleBody(TypedDict):
     rules: list[RuleItem]
 
 
+class PresenceRuleBody(TypedDict):
+    kind: Literal["presence"]
+
+
 class RuleDetail(TypedDict):
     id: str
     title: str
-    kind: str
     created_at: str
-    body: RuleBody
-    source_file_id: str
-    source_file_version_id: str
-    type: NotRequired[str]
+    body: EngineRuleBody | PresenceRuleBody
+    source_file_id: str | None
+    source_file_version_id: str | None
     predecessor_id: NotRequired[str | None]
-    customers: NotRequired[list[str]]
-    models: NotRequired[list[str]]
-    parts: NotRequired[list[str]]
 
 
 class RuleCandidate(TypedDict):
     title: str
-    body: RuleBody
+    body: EngineRuleBody
     source_file_version_id: str
 
 
@@ -135,7 +134,7 @@ class RuleParseRequest(TypedDict):
 
 class RulePublishRequest(TypedDict):
     title: str
-    body: RuleBody
+    body: EngineRuleBody
     source_file_version_id: str
     predecessor_id: NotRequired[str | None]
 

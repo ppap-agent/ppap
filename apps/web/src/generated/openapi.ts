@@ -277,17 +277,20 @@ export interface components {
       "title": string;
       "type"?: string;
     };
-    "RuleBody": {
+    "EngineRuleBody": {
       "customers": Array<string>;
-      "kind": string;
+      "kind": "engine";
       "models": Array<string>;
       "parts": Array<string>;
       "rule_profile": string;
       "rules": Array<components["schemas"]["RuleItem"]>;
       "type": string;
     };
+    "PresenceRuleBody": {
+      "kind": "presence";
+    };
     "RuleCandidate": {
-      "body": components["schemas"]["RuleBody"];
+      "body": components["schemas"]["EngineRuleBody"];
       "source_file_version_id": string;
       "title": string;
     };
@@ -303,18 +306,13 @@ export interface components {
       "status"?: "ERR" | "NA" | "NG" | "PASS" | "UNABLE";
     };
     "RuleDetail": {
-      "body": components["schemas"]["RuleBody"];
+      "body": components["schemas"]["EngineRuleBody"] | components["schemas"]["PresenceRuleBody"];
       "created_at": string;
-      "customers"?: Array<string>;
       "id": string;
-      "kind": string;
-      "models"?: Array<string>;
-      "parts"?: Array<string>;
       "predecessor_id"?: null | string;
-      "source_file_id": string;
-      "source_file_version_id": string;
+      "source_file_id": null | string;
+      "source_file_version_id": null | string;
       "title": string;
-      "type"?: string;
     };
     "RuleItem": {
       "category": string;
@@ -338,7 +336,7 @@ export interface components {
       "source_file_version_id": string;
     };
     "RulePublishRequest": {
-      "body": components["schemas"]["RuleBody"];
+      "body": components["schemas"]["EngineRuleBody"];
       "predecessor_id"?: null | string;
       "source_file_version_id": string;
       "title": string;
