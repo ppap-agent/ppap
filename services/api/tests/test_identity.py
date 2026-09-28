@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import unittest
+
+import pytest
 from unittest.mock import patch
 
 
@@ -141,6 +143,10 @@ class FeishuParseTests(unittest.TestCase):
 
 
 class HttpAuthTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def setUp(self):
         self._env = _clean_env(
             FEISHU_APP_ID="cli_test",

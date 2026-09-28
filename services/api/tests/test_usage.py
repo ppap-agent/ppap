@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import unittest
+
+import pytest
 from unittest.mock import patch
 
 
@@ -23,6 +25,11 @@ def _clean_env(**extra: str):
 
 
 class UsageReadTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory, seed_usage_event_factory):
+        self.auth_store = auth_store_factory
+        self.seed_usage_event = seed_usage_event_factory
+
     def setUp(self):
         self._env = _clean_env(PPAP_BUILD_SHA="a" * 40)
         self._env.start()
