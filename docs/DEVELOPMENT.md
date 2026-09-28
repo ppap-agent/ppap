@@ -24,6 +24,8 @@ Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测
 
 Repository contract：
 
+TKE 的 Kubernetes authority 是 `deploy/tke/kustomization.yaml`。CI 与真实 apply 都通过 `deploy/tke/render-current.sh` 得到同一 rendered object stream；CI 对它执行 kubeconform，`apply-current.sh` 对同一 stream 执行 server-side dry-run 后再 apply。edition proxy 的 nginx 内容只存在于 `deploy/tke/edition-proxy.conf`，ConfigMap 由 Kustomize `configMapGenerator` 生成。
+
 ```sh
 uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'

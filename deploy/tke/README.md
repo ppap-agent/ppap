@@ -11,7 +11,9 @@ Do not change the load balancer ID, TLS secret, or `ppap.api.xixifusi.online`.
 
 TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy` stays NodePort.
 
-Validation renders `kustomization.yaml` with Kustomize and checks the result with kubeconform. Apply still uses the commands below.
+Validation and deployment consume the same rendered object stream from `deploy/tke/render-current.sh`. That script runs the pinned Kustomize 5.6.0 image against this directory. CI pipes the render to kubeconform; deployment first sends the same render through Kubernetes server-side dry-run and then applies that exact stream.
+
+`edition-proxy.conf` is the only nginx configuration authority. `kustomization.yaml` generates the ConfigMap with `configMapGenerator`; the generated name hash updates the Deployment volume reference and rolls the proxy when the config changes.
 
 ## Apply current stack
 
@@ -19,12 +21,10 @@ Secret `ppap-current` is not in git. Create it once from the production env file
 
 ```sh
 export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"
-kubectl -n ppap-test create configmap ppap-current-migrations \
-  --from-file=migrations --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n ppap-test apply -f deploy/tke/current.yaml
-# after postgres/silo/api/web are Ready:
-kubectl -n ppap-test apply -f deploy/tke/edition-proxy.yaml
+./deploy/tke/apply-current.sh
 ```
+
+`apply-current.sh` keeps the existing migration ConfigMap as a prerequisite payload until #138 changes migration ordering authority. All workload objects, Services, PVCs, application ConfigMap, and edition-proxy objects are rendered from the canonical Kustomize target. The script performs `kubectl apply --dry-run=server` before the real apply, then waits for the existing Deployments and init Jobs and verifies the expected Services.
 
 No `nodeSelector`. API, Worker, Web, and Deep images must use the same current Git SHA; do not apply the manifest while any referenced image tag is missing. A Deep-only change does not require deleting or re-running the DB/bucket init Jobs.
 
