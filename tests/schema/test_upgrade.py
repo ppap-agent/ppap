@@ -1,4 +1,4 @@
-"""Upgrade an empty database and the previous schema to latest via container psql."""
+"""Upgrade empty and previous databases through the canonical migration runner."""
 from __future__ import annotations
 
 import unittest
@@ -12,28 +12,23 @@ class SchemaUpgradeTests(unittest.TestCase):
     def _schema_support(self, schema_tools):
         self.schema = schema_tools
 
-    def test_migration_files_are_forward_only(self):
+    def test_numbered_files_are_the_only_ordering_authority(self):
         versions = [path.name for path in self.schema.migration_files()]
         self.assertGreaterEqual(len(versions), 2)
         self.assertEqual(versions, sorted(versions))
         self.assertEqual(self.schema.latest_version(), versions[-1])
         self.assertEqual(self.schema.previous_version(), versions[-2])
         self.assertTrue(all(name.endswith(".sql") for name in versions))
-        apply = (self.schema.MIGRATIONS / "apply.sql").read_text()
-        for name in versions:
-            self.assertIn(f"\\ir {name}", apply)
-        self.assertEqual(
-            self.schema.sql_file_in_container(str(self.schema.MIGRATIONS / "apply.sql")),
-            "/migrations/apply.sql",
-        )
-        self.assertEqual(
-            self.schema.container_psql_args(
-                ("-f", str(self.schema.MIGRATIONS / "apply.sql"), "-Atc", "SELECT 1")
-            ),
-            ["-f", "/migrations/apply.sql", "-Atc", "SELECT 1"],
-        )
+        self.assertFalse((self.schema.MIGRATIONS / "apply.sql").exists())
 
-    def test_empty_and_previous_schema_reach_latest(self):
+        runner = (self.schema.MIGRATIONS / "apply.sh").read_text()
+        self.assertIn("LC_ALL=C", runner)
+        self.assertIn("/migrations/[0-9][0-9][0-9][0-9]_*.sql", runner)
+        self.assertIn("psql -d \"$PPAP_PG_DATABASE\" -v ON_ERROR_STOP=1 -f \"$migration\"", runner)
+        for name in versions:
+            self.assertNotIn(name, runner)
+
+    def test_empty_and_previous_schema_reach_latest_through_shared_runner(self):
         self.schema.require_postgres()
         versions = [path.name for path in self.schema.migration_files()]
         empty = "ppap_schema_empty_" + uuid.uuid4().hex[:8]
@@ -50,29 +45,12 @@ class SchemaUpgradeTests(unittest.TestCase):
                     ),
                     f"create {name}",
                 )
-            apply = str(self.schema.MIGRATIONS / "apply.sql")
-            self.schema.require(
-                self.schema.psql(
-                    self.schema.migrator_user(),
-                    self.schema.migrator_password(),
-                    empty,
-                    "-f",
-                    apply,
-                ),
-                "apply empty",
-            )
+
+            self.schema.require(self.schema.apply(empty), "apply empty")
             self.assertEqual(self.schema.applied(empty), versions)
-            self.schema.require(
-                self.schema.psql(
-                    self.schema.migrator_user(),
-                    self.schema.migrator_password(),
-                    empty,
-                    "-f",
-                    apply,
-                ),
-                "re-apply empty",
-            )
+            self.schema.require(self.schema.apply(empty), "re-apply empty")
             self.assertEqual(self.schema.applied(empty), versions)
+
             for name in versions[:-1]:
                 self.schema.require(
                     self.schema.psql(
@@ -82,20 +60,13 @@ class SchemaUpgradeTests(unittest.TestCase):
                         "-f",
                         str(self.schema.MIGRATIONS / name),
                     ),
-                    f"apply {name}",
+                    f"prepare previous schema with {name}",
                 )
             self.assertEqual(self.schema.applied(previous), versions[:-1])
-            self.schema.require(
-                self.schema.psql(
-                    self.schema.migrator_user(),
-                    self.schema.migrator_password(),
-                    previous,
-                    "-f",
-                    str(self.schema.MIGRATIONS / versions[-1]),
-                ),
-                "apply latest onto previous",
-            )
+
+            self.schema.require(self.schema.apply(previous), "upgrade previous")
             self.assertEqual(self.schema.applied(previous), versions)
+
             tables = self.schema.psql(
                 self.schema.migrator_user(),
                 self.schema.migrator_password(),

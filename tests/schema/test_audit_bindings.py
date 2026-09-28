@@ -34,7 +34,7 @@ class AuditDatabaseCase(unittest.TestCase):
                     break
                 self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
         else:
-            self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "apply.sql")), "apply audit schema")
+            self.schema.require(self.schema.apply(self.database), "apply audit schema")
         self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=self.schema.migrator_user(), pg_migrator_password=self.schema.migrator_password())
         self.store = build_product_store(self.settings, objects=self.memory_objects_type())
         self.store.seed_isolated_dev()
@@ -189,7 +189,7 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
             conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
         for _ in range(2):
             self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
-        self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
+        self.schema.require(self.schema.apply(self.database), "upgrade to current before using current store")
         loaded = self.store.get_round(round_id)
         by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
         self.assertEqual(by_id[target.id]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})

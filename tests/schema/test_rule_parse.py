@@ -28,7 +28,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]
         self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self.schema.migrator_user()}"), "create isolated rule parse DB")
         try:
-            self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), database, "-f", str(self.schema.MIGRATIONS / "apply.sql")), "apply rule parse schema")
+            self.schema.require(self.schema.apply(database), "apply rule parse schema")
             settings = Settings(
                 pg_database=database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")),
                 pg_migrator_user=self.schema.migrator_user(), pg_migrator_password=self.schema.migrator_password(),
