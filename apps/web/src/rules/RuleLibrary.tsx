@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {dateLabel, request, type Rule} from '../api'
+import {dateLabel, request, type Rule, type RulesList} from '../api'
 import {latestRules} from '../helpers'
 import {productHref, type ReturnTarget} from '../navigation/route'
 import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
@@ -46,7 +46,7 @@ export default function RuleLibrary({returnTo, returnLabel}: {returnTo?: ReturnT
     let active = true
     setBusy(true)
     setError('')
-    void request<{rules: Rule[]}>('/rules')
+    void request<RulesList>('/rules')
       .then(result => { if (active) setRules(result.rules) })
       .catch(caught => { if (active) setError(caught instanceof Error ? caught.message : '无法读取规则') })
       .finally(() => { if (active) setBusy(false) })

@@ -3,7 +3,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import {request, type Finding, type Round, type SemanticSource} from '../api'
+import {request, type Finding, type Round, type SemanticSource, type WritebackResponse} from '../api'
 import {matchesFilter, parseWorkspacePosition, reviewJudgments, workspaceStorageKey} from '../helpers'
 import {parseProductRoute} from '../navigation/route'
 import type {OriginalPreviewHandle} from '../OriginalPreview'
@@ -259,7 +259,7 @@ export function useRoundReview({
     const current = roundRef.current
     if (!current) return
     await action(async () => {
-      const result = await request<{inserted?: boolean}>(`/integrations/feishu/rounds/${current.id}/writeback`, 'POST', {})
+      const result = await request<WritebackResponse>(`/integrations/feishu/rounds/${current.id}/writeback`, 'POST', {})
       setMessage(result.inserted ? '已写回飞书文档。' : '未写回。')
     })
   }

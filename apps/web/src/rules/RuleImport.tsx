@@ -1,5 +1,5 @@
 import {useEffect, useReducer, useRef, useState, type ChangeEvent} from 'react'
-import {originalUrl, request, upload, type Job, type Material} from '../api'
+import {originalUrl, request, upload, type Material, type RuleParseJob, type RuleTypes} from '../api'
 import {Modal, LockedFields, ReportBlock} from '../ui/domain'
 import {productHref, type ReturnTarget} from '../navigation/route'
 import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
@@ -58,7 +58,7 @@ export default function RuleImport({
       }
     }
     window.addEventListener('beforeunload', guardLeave)
-    void request<{types: string[]}>('/rule-types')
+    void request<RuleTypes>('/rule-types')
       .then(result => { if (!disposed.current) setTypes(result.types) })
       .catch(caught => {
         if (!disposed.current) send({type: 'catalog-failed', message: caught instanceof TypeError ? '无法读取规则类型，请刷新重试。' : caught instanceof Error ? caught.message : '无法读取规则类型'})
@@ -80,10 +80,15 @@ export default function RuleImport({
     return next
   }
 
-  function jobError(job: Job<Candidate>) {
+  function jobError(job: RuleParseJob) {
     const result = job.result
     if (result && typeof result === 'object' && 'error' in result && result.error) return String(result.error)
     return undefined
+  }
+
+  function candidateResult(job: RuleParseJob): Candidate | undefined {
+    const result = job.result
+    return result && !('error' in result) ? result : undefined
   }
 
   function updateParseUrl(id: string) {
@@ -99,17 +104,17 @@ export default function RuleImport({
     send({type: 'edit', candidate: candidateNext})
   }
 
-  function observe(id: string, job: Job<Candidate>) {
+  function observe(id: string, job: RuleParseJob) {
     const next = send({
       type: 'observed',
-      job: {id, status: job.status, result: job.result, error: jobError(job)},
+      job: {id, status: job.status, result: candidateResult(job), error: jobError(job)},
     })
     if (next.kind === 'parsing') timer.current = setTimeout(() => { void poll(id) }, 2000)
   }
 
   async function poll(id: string) {
     try {
-      const job = await request<Job<Candidate>>(`/rules/parse/${id}`)
+      const job = await request<RuleParseJob>(`/rules/parse/${id}`)
       if (disposed.current) return
       observe(id, job)
     } catch {
@@ -126,7 +131,7 @@ export default function RuleImport({
     if (started === previous || started.kind !== 'uploading') return
     try {
       const uploaded = await upload(file, 'reference')
-      const job = await request<Job<Candidate>>('/rules/parse', 'POST', {
+      const job = await request<RuleParseJob>('/rules/parse', 'POST', {
         request_id: crypto.randomUUID(),
         source_file_id: uploaded.file_id,
         source_file_version_id: uploaded.file_version_id,
@@ -149,7 +154,7 @@ export default function RuleImport({
     const reading = current.kind === 'parsing' && current.jobId === id ? current : send({type: 'read-back'})
     if (reading.kind !== 'parsing' || reading.jobId !== id) return
     try {
-      const job = await request<Job<Candidate> & {source_file_id: string; source_file_version_id: string; document_type: string}>(`/rules/parse/${id}`)
+      const job = await request<RuleParseJob>(`/rules/parse/${id}`)
       if (disposed.current) return
       const source = job.source_file_id && job.source_file_version_id
         ? {file_id: job.source_file_id, file_version_id: job.source_file_version_id, original_filename: '规则原件'}
@@ -166,7 +171,7 @@ export default function RuleImport({
     const started = send({type: 'begin-rerun'})
     if (started === previous || started.kind !== 'uploading' || !started.source) return
     try {
-      const job = await request<Job<Candidate>>('/rules/parse', 'POST', {
+      const job = await request<RuleParseJob>('/rules/parse', 'POST', {
         request_id: crypto.randomUUID(),
         source_file_id: started.source.file_id,
         source_file_version_id: started.source.file_version_id,

@@ -105,7 +105,7 @@ export async function upload(file: File, role: Material['role']): Promise<Materi
     if (!(error instanceof TypeError)) throw error
     let ready = false
     try {
-      ready = (await request<{status: string}>(path)).status === 'ready'
+      ready = (await request<FileVersion>(path)).status === 'ready'
     } catch {
       // The readback failed too, so the finalization result is unknown.
     }
