@@ -29,15 +29,18 @@ docker stop isolated-dev-onlyoffice-1
 ./deploy/remote-dev/run.sh up
 ```
 
+`run.sh` resolves the current git SHA into `PPAP_BUILD_SHA`, builds the API/Web images through the repository `docker-bake.hcl`, then starts Compose with `--no-build`. Remote Compose does not define a second build graph.
+
 For live React and Python source reload, use
-`./deploy/remote-dev/run.sh up-live` instead. It reuses the isolated-dev Vite overlay; dependency changes
-still require rebuilding the API image.
+`./deploy/remote-dev/run.sh up-live` instead. It reuses the isolated-dev Vite overlay; dependency changes are picked up by rerunning the script, which rebuilds the canonical Bake targets.
 
 Open <http://127.0.0.1:4173/>. Keep the script running; Ctrl-C removes the
 remote-dev containers and closes all tunnels. To restore the isolated stack:
 
 ```sh
-docker compose -f deploy/isolated-dev/compose.yaml up -d --wait
+export PPAP_BUILD_SHA="${PPAP_BUILD_SHA:-local}"
+docker buildx bake
+docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait
 ```
 
 `run.sh` makes two localhost-only `kubectl port-forward` connections for
