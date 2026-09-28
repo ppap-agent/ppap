@@ -45,7 +45,7 @@ def excel_rule():
 
 class RuleParsingTests(unittest.TestCase):
     def test_excel_rules_use_real_extraction_and_preserve_metadata(self):
-        from ppap_core.rules import parse_rule_file
+        from ppap_application import parse_rule_file
 
         ai = FakeRuleAI()
         body = parse_rule_file("控制计划规则.xlsx", excel_rule(), ai=ai)
@@ -58,7 +58,7 @@ class RuleParsingTests(unittest.TestCase):
 
     def test_word_rules_use_the_actual_word_extractor(self):
         from docx import Document
-        from ppap_core.rules import parse_rule_file
+        from ppap_application import parse_rule_file
 
         document = Document()
         document.add_paragraph("控制计划规则：必须填写零件号")
@@ -71,7 +71,8 @@ class RuleParsingTests(unittest.TestCase):
         self.assertIn("控制计划规则：必须填写零件号", ai.requests[-1]["user_prompt"])
 
     def test_json_import_and_parse_failures_do_not_make_empty_professional_rules(self):
-        from ppap_core.rules import RuleParseError, parse_rule_file
+        from ppap_application import parse_rule_file
+        from ppap_core.rules import RuleParseError
 
         ai = FakeRuleAI()
         self.assertEqual(parse_rule_file("rules.json", json.dumps(rule_body()).encode(), ai=ai), rule_body())
@@ -82,7 +83,8 @@ class RuleParsingTests(unittest.TestCase):
                     parse_rule_file("控制计划.md", b"rules", ai=FakeRuleAI(response))
 
     def test_long_input_is_not_silently_truncated(self):
-        from ppap_core.rules import RuleParseError, parse_rule_file
+        from ppap_application import parse_rule_file
+        from ppap_core.rules import RuleParseError
 
         ai = FakeRuleAI()
         with self.assertRaisesRegex(RuleParseError, "rule_document_too_long"):

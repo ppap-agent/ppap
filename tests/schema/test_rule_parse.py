@@ -12,7 +12,7 @@ class RuleParseDatabaseTests(unittest.TestCase):
     def test_idempotent_acceptance_unknown_lease_late_result_and_current_source_authorization(self):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
-        from ppap_api.store import AuthStore
+        from ppap_product_store import AuthStore
         from ppap_core.db import connect
         from ppap_core.settings import Settings
         from ppap_worker import process_claimed

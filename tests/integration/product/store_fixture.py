@@ -5,7 +5,8 @@ import uuid
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from ppap_api.store import AuthStore
+from ppap_application import build_product_store
+from ppap_product_store import AuthStore
 from ppap_core.db import connect
 from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
@@ -80,7 +81,7 @@ def auth_store(
     settings.pg_migrator_password = ISOLATED_DEV_SECRET
     if reset:
         reset_product_database(settings)
-    return AuthStore(settings, objects or MemoryObjects(), role=role)
+    return build_product_store(settings, objects=objects or MemoryObjects(), role=role)
 
 
 def seed_usage_event(
