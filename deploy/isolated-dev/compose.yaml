@@ -100,12 +100,6 @@ services:
 
   api:
     image: ppap-api:${PPAP_BUILD_SHA:-local}
-    build:
-      context: ../..
-      dockerfile: deploy/app/Dockerfile
-      args:
-        PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
-        PPAP_SERVICE: api
     depends_on:
       init-db:
         condition: service_completed_successfully
@@ -151,12 +145,6 @@ services:
 
   worker:
     image: ppap-worker:${PPAP_BUILD_SHA:-local}
-    build:
-      context: ../..
-      dockerfile: deploy/app/Dockerfile
-      args:
-        PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
-        PPAP_SERVICE: worker
     depends_on:
       init-db:
         condition: service_completed_successfully
@@ -188,11 +176,6 @@ services:
 
   web:
     image: ppap-web:${PPAP_BUILD_SHA:-local}
-    build:
-      context: ../..
-      dockerfile: deploy/web/Dockerfile
-      args:
-        PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
     depends_on:
       api:
         condition: service_healthy

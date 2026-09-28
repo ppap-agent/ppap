@@ -79,6 +79,7 @@ jobs:
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
           docker buildx bake --print >/dev/null
           docker buildx bake --check
+          node scripts/verify-container-graph.mjs
           curl -fsSL -o /tmp/actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
           echo "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757  /tmp/actionlint.tar.gz" | sha256sum -c
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
@@ -404,7 +405,7 @@ jobs:
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
           uv run --no-sync pytest tests/integration/product
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
-      - name: Bake api, worker, and web images
+      - name: Bake canonical api, worker, and web images
         run: |
           set -euo pipefail
           docker buildx bake
@@ -413,6 +414,12 @@ jobs:
             "ppap-worker:${PPAP_BUILD_SHA}" \
             "ppap-web:${PPAP_BUILD_SHA}" \
             >/dev/null
+          test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-api:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-worker:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-api:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-worker:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
       - name: Production runtime and backup
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_PROD }}

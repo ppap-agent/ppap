@@ -17,6 +17,8 @@ need() {
 preflight() {
   need kubectl
   need docker
+  docker compose version >/dev/null
+  docker buildx version >/dev/null
   need jq
   need ssh
   need ssh-keygen
@@ -64,7 +66,7 @@ load_remote_settings() {
   export PPAP_REMOTE_S3_BUCKET="$(config_value PPAP_S3_BUCKET)"
   export PPAP_REMOTE_S3_ACCESS_KEY="$(secret_value PPAP_S3_ACCESS_KEY)"
   export PPAP_REMOTE_S3_SECRET_KEY="$(secret_value PPAP_S3_SECRET_KEY)"
-  export PPAP_REMOTE_BUILD_SHA="$(git -C "$repo_dir" rev-parse HEAD)"
+  export PPAP_BUILD_SHA="$(git -C "$repo_dir" rev-parse HEAD)"
   # This shared Document Server does not validate browser JWTs. This separate
   # secret still signs local, ten-minute /office/content capability tickets.
   export PPAP_REMOTE_ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
@@ -118,7 +120,11 @@ run() {
     -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
     -R 0.0.0.0:8080:127.0.0.1:8080 dev@127.0.0.1 &
   tunnel_pids+=("$!")
-  "${compose[@]}" up --build -d --wait
+  (
+    cd "$repo_dir"
+    docker buildx bake api web
+  )
+  "${compose[@]}" up --no-build -d --wait
   "${kctl[@]}" -n ppap-remote-dev exec ppap-remote-dev-bridge -- \
     wget -qO- http://127.0.0.1:8080/health >/dev/null
   echo "Remote dev is ready at http://127.0.0.1:4173/"

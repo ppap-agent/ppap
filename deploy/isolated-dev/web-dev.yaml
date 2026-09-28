@@ -2,7 +2,6 @@
 services:
   web:
     image: node:22-bookworm
-    build: !reset
     working_dir: /web
     volumes:
       - ../../apps/web:/web

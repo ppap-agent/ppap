@@ -250,6 +250,19 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("Guest interpreter boundary", guest)
         self.assertIn('"PYTHONPATH"', guest)
 
+    def test_container_build_graph_uses_native_bake_and_compose_authorities(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        verifier = (ROOT / "scripts/verify-container-graph.mjs").read_text()
+        remote = (ROOT / "deploy/remote-dev/run.sh").read_text()
+        self.assertIn("docker buildx bake --print", workflow)
+        self.assertIn("docker buildx bake --check", workflow)
+        self.assertIn("scripts/verify-container-graph.mjs", workflow)
+        self.assertIn("['buildx', 'bake', '--print']", verifier)
+        self.assertIn("['compose', '--progress', 'quiet'", verifier)
+        self.assertIn("'config', '--format', 'json'", verifier)
+        self.assertIn("docker buildx bake api web", remote)
+        self.assertIn("up --no-build -d --wait", remote)
+
     def test_distribution_closure_ci_uses_wheels_and_clean_environments(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text()
         script = (ROOT / "scripts/validate_distribution.py").read_text()
