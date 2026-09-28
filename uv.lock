@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "ppap",
     "ppap-api",
+    "ppap-application",
     "ppap-core",
     "ppap-corpus-contracts",
     "ppap-deep",
@@ -18,6 +19,7 @@ members = [
     "ppap-excel-audit-engine",
     "ppap-ocr-adapter",
     "ppap-pdf-to-excel",
+    "ppap-product-store",
     "ppap-vision",
     "ppap-worker",
 ]
