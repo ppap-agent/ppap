@@ -15,7 +15,6 @@ from ppap_core.logs import JsonFormatter, LOGGER, bind, emit, new_request_id, re
 from ppap_core.settings import Settings
 from ppap_api import create_app
 from ppap_worker import process_claimed
-from tests.integration.product.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -77,7 +76,7 @@ class LogTests(unittest.TestCase):
     def test_http_request_sets_header_and_skips_health(self):
         with _clean_env(PPAP_BUILD_SHA="a" * 40, LOG_FORMAT="json"):
             settings = Settings()
-        store = auth_store(settings)
+        store = self.auth_store(settings)
         store.seed_isolated_dev()
         client = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient(
             create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
@@ -102,14 +101,15 @@ class LogTests(unittest.TestCase):
     def test_worker_logs_job_attempt_round_and_tenant(self):
         with _clean_env(PPAP_BUILD_SHA="a" * 40):
             settings = Settings()
-        store = auth_store(settings)
-        claimed = ClaimedJob("job-log", "heartbeat", {}, 3, None, TENANT_A)
+        store = self.auth_store(settings)
+        job_id = "00000000-0000-4000-8000-0000000000b1"
+        claimed = ClaimedJob(job_id, "heartbeat", {}, 3, None, TENANT_A)
         buf = _json_logger()
         process_claimed(store, claimed, "worker-1")
         lines = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
         claimed_log = next(row for row in lines if row["event"] == "job_claimed")
         done = next(row for row in lines if row["event"] == "job_completed")
-        self.assertEqual(claimed_log["job_id"], "job-log")
+        self.assertEqual(claimed_log["job_id"], job_id)
         self.assertEqual(claimed_log["attempt"], "3")
         self.assertEqual(claimed_log["tenant_id"], TENANT_A)
         self.assertEqual(done["outcome"], "succeeded")

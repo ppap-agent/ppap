@@ -13,11 +13,6 @@ dependencies = [
     "httpx>=0.24.0",
     "requests>=2.31.0",
     "olefile>=0.47",
-]
-
-[project.optional-dependencies]
-# Runtime ownership: ../../ppap_agent/docs/dependency-runtime-ownership.md
-ingestion = [
     "python-docx>=1.1.0",
     "python-pptx>=0.6.23",
 ]

@@ -17,7 +17,6 @@ from ppap_core.feishu_usage import PartnerAiItem, audit_usage_points, estimate_a
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.store_fixture import auth_store, seed_usage_event, set_trial_baseline
 
 
 def _clean_env(**extra: str):
@@ -129,7 +128,7 @@ class FeishuUsageTests(unittest.TestCase):
         )
         self._env.start()
         self.settings = Settings()
-        self.store = auth_store(self.settings)
+        self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.partner = _PartnerMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.partner.handler))
@@ -160,7 +159,7 @@ class FeishuUsageTests(unittest.TestCase):
     def _seed_event(self, *, json):
         # Test fixture only; the Product API cannot create arbitrary usage events.
         principal = self.store.principal_for_fixture("alice")
-        row = seed_usage_event(
+        row = self.seed_usage_event(
             self.store,
             principal,
             "ai-item-1",
@@ -245,7 +244,7 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertNotIn("remaining_trial_ai_points", estimate.json())
 
     def test_cutover_baseline_reduces_remaining_trial_without_inventing_partner_balance(self):
-        set_trial_baseline(self.store, "isolated-dev-a", "ai-item-1", 1000)
+        self.set_trial_baseline(self.store, "isolated-dev-a", "ai-item-1", 1000)
         self._login_feishu_user("alice")
         body = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(body["remaining_trial_ai_points"], 9000)

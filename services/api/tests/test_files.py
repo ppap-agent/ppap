@@ -24,7 +24,6 @@ from ppap_core.files import (
 )
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -182,7 +181,7 @@ class FileHttpTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = auth_store(self.settings)
+        self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(
             create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
@@ -385,7 +384,7 @@ class StagingRaceTests(unittest.TestCase):
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
-        self.store = auth_store(Settings())
+        self.store = self.auth_store(Settings())
         self.store.seed_isolated_dev()
         self.principal = self.store.principal_for_fixture("alice")
 

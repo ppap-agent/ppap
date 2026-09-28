@@ -2,6 +2,10 @@ name: LLM readiness
 
 on:
   workflow_dispatch:
+  # Weekly: catch provider/API/credential drift without running this probe on
+  # every PR. Uses the same real secrets and Responses API as manual dispatch.
+  schedule:
+    - cron: "41 3 * * 3"
 
 permissions: {}
 

@@ -1,0 +1,24 @@
+[project]
+name = "ppap-worker"
+version = "0.1.0"
+description = "PPAP audit worker"
+requires-python = "==3.12.*"
+dependencies = [
+    "ppap-core",
+    "ppap-api",
+    "ppap-deep",
+    "ppap-excel-audit-engine",
+]
+
+[tool.uv.sources]
+ppap-core = { workspace = true }
+ppap-api = { workspace = true }
+ppap-deep = { workspace = true }
+ppap-excel-audit-engine = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppap_worker"]

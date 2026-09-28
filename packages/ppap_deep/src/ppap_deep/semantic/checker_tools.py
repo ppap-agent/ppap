@@ -13,10 +13,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-if __name__ == "__main__" and not __package__:
-    # The guest calls this file by its stable /opt/ppap/semantic path.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from ppap_deep.semantic.document_tools import col_number, effective, ref, save
 from ppap_deep.semantic.evidence import EvidenceBudget
 from ppap_deep.semantic.models import Artifact, Citation, Predicate, QueryProgram, Scalar

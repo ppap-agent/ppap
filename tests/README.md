@@ -12,7 +12,7 @@ Single-owner tests live with their production owner under `packages/*/tests` or 
 - `integration/product`: cross-owner production-store contracts
 - `integration/runtime`: production runtime and backup/restore
 - `e2e`: Python Playwright full-product black-box paths
-- `live`: explicit real external service/model/environment tests; not part of deterministic CI
+- `live`: explicit real-environment validation that is outside the default merge contract; not a bucket for every external-backed test
 
 CI consumes these physical owners. It does not maintain a second test manifest.
 
@@ -21,29 +21,36 @@ CI consumes these physical owners. It does not maintain a second test manifest.
 Repository contract:
 
 ```sh
-uv sync --locked --extra dev
+uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 node deploy/insforge/verify-config.mjs
+docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
+docker buildx bake --print >/dev/null
+docker buildx bake --check
 uv run --no-sync pytest tests/repository
 ```
 
 Python module groups:
 
 ```sh
-uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
-# documents: current physical owner test directory; docops/pdf_to_excel/vision have no tests/ yet
+# One pytest process per physical owner. CI discovers packages/*/tests and services/*/tests.
+uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_deep/tests
 uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
 ```
 
-The services group needs the real isolated-dev PostgreSQL fixture:
+API and Worker each need the real isolated-dev PostgreSQL fixture, in separate processes:
 
 ```sh
-export COMPOSE_PROJECT_NAME=ppap-services
+export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests
+uv run --no-sync pytest services/api/tests
+export COMPOSE_PROJECT_NAME=ppap-worker
+uv run --no-sync pytest services/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
@@ -63,6 +70,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
+uv run --no-sync pytest tests/corpus/v2_assets/test_cross_format_pairs.py tests/corpus/v2_assets/test_cross_format_contract.py --cross-format -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -79,7 +87,7 @@ docker run --rm \
   pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
 ```
 
-PSW remains a purpose-built container entry in the same CI Corpus matrix.
+Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF / scanned variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix. Its image starts from the production worker install and runs `uv sync --frozen --no-editable` so the default dev dependency group comes from the same lock.
 
 ## Schema
 
@@ -109,7 +117,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 Browser E2E uses the same canonical baked API/Worker/Web images in isolated-dev and runs:
 
 ```sh
-uv sync --locked --extra dev --extra e2e
+uv sync --locked --group e2e
 uv run --no-sync python -m playwright install chromium
 uv run --no-sync pytest tests/e2e
 ```
@@ -122,8 +130,8 @@ uv run --no-sync pytest tests/e2e
 PPAP_DEEP_LIVE=1 uv run --no-sync pytest tests/live/test_deep_isolated.py
 ```
 
-The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default deterministic `CI Gate`.
+The separate InsForge native lifecycle remains path-filtered / manual / scheduled. It is not part of the default `CI Gate`. LLM readiness and Feishu readiness keep `workflow_dispatch` and add a weekly schedule; they probe real credentials and endpoints and stay outside the default `CI Gate`.
 
 ## CI Gate
 
-Every PR runs the deterministic groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. The final `CI Gate` runs no tests; it succeeds only when every required deterministic group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.
+The default merge contract is the required groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.

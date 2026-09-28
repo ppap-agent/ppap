@@ -21,7 +21,7 @@ class ClaimedJobTests(unittest.TestCase):
 
 class WorkerLoopTests(unittest.TestCase):
     def test_run_does_not_hold_a_connection_across_claim_job(self):
-        text = (ROOT / "services/worker/ppap_worker/__init__.py").read_text()
+        text = (ROOT / "services/worker/src/ppap_worker/__init__.py").read_text()
         run = text.split("def run() -> None:", 1)[1].split("if __name__", 1)[0]
         before, after = run.split("claimed = store.claim_job(ident)", 1)
         self.assertIn('with connect(settings, "worker") as conn:', before)

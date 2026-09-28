@@ -1,8 +1,14 @@
 """Deterministic browser/API interleavings; no live backend or model calls."""
+import os
 from pathlib import Path
 import unittest
 
-from tests.e2e.test_web_audit import WEB, sync_playwright
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
+    sync_playwright = None
+
+WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 ROOT = Path(__file__).resolve().parents[2]
 JOB = "00000000-0000-4000-8000-000000000001"

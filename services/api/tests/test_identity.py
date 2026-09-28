@@ -23,7 +23,6 @@ from ppap_core.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
 from ppap_core.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -151,7 +150,7 @@ class HttpAuthTests(unittest.TestCase):
         )
         self._env.start()
         self.settings = Settings()
-        self.store = auth_store(self.settings)
+        self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
 
@@ -254,7 +253,7 @@ class HttpAuthTests(unittest.TestCase):
                 self.settings,
                 lambda _s: {"state": "ok"},
                 lambda _s: {"state": "ok"},
-                auth_store(self.settings),
+                self.auth_store(self.settings),
                 FakeHttp(),
             )
         )
@@ -280,7 +279,7 @@ class HttpAuthTests(unittest.TestCase):
         with _clean_env(PPAP_BUILD_SHA="a" * 40):
             settings = Settings()
         client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings))
+            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings))
         )
         self.assertEqual(client.get("/login/feishu").status_code, 409)
 
@@ -357,7 +356,7 @@ class HttpAuthTests(unittest.TestCase):
             FEISHU_APP_SECRET="secret",
         ):
             settings = Settings()
-        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, auth_store(settings)))
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings)))
         self.assertEqual(client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code, 404)
 
     def _oauth_client(self, http, settings=None):
@@ -367,7 +366,7 @@ class HttpAuthTests(unittest.TestCase):
                 settings,
                 lambda _s: {"state": "ok"},
                 lambda _s: {"state": "ok"},
-                auth_store(settings),
+                self.auth_store(settings),
                 http,
             )
         )
@@ -499,7 +498,7 @@ class HttpAuthTests(unittest.TestCase):
             PPAP_BUILD_SHA="a" * 40,
         ):
             settings = Settings()
-        store = auth_store(settings)
+        store = self.auth_store(settings)
         store.seed_isolated_dev()
         client = TestClient(
             create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store, _TokenHttp())

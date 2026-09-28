@@ -120,27 +120,8 @@ function nativeComposeConfig(overrides) {
 }
 
 const version = read(join(insforge, 'VERSION')).trim()
+// Compose does not own the InsForge overlay release pin.
 assertEqual(version, 'v2.3.2', 'VERSION')
-const readme = read(join(insforge, 'README.md'))
-for (const marker of [
-  'v2.3.2',
-  'docker.sock',
-  'host-root-equivalent',
-  'Custom Compute',
-  'Edge Function',
-  'Do not import legacy ledgers',
-  'compose.yaml down',
-  'without `-v`',
-]) {
-  assert(readme.includes(marker), `README missing ${marker}`)
-}
-assert(read(join(root, 'deploy', 'README.md')).includes('down -v'), 'deploy README must mention down -v')
-
-const catalog = read(envFile)
-assert(catalog.includes('PPAP_PG_HOST=postgres'), 'env.example PPAP_PG_HOST')
-assert(catalog.includes('PPAP_PG_BOOTSTRAP_USER=postgres'), 'env.example bootstrap user')
-assert(catalog.includes('PPAP_PG_DATABASE=ppap'), 'env.example database')
-assert(catalog.includes('PPAP_S3_ENDPOINT=http://silo:9000'), 'env.example S3 endpoint')
 
 const selected = {
   PPAP_BUILD_SHA: 'verify-config',
@@ -265,6 +246,19 @@ if (config) {
   assert(!('PPAP_PG_API_PASSWORD' in workerEnv), 'worker must not have API password')
   assert(!('PADDLE_TOKEN' in apiEnv), 'api must not have PADDLE_TOKEN')
   assert('PADDLE_TOKEN' in workerEnv, 'worker has PADDLE_TOKEN')
+}
+
+// Defaults come from env.example through `docker compose config`, not from
+// scanning that file as text.
+const defaults = requireComposeCli() ? nativeComposeConfig({}) : null
+if (defaults) {
+  const defaultApi = envOf(defaults.services?.api)
+  const defaultWorker = envOf(defaults.services?.worker)
+  assertEqual(defaultApi.PPAP_PG_HOST, 'postgres', 'env file default PG host')
+  assertEqual(defaultApi.PPAP_PG_PORT, '5432', 'env file default PG port')
+  assertEqual(defaultApi.PPAP_PG_DATABASE, 'ppap', 'env file default database')
+  assertEqual(defaultApi.PPAP_S3_ENDPOINT, 'http://silo:9000', 'env file default S3 endpoint')
+  assert(!('FEISHU_APP_ID' in defaultWorker), 'worker must not receive Feishu app id from defaults')
 }
 
 // @insforge/cli@0.2.8 has no offline compute-spec validator. `compute *` talks

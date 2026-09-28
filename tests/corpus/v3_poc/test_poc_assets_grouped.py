@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from ppap_core.rule_profile import RULE_PROFILE_V3
 from ppap_excel_audit_engine.routing import resolve_engine_agent_class
 
-from .poc_oracle import (
+from ppap_corpus_contracts.poc_oracle import (
     DEFAULT_POC_DATASET_ROOT,
     DEFAULT_POC_EXPECTED_XLSX,
     POC_SEQ_TO_DOC_TYPE,
@@ -211,12 +211,7 @@ def pytest_generate_tests(metafunc: Any) -> None:
     if "case" not in metafunc.fixturenames:
         return
 
-    try:
-        cases = _build_selected_cases(metafunc.config)
-    except FileNotFoundError as exc:
-        pytest.skip(str(exc), allow_module_level=True)
-        return
-
+    cases = _build_selected_cases(metafunc.config)
     if not cases:
         raise AssertionError("No POC test cases found after applying filters.")
 

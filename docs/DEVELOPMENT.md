@@ -25,24 +25,31 @@ Local 与 CI 使用同一 ownership。CI 不再维护与目录结构脱节的测
 Repository contract：
 
 ```sh
-uv sync --locked --extra dev
+uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
 node deploy/insforge/verify-config.mjs
+docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
+docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
+docker buildx bake --print >/dev/null
+docker buildx bake --check
 uv run --no-sync pytest tests/repository
 ```
 
 Python module groups：
 
 ```sh
-uv run --no-sync pytest packages/ppap_core/tests packages/ppap_deep/tests
+uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_deep/tests
 uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
 
-export COMPOSE_PROJECT_NAME=ppap-services
+export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
 docker compose -f deploy/isolated-dev/compose.yaml run --rm init-db
-uv run --no-sync pytest services/api/tests services/worker/tests
+uv run --no-sync pytest services/api/tests
+export COMPOSE_PROJECT_NAME=ppap-worker
+uv run --no-sync pytest services/worker/tests
 docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 ```
 
@@ -64,17 +71,17 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 Excel/PDF/scanned/V3/PSW 命令见 [TESTING](TESTING.md)。
 
-默认 `Tests` workflow 每个 PR 都执行 Web、Repository contract、Python modules、Schema、Corpus、Product integration；最终 `CI Gate` 只汇总这些 deterministic groups。当前不做 change-aware path skipping。`tests/live` 与 InsForge native lifecycle 不进入默认 Gate。
+默认 merge contract 是 required groups：Web、Repository contract、Python modules、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
-single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。
+single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
 
 ## 工程工具链
 
-当前实现是 Python 3.12、单一 `pyproject.toml`、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试统一由 pytest collect/execute；现有 `unittest.TestCase` 仅作为测试类写法保留；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。
+当前实现是 Python 3.12、uv workspace（每个 production owner 一份 `pyproject.toml` + 统一 `src-layout`）、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试统一由 pytest collect/execute；现有 `unittest.TestCase` 仅作为测试类写法保留；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。
 
 CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装语义：
 
-- Python 依赖：`uv.lock`。Repository contract / Python modules / schema / corpus 使用 `uv sync --locked --extra dev`；Product integration / Playwright E2E 另加 `--extra e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 按默认 extra 再 sync 一次。
+- Python 依赖：`uv.lock`。`dev` 是默认 dependency group，Repository contract / Python modules / schema / corpus 使用 `uv sync --locked`。Product integration / Playwright E2E 另加 `--group e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 再 sync 一次。
 - Python 解释器：`.python-version`（3.12）。`pyproject.toml` 的 `requires-python = ">=3.12"` 是兼容范围。
 - Node：`.node-version`（22）。workflow 通过 `actions/setup-node` 的 `node-version-file` 读取。
 - pnpm：`apps/web/package.json` 的 `packageManager`。`corepack enable` 后 Corepack 直接使用该字段；workflow、Web Dockerfile 和 isolated-dev Vite overlay 不再重复 `pnpm@…` 字面量。安装仍是 `pnpm install --frozen-lockfile`。
@@ -83,11 +90,11 @@ CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装�
 
 有意保留的重复（消除它们需要模板化 Dockerfile 或另做包装层）：
 
-- `deploy/app/Dockerfile` 继续用 `python:3.12-slim-bookworm` 和 `pip install`；生产镜像不走 CI 的 uv 项目环境。
+- `deploy/app/Dockerfile` 继续用 `python:3.12-slim-bookworm`。uv 来自钉死 digest 的 `ghcr.io/astral-sh/uv:0.9.26`。生产安装是镜像内 `uv sync --frozen --no-dev --no-editable`，不设置 `PYTHONPATH`，也不用 pip。
 - `deploy/web/Dockerfile` 的 `node:22-alpine` 与 `deploy/isolated-dev/web-dev.yaml` 的 `node:22-bookworm` 仍写在镜像 tag 里。
-- `deploy/deep/Dockerfile` 为安装 `@xai-official/grok` 使用独立的 `node:22.14.0-bookworm-slim@sha256:…` 和 `pnpm@10.6.1`，不是 Web 的 `packageManager` authority。
+- `deploy/deep/Dockerfile` 用 npm 安装 `@xai-official/grok@1.0.40`，`npm audit signatures` 校验 registry 签名，再由 `verify-grok.mjs` 固定解压后的 guest 二进制。
 
-CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。Python modules 的 services variant、Schema、Corpus PSW、Product integration 和 InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web、Repository contract、core/deep、documents、engine 和普通 Corpus 不要求 Docker。InsForge static config 属于 Repository contract，只需要 Docker Compose CLI（`docker compose config`），不需要 daemon 或 Buildx，也不启动容器；CLI 缺失时由 `verify-config.mjs` 给出明确错误。live InsForge lifecycle 需要 `local start` 使用的 runtime Docker capability，只在 InsForge 相关 path、手动 dispatch 或每周 schedule 上运行。Product integration 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 是 Corpus matrix 的 purpose-built container variant，单独 `docker buildx bake worker` 后从 worker 派生测试镜像。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 services、Schema、Product integration 和 InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用原生 CLI，不另起 PPAP dispatcher。
+CI 依赖 capability，而不是发行版。workflow 可以安装 uv/Python、Node、Corepack/pnpm 和项目依赖；不得用 `sudo` / `apt` / `yum` / `apk` / `systemctl` 修复 runner，也不得安装或启动 Docker。Python modules 的 services variant、Schema、Corpus PSW、Product integration 和 InsForge lifecycle 要求 runner 已提供 Docker Engine、Compose 和 Buildx；缺任一能力时 fail-fast 输出 `runner does not satisfy ppap-docker capability`。Web、无 PostgreSQL 的 Python modules 和普通 Corpus 不要求 Docker。Repository contract 需要 Docker Engine、Compose 和 Buildx：`docker compose config`、`docker buildx bake --check`/`--print`、nginx 黑盒、Kustomize 与 kubeconform。`actionlint` 1.7.7 检查 workflow 语法。InsForge static config 仍由 `verify-config.mjs` 调用 `docker compose config`。live InsForge lifecycle 需要 `local start` 使用的 runtime Docker capability，只在 InsForge 相关 path、手动 dispatch 或每周 schedule 上运行。LLM / Feishu readiness 是真实外部 probe，手动 dispatch 或每周 schedule，不进 `CI Gate`。Product integration 对同一 `PPAP_BUILD_SHA` 只 `docker buildx bake` 一次，生产 runtime/backup 与 isolated-dev E2E 复用这些镜像（E2E 使用 `compose up --no-build`）。PSW 是 Corpus matrix 的 purpose-built container variant，单独 `docker buildx bake worker` 后从 worker 派生测试镜像。CI Compose 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 project name，cleanup 在独立 `if: always()` step。现有 Compose stack 仍 bind-mount 仓库内 `migrations/`，因此 services、Schema、Product integration 和 InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。后续若把 Ruff、Pyright 或 Vite 收进来，直接调用原生 CLI，不另起 PPAP dispatcher。
 
 #15 剩余：把本仓客户入口切到 current `ppap`；compose 验证不等于客户 cut-over。不拆除 `ppap-agent`：它是算法验证基地和参考实现，并继续服务其它用户。
 

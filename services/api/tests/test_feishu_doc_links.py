@@ -18,7 +18,6 @@ from ppap_core.feishu_drive import extract_doc_token_from_url, list_doc_links
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_api import create_app
-from tests.integration.store_fixture import auth_store
 
 
 def _clean_env(**extra: str):
@@ -200,7 +199,7 @@ class FeishuDocLinksTests(unittest.TestCase):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
         self.settings = Settings()
-        self.store = auth_store(self.settings)
+        self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.feishu = _DocLinksMock()
         self.http = httpx.Client(transport=httpx.MockTransport(self.feishu.handler))

@@ -26,7 +26,7 @@ POC_SEQ_TO_DOC_TYPE = {
     "11": PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST,
 }
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 ASSETS_ROOT = Path(os.getenv("PPAP_ASSETS_ROOT", REPO_ROOT / "assets"))
 DEFAULT_POC_DATASET_ROOT = Path(os.getenv("PPAP_POC_DATASET_ROOT", ASSETS_ROOT / "poc测试" / "POC测试样本"))
 DEFAULT_POC_EXPECTED_XLSX = Path(os.getenv("PPAP_POC_EXPECTED_XLSX", ASSETS_ROOT / "poc测试" / "poc-测试数据统计表.xlsx"))
@@ -47,6 +47,12 @@ class PocCase:
     file_path: Path
     bundle_id: str
     expected: Dict[int, OracleRuleExpectation]
+
+    def __post_init__(self) -> None:
+        if not self.expected:
+            raise AssertionError(
+                f"V3 oracle incomplete: file={self.file_name} seq={self.file_seq} has 0 PASS/NG expectations"
+            )
 
 
 @dataclass(frozen=True)
@@ -103,7 +109,7 @@ def _load_expected_from_xlsx(
     df: pd.DataFrame | None = None,
 ) -> Dict[str, Dict[int, OracleRuleExpectation]]:
     if not xlsx_path.exists():
-        raise FileNotFoundError(f"Missing expected xlsx: {xlsx_path}")
+        raise AssertionError(f"Required V3 expected XLSX is missing: {xlsx_path}")
 
     if df is None:
         df = pd.read_excel(xlsx_path, header=None, sheet_name=0).fillna("")
@@ -152,14 +158,20 @@ def _load_expected_from_xlsx(
                 raise AssertionError(f"Conflicting duplicate rows in xlsx: {file_name}")
             continue
 
+        if not rule_map:
+            raise AssertionError(
+                f"V3 oracle incomplete: file={file_name} seq={file_seq or '(missing)'} has 0 PASS/NG expectations"
+            )
         expected[file_name] = rule_map
 
+    if not expected:
+        raise AssertionError(f"No valid V3 cases in expected xlsx: {xlsx_path}")
     return expected
 
 
 def _index_dataset_files(root: Path) -> Dict[str, Path]:
     if not root.exists():
-        raise FileNotFoundError(f"Missing dataset root: {root}")
+        raise AssertionError(f"Required V3 dataset is missing: {root}")
 
     mapping: Dict[str, Path] = {}
     for path in root.rglob("*"):
@@ -192,6 +204,10 @@ def _build_poc_cases(
     for file_name, rule_map in expected_map.items():
         file_path = dataset_index[file_name]
         file_seq = file_seq_map[file_name]
+        if not rule_map:
+            raise AssertionError(
+                f"V3 oracle incomplete: file={file_name} seq={file_seq} has 0 PASS/NG expectations"
+            )
 
         cases.append(
             PocCase(
@@ -267,9 +283,9 @@ def load_poc_cases(
     expected_xlsx: Path = DEFAULT_POC_EXPECTED_XLSX,
 ) -> List[PocCase]:
     if not dataset_root.exists():
-        raise FileNotFoundError(f"Missing dataset root at {dataset_root}. Set PPAP_POC_DATASET_ROOT to override.")
+        raise AssertionError(f"Required V3 dataset is missing: {dataset_root}")
     if not expected_xlsx.exists():
-        raise FileNotFoundError(f"Missing expected xlsx at {expected_xlsx}. Set PPAP_POC_EXPECTED_XLSX to override.")
+        raise AssertionError(f"Required V3 expected XLSX is missing: {expected_xlsx}")
 
     raw_df = pd.read_excel(expected_xlsx, header=None, sheet_name=0).fillna("")
     expected_map = _load_expected_from_xlsx(expected_xlsx, df=raw_df)
