@@ -417,6 +417,9 @@ jobs:
           test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-api:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
           test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-worker:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
           test "$(docker compose -f deploy/isolated-dev/compose.yaml config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-api:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-worker:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
+          test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fx "ppap-web:${PPAP_BUILD_SHA}" | wc -l)" -eq 1
       - name: Production runtime and backup
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_PROD }}
