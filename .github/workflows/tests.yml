@@ -127,6 +127,73 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+  discover_distributions:
+    name: Discover distributions
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - id: discover
+        name: Find production distributions
+        run: |
+          set -euo pipefail
+          matrix="$(python3 scripts/validate_distribution.py --discover)"
+          {
+            echo "matrix<<EOF"
+            echo "$matrix"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  distribution_closure:
+    name: Distribution closure / ${{ matrix.name }}
+    needs: discover_distributions
+    runs-on: [self-hosted, linux, x64, ppap]
+    timeout-minutes: 45
+    env:
+      COMPOSE_PROJECT_NAME: ppap-ci-dist-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover_distributions.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assert Docker
+        if: ${{ matrix.postgres }}
+        uses: ./.github/actions/assert-docker
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Start service PostgreSQL fixture
+        if: ${{ matrix.postgres }}
+        run: |
+          set -euo pipefail
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
+      - name: Build, install, import, and test clean distribution closure
+        run: python3 scripts/validate_distribution.py --member "${{ matrix.name }}"
+      - name: Prove missing dependency fails closed
+        if: ${{ matrix.name == 'ppap-product-store' }}
+        run: python3 scripts/validate_distribution.py --prove-missing-dependency
+      - name: Dump PostgreSQL diagnostics
+        if: failure() && matrix.postgres
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            logs --no-color --timestamps postgres init-db || true
+      - name: Clean PostgreSQL fixture
+        if: always() && matrix.postgres
+        run: |
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans || true
+
   python_modules:
     name: Python modules / ${{ matrix.name }}
     needs: discover_python_owners
@@ -398,6 +465,7 @@ jobs:
       - web
       - repository
       - python_modules
+      - distribution_closure
       - schema
       - corpus
       - integration
@@ -409,6 +477,7 @@ jobs:
           WEB_RESULT: ${{ needs.web.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           PYTHON_MODULES_RESULT: ${{ needs.python_modules.result }}
+          DISTRIBUTION_CLOSURE_RESULT: ${{ needs.distribution_closure.result }}
           SCHEMA_RESULT: ${{ needs.schema.result }}
           CORPUS_RESULT: ${{ needs.corpus.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
@@ -419,6 +488,7 @@ jobs:
             "$WEB_RESULT" \
             "$REPOSITORY_RESULT" \
             "$PYTHON_MODULES_RESULT" \
+            "$DISTRIBUTION_CLOSURE_RESULT" \
             "$SCHEMA_RESULT" \
             "$CORPUS_RESULT" \
             "$INTEGRATION_RESULT"
@@ -428,7 +498,7 @@ jobs:
             fi
           done
           if [ "$failed" -ne 0 ]; then
-            printf 'required results: web=%s repository=%s python_modules=%s schema=%s corpus=%s integration=%s\n' \
-              "$WEB_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_RESULT"
+            printf 'required results: web=%s repository=%s python_modules=%s distribution_closure=%s schema=%s corpus=%s integration=%s\n' \
+              "$WEB_RESULT" "$REPOSITORY_RESULT" "$PYTHON_MODULES_RESULT" "$DISTRIBUTION_CLOSURE_RESULT" "$SCHEMA_RESULT" "$CORPUS_RESULT" "$INTEGRATION_RESULT"
             exit 1
           fi

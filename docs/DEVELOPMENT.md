@@ -36,6 +36,20 @@ docker buildx bake --check
 uv run --no-sync pytest tests/repository
 ```
 
+Distribution closure：
+
+```sh
+# 不先执行 root uv sync；脚本为目标 member 构建 wheel closure，
+# 在 /tmp clean venv 中安装、从非 repo cwd import，并运行 owner tests。
+python3 scripts/validate_distribution.py --discover
+python3 scripts/validate_distribution.py --member ppap-core
+
+# regression proof：删除一个真实 dependency declaration 必须 fail closed。
+python3 scripts/validate_distribution.py --prove-missing-dependency
+```
+
+service member 运行 owner tests 时需要与 CI 相同的 isolated-dev PostgreSQL fixture。root `uv sync --locked` 仍用于快速 workspace 开发，但不再作为 distribution correctness proof。
+
 Python module groups：
 
 ```sh
@@ -71,7 +85,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对着 isolated-dev。生产 runtime/backup 是 `uv run --no-sync pytest tests/integration/runtime`。Corpus 的 Excel/PDF/scanned/V3/PSW 命令见 [TESTING](TESTING.md)。
 
-默认 merge contract 是 required groups：Web、Repository contract、Python modules、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
+默认 merge contract 是 required groups：Web、Repository contract、Python modules、Distribution closure、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
 single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
 
@@ -81,7 +95,7 @@ single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`�
 
 CI 以项目原生 metadata / lockfile 为 authority，不再另写一套安装语义：
 
-- Python 依赖：`uv.lock`。`dev` 是默认 dependency group，Repository contract / Python modules / schema / corpus 使用 `uv sync --locked`。Product integration / Playwright E2E 另加 `--group e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 再 sync 一次。
+- Python 依赖：`uv.lock`。`dev` 是默认 dependency group，Repository contract / Python modules / schema / corpus 使用 `uv sync --locked`。Product integration / Playwright E2E 另加 `--group e2e`。安装之后用 `uv run --no-sync` 执行命令，避免 `uv run` 再 sync 一次。 Distribution closure 不复用这个完整 workspace environment：它构建目标 distribution 的 workspace wheel closure，并在 clean venv 中显式安装；registry dependency 版本仍由 `uv.lock` 生成的 constraints 固定。
 - Python 解释器：`.python-version`（3.12）。`pyproject.toml` 的 `requires-python = ">=3.12"` 是兼容范围。
 - Node：`.node-version`（22）。workflow 通过 `actions/setup-node` 的 `node-version-file` 读取。
 - pnpm：`apps/web/package.json` 的 `packageManager`。`corepack enable` 后 Corepack 直接使用该字段；workflow、Web Dockerfile 和 isolated-dev Vite overlay 不再重复 `pnpm@…` 字面量。安装仍是 `pnpm install --frozen-lockfile`。
