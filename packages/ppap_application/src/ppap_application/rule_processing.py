@@ -75,4 +75,3 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         raise
     except Exception:
         raise RuleParseError("rule_parse_failed") from None
-

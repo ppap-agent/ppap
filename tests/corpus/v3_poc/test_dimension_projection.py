@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from ppap_core.audits import RoundInput, RoundWork
-from ppap_core.engine_round import run_round_from_bytes
+from ppap_application import run_round_from_bytes
 from ppap_core.rule_coverage import COVERAGE_MAPPED, COVERAGE_UNSUPPORTED
 from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target, freeze_target_rule_execution
 
