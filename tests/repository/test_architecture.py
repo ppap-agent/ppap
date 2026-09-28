@@ -256,6 +256,8 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("LC_ALL=C", runner)
         self.assertIn('"$MIGRATIONS_DIR"/[0-9][0-9][0-9][0-9]_*.sql', runner)
         self.assertIn("ON_ERROR_STOP=1", runner)
+        self.assertIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', runner)
+        self.assertIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', runner)
         for path in (
             ROOT / "deploy/compose.yaml",
             ROOT / "deploy/isolated-dev/compose.yaml",
@@ -264,6 +266,8 @@ class ArchitectureTests(unittest.TestCase):
         ):
             text = path.read_text()
             self.assertIn("sh /migrations/apply.sh", text)
+            self.assertNotIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', text)
+            self.assertNotIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', text)
             self.assertNotIn("apply.sql", text)
 
     def test_tke_deploy_uses_canonical_render_and_no_raw_manifest_apply(self):

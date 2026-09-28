@@ -164,4 +164,3 @@ class SchemaUpgradeTests(unittest.TestCase):
                 "-c",
                 f"DROP DATABASE IF EXISTS {database} WITH (FORCE)",
             )
-

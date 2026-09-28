@@ -58,8 +58,7 @@ services:
         i=0
         while true; do
           if psql -d postgres -v ON_ERROR_STOP=1 -f /migrations/bootstrap.sql \
-            && PGUSER="$PPAP_PG_MIGRATOR_USER" PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD" \
-              sh /migrations/apply.sh; then
+            && sh /migrations/apply.sh; then
             break
           fi
           i=$$((i+1))
