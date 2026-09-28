@@ -11,8 +11,6 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-ROOT = Path(__file__).resolve().parents[3]
-
 from fastapi.testclient import TestClient
 
 from ppap_core.audits import (
@@ -32,6 +30,8 @@ from ppap_core.fixtures import RULE_A
 from ppap_core.feishu import UserTokens
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
+import ppap_deep
+import ppap_worker
 from ppap_api import create_app
 from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
 from ppap_deep.mapping import passing_response
@@ -83,9 +83,9 @@ class DeepProtocolTests(unittest.TestCase):
 
     def test_package_does_not_use_docker_socket(self):
         blob = ""
-        for path in (ROOT / "packages" / "ppap_deep").rglob("*.py"):
+        for path in Path(ppap_deep.__file__).resolve().parent.rglob("*.py"):
             blob += path.read_text()
-        blob += (ROOT / "services" / "worker" / "ppap_worker" / "__init__.py").read_text()
+        blob += Path(ppap_worker.__file__).read_text()
         self.assertNotIn("/var/run/docker.sock", blob)
         self.assertNotIn("docker.sock", blob)
         self.assertNotIn("from docker", blob)
