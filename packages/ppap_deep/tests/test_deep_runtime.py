@@ -166,7 +166,14 @@ class SemanticProductContractTests(unittest.TestCase):
     def test_renamed_rule_flows_through_semantic_adapter_without_fixed_checker(self) -> None:
         spec = _spec(title="标题不同但要求未变")
         objects = _MemoryObjects()
-        with patch("ppap_excel_audit_engine.app_runtime.run_audit_engine", side_effect=AssertionError("fixed checker called")):
+        real_import = __import__
+
+        def guarded_import(name, *args, **kwargs):
+            if name == "ppap_excel_audit_engine" or name.startswith("ppap_excel_audit_engine."):
+                raise AssertionError("fixed checker imported")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=guarded_import):
             response = SemanticRuntime(_BundleRuntime(spec), objects).execute(
                 spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext()
             )
