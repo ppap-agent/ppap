@@ -9,8 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = ROOT / ".venv" / "bin" / "python"
 IMPORTS = (
-    "import ppap_api, ppap_core, ppap_corpus_contracts, ppap_deep, "
-    "ppap_docops, ppap_excel_audit_engine, ppap_ocr_adapter, "
+    "import ppap_api, ppap_application, ppap_core, ppap_corpus_contracts, ppap_deep, "
+    "ppap_docops, ppap_excel_audit_engine, ppap_ocr_adapter, ppap_product_store, "
     "ppap_pdf_to_excel, ppap_vision, ppap_worker"
 )
 

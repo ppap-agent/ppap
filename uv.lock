@@ -454,37 +454,29 @@ wheels = [
 ]
 
 [[package]]
-name = "ppap"
-version = "0.0.0"
-source = { virtual = "." }
+name = "ppap-core"
+version = "0.1.0"
+source = { editable = "packages/ppap_core" }
 dependencies = [
-    { name = "ppap-api" },
-    { name = "ppap-worker" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ppap-corpus-contracts" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-e2e = [
-    { name = "playwright" },
+    { name = "boto3" },
+    { name = "botocore" },
+    { name = "httpx" },
+    { name = "openpyxl" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "ppap-api", editable = "services/api" },
-    { name = "ppap-worker", editable = "services/worker" },
+    { name = "boto3", specifier = ">=1.36.16" },
+    { name = "botocore", specifier = ">=1.36.16" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.6" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pydantic-settings", specifier = ">=2.7.1" },
 ]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ppap-corpus-contracts", editable = "packages/ppap_corpus_contracts" },
-    { name = "pytest", specifier = "==7.4.3" },
-    { name = "pytest-asyncio", specifier = "==0.21.1" },
-]
-e2e = [{ name = "playwright" }]
 
 [[package]]
 name = "ppap-api"
@@ -509,6 +501,25 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "starlette", specifier = ">=0.45.3" },
     { name = "uvicorn", specifier = ">=0.34.0" },
+]
+
+[[package]]
+name = "ppap-application"
+version = "0.1.0"
+source = { editable = "packages/ppap_application" }
+dependencies = [
+    { name = "ppap-core" },
+    { name = "ppap-docops" },
+    { name = "ppap-excel-audit-engine" },
+    { name = "ppap-product-store" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ppap-core", editable = "packages/ppap_core" },
+    { name = "ppap-docops", editable = "packages/ppap_docops" },
+    { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
+    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
 ]
 
 [[package]]
@@ -704,22 +715,39 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ppap-worker"
+name = "ppap-product-store"
 version = "0.1.0"
-source = { editable = "services/worker" }
+source = { editable = "packages/ppap_product_store" }
 dependencies = [
-    { name = "ppap-api" },
     { name = "ppap-core" },
-    { name = "ppap-deep" },
-    { name = "ppap-excel-audit-engine" },
+    { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "ppap-api", editable = "services/api" },
+    { name = "ppap-core", editable = "packages/ppap_core" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.6" },
+]
+
+[[package]]
+name = "ppap-worker"
+version = "0.1.0"
+source = { editable = "services/worker" }
+dependencies = [
+    { name = "ppap-application" },
+    { name = "ppap-core" },
+    { name = "ppap-deep" },
+    { name = "ppap-excel-audit-engine" },
+    { name = "ppap-product-store" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ppap-application", editable = "packages/ppap_application" },
     { name = "ppap-core", editable = "packages/ppap_core" },
     { name = "ppap-deep", editable = "packages/ppap_deep" },
     { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
+    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
 ]
 
 [[package]]
