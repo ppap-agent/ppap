@@ -14,10 +14,6 @@ CoverageState = Literal["mapped", "unsupported", "executed"]
 ProgressPhase = Literal["reading", "planning", "checking", "validating"]
 
 
-class ErrorResponse(TypedDict):
-    error: str
-
-
 class PublicConfig(TypedDict):
     api_url: str
     profile: str
@@ -47,10 +43,6 @@ class FileCreateRequest(TypedDict):
     original_filename: str
     byte_size: int
     content_type: str
-
-
-class FileStatus(TypedDict):
-    status: str
 
 
 class Metadata(TypedDict):
@@ -140,19 +132,14 @@ class RulePublishRequest(TypedDict):
     predecessor_id: NotRequired[str | None]
 
 
-class AnalysisJobResult(TypedDict, total=False):
-    metadata: Metadata
-    document_type: str | None
-    matched_rule_id: str | None
-    matching_status: str
-    notices: list[str]
+class JobError(TypedDict):
     error: str
 
 
 class AnalysisJob(TypedDict):
     id: str
     status: str
-    result: NotRequired[AnalysisJobResult]
+    result: NotRequired[Analysis | JobError]
 
 
 class LatestAnalysis(TypedDict):
@@ -165,17 +152,10 @@ class FileAnalysisRequest(TypedDict):
     source_file_version_id: str
 
 
-class RuleParseJobResult(TypedDict, total=False):
-    title: str
-    body: RuleBody
-    source_file_version_id: str
-    error: str
-
-
 class RuleParseJob(TypedDict):
     id: str
     status: str
-    result: NotRequired[RuleParseJobResult]
+    result: NotRequired[RuleCandidate | JobError]
     source_file_id: NotRequired[str]
     source_file_version_id: NotRequired[str]
     document_type: NotRequired[str]
