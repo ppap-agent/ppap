@@ -97,10 +97,19 @@ class RuleBody(TypedDict):
     rules: list[RuleItem]
 
 
-class RuleDetail(Rule):
+class RuleDetail(TypedDict):
+    id: str
+    title: str
+    kind: str
+    created_at: str
     body: RuleBody
     source_file_id: str
     source_file_version_id: str
+    type: NotRequired[str]
+    predecessor_id: NotRequired[str | None]
+    customers: NotRequired[list[str]]
+    models: NotRequired[list[str]]
+    parts: NotRequired[list[str]]
 
 
 class RuleCandidate(TypedDict):
