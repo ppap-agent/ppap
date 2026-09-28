@@ -48,21 +48,24 @@ def _containers(doc: dict):
 
 
 class TkeCurrentDeployTests(unittest.TestCase):
+    def test_validate_and_apply_share_the_same_kustomize_render(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        apply = (TKE / "apply-current.sh").read_text()
+        workload = (TKE / "edition-proxy.yaml").read_text()
+        kustomization = (TKE / "kustomization.yaml").read_text()
+
+        self.assertIn("deploy/tke/render-current.sh", workflow)
+        self.assertIn('"$TKE/render-current.sh" > "$RENDERED"', apply)
+        self.assertIn('kubectl apply --dry-run=server -f "$RENDERED"', apply)
+        self.assertIn('kubectl apply -f "$RENDERED"', apply)
+        self.assertNotIn("deploy/tke/current.yaml", apply)
+        self.assertNotIn("deploy/tke/edition-proxy.yaml", apply)
+        self.assertNotIn("kind: ConfigMap", workload)
+        self.assertIn("configMapGenerator:", kustomization)
+        self.assertIn("default.conf=edition-proxy.conf", kustomization)
+
     def test_kustomize_render_matches_schema_and_ppap_policy(self):
-        rendered = _run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "-v",
-                f"{TKE}:/src:ro",
-                "-w",
-                "/src",
-                KUSTOMIZE,
-                "build",
-                ".",
-            ]
-        )
+        rendered = _run([str(TKE / "render-current.sh")])
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         schema = _run(
             [
@@ -84,6 +87,7 @@ class TkeCurrentDeployTests(unittest.TestCase):
         self.assertEqual(converted.returncode, 0, converted.stderr)
         docs = json.loads(converted.stdout)
         names = [doc.get("metadata", {}).get("name") for doc in docs]
+        self.assertFalse(any(doc.get("kind") == "Secret" for doc in docs))
         for name in WORKLOADS:
             self.assertIn(name, names)
         blob = json.dumps(docs)

@@ -3,3 +3,12 @@ kind: Kustomization
 resources:
   - current.yaml
   - edition-proxy.yaml
+
+configMapGenerator:
+  - name: edition-proxy
+    namespace: ppap-test
+    files:
+      - default.conf=edition-proxy.conf
+
+generatorOptions:
+  disableNameSuffixHash: true
