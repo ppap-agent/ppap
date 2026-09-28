@@ -48,6 +48,12 @@ class PocCase:
     bundle_id: str
     expected: Dict[int, OracleRuleExpectation]
 
+    def __post_init__(self) -> None:
+        if not self.expected:
+            raise AssertionError(
+                f"V3 oracle incomplete: file={self.file_name} seq={self.file_seq} has 0 PASS/NG expectations"
+            )
+
 
 @dataclass(frozen=True)
 class BundleContext:
@@ -152,6 +158,10 @@ def _load_expected_from_xlsx(
                 raise AssertionError(f"Conflicting duplicate rows in xlsx: {file_name}")
             continue
 
+        if not rule_map:
+            raise AssertionError(
+                f"V3 oracle incomplete: file={file_name} seq={file_seq or '(missing)'} has 0 PASS/NG expectations"
+            )
         expected[file_name] = rule_map
 
     if not expected:
@@ -194,6 +204,10 @@ def _build_poc_cases(
     for file_name, rule_map in expected_map.items():
         file_path = dataset_index[file_name]
         file_seq = file_seq_map[file_name]
+        if not rule_map:
+            raise AssertionError(
+                f"V3 oracle incomplete: file={file_name} seq={file_seq} has 0 PASS/NG expectations"
+            )
 
         cases.append(
             PocCase(

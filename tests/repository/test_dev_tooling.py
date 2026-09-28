@@ -910,6 +910,8 @@ class DeployContractTests(unittest.TestCase):
         self.assertIn("Required V3 dataset is missing", oracle)
         self.assertIn("Required V3 expected XLSX is missing", oracle)
         self.assertIn("No valid V3 cases", oracle)
+        self.assertIn("V3 oracle incomplete", oracle)
+        self.assertIn("0 PASS/NG expectations", oracle)
 
     def test_python_tests_use_pytest_and_installed_imports(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
