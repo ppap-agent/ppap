@@ -7,19 +7,29 @@ One PostgreSQL cluster, two responsibility schemas:
 
 Migrations are forward-only and reviewed with the application change that needs them.
 
-Apply with `psql`. Empty cluster:
+The canonical migration order is the lexical order of the numbered files:
+
+```text
+migrations/0001_*.sql
+migrations/0002_*.sql
+...
+```
+
+There is no second ordering manifest. `migrations/apply.sh` sets `LC_ALL=C`, discovers `NNNN_*.sql` from its directory, and executes each file with `psql -v ON_ERROR_STOP=1 -f`. Each numbered migration records itself in `product.schema_migrations` and is safe to re-run.
+
+Empty cluster:
 
 ```sh
 psql -d postgres -v ON_ERROR_STOP=1 -f migrations/bootstrap.sql
-psql -d ppap -v ON_ERROR_STOP=1 -f migrations/apply.sql
+PPAP_PG_DATABASE=ppap PGUSER=ppap_migrator PGPASSWORD='<password>' sh migrations/apply.sh
 ```
 
-`bootstrap.sql` creates least-privilege roles (`ppap_migrator`, `ppap_api`, `ppap_worker`) and the application database from `PPAP_PG_*` environment variables. `apply.sql` `\ir`s the numbered files in order. Each numbered file records itself in `product.schema_migrations` and is safe to re-run.
-
-Compose `init-db` retries the same two `psql` invocations until Postgres has finished its first-boot restart. Empty → latest、previous → latest 以及其余真实 PostgreSQL 契约：`pytest tests/schema`（需要 isolated-dev postgres；测试使用容器内 `psql`，不要求 host `psql`）。
+`bootstrap.sql` creates least-privilege roles (`ppap_migrator`, `ppap_api`, `ppap_worker`) and the application database from `PPAP_PG_*` environment variables. Compose, InsForge, TKE, and Schema CI all execute the same `apply.sh` path. Empty → latest、previous → latest、repeated apply、history ordering and fail-closed behavior are verified against real PostgreSQL by `pytest tests/schema`.
 
 Rules:
 
+- numbered migration filenames are the only ordering authority
+- do not maintain an `apply.sql` or another explicit migration list
 - do not collapse audit rounds and engine jobs into one generic task table
 - keep result/history records versioned or append-only
 - add constraints for idempotency and foreign-key traceability

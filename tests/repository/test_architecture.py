@@ -250,6 +250,26 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("Guest interpreter boundary", guest)
         self.assertIn('"PYTHONPATH"', guest)
 
+    def test_migration_order_has_one_filename_authority(self):
+        runner = (ROOT / "migrations/apply.sh").read_text()
+        self.assertFalse((ROOT / "migrations/apply.sql").exists())
+        self.assertIn("LC_ALL=C", runner)
+        self.assertIn('"$MIGRATIONS_DIR"/[0-9][0-9][0-9][0-9]_*.sql', runner)
+        self.assertIn("ON_ERROR_STOP=1", runner)
+        self.assertIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', runner)
+        self.assertIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', runner)
+        for path in (
+            ROOT / "deploy/compose.yaml",
+            ROOT / "deploy/isolated-dev/compose.yaml",
+            ROOT / "deploy/insforge/compose.yaml",
+            ROOT / "deploy/tke/current.yaml",
+        ):
+            text = path.read_text()
+            self.assertIn("sh /migrations/apply.sh", text)
+            self.assertNotIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', text)
+            self.assertNotIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', text)
+            self.assertNotIn("apply.sql", text)
+
     def test_tke_deploy_uses_canonical_render_and_no_raw_manifest_apply(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text()
         apply = (ROOT / "deploy/tke/apply-current.sh").read_text()

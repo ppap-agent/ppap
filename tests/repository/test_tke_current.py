@@ -125,6 +125,17 @@ class TkeCurrentDeployTests(unittest.TestCase):
             for container in _containers(doc)
             if container.get("name") == "worker"
         )
+        init_db = next(
+            container
+            for doc in docs
+            if doc.get("metadata", {}).get("name") == "ppap-current-init-db"
+            for container in _containers(doc)
+            if container.get("name") == "init-db"
+        )
+        init_command = "\n".join(init_db.get("args") or [])
+        self.assertIn("sh /migrations/apply.sh", init_command)
+        self.assertNotIn("apply.sql", init_command)
+
         command = "\n".join(worker.get("args") or [])
         self.assertIn('until [ -S "$PPAP_DEEP_CONTROLLER_SOCKET" ]', command)
         self.assertIn("warning: deep controller socket unavailable after 60s; starting Worker so Standard remains available", command)

@@ -62,7 +62,7 @@ class SchemaTools:
     )
 
     def migration_files(self) -> list[Path]:
-        return sorted(path for path in self.MIGRATIONS.glob("*.sql") if path.name[:4].isdigit())
+        return sorted(self.MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql"))
 
     def latest_version(self) -> str:
         files = self.migration_files()
@@ -130,6 +130,51 @@ class SchemaTools:
             "ON_ERROR_STOP=1",
             *self.container_psql_args(args),
         ]
+        try:
+            return subprocess.run(
+                command,
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
+
+    def apply(self, database: str, *, migrations_dir: str = "/migrations") -> subprocess.CompletedProcess[bytes]:
+        command = [
+            *self.COMPOSE,
+            "exec",
+            "-T",
+            "-e",
+            "PGHOST=127.0.0.1",
+            "-e",
+            "PGPORT=5432",
+            "-e",
+            f"PPAP_PG_MIGRATOR_USER={self.migrator_user()}",
+            "-e",
+            f"PPAP_PG_MIGRATOR_PASSWORD={self.migrator_password()}",
+            "-e",
+            f"PPAP_PG_DATABASE={database}",
+            "-e",
+            f"MIGRATIONS_DIR={migrations_dir}",
+            "postgres",
+            "sh",
+            "/migrations/apply.sh",
+        ]
+        try:
+            return subprocess.run(
+                command,
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
+
+    def container_sh(self, script: str) -> subprocess.CompletedProcess[bytes]:
+        command = [*self.COMPOSE, "exec", "-T", "postgres", "sh", "-c", script]
         try:
             return subprocess.run(
                 command,
