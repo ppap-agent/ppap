@@ -194,6 +194,10 @@ class ArchitectureTests(unittest.TestCase):
         self.assertTrue((owner / "test_cross_format_contract.py").is_file())
         self.assertTrue((owner / "test_oracle_reconciliation.py").is_file())
         self.assertTrue((owner / "test_psw_cross_format_regression.py").is_file())
+        self.assertFalse((ROOT / "tests/corpus/v2_assets/test_baseline_exceptions.py").exists())
+        corpus_conftest = (ROOT / "tests/corpus/conftest.py").read_text()
+        self.assertNotIn("BASELINE_XFAIL_IDS", corpus_conftest)
+        self.assertNotIn("pytest.mark.xfail", corpus_conftest)
         core_tests = "\n".join(
             path.read_text()
             for path in (ROOT / "packages/ppap_core/tests").glob("test_*.py")
