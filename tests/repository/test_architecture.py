@@ -250,6 +250,22 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("Guest interpreter boundary", guest)
         self.assertIn('"PYTHONPATH"', guest)
 
+    def test_tke_deploy_uses_canonical_render_and_no_raw_manifest_apply(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        apply = (ROOT / "deploy/tke/apply-current.sh").read_text()
+        kustomization = (ROOT / "deploy/tke/kustomization.yaml").read_text()
+        proxy = (ROOT / "deploy/tke/edition-proxy.yaml").read_text()
+
+        self.assertIn("deploy/tke/render-current.sh", workflow)
+        self.assertIn('"$TKE/render-current.sh" > "$RENDERED"', apply)
+        self.assertIn("--dry-run=server -f \"$RENDERED\"", apply)
+        self.assertIn('kubectl apply -f "$RENDERED"', apply)
+        self.assertNotIn("kubectl apply -f \"$ROOT/deploy/tke/current.yaml\"", apply)
+        self.assertNotIn("kubectl apply -f \"$ROOT/deploy/tke/edition-proxy.yaml\"", apply)
+        self.assertIn("configMapGenerator:", kustomization)
+        self.assertIn("default.conf=edition-proxy.conf", kustomization)
+        self.assertNotIn("kind: ConfigMap", proxy)
+
     def test_container_build_graph_uses_native_bake_and_compose_authorities(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text()
         verifier = (ROOT / "scripts/verify-container-graph.mjs").read_text()
