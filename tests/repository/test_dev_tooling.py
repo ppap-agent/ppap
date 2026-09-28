@@ -893,6 +893,15 @@ class DeployContractTests(unittest.TestCase):
             self.assertIn("LLM", text)
             self.assertIn("Feishu", text)
 
+    def test_required_v2_corpus_reconciles_oracle_assets(self):
+        shared = (ROOT / "tests" / "corpus" / "v2_assets" / "v2_assets_shared.py").read_text()
+        self.assertIn("def reconcile_v2_oracle_assets", shared)
+        self.assertIn("V2 oracle assets missing", shared)
+        self.assertIn("V2 oracle assets ambiguous", shared)
+        self.assertNotIn("long-feedback files not found", shared)
+        testing = (ROOT / "docs" / "TESTING.md").read_text()
+        self.assertIn("不跳过部分样本", testing)
+
     def test_required_v3_corpus_does_not_skip_missing_assets(self):
         grouped = (ROOT / "tests" / "corpus" / "v3_poc" / "test_poc_assets_grouped.py").read_text()
         self.assertNotIn("pytest.skip", grouped)

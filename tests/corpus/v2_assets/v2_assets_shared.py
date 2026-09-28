@@ -156,6 +156,15 @@ class FileCase:
     file_type: str
 
 
+@dataclass(frozen=True)
+class OracleCaseSpec:
+    file_name: str
+    file_format: str
+    file_type: str
+    agent_cls: type
+    expected: Dict[int, RuleExpectation]
+
+
 def normalize_file_name(name: str) -> str:
     if not name:
         return ""
@@ -413,13 +422,13 @@ def _parse_feedback_doc_key(*, file_type: str, file_name: str) -> DocKey | None:
     return parse_doc_key(file_name)
 
 
-def _load_manifest_path_index(manifest_path: Path) -> dict[tuple[str, str], Path]:
+def _load_manifest_path_index(manifest_path: Path) -> dict[tuple[str, str], tuple[Path, ...]]:
     if not manifest_path.exists():
         return {}
 
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = raw.get("rows", []) if isinstance(raw, dict) else []
-    index: dict[tuple[str, str], Path] = {}
+    collected: dict[tuple[str, str], list[Path]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -429,30 +438,63 @@ def _load_manifest_path_index(manifest_path: Path) -> dict[tuple[str, str], Path
         if not file_name or not local_path_raw:
             continue
         local_path = Path(local_path_raw).expanduser().resolve()
-        key = (file_name, file_format)
-        if key not in index:
-            index[key] = local_path
-    return index
+        bucket = collected.setdefault((file_name, file_format), [])
+        if local_path not in bucket:
+            bucket.append(local_path)
+    return {key: tuple(paths) for key, paths in collected.items()}
 
 
-def build_cases_from_long_feedback(
+def reconcile_v2_oracle_assets(
+    selected: list[OracleCaseSpec],
     *,
-    dataset_root: Path,
+    dataset_files: Dict[str, Path],
+    manifest_paths: dict[tuple[str, str], tuple[Path, ...]],
+) -> list[tuple[OracleCaseSpec, Path]]:
+    if not selected:
+        raise AssertionError("No long-feedback test cases found for selected options.")
+
+    missing: list[OracleCaseSpec] = []
+    ambiguous: list[tuple[OracleCaseSpec, list[Path]]] = []
+    resolved: list[tuple[OracleCaseSpec, Path]] = []
+
+    for spec in selected:
+        candidates: list[Path] = []
+        for path in manifest_paths.get((spec.file_name, spec.file_format), ()):
+            if path.exists() and path not in candidates:
+                candidates.append(path)
+        if not candidates:
+            fallback = dataset_files.get(spec.file_name)
+            if fallback is not None and fallback.exists() and fallback not in candidates:
+                candidates.append(fallback)
+
+        if len(candidates) == 1:
+            resolved.append((spec, candidates[0]))
+        elif len(candidates) > 1:
+            ambiguous.append((spec, candidates))
+        else:
+            missing.append(spec)
+
+    parts: list[str] = []
+    if missing:
+        lines = [f"- file={spec.file_name} file_type={spec.file_type}" for spec in missing]
+        parts.append("V2 oracle assets missing:\n" + "\n".join(lines))
+    if ambiguous:
+        lines = [
+            f"- file={spec.file_name} file_type={spec.file_type} -> {paths}"
+            for spec, paths in ambiguous
+        ]
+        parts.append("V2 oracle assets ambiguous:\n" + "\n".join(lines))
+    if parts:
+        raise AssertionError("\n".join(parts))
+    return resolved
+
+
+def _select_long_feedback_oracle_cases(
+    *,
     expected_csv: Path,
-    ftype_filter: str | None = None,
-    include_unlabeled: bool = False,
-    manifest_path: Path | None = None,
-) -> List[FileCase]:
-    dataset_root = dataset_root.expanduser().resolve()
-    expected_csv = expected_csv.expanduser().resolve()
-    if not dataset_root.exists():
-        raise AssertionError(f"Missing dataset root: {dataset_root}")
-    if not expected_csv.exists():
-        raise AssertionError(f"Missing expected CSV: {expected_csv}")
-
-    dataset_files = index_dataset_files(dataset_root)
-    manifest_index = _load_manifest_path_index(manifest_path.expanduser().resolve()) if manifest_path else {}
-
+    ftype_filter: str | None,
+    include_unlabeled: bool,
+) -> list[OracleCaseSpec]:
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     with expected_csv.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -505,15 +547,23 @@ def build_cases_from_long_feedback(
             state = grouped.setdefault(
                 group_key,
                 {
-                    "agent_cls": agent_cls,
+                    "file_name": file_name,
+                    "file_format": group_key[1],
                     "file_type": agent_file_type,
+                    "agent_cls": agent_cls,
                     "expected": {},
                 },
             )
 
             existing = state["expected"].get(rule_index)
-            if existing is not None and (existing.status != status or existing.rule_desc != rule_desc or existing.manual_reason != manual_reason):
-                raise AssertionError(f"Conflicting duplicate row in long feedback CSV: file={file_name!r}, rule={rule_index}")
+            if existing is not None and (
+                existing.status != status
+                or existing.rule_desc != rule_desc
+                or existing.manual_reason != manual_reason
+            ):
+                raise AssertionError(
+                    f"Conflicting duplicate row in long feedback CSV: file={file_name!r}, rule={rule_index}"
+                )
 
             state["expected"][rule_index] = RuleExpectation(
                 status=status,
@@ -521,42 +571,53 @@ def build_cases_from_long_feedback(
                 manual_reason=manual_reason,
             )
 
-    cases: list[FileCase] = []
-    missing_files: list[str] = []
-    for (file_name, file_format_key), state in sorted(grouped.items(), key=lambda item: item[0]):
-        expected_map = state["expected"]
-        if not expected_map:
-            continue
-
-        resolved_path: Path | None = None
-        manifest_path_value = manifest_index.get((file_name, file_format_key))
-        if manifest_path_value and manifest_path_value.exists():
-            resolved_path = manifest_path_value
-
-        if resolved_path is None:
-            resolved_path = dataset_files.get(file_name)
-
-        if resolved_path is None:
-            missing_files.append(file_name)
-            continue
-
-        cases.append(
-            FileCase(
-                file_name=file_name,
-                file_path=resolved_path,
-                expected=expected_map,
-                agent_cls=state["agent_cls"],
-                file_type=state["file_type"],
-            )
+    return [
+        OracleCaseSpec(
+            file_name=state["file_name"],
+            file_format=state["file_format"],
+            file_type=state["file_type"],
+            agent_cls=state["agent_cls"],
+            expected=state["expected"],
         )
+        for _, state in sorted(grouped.items(), key=lambda item: item[0])
+        if state["expected"]
+    ]
 
-    if missing_files:
-        unique_missing = sorted(set(missing_files))
-        print(f"[v2_assets] Skipped {len(unique_missing)} long-feedback files not found in dataset: " + ", ".join(unique_missing[:8]) + (" ..." if len(unique_missing) > 8 else ""))
 
-    if not cases:
-        if missing_files:
-            missing_text = ", ".join(sorted(set(missing_files)))
-            raise AssertionError(f"No long-feedback test cases found for selected options. Missing files: {missing_text}")
-        raise AssertionError("No long-feedback test cases found for selected options.")
-    return cases
+def build_cases_from_long_feedback(
+    *,
+    dataset_root: Path,
+    expected_csv: Path,
+    ftype_filter: str | None = None,
+    include_unlabeled: bool = False,
+    manifest_path: Path | None = None,
+) -> List[FileCase]:
+    dataset_root = dataset_root.expanduser().resolve()
+    expected_csv = expected_csv.expanduser().resolve()
+    if not dataset_root.exists():
+        raise AssertionError(f"Missing dataset root: {dataset_root}")
+    if not expected_csv.exists():
+        raise AssertionError(f"Missing expected CSV: {expected_csv}")
+
+    selected = _select_long_feedback_oracle_cases(
+        expected_csv=expected_csv,
+        ftype_filter=ftype_filter,
+        include_unlabeled=include_unlabeled,
+    )
+    resolved = reconcile_v2_oracle_assets(
+        selected,
+        dataset_files=index_dataset_files(dataset_root),
+        manifest_paths=(
+            _load_manifest_path_index(manifest_path.expanduser().resolve()) if manifest_path else {}
+        ),
+    )
+    return [
+        FileCase(
+            file_name=spec.file_name,
+            file_path=path,
+            expected=spec.expected,
+            agent_cls=spec.agent_cls,
+            file_type=spec.file_type,
+        )
+        for spec, path in resolved
+    ]
