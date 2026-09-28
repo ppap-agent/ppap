@@ -9,4 +9,3 @@ configMapGenerator:
     namespace: ppap-test
     files:
       - default.conf=edition-proxy.conf
-
