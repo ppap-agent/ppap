@@ -32,7 +32,7 @@ from ppap_corpus_contracts.psw_cross_format_regression import (
     compare_psw_snapshots,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _PAIR_ROOT = _REPO_ROOT / "assets" / "V2.0测试" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
 _LEGACY_DOC = _REPO_ROOT / "tests" / "corpus" / "fixtures" / "legacy_doc" / "psw.doc"
 
