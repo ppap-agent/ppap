@@ -13,16 +13,8 @@ export interface components {
     };
     "AnalysisJob": {
       "id": string;
-      "result"?: components["schemas"]["AnalysisJobResult"];
+      "result"?: components["schemas"]["Analysis"] | components["schemas"]["JobError"];
       "status": string;
-    };
-    "AnalysisJobResult": {
-      "document_type"?: null | string;
-      "error"?: string;
-      "matched_rule_id"?: null | string;
-      "matching_status"?: string;
-      "metadata"?: components["schemas"]["Metadata"];
-      "notices"?: Array<string>;
     };
     "DocxCellLocator": {
       "column": number;
@@ -73,9 +65,6 @@ export interface components {
       "files": Array<components["schemas"]["DriveFile"]>;
       "next_page_token"?: string;
     };
-    "ErrorResponse": {
-      "error": string;
-    };
     "Evidence": {
       "sources"?: Array<components["schemas"]["EvidenceSource"]>;
     };
@@ -96,9 +85,6 @@ export interface components {
       "byte_size": number;
       "content_type": string;
       "original_filename": string;
-    };
-    "FileStatus": {
-      "status": string;
     };
     "FileVersion": {
       "byte_size"?: number;
@@ -131,6 +117,9 @@ export interface components {
     "HostLoginRequest": {
       "code": string;
       "redirect_uri"?: string;
+    };
+    "JobError": {
+      "error": string;
     };
     "LatestAnalysis": {
       "analysis": components["schemas"]["AnalysisJob"] | null;
@@ -320,16 +309,10 @@ export interface components {
     "RuleParseJob": {
       "document_type"?: string;
       "id": string;
-      "result"?: components["schemas"]["RuleParseJobResult"];
+      "result"?: components["schemas"]["JobError"] | components["schemas"]["RuleCandidate"];
       "source_file_id"?: string;
       "source_file_version_id"?: string;
       "status": string;
-    };
-    "RuleParseJobResult": {
-      "body"?: components["schemas"]["RuleBody"];
-      "error"?: string;
-      "source_file_version_id"?: string;
-      "title"?: string;
     };
     "RuleParseRequest": {
       "document_type"?: string;

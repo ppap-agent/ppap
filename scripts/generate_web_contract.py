@@ -11,8 +11,70 @@ from ppap_api import app
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "apps" / "web" / "src" / "generated" / "openapi.ts"
-SKIP_SCHEMAS = {"HTTPValidationError", "ValidationError"}
-HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+WEB_SCHEMA_NAMES = (
+    "Analysis",
+    "AnalysisJob",
+    "DocxCellLocator",
+    "DocxParagraphLocator",
+    "Draft",
+    "DraftAcceptRequest",
+    "DraftCreateRequest",
+    "DraftInputItem",
+    "DraftList",
+    "DraftSaveRequest",
+    "DriveFile",
+    "DriveFilesList",
+    "Evidence",
+    "EvidenceSource",
+    "FeishuFileImportRequest",
+    "FileAnalysisRequest",
+    "FileCreateRequest",
+    "FileVersion",
+    "Finding",
+    "FindingLocator",
+    "HostLoginRequest",
+    "JobError",
+    "LatestAnalysis",
+    "MaterialWire",
+    "Metadata",
+    "OfficePreviewResponse",
+    "PdfBlockLocator",
+    "PreviewResponse",
+    "PreviewRow",
+    "PrincipalPublic",
+    "PublicConfig",
+    "QuotaEstimate",
+    "ReportEnvelope",
+    "ReportExport",
+    "ResubmitRequest",
+    "Review",
+    "ReviewRequest",
+    "Round",
+    "RoundFailure",
+    "RoundList",
+    "RoundProgress",
+    "Rule",
+    "RuleBody",
+    "RuleCandidate",
+    "RuleCoverageItem",
+    "RuleDetail",
+    "RuleItem",
+    "RuleParseJob",
+    "RuleParseRequest",
+    "RulePublishRequest",
+    "RuleTypes",
+    "RulesList",
+    "SemanticEvidence",
+    "SemanticScope",
+    "SemanticSource",
+    "UsageEvent",
+    "UsageList",
+    "WritebackResponse",
+    "WritebackTarget",
+    "XlsxCellLocator",
+    "XlsxRangeLocator",
+    "Coverage",
+)
 
 REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/public-config"): False,
@@ -164,7 +226,10 @@ def generate() -> str:
     spec = app.openapi()
     validate_required_operations(spec)
     schemas = ((spec.get("components") or {}).get("schemas") or {})
-    names = sorted(name for name in schemas if name not in SKIP_SCHEMAS)
+    missing = [name for name in WEB_SCHEMA_NAMES if name not in schemas]
+    if missing:
+        raise SystemExit("OpenAPI is missing Web schemas: " + ", ".join(missing))
+    names = WEB_SCHEMA_NAMES
     rows = [
         "/* eslint-disable */",
         "// GENERATED FILE. Source authority: FastAPI app.openapi().",
