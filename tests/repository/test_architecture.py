@@ -168,6 +168,43 @@ class ArchitectureTests(unittest.TestCase):
                     offenders.append(f"{rel}: {stripped}")
         self.assertEqual(offenders, [])
 
+    def test_test_support_uses_pytest_native_lifecycle(self):
+        forbidden = ("spec_from_file_location", "exec_module(", "request.instance")
+        offenders = []
+        for path in ROOT.rglob("conftest.py"):
+            text = path.read_text()
+            for token in forbidden:
+                if token in text:
+                    offenders.append(f"{path.relative_to(ROOT)}: {token}")
+        self.assertEqual(offenders, [])
+        self.assertFalse((ROOT / "services/api/tests/store_fixture.py").exists())
+        self.assertFalse((ROOT / "services/worker/tests/store_fixture.py").exists())
+        self.assertFalse((ROOT / "tests/integration/product/store_fixture.py").exists())
+        self.assertFalse((ROOT / "tests/schema/memory_objects.py").exists())
+        self.assertFalse((ROOT / "tests/schema/sample_rule.py").exists())
+
+    def test_corpus_contract_tests_follow_their_owner(self):
+        owner = ROOT / "packages/ppap_corpus_contracts/tests"
+        self.assertTrue((owner / "test_execution_outcome.py").is_file())
+        self.assertTrue((owner / "test_baseline_exceptions.py").is_file())
+        self.assertTrue((owner / "test_cross_format_contract.py").is_file())
+        self.assertTrue((owner / "test_oracle_reconciliation.py").is_file())
+        self.assertTrue((owner / "test_psw_cross_format_regression.py").is_file())
+        core_tests = "\n".join(
+            path.read_text()
+            for path in (ROOT / "packages/ppap_core/tests").glob("test_*.py")
+        )
+        self.assertNotIn("ppap_excel_audit_engine", core_tests)
+
+    def test_corpus_pairs_and_psw_use_physical_suite_discovery(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        self.assertIn("args: tests/corpus/pairs --cross-format -q", workflow)
+        self.assertIn("pytest tests/corpus/psw -q", workflow)
+        self.assertNotIn("test_cross_format_pairs.py tests/corpus", workflow)
+        self.assertNotIn("test_psw_cross_format_audit.py", workflow)
+        self.assertTrue(any((ROOT / "tests/corpus/pairs").glob("test_*.py")))
+        self.assertTrue(any((ROOT / "tests/corpus/psw").glob("test_*.py")))
+
     def test_owner_tests_do_not_read_root_corpus(self):
         offenders = []
         for base in PRODUCTION_ROOTS:
