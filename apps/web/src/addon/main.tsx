@@ -13,7 +13,12 @@ import type {
   DocLink,
   DocLinksResponse,
   Draft,
+  DraftAcceptRequest,
+  DraftCreateRequest,
+  DraftSaveRequest,
+  FeishuFileImportRequest,
   FileVersion,
+  HostLoginRequest,
   Material,
   PrincipalPublic,
   PublicConfig,
@@ -84,7 +89,8 @@ async function waitForHostLogin(host: AddonHost) {
 
 async function loginWithHost(api: string, host: AddonHost) {
   const code = await waitForHostLogin(host)
-  const logged = await readJson<PrincipalPublic>(`${api}/login/feishu/host`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code})})
+  const payload: HostLoginRequest = {code}
+  const logged = await readJson<PrincipalPublic>(`${api}/login/feishu/host`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
   if (!logged.ok) {
     if (logged.status === 403 && (logged.body as ApiFailure).error === 'tenant_not_allowed') throw new Error('无法使用此入口。')
     throw new Error('飞书登录失败，请重试')
@@ -171,7 +177,7 @@ export default function AddonApp() {
   const [busy, setBusy] = useState(false)
   const [writebackResult, setWritebackResult] = useState('')
 
-  const request = useCallback(async <T,>(path: string, body?: Record<string, unknown>, method?: string): Promise<T> => {
+  const request = useCallback(async <T, B = unknown>(path: string, body?: B, method?: string): Promise<T> => {
     if (!api || !host) throw new Error('尚未建立飞书连接')
     const verb = method || (body === undefined ? 'GET' : 'POST')
     const result = await authorizedJson<T>(api, host, `${api}${path}`, verb === 'GET' ? {} : {method: verb, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
@@ -222,10 +228,14 @@ export default function AddonApp() {
         setApi(nextApi); setHost(nextHost); setFileToken(fileToken); setUser(subjectOf(principal)); setRules(nextRules); setDocuments(nextItems); setSelected(new Set(nextItems.map(item => item.token)))
         setStatus('为每个待审文件选择规则')
         if (!query.get('round') && nextItems.length && !query.get('draft')) {
-          const draft = await authorizedJson<Draft>(nextApi, nextHost, `${nextApi}/drafts`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+          const payload: DraftCreateRequest = {}
+          const draft = await authorizedJson<Draft>(nextApi, nextHost, `${nextApi}/drafts`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
           if (draft.ok) { setDraftId(draft.body.id); remember(draft.body.id, '') }
         }
-        if (query.get('draft') && fileToken && !nextDraftAccepted) await authorizedJson(nextApi, nextHost, `${nextApi}/drafts/${encodeURIComponent(query.get('draft')!)}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({writeback_target: writebackTarget(fileToken)})})
+        if (query.get('draft') && fileToken && !nextDraftAccepted) {
+          const payload: DraftSaveRequest = {writeback_target: writebackTarget(fileToken)}
+          await authorizedJson<Draft>(nextApi, nextHost, `${nextApi}/drafts/${encodeURIComponent(query.get('draft')!)}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
+        }
       } catch (caught) {
         if (!cancelled) { const message = caught instanceof Error ? caught.message : '飞书登录失败，请重试'; setStatus(message); setError(message) }
       }
@@ -269,19 +279,19 @@ export default function AddonApp() {
     setBusy(true); setError(''); setStatus('正在发起审核…')
     try {
       let activeDraft = draftId
-      if (!activeDraft) { activeDraft = (await request<Draft>('/drafts', {})).id; setDraftId(activeDraft) }
+      if (!activeDraft) { activeDraft = (await request<Draft, DraftCreateRequest>('/drafts', {})).id; setDraftId(activeDraft) }
       const prepared = []
       for (const item of documents.filter(item => selected.has(item.token))) {
         if (!item.file_version_id) {
-          const imported = await request<FileVersion>('/integrations/feishu/files/import', {file_token: item.token, doc_type: 'file'})
+          const imported = await request<FileVersion, FeishuFileImportRequest>('/integrations/feishu/files/import', {file_token: item.token, doc_type: 'file'})
           item.file_version_id = imported.id
           item.file_id = imported.file_id
         }
         prepared.push({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.rule_version_id || null})
       }
       const items = prepared
-      await request<Draft>(`/drafts/${encodeURIComponent(activeDraft)}`, {items, writeback_target: writebackTarget(fileToken)}, 'PUT')
-      const accepted = await request<Round>(`/drafts/${encodeURIComponent(activeDraft)}/accept`, {idempotency_key: `addon:${activeDraft}`})
+      await request<Draft, DraftSaveRequest>(`/drafts/${encodeURIComponent(activeDraft)}`, {items, writeback_target: writebackTarget(fileToken)}, 'PUT')
+      const accepted = await request<Round, DraftAcceptRequest>(`/drafts/${encodeURIComponent(activeDraft)}/accept`, {idempotency_key: `addon:${activeDraft}`})
       refreshUrl(accepted.id, activeDraft); setDraftAccepted(true)
       const completed = await pollRound(accepted.id)
       if (completed?.execution === 'completed') await writeCurrentDocument()
