@@ -2,6 +2,8 @@
 import io
 import os
 import unittest
+
+import pytest
 from unittest.mock import Mock, patch
 
 import httpx
@@ -73,6 +75,10 @@ class PreviewTests(unittest.TestCase):
 
 
 class ProductExperienceTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def test_round_findings_follow_effective_clause_order_not_lexical_ids(self):
         from ppap_product_store import AuthStore
 

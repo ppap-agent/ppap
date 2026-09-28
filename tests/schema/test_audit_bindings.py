@@ -4,6 +4,8 @@ import os
 import threading
 import time
 import unittest
+
+import pytest
 import uuid
 
 
@@ -11,24 +13,30 @@ import uuid
 class AuditDatabaseCase(unittest.TestCase):
     previous_schema = False
 
+    @pytest.fixture(autouse=True)
+    def _schema_support(self, schema_tools, memory_objects_type, sample_rule_body_factory):
+        self.schema = schema_tools
+        self.memory_objects_type = memory_objects_type
+        self.rule_body = sample_rule_body_factory
+
     def setUp(self):
         from ppap_application import build_product_store
         from ppap_core.settings import Settings
 
-        self._require_postgres(self)
+        self.schema.require_postgres()
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
-        self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self._migrator_user()}"), "create isolated audit DB")
-        self.addCleanup(lambda: self._require(self._psql(self._bootstrap_user(), self._bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))
+        self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()}"), "create isolated audit DB")
+        self.addCleanup(lambda: self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))
         if self.previous_schema:
 
-            for migration in self.migration_files():
+            for migration in self.schema.migration_files():
                 if migration.name >= "0010":
                     break
-                self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
+                self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
         else:
-            self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "apply.sql")), "apply audit schema")
-        self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=self._migrator_user(), pg_migrator_password=self._migrator_password())
-        self.store = build_product_store(self.settings, objects=self.MemoryObjects())
+            self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "apply.sql")), "apply audit schema")
+        self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=self.schema.migrator_user(), pg_migrator_password=self.schema.migrator_password())
+        self.store = build_product_store(self.settings, objects=self.memory_objects_type())
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
 
@@ -180,8 +188,8 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
             conn.execute("INSERT INTO product.findings (id,round_id,item_key,classification,item,status) VALUES (%s,%s,'check','A','Original result','NG')", (str(uuid.uuid4()), round_id))
             conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
         for _ in range(2):
-            self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
-        self._require(self._psql(self._migrator_user(), self._migrator_password(), self.database, "-f", str(self.MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
+            self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
+        self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "apply.sql")), "upgrade to current before using current store")
         loaded = self.store.get_round(round_id)
         by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
         self.assertEqual(by_id[target.id]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})

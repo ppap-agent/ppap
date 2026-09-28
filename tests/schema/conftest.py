@@ -1,49 +1,186 @@
-"""Schema fixtures. PostgreSQL remains the migration authority.
-
-Support modules stay owner-local. Tests receive them by fixture injection so
-importlib collection does not put sibling test modules on sys.path.
-"""
+"""Schema pytest fixtures. PostgreSQL remains the migration authority."""
 from __future__ import annotations
 
-import importlib.util
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
-_DIR = Path(__file__).resolve().parent
+from ppap_core.files import ObjectExists, ObjectMissing
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load(stem: str):
-    path = _DIR / f"{stem}.py"
-    spec = importlib.util.spec_from_file_location(f"ppap_schema_support_{stem}", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+class MemoryObjects:
+    """Schema-local object-storage boundary fake."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, bytes] = {}
+
+    def put_exclusive(self, key: str, body: bytes, content_type: str) -> None:
+        if key in self.data:
+            raise ObjectExists()
+        self.data[key] = body
+
+    def get(self, key: str) -> bytes:
+        if key not in self.data:
+            raise ObjectMissing()
+        return self.data[key]
+
+    def delete(self, key: str) -> None:
+        self.data.pop(key, None)
 
 
-_UPGRADE = _load("test_upgrade")
-_OBJECTS = _load("memory_objects")
-_SAMPLE = _load("sample_rule")
+def sample_rule_body() -> dict:
+    return {
+        "kind": "engine",
+        "rule_profile": "v3",
+        "type": "控制计划",
+        "customers": ["测试客户"],
+        "models": ["M1"],
+        "parts": ["P1"],
+        "rules": [
+            {
+                "id": "1",
+                "category": "基本信息",
+                "priority": "P0",
+                "rule_to_check": "必须填写零件号",
+                "type_of_rule": "table",
+            }
+        ],
+    }
 
-_EXPORTS = {
-    "MIGRATIONS": _UPGRADE.MIGRATIONS,
-    "_bootstrap_password": _UPGRADE._bootstrap_password,
-    "_bootstrap_user": _UPGRADE._bootstrap_user,
-    "_migrator_password": _UPGRADE._migrator_password,
-    "_migrator_user": _UPGRADE._migrator_user,
-    "_psql": _UPGRADE._psql,
-    "_require": _UPGRADE._require,
-    "_require_postgres": _UPGRADE._require_postgres,
-    "migration_files": _UPGRADE.migration_files,
-    "MemoryObjects": _OBJECTS.MemoryObjects,
-    "rule_body": _SAMPLE.rule_body,
-}
+
+class SchemaTools:
+    MIGRATIONS = ROOT / "migrations"
+    COMPOSE = (
+        "docker",
+        "compose",
+        "-f",
+        str(ROOT / "deploy" / "isolated-dev" / "compose.yaml"),
+    )
+
+    def migration_files(self) -> list[Path]:
+        return sorted(path for path in self.MIGRATIONS.glob("*.sql") if path.name[:4].isdigit())
+
+    def latest_version(self) -> str:
+        files = self.migration_files()
+        if not files:
+            raise RuntimeError("no SQL migrations found")
+        return files[-1].name
+
+    def previous_version(self) -> str:
+        files = self.migration_files()
+        if len(files) < 2:
+            raise RuntimeError("need at least two migrations to upgrade from a previous schema")
+        return files[-2].name
+
+    def bootstrap_user(self) -> str:
+        return os.environ.get("PPAP_PG_BOOTSTRAP_USER") or os.environ.get("PGUSER") or "ppap"
+
+    def bootstrap_password(self) -> str:
+        return os.environ.get("PPAP_PG_BOOTSTRAP_PASSWORD") or os.environ.get("PGPASSWORD") or "ppap_isolated_dev"
+
+    def migrator_user(self) -> str:
+        return os.environ.get("PPAP_PG_MIGRATOR_USER", "ppap_migrator")
+
+    def migrator_password(self) -> str:
+        return os.environ.get("PPAP_PG_MIGRATOR_PASSWORD", "ppap_isolated_dev")
+
+    def sql_file_in_container(self, host_path: str) -> str:
+        path = Path(host_path)
+        path = path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+        try:
+            relative = path.relative_to(self.MIGRATIONS)
+        except ValueError as exc:
+            raise RuntimeError(f"schema SQL must live under migrations/: {host_path}") from exc
+        return f"/migrations/{relative.as_posix()}"
+
+    def container_psql_args(self, args: tuple[str, ...]) -> list[str]:
+        mapped: list[str] = []
+        expect_file = False
+        for arg in args:
+            if expect_file:
+                mapped.append(self.sql_file_in_container(arg))
+                expect_file = False
+                continue
+            mapped.append(arg)
+            expect_file = arg == "-f"
+        return mapped
+
+    def psql(self, user: str, password: str, database: str, *args: str) -> subprocess.CompletedProcess[bytes]:
+        command = [
+            *self.COMPOSE,
+            "exec",
+            "-T",
+            "-e",
+            "PGHOST=127.0.0.1",
+            "-e",
+            "PGPORT=5432",
+            "-e",
+            f"PGUSER={user}",
+            "-e",
+            f"PGPASSWORD={password}",
+            "postgres",
+            "psql",
+            "-d",
+            database,
+            "-v",
+            "ON_ERROR_STOP=1",
+            *self.container_psql_args(args),
+        ]
+        try:
+            return subprocess.run(
+                command,
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
+
+    def require(self, proc: subprocess.CompletedProcess[bytes], action: str) -> None:
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or b"").decode(errors="replace")[-4000:]
+            raise RuntimeError(f"{action}: {detail}")
+
+    def require_postgres(self) -> None:
+        probe = self.psql(self.bootstrap_user(), self.bootstrap_password(), "postgres", "-Atc", "SELECT 1")
+        if probe.returncode == 0:
+            return
+        detail = (probe.stderr or probe.stdout or b"").decode(errors="replace").strip()[-2000:]
+        message = "postgres container is not reachable with container-native psql"
+        if detail:
+            message = f"{message}: {detail}"
+        if os.environ.get("CI"):
+            pytest.fail(message)
+        pytest.skip(message)
+
+    def applied(self, database: str) -> list[str]:
+        proc = self.psql(
+            self.migrator_user(),
+            self.migrator_password(),
+            database,
+            "-Atc",
+            "SELECT version FROM product.schema_migrations ORDER BY version",
+        )
+        self.require(proc, "list schema_migrations")
+        text = (proc.stdout or b"").decode().strip()
+        return [line for line in text.splitlines() if line]
 
 
-@pytest.fixture(autouse=True)
-def _inject_schema_support(request):
-    if request.instance is None:
-        return
-    for name, value in _EXPORTS.items():
-        setattr(request.instance, name, value)
+@pytest.fixture
+def schema_tools():
+    return SchemaTools()
+
+
+@pytest.fixture
+def memory_objects_type():
+    return MemoryObjects
+
+
+@pytest.fixture
+def sample_rule_body_factory():
+    return sample_rule_body

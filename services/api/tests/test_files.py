@@ -5,6 +5,8 @@ import io
 import os
 import socket
 import unittest
+
+import pytest
 import zipfile
 from unittest.mock import patch
 from urllib.parse import quote, urlsplit
@@ -177,6 +179,10 @@ class SsrfTests(unittest.TestCase):
 
 
 class FileHttpTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()
@@ -381,6 +387,10 @@ class FileHttpTests(unittest.TestCase):
 
 
 class StagingRaceTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()

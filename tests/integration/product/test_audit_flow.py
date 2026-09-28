@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 import unittest
+
+import pytest
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -39,6 +41,10 @@ def _clean_env(**extra: str):
 
 
 class AuditFlowTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()

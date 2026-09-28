@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import unittest
+
+import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -283,6 +285,10 @@ class _WritebackMock:
 
 
 class FeishuWritebackTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory):
+        self.auth_store = auth_store_factory
+
     def setUp(self):
         self._env = _clean_env(FEISHU_APP_ID="cli_test", FEISHU_APP_SECRET="secret", PPAP_BUILD_SHA="a" * 40)
         self._env.start()

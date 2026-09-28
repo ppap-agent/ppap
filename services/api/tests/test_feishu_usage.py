@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import unittest
+
+import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -119,6 +121,12 @@ class _PartnerMock:
 
 
 class FeishuUsageTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def _owner_store(self, auth_store_factory, seed_usage_event_factory, set_trial_baseline_factory):
+        self.auth_store = auth_store_factory
+        self.seed_usage_event = seed_usage_event_factory
+        self.set_trial_baseline = set_trial_baseline_factory
+
     def setUp(self):
         self._env = _clean_env(
             FEISHU_APP_ID="cli_test",

@@ -17,4 +17,4 @@ RUN UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 \
  && command -v ppap-local-converter-sandbox
 
 ENTRYPOINT []
-CMD ["pytest", "tests/corpus/test_psw_cross_format_regression.py", "tests/corpus/test_psw_cross_format_audit.py", "-q"]
+CMD ["pytest", "tests/corpus/psw", "-q"]
