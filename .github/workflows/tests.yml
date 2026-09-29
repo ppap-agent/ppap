@@ -72,9 +72,12 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --locked
+          corepack enable
+          pnpm --dir apps/web install --frozen-lockfile
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages services tests scripts
-          uv run --no-sync python scripts/generate_web_contract.py --check
+          pnpm --dir apps/web api-types
+          git diff --exit-code -- apps/web/src/generated/openapi.ts
           node deploy/insforge/verify-config.mjs
           docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
           docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
