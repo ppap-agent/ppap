@@ -79,11 +79,14 @@ service distribution 的 owner tests 与普通 service module job 一样，需�
 Python module groups：
 
 ```sh
-# One pytest process per physical owner. CI discovers packages/*/tests and services/*/tests.
+# One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
+uv run --no-sync pytest packages/ppap_application/tests
 uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_corpus_contracts/tests
 uv run --no-sync pytest packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_product_store/tests
 
 export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
