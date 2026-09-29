@@ -153,6 +153,7 @@ class ArchitectureTests(unittest.TestCase):
         options = _pyproject(ROOT / "pyproject.toml")["tool"]["pytest"]["ini_options"]
         self.assertIn("--import-mode=importlib", options["addopts"])
         self.assertNotIn("pythonpath", options)
+        self.assertEqual(options["norecursedirs"], ["tests/live"])
         self.assertFalse((ROOT / "tests" / "pathsetup.py").exists())
         self.assertFalse((ROOT / "tests" / "common").exists())
         self.assertFalse((ROOT / "tests" / "utils").exists())
