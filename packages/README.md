@@ -6,12 +6,15 @@
 
 | Package | Owns |
 |---|---|
+| `ppap_application` | 跨 core / engine / store 的 application orchestration 与 composition boundaries |
 | `ppap_core` | typed settings、数据库/对象存储基础能力、共享产品类型、审核 contracts/types |
+| `ppap_corpus_contracts` | Corpus regression domain（ExecutionOutcome、baseline、oracle reconciliation）；仅开发/测试 authority，不是产品 runtime API |
 | `ppap_deep` | 独立 Deep 执行协议、UDS client、Controller；把冻结 round 转成 bounded spec 再写回 findings。`python -m ppap_deep` 是 Controller 进程，拥有 gVisor guest；Worker 只连 UDS |
 | `ppap_docops` | 文档抽取、转换、文件工具 |
 | `ppap_excel_audit_engine` | 规则检查器与 worker audit runtime |
-| `ppap_pdf_to_excel` | PDF → Excel |
 | `ppap_ocr_adapter` | OCR providers |
+| `ppap_pdf_to_excel` | PDF → Excel |
+| `ppap_product_store` | API / Worker 共用的 product PostgreSQL persistence implementation |
 | `ppap_vision` | 图像、印章/签名检测 |
 
 Worker 调用 `ppap_excel_audit_engine.app_runtime.run_audit_engine`。#11 飞书 parity 仍由对应 Issue 拥有。
