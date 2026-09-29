@@ -196,8 +196,7 @@ def test_real_local_doc_and_its_converted_docx_have_equivalent_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executable = shutil.which("soffice") or shutil.which("libreoffice")
-    if executable is None:
-        pytest.skip("optional local LibreOffice runtime is not installed")
+    assert executable is not None, "required PSW runtime must provide LibreOffice"
     monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", executable)
     monkeypatch.setattr(
         _AppAuditRuntime,

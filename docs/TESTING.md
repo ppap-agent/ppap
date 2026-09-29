@@ -47,7 +47,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 - **Container build authority**：`docker-bake.hcl` 唯一拥有 API / Worker / Web build graph。Compose 只消费 images；Repository contract 从 Bake/Compose native rendered output 核对 image identity 与无 `build` graph，Integration 对同一 `PPAP_BUILD_SHA` 只 Bake 一次并复用。
 - **CI Gate**：不运行测试，只汇总以上 required groups（包括 Distribution closure）；任一 required group failed / cancelled / skipped 时 Gate 失败。
 
-外部依赖本身不改变 test ownership，也不决定测试是否 required。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是“所有带外部依赖的测试”。InsForge native live lifecycle 同样不进入默认 `CI Gate`。LLM readiness 与 Feishu readiness 是真实 endpoint / credential probe：保留 `workflow_dispatch`，并每周 schedule 一次；它们不进入默认 PR `CI Gate`，也不复制产品业务测试。当前不做 git-diff/path-aware skipping；required groups 每个 PR 都执行。
+外部依赖本身不改变 test ownership，也不决定测试是否 required。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是“所有带外部依赖的测试”。Root pytest 的 `norecursedirs = ["tests/live"]` 只阻止裸 pytest recursion 意外收集 live tests；显式指定 `tests/live` 目录或具体文件仍会收集并执行。InsForge native live lifecycle 同样不进入默认 `CI Gate`。LLM readiness 与 Feishu readiness 是真实 endpoint / credential probe：保留 `workflow_dispatch`，并每周 schedule 一次；它们不进入默认 PR `CI Gate`，也不复制产品业务测试。当前不做 git-diff/path-aware skipping；required groups 每个 PR 都执行。
 
 Repository contract：
 
@@ -79,11 +79,14 @@ service distribution 的 owner tests 与普通 service module job 一样，需�
 Python module groups：
 
 ```sh
-# One pytest process per physical owner. CI discovers packages/*/tests and services/*/tests.
+# One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
+uv run --no-sync pytest packages/ppap_application/tests
 uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_corpus_contracts/tests
 uv run --no-sync pytest packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_product_store/tests
 
 export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait

@@ -57,10 +57,14 @@ service member 运行 owner tests 时需要与 CI 相同的 isolated-dev Postgre
 Python module groups：
 
 ```sh
+# One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
+uv run --no-sync pytest packages/ppap_application/tests
 uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_corpus_contracts/tests
 uv run --no-sync pytest packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_product_store/tests
 
 export COMPOSE_PROJECT_NAME=ppap-api
 docker compose -f deploy/isolated-dev/compose.yaml up -d postgres --wait
@@ -91,7 +95,7 @@ Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对
 
 默认 merge contract 是 required groups：Web、Repository contract、Python modules、Distribution closure、Schema、Corpus、Product integration。`CI Gate` 只汇总这些 required groups，不把“是否 deterministic”当成入 Gate 的条件。Corpus 即使 cache miss 调用真实 OCR / model 仍是 required。当前不做 change-aware path skipping。`tests/live` 表示不进入默认 merge contract、需要显式执行的真实环境验证，不是所有带外部依赖的测试；InsForge native lifecycle 同样不进入默认 Gate。
 
-single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。pytest fixture lifecycle 直接由 owner `conftest.py` 提供；不动态加载 sibling support/test modules，也不通过 `request.instance` 建立注入框架。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/store_fixture.py` 只负责该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
+single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。pytest fixture lifecycle 直接由 owner `conftest.py` 提供；不动态加载 sibling support/test modules，也不通过 `request.instance` 建立注入框架。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/conftest.py` 通过 pytest-native fixtures 提供该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机；仓库明确不保留 `store_fixture.py` 这类 test-module import seam。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
 
 ## 工程工具链
 

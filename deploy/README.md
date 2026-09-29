@@ -2,10 +2,12 @@
 
 ## 当前 main
 
-当前仓库用 Docker Compose 启动 isolated-dev：
+当前仓库先通过唯一的 Bake build graph 构建应用镜像，再用 Docker Compose 启动 isolated-dev：
 
 ```sh
-docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait
+export PPAP_BUILD_SHA="${PPAP_BUILD_SHA:-local}"
+docker buildx bake
+docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait
 ```
 
 这会启动 PostgreSQL、[PGSTY Silo](https://github.com/pgsty/silo)、`psql` 角色/schema、对象桶，以及同一 Git revision 的 API / Worker / nginx Web。用于开发演示，不代表 production deployment 已完成。
@@ -35,7 +37,7 @@ docker buildx bake
 - `ppap-api:<git_sha>` / `ppap-worker:<git_sha>`：`deploy/app/Dockerfile`（`PPAP_SERVICE=api|worker`，共用安装层）
 - `ppap-web:<git_sha>`：`deploy/web/Dockerfile`（nginx；`build-identity.json` 记录 `git_sha`；不把 isolated-dev `runtime-config.json` 打进镜像，进程启动时由 `PPAP_PUBLIC_API_URL` 写入）
 
-Bake 定义在仓库根 [docker-bake.hcl](../docker-bake.hcl)。API `GET /version` 与 Worker heartbeat 读取 `PPAP_BUILD_SHA`。当前镜像不含 isolated-dev 凭据，也不含 `.doc` converter sandbox。
+Bake 定义在仓库根 [docker-bake.hcl](../docker-bake.hcl)。API `GET /version` 与 Worker heartbeat 读取 `PPAP_BUILD_SHA`。当前镜像不含 isolated-dev 凭据；API/Worker 共用的 app image 包含当前 DOC 支持所需的 LibreOffice 与受限 converter sandbox。
 
 ## TKE current preview
 
@@ -53,7 +55,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down
 
 真实部署把填好密钥的文件交给 `--env-file`（生产字段目录是仓库根 [`.env.production`](../.env.production)；`deploy/compose.env.example` 只是 verify fixture）。接到 self-hosted InsForge 时用 `-f deploy/insforge/compose.yaml`：不启动 PostgreSQL，加入已有 `insforge-network`，API/Worker 作为该网络上的常驻容器；对象数据在 named volume `ppap-silo-data` 上。该 overlay 停服务时用 `docker compose down`，不要带 `-v`，不会删掉对象卷。验证用的默认 `deploy/compose.yaml` 仍可用 `down -v` 做 CI 清理。Custom Compute 规格见 [insforge/README.md](insforge/README.md)。
 
-`init-db` 是唯一读取 bootstrap/migrator 口令的组件：用 `psql` 执行 `migrations/bootstrap.sql`（角色与库）和 `migrations/apply.sql`（schema）。`init-bucket` 用 Silo `mcli` 确保对象桶。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置，以及各自拥有的 capability。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
+`init-db` 是唯一读取 bootstrap/migrator 口令的组件：先用 `psql` 执行 `migrations/bootstrap.sql`（角色与库），再通过 `migrations/apply.sh` 按 numbered SQL filenames 的 lexical order 执行 schema migrations。`init-bucket` 用 Silo `mcli` 确保对象桶。API 与 Worker 只持有各自数据库角色口令加共享的对象存储/LLM/Web 配置，以及各自拥有的 capability。然后 API `GET /health`、`GET /version`、`GET /ready` 必须成功且 `git_sha` 与镜像一致。
 
 ### Backup / restore
 
@@ -84,6 +86,6 @@ InsForge 集群自身的 backup 不覆盖 PPAP 对象存储。这是当前可执
 
 API 与 Worker 在 production 下向 stderr 写 JSON 行，字段包括 `request_id` / `tenant_id` / `round_id` / `job_id` / `attempt` 以及 HTTP method/path/status 或 job outcome。不记录 token 或客户内容。`GET /health` `/ready` `/version` `/public-config` 不打 INFO。响应带头 `X-Request-ID`。
 
-该 Compose 里的对象存储是 pinned 的 [PGSTY Silo](https://github.com/pgsty/silo) classic 镜像（MinIO 协议兼容 fork，`RELEASE.2026-09-16T00-00-00Z`，digest `sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46`）。S3 只在 compose 网络内（`http://silo:9000`），不发布到宿主机；根用户仍走 Silo 保留的 `MINIO_ROOT_*`，PPAP 继续用 `PPAP_S3_*`。不用 distroless；classic 是 ubi-micro（有 `sh`/`mcli`/`curl`，没有 `tar`）。不拉 `minio/minio`，也不再本地构建 MinIO。真实生产仍可把 `PPAP_S3_ENDPOINT` 换成自有 S3。当前不含 `.doc` converter sandbox。
+该 Compose 里的对象存储是 pinned 的 [PGSTY Silo](https://github.com/pgsty/silo) classic 镜像（MinIO 协议兼容 fork，`RELEASE.2026-09-16T00-00-00Z`，digest `sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46`）。S3 只在 compose 网络内（`http://silo:9000`），不发布到宿主机；根用户仍走 Silo 保留的 `MINIO_ROOT_*`，PPAP 继续用 `PPAP_S3_*`。不用 distroless；classic 是 ubi-micro（有 `sh`/`mcli`/`curl`，没有 `tar`）。不拉 `minio/minio`，也不再本地构建 MinIO。真实生产仍可把 `PPAP_S3_ENDPOINT` 换成自有 S3。当前 app image 保留 DOC 支持所需的受限 converter sandbox。
 
 本仓生产运行不得把 Java PPAP 服务或 `ppap-agent` HTTP 当作 runtime dependency。这不表示拆除 `ppap-agent`：该仓继续服务其它用户，并作为新算法的验证基地和参考实现。

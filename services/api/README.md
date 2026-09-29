@@ -1,6 +1,6 @@
 # Product API
 
-PPAP 唯一公开 HTTP API。isolated-dev 使用 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动；重文档处理和长模型调用不在请求线程执行。
+PPAP 唯一公开 HTTP API。isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再用 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动；重文档处理和长模型调用不在请求线程执行。
 
 ## 当前 main 已实现
 

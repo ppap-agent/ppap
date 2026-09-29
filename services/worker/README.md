@@ -2,7 +2,7 @@
 
 PPAP 的异步执行进程。
 
-isolated-dev 使用 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动。Worker 是独立进程；停止 Worker 不应让 API `/health` 失败。
+isolated-dev 先设置 `PPAP_BUILD_SHA=${PPAP_BUILD_SHA:-local}` 并执行 `docker buildx bake`，再用 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动。Worker 是独立进程；停止 Worker 不应让 API `/health` 失败。
 
 ## 当前 main
 

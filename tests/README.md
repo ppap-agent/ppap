@@ -32,14 +32,25 @@ docker buildx bake --check
 uv run --no-sync pytest tests/repository
 ```
 
+Distribution closure:
+
+```sh
+python3 scripts/validate_distribution.py --discover
+python3 scripts/validate_distribution.py --member ppap-core
+python3 scripts/validate_distribution.py --prove-missing-dependency
+```
+
 Python module groups:
 
 ```sh
-# One pytest process per physical owner. CI discovers packages/*/tests and services/*/tests.
+# One pytest process per physical owner. CI discovers every packages/*/tests and services/*/tests.
+uv run --no-sync pytest packages/ppap_application/tests
 uv run --no-sync pytest packages/ppap_core/tests
+uv run --no-sync pytest packages/ppap_corpus_contracts/tests
 uv run --no-sync pytest packages/ppap_deep/tests
-uv run --no-sync pytest packages/ppap_ocr_adapter/tests
 uv run --no-sync pytest packages/ppap_excel_audit_engine/tests
+uv run --no-sync pytest packages/ppap_ocr_adapter/tests
+uv run --no-sync pytest packages/ppap_product_store/tests
 ```
 
 API and Worker each need the real isolated-dev PostgreSQL fixture, in separate processes:
@@ -70,7 +81,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 uv run --no-sync pytest tests/corpus/v2_assets --ftype excel -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q
 uv run --no-sync pytest tests/corpus/v2_assets --ftype scanned -q
-uv run --no-sync pytest tests/corpus/v2_assets/test_cross_format_pairs.py tests/corpus/v2_assets/test_cross_format_contract.py --cross-format -q
+uv run --no-sync pytest tests/corpus/pairs --cross-format -q
 uv run --no-sync pytest tests/corpus/v3_poc -q
 
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
@@ -84,7 +95,7 @@ docker build \
   .
 docker run --rm \
   "ppap-psw-test:${PPAP_BUILD_SHA}" \
-  pytest tests/corpus/test_psw_cross_format_regression.py tests/corpus/test_psw_cross_format_audit.py -q
+  pytest tests/corpus/psw -q
 ```
 
 Pairs compares PDF vs Excel outcomes for the same oracle stem at pair+rule granularity. Known format divergences are a structured baseline, not a second expected-status oracle. Excel / PDF / scanned variants do not pass `--cross-format`. PSW remains a purpose-built container entry in the same CI Corpus matrix. Its image starts from the production worker install and runs `uv sync --frozen --no-editable` so the default dev dependency group comes from the same lock.
@@ -134,4 +145,4 @@ The separate InsForge native lifecycle remains path-filtered / manual / schedule
 
 ## CI Gate
 
-The default merge contract is the required groups: Web, Repository contract, Python modules, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Branch protection can therefore depend on the stable `CI Gate` check while internal matrix groups evolve.
+The default merge contract is the required groups: Web, Repository contract, Python modules, Distribution closure, Schema, Corpus, and Product integration. Being external-backed does not make a test optional or live; Corpus stays a required CI Gate child even when a cache miss calls real OCR / model capability. pytest does not inject the repository root via `pythonpath`; production imports come from uv workspace packaging. `tests/live` is opt-in real-environment validation, not the set of all external tests. The final `CI Gate` runs no tests; it succeeds only when every required group succeeds. Repository-side merge-contract semantics are therefore stable even when internal matrix groups evolve; whether the hosting plan can enforce `CI Gate` through branch protection/rulesets is a separate platform capability.
