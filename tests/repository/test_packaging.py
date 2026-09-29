@@ -51,3 +51,51 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertEqual(collected.returncode, 0, collected.stderr)
         self.assertIn("test_", collected.stdout)
+
+    def test_live_tests_require_explicit_collection(self):
+        self.assertTrue(PYTHON.is_file(), PYTHON)
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+
+        default_collection = subprocess.run(
+            [
+                str(PYTHON),
+                "-m",
+                "pytest",
+                "--rootdir",
+                str(ROOT),
+                "-c",
+                str(ROOT / "pyproject.toml"),
+                "--collect-only",
+                "-q",
+            ],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(default_collection.returncode, 0, default_collection.stderr)
+        self.assertNotIn("tests/live/test_deep_isolated.py", default_collection.stdout)
+
+        explicit_collection = subprocess.run(
+            [
+                str(PYTHON),
+                "-m",
+                "pytest",
+                "--rootdir",
+                str(ROOT),
+                "-c",
+                str(ROOT / "pyproject.toml"),
+                "--collect-only",
+                "-q",
+                str(ROOT / "tests/live"),
+            ],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(explicit_collection.returncode, 0, explicit_collection.stderr)
+        self.assertIn("test_deep_isolated.py", explicit_collection.stdout)
