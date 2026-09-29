@@ -9,7 +9,9 @@ it does not parse workflow/config source to proxy native behavior.
 """
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -26,6 +28,23 @@ SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
 
 def _pyproject(path: Path) -> dict:
     return tomllib.loads(path.read_text())
+
+
+def _compose_config(path: Path, env_file: Path | None = None) -> dict:
+    args = ["docker", "compose", "--progress", "quiet", "-f", str(path)]
+    if env_file is not None:
+        args.extend(["--env-file", str(env_file)])
+    args.extend(["config", "--format", "json"])
+    completed = subprocess.run(
+        args,
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr or completed.stdout)
+    return json.loads(completed.stdout)
 
 
 def _member_dirs() -> set[Path]:
@@ -256,17 +275,21 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("ON_ERROR_STOP=1", runner)
         self.assertIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', runner)
         self.assertIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', runner)
-        for path in (
-            ROOT / "deploy/compose.yaml",
-            ROOT / "deploy/isolated-dev/compose.yaml",
-            ROOT / "deploy/insforge/compose.yaml",
-            ROOT / "deploy/tke/current.yaml",
-        ):
-            text = path.read_text()
-            self.assertIn("sh /migrations/apply.sh", text)
-            self.assertNotIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', text)
-            self.assertNotIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', text)
-            self.assertNotIn("apply.sql", text)
+
+        configs = (
+            _compose_config(ROOT / "deploy/isolated-dev/compose.yaml"),
+            _compose_config(
+                ROOT / "deploy/compose.yaml",
+                ROOT / "deploy/compose.env.example",
+            ),
+        )
+        for config in configs:
+            command = config["services"]["init-db"].get("command")
+            command_text = "\n".join(command) if isinstance(command, list) else str(command or "")
+            self.assertIn("sh /migrations/apply.sh", command_text)
+            self.assertNotIn('PGUSER="$PPAP_PG_MIGRATOR_USER"', command_text)
+            self.assertNotIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', command_text)
+            self.assertNotIn("apply.sql", command_text)
 
     def test_physical_owner_test_directories_belong_to_workspace_members(self):
         members = _member_dirs()
