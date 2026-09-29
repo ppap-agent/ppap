@@ -1,6 +1,6 @@
 # Web Client
 
-浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。生产构建包含 `/manifest.webmanifest`、应用图标和根作用域 service worker；service worker 只缓存应用壳与静态资源，不缓存 API 响应、上传内容、审核结果或 Office 签名地址。离线时只允许查看已加载页面，上传、审核提交和复核会明确提示需要联网。isolated-dev 通过 `docker compose -f deploy/isolated-dev/compose.yaml up --build -d --wait` 启动本地 Web。
+浏览器/PWA 与飞书 H5 使用同一个 PPAP 产品客户端。生产构建包含 `/manifest.webmanifest`、应用图标和根作用域 service worker；service worker 只缓存应用壳与静态资源，不缓存 API 响应、上传内容、审核结果或 Office 签名地址。离线时只允许查看已加载页面，上传、审核提交和复核会明确提示需要联网。isolated-dev 先执行 `docker buildx bake`，再通过 `docker compose -f deploy/isolated-dev/compose.yaml up --no-build -d --wait` 启动本地 Web。
 
 ## 当前 main
 
