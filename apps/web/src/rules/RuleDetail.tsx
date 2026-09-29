@@ -71,8 +71,8 @@ function RuleDetailContent({
         back={back}
         trailing={isPresence && <Badge>资料就绪检测</Badge>}
         description={isPresence ? '仅确认待审文件可用于审核，不检查文件内容。' : undefined}
-        action={!isPresence && sourceFile && <>
-          <Button asChild variant="outline" size="sm"><a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">查看原件 ↗</a></Button>
+        action={!isPresence && <>
+          {sourceFile && <Button asChild variant="outline" size="sm"><a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">查看原件 ↗</a></Button>}
           {detail.predecessor_id && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => { location.href = productHref({page: 'rule-detail', ruleId: detail.predecessor_id!, returnTo}) }}>上一版本</Button>}
           <Button type="button" size="sm" disabled={busy} onClick={() => {
             location.href = productHref({page: 'rule-import', predecessorId: detail.id, documentType: body.type, returnTo})

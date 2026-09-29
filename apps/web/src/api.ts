@@ -68,7 +68,7 @@ export class UploadResultUnknown extends Error {
 export const resultLabels:Record<FindingStatus,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常', UNABLE:'无法判断', NA:'不适用'}
 export const executionLabels:Record<string,string> = {queued:'排队中', running:'检查中', completed:'检查完成', failed:'执行失败'}
 export const analysisModeLabels:Record<AnalysisMode,string> = {standard:'标准', deep:'深度'}
-export function dateLabel(value?:string) {
+export function dateLabel(value?: string | null) {
   return value ? new Intl.DateTimeFormat('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—'
 }
 export let apiUrl = ''
