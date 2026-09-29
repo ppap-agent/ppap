@@ -205,7 +205,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("ppap_excel_audit_engine", core_tests)
 
     def test_corpus_pairs_and_psw_use_physical_suite_discovery(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        workflow = (ROOT / ".github/workflows/backend.yml").read_text()
         self.assertIn("args: tests/corpus/pairs --cross-format -q", workflow)
         self.assertIn("pytest tests/corpus/psw -q", workflow)
         self.assertNotIn("test_cross_format_pairs.py tests/corpus", workflow)
@@ -271,7 +271,7 @@ class ArchitectureTests(unittest.TestCase):
             self.assertNotIn("apply.sql", text)
 
     def test_tke_deploy_uses_canonical_render_and_no_raw_manifest_apply(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        workflow = (ROOT / ".github/workflows/repository.yml").read_text()
         apply = (ROOT / "deploy/tke/apply-current.sh").read_text()
         kustomization = (ROOT / "deploy/tke/kustomization.yaml").read_text()
         proxy = (ROOT / "deploy/tke/edition-proxy.yaml").read_text()
@@ -287,7 +287,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("kind: ConfigMap", proxy)
 
     def test_container_build_graph_uses_native_bake_and_compose_authorities(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        workflow = (ROOT / ".github/workflows/repository.yml").read_text()
         verifier = (ROOT / "scripts/verify-container-graph.mjs").read_text()
         remote = (ROOT / "deploy/remote-dev/run.sh").read_text()
         self.assertIn("docker buildx bake --print", workflow)
@@ -300,7 +300,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("up --no-build -d --wait", remote)
 
     def test_distribution_closure_ci_uses_wheels_and_clean_environments(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        workflow = (ROOT / ".github/workflows/backend.yml").read_text()
         script = (ROOT / "scripts/validate_distribution.py").read_text()
         section = workflow.split("  distribution_closure:", 1)[1].split("\n  python_modules:", 1)[0]
         self.assertIn("scripts/validate_distribution.py --member", section)
@@ -311,12 +311,32 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn('"uv", "pip", "install"', script)
         self.assertIn('cwd="/tmp"', script)
         self.assertNotIn("sys.path.", script)
-        self.assertIn("distribution_closure", workflow.split("  ci_gate:", 1)[1])
+        self.assertIn("distribution_closure:", workflow)
+
+    def test_ci_workflows_follow_large_domain_inputs(self):
+        workflows = ROOT / ".github/workflows"
+        self.assertFalse((workflows / "tests.yml").exists())
+        repository = (workflows / "repository.yml").read_text()
+        web = (workflows / "web.yml").read_text()
+        backend = (workflows / "backend.yml").read_text()
+        integration = (workflows / "integration.yml").read_text()
+
+        self.assertNotIn("paths:", repository)
+        self.assertIn("'apps/web/**'", web)
+        self.assertIn("'.node-version'", web)
+        self.assertNotIn("'packages/**'", web)
+        self.assertIn("'packages/**'", backend)
+        self.assertIn("'services/**'", backend)
+        self.assertIn("'tests/corpus/**'", backend)
+        self.assertNotIn("'apps/web/**'", backend)
+        self.assertIn("'apps/web/**'", integration)
+        self.assertIn("'packages/**'", integration)
+        self.assertIn("'services/**'", integration)
 
     def test_owner_ci_discovers_physical_test_directories(self):
         # actionlint checks workflow syntax. It does not know that each
         # physical owner must be its own pytest process.
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+        workflow = (ROOT / ".github/workflows/backend.yml").read_text()
         self.assertIn('Path("packages")', workflow)
         self.assertIn('Path("services")', workflow)
         self.assertIn('glob("*/tests")', workflow)
