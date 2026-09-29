@@ -28,6 +28,8 @@ def _inline_schema(schema_type) -> dict[str, Any]:
         ref = value.get("$ref")
         if isinstance(ref, str) and ref.startswith("#/$defs/"):
             name = ref.rsplit("/", 1)[-1]
+            if name == "EngineRuleBody":
+                return {"$ref": "#/components/schemas/EngineRuleBody"}
             return resolve(definitions[name])
         return {key: resolve(item) for key, item in value.items() if key != "$defs"}
 
