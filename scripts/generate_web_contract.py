@@ -19,7 +19,6 @@ WEB_SCHEMA_NAMES = (
     "Draft",
     "DraftAcceptRequest",
     "DraftCreateRequest",
-    "DraftInputItem",
     "DraftList",
     "DraftSaveRequest",
     "DriveFile",
@@ -31,6 +30,7 @@ WEB_SCHEMA_NAMES = (
     "FeishuFileImportRequest",
     "FileAnalysisRequest",
     "FileCreateRequest",
+    "FileFinalizeRequest",
     "FileVersion",
     "Finding",
     "FindingLocator",
@@ -84,11 +84,28 @@ WEB_SCHEMA_NAMES = (
     "RoundSummary",
 )
 
+REQUEST_SCHEMA_NAMES: dict[tuple[str, str], str] = {
+    ("POST", "/login/feishu/host"): "HostLoginRequest",
+    ("POST", "/files"): "FileCreateRequest",
+    ("POST", "/files/{file_id}/versions/{version_id}/finalize"): "FileFinalizeRequest",
+    ("POST", "/integrations/feishu/files/import"): "FeishuFileImportRequest",
+    ("POST", "/drafts"): "DraftCreateRequest",
+    ("POST", "/file-analyses"): "FileAnalysisRequest",
+    ("PUT", "/drafts/{draft_id}"): "DraftSaveRequest",
+    ("POST", "/drafts/{draft_id}/accept"): "DraftAcceptRequest",
+    ("POST", "/rounds/{round_id}/resubmit"): "ResubmitRequest",
+    ("PUT", "/rounds/{round_id}/reviews"): "ReviewRequest",
+    ("POST", "/rules/parse"): "RuleParseRequest",
+    ("POST", "/rules"): "RulePublishRequest",
+}
+
+
 REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/public-config"): False,
     ("POST", "/login/feishu/host"): True,
     ("GET", "/me"): False,
     ("POST", "/files"): True,
+    ("POST", "/files/{file_id}/versions/{version_id}/finalize"): True,
     ("GET", "/files/{file_id}/versions/{version_id}"): False,
     ("GET", "/files/{file_id}/versions/{version_id}/preview"): False,
     ("GET", "/integrations/feishu/files"): False,
@@ -195,6 +212,14 @@ def ts_type(schema: dict[str, Any], level: int = 0) -> str:
     return "unknown"
 
 
+def request_schema(operation: dict[str, Any]) -> dict[str, Any] | None:
+    return (
+        ((operation.get("requestBody") or {}).get("content") or {})
+        .get("application/json", {})
+        .get("schema")
+    )
+
+
 def response_schema(operation: dict[str, Any]) -> dict[str, Any] | None:
     for status in sorted(operation.get("responses") or {}):
         if not str(status).startswith("2"):
@@ -220,11 +245,7 @@ def validate_required_operations(spec: dict[str, Any]) -> None:
         if not response or response == {"type": "object"}:
             failures.append(f"missing explicit 2xx JSON response schema: {label}")
         if needs_body:
-            request = (
-                ((operation.get("requestBody") or {}).get("content") or {})
-                .get("application/json", {})
-                .get("schema")
-            )
+            request = request_schema(operation)
             if not request or request == {"type": "object"}:
                 failures.append(f"missing explicit JSON request schema: {label}")
     if failures:
@@ -234,7 +255,14 @@ def validate_required_operations(spec: dict[str, Any]) -> None:
 def generate() -> str:
     spec = app.openapi()
     validate_required_operations(spec)
-    schemas = ((spec.get("components") or {}).get("schemas") or {})
+    schemas = dict(((spec.get("components") or {}).get("schemas") or {}))
+    paths = spec.get("paths") or {}
+    for (method, path), name in REQUEST_SCHEMA_NAMES.items():
+        operation = (paths.get(path) or {}).get(method.lower()) or {}
+        schema = request_schema(operation)
+        if not schema:
+            raise SystemExit(f"OpenAPI is missing request schema for {method} {path}")
+        schemas[name] = schema
     missing = [name for name in WEB_SCHEMA_NAMES if name not in schemas]
     if missing:
         raise SystemExit("OpenAPI is missing Web schemas: " + ", ".join(missing))
