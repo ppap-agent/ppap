@@ -16,8 +16,8 @@ def register_rule_routes(app: FastAPI, store, principal_of):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         return {"types": document_types()}
 
-    @app.post("/rules/parse", response_model=wc.RuleParseJob, status_code=202)
-    def rules_parse(request: Request, body: wc.RuleParseRequest = Body(...)):
+    @app.post("/rules/parse", response_model=wc.RuleParseJob, status_code=202, openapi_extra=wc.openapi_body(wc.RuleParseRequest))
+    def rules_parse(request: Request, body: Any = Body(...)):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -43,8 +43,8 @@ def register_rule_routes(app: FastAPI, store, principal_of):
         except ValueError:
             return JSONResponse({"error": "file_not_ready"}, status_code=409)
 
-    @app.post("/rules", response_model=wc.RuleDetail, status_code=201)
-    def rules_publish(request: Request, body: wc.RulePublishRequest = Body(...)):
+    @app.post("/rules", response_model=wc.RuleDetail, status_code=201, openapi_extra=wc.openapi_body(wc.RulePublishRequest))
+    def rules_publish(request: Request, body: Any = Body(...)):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)

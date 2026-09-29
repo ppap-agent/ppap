@@ -280,8 +280,8 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
-    @app.post("/login/feishu/host", response_model=wc.PrincipalPublic)
-    def login_feishu_host(body: wc.HostLoginRequest) -> JSONResponse:
+    @app.post("/login/feishu/host", response_model=wc.PrincipalPublic, openapi_extra=wc.openapi_body(wc.HostLoginRequest))
+    def login_feishu_host(body: dict) -> JSONResponse:
         code = str(body.get("code") or "").strip()
         if not code:
             return JSONResponse({"error": "invalid_host_code"}, status_code=400)
@@ -372,8 +372,8 @@ def create_app(
             "review_allowed": can_review(principal, resource, grants),
         })
 
-    @app.post("/files", response_model=wc.FileVersion, status_code=201)
-    def files_create(body: wc.FileCreateRequest, request: Request) -> JSONResponse:
+    @app.post("/files", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FileCreateRequest))
+    def files_create(body: dict, request: Request) -> JSONResponse:
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -388,8 +388,8 @@ def create_app(
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         return JSONResponse(version.public(), status_code=201)
 
-    @app.post("/files/{file_id}/versions", response_model=wc.FileVersion, status_code=201)
-    def files_new_version(file_id: str, body: wc.FileCreateRequest, request: Request) -> JSONResponse:
+    @app.post("/files/{file_id}/versions", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FileCreateRequest))
+    def files_new_version(file_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_file_read(request, file_id)
         if denied:
             return denied
@@ -430,7 +430,7 @@ def create_app(
             return JSONResponse({"error": "invalid_upload"}, status_code=400)
         return JSONResponse(updated.public())
 
-    @app.post("/files/{file_id}/versions/{version_id}/finalize")
+    @app.post("/files/{file_id}/versions/{version_id}/finalize", response_model=wc.FileVersion, openapi_extra=wc.openapi_body(wc.FileFinalizeRequest, required=False))
     async def files_finalize(file_id: str, version_id: str, request: Request) -> JSONResponse:
         principal, denied = require_file_read(request, file_id)
         if denied:
@@ -590,8 +590,8 @@ def create_app(
         except FeishuMetaError:
             return JSONResponse({"error": "feishu_folder_failed"}, status_code=502)
 
-    @app.post("/integrations/feishu/files/import", response_model=wc.FileVersion, status_code=201)
-    def feishu_files_import(body: wc.FeishuFileImportRequest, request: Request) -> JSONResponse:
+    @app.post("/integrations/feishu/files/import", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FeishuFileImportRequest))
+    def feishu_files_import(body: dict, request: Request) -> JSONResponse:
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)

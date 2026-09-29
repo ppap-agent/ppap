@@ -49,8 +49,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
 
-    @app.post("/drafts", response_model=wc.Draft, status_code=201)
-    def drafts_create(request: Request, body: wc.DraftCreateRequest | None = None) -> JSONResponse:
+    @app.post("/drafts", response_model=wc.Draft, status_code=201, openapi_extra=wc.openapi_body(wc.DraftCreateRequest, required=False))
+    def drafts_create(request: Request, body: dict | None = None) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -67,8 +67,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         rows = store.list_drafts(principal, limit + 1, offset)
         return JSONResponse({"drafts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
-    @app.post("/file-analyses", response_model=wc.AnalysisJob, status_code=202)
-    def files_analyze(body: wc.FileAnalysisRequest, request: Request) -> JSONResponse:
+    @app.post("/file-analyses", response_model=wc.AnalysisJob, status_code=202, openapi_extra=wc.openapi_body(wc.FileAnalysisRequest))
+    def files_analyze(body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -108,8 +108,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(draft)
 
-    @app.put("/drafts/{draft_id}", response_model=wc.Draft)
-    def drafts_save(draft_id: str, body: wc.DraftSaveRequest, request: Request) -> JSONResponse:
+    @app.put("/drafts/{draft_id}", response_model=wc.Draft, openapi_extra=wc.openapi_body(wc.DraftSaveRequest))
+    def drafts_save(draft_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)
         if denied:
             return denied
@@ -124,8 +124,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(draft)
 
-    @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201)
-    def drafts_accept(draft_id: str, body: wc.DraftAcceptRequest, request: Request) -> JSONResponse:
+    @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.DraftAcceptRequest))
+    def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_object(request, draft_id)
         if denied:
             return denied
@@ -229,8 +229,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except Exception:
             return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
 
-    @app.post("/rounds/{round_id}/resubmit", response_model=wc.Round, status_code=201)
-    def rounds_resubmit(round_id: str, body: wc.ResubmitRequest, request: Request) -> JSONResponse:
+    @app.post("/rounds/{round_id}/resubmit", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.ResubmitRequest))
+    def rounds_resubmit(round_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_object(request, round_id)
         if denied:
             return denied
@@ -248,8 +248,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(created, status_code=201)
 
-    @app.put("/rounds/{round_id}/reviews", response_model=wc.Round)
-    def rounds_review(round_id: str, body: wc.ReviewRequest, request: Request) -> JSONResponse:
+    @app.put("/rounds/{round_id}/reviews", response_model=wc.Round, openapi_extra=wc.openapi_body(wc.ReviewRequest))
+    def rounds_review(round_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_object(request, round_id, review=True)
         if denied:
             return denied
