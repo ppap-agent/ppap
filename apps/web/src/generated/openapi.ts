@@ -225,7 +225,7 @@ export interface components {
     "ReportExport": {
       "document_id": null | string;
       "error_code"?: null | string;
-      "id": string;
+      "id"?: string;
       "status": string;
     };
     "ResubmitRequest": {

@@ -272,7 +272,7 @@ export default function AddonApp() {
   async function writeCurrentDocument() {
     if (!roundId || !api || !host) return
     const result = await authorizedJson<WritebackResponse>(api, host, `${api}/integrations/feishu/rounds/${encodeURIComponent(roundId)}/writeback`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
-    setWritebackResult(result.ok ? (result.body.inserted ? '已写回当前文档' : '未写回') : (result.body.error || '写回失败'))
+    setWritebackResult(result.ok ? (result.body.inserted ? '已写回当前文档' : '未写回') : ((result.body as ApiFailure).error || '写回失败'))
   }
 
   async function submit() {

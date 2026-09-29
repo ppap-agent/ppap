@@ -9,7 +9,7 @@ import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/c
 import {DataSurface, FilterBar, PageHeader, PageLayout} from './ui/PageLayout'
 
 
-function UsageMobileRow({row}: {row: Usage}) {
+function UsageMobileRow({row}: {row: UsageEvent}) {
   return (
     <article className="grid gap-2 py-4 first:pt-0 last:pb-0">
       <div className="flex items-start justify-between gap-4">

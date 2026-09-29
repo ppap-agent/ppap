@@ -544,9 +544,9 @@ class OfficePreviewResponse(TypedDict):
 
 
 class ReportExport(TypedDict):
-    id: str
     status: str
     document_id: str | None
+    id: NotRequired[str]
     error_code: NotRequired[str | None]
 
 
