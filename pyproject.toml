@@ -54,5 +54,5 @@ ppap-corpus-contracts = { workspace = true }
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 asyncio_mode = "strict"
-norecursedirs = ["tests/live"]
+norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "live"]
 disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true
