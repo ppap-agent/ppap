@@ -309,6 +309,7 @@ export interface components {
     "RuleDetail": {
       "body": components["schemas"]["EngineRuleBody"] | components["schemas"]["PresenceRuleBody"];
       "created_at": string;
+      "created_by"?: null | string;
       "id": string;
       "predecessor_id"?: null | string;
       "source_file_id": null | string;

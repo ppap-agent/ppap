@@ -69,4 +69,4 @@ def register_rule_routes(app: FastAPI, store, principal_of):
         result = store.get_rule(principal.tenant_id, rule_version_id)
         if result is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        return result
+        return JSONResponse(result)

@@ -1,6 +1,7 @@
 import type {Schema} from './generated/openapi'
 
 export type Rule = Schema<'Rule'>
+export type BoundRule = Schema<'BoundRule'>
 export type Analysis = Schema<'Analysis'>
 export type RuleCoverageItem = Schema<'RuleCoverageItem'>
 export type Finding = Schema<'Finding'>
@@ -51,7 +52,8 @@ export type RuleParseRequest = Schema<'RuleParseRequest'>
 export type RulePublishRequest = Schema<'RulePublishRequest'>
 
 type MaterialWire = Schema<'MaterialWire'>
-export type Material = MaterialWire & {
+export type Material = Omit<MaterialWire, 'rule'> & {
+  rule?: BoundRule | null
   analysis?: Analysis
   analysisId?: string
   analysisStatus?: string

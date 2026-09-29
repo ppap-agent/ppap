@@ -115,6 +115,7 @@ class RuleDetail(TypedDict):
     source_file_id: str | None
     source_file_version_id: str | None
     predecessor_id: NotRequired[str | None]
+    created_by: NotRequired[str | None]
 
 
 class RuleCandidate(TypedDict):
