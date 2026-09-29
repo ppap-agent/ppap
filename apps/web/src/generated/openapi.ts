@@ -27,13 +27,13 @@ export interface components {
       "paragraph": number;
     };
     "Draft": {
-      "analysis_mode"?: "deep" | "standard";
+      "analysis_mode": "deep" | "standard";
       "id": string;
       "items": Array<components["schemas"]["MaterialWire"]>;
-      "predecessor_id"?: null | string;
+      "predecessor_id": null | string;
       "status": string;
-      "updated_at"?: string;
-      "writeback"?: components["schemas"]["WritebackTarget"];
+      "updated_at": string;
+      "writeback": components["schemas"]["WritebackTarget"];
     };
     "DraftAcceptRequest": {
       "idempotency_key": string;
@@ -42,19 +42,22 @@ export interface components {
     "DraftCreateRequest": {
       "predecessor_id"?: null | string;
     };
-    "DraftInputItem": {
-      "file_version_id": string;
-      "role": "reference" | "target";
-      "rule_version_id": null | string;
-    };
     "DraftList": {
       "drafts": Array<components["schemas"]["Draft"]>;
       "next_offset": null | number;
     };
     "DraftSaveRequest": {
       "analysis_mode"?: "deep" | "standard";
-      "items"?: Array<components["schemas"]["DraftInputItem"]>;
-      "writeback_target"?: Record<string, unknown> | null;
+      "items"?: Array<{
+        "file_version_id": string;
+        "role": "reference" | "target";
+        "rule_version_id": null | string;
+      }>;
+      "writeback_target"?: null | {
+        "object_kind": string;
+        "object_ref": string;
+        "provider": "feishu";
+      };
     };
     "DriveFile": {
       "name": string;
@@ -96,13 +99,17 @@ export interface components {
       "content_type": string;
       "original_filename": string;
     };
+    "FileFinalizeRequest": {
+      "sha256"?: string;
+    };
     "FileVersion": {
-      "byte_size"?: number;
-      "content_type"?: string;
+      "byte_size": number;
+      "content_type": string;
       "file_id": string;
       "id": string;
+      "origin"?: components["schemas"]["WritebackTarget"];
       "original_filename": string;
-      "sha256"?: null | string;
+      "sha256": null | string;
       "status": string;
     };
     "Finding": {
@@ -147,7 +154,7 @@ export interface components {
       "role": "reference" | "target";
       "rule": components["schemas"]["BoundRule"] | null;
       "rule_version_id": null | string;
-      "status"?: string;
+      "status": string;
     };
     "Metadata": {
       "customer": null | string;
@@ -189,10 +196,13 @@ export interface components {
     };
     "PublicConfig": {
       "api_url": string;
-      "deep_offered"?: boolean;
-      "feishu_app_id"?: string;
+      "current_access": string;
+      "deep_offered": boolean;
+      "feishu_app_id": string;
+      "git_sha": string;
       "login": string;
       "profile": string;
+      "usage_charge_enabled": boolean;
     };
     "QuotaEstimate": {
       "accept_allowed"?: boolean;
@@ -220,7 +230,11 @@ export interface components {
     };
     "ResubmitRequest": {
       "idempotency_key"?: string;
-      "items"?: Array<components["schemas"]["DraftInputItem"]>;
+      "items"?: Array<{
+        "file_version_id": string;
+        "role": "reference" | "target";
+        "rule_version_id": null | string;
+      }>;
     };
     "Review": {
       "judgment": string;
@@ -236,21 +250,21 @@ export interface components {
       "version": number;
     };
     "Round": {
-      "analysis_mode"?: "deep" | "standard";
-      "coverage"?: components["schemas"]["Coverage"];
-      "created_at"?: null | string;
+      "analysis_mode": "deep" | "standard";
+      "coverage": components["schemas"]["Coverage"];
+      "created_at": null | string;
       "execution": string;
       "executor"?: string;
       "executor_revision"?: string;
-      "failure"?: components["schemas"]["RoundFailure"] | null;
+      "failure": components["schemas"]["RoundFailure"] | null;
       "findings": Array<components["schemas"]["Finding"]>;
       "id": string;
       "inputs": Array<components["schemas"]["MaterialWire"]>;
-      "predecessor_id"?: null | string;
-      "progress"?: components["schemas"]["RoundProgress"] | null;
-      "result_counts"?: Record<string, number>;
-      "reviewed_count"?: number;
-      "writeback"?: components["schemas"]["WritebackTarget"];
+      "predecessor_id": null | string;
+      "progress": components["schemas"]["RoundProgress"] | null;
+      "result_attempt": null | number;
+      "source_draft_id": null | string;
+      "writeback": components["schemas"]["WritebackTarget"];
     };
     "RoundFailure": {
       "code": string;
@@ -269,14 +283,15 @@ export interface components {
     };
     "Rule": {
       "created_at": string;
-      "customers"?: Array<string> | null;
+      "customers": Array<string> | null;
       "id": string;
       "kind": string;
-      "models"?: Array<string> | null;
-      "parts"?: Array<string> | null;
-      "predecessor_id"?: null | string;
+      "models": Array<string> | null;
+      "parts": Array<string> | null;
+      "predecessor_id": null | string;
+      "rule_profile": null | string;
       "title": string;
-      "type"?: null | string;
+      "type": null | string;
     };
     "EngineRuleBody": {
       "customers": Array<string>;
