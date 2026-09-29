@@ -1,10 +1,11 @@
 """PPAP layout invariants that uv, pytest, and actionlint do not enforce.
 
 Native tools own their own semantics: uv installs the workspace, pytest
-collects with importlib, docker compose config renders Compose, bake checks
-the build graph, actionlint checks workflow syntax, nginx -t checks nginx,
-and kustomize plus kubeconform check the TKE manifests. This module only
-rejects structures those tools still accept.
+collects with importlib, Docker Compose renders Compose, Buildx Bake checks
+the build graph, actionlint/GitHub Actions own workflow syntax and execution,
+nginx checks nginx, and Kustomize plus kubeconform check Kubernetes objects.
+This module only rejects repository-owned structures those tools still accept;
+it does not parse workflow/config source to proxy native behavior.
 """
 from __future__ import annotations
 
@@ -204,14 +205,11 @@ class ArchitectureTests(unittest.TestCase):
         )
         self.assertNotIn("ppap_excel_audit_engine", core_tests)
 
-    def test_corpus_pairs_and_psw_use_physical_suite_discovery(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        self.assertIn("args: tests/corpus/pairs --cross-format -q", workflow)
-        self.assertIn("pytest tests/corpus/psw -q", workflow)
-        self.assertNotIn("test_cross_format_pairs.py tests/corpus", workflow)
-        self.assertNotIn("test_psw_cross_format_audit.py", workflow)
-        self.assertTrue(any((ROOT / "tests/corpus/pairs").glob("test_*.py")))
-        self.assertTrue(any((ROOT / "tests/corpus/psw").glob("test_*.py")))
+    def test_corpus_pairs_and_psw_have_physical_suite_ownership(self):
+        for suite in ("pairs", "psw"):
+            directory = ROOT / "tests/corpus" / suite
+            self.assertTrue(directory.is_dir())
+            self.assertTrue(any(directory.glob("test_*.py")))
 
     def test_owner_tests_do_not_read_root_corpus(self):
         offenders = []
@@ -270,56 +268,12 @@ class ArchitectureTests(unittest.TestCase):
             self.assertNotIn('PGPASSWORD="$PPAP_PG_MIGRATOR_PASSWORD"', text)
             self.assertNotIn("apply.sql", text)
 
-    def test_tke_deploy_uses_canonical_render_and_no_raw_manifest_apply(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        apply = (ROOT / "deploy/tke/apply-current.sh").read_text()
-        kustomization = (ROOT / "deploy/tke/kustomization.yaml").read_text()
-        proxy = (ROOT / "deploy/tke/edition-proxy.yaml").read_text()
-
-        self.assertIn("deploy/tke/render-current.sh", workflow)
-        self.assertIn('"$TKE/render-current.sh" > "$RENDERED"', apply)
-        self.assertIn("--dry-run=server -f \"$RENDERED\"", apply)
-        self.assertIn('kubectl apply -f "$RENDERED"', apply)
-        self.assertNotIn("kubectl apply -f \"$ROOT/deploy/tke/current.yaml\"", apply)
-        self.assertNotIn("kubectl apply -f \"$ROOT/deploy/tke/edition-proxy.yaml\"", apply)
-        self.assertIn("configMapGenerator:", kustomization)
-        self.assertIn("default.conf=edition-proxy.conf", kustomization)
-        self.assertNotIn("kind: ConfigMap", proxy)
-
-    def test_container_build_graph_uses_native_bake_and_compose_authorities(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        verifier = (ROOT / "scripts/verify-container-graph.mjs").read_text()
-        remote = (ROOT / "deploy/remote-dev/run.sh").read_text()
-        self.assertIn("docker buildx bake --print", workflow)
-        self.assertIn("docker buildx bake --check", workflow)
-        self.assertIn("scripts/verify-container-graph.mjs", workflow)
-        self.assertIn("['buildx', 'bake', '--print']", verifier)
-        self.assertIn("['compose', '--progress', 'quiet'", verifier)
-        self.assertIn("'config', '--format', 'json'", verifier)
-        self.assertIn("docker buildx bake api web", remote)
-        self.assertIn("up --no-build -d --wait", remote)
-
-    def test_distribution_closure_ci_uses_wheels_and_clean_environments(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        script = (ROOT / "scripts/validate_distribution.py").read_text()
-        section = workflow.split("  distribution_closure:", 1)[1].split("\n  python_modules:", 1)[0]
-        self.assertIn("scripts/validate_distribution.py --member", section)
-        self.assertIn("--prove-missing-dependency", section)
-        self.assertNotIn("uv sync", section)
-        self.assertIn('"uv", "build"', script)
-        self.assertIn('"uv", "venv"', script)
-        self.assertIn('"uv", "pip", "install"', script)
-        self.assertIn('cwd="/tmp"', script)
-        self.assertNotIn("sys.path.", script)
-        self.assertIn("distribution_closure", workflow.split("  ci_gate:", 1)[1])
-
-    def test_owner_ci_discovers_physical_test_directories(self):
-        # actionlint checks workflow syntax. It does not know that each
-        # physical owner must be its own pytest process.
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        self.assertIn('Path("packages")', workflow)
-        self.assertIn('Path("services")', workflow)
-        self.assertIn('glob("*/tests")', workflow)
-        self.assertIn("matrix.path", workflow)
-        self.assertNotIn("services/api/tests services/worker/tests", workflow)
-        self.assertNotIn("packages/ppap_core/tests packages/ppap_deep/tests", workflow)
+    def test_physical_owner_test_directories_belong_to_workspace_members(self):
+        members = _member_dirs()
+        found = set()
+        for base in PRODUCTION_ROOTS:
+            for tests in (ROOT / base).glob("*/tests"):
+                if any(tests.rglob("test_*.py")):
+                    found.add(tests.parent)
+        self.assertTrue(found)
+        self.assertTrue(found.issubset(members))
