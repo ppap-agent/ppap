@@ -36,11 +36,14 @@ test('the product and addon documents boot the React entries', () => {
   assert.doesNotMatch(addon, /audit-files\.html/)
 })
 
-test('docs-addon vendor client is the pinned Blockit export', () => {
-  const vendor = readFileSync(join(web, 'block-docs-addon-api.js'), 'utf8')
-  assert.match(vendor, /export \{/)
-  assert.match(vendor, /BlockitClient/)
-  assert.match(vendor, /@lark-opdev\/block-docs-addon-api@0\.0\.11/)
+test('docs-addon client comes from the package manager', () => {
+  const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
+  assert.equal(pkg.dependencies['@lark-opdev/block-docs-addon-api'], '0.0.11')
+  assert.equal(existsSync(join(web, 'block-docs-addon-api.js')), false)
+  const addon = readFileSync(join(web, 'src/addon/main.tsx'), 'utf8')
+  assert.match(addon, /@lark-opdev\/block-docs-addon-api/)
+  assert.match(addon, /BlockitClient/)
+  assert.doesNotMatch(addon, /block-docs-addon-api\.js/)
 })
 
 test('legacy page files are gone', () => {

@@ -11,6 +11,9 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.3.0
         version: 5.3.0
+      '@lark-opdev/block-docs-addon-api':
+        specifier: 0.0.11
+        version: 0.0.11
       '@radix-ui/react-checkbox':
         specifier: ^1.3.11
         version: 1.3.11(@types/react-dom@19.1.9(@types/react@19.1.13))(@types/react@19.1.13)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
@@ -523,6 +526,9 @@ packages:
 
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
+
+  '@lark-opdev/block-docs-addon-api@0.0.11':
+    resolution: {integrity: sha512-9Utqqilx/nGkwT+7OwgrruMxjtVdAsaQOU8JjvUa1JhJmkozuebnWR1zv3W0wY6UNkuHtIi8+JQZsLnazMY9sQ==}
 
   '@modelcontextprotocol/sdk@1.30.1':
     resolution: {integrity: sha512-H2HxLvC3HDNybePJaLdSrU1hhUK5iQw+WvV1b01myFyI7sdVGe1u/IPTE5D9fGCiJDVtgMV/lmFkQXLmQyIFYA==}
@@ -3629,6 +3635,8 @@ snapshots:
       keyv: 5.6.0
 
   '@keyv/serialize@1.1.1': {}
+
+  '@lark-opdev/block-docs-addon-api@0.0.11': {}
 
   '@modelcontextprotocol/sdk@1.30.1(zod@3.25.76)':
     dependencies:

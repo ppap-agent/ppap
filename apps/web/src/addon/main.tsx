@@ -8,6 +8,7 @@ import {Label} from '@/components/ui/label'
 import {NativeSelect} from '@/components/ui/native-select'
 import {Separator} from '@/components/ui/separator'
 import {LoaderCircle, FileSpreadsheet, FileText} from 'lucide-react'
+import {BlockitClient as PackagedBlockitClient} from '@lark-opdev/block-docs-addon-api'
 import '../index.css'
 
 type Json = Record<string, any>
@@ -35,14 +36,7 @@ async function resolveHost(): Promise<AddonHost> {
   let inHostFrame = false
   try { inHostFrame = window.self !== window.top } catch { inHostFrame = true }
   if (!inHostFrame) throw hostUnavailableError()
-  let Client: (new () => {initAPI: () => Json}) | null = window.BlockitClient || null
-  if (!Client) {
-    try {
-      const loadModule = new Function('path', 'return import(path)') as (path: string) => Promise<Json>
-      const mod = await loadModule('/block-docs-addon-api.js')
-      Client = mod.BlockitClient || mod.default?.BlockitClient
-    } catch { Client = null }
-  }
+  const Client: (new () => {initAPI: () => Json}) | null = window.BlockitClient || PackagedBlockitClient
   if (typeof Client !== 'function') throw hostUnavailableError()
   const api = new Client().initAPI()
   return {login: () => api.Service.User.login(), documentToken: async () => (await api.getActiveDocumentRef())?.docToken}
