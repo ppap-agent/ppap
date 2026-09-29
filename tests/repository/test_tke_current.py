@@ -7,8 +7,11 @@ rendered object model. They do not scan raw manifest text.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -30,6 +33,11 @@ def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, check=False, capture_output=True, text=True, **kwargs)
 
 
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content)
+    path.chmod(0o755)
+
+
 def _find(node, key):
     if isinstance(node, dict):
         if key in node:
@@ -48,22 +56,100 @@ def _containers(doc: dict):
 
 
 class TkeCurrentDeployTests(unittest.TestCase):
-    def test_validate_and_apply_share_the_same_kustomize_render(self):
-        workflow = (ROOT / ".github/workflows/tests.yml").read_text()
-        apply = (TKE / "apply-current.sh").read_text()
-        workload = (TKE / "edition-proxy.yaml").read_text()
-        kustomization = (TKE / "kustomization.yaml").read_text()
+    def test_apply_reuses_one_native_render_for_dry_run_and_apply(self):
+        rendered = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: rendered-sentinel\n"
+        expected_digest = hashlib.sha256(rendered.encode()).hexdigest()
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            docker_log = tmp / "docker.log"
+            kubectl_log = tmp / "kubectl.log"
 
-        self.assertIn("deploy/tke/render-current.sh", workflow)
-        self.assertIn('"$TKE/render-current.sh" > "$RENDERED"', apply)
-        self.assertIn('kubectl apply --dry-run=server -f "$RENDERED"', apply)
-        self.assertIn('kubectl apply -f "$RENDERED"', apply)
-        self.assertNotIn("deploy/tke/current.yaml", apply)
-        self.assertNotIn("deploy/tke/edition-proxy.yaml", apply)
-        self.assertNotIn("kind: ConfigMap", workload)
-        self.assertIn("configMapGenerator:", kustomization)
-        self.assertIn("default.conf=edition-proxy.conf", kustomization)
-        self.assertNotIn("disableNameSuffixHash", kustomization)
+            _write_executable(
+                fake_bin / "docker",
+                """#!/bin/sh
+set -eu
+if [ "${1:-}" = "info" ]; then
+  exit 0
+fi
+if [ "${1:-}" = "run" ]; then
+  printf '%s\\n' "$*" >> "$PPAP_DOCKER_LOG"
+  cat <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rendered-sentinel
+EOF
+  exit 0
+fi
+echo "unexpected docker invocation: $*" >&2
+exit 2
+""",
+            )
+            _write_executable(
+                fake_bin / "kubectl",
+                """#!/bin/sh
+set -eu
+printf 'ARGS %s\\n' "$*" >> "$PPAP_KUBECTL_LOG"
+case " $* " in
+  *" create configmap "*)
+    cat <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ppap-current-migrations
+EOF
+    exit 0
+    ;;
+esac
+file=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "-f" ]; then
+    file="$arg"
+    break
+  fi
+  previous="$arg"
+done
+if [ -n "$file" ]; then
+  if [ "$file" = "-" ]; then
+    cat >/dev/null
+    printf 'stdin\\n' >> "$PPAP_KUBECTL_LOG"
+    exit 0
+  fi
+  digest="$(sha256sum "$file" | awk '{print $1}')"
+  case " $* " in
+    *" --dry-run=server "*) kind="dry-run" ;;
+    *) kind="apply" ;;
+  esac
+  printf '%s %s\\n' "$kind" "$digest" >> "$PPAP_KUBECTL_LOG"
+fi
+exit 0
+""",
+            )
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:{env['PATH']}"
+            env["HOME"] = str(tmp)
+            env["KUBECONFIG"] = str(tmp / "kubeconfig")
+            env["PPAP_DOCKER_LOG"] = str(docker_log)
+            env["PPAP_KUBECTL_LOG"] = str(kubectl_log)
+            completed = _run([str(TKE / "apply-current.sh")], cwd=ROOT, env=env)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocation = docker_log.read_text()
+            self.assertIn("registry.k8s.io/kustomize/kustomize:v5.6.0", invocation)
+            self.assertTrue(invocation.rstrip().endswith("build ."))
+            applies = [
+                line.split()
+                for line in kubectl_log.read_text().splitlines()
+                if line.startswith("dry-run ") or line.startswith("apply ")
+            ]
+            self.assertEqual(
+                applies,
+                [["dry-run", expected_digest], ["apply", expected_digest]],
+            )
 
     def test_kustomize_render_matches_schema_and_ppap_policy(self):
         rendered = _run([str(TKE / "render-current.sh")])
