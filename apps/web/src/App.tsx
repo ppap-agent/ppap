@@ -1,5 +1,5 @@
 import {useEffect, useState, type ReactNode} from 'react'
-import {apiUrl, connect, feishuAppId, profile, request} from './api'
+import {apiUrl, connect, feishuAppId, profile, request, type HostLoginRequest, type PrincipalPublic} from './api'
 import {isFeishuHost, requestHostCode} from './hostLogin'
 import Workbench from './Workbench'
 import HistoryView from './HistoryView'
@@ -37,13 +37,13 @@ export default function App() {
         setDevelopment(profile === 'isolated-dev')
         setLoginUrl(apiUrl + '/login/feishu?return_to=' + encodeURIComponent(location.href))
         try {
-          const me = await request<{display_name: string}>('/me')
+          const me = await request<PrincipalPublic>('/me')
           setUser(me.display_name || '已登录用户')
         } catch {
           if (isFeishuHost() && feishuAppId) {
             try {
               const code = await requestHostCode(feishuAppId)
-              const me = await request<{display_name: string}>('/login/feishu/host', 'POST', {code})
+              const me = await request<PrincipalPublic, HostLoginRequest>('/login/feishu/host', 'POST', {code})
               setUser(me.display_name || '已登录用户')
             } catch { /* Browser OAuth remains available. */ }
           }

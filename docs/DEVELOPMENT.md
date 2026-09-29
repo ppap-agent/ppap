@@ -126,3 +126,16 @@ Engine migration 的具体 baseline 见 #3；飞书 capability baseline 见 #11�
 ## 最短交付路径
 
 当前 Issue → 复用/迁入现成资产 → 跑 baseline/当前测试 → 修新增 regression 或产品缺口 → 必要真实环境验证 → 当前 PR → 尽快打通客户路径。
+
+
+## Web wire contract
+
+FastAPI/Pydantic OpenAPI is the machine authority for Web JSON wire shapes. The Web does not maintain a second DTO registry.
+
+The generated TypeScript artifact is owned by the standard `openapi-typescript` CLI pinned in `apps/web/package.json` and `apps/web/pnpm-lock.yaml`. From `apps/web`, run:
+
+```sh
+pnpm api-types
+```
+
+That command serializes the real FastAPI `app.openapi()` schema and pipes it to `openapi-typescript --alphabetize`. CI runs the same generation and rejects any diff in `apps/web/src/generated/openapi.ts`. The generated artifact owns wire types only; retry/readback policy, localized error copy, labels, caches, and UI view-model state remain handwritten.

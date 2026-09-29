@@ -4,14 +4,21 @@ import {
   request,
   upload,
   UploadResultUnknown,
-  type Analysis,
+  type AnalysisJob,
   type AnalysisMode,
   type Draft,
-  type Job,
+  type DraftAcceptRequest,
+  type DraftCreateRequest,
+  type DraftSaveRequest,
+  type DraftList,
+  type FileAnalysisRequest,
+  type FileVersion,
+  type LatestAnalysis,
   type Material,
   type QuotaEstimate,
   type Round,
   type Rule,
+  type RulesList,
 } from '../api'
 import {latestRules} from '../helpers'
 import {parseProductRoute, productHref} from '../navigation/route'
@@ -113,7 +120,7 @@ export function useDraftPreparation({
 
   async function ensureRules() {
     if (rules.length) return
-    setRules((await request<{rules: Rule[]}>('/rules')).rules)
+    setRules((await request<RulesList>('/rules')).rules)
   }
 
   function claimDraft(next: DraftPhase | null) {
@@ -132,12 +139,12 @@ export function useDraftPreparation({
   async function persistDraft(list = itemsRef.current) {
     let id = draftIdRef.current
     if (!id) {
-      id = (await request<{id: string}>('/drafts', 'POST', {predecessor_id: predecessorIdRef.current || null})).id
+      id = (await request<Draft, DraftCreateRequest>('/drafts', 'POST', {predecessor_id: predecessorIdRef.current || null})).id
       setDraftId(id)
       draftIdRef.current = id
     }
     const snapshot = draftSnapshot(list)
-    await request(`/drafts/${id}`, 'PUT', snapshot)
+    await request<Draft, DraftSaveRequest>(`/drafts/${id}`, 'PUT', snapshot)
     const serialized = JSON.stringify(snapshot)
     setSavedDraft(serialized)
     showDraft(id)
@@ -155,12 +162,12 @@ export function useDraftPreparation({
 
   async function readAnalysis(versionId: string, id: string) {
     try {
-      const job = await request<Job<Analysis>>(`/file-analyses/${id}`)
+      const job = await request<AnalysisJob>(`/file-analyses/${id}`)
       if (disposed.current) return
       setItems(current => current.map(item => {
         if (item.file_version_id !== versionId) return item
         const next = {...item, analysisStatus: job.status, analysisReadFailed: false}
-        if (job.status === 'succeeded' && job.result) {
+        if (job.status === 'succeeded' && job.result && !('error' in job.result)) {
           next.analysis = job.result
           if (item.role === 'target' && !item.rule_version_id) next.rule_version_id = job.result.matched_rule_id
         }
@@ -174,7 +181,7 @@ export function useDraftPreparation({
 
   async function reloadAnalysis(item: Material) {
     try {
-      const saved = await request<{analysis: Job<Analysis> | null}>(`/files/${item.file_id}/versions/${item.file_version_id}/analysis`)
+      const saved = await request<LatestAnalysis>(`/files/${item.file_id}/versions/${item.file_version_id}/analysis`)
       if (disposed.current) return
       setItems(current => current.map(row => row.file_version_id === item.file_version_id
         ? {...row, analysisId: saved.analysis?.id, analysisReadFailed: false} : row))
@@ -188,7 +195,7 @@ export function useDraftPreparation({
   async function analyze(item: Material) {
     setItems(current => current.map(row => row.file_version_id === item.file_version_id ? {...row, analysisStatus: 'queued'} : row))
     try {
-      const job = await request<Job<Analysis>>('/file-analyses', 'POST', {
+      const job = await request<AnalysisJob, FileAnalysisRequest>('/file-analyses', 'POST', {
         request_id: crypto.randomUUID(),
         source_file_id: item.file_id,
         source_file_version_id: item.file_version_id,
@@ -211,7 +218,7 @@ export function useDraftPreparation({
   async function loadDrafts(more = false) {
     setDraftLoading(true)
     try {
-      const result = await request<{drafts: Draft[]; next_offset: number | null}>('/drafts?limit=8&offset=' + (more ? draftNext || 0 : 0))
+      const result = await request<DraftList>('/drafts?limit=8&offset=' + (more ? draftNext || 0 : 0))
       setDrafts(current => more ? current.concat(result.drafts) : result.drafts)
       setDraftNext(result.next_offset)
     } finally {
@@ -248,7 +255,7 @@ export function useDraftPreparation({
       const key = `ppap-idempotency-${draftIdRef.current}`
       const idempotencyKey = sessionStorage.getItem(key) || crypto.randomUUID()
       sessionStorage.setItem(key, idempotencyKey)
-      const result = await request<Round>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
+      const result = await request<Round, DraftAcceptRequest>(`/drafts/${draftIdRef.current}/accept`, 'POST', {
         idempotency_key: idempotencyKey,
         predecessor_id: predecessorIdRef.current || null,
       })
@@ -322,7 +329,7 @@ export function useDraftPreparation({
       const material = pendingUpload.material
       let status: string
       try {
-        status = (await request<{status: string}>(`/files/${material.file_id}/versions/${material.file_version_id}`)).status
+        status = (await request<FileVersion>(`/files/${material.file_id}/versions/${material.file_version_id}`)).status
       } catch {
         throw new Error(`暂时无法读取 ${material.original_filename} 的上传结果，请稍后再次核对。`)
       }

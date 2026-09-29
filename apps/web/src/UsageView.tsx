@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {dateLabel, request, type QuotaEstimate} from './api'
+import {dateLabel, request, type QuotaEstimate, type UsageEvent, type UsageList} from './api'
 import {productHref} from './navigation/route'
 import {Alert, AlertDescription, AlertTitle} from '@/components/ui/alert'
 import {Badge} from '@/components/ui/badge'
@@ -8,9 +8,8 @@ import {Input} from '@/components/ui/input'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table'
 import {DataSurface, FilterBar, PageHeader, PageLayout} from './ui/PageLayout'
 
-interface Usage {id: string; created_at: string; consumed_points: number; is_free_trial: boolean; round_id?: string}
 
-function UsageMobileRow({row}: {row: Usage}) {
+function UsageMobileRow({row}: {row: UsageEvent}) {
   return (
     <article className="grid gap-2 py-4 first:pt-0 last:pb-0">
       <div className="flex items-start justify-between gap-4">
@@ -26,7 +25,7 @@ function UsageMobileRow({row}: {row: Usage}) {
 }
 
 export default function UsageView() {
-  const [rows, setRows] = useState<Usage[]>([])
+  const [rows, setRows] = useState<UsageEvent[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [next, setNext] = useState<number | null>(null)
@@ -43,7 +42,7 @@ export default function UsageView() {
       const query = new URLSearchParams({offset: String(reset ? 0 : next || 0)})
       if (since) query.set('since', since)
       if (until) query.set('until', until)
-      const data = await request<{events: Usage[]; next_offset: number | null}>('/usage?' + query)
+      const data = await request<UsageList>('/usage?' + query)
       setRows(current => reset ? data.events : current.concat(data.events))
       setNext(data.next_offset)
     } catch (e) {

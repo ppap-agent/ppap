@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
-import {type FindingStatus, type Round, apiUrl, originalUrl, bundleUrl, request, resultLabels} from './api'
+import {type FindingStatus, type ReportEnvelope, type ReportExport, type Round, apiUrl, originalUrl, bundleUrl, request, resultLabels} from './api'
 import {findingShortTitle, sourceLocation} from './helpers'
 import {productHref} from './navigation/route'
 import Help from './Help'
@@ -8,7 +8,6 @@ import {Button} from '@/components/ui/button'
 import {ReportBlock, ReviewNote} from './ui/domain'
 import {DataSurface} from './ui/PageLayout'
 
-interface Export {id: string; status: string; document_id: string | null; error_code?: string | null}
 
 function machineVariant(status: string): 'default' | 'outline' | 'destructive' | 'secondary' {
   if (status === 'PASS') return 'default'
@@ -20,7 +19,7 @@ function machineVariant(status: string): 'default' | 'outline' | 'destructive' |
 const resultOrder: FindingStatus[] = ['NG', 'ERR', 'UNABLE', 'NA', 'PASS']
 
 export default function ReportPreview({round, unsavedReview, onReview}: {round: Round; unsavedReview?: boolean; onReview: () => void}) {
-  const [report, setReport] = useState<Export | null>(null)
+  const [report, setReport] = useState<ReportExport | null>(null)
   const [exporting, setExporting] = useState(false)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
@@ -33,7 +32,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
     const current = ++revision.current
     setReading(true)
     try {
-      const result = await request<{report: Export | null}>(path)
+      const result = await request<ReportEnvelope>(path)
       if (current === revision.current) { setReport(result.report); setError('') }
     } catch {
       if (current === revision.current) setError('无法读取报告状态，请稍后重新读取。')
@@ -48,7 +47,7 @@ export default function ReportPreview({round, unsavedReview, onReview}: {round: 
     setError('')
     const current = ++revision.current
     try {
-      const result = await request<{report: Export | null}>(path, 'POST', {})
+      const result = await request<ReportEnvelope>(path, 'POST', {})
       if (current === revision.current) setReport(result.report)
     } catch (e) {
       if (current === revision.current) setError(e instanceof Error ? e.message : '报告创建失败，请重新读取状态后确认。')

@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\""
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
+    "api-types": "cd ../.. && uv run --no-sync python -c \"import json; from ppap_api import app; print(json.dumps(app.openapi(), ensure_ascii=False, sort_keys=True))\" | pnpm --dir apps/web exec openapi-typescript --alphabetize -o src/generated/openapi.ts",
+    "api-types:check": "cd ../.. && uv run --no-sync python -c \"import json; from ppap_api import app; print(json.dumps(app.openapi(), ensure_ascii=False, sort_keys=True))\" | pnpm --dir apps/web exec openapi-typescript --alphabetize --check -o src/generated/openapi.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
@@ -44,6 +46,7 @@
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "5.0.4",
     "eslint": "^10.11.0",
+    "openapi-typescript": "7.13.0",
     "shadcn": "^4.21.0",
     "typescript": "5.9.3",
     "vite": "7.3.6"
