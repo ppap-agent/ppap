@@ -42,6 +42,7 @@ export type RuleItem = Schema<'RuleItem'>
 export type RuleCandidate = Schema<'RuleCandidate'>
 export type HostLoginRequest = Schema<'HostLoginRequest'>
 export type FileCreateRequest = Schema<'FileCreateRequest'>
+export type FileFinalizeRequest = Schema<'FileFinalizeRequest'>
 export type FeishuFileImportRequest = Schema<'FeishuFileImportRequest'>
 export type DraftCreateRequest = Schema<'DraftCreateRequest'>
 export type DraftSaveRequest = Schema<'DraftSaveRequest'>
@@ -52,8 +53,9 @@ export type RuleParseRequest = Schema<'RuleParseRequest'>
 export type RulePublishRequest = Schema<'RulePublishRequest'>
 
 type MaterialWire = Schema<'MaterialWire'>
-export type Material = Omit<MaterialWire, 'rule'> & {
+export type Material = Omit<MaterialWire, 'rule' | 'status'> & {
   rule?: BoundRule | null
+  status?: string
   analysis?: Analysis
   analysisId?: string
   analysisStatus?: string
@@ -115,7 +117,7 @@ export async function upload(file: File, role: Material['role']): Promise<Materi
   const response = await fetch(apiUrl + path + '/blob', {method: 'PUT', credentials: 'include', headers: {'Content-Type': file.type || 'application/octet-stream'}, body: file})
   if (!response.ok) throw new Error(`${file.name} 上传失败，请重新选择文件。`)
   try {
-    await request(path + '/finalize', 'POST', {})
+    await request<FileVersion, FileFinalizeRequest>(path + '/finalize', 'POST', {})
   } catch (error) {
     if (!(error instanceof TypeError)) throw error
     let ready = false

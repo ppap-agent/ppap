@@ -134,7 +134,9 @@ function splitDocuments(items: DocLink[]) {
   return {selectable, cloud, nonExcel}
 }
 
-function writebackTarget(fileToken: string) { return fileToken ? {provider: 'feishu', object_kind: 'docx', object_ref: fileToken} : null }
+function writebackTarget(fileToken: string): DraftSaveRequest['writeback_target'] {
+  return fileToken ? {provider: 'feishu', object_kind: 'docx', object_ref: fileToken} : null
+}
 function quotaBlocksStart(quota: Quota) { return Boolean(quota && !quota.unavailable && quota.accept_allowed === false) }
 function quotaLabel(quota: Quota) {
   if (!quota) return ''
