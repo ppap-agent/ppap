@@ -36,11 +36,14 @@ test('the product and addon documents boot the React entries', () => {
   assert.doesNotMatch(addon, /audit-files\.html/)
 })
 
-test('docs-addon vendor client is the pinned Blockit export', () => {
-  const vendor = readFileSync(join(web, 'block-docs-addon-api.js'), 'utf8')
-  assert.match(vendor, /export \{/)
-  assert.match(vendor, /BlockitClient/)
-  assert.match(vendor, /@lark-opdev\/block-docs-addon-api@0\.0\.11/)
+test('docs-addon client comes from the package manager', () => {
+  const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
+  assert.equal(pkg.dependencies['@lark-opdev/block-docs-addon-api'], '0.0.11')
+  assert.equal(existsSync(join(web, 'block-docs-addon-api.js')), false)
+  const addon = readFileSync(join(web, 'src/addon/main.tsx'), 'utf8')
+  assert.match(addon, /@lark-opdev\/block-docs-addon-api/)
+  assert.match(addon, /BlockitClient/)
+  assert.doesNotMatch(addon, /block-docs-addon-api\.js/)
 })
 
 test('legacy page files are gone', () => {
@@ -75,6 +78,38 @@ test('the web client stays behind the Product API boundary', () => {
   }
   assert.equal(filesUnder(join(web, 'src')).some(path => path.endsWith('.vue')), false)
   assert.match(readFileSync(join(repo, 'deploy', 'web', 'Dockerfile'), 'utf8'), /COPY --from=web-build \/app\/dist/)
+})
+
+test('Web wire schemas are generated from FastAPI OpenAPI', () => {
+  const generated = readFileSync(join(web, 'src', 'generated', 'openapi.ts'), 'utf8')
+  const api = readFileSync(join(web, 'src', 'api.ts'), 'utf8')
+  const ruleTypes = readFileSync(join(web, 'src', 'rules', 'types.ts'), 'utf8')
+  const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
+
+  assert.equal(pkg.devDependencies['openapi-typescript'], '7.13.0')
+  assert.match(pkg.scripts['api-types'], /app\.openapi\(\)/)
+  assert.match(pkg.scripts['api-types'], /openapi-typescript --alphabetize/)
+  assert.match(pkg.scripts['api-types:check'], /--check/)
+  assert.equal(existsSync(join(repo, 'scripts', 'generate_web_contract.py')), false)
+  assert.match(api, /from ['"]\.\/generated\/openapi['"]/)
+  assert.match(api, /type MaterialWire = Schema<'MaterialWire'>/)
+  assert.match(ruleTypes, /export type \{RuleBody, RuleCandidate, RuleDetail, RuleItem\} from ['"]\.\.\/api['"]/)
+
+  for (const legacy of [
+    /export interface Rule\b/,
+    /export interface Analysis\b/,
+    /export interface Finding\b/,
+    /export interface Round\b/,
+    /export interface Draft\b/,
+    /export interface QuotaEstimate\b/,
+    /export interface Job\b/,
+  ]) {
+    assert.doesNotMatch(api, legacy)
+  }
+
+  for (const behavior of ['fetch(', 'setTimeout(', 'navigator.', '请求失败', '请先登录']) {
+    assert.equal(generated.includes(behavior), false, `generated OpenAPI artifact contains frontend behavior: ${behavior}`)
+  }
 })
 
 test('usage stays read-only and the client does not own audit pricing', () => {

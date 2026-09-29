@@ -56,13 +56,13 @@ function RuleDetailContent({
 
   const body = detail.body
   const isPresence = body.kind === 'presence'
-  const sourceFile = {
+  const sourceFile = detail.source_file_id && detail.source_file_version_id ? {
     file_id: detail.source_file_id,
     file_version_id: detail.source_file_version_id,
     original_filename: detail.title,
     role: 'reference' as const,
     rule_version_id: null,
-  }
+  } : null
 
   return (
     <div className="flex flex-col gap-4">
@@ -72,7 +72,7 @@ function RuleDetailContent({
         trailing={isPresence && <Badge>资料就绪检测</Badge>}
         description={isPresence ? '仅确认待审文件可用于审核，不检查文件内容。' : undefined}
         action={!isPresence && <>
-          <Button asChild variant="outline" size="sm"><a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">查看原件 ↗</a></Button>
+          {sourceFile && <Button asChild variant="outline" size="sm"><a id="rule-source" data-testid="rule-source" href={originalUrl(sourceFile)} target="_blank" rel="noopener">查看原件 ↗</a></Button>}
           {detail.predecessor_id && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => { location.href = productHref({page: 'rule-detail', ruleId: detail.predecessor_id!, returnTo}) }}>上一版本</Button>}
           <Button type="button" size="sm" disabled={busy} onClick={() => {
             location.href = productHref({page: 'rule-import', predecessorId: detail.id, documentType: body.type, returnTo})

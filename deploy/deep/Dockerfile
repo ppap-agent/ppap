@@ -1,10 +1,10 @@
 ARG PPAP_APP_IMAGE
 FROM node:22.14.0-bookworm-slim@sha256:1c18d9ab3af4585870b92e4dbc5cac5a0dc77dd13df1a5905cea89fc720eb05b AS grok
 WORKDIR /build
-COPY deploy/deep/verify-grok.mjs /build/verify-grok.mjs
-# Registry signatures belong to the npm CLI. verify-grok.mjs only pins the
-# decompressed guest executable, which npm does not hash.
-RUN npm install --ignore-scripts --no-package-lock --registry=https://registry.npmjs.org @xai-official/grok@1.0.40 \
+COPY deploy/deep/package.json deploy/deep/package-lock.json deploy/deep/verify-grok.mjs /build/
+# Node 22.14.0 pins the npm CLI in this image. Registry signatures belong to
+# npm. verify-grok.mjs is only the extra decompressed-executable allowlist.
+RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org \
  && npm audit signatures \
  && node /build/verify-grok.mjs
 

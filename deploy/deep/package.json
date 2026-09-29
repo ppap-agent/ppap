@@ -1,0 +1,8 @@
+{
+  "name": "ppap-deep-guest",
+  "private": true,
+  "description": "Lockfile authority for the Deep guest Grok package. The decompressed executable pin stays in verify-grok.mjs.",
+  "dependencies": {
+    "@xai-official/grok": "1.0.40"
+  }
+}
