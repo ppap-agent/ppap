@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
+from pydantic import TypeAdapter
+
 
 AnalysisMode = Literal["standard", "deep"]
 FindingStatus = Literal["PASS", "NG", "ERR", "UNABLE", "NA"]
@@ -14,12 +16,43 @@ CoverageState = Literal["mapped", "unsupported", "executed"]
 ProgressPhase = Literal["reading", "planning", "checking", "validating"]
 
 
+def _inline_schema(schema_type) -> dict[str, Any]:
+    raw = TypeAdapter(schema_type).json_schema()
+    definitions = raw.pop("$defs", {})
+
+    def resolve(value):
+        if isinstance(value, list):
+            return [resolve(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            name = ref.rsplit("/", 1)[-1]
+            return resolve(definitions[name])
+        return {key: resolve(item) for key, item in value.items() if key != "$defs"}
+
+    return resolve(raw)
+
+
+def openapi_body(schema_type, *, required: bool = True) -> dict[str, Any]:
+    """Document a JSON body without replacing the route's existing dict parsing."""
+    return {
+        "requestBody": {
+            "required": required,
+            "content": {"application/json": {"schema": _inline_schema(schema_type)}},
+        }
+    }
+
+
 class PublicConfig(TypedDict):
-    api_url: str
+    git_sha: str
     profile: str
+    api_url: str
+    deep_offered: bool
+    feishu_app_id: str
+    current_access: str
+    usage_charge_enabled: bool
     login: str
-    deep_offered: NotRequired[bool]
-    feishu_app_id: NotRequired[str]
 
 
 class IdentityPublic(TypedDict):
@@ -37,20 +70,31 @@ class PrincipalPublic(TypedDict):
     identity: IdentityPublic
 
 
+class WritebackTarget(TypedDict):
+    available: bool
+    provider: NotRequired[str]
+    object_kind: NotRequired[str]
+
+
 class FileVersion(TypedDict):
     file_id: str
     id: str
     original_filename: str
     status: str
-    content_type: NotRequired[str]
-    byte_size: NotRequired[int]
-    sha256: NotRequired[str | None]
+    content_type: str
+    byte_size: int
+    sha256: str | None
+    origin: NotRequired[WritebackTarget]
 
 
 class FileCreateRequest(TypedDict):
     original_filename: str
     byte_size: int
     content_type: str
+
+
+class FileFinalizeRequest(TypedDict, total=False):
+    sha256: str
 
 
 class Metadata(TypedDict):
@@ -72,11 +116,12 @@ class Rule(TypedDict):
     title: str
     kind: str
     created_at: str
-    type: NotRequired[str | None]
-    predecessor_id: NotRequired[str | None]
-    customers: NotRequired[list[str] | None]
-    models: NotRequired[list[str] | None]
-    parts: NotRequired[list[str] | None]
+    predecessor_id: str | None
+    type: str | None
+    rule_profile: str | None
+    customers: list[str] | None
+    models: list[str] | None
+    parts: list[str] | None
 
 
 class RuleItem(TypedDict):
@@ -182,23 +227,17 @@ class MaterialWire(TypedDict):
     role: MaterialRole
     rule_version_id: str | None
     rule: BoundRule | None
-    status: NotRequired[str]
-
-
-class WritebackTarget(TypedDict):
-    available: bool
-    provider: NotRequired[str]
-    object_kind: NotRequired[str]
+    status: str
 
 
 class Draft(TypedDict):
     id: str
     status: str
     items: list[MaterialWire]
-    updated_at: NotRequired[str]
-    predecessor_id: NotRequired[str | None]
-    analysis_mode: NotRequired[AnalysisMode]
-    writeback: NotRequired[WritebackTarget]
+    updated_at: str
+    predecessor_id: str | None
+    analysis_mode: AnalysisMode
+    writeback: WritebackTarget
 
 
 class DraftCreateRequest(TypedDict, total=False):
@@ -211,10 +250,16 @@ class DraftInputItem(TypedDict):
     rule_version_id: str | None
 
 
+class WritebackTargetRequest(TypedDict):
+    provider: Literal["feishu"]
+    object_kind: str
+    object_ref: str
+
+
 class DraftSaveRequest(TypedDict, total=False):
     items: list[DraftInputItem]
     analysis_mode: AnalysisMode
-    writeback_target: dict[str, Any] | None
+    writeback_target: WritebackTargetRequest | None
 
 
 class DraftAcceptRequest(TypedDict):
@@ -357,19 +402,19 @@ class RoundFailure(TypedDict):
 class Round(TypedDict):
     id: str
     execution: str
+    coverage: Coverage
+    predecessor_id: str | None
+    source_draft_id: str | None
+    result_attempt: int | None
+    created_at: str | None
+    analysis_mode: AnalysisMode
+    writeback: WritebackTarget
+    progress: RoundProgress | None
+    failure: RoundFailure | None
     inputs: list[MaterialWire]
     findings: list[Finding]
-    predecessor_id: NotRequired[str | None]
-    created_at: NotRequired[str | None]
-    result_counts: NotRequired[dict[str, int]]
-    reviewed_count: NotRequired[int]
-    coverage: NotRequired[Coverage]
-    analysis_mode: NotRequired[AnalysisMode]
     executor: NotRequired[str]
     executor_revision: NotRequired[str]
-    progress: NotRequired[RoundProgress | None]
-    failure: NotRequired[RoundFailure | None]
-    writeback: NotRequired[WritebackTarget]
 
 
 class RoundSummaryRule(TypedDict):
