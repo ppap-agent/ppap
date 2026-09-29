@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 from pathlib import Path
 from typing import Any
@@ -298,6 +299,14 @@ def main() -> None:
     if args.check:
         current = OUTPUT.read_text() if OUTPUT.is_file() else ""
         if current != generated:
+            diff = difflib.unified_diff(
+                current.splitlines(),
+                generated.splitlines(),
+                fromfile=str(OUTPUT.relative_to(ROOT)) + " (committed)",
+                tofile=str(OUTPUT.relative_to(ROOT)) + " (generated)",
+                lineterm="",
+            )
+            print("\n".join(diff))
             raise SystemExit(
                 "generated Web OpenAPI types are stale; run "
                 "uv run --no-sync python scripts/generate_web_contract.py"
