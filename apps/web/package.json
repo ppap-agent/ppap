@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
-    "api-types": "cd ../.. && uv run --no-sync python -c \"import json; from ppap_api import app; print(json.dumps(app.openapi(), ensure_ascii=False, sort_keys=True))\" | pnpm --dir apps/web exec openapi-typescript --alphabetize -o src/generated/openapi.ts",
-    "api-types:check": "cd ../.. && uv run --no-sync python -c \"import json; from ppap_api import app; print(json.dumps(app.openapi(), ensure_ascii=False, sort_keys=True))\" | pnpm --dir apps/web exec openapi-typescript --alphabetize --check -o src/generated/openapi.ts"
+    "api-types": "( cd ../.. && uv run --no-sync python -c \"import json; from ppap_api import app; print(json.dumps(app.openapi(), ensure_ascii=False, sort_keys=True))\" ) | pnpm exec openapi-typescript --alphabetize -o src/generated/openapi.ts",
+    "api-types:check": "( cd ../.. && uv run --no-sync python -c \"import json; from ppap_api import app; print(json.dumps(app.openapi(), ensure_ascii=False, sort_keys=True))\" ) | pnpm exec openapi-typescript --alphabetize --check -o src/generated/openapi.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

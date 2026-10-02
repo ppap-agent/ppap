@@ -69,17 +69,26 @@ jobs:
       - name: Assert Docker
         uses: ./.github/actions/assert-docker
       - name: Repository, config, and tooling contracts
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
           set -euo pipefail
           uv sync --locked
           corepack enable
-          pnpm --dir apps/web install --frozen-lockfile
+          # Corepack reads packageManager from the current directory, not from pnpm --dir.
+          (
+            cd apps/web
+            pnpm install --frozen-lockfile
+          )
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages services tests scripts
           uv run --no-sync ruff check packages services tests scripts
           uv run --no-sync ruff format --check packages services tests scripts
           uv run --no-sync mypy --no-incremental
-          pnpm --dir apps/web api-types
+          (
+            cd apps/web
+            pnpm api-types
+          )
           git diff --exit-code -- apps/web/src/generated/openapi.ts
           node deploy/insforge/verify-config.mjs
           docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
