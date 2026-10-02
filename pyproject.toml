@@ -13,6 +13,8 @@ dev = [
     "pytest==7.4.3",
     "pytest-asyncio==0.21.1",
     "ppap-corpus-contracts",
+    "ruff>=0.14.13,<0.15.0",
+    "mypy>=1.7.1",
 ]
 e2e = [
     "playwright",
@@ -56,3 +58,44 @@ addopts = "--import-mode=importlib"
 asyncio_mode = "strict"
 norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "live"]
 disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true
+
+[tool.ruff]
+line-length = 200
+target-version = "py312"
+required-version = ">=0.14.13,<0.15.0"
+cache-dir = ".cache/ruff"
+force-exclude = true
+show-fixes = true
+exclude = [
+    ".git",
+    "__pycache__",
+    "migrations",
+    ".venv",
+    "venv",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E203"]
+
+[tool.mypy]
+python_version = "3.12"
+explicit_package_bases = true
+ignore_missing_imports = true
+warn_unused_configs = true
+files = ["packages", "services"]
+exclude = ["tests/", "migrations/", "__pycache__/"]
+mypy_path = [
+    "packages/ppap_application/src",
+    "packages/ppap_core/src",
+    "packages/ppap_corpus_contracts/src",
+    "packages/ppap_deep/src",
+    "packages/ppap_docops/src",
+    "packages/ppap_excel_audit_engine/src",
+    "packages/ppap_ocr_adapter/src",
+    "packages/ppap_pdf_to_excel/src",
+    "packages/ppap_product_store/src",
+    "packages/ppap_vision/src",
+    "services/api/src",
+    "services/worker/src",
+]

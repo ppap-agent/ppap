@@ -1,4 +1,5 @@
 """Application rule-file parsing backed by document and engine capabilities."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from ppap_core.rules import (
     normalize_rule_body,
 )
 from ppap_core.types import PpapDocumentType
+
 
 def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", ai=None) -> dict:
     extension = Path(filename).suffix.lower()
@@ -29,6 +31,7 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
     try:
         if extension == ".doc":
             from ppap_docops.word.legacy import convert_legacy_doc_to_docx
+
             content = convert_legacy_doc_to_docx(content, filename)
             extension = ".docx"
         text = get_extractor(extension).extract_text(content)
@@ -54,8 +57,11 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
             classified = ai.structured_completion(
                 system_prompt=PromptManager.get_system_prompt("ppap_expert"),
                 user_prompt=PromptManager.get_document_classification_prompt(text, "\n".join(document_types())),
-                max_tokens=100, temperature=0.0, operation="document_classification",
-                request_timeout=120, retry_limit=0,
+                max_tokens=100,
+                temperature=0.0,
+                operation="document_classification",
+                request_timeout=120,
+                retry_limit=0,
             )
             doc_type = PpapDocumentType.from_string(classified)
         if doc_type == PpapDocumentType.UNKNOWN:
@@ -63,9 +69,14 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         prompt = PromptManager.get_rule_extraction_prompt(text, doc_type.get_type_name())
         prompt += "\n同时返回 customers、models、parts 三个字符串数组，仅包含原文明确的适用客户、型号、零件；没有则为空数组。"
         response = ai.structured_completion(
-            system_prompt=PromptManager.get_system_prompt("rule_extractor"), user_prompt=prompt,
-            max_tokens=8192, temperature=0.0, json_format=True, operation="rule_extraction",
-            request_timeout=120, retry_limit=0,
+            system_prompt=PromptManager.get_system_prompt("rule_extractor"),
+            user_prompt=prompt,
+            max_tokens=8192,
+            temperature=0.0,
+            json_format=True,
+            operation="rule_extraction",
+            request_timeout=120,
+            retry_limit=0,
         )
         parsed = json.loads(response.strip().removeprefix("```json").removesuffix("```").strip())
         if not isinstance(parsed, dict):

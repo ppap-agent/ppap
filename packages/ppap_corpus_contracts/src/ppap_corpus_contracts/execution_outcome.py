@@ -44,7 +44,7 @@ class ExecutionOutcome:
 MISSING_OUTCOME = ExecutionOutcome(status="ERR", execution_class=MISSING_RULE)
 
 
-def O(
+def O(  # noqa: E743 - short outcome constructor used by corpus tables
     status: str,
     execution_class: str | None = None,
     diagnostic_code: str | None = None,
@@ -62,12 +62,7 @@ def O(
 def stable_diagnostic_code(result: Any) -> str | None:
     evidence = getattr(result, "evidence", None)
     diagnostics = getattr(evidence, "diagnostics", ()) or ()
-    codes = [
-        str(getattr(item, "code", "") or "")
-        for item in diagnostics
-        if str(getattr(item, "severity", "") or "") == "error"
-        and str(getattr(item, "code", "") or "")
-    ]
+    codes = [str(getattr(item, "code", "") or "") for item in diagnostics if str(getattr(item, "severity", "") or "") == "error" and str(getattr(item, "code", "") or "")]
     return codes[0] if codes else None
 
 

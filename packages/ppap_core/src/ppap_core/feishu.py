@@ -1,8 +1,10 @@
 """Feishu store-app event and OAuth helpers. Application identity is not email."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 from urllib.parse import urlencode
 
 from ppap_core.identity import constant_time_equal
@@ -69,14 +71,17 @@ def authorize_url(settings: Settings, state: str, *, report: bool = False) -> st
 
 
 def event_token(body: dict) -> str:
-    header = body.get("header") if isinstance(body.get("header"), dict) else {}
+    header_value = body.get("header")
+    header = header_value if isinstance(header_value, dict) else {}
     token = header.get("token") or body.get("token") or ""
     return token.strip() if isinstance(token, str) else ""
 
 
 def event_app_id(body: dict) -> str:
-    header = body.get("header") if isinstance(body.get("header"), dict) else {}
-    event = body.get("event") if isinstance(body.get("event"), dict) else {}
+    header_value = body.get("header")
+    event_value = body.get("event")
+    header = header_value if isinstance(header_value, dict) else {}
+    event = event_value if isinstance(event_value, dict) else {}
     app_id = header.get("app_id") or event.get("app_id") or ""
     return app_id.strip() if isinstance(app_id, str) else ""
 
@@ -90,8 +95,10 @@ def parse_event(body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownE
             return Challenge(challenge)
     if body.get("encrypt") and not body.get("event"):
         return EncryptedEvent()
-    event = body.get("event") if isinstance(body.get("event"), dict) else {}
-    header = body.get("header") if isinstance(body.get("header"), dict) else {}
+    event_value = body.get("event")
+    header_value = body.get("header")
+    event = event_value if isinstance(event_value, dict) else {}
+    header = header_value if isinstance(header_value, dict) else {}
     ticket = event.get("app_ticket")
     event_type = header.get("event_type") or event.get("type") or body.get("type")
     if event_type == "app_ticket" and isinstance(ticket, str) and ticket.strip():
@@ -99,9 +106,7 @@ def parse_event(body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownE
     return UnknownEvent()
 
 
-def accept_event(
-    settings: Settings, body: dict
-) -> Challenge | AppTicket | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
+def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
     """Feishu Verification Token plus app_id binding. Not a generic webhook framework."""
     parsed = parse_event(body)
     if isinstance(parsed, (EncryptedEvent, UnknownEvent)):
@@ -123,7 +128,7 @@ class FeishuError(Exception):
 
 def _seconds(value: object) -> int:
     try:
-        return max(0, int(value))
+        return max(0, int(cast(Any, value)))
     except (TypeError, ValueError):
         return 0
 

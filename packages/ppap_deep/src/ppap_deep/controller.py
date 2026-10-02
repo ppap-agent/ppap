@@ -1,8 +1,8 @@
 """Controller process: owns runtime, never accepts host path/command/mount/image/env."""
+
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import select
 import socket
@@ -12,17 +12,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from pydantic import ValidationError
 
-from ppap_core.audits import DEEP_PROTOCOL_REVISION
-from ppap_deep.client import DeepError, DeepUnavailable, MAX_FRAME, read_frame, write_frame
+from ppap_deep.client import DeepError, DeepUnavailable, read_frame, write_frame
 from ppap_deep.protocol import (
-    ErrorEnvelope,
     DeepProgress,
+    ErrorEnvelope,
     ExecuteRequest,
     ExecuteResponse,
-    RequestEnvelope,
     ProgressEnvelope,
+    RequestEnvelope,
     ResultEnvelope,
 )
 
@@ -41,8 +41,7 @@ class ExecutionContext:
 
 
 class Runtime(Protocol):
-    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
-        ...
+    def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse: ...
 
 
 class UnconfiguredRuntime:
@@ -125,9 +124,7 @@ class Controller:
             if version_id and version_id not in known:
                 raise DeepError("deep_output_identity_mismatch")
         expected = {
-            f"{item.file_version_id}:rule:{clause.get('id') or index}"
-            for item in spec.files if item.role == "target"
-            for index, clause in enumerate((item.rule_body or {}).get("rules") or [], 1)
+            f"{item.file_version_id}:rule:{clause.get('id') or index}" for item in spec.files if item.role == "target" for index, clause in enumerate((item.rule_body or {}).get("rules") or [], 1)
         }
         if expected and seen != expected:
             raise DeepError("deep_output_invalid")

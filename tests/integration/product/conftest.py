@@ -1,17 +1,17 @@
 """Product integration pytest fixtures."""
+
 from __future__ import annotations
 
 import uuid
 
 import pytest
-from psycopg import sql
-from psycopg.rows import dict_row
-
 from ppap_application import build_product_store
-from ppap_product_store import AuthStore
 from ppap_core.db import connect
 from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
+from ppap_product_store import AuthStore
+from psycopg import sql
+from psycopg.rows import dict_row
 
 
 class MemoryObjects:
@@ -44,21 +44,10 @@ def reset_product_database(settings: Settings) -> None:
             ORDER BY schemaname, tablename
             """
         ).fetchall()
-        targets = [
-            sql.Identifier(schema, table)
-            for schema, table in tables
-            if not (
-                schema == "product"
-                and table in {"schema_migrations", "trial_cutover_baselines"}
-            )
-        ]
+        targets = [sql.Identifier(schema, table) for schema, table in tables if not (schema == "product" and table in {"schema_migrations", "trial_cutover_baselines"})]
         if targets:
-            conn.execute(
-                sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(targets))
-            )
-        conn.execute(
-            "DELETE FROM product.trial_cutover_baselines WHERE tenant_key LIKE 'isolated-dev-%'"
-        )
+            conn.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(sql.SQL(", ").join(targets)))
+        conn.execute("DELETE FROM product.trial_cutover_baselines WHERE tenant_key LIKE 'isolated-dev-%'")
 
 
 def make_auth_store(

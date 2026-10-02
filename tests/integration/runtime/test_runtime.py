@@ -1,4 +1,5 @@
 """Thin black-box checks against a docker compose production stack."""
+
 from __future__ import annotations
 
 import json

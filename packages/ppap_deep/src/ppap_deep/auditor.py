@@ -1,4 +1,5 @@
 """Product versions -> real semantic auditor -> validated product findings."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,10 +7,11 @@ import json
 import tempfile
 import time
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, cast
 from uuid import UUID
 
 from ppap_core.files import ObjectExists, ObjectMissing
+
 from ppap_deep.client import DeepError
 from ppap_deep.controller import ExecutionContext
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
@@ -52,20 +54,21 @@ def semantic_inputs(spec: ExecuteRequest, engine_revision: str) -> tuple[Submiss
         extension = Path(item.filename).suffix.lower()
         if extension not in FORMATS:
             raise DeepError("deep_input_invalid")
-        documents.append(DocumentRef(audit_id=item.file_version_id, filename=item.filename, sha256=item.sha256,
-                                     format=extension, role="target" if item.role == "target" else "context"))
+        file_format = cast(Literal[".xlsx", ".xlsm", ".xls", ".docx", ".pdf"], extension)
+        role = cast(Literal["target", "context"], "target" if item.role == "target" else "context")
+        documents.append(DocumentRef(audit_id=item.file_version_id, filename=item.filename, sha256=item.sha256, format=file_format, role=role))
         if item.role != "target":
             continue
         body = item.rule_body or {}
         clauses = body.get("rules")
         if not item.rule_version_id or not isinstance(clauses, list) or not clauses:
             raise DeepError("deep_rules_empty")
-        if any(not isinstance(row, dict) or not isinstance(row.get("id"), str)
-               or not row["id"].strip() or not isinstance(row.get("rule_to_check"), str)
-               or not row["rule_to_check"].strip() for row in clauses):
+        if any(
+            not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"].strip() or not isinstance(row.get("rule_to_check"), str) or not row["rule_to_check"].strip()
+            for row in clauses
+        ):
             raise DeepError("deep_input_invalid")
-        packet = {"kind": "published_rule", "rule_version_id": item.rule_version_id,
-                  "rule_body": body, "clauses": clauses}
+        packet = {"kind": "published_rule", "rule_version_id": item.rule_version_id, "rule_body": body, "clauses": clauses}
         if item.rule_source_file_version_id:
             packet["origin"] = {"file_version_id": item.rule_source_file_version_id}
         raw = encoded(packet)
@@ -73,15 +76,20 @@ def semantic_inputs(spec: ExecuteRequest, engine_revision: str) -> tuple[Submiss
             raise DeepError("deep_integrity_mismatch")
         digest = hashlib.sha256(raw).hexdigest()
         revision = hashlib.sha256(encoded([digest, POLICY_REVISION, engine_revision])).hexdigest()
-        rules[item.rule_version_id] = RuleRef(rule_id=item.rule_version_id, rule_version_id=item.rule_version_id,
-                                             sha256=digest, format=".json", plan_revision=revision, clauses=clauses)
+        rules[item.rule_version_id] = RuleRef(rule_id=item.rule_version_id, rule_version_id=item.rule_version_id, sha256=digest, format=".json", plan_revision=revision, clauses=clauses)
         packets[item.rule_version_id] = raw
         targets[item.file_version_id] = item.rule_version_id
     try:
-        submission = SubmissionSpec(execution_id=UUID(int=0), submission_id=UUID(spec.round_id),
-                                    project_id=spec.tenant_id, documents=documents, rules=list(rules.values()),
-                                    targets=targets, policy_revision=POLICY_REVISION,
-                                    semantic_engine_revision=engine_revision)
+        submission = SubmissionSpec(
+            execution_id=UUID(int=0),
+            submission_id=UUID(spec.round_id),
+            project_id=spec.tenant_id,
+            documents=documents,
+            rules=list(rules.values()),
+            targets=targets,
+            policy_revision=POLICY_REVISION,
+            semantic_engine_revision=engine_revision,
+        )
     except ValueError as exc:
         raise DeepError("deep_input_invalid") from exc
     return submission.model_copy(update={"execution_id": submission.expected_execution_id()}), packets
@@ -102,44 +110,86 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
             excerpt = " · ".join(observed.values)
             if len(excerpt) > 4000:
                 excerpt = excerpt[:4000] + "…"
-            sources.append({"file_version_id": source.file_version_id, "filename": source.filename,
-                            "role": source.role, "locator": citation.locator.model_dump(), "excerpt": excerpt})
-        semantic = {"rule_version_id": target.rule_version_id, "clause_id": check.rule_id,
-                    "rule_text": clause["rule_to_check"], "scope": {"total": check.total, "checked": check.checked, "unknown": check.unknown},
-                    "sources": sources}
+            sources.append({"file_version_id": source.file_version_id, "filename": source.filename, "role": source.role, "locator": citation.locator.model_dump(), "excerpt": excerpt})
+        semantic = {
+            "rule_version_id": target.rule_version_id,
+            "clause_id": check.rule_id,
+            "rule_text": clause["rule_to_check"],
+            "scope": {"total": check.total, "checked": check.checked, "unknown": check.unknown},
+            "sources": sources,
+        }
         if check.diagnostic:
             semantic["diagnostic_code"] = check.diagnostic
             semantic["diagnostic"] = DIAGNOSTIC_LABELS[check.diagnostic]
         if target.rule_source_file_version_id:
             semantic["rule_source_file_version_id"] = target.rule_source_file_version_id
         item_key = f"{target.file_version_id}:rule:{check.rule_id}"
-        findings.append(DeepFinding(item_key=item_key, classification=str(clause.get("category") or "客户规则"),
-                                    item=clause["rule_to_check"], priority=str(clause.get("priority") or "P1"),
-                                    status=check.status, suggestions=check.reason,
-                                    locator={"kind": "file_version", "file_id": target.file_id,
-                                             "file_version_id": target.file_version_id, "filename": target.filename,
-                                             "rule_item_id": check.rule_id, "semantic": semantic}))
-        rule_items.append({"file_version_id": target.file_version_id, "filename": target.filename,
-                           "rule_version_id": target.rule_version_id, "rule_item_id": check.rule_id, "id": check.rule_id,
-                           "category": str(clause.get("category") or "客户规则"),
-                           "rule_to_check": clause["rule_to_check"], "item_key": item_key,
-                           "coverage": "executed", "status": check.status})
-    return ExecuteResponse(protocol_revision=spec.protocol_revision, round_id=spec.round_id, files=spec.files,
-                           findings=findings, note="deep_semantic_audit",
-                           usage={"input_tokens": bundle.input_tokens, "output_tokens": bundle.output_tokens,
-                                  "tool_calls": bundle.tool_calls, "completed_tool_calls": bundle.completed_tool_calls,
-                                  "compactions": bundle.compactions},
-                           coverage=DeepCoverage(checked=[item.filename for item in spec.files if item.role == "target"],
-                                                 unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"],
-                                                 locator_gap=any(not (row.locator or {})["semantic"]["sources"] for row in findings),
-                                                 rule_items=rule_items))
+        findings.append(
+            DeepFinding(
+                item_key=item_key,
+                classification=str(clause.get("category") or "客户规则"),
+                item=clause["rule_to_check"],
+                priority=str(clause.get("priority") or "P1"),
+                status=check.status,
+                suggestions=check.reason,
+                locator={
+                    "kind": "file_version",
+                    "file_id": target.file_id,
+                    "file_version_id": target.file_version_id,
+                    "filename": target.filename,
+                    "rule_item_id": check.rule_id,
+                    "semantic": semantic,
+                },
+            )
+        )
+        rule_items.append(
+            {
+                "file_version_id": target.file_version_id,
+                "filename": target.filename,
+                "rule_version_id": target.rule_version_id,
+                "rule_item_id": check.rule_id,
+                "id": check.rule_id,
+                "category": str(clause.get("category") or "客户规则"),
+                "rule_to_check": clause["rule_to_check"],
+                "item_key": item_key,
+                "coverage": "executed",
+                "status": check.status,
+            }
+        )
+    return ExecuteResponse(
+        protocol_revision=spec.protocol_revision,
+        round_id=spec.round_id,
+        files=spec.files,
+        findings=findings,
+        note="deep_semantic_audit",
+        usage={
+            "input_tokens": bundle.input_tokens,
+            "output_tokens": bundle.output_tokens,
+            "tool_calls": bundle.tool_calls,
+            "completed_tool_calls": bundle.completed_tool_calls,
+            "compactions": bundle.compactions,
+        },
+        coverage=DeepCoverage(
+            checked=[item.filename for item in spec.files if item.role == "target"],
+            unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"],
+            locator_gap=any(not (row.locator or {})["semantic"]["sources"] for row in findings),
+            rule_items=rule_items,
+        ),
+    )
 
 
-FAULTS = {"INPUT_INTEGRITY_ERROR": "deep_integrity_mismatch", "PARSER_LIMIT": "deep_parser_limit",
-          "MODEL_TIMEOUT": "deep_timeout", "MODEL_PROTOCOL_ERROR": "deep_model_protocol",
-          "OUTPUT_VALIDATION_ERROR": "deep_output_invalid", "EVIDENCE_VALIDATION_ERROR": "deep_output_invalid",
-          "RESOURCE_LIMIT": "deep_budget_exhausted", "CANCELLED": "deep_cancelled",
-          "ISOLATION_UNAVAILABLE": "deep_runtime_unavailable", "CONTROLLER_UNAVAILABLE": "deep_runtime_unavailable"}
+FAULTS = {
+    "INPUT_INTEGRITY_ERROR": "deep_integrity_mismatch",
+    "PARSER_LIMIT": "deep_parser_limit",
+    "MODEL_TIMEOUT": "deep_timeout",
+    "MODEL_PROTOCOL_ERROR": "deep_model_protocol",
+    "OUTPUT_VALIDATION_ERROR": "deep_output_invalid",
+    "EVIDENCE_VALIDATION_ERROR": "deep_output_invalid",
+    "RESOURCE_LIMIT": "deep_budget_exhausted",
+    "CANCELLED": "deep_cancelled",
+    "ISOLATION_UNAVAILABLE": "deep_runtime_unavailable",
+    "CONTROLLER_UNAVAILABLE": "deep_runtime_unavailable",
+}
 
 
 class SemanticRuntime:
@@ -210,8 +260,7 @@ class SemanticRuntime:
                 cached_name = f"plan-{index}.json"
                 if self._cache(f"{prefix}/plans/{scope}/{rule.plan_revision}.json", inputs / cached_name):
                     cached_plans[rule.rule_id] = cached_name
-            manifest = Manifest(spec=submission, documents=names, rules=rule_names,
-                                cached_snapshots=cached_snapshots, cached_plans=cached_plans)
+            manifest = Manifest(spec=submission, documents=names, rules=rule_names, cached_snapshots=cached_snapshots, cached_plans=cached_plans)
             (inputs / "manifest.json").write_bytes(manifest.model_dump_json().encode())
 
             def progress(value):

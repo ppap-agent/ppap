@@ -1,6 +1,7 @@
 """PSW PDF evidence tracing must not crash when file_metadata is missing."""
-from types import SimpleNamespace
+
 import unittest
+from types import SimpleNamespace
 
 from ppap_core.contracts import AuditResultItem
 

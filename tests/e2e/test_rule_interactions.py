@@ -1,7 +1,8 @@
 """Deterministic browser/API interleavings; no live backend or model calls."""
+
 import os
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 try:
     from playwright.sync_api import sync_playwright
@@ -14,7 +15,15 @@ ROOT = Path(__file__).resolve().parents[2]
 JOB = "00000000-0000-4000-8000-000000000001"
 SOURCE = "00000000-0000-4000-8000-000000000002"
 VERSION = "00000000-0000-4000-8000-000000000003"
-BODY = {"kind": "engine", "type": "控制计划", "rule_profile": "v3", "customers": [], "models": [], "parts": [], "rules": [{"id": "1", "category": "A", "priority": None, "rule_to_check": "检查 A", "type_of_rule": "table"}]}
+BODY = {
+    "kind": "engine",
+    "type": "控制计划",
+    "rule_profile": "v3",
+    "customers": [],
+    "models": [],
+    "parts": [],
+    "rules": [{"id": "1", "category": "A", "priority": None, "rule_to_check": "检查 A", "type_of_rule": "table"}],
+}  # noqa: E501
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
@@ -71,10 +80,9 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/file-analyses", analyze)
             page.route("**/api/file-analyses/*", lambda route: route.fulfill(json={"id": "analysis-1", "status": "succeeded"}))
             page.goto(WEB)
-            page.get_by_test_id("source-upload").set_input_files([
-                {"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
-                for name in names
-            ])
+            page.get_by_test_id("source-upload").set_input_files(
+                [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in names]
+            )
 
             expect(page.get_by_test_id("draft-items")).to_contain_text("first.xlsx")
             expect(page.get_by_test_id("draft-items")).to_contain_text("second.xlsx")
@@ -177,12 +185,22 @@ class RuleInteractionTests(unittest.TestCase):
 
             page.route("**/api/files/*/versions/*/analysis", read_latest)
             page.route("**/api/file-analyses/ref-analysis", lambda route: route.fulfill(json={"id": "ref-analysis", "status": "failed"}))
-            page.route("**/api/file-analyses/target-analysis", lambda route: route.fulfill(json={
-                "id": "target-analysis", "status": "succeeded", "result": {
-                    "metadata": {"customer": "CETUS", "model": None, "part": None}, "document_type": "控制计划",
-                    "matched_rule_id": "version-b", "matching_status": "matched", "notices": [],
-                },
-            }))
+            page.route(
+                "**/api/file-analyses/target-analysis",
+                lambda route: route.fulfill(
+                    json={
+                        "id": "target-analysis",
+                        "status": "succeeded",
+                        "result": {
+                            "metadata": {"customer": "CETUS", "model": None, "part": None},
+                            "document_type": "控制计划",
+                            "matched_rule_id": "version-b",
+                            "matching_status": "matched",
+                            "notices": [],
+                        },
+                    }
+                ),
+            )
             page.goto(WEB + "/?draft=" + JOB)
             expect(page.get_by_role("button", name="重新读取 flow.xlsx 的识别结果")).to_be_visible()
             expect(page.get_by_text("CETUS", exact=True)).to_be_visible()
@@ -201,8 +219,7 @@ class RuleInteractionTests(unittest.TestCase):
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for readback, finalize_response in (("ready", "lost"), ("ready", "bad_json"),
-                                                ("staging", "lost"), ("failed_read", "lost")):
+            for readback, finalize_response in (("ready", "lost"), ("ready", "bad_json"), ("staging", "lost"), ("failed_read", "lost")):
                 with self.subTest(readback=readback, finalize_response=finalize_response):
                     page = browser.new_page()
                     self.route(page)
@@ -265,10 +282,19 @@ class RuleInteractionTests(unittest.TestCase):
             ]
             posts, saves, accepted = [], [], []
             page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev", "deep_offered": True}))
-            page.route("**/api/rounds/" + JOB, lambda route: route.fulfill(json={
-                "id": JOB, "execution": "failed", "analysis_mode": "deep", "inputs": items, "findings": [],
-                "failure": {"code": "deep_budget_exhausted", "message": "执行额度已用完。", "retryable": False},
-            }))
+            page.route(
+                "**/api/rounds/" + JOB,
+                lambda route: route.fulfill(
+                    json={
+                        "id": JOB,
+                        "execution": "failed",
+                        "analysis_mode": "deep",
+                        "inputs": items,
+                        "findings": [],
+                        "failure": {"code": "deep_budget_exhausted", "message": "执行额度已用完。", "retryable": False},
+                    }
+                ),
+            )
 
             def create_draft(route):
                 posts.append(route.request.post_data_json)
@@ -295,8 +321,7 @@ class RuleInteractionTests(unittest.TestCase):
     def test_round_read_failure_keeps_acceptance_and_recovers_without_resubmitting(self):
         from playwright.sync_api import expect
 
-        for entry, first_read in (("submit", "connectionreset"), ("deep_link", "connectionreset"),
-                                  ("submit", "bad_json"), ("deep_link", "bad_json")):
+        for entry, first_read in (("submit", "connectionreset"), ("deep_link", "connectionreset"), ("submit", "bad_json"), ("deep_link", "bad_json")):
             with self.subTest(entry=entry, first_read=first_read), sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 page = browser.new_page()
@@ -347,7 +372,7 @@ class RuleInteractionTests(unittest.TestCase):
                 route.fulfill(status=204, headers=cors)
                 return
             path = request.url.split("?", 1)[0]
-            path = path[path.find("/api") + 4:] if "/api" in path else path.replace("http://127.0.0.1:8080", "")
+            path = path[path.find("/api") + 4 :] if "/api" in path else path.replace("http://127.0.0.1:8080", "")
             if path == "/public-config":
                 route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev"}, headers=cors)
             elif path == "/me":
@@ -358,11 +383,36 @@ class RuleInteractionTests(unittest.TestCase):
                 if publish_status >= 400:
                     route.fulfill(status=publish_status, json={"error": "save_failed"}, headers=cors)
                 else:
-                    route.fulfill(status=publish_status, json={"id": "saved-rule", "title": "规则 A", "kind": "engine", "type": "控制计划", "created_at": "2026-09-23T00:00:00Z", "body": BODY, "source_file_id": SOURCE, "source_file_version_id": VERSION}, headers=cors)
+                    route.fulfill(
+                        status=publish_status,
+                        json={
+                            "id": "saved-rule",
+                            "title": "规则 A",
+                            "kind": "engine",
+                            "type": "控制计划",
+                            "created_at": "2026-09-23T00:00:00Z",
+                            "body": BODY,
+                            "source_file_id": SOURCE,
+                            "source_file_version_id": VERSION,
+                        },
+                        headers=cors,
+                    )  # noqa: E501
             elif path == "/rules":
                 route.fulfill(json={"rules": [{"id": "version-b", "kind": "engine", "title": "规则 B", "type": "控制计划"}]}, headers=cors)
             elif path == "/rules/saved-rule":
-                route.fulfill(json={"id": "saved-rule", "title": "规则 A", "kind": "engine", "type": "控制计划", "created_at": "2026-09-23T00:00:00Z", "body": BODY, "source_file_id": SOURCE, "source_file_version_id": VERSION}, headers=cors)
+                route.fulfill(
+                    json={
+                        "id": "saved-rule",
+                        "title": "规则 A",
+                        "kind": "engine",
+                        "type": "控制计划",
+                        "created_at": "2026-09-23T00:00:00Z",
+                        "body": BODY,
+                        "source_file_id": SOURCE,
+                        "source_file_version_id": VERSION,
+                    },
+                    headers=cors,
+                )  # noqa: E501
             elif path == "/files":
                 route.fulfill(status=201, json={"file_id": SOURCE, "id": VERSION}, headers=cors)
             elif path.endswith(("/blob", "/finalize")):
@@ -374,7 +424,17 @@ class RuleInteractionTests(unittest.TestCase):
                 else:
                     route.fulfill(status=202, json={"id": posts[-1]["request_id"], "status": "queued"}, headers=cors)
             elif path.startswith("/rules/parse/"):
-                route.fulfill(json={"id": path.rsplit("/", 1)[1], "status": status, "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "控制计划", "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION} if status == "succeeded" else None}, headers=cors)
+                route.fulfill(
+                    json={
+                        "id": path.rsplit("/", 1)[1],
+                        "status": status,
+                        "source_file_id": SOURCE,
+                        "source_file_version_id": VERSION,
+                        "document_type": "控制计划",
+                        "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION} if status == "succeeded" else None,
+                    },
+                    headers=cors,
+                )  # noqa: E501
             else:
                 route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)
 
@@ -400,7 +460,20 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(pending), 1)
             pending[0].fulfill(status=202, json={"id": posts[0]["request_id"], "status": "queued"}, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"})
             page.wait_for_timeout(100)
-            page.route("**/api/rules/parse/" + posts[0]["request_id"], lambda route: route.fulfill(json={"id": posts[0]["request_id"], "status": "succeeded", "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "控制计划", "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION}}, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"}))
+            page.route(
+                "**/api/rules/parse/" + posts[0]["request_id"],
+                lambda route: route.fulfill(
+                    json={
+                        "id": posts[0]["request_id"],
+                        "status": "succeeded",
+                        "source_file_id": SOURCE,
+                        "source_file_version_id": VERSION,
+                        "document_type": "控制计划",
+                        "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION},
+                    },
+                    headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"},
+                ),
+            )  # noqa: E501
             expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
             expect(page.locator("#rule-origin")).to_contain_text("新规则")
             expect(page.get_by_test_id("rule-back")).to_be_enabled()
@@ -442,7 +515,10 @@ class RuleInteractionTests(unittest.TestCase):
                 if route.request.method == "OPTIONS":
                     route.fulfill(status=204, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "content-type"})
                     return
-                route.fulfill(json={"id": JOB, "status": "failed", "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "", "result": {"error": "rule_type_required"}}, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"})
+                route.fulfill(
+                    json={"id": JOB, "status": "failed", "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "", "result": {"error": "rule_type_required"}},
+                    headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"},
+                )  # noqa: E501
 
             page.route("**/api/rules/parse/" + JOB, original_task)
             page.goto(WEB + "/rules?parse=" + JOB)
@@ -459,7 +535,6 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(posts[0]["document_type"], "控制计划")
             self.assertEqual([method for method in original_requests if method != "OPTIONS"], ["GET"])
             browser.close()
-
 
     def test_save_success_clears_the_leave_guard_before_navigation(self):
         from playwright.sync_api import expect

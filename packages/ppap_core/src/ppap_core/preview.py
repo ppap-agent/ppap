@@ -1,7 +1,9 @@
 """Bounded, read-only content excerpts. No macros, LLM calls or office processes."""
+
 from io import BytesIO
 from itertools import islice
 from pathlib import Path
+from typing import Any
 from zipfile import ZipFile
 
 MAX_PREVIEW_BYTES = 25 * 1024 * 1024
@@ -14,9 +16,9 @@ def document_preview(content: bytes, filename: str, sheet: str = "", start_row: 
         return unsupported
     extension = Path(filename).suffix.lower()
     lines = []
-    metadata = {}
+    metadata: dict[str, Any] = {}
     if extension in {".md", ".txt", ".csv", ".json"}:
-        text = content[:MAX_TEXT * 4].decode("utf-8-sig", errors="replace")
+        text = content[: MAX_TEXT * 4].decode("utf-8-sig", errors="replace")
     elif extension in {".docx", ".xlsx", ".xlsm"}:
         with ZipFile(BytesIO(content)) as archive:
             entries = archive.infolist()
@@ -24,10 +26,12 @@ def document_preview(content: bytes, filename: str, sheet: str = "", start_row: 
                 return unsupported
         if extension == ".docx":
             from docx import Document
+
             doc = Document(BytesIO(content))
             # Preserve paragraph/table order in the main document body.
             from docx.table import Table
             from docx.text.paragraph import Paragraph
+
             for block in islice(doc.element.body, 300):
                 if block.tag.endswith("}p"):
                     lines.append(Paragraph(block, doc).text)
@@ -39,6 +43,7 @@ def document_preview(content: bytes, filename: str, sheet: str = "", start_row: 
                     break
         else:
             from openpyxl import load_workbook
+
             book = load_workbook(BytesIO(content), read_only=True, data_only=False, keep_links=False)
             try:
                 metadata["sheets"] = book.sheetnames
@@ -47,7 +52,10 @@ def document_preview(content: bytes, filename: str, sheet: str = "", start_row: 
                 if sheet:
                     start_row = max(1, min(start_row, 1048576))
                     metadata.update(sheet=sheet, start_row=start_row, rows=[], next_row=None)
-                for worksheet in ([book[sheet]] if sheet else book.worksheets[:5]):
+                    worksheets: list[Any] = [book[sheet]]
+                else:
+                    worksheets = book.worksheets[:5]
+                for worksheet in worksheets:
                     lines.append("[工作表] " + worksheet.title)
                     first = start_row if sheet else 1
                     last = min(first + 199, worksheet.max_row or first + 199)

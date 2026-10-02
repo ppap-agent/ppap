@@ -1,6 +1,5 @@
 import unittest
 
-
 from ppap_core.rule_coverage import (
     COVERAGE_MAPPED,
     COVERAGE_UNSUPPORTED,
@@ -10,7 +9,6 @@ from ppap_core.rule_coverage import (
     freeze_rule_execution,
     map_rule_items,
 )
-
 
 DECLARATIONS = (
     ("rule_1", "文件类型勾选审核"),

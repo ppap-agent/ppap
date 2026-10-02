@@ -53,13 +53,9 @@ class Observation(Artifact):
 
     @model_validator(mode="after")
     def explained_role(self) -> Observation:
-        if self.role == "applicable" and (
-            not (self.applicability_basis or "").strip() or self.exclusion_basis is not None or not self.evidence or self.status == "NA"
-        ):
+        if self.role == "applicable" and (not (self.applicability_basis or "").strip() or self.exclusion_basis is not None or not self.evidence or self.status == "NA"):
             raise ValueError("Applicable record needs its rule-trigger basis and source evidence")
-        if self.role == "excluded" and (
-            not (self.exclusion_basis or "").strip() or self.applicability_basis is not None or not self.evidence or self.status not in {"NA", "UNABLE"}
-        ):
+        if self.role == "excluded" and (not (self.exclusion_basis or "").strip() or self.applicability_basis is not None or not self.evidence or self.status not in {"NA", "UNABLE"}):
             raise ValueError("Excluded record needs its non-applicability basis and source evidence")
         if self.role == "prerequisite" and (self.applicability_basis is not None or self.exclusion_basis is not None):
             raise ValueError("Prerequisite cannot claim a row applicability basis")
@@ -243,15 +239,10 @@ def validate_trace(trace: AuditTrace, report: AuditReport, documents: dict[str, 
                     if record.status != "UNABLE" and not observed.known:
                         raise ValueError("Semantic observation uses unknown evidence")
             if check.status != "UNABLE":
-                empty_scope_result = (
-                    not any(record.role == "applicable" for record in proof.records)
-                    and check.status == status and status in {"PASS", "NA"}
-                )
+                empty_scope_result = not any(record.role == "applicable" for record in proof.records) and check.status == status and status in {"PASS", "NA"}
                 # Excluded candidates establish the empty set. Their own NA
                 # status must not override the rule's explicit PASS/NA policy.
-                supporting = {citation.model_dump_json() for record in proof.records
-                              if record.status == check.status or empty_scope_result
-                              for citation in record.evidence}
+                supporting = {citation.model_dump_json() for record in proof.records if record.status == check.status or empty_scope_result for citation in record.evidence}
                 if not any(citation.model_dump_json() in supporting for citation in check.evidence):
                     raise ValueError("Conclusion evidence does not support its semantic status")
         if (check.status, check.total, check.checked, check.unknown) != (status, total, checked, unknown):

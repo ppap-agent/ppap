@@ -1,4 +1,5 @@
 """Schema pytest fixtures. PostgreSQL remains the migration authority."""
+
 from __future__ import annotations
 
 import os
@@ -6,7 +7,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from ppap_core.files import ObjectExists, ObjectMissing
 
 ROOT = Path(__file__).resolve().parents[2]

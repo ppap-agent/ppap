@@ -16,21 +16,20 @@ from ppap_core.contracts import (
     RuleInput,
 )
 from ppap_core.types import PpapDocumentType
+from ppap_corpus_contracts.psw_cross_format_regression import (
+    DifferenceKind,
+    PswAuditSnapshot,
+    compare_psw_snapshots,
+)
 from ppap_docops.word import (
     WordTableBlock,
     convert_legacy_doc_to_docx,
     extract_docx_structure,
 )
 from ppap_excel_audit_engine import run_audit
-from ppap_excel_audit_engine.app_runtime import _AppAuditRuntime
-from ppap_excel_audit_engine.app_runtime import run_audit_engine
+from ppap_excel_audit_engine.app_runtime import _AppAuditRuntime, run_audit_engine
 from ppap_excel_audit_engine.checkers.agents.psw_excel_agent import PswExcelAgent
 from ppap_excel_audit_engine.rule_engine import Table
-from ppap_corpus_contracts.psw_cross_format_regression import (
-    DifferenceKind,
-    PswAuditSnapshot,
-    compare_psw_snapshots,
-)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PAIR_ROOT = _REPO_ROOT / "assets" / "V2.0测试" / "模拟测试文件V2-01" / "16-零件提交保证书" / "16-零件提交保证书-上海亚大"
@@ -239,3 +238,86 @@ def test_real_local_doc_and_its_converted_docx_have_equivalent_results(
     assert all(result.evidence is not None for result in doc_results + docx_results)
     assert {result.evidence.source_format for result in doc_results if result.evidence} == {"doc"}
     assert {result.evidence.source_format for result in docx_results if result.evidence} == {"docx"}
+
+
+def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
+    from ppap_application import run_round_from_bytes
+    from ppap_core.rule_profile import RULE_PROFILE_V2
+    from ppap_corpus_contracts.product_round import (
+        MATCH,
+        compare_file,
+        engine_rule_body,
+        execute_product_round,
+    )
+
+    xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
+    doc_type = PpapDocumentType.PSW.get_type_name()
+    body, _execution = engine_rule_body(doc_type, xlsx_path.name, RULE_PROFILE_V2)
+    engine_results = run_audit(
+        AuditInput(audit_id="psw-xlsx-engine", file_url=str(xlsx_path)),
+        RuleInput(rule_id="psw-xlsx", rule_profile=RULE_PROFILE_V2, type=doc_type, rules=body["rules"]),
+    )
+    expected = {index: str(getattr(result, "status", "") or "").upper() for index, result in enumerate(engine_results, 1)}
+    result, versions, setup_error = execute_product_round(
+        [(xlsx_path.name, xlsx_path, doc_type)],
+        profile=RULE_PROFILE_V2,
+        round_id="psw-xlsx",
+        runner=run_round_from_bytes,
+    )
+    verdicts = compare_file(
+        file_name=xlsx_path.name,
+        version_id=versions.get(xlsx_path.name, ""),
+        expected=expected,
+        result=result,
+        setup_error=setup_error,
+    )
+    failures = [item for item in verdicts if item.kind != MATCH]
+    assert not failures, failures
+
+
+def test_psw_pdf_visual_rules_match_the_xlsx_product_round() -> None:
+    from ppap_application import run_round_from_bytes
+    from ppap_core.rule_profile import RULE_PROFILE_V2
+    from ppap_core.settings import get_settings
+    from ppap_corpus_contracts.product_round import EXECUTION_FAILURE, MATCH, SETUP_FAILURE, compare_file, execute_product_round
+
+    settings = get_settings()
+    if not (settings.OPENAI_API_KEY.strip() and settings.MODEL_NAME.strip()):
+        pytest.fail("setup_failure: model credential is missing; PDF visual audit did not start")
+    pdf_path = _PAIR_ROOT.with_suffix(".pdf")
+    xlsx_path = _PAIR_ROOT.with_suffix(".xlsx")
+    doc_type = PpapDocumentType.PSW.get_type_name()
+    visual_rules = {3, 5, 7, 8, 9, 10}
+    oracle, oracle_versions, oracle_error = execute_product_round(
+        [(xlsx_path.name, xlsx_path, doc_type)],
+        profile=RULE_PROFILE_V2,
+        round_id="psw-xlsx-oracle",
+        runner=run_round_from_bytes,
+    )
+    oracle_rows = compare_file(
+        file_name=xlsx_path.name,
+        version_id=oracle_versions.get(xlsx_path.name, ""),
+        expected={index: "PASS" for index in visual_rules},
+        result=oracle,
+        setup_error=oracle_error,
+    )
+    expected = {}
+    for item in oracle_rows:
+        if item.kind in {SETUP_FAILURE, EXECUTION_FAILURE} or not item.actual:
+            pytest.fail(f"xlsx oracle rule {item.rule_index}: {item.kind} {item.detail}")
+        expected[item.rule_index] = item.actual
+    result, versions, setup_error = execute_product_round(
+        [(pdf_path.name, pdf_path, doc_type)],
+        profile=RULE_PROFILE_V2,
+        round_id="psw-pdf-visual",
+        runner=run_round_from_bytes,
+    )
+    verdicts = compare_file(
+        file_name=pdf_path.name,
+        version_id=versions.get(pdf_path.name, ""),
+        expected=expected,
+        result=result,
+        setup_error=setup_error,
+    )
+    failures = [item for item in verdicts if item.kind != MATCH]
+    assert not failures, failures

@@ -1,4 +1,5 @@
 """Feishu Drive/Docs fetch plan and download/export. Not a Feishu-only file ledger."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable, cast
 from urllib.parse import unquote
 
 from ppap_core.files import MAX_UPLOAD_BYTES, original_filename, safe_content_type
@@ -236,14 +237,13 @@ def list_drive_folder(http, access_token: str, folder_token: str = "", page_toke
         raise ValueError("invalid_folder_token")
     if len(page_token) > 4096:
         raise ValueError("invalid_page_token")
-    params = {"page_size": 50}
+    params: dict[str, str | int] = {"page_size": 50}
     if folder_token:
         params["folder_token"] = folder_token
     if page_token:
         params["page_token"] = page_token
     try:
-        response = http.get(OPEN_API + "/drive/v1/files", params=params,
-                            headers=_auth_headers(access_token), timeout=20)
+        response = http.get(OPEN_API + "/drive/v1/files", params=params, headers=_auth_headers(access_token), timeout=20)
         body = _response_json(response)
         if response.status_code != 200 or body.get("code") != 0:
             raise FeishuMetaError("feishu_folder_failed")
@@ -254,9 +254,14 @@ def list_drive_folder(http, access_token: str, folder_token: str = "", page_toke
         next_page = data.get("next_page_token") if data.get("has_more") else None
         if data.get("has_more") and (not isinstance(next_page, str) or not next_page):
             raise FeishuMetaError("feishu_folder_failed")
-        return {"files": [{"token": item["token"], "name": item["name"], "type": item["type"]}
-                          for item in files if isinstance(item, dict) and all(isinstance(item.get(k), str) for k in ("token", "name", "type"))],
-                "next_page_token": next_page}
+        return {
+            "files": [
+                {"token": item["token"], "name": item["name"], "type": item["type"]}
+                for item in files
+                if isinstance(item, dict) and all(isinstance(item.get(k), str) for k in ("token", "name", "type"))
+            ],
+            "next_page_token": next_page,
+        }
     except FeishuMetaError:
         raise
     except Exception:
@@ -337,12 +342,15 @@ def try_get_file_meta(http, access_token: str, file_token: str, doc_type: str) -
         return None
     if body.get("code") not in (0, None):
         return None
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    failed = data.get("failed_list") if isinstance(data.get("failed_list"), list) else []
+    data_value = body.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
+    failed_value = data.get("failed_list")
+    failed = failed_value if isinstance(failed_value, list) else []
     for item in failed:
         if isinstance(item, dict) and item.get("doc_token") == file_token:
             return None
-    metas = data.get("metas") if isinstance(data.get("metas"), list) else []
+    metas_value = data.get("metas")
+    metas = metas_value if isinstance(metas_value, list) else []
     if not metas or not isinstance(metas[0], dict):
         return None
     row = metas[0]
@@ -438,7 +446,8 @@ def create_export_task(http, access_token: str, file_token: str, doc_type: str) 
         body = _response_json(response)
     except Exception as exc:
         raise FeishuExportError("创建导出任务失败, fileType=" + doc_type) from exc
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    data_value = body.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
     ticket = data.get("ticket") if body.get("code") in (0, None) else None
     if not isinstance(ticket, str) or not ticket.strip():
         raise FeishuExportError("创建导出任务失败, fileType=" + doc_type)
@@ -469,14 +478,16 @@ def poll_export_task(
         body = _response_json(response)
         if body.get("code") not in (0, None):
             raise FeishuExportError("查询导出任务失败: " + str(body.get("msg") or ""))
-        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        data_value = body.get("data")
+        data = data_value if isinstance(data_value, dict) else {}
         job_status = data.get("job_status")
         try:
-            job_status = int(job_status)
+            job_status = int(cast(Any, job_status))
         except (TypeError, ValueError):
             job_status = -1
         if job_status == 0:
-            result = data.get("result") if isinstance(data.get("result"), dict) else {}
+            result_value = data.get("result")
+            result = result_value if isinstance(result_value, dict) else {}
             exported = str(result.get("file_token") or "").strip()
             if exported:
                 return exported
@@ -505,9 +516,7 @@ def download_exported_file(http, access_token: str, exported_file_token: str) ->
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError("too_large")
     headers = _response_headers(response)
-    return data, filename_from_content_disposition(headers.get("content-disposition")), safe_content_type(
-        headers.get("content-type")
-    )
+    return data, filename_from_content_disposition(headers.get("content-disposition")), safe_content_type(headers.get("content-type"))
 
 
 def import_drive_material(
@@ -527,9 +536,7 @@ def import_drive_material(
     meta = get_file_meta(http, access_token, token, doc_type)
     plan = FetchPlan.for_doc_type(meta.doc_type)
     if plan.downloads_drive_file():
-        data, header_name, content_type = download_drive_file(
-            http, access_token, meta.token, sleeper=sleeper, sleep_ms=sleep_ms
-        )
+        data, header_name, content_type = download_drive_file(http, access_token, meta.token, sleeper=sleeper, sleep_ms=sleep_ms)
     else:
         ticket = create_export_task(http, access_token, meta.token, plan.doc_type)
         exported = poll_export_task(
@@ -635,8 +642,7 @@ def _collect_block_links(block: dict) -> list[dict[str, str]]:
                         "token": token,
                         "name": str(mention.get("title") or mention.get("name") or "").strip(),
                         "url": url,
-                        "doc_type": (hinted[1] if hinted else "")
-                        or str(mention.get("obj_type") or mention.get("type") or "").strip(),
+                        "doc_type": (hinted[1] if hinted else "") or str(mention.get("obj_type") or mention.get("type") or "").strip(),
                     }
                 )
             continue
@@ -669,7 +675,7 @@ def _fetch_docx_blocks(http, access_token: str, file_token: str) -> list:
     items: list = []
     page_token = ""
     for _ in range(20):
-        params = {"page_size": 500}
+        params: dict[str, str | int] = {"page_size": 500}
         if page_token:
             params["page_token"] = page_token
         try:
@@ -687,8 +693,10 @@ def _fetch_docx_blocks(http, access_token: str, file_token: str) -> list:
             raise FeishuDocLinksError("feishu_doc_links_failed")
         if body.get("code") not in (0, None):
             return items
-        data = body.get("data") if isinstance(body.get("data"), dict) else {}
-        page_items = data.get("items") if isinstance(data.get("items"), list) else []
+        data_value = body.get("data")
+        data = data_value if isinstance(data_value, dict) else {}
+        raw_items = data.get("items")
+        page_items = raw_items if isinstance(raw_items, list) else []
         items.extend(page_items)
         if not data.get("has_more"):
             break

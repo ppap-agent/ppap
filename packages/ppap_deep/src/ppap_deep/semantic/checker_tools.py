@@ -9,7 +9,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field
 
@@ -67,9 +67,7 @@ class CheckOutput(Artifact):
     source: dict[str, str]
     binding: Binding
     checks: list[LocalCheckResult]
-    limitation: Literal["local_condition_only; mapping_and_rule_applicability_not_verified"] = (
-        "local_condition_only; mapping_and_rule_applicability_not_verified"
-    )
+    limitation: Literal["local_condition_only; mapping_and_rule_applicability_not_verified"] = "local_condition_only; mapping_and_rule_applicability_not_verified"
 
 
 def _citation(binding: Binding, source_format: str, row: int, column: int) -> Citation:
@@ -115,33 +113,43 @@ def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput
             item = effective(table, row, column)
             if row in failures:
                 if len(violations) < 64:
-                    violations.append(CellObservation(
-                        row=row, citation=_citation(binding, source["format"], row, column),
-                        value=item["value"], state=item["state"],
-                    ))
+                    violations.append(
+                        CellObservation(
+                            row=row,
+                            citation=_citation(binding, source["format"], row, column),
+                            value=item["value"],
+                            state=item["state"],
+                        )
+                    )
             elif item["state"] != "known" or predicate_result(predicate, item["value"]) is None:
                 unknown_rows.append(row)
                 if len(unknown_examples) < 64:
-                    unknown_examples.append(CellObservation(
-                        row=row, citation=_citation(binding, source["format"], row, column),
-                        value=item["value"], state=item["state"],
-                    ))
+                    unknown_examples.append(
+                        CellObservation(
+                            row=row,
+                            citation=_citation(binding, source["format"], row, column),
+                            value=item["value"],
+                            state=item["state"],
+                        )
+                    )
         if len(unknown_rows) != unknown:
             raise ValueError("Local evidence count disagrees with deterministic replay")
-        results.append(LocalCheckResult(
-            id=check.id,
-            kind=check.kind,
-            field=check.field,
-            local_condition_status=status,
-            total=total,
-            checked=checked,
-            unknown=unknown,
-            violations_count=len(failures),
-            violation_rows=sorted(failures),
-            unknown_rows=unknown_rows,
-            violations=violations,
-            unknown_examples=unknown_examples,
-        ))
+        results.append(
+            LocalCheckResult(
+                id=check.id,
+                kind=check.kind,
+                field=check.field,
+                local_condition_status=cast(Literal["PASS", "NG", "UNABLE"], status),
+                total=total,
+                checked=checked,
+                unknown=unknown,
+                violations_count=len(failures),
+                violation_rows=sorted(failures),
+                unknown_rows=unknown_rows,
+                violations=violations,
+                unknown_examples=unknown_examples,
+            )
+        )
     return CheckOutput(document_id=binding.document_id, source={key: str(source[key]) for key in ("file", "sha256", "format")}, binding=binding, checks=results)
 
 
@@ -155,11 +163,19 @@ def main() -> int:
     request = CheckRequest.model_validate_json(Path(args.request).read_text())
     result = check_fields(snapshot, request)
     save(args.out, result.model_dump(mode="json"))
-    print(json.dumps({"output": args.out, "document_id": result.document_id, "checks": [
-        {"id": item.id, "local_condition_status": item.local_condition_status,
-         "total": item.total, "unknown": item.unknown, "violations_count": item.violations_count}
-        for item in result.checks
-    ]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "output": args.out,
+                "document_id": result.document_id,
+                "checks": [
+                    {"id": item.id, "local_condition_status": item.local_condition_status, "total": item.total, "unknown": item.unknown, "violations_count": item.violations_count}
+                    for item in result.checks
+                ],
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

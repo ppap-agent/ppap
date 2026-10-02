@@ -1,4 +1,5 @@
 """Identity keys, session tokens, and object-authorization decisions. No email merge."""
+
 from __future__ import annotations
 
 import hashlib

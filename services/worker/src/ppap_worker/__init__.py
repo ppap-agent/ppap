@@ -9,14 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ppap_application import analyze_file, build_product_store, parse_rule_file, run_standard_round
-from ppap_product_store import AuthStore
 from ppap_core.audits import (
     ANALYSIS_DEEP,
     evaluate_round,
 )
 from ppap_core.db import connect
-from ppap_core.logs import bind, configure as configure_logs, emit, reset
+from ppap_core.logs import bind, emit, reset
+from ppap_core.logs import configure as configure_logs
 from ppap_core.settings import load_settings
+from ppap_product_store import AuthStore
 
 STOP = False
 
@@ -124,7 +125,10 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
                 note=result.get("note") or "deep_audit",
             )
             return result
-        runner = lambda current: engine_runner(current, store)
+
+        def runner(current):
+            return engine_runner(current, store)
+
         try:
             result = evaluate_round(work, engine_runner=runner)
             result["note"] = result.get("note") or "round_audit"
@@ -179,8 +183,8 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
     """Deep execution boundary. Never falls back to the in-repo Standard engine."""
     from ppap_core.audits import DEEP_PROTOCOL_REVISION, EXECUTOR_DEEP, frozen_executor
     from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
-    from ppap_deep.mapping import product_result, spec_from_work
     from ppap_deep.failures import failure_result
+    from ppap_deep.mapping import product_result, spec_from_work
     from ppap_deep.protocol import DeepProgress
 
     settings = getattr(store, "settings", None)
@@ -202,6 +206,7 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
         spec = spec_from_work(work, executor, revision, DEEP_PROTOCOL_REVISION)
         spec = spec.model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
         with audit_lease(store, claimed, ident) as cancelled:
+
             def progress(state):
                 safe = DeepProgress.model_validate(state).model_dump(exclude_none=True)
                 if not store.audit_progress(claimed, ident, safe):
@@ -209,7 +214,9 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
                     raise DeepError("deep_lease_lost")
 
             response = DeepClient(socket_path, timeout=DEEP_REQUEST_TIMEOUT).execute(
-                spec, cancelled=cancelled, on_progress=progress,
+                spec,
+                cancelled=cancelled,
+                on_progress=progress,
             )
             if cancelled.is_set():
                 raise DeepError("deep_lease_lost")

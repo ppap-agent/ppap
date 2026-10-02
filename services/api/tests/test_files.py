@@ -1,19 +1,18 @@
 """Immutable file versions. Not an S03 Live Story proof."""
+
 from __future__ import annotations
 
 import io
 import os
 import socket
 import unittest
-
-import pytest
 import zipfile
 from unittest.mock import patch
 from urllib.parse import quote, urlsplit
 
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
@@ -25,15 +24,10 @@ from ppap_core.files import (
     sha256_bytes,
 )
 from ppap_core.settings import Settings
-from ppap_api import create_app
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -88,6 +82,7 @@ class SsrfTests(unittest.TestCase):
                     status_code = 302
                     headers = {}
                     content = b""
+
                 return R()
 
         with self._public_dns("8.8.8.8", 443):
@@ -189,9 +184,7 @@ class FileHttpTests(unittest.TestCase):
         self.settings = Settings()
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
-        self.client = TestClient(
-            create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
-        )
+        self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
 
     def tearDown(self):
         self._env.stop()
@@ -304,9 +297,7 @@ class FileHttpTests(unittest.TestCase):
     def test_wrong_sha_and_reap_leave_ready_history(self):
         self._login("alice")
         first = b"keep-me"
-        created = self.client.post(
-            "/files", json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": len(first)}
-        )
+        created = self.client.post("/files", json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": len(first)})
         file_id, v1 = created.json()["file_id"], created.json()["id"]
         self.client.put(f"/files/{file_id}/versions/{v1}/blob", content=first)
         self.client.post(f"/files/{file_id}/versions/{v1}/finalize")
@@ -316,9 +307,7 @@ class FileHttpTests(unittest.TestCase):
         )
         v2 = staging.json()["id"]
         self.client.put(f"/files/{file_id}/versions/{v2}/blob", content=b"temp")
-        mismatch = self.client.post(
-            f"/files/{file_id}/versions/{v2}/finalize", json={"sha256": "0" * 64}
-        )
+        mismatch = self.client.post(f"/files/{file_id}/versions/{v2}/finalize", json={"sha256": "0" * 64})
         self.assertEqual(mismatch.status_code, 409)
         self.assertEqual(mismatch.json()["error"], "sha256_mismatch")
         leftover = self.client.post(

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate one workspace distribution outside the root workspace environment."""
+
 from __future__ import annotations
 
 import argparse
@@ -64,11 +65,7 @@ def workspace_members() -> dict[str, Member]:
 def production_members() -> dict[str, Member]:
     members = workspace_members()
     root = load_toml(ROOT / "pyproject.toml")
-    dev = {
-        dependency_name(spec)
-        for specs in root.get("dependency-groups", {}).values()
-        for spec in specs
-    }
+    dev = {dependency_name(spec) for specs in root.get("dependency-groups", {}).values() for spec in specs}
     missing = DEV_ONLY_MEMBERS - dev
     if missing:
         raise ValueError(f"dev-only members are not declared in dependency groups: {sorted(missing)}")
@@ -84,7 +81,7 @@ def closure(target: str, members: dict[str, Member]) -> list[str]:
 
     def visit(name: str) -> None:
         if name in visiting:
-            cycle = visiting[visiting.index(name):] + [name]
+            cycle = visiting[visiting.index(name) :] + [name]
             raise ValueError("workspace dependency cycle: " + " -> ".join(cycle))
         if name in visited:
             return
@@ -122,11 +119,7 @@ def lock_constraints(destination: Path) -> Path:
         if "registry" not in source or not version:
             continue
         versions.setdefault(package["name"], set()).add(version)
-    lines = [
-        f"{name}=={next(iter(found))}"
-        for name, found in sorted(versions.items())
-        if len(found) == 1
-    ]
+    lines = [f"{name}=={next(iter(found))}" for name, found in sorted(versions.items()) if len(found) == 1]
     path = destination / "constraints.txt"
     path.write_text("\n".join(lines) + "\n")
     return path
@@ -168,9 +161,13 @@ def assert_wheel_install(target: str) -> None:
         run(["uv", "venv", "--python", "3.12", str(venv)], cwd=work, env=clean_env())
         python = venv / "bin" / "python"
         install = [
-            "uv", "pip", "install",
-            "--python", str(python),
-            "--constraint", str(constraints),
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--constraint",
+            str(constraints),
             *[str(wheels[name]) for name in names],
             *test_runner_requirements(),
         ]
@@ -199,9 +196,13 @@ def assert_wheel_install(target: str) -> None:
         if member.tests.is_dir() and any(member.tests.rglob("test_*.py")):
             run(
                 [
-                    str(python), "-m", "pytest",
-                    "--rootdir", str(ROOT),
-                    "-c", str(ROOT / "pyproject.toml"),
+                    str(python),
+                    "-m",
+                    "pytest",
+                    "--rootdir",
+                    str(ROOT),
+                    "-c",
+                    str(ROOT / "pyproject.toml"),
                     str(member.tests),
                 ],
                 cwd=work,
@@ -219,7 +220,7 @@ def prove_missing_dependency_fails() -> None:
         pyproject = mutated / "pyproject.toml"
         text = pyproject.read_text()
         required = '    "ppap-core",\n'
-        source_rule = '\n[tool.uv.sources]\nppap-core = { workspace = true }\n'
+        source_rule = "\n[tool.uv.sources]\nppap-core = { workspace = true }\n"
         if required not in text or source_rule not in text:
             raise RuntimeError("ppap-product-store dependency fixture changed")
         pyproject.write_text(text.replace(required, "").replace(source_rule, ""))
@@ -250,9 +251,7 @@ def prove_missing_dependency_fails() -> None:
         )
         diagnostic = completed.stdout + completed.stderr
         if completed.returncode == 0 or "ppap_core" not in diagnostic:
-            raise RuntimeError(
-                "removing ppap-core did not fail the isolated product-store import as expected\n" + diagnostic
-            )
+            raise RuntimeError("removing ppap-core did not fail the isolated product-store import as expected\n" + diagnostic)
 
 
 def discover() -> None:

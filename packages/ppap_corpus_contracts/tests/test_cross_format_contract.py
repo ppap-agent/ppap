@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from ppap_corpus_contracts.cross_format import (
     D,
     classify_pair_rule,
@@ -24,10 +23,7 @@ from ppap_corpus_contracts.v2_assets_shared import FileCase, RuleExpectation
 
 
 def _case(file_name: str, file_type: str, rules: list[int] | None = None) -> FileCase:
-    expected = {
-        index: RuleExpectation(status="PASS", rule_desc="r", manual_reason="")
-        for index in (rules or [1])
-    }
+    expected = {index: RuleExpectation(status="PASS", rule_desc="r", manual_reason="") for index in (rules or [1])}
     return FileCase(
         file_name=file_name,
         file_path=Path(file_name),

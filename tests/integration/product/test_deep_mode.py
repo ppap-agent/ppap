@@ -1,20 +1,20 @@
 """Native Deep analysis mode. Independent protocol; does not import ppap-agent."""
+
 from __future__ import annotations
 
 import os
 import shutil
 import tempfile
 import unittest
-
-import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from pydantic import ValidationError
-
+import ppap_deep
+import ppap_worker
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.audits import (
     ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
@@ -28,25 +28,19 @@ from ppap_core.audits import (
     request_fingerprint,
 )
 from ppap_core.capabilities import report
-from ppap_core.fixtures import RULE_A
 from ppap_core.feishu import UserTokens
+from ppap_core.fixtures import RULE_A
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
-import ppap_deep
-import ppap_worker
-from ppap_api import create_app
 from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
 from ppap_deep.mapping import passing_response
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
 from ppap_worker import process_claimed
+from pydantic import ValidationError
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -115,9 +109,7 @@ class DeepModeTests(unittest.TestCase):
         self.settings = Settings()
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
-        self.client = TestClient(
-            create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
-        )
+        self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
         self._servers: list[UnixControllerServer] = []
 
     def tearDown(self):
@@ -176,10 +168,12 @@ class DeepModeTests(unittest.TestCase):
         path = str(Path(tmp) / "c.sock")
 
         def source(file_version_id: str) -> bytes:
-            file_id = str(self._scalar(
-                "SELECT file_id FROM product.file_versions WHERE id = %s",
-                (file_version_id,),
-            ))
+            file_id = str(
+                self._scalar(
+                    "SELECT file_id FROM product.file_versions WHERE id = %s",
+                    (file_version_id,),
+                )
+            )
             version = self.store.get_version(file_id, file_version_id)
             self.assertIsNotNone(version)
             return self.store.version_bytes(version)
@@ -323,11 +317,14 @@ class DeepModeTests(unittest.TestCase):
         self.assertFalse(self.store.audit_progress(first, "w1", {"phase": "validating"}))
         self.assertTrue(self.store.audit_progress(second, "w2", {"phase": "validating"}))
         failure = {"code": "deep_timeout", "message": "timeout", "retryable": False}
-        self.assertTrue(self.store.complete_job(
-            second, "w2",
-            {"findings": [], "coverage": {}, "failure": failure, "usage": {"input_tokens": 7}},
-            outcome="failed",
-        ))
+        self.assertTrue(
+            self.store.complete_job(
+                second,
+                "w2",
+                {"findings": [], "coverage": {}, "failure": failure, "usage": {"input_tokens": 7}},
+                outcome="failed",
+            )
+        )
         loaded = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(loaded["findings"], [])
         self.assertEqual(loaded["progress"]["phase"], "validating")
@@ -373,9 +370,7 @@ class DeepModeTests(unittest.TestCase):
             },
         )
         self.assertEqual(saved.json()["analysis_mode"], ANALYSIS_STANDARD)
-        second = self.client.post(
-            f"/drafts/{nxt['id']}/accept", json={"idempotency_key": "deep-freeze-2"}
-        ).json()
+        second = self.client.post(f"/drafts/{nxt['id']}/accept", json={"idempotency_key": "deep-freeze-2"}).json()
         self.assertEqual(second["analysis_mode"], ANALYSIS_STANDARD)
         original = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(original["analysis_mode"], ANALYSIS_DEEP)
@@ -395,8 +390,6 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(report(self.settings)["deep"], {"state": "configured"})
         self.assertEqual(set(report(self.settings)["deep"]), {"state"})
 
-
-
     def test_production_does_not_offer_placeholder_deep(self):
         with _clean_env(
             PPAP_PROFILE="production",
@@ -415,15 +408,11 @@ class DeepModeTests(unittest.TestCase):
             settings = Settings()
         self.assertFalse(settings.deep_offered())
         self.assertFalse(settings.public_config()["deep_offered"])
-        client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings))
-        )
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings)))
         self.assertFalse(client.get("/public-config").json()["deep_offered"])
         store = self.auth_store(settings)
         store.seed_isolated_dev()
-        client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
-        )
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store))
         principal = store.principal_for_fixture("alice")
         now = datetime.now(timezone.utc)
         raw = store.create_session(principal, UserTokens("user-access", "user-refresh", now + timedelta(hours=1), now + timedelta(days=7)))
@@ -454,9 +443,7 @@ class DeepModeTests(unittest.TestCase):
         ):
             settings = Settings()
         self.assertTrue(settings.deep_offered())
-        client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings))
-        )
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings)))
         self.assertTrue(client.get("/public-config").json()["deep_offered"])
 
     def test_isolated_dev_still_offers_deep(self):
@@ -467,6 +454,7 @@ class DeepModeTests(unittest.TestCase):
         saved = self.client.put(f"/drafts/{draft}", json={"analysis_mode": ANALYSIS_DEEP})
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["analysis_mode"], ANALYSIS_DEEP)
+
 
 if __name__ == "__main__":
     unittest.main()

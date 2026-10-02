@@ -2,12 +2,12 @@
 
 These types describe HTTP JSON only. UI-only state belongs in apps/web.
 """
+
 from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
 from pydantic import TypeAdapter
-
 
 AnalysisMode = Literal["standard", "deep"]
 FindingStatus = Literal["PASS", "NG", "ERR", "UNABLE", "NA"]

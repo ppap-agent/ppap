@@ -1,4 +1,5 @@
 """Single typed settings owner for API and worker. Application code reads LLM_*, never OPENAI_*."""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -179,10 +180,7 @@ class Settings(BaseSettings):
             "bootstrap": (self.pg_bootstrap_user, self.pg_bootstrap_password),
         }[role]
         database = "postgres" if role == "bootstrap" else self.pg_database
-        return (
-            f"postgresql://{user}:{password}@{self.pg_host}:{self.pg_port}/{database}"
-            "?connect_timeout=15"
-        )
+        return f"postgresql://{user}:{password}@{self.pg_host}:{self.pg_port}/{database}?connect_timeout=15"
 
     def canonical_web_url(self) -> str:
         explicit = self.web_url.strip().rstrip("/")

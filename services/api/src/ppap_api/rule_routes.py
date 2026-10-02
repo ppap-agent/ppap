@@ -4,8 +4,8 @@ from typing import Any
 
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
-
 from ppap_core.rules import document_types
+
 from ppap_api import web_contract as wc
 
 
@@ -52,8 +52,11 @@ def register_rule_routes(app: FastAPI, store, principal_of):
             return JSONResponse({"error": "invalid_rule_request"}, status_code=400)
         try:
             published = store.publish_rule(
-                principal, body.get("title"), body.get("body"),
-                body.get("source_file_version_id"), body.get("predecessor_id"),
+                principal,
+                body.get("title"),
+                body.get("body"),
+                body.get("source_file_version_id"),
+                body.get("predecessor_id"),
             )
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)

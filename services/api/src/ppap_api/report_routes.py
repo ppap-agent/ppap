@@ -1,15 +1,20 @@
 """Explicit report export; never retries an unknown external creation."""
+
 import hashlib
 import json
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from ppap_core.identity import can_read
-from ppap_api import web_contract as wc
 from ppap_core.feishu_writeback import (
-    FeishuWritebackError, report_blocks, round_return_url,
-    create_report_document, append_report_blocks,
+    FeishuWritebackError,
+    append_report_blocks,
+    create_report_document,
+    report_blocks,
+    round_return_url,
 )
+from ppap_core.identity import can_read
+
+from ppap_api import web_contract as wc
 
 
 def register_report_routes(app, store, session_of, http, settings):
@@ -29,14 +34,14 @@ def register_report_routes(app, store, session_of, http, settings):
         fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         return session, blocks, fingerprint, None
 
-    @app.get('/integrations/feishu/rounds/{round_id}/report', response_model=wc.ReportEnvelope)
+    @app.get("/integrations/feishu/rounds/{round_id}/report", response_model=wc.ReportEnvelope)
     def get_report(round_id: str, request: Request):
         session, blocks, fingerprint, denied = prepare(round_id, request)
         if denied is not None:
             return denied
         return {"report": store.get_report(session.principal, round_id, fingerprint)}
 
-    @app.post('/integrations/feishu/rounds/{round_id}/report', response_model=wc.ReportEnvelope)
+    @app.post("/integrations/feishu/rounds/{round_id}/report", response_model=wc.ReportEnvelope)
     def create_report(round_id: str, request: Request):
         session, blocks, fingerprint, denied = prepare(round_id, request)
         if denied is not None:
@@ -56,6 +61,6 @@ def register_report_routes(app, store, session_of, http, settings):
             # Only a definite creation rejection can be explicitly retried.
             # A failed append may have left a real document, so it stays unknown.
             code = str(exc)
-            state = 'failed' if code.startswith('feishu_report_create_rejected:') else 'unknown'
+            state = "failed" if code.startswith("feishu_report_create_rejected:") else "unknown"
             store.settle_report(principal, ident, state, error_code=code)
         return {"report": store.get_report(principal, round_id, fingerprint)}

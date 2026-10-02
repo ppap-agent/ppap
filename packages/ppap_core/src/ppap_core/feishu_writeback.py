@@ -1,9 +1,12 @@
 """Write common round findings back into the source Feishu doc. Not a second ledger."""
+
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import cast
 
 from ppap_core.audits import ERR, EXEC_COMPLETED, FINDING_STATUSES, NA, NG, PASS, TARGET, UNABLE
 from ppap_core.feishu_drive import OPEN_API
@@ -16,12 +19,12 @@ class FeishuWritebackError(Exception):
 
 def _report_error(response, stage: str) -> FeishuWritebackError:
     # Preserve only a public numeric code, never provider messages or credentials.
-    status = int(getattr(response, 'status_code', 0) or 0)
-    code = _response_json(response).get('code')
-    detail = str(code) if type(code) is int and code != 0 else 'http_' + str(status)
+    status = int(getattr(response, "status_code", 0) or 0)
+    code = _response_json(response).get("code")
+    detail = str(code) if type(code) is int and code != 0 else "http_" + str(status)
     # Feishu can return missing app/user permission as HTTP 400, before creation.
-    outcome = 'rejected' if status in (401, 403, 422, 429) or code in (99991672, 99991679) else 'unknown'
-    return FeishuWritebackError(f'feishu_report_{stage}_{outcome}:{detail}')
+    outcome = "rejected" if status in (401, 403, 422, 429) or code in (99991672, 99991679) else "unknown"
+    return FeishuWritebackError(f"feishu_report_{stage}_{outcome}:{detail}")
 
 
 def create_report_document(http, access_token: str, title: str) -> str:
@@ -30,21 +33,21 @@ def create_report_document(http, access_token: str, title: str) -> str:
         response = http.post(
             OPEN_API + "/docx/v1/documents",
             headers={"Authorization": "Bearer " + access_token},
-            json={"title": title[:200]}, timeout=20,
+            json={"title": title[:200]},
+            timeout=20,
         )
     except Exception as exc:
         raise FeishuWritebackError("feishu_report_create_unknown") from exc
     payload = _response_json(response)
     if not _ok(response) or payload.get("code") != 0:
-        raise _report_error(response, 'create')
+        raise _report_error(response, "create")
     document_id = ((payload.get("data") or {}).get("document") or {}).get("document_id")
     if not isinstance(document_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", document_id):
         raise FeishuWritebackError("feishu_report_create_unknown")
     return document_id
 
 
-def append_report_blocks(http, access_token: str, document_id: str,
-                         blocks: list[dict], operation_id: str) -> None:
+def append_report_blocks(http, access_token: str, document_id: str, blocks: list[dict], operation_id: str) -> None:
     """Write in ordered batches; never auto-retry an ambiguous append."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", document_id):
         raise FeishuWritebackError("invalid_file_token")
@@ -55,12 +58,13 @@ def append_report_blocks(http, access_token: str, document_id: str,
                 docx_children_url(document_id),
                 params={"client_token": client_token},
                 headers={"Authorization": "Bearer " + access_token},
-                json={"index": -1, "children": blocks[offset:offset + 50]}, timeout=20,
+                json={"index": -1, "children": blocks[offset : offset + 50]},
+                timeout=20,
             )
         except Exception as exc:
             raise FeishuWritebackError("feishu_report_write_unknown") from exc
         if not _ok(response) or _response_json(response).get("code") != 0:
-            raise _report_error(response, 'write')
+            raise _report_error(response, "write")
 
 
 def docx_children_url(document_id: str) -> str:
@@ -77,7 +81,8 @@ def round_return_url(web_url: str, round_id: str) -> str:
 
 
 def _finding_version(finding: dict) -> str:
-    locator = finding.get("locator") if isinstance(finding.get("locator"), dict) else {}
+    locator_value = finding.get("locator")
+    locator = locator_value if isinstance(locator_value, dict) else {}
     return str(locator.get("file_version_id") or "")
 
 
@@ -101,10 +106,13 @@ def _semantic(finding: dict) -> dict:
 
 def _scope(finding: dict) -> tuple[int, int, int] | None:
     semantic = _semantic(finding)
-    values = semantic.get("scope") if isinstance(semantic.get("scope"), dict) else semantic
-    counts = tuple(values.get(key) for key in ("total", "checked", "unknown"))
-    if all(type(value) is int and value >= 0 for value in counts) and counts[1] + counts[2] <= counts[0]:
-        return counts
+    scope = semantic.get("scope")
+    values = scope if isinstance(scope, dict) else semantic
+    total = values.get("total")
+    checked = values.get("checked")
+    unknown = values.get("unknown")
+    if type(total) is int and total >= 0 and type(checked) is int and checked >= 0 and type(unknown) is int and unknown >= 0 and checked + unknown <= total:
+        return total, checked, unknown
     return None
 
 
@@ -131,16 +139,16 @@ def _semantic_source_valid(source: dict, inputs: dict[str, dict]) -> bool:
         return False
     locator = source.get("locator")
     required = {
-        "xlsx_cell": ("sheet", "cell"), "xlsx_range": ("sheet", "start", "end"),
-        "docx_paragraph": ("paragraph",), "docx_cell": ("table", "row", "column"),
+        "xlsx_cell": ("sheet", "cell"),
+        "xlsx_range": ("sheet", "start", "end"),
+        "docx_paragraph": ("paragraph",),
+        "docx_cell": ("table", "row", "column"),
         "pdf_block": ("page", "block"),
     }
-    kind = locator.get("kind") if isinstance(locator, dict) else None
-    return (
-        isinstance(kind, str) and kind in required
-        and all(locator.get(field) is not None for field in required[kind])
-        and isinstance(source.get("excerpt"), str)
-    )
+    if not isinstance(locator, dict):
+        return False
+    kind = locator.get("kind")
+    return isinstance(kind, str) and kind in required and all(locator.get(field) is not None for field in required[kind]) and isinstance(source.get("excerpt"), str)
 
 
 def writeback_state(round_body: dict) -> str:
@@ -286,7 +294,8 @@ def _bullet(content: str) -> dict:
 
 
 def _finding_title(row: dict, number: int) -> str:
-    locator = row.get("locator") if isinstance(row.get("locator"), dict) else {}
+    locator_value = row.get("locator")
+    locator = locator_value if isinstance(locator_value, dict) else {}
     clause = _semantic(row).get("clause_id") or locator.get("rule_item_id") or number
     return str(clause) + " · " + str(row.get("classification") or "条款")
 
@@ -305,18 +314,12 @@ def _source_location(locator: dict) -> str:
 
 
 def _published_clause(clauses: object, clause_id: object, text: object) -> bool:
-    return bool(text) and isinstance(clauses, list) and any(
-        isinstance(clause, dict) and clause.get('rule_to_check') == text
-        and (not clause_id or clause.get('id') == clause_id) for clause in clauses
-    )
+    return bool(text) and isinstance(clauses, list) and any(isinstance(clause, dict) and clause.get("rule_to_check") == text and (not clause_id or clause.get("id") == clause_id) for clause in clauses)
 
 
 def _semantic_source_text(source: dict) -> str:
     role = "待审" if source["role"] == TARGET else "参考"
-    return (
-        f"来源：{source['filename']}（{role}；文件版本 {source['file_version_id']}）"
-        f"；位置：{_source_location(source['locator'])}；原文摘录：{source['excerpt']}"
-    )
+    return f"来源：{source['filename']}（{role}；文件版本 {source['file_version_id']}）；位置：{_source_location(source['locator'])}；原文摘录：{source['excerpt']}"
 
 
 def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
@@ -324,65 +327,64 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
     state = writeback_state(round_body)
     if state != "ready":
         raise FeishuWritebackError(state)
-    blocks = [_heading2("PPAP 审核报告"), _text("审核时间（UTC）：" + _audit_clock(round_body)),
-              _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
-    targets = {item['file_version_id']: item for item in round_body['inputs'] if item.get('role') == TARGET}
-    findings = round_body.get('findings') or []
-    counts = {status: sum(row.get('status') == status for row in findings) for status in (PASS, NG, UNABLE, NA, ERR)}
-    pending = sum(not row.get('review') for row in findings)
-    blocks.extend([
-        _heading2('本轮摘要'),
-        _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts[PASS]}，不符合 {counts[NG]}，无法判断 {counts[UNABLE]}，不适用 {counts[NA]}，检查异常 {counts[ERR]}。"),
-        _text(f'未记录人工复核 {pending} 项。已记录不等于问题已解决，本报告不代表正式批准。'),
-        _text('未自动检查的规则条目会单独列出，不计入机器通过。'),
-    ])
+    blocks = [_heading2("PPAP 审核报告"), _text("审核时间（UTC）：" + _audit_clock(round_body)), _text("机器结论与人工复核分别记录，人工判断不覆盖原始检查结果。")]
+    targets = {item["file_version_id"]: item for item in round_body["inputs"] if item.get("role") == TARGET}
+    findings = round_body.get("findings") or []
+    counts = {status: sum(row.get("status") == status for row in findings) for status in (PASS, NG, UNABLE, NA, ERR)}
+    pending = sum(not row.get("review") for row in findings)
+    blocks.extend(
+        [
+            _heading2("本轮摘要"),
+            _text(f"待审资料 {len(targets)} 份；自动检查 {len(findings)} 项：通过 {counts[PASS]}，不符合 {counts[NG]}，无法判断 {counts[UNABLE]}，不适用 {counts[NA]}，检查异常 {counts[ERR]}。"),
+            _text(f"未记录人工复核 {pending} 项。已记录不等于问题已解决，本报告不代表正式批准。"),
+            _text("未自动检查的规则条目会单独列出，不计入机器通过。"),
+        ]
+    )
     overall_scope = _scope_text(findings)
     if overall_scope:
         blocks.append(_text(overall_scope))
     for _, rows in _group_findings(round_body):
         for number, row in enumerate(rows, 1):
-            if row.get('status') != 'PASS':
-                blocks.append(_bullet(str(row.get('status')) + ' · ' + _finding_title(row, number) + (' · 已记录复核' if row.get('review') else ' · 未记录复核')))
-    coverage = round_body.get('coverage') or {}
-    unsupported = [item for item in coverage.get('rule_items') or [] if isinstance(item, dict) and item.get('coverage') == 'unsupported']
+            if row.get("status") != "PASS":
+                blocks.append(_bullet(str(row.get("status")) + " · " + _finding_title(row, number) + (" · 已记录复核" if row.get("review") else " · 未记录复核")))
+    coverage = round_body.get("coverage") or {}
+    unsupported = [item for item in coverage.get("rule_items") or [] if isinstance(item, dict) and item.get("coverage") == "unsupported"]
     if unsupported:
-        blocks.append(_text('未覆盖条款（不计入机器通过）：'))
+        blocks.append(_text("未覆盖条款（不计入机器通过）："))
         for item in unsupported:
-            title = str(item.get('id') or '?') + ' · ' + str(item.get('category') or '规则条款')
-            reason = item.get('reason')
-            detail = ({REASON_MANUAL_ONLY: '无对应内置检查，需人工核对',
-                       REASON_UNSUPPORTED: '当前文档类型没有可执行检查器'}.get(reason, str(reason or '未自动检查')))
-            blocks.append(_bullet(title + '：' + detail))
-            version = item.get('file_version_id')
+            title = str(item.get("id") or "?") + " · " + str(item.get("category") or "规则条款")
+            reason = item.get("reason")
+            detail = {REASON_MANUAL_ONLY: "无对应内置检查，需人工核对", REASON_UNSUPPORTED: "当前文档类型没有可执行检查器"}.get(cast(str, reason), str(reason or "未自动检查"))
+            blocks.append(_bullet(title + "：" + detail))
+            version = item.get("file_version_id")
             if version:
-                blocks.append(_text('待审文件版本：' + str(version)))
-            rule = (targets.get(version) or {}).get('rule') or {}
-            rule_body = rule.get('body') if isinstance(rule, dict) else None
-            clauses = rule_body.get('rules') if isinstance(rule_body, dict) else None
-            if not _published_clause(clauses, item.get('id'), item.get('rule_to_check')) and item.get('rule_to_check'):
-                blocks.append(_text('本轮有效条款：' + str(item['rule_to_check'])))
-    unchecked = [note for note in coverage.get('unchecked') or []
-                 if not any(str(note) == unsupported_item_note(item) for item in unsupported)]
+                blocks.append(_text("待审文件版本：" + str(version)))
+            rule = (targets.get(version) or {}).get("rule") or {}
+            rule_body = rule.get("body") if isinstance(rule, dict) else None
+            clauses = rule_body.get("rules") if isinstance(rule_body, dict) else None
+            if not _published_clause(clauses, item.get("id"), item.get("rule_to_check")) and item.get("rule_to_check"):
+                blocks.append(_text("本轮有效条款：" + str(item["rule_to_check"])))
+    unchecked = [note for note in coverage.get("unchecked") or [] if not any(str(note) == unsupported_item_note(item) for item in unsupported)]
     if unchecked:
-        blocks.append(_text('未检查范围：' + '；'.join(map(str, unchecked))))
+        blocks.append(_text("未检查范围：" + "；".join(map(str, unchecked))))
     for name, rows in _group_findings(round_body):
         blocks.append(_heading2(name))
         source = targets[_finding_version(rows[0])]
-        rule = source.get('rule') or {}
-        blocks.append(_text('匹配规则：' + str(rule.get('title') or '未记录规则名称')))
-        blocks.append(_text('待审文件版本：' + source['file_version_id']))
-        if source.get('rule_version_id'):
-            blocks.append(_text('规则版本：' + source['rule_version_id']))
-        rule_body = rule.get('body') if isinstance(rule, dict) else None
-        published_clauses = rule_body.get('rules') if isinstance(rule_body, dict) else None
+        rule = source.get("rule") or {}
+        blocks.append(_text("匹配规则：" + str(rule.get("title") or "未记录规则名称")))
+        blocks.append(_text("待审文件版本：" + source["file_version_id"]))
+        if source.get("rule_version_id"):
+            blocks.append(_text("规则版本：" + source["rule_version_id"]))
+        rule_body = rule.get("body") if isinstance(rule, dict) else None
+        published_clauses = rule_body.get("rules") if isinstance(rule_body, dict) else None
         if isinstance(published_clauses, list):
-            blocks.append(_text('本轮已发布规则有效正文（条款 ID 与正文；不是原件坐标）：'))
+            blocks.append(_text("本轮已发布规则有效正文（条款 ID 与正文；不是原件坐标）："))
             for clause in published_clauses:
                 if isinstance(clause, dict):
-                    blocks.append(_bullet(str(clause.get('id') or '?') + '：' + str(clause.get('rule_to_check') or '')))
-        rule_origin = (rule.get('source_file_version_id') if isinstance(rule, dict) else None) or source.get('rule_source_file_version_id')
+                    blocks.append(_bullet(str(clause.get("id") or "?") + "：" + str(clause.get("rule_to_check") or "")))
+        rule_origin = (rule.get("source_file_version_id") if isinstance(rule, dict) else None) or source.get("rule_source_file_version_id")
         if rule_origin:
-            blocks.append(_text('规则原件来源版本（仅溯源，不表示修订条款位于原件）：' + str(rule_origin)))
+            blocks.append(_text("规则原件来源版本（仅溯源，不表示修订条款位于原件）：" + str(rule_origin)))
         for number, row in enumerate(rows, 1):
             meta = [str(row.get("classification") or "").strip(), str(row.get("priority") or "").strip()]
             blocks.append(_heading3(str(row["status"]) + " · " + _finding_title(row, number)))
@@ -392,27 +394,27 @@ def report_blocks(round_body: dict, return_url: str = "") -> list[dict]:
                 blocks.append(_text(str(row["suggestions"])))
             semantic = _semantic(row)
             if semantic:
-                clause_id = str(semantic.get('clause_id') or '').strip()
-                rule_text = str(semantic.get('rule_text') or '').strip()
+                clause_id = str(semantic.get("clause_id") or "").strip()
+                rule_text = str(semantic.get("rule_text") or "").strip()
                 if (clause_id or rule_text) and not _published_clause(published_clauses, clause_id, rule_text):
-                    blocks.append(_text('本轮有效条款：' + (clause_id + ' · ' if clause_id else '') + rule_text))
-                semantic_origin = semantic.get('rule_source_file_version_id')
+                    blocks.append(_text("本轮有效条款：" + (clause_id + " · " if clause_id else "") + rule_text))
+                semantic_origin = semantic.get("rule_source_file_version_id")
                 if semantic_origin and semantic_origin != rule_origin:
-                    blocks.append(_text('规则原件来源版本（仅溯源）：' + str(semantic_origin)))
+                    blocks.append(_text("规则原件来源版本（仅溯源）：" + str(semantic_origin)))
                 scope = _scope(row)
                 if scope:
-                    blocks.append(_text(f'本条核验记录：共 {scope[0]} 条，已判断 {scope[1]} 条，无法判断 {scope[2]} 条'))
-                if semantic.get('diagnostic'):
-                    blocks.append(_text('无法判断原因：' + str(semantic['diagnostic'])))
-                sources = semantic.get('sources') or []
+                    blocks.append(_text(f"本条核验记录：共 {scope[0]} 条，已判断 {scope[1]} 条，无法判断 {scope[2]} 条"))
+                if semantic.get("diagnostic"):
+                    blocks.append(_text("无法判断原因：" + str(semantic["diagnostic"])))
+                sources = semantic.get("sources") or []
                 if sources:
                     blocks.extend(_text(_semantic_source_text(item)) for item in sources)
                 else:
-                    blocks.append(_text('依据：未提供可定位的资料来源。'))
+                    blocks.append(_text("依据：未提供可定位的资料来源。"))
             else:
                 locator = row.get("locator") or {}
-                if row.get('item') and not _published_clause(published_clauses, locator.get('rule_item_id'), row['item']):
-                    blocks.append(_text('检查项正文：' + str(row['item'])))
+                if row.get("item") and not _published_clause(published_clauses, locator.get("rule_item_id"), row["item"]):
+                    blocks.append(_text("检查项正文：" + str(row["item"])))
                 positions = [str(locator["locator"])] if locator.get("locator") else []
                 for evidence_source in (locator.get("evidence") or {}).get("sources") or []:
                     position = str(evidence_source.get("locator") or "")

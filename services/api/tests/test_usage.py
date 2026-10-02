@@ -1,25 +1,19 @@
 """Provider-neutral usage read path for the Web workbench."""
+
 from __future__ import annotations
 
 import os
 import unittest
-
-import pytest
 from unittest.mock import patch
 
-
+import pytest
 from fastapi.testclient import TestClient
-
-from ppap_core.settings import Settings
 from ppap_api import create_app
+from ppap_core.settings import Settings
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -36,9 +30,7 @@ class UsageReadTests(unittest.TestCase):
         self.settings = Settings()
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
-        self.client = TestClient(
-            create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
-        )
+        self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
 
     def tearDown(self):
         self._env.stop()

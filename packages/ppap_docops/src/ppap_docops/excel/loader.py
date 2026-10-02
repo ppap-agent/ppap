@@ -9,7 +9,7 @@ import os
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO, Literal, cast
 
 import openpyxl
 import openpyxl.utils
@@ -406,7 +406,7 @@ def load_excel_workbook(file_path: str) -> Workbook:
         downloads_dir.mkdir(parents=True, exist_ok=True)
 
         temp_download_path = download_file_to_temp_sync(file_path, downloads_dir, max_file_size)
-        file_path = temp_download_path
+        file_path = cast(str, temp_download_path)
     try:
         workbook = ExcelLoader.load_workbook(file_path)
         try:

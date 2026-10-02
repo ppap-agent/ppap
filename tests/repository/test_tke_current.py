@@ -5,6 +5,7 @@ socket, usage charge stays off, the worker still starts when Deep is late,
 and the edition proxy ConfigMap is the nginx conf file. Those checks read the
 rendered object model. They do not scan raw manifest text.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -141,11 +142,7 @@ exit 0
             invocation = docker_log.read_text()
             self.assertIn("registry.k8s.io/kustomize/kustomize:v5.6.0", invocation)
             self.assertTrue(invocation.rstrip().endswith("build ."))
-            applies = [
-                line.split()
-                for line in kubectl_log.read_text().splitlines()
-                if line.startswith("dry-run ") or line.startswith("apply ")
-            ]
+            applies = [line.split() for line in kubectl_log.read_text().splitlines() if line.startswith("dry-run ") or line.startswith("apply ")]
             self.assertEqual(
                 applies,
                 [["dry-run", expected_digest], ["apply", expected_digest]],
@@ -192,32 +189,15 @@ exit 0
         self.assertEqual(config["data"]["PPAP_DEEP_RUNTIME"], "container-only")
         self.assertEqual(config["data"]["PPAP_DEEP_SANDBOX_PROFILE"], "off")
         self.assertEqual(config["data"]["PPAP_DEEP_CUSTOMER_ENABLED"], "true")
-        images = [
-            container["image"]
-            for doc in docs
-            for container in _containers(doc)
-            if container.get("image")
-        ]
+        images = [container["image"] for doc in docs for container in _containers(doc) if container.get("image")]
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-api:") for image in images))
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-worker:") for image in images))
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-deep:") for image in images))
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-web:") for image in images))
         self.assertTrue(any("postgres:" in image for image in images))
         self.assertTrue(any(image.startswith("docker.io/pgsty/silo:") for image in images))
-        worker = next(
-            container
-            for doc in docs
-            if doc.get("metadata", {}).get("name") == "ppap-current-worker"
-            for container in _containers(doc)
-            if container.get("name") == "worker"
-        )
-        init_db = next(
-            container
-            for doc in docs
-            if doc.get("metadata", {}).get("name") == "ppap-current-init-db"
-            for container in _containers(doc)
-            if container.get("name") == "init-db"
-        )
+        worker = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker" for container in _containers(doc) if container.get("name") == "worker")
+        init_db = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-init-db" for container in _containers(doc) if container.get("name") == "init-db")
         init_command = "\n".join(init_db.get("args") or [])
         self.assertIn("sh /migrations/apply.sh", init_command)
         self.assertNotIn("apply.sql", init_command)
@@ -227,30 +207,13 @@ exit 0
         self.assertIn("warning: deep controller socket unavailable after 60s; starting Worker so Standard remains available", command)
         self.assertIn("exec python -m ppap_worker.main", command)
         self.assertNotIn("deep controller socket missing", command)
-        deep = next(
-            container
-            for doc in docs
-            if doc.get("metadata", {}).get("name") == "ppap-current-worker"
-            for container in _containers(doc)
-            if container.get("name") == "deep"
-        )
+        deep = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker" for container in _containers(doc) if container.get("name") == "deep")
         self.assertEqual(next(item["value"] for item in deep["env"] if item["name"] == "PPAP_SERVICE"), "deep")
         self.assertTrue(any("emptyDir" in json.dumps(doc.get("spec", {})) for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker"))
-        proxy_conf = next(
-            doc
-            for doc in docs
-            if doc.get("kind") == "ConfigMap"
-            and doc["metadata"]["name"].startswith("edition-proxy-")
-        )
+        proxy_conf = next(doc for doc in docs if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].startswith("edition-proxy-"))
         self.assertEqual(proxy_conf["data"]["default.conf"].strip(), (TKE / "edition-proxy.conf").read_text().strip())
-        proxy_deployment = next(
-            doc
-            for doc in docs
-            if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "edition-proxy"
-        )
-        proxy_volume = next(
-            volume for volume in proxy_deployment["spec"]["template"]["spec"]["volumes"] if volume["name"] == "conf"
-        )
+        proxy_deployment = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "edition-proxy")
+        proxy_volume = next(volume for volume in proxy_deployment["spec"]["template"]["spec"]["volumes"] if volume["name"] == "conf")
         self.assertEqual(proxy_volume["configMap"]["name"], proxy_conf["metadata"]["name"])
         service = next(doc for doc in docs if doc.get("kind") == "Service" and doc["metadata"]["name"] == "edition-proxy")
         self.assertEqual(service["spec"]["type"], "NodePort")

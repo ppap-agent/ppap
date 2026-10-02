@@ -7,6 +7,7 @@ nginx checks nginx, and Kustomize plus kubeconform check Kubernetes objects.
 This module only rejects repository-owned structures those tools still accept;
 it does not parse workflow/config source to proxy native behavior.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,9 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = ("packages", "services")
 ROOT_TEST_GROUPS = {"repository", "schema", "corpus", "integration", "e2e", "live"}
 GUEST_ENV = ROOT / "packages/ppap_deep/src/ppap_deep/isolation/container.py"
-FORBIDDEN_IMPORT = re.compile(
-    r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)"
-)
+FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)")
 SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
 
 
@@ -68,14 +67,7 @@ def _production_graph() -> dict[str, set[str]]:
         project = _pyproject(member / "pyproject.toml")["project"]
         projects[project["name"]] = project
     names = set(projects)
-    return {
-        name: {
-            dependency
-            for spec in project.get("dependencies", [])
-            if (dependency := _dependency_name(spec)) in names
-        }
-        for name, project in projects.items()
-    }
+    return {name: {dependency for spec in project.get("dependencies", []) if (dependency := _dependency_name(spec)) in names} for name, project in projects.items()}
 
 
 class ArchitectureTests(unittest.TestCase):
@@ -112,7 +104,7 @@ class ArchitectureTests(unittest.TestCase):
 
         def visit(name: str) -> None:
             if name in visiting:
-                cycle = visiting[visiting.index(name):] + [name]
+                cycle = visiting[visiting.index(name) :] + [name]
                 self.fail("production dependency cycle: " + " -> ".join(cycle))
             if name in visited:
                 return
@@ -132,18 +124,9 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("ppap-application", graph["ppap-api"])
         self.assertIn("ppap-application", graph["ppap-worker"])
 
-        core_source = "\n".join(
-            path.read_text()
-            for path in (ROOT / "packages/ppap_core/src/ppap_core").glob("*.py")
-        )
-        worker_source = "\n".join(
-            path.read_text()
-            for path in (ROOT / "services/worker/src/ppap_worker").glob("*.py")
-        )
-        store_source = "\n".join(
-            path.read_text()
-            for path in (ROOT / "packages/ppap_product_store/src/ppap_product_store").glob("*.py")
-        )
+        core_source = "\n".join(path.read_text() for path in (ROOT / "packages/ppap_core/src/ppap_core").glob("*.py"))
+        worker_source = "\n".join(path.read_text() for path in (ROOT / "services/worker/src/ppap_worker").glob("*.py"))
+        store_source = "\n".join(path.read_text() for path in (ROOT / "packages/ppap_product_store/src/ppap_product_store").glob("*.py"))
         self.assertNotIn("ppap_excel_audit_engine", core_source)
         self.assertNotIn("ppap_api", worker_source)
         self.assertNotIn("ppap_excel_audit_engine", store_source)
@@ -161,11 +144,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertFalse((ROOT / "tests" / "utils").exists())
 
     def test_root_tests_are_system_groups_only(self):
-        groups = {
-            path.name
-            for path in (ROOT / "tests").iterdir()
-            if path.is_dir() and path.name != "__pycache__"
-        }
+        groups = {path.name for path in (ROOT / "tests").iterdir() if path.is_dir() and path.name != "__pycache__"}
         self.assertEqual(groups, ROOT_TEST_GROUPS)
 
     def test_tests_do_not_import_each_other_or_mutate_sys_path(self):
@@ -221,10 +200,7 @@ class ArchitectureTests(unittest.TestCase):
         corpus_conftest = (ROOT / "tests/corpus/conftest.py").read_text()
         self.assertNotIn("BASELINE_XFAIL_IDS", corpus_conftest)
         self.assertNotIn("pytest.mark.xfail", corpus_conftest)
-        core_tests = "\n".join(
-            path.read_text()
-            for path in (ROOT / "packages/ppap_core/tests").glob("test_*.py")
-        )
+        core_tests = "\n".join(path.read_text() for path in (ROOT / "packages/ppap_core/tests").glob("test_*.py"))
         self.assertNotIn("ppap_excel_audit_engine", core_tests)
 
     def test_corpus_pairs_and_psw_have_physical_suite_ownership(self):

@@ -63,10 +63,7 @@ def collect_v2_rule_outcomes(
         outcomes[rule_index] = outcome
         if verbose_check and (not mismatch_only or outcome.is_mismatch):
             status_mark = "✓" if not outcome.is_mismatch else "✗"
-            print(
-                f"  [{status_mark}] Rule {rule_index}: expected={outcome.expected_status}, "
-                f"actual={outcome.actual.status}/{outcome.actual.execution_class}"
-            )
+            print(f"  [{status_mark}] Rule {rule_index}: expected={outcome.expected_status}, actual={outcome.actual.status}/{outcome.actual.execution_class}")
             if expectation.rule_desc:
                 rule_desc_short = expectation.rule_desc
                 if len(rule_desc_short) > 120:
@@ -84,9 +81,6 @@ def collect_v2_rule_outcomes(
             for rule in mismatches:
                 outcome = outcomes[rule]
                 extra = f" {outcome.actual.diagnostic_code}" if outcome.actual.diagnostic_code else ""
-                print(
-                    f"  - rule {rule}: expected {outcome.expected_status}, "
-                    f"got {outcome.actual.status}/{outcome.actual.execution_class}{extra}"
-                )
+                print(f"  - rule {rule}: expected {outcome.expected_status}, got {outcome.actual.status}/{outcome.actual.execution_class}{extra}")
             print("------------------------------")
     return outcomes

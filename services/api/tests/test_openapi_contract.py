@@ -1,10 +1,10 @@
 """OpenAPI contracts consumed by the Web application."""
+
 from __future__ import annotations
 
 import unittest
 
 from ppap_api import app
-
 
 REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/public-config"): False,
@@ -57,11 +57,7 @@ def _response_schema(operation: dict) -> dict | None:
 
 
 def _request_schema(operation: dict) -> dict | None:
-    return (
-        ((operation.get("requestBody") or {}).get("content") or {})
-        .get("application/json", {})
-        .get("schema")
-    )
+    return ((operation.get("requestBody") or {}).get("content") or {}).get("application/json", {}).get("schema")
 
 
 class OpenAPIContractTests(unittest.TestCase):

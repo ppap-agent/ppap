@@ -497,3 +497,21 @@ def _score_signal(
                 continue
             scores[doc_type] = scores.get(doc_type, 0) + keyword_weight
             keyword_hits.setdefault(doc_type, set()).add(keyword)
+
+
+def cross_file_doc_type_name(*, filename: str = "", content: str = "", rule_type: str | None = None) -> str | None:
+    """Standard cross-file type: signal inference, then a bound rule type."""
+    inferred = PpapDocumentType.infer_from_signals(
+        filename=filename,
+        content=content or "",
+        minimum_score=8,
+        min_margin=4,
+    )
+    if inferred is not PpapDocumentType.UNKNOWN:
+        return inferred.get_type_name()
+    if not rule_type:
+        return None
+    fallback = PpapDocumentType.from_string(str(rule_type))
+    if fallback is PpapDocumentType.UNKNOWN:
+        return None
+    return fallback.get_type_name()

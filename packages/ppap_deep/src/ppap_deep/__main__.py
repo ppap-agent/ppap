@@ -1,4 +1,5 @@
 """Host/sidecar Controller process. Owns the isolated runtime; Worker is a UDS client only."""
+
 from __future__ import annotations
 
 import signal
@@ -7,10 +8,11 @@ import threading
 
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.settings import load_settings
+
 from ppap_deep.client import DEEP_REQUEST_TIMEOUT
 from ppap_deep.controller import Controller, UnixControllerServer
 from ppap_deep.runtime import runtime_from_env
-from ppap_deep.source import object_file_source, authorize_execution
+from ppap_deep.source import authorize_execution, object_file_source
 
 STOP = threading.Event()
 
@@ -31,8 +33,7 @@ def main() -> int:
     with runtime_from_env(settings) as runtime:
         server = UnixControllerServer(
             socket_path,
-            Controller(runtime, object_file_source(settings), executor_revision=revision,
-                       authorize=authorize_execution(settings)),
+            Controller(runtime, object_file_source(settings), executor_revision=revision, authorize=authorize_execution(settings)),
             request_timeout=DEEP_REQUEST_TIMEOUT,
         )
         server.start()

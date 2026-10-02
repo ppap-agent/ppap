@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-
 from ppap_ocr_adapter.doc_cache import llm_service
 
 
@@ -27,10 +26,18 @@ class OCRResponsesTests(TestCase):
             self.assertEqual(llm_service.call_llm("image.jpg", "inspect", json_mode=True, response_schema=schema), {"has_checkboxes": True})
 
         self.assertEqual(calls[0]["text"], {"format": {"type": "json_schema", **schema}})
-        self.assertEqual(calls[0]["input"], [{"role": "user", "content": [
-            {"type": "input_text", "text": "inspect"},
-            {"type": "input_image", "image_url": "data:image/jpeg;base64,AAAA"},
-        ]}])
+        self.assertEqual(
+            calls[0]["input"],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "inspect"},
+                        {"type": "input_image", "image_url": "data:image/jpeg;base64,AAAA"},
+                    ],
+                }
+            ],
+        )
         self.assertFalse(calls[0]["store"])
 
     def test_incomplete_response_is_not_accepted(self):

@@ -1,4 +1,5 @@
 """Small deterministic guards for the migrated semantic core."""
+
 from __future__ import annotations
 
 import hashlib
@@ -13,17 +14,15 @@ from datetime import date, datetime, time
 from pathlib import Path
 from unittest.mock import patch
 
-
-from ppap_deep.semantic.document_tools import snapshot
 from ppap_deep.semantic.checker_tools import CheckRequest, check_fields
+from ppap_deep.semantic.document_tools import snapshot
 from ppap_deep.semantic.evidence import EvidenceBudget
 from ppap_deep.semantic.guest import _compile_prompt, audit_prompt, validate_plan
-from ppap_deep.semantic.guest_model import GrokRunner, ModelGrant, ModelProtocolError, sandbox_profile
+from ppap_deep.semantic.guest_model import GrokRunner, ModelProtocolError, sandbox_profile
 from ppap_deep.semantic.models import AuditReport, RulePlan
 from ppap_deep.semantic.protocol import RuleRef
 from ppap_deep.semantic.trace import AuditTrace, validate_trace
 from ppap_deep.semantic.validation import validate_report
-
 
 REVISION = "a" * 64
 
@@ -42,25 +41,38 @@ def published_source() -> tuple[RuleRef, dict]:
         path.write_bytes(raw)
         source = snapshot(path)
     rule = RuleRef(
-        rule_id="rule-1", sha256=hashlib.sha256(raw).hexdigest(), format=".json",
-        rule_version_id="version-1", plan_revision=REVISION, clauses=[clause],
+        rule_id="rule-1",
+        sha256=hashlib.sha256(raw).hexdigest(),
+        format=".json",
+        rule_version_id="version-1",
+        plan_revision=REVISION,
+        clauses=[clause],
     )
     return rule, source
 
 
 def plan(locator_id: str = "R1") -> RulePlan:
     rule, _ = published_source()
-    return RulePlan.model_validate({
-        "source_sha256": rule.sha256,
-        "plan_revision": REVISION,
-        "rules": [{
-            "id": "R1", "description": "Every record has a frequency.", "priority": "P1",
-            "source_locator": {"kind": "published_clause", "clause_id": locator_id},
-            "scope": "all body rows", "predicate": {"kind": "semantic", "question": "Is frequency present?"},
-            "missing_evidence": "UNABLE", "ambiguities": [],
-            "empty_scope_status": "UNABLE", "empty_scope_basis": "The clause does not define an empty-range result.",
-        }],
-    })
+    return RulePlan.model_validate(
+        {
+            "source_sha256": rule.sha256,
+            "plan_revision": REVISION,
+            "rules": [
+                {
+                    "id": "R1",
+                    "description": "Every record has a frequency.",
+                    "priority": "P1",
+                    "source_locator": {"kind": "published_clause", "clause_id": locator_id},
+                    "scope": "all body rows",
+                    "predicate": {"kind": "semantic", "question": "Is frequency present?"},
+                    "missing_evidence": "UNABLE",
+                    "ambiguities": [],
+                    "empty_scope_status": "UNABLE",
+                    "empty_scope_basis": "The clause does not define an empty-range result.",
+                }
+            ],
+        }
+    )
 
 
 DOCUMENT = {
@@ -74,10 +86,17 @@ CITATION = {"document_id": "target-1", "locator": {"kind": "xlsx_cell", "sheet":
 def field_check_request() -> dict:
     return {
         "binding": {
-            "id": "data", "document_id": "target-1", "source_sha256": "b" * 64,
-            "table": "Sheet1", "header_rows": [1], "first_row": 2, "last_row": 4,
-            "columns": {"frequency": "A", "measurement": "B"}, "excluded_rows": [],
-            "mapping_basis": "observed headers", "boundary_basis": "observed body rows",
+            "id": "data",
+            "document_id": "target-1",
+            "source_sha256": "b" * 64,
+            "table": "Sheet1",
+            "header_rows": [1],
+            "first_row": 2,
+            "last_row": 4,
+            "columns": {"frequency": "A", "measurement": "B"},
+            "excluded_rows": [],
+            "mapping_basis": "observed headers",
+            "boundary_basis": "observed body rows",
         },
         "checks": [
             {"id": "presence", "kind": "field_nonempty", "field": "frequency"},
@@ -88,18 +107,23 @@ def field_check_request() -> dict:
 
 FIELD_DOCUMENT = {
     "source": {"file": "target.xlsx", "sha256": "b" * 64, "format": ".xlsx"},
-    "tables": [{
-        "id": "Sheet1", "rows": 4, "cols": 2, "merges": [],
-        "cells": {
-            "A1": {"value": "Frequency", "state": "known"},
-            "B1": {"value": "Measurement", "state": "known"},
-            "A2": {"value": "daily", "state": "known"},
-            "B2": {"value": 1, "state": "known"},
-            "B3": {"value": "5", "state": "known"},
-            "A4": {"value": None, "state": "unknown_formula_cache"},
-            "B4": {"value": None, "state": "unknown_formula_cache"},
-        },
-    }],
+    "tables": [
+        {
+            "id": "Sheet1",
+            "rows": 4,
+            "cols": 2,
+            "merges": [],
+            "cells": {
+                "A1": {"value": "Frequency", "state": "known"},
+                "B1": {"value": "Measurement", "state": "known"},
+                "A2": {"value": "daily", "state": "known"},
+                "B2": {"value": 1, "state": "known"},
+                "B3": {"value": "5", "state": "known"},
+                "A4": {"value": None, "state": "unknown_formula_cache"},
+                "B4": {"value": None, "state": "unknown_formula_cache"},
+            },
+        }
+    ],
     "limitations": [],
 }
 
@@ -148,15 +172,35 @@ class SemanticBoundaryTests(unittest.TestCase):
         self.assertEqual(cells["C1"]["value"], "2026-09-26T09:15:00")
 
     def test_prerequisite_only_pass_cannot_hide_empty_applicable_scope(self) -> None:
-        proof = AuditTrace.model_validate({"proofs": [{
-            "kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "No triggering body rows",
-            "records": [{"record_id": "headers", "role": "prerequisite", "status": "PASS",
-                         "reason": "Required columns exist", "evidence": [CITATION]}],
-        }]})
-        report = AuditReport.model_validate({"checks": [{
-            "audit_id": "target-1", "rule_id": "R1", "status": "PASS", "reason": "No trigger, so passed",
-            "total": 1, "checked": 1, "unknown": 0, "evidence": [CITATION],
-        }]})
+        proof = AuditTrace.model_validate(
+            {
+                "proofs": [
+                    {
+                        "kind": "semantic",
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "scope_basis": "No triggering body rows",
+                        "records": [{"record_id": "headers", "role": "prerequisite", "status": "PASS", "reason": "Required columns exist", "evidence": [CITATION]}],
+                    }
+                ]
+            }
+        )
+        report = AuditReport.model_validate(
+            {
+                "checks": [
+                    {
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "status": "PASS",
+                        "reason": "No trigger, so passed",
+                        "total": 1,
+                        "checked": 1,
+                        "unknown": 0,
+                        "evidence": [CITATION],
+                    }
+                ]
+            }
+        )
         validate_report(report, {"target-1": plan()}, {"target-1": DOCUMENT})
         with self.assertRaisesRegex(ValueError, "contradicts replayed"):
             validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": plan()})
@@ -170,21 +214,38 @@ class SemanticBoundaryTests(unittest.TestCase):
         validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": plan()})
 
     def test_excluded_candidates_and_passed_prerequisites_do_not_make_scope_nonempty(self) -> None:
-        proof = AuditTrace.model_validate({"proofs": [{
-            "kind": "semantic", "audit_id": "target-1", "rule_id": "R1",
-            "scope_basis": "The only candidate does not meet the trigger",
-            "records": [
-                {"record_id": "headers", "role": "prerequisite", "status": "PASS",
-                 "reason": "Columns exist", "evidence": [CITATION]},
-                {"record_id": "row-1", "role": "excluded", "exclusion_basis": "Trigger is absent",
-                 "status": "NA", "reason": "Not triggered", "evidence": [CITATION]},
-            ],
-        }]})
-        report = AuditReport.model_validate({"checks": [{
-            "audit_id": "target-1", "rule_id": "R1", "status": "PASS",
-            "reason": "Nothing triggered, so passed", "total": 2, "checked": 2, "unknown": 0,
-            "evidence": [CITATION],
-        }]})
+        proof = AuditTrace.model_validate(
+            {
+                "proofs": [
+                    {
+                        "kind": "semantic",
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "scope_basis": "The only candidate does not meet the trigger",
+                        "records": [
+                            {"record_id": "headers", "role": "prerequisite", "status": "PASS", "reason": "Columns exist", "evidence": [CITATION]},
+                            {"record_id": "row-1", "role": "excluded", "exclusion_basis": "Trigger is absent", "status": "NA", "reason": "Not triggered", "evidence": [CITATION]},
+                        ],
+                    }
+                ]
+            }
+        )
+        report = AuditReport.model_validate(
+            {
+                "checks": [
+                    {
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "status": "PASS",
+                        "reason": "Nothing triggered, so passed",
+                        "total": 2,
+                        "checked": 2,
+                        "unknown": 0,
+                        "evidence": [CITATION],
+                    }
+                ]
+            }
+        )
         with self.assertRaisesRegex(ValueError, "contradicts replayed"):
             validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": plan()})
         report.checks[0].status = "UNABLE"
@@ -207,35 +268,59 @@ class SemanticBoundaryTests(unittest.TestCase):
                 rule_plan["rules"][0]["empty_scope_status"] = empty_policy
                 rule_plan["rules"][0]["empty_scope_basis"] = "The effective clause explicitly defines this empty-range branch"
                 selected_plan = RulePlan.model_validate(rule_plan)
-                proof = AuditTrace.model_validate({"proofs": [{
-                    "kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "No applicable body rows",
-                    "records": [{"record_id": "observation", "role": role, "status": record_status,
-                                 "exclusion_basis": "Trigger confirmed absent" if role == "excluded" else None,
-                                 "reason": "Observed rule scope", "evidence": [CITATION]}],
-                }]})
-                report = AuditReport.model_validate({"checks": [{
-                    "audit_id": "target-1", "rule_id": "R1", "status": expected_status, "reason": "Observed outcome",
-                    "total": 1, "checked": 1, "unknown": 0, "evidence": [CITATION],
-                }]})
+                proof = AuditTrace.model_validate(
+                    {
+                        "proofs": [
+                            {
+                                "kind": "semantic",
+                                "audit_id": "target-1",
+                                "rule_id": "R1",
+                                "scope_basis": "No applicable body rows",
+                                "records": [
+                                    {
+                                        "record_id": "observation",
+                                        "role": role,
+                                        "status": record_status,
+                                        "exclusion_basis": "Trigger confirmed absent" if role == "excluded" else None,
+                                        "reason": "Observed rule scope",
+                                        "evidence": [CITATION],
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+                report = AuditReport.model_validate(
+                    {
+                        "checks": [
+                            {
+                                "audit_id": "target-1",
+                                "rule_id": "R1",
+                                "status": expected_status,
+                                "reason": "Observed outcome",
+                                "total": 1,
+                                "checked": 1,
+                                "unknown": 0,
+                                "evidence": [CITATION],
+                            }
+                        ]
+                    }
+                )
                 validate_report(report, {"target-1": selected_plan}, {"target-1": DOCUMENT})
                 validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": selected_plan})
 
     def test_applicable_record_requires_trigger_basis(self) -> None:
-        record = {"record_id": "row-1", "role": "applicable", "status": "PASS",
-                  "reason": "Reviewed", "evidence": [CITATION]}
+        record = {"record_id": "row-1", "role": "applicable", "status": "PASS", "reason": "Reviewed", "evidence": [CITATION]}
         with self.assertRaisesRegex(ValueError, "trigger basis"):
-            AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1",
-                                                 "scope_basis": "one row", "records": [record]}]})
+            AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [record]}]})
         record["applicability_basis"] = "This row meets the rule's stated condition"
         no_source = {**record, "evidence": []}
         with self.assertRaisesRegex(ValueError, "source evidence"):
-            AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1",
-                                                 "scope_basis": "one row", "records": [no_source]}]})
-        proof = AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1",
-                                             "scope_basis": "one row", "records": [record]}]})
-        report = AuditReport.model_validate({"checks": [{"audit_id": "target-1", "rule_id": "R1", "status": "PASS",
-                                               "reason": "Reviewed", "total": 1, "checked": 1, "unknown": 0,
-                                               "evidence": [CITATION]}]})
+            AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [no_source]}]})
+        proof = AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [record]}]})
+        report = AuditReport.model_validate(
+            {"checks": [{"audit_id": "target-1", "rule_id": "R1", "status": "PASS", "reason": "Reviewed", "total": 1, "checked": 1, "unknown": 0, "evidence": [CITATION]}]}
+        )
         validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": plan()})
 
     def test_old_plan_cannot_silently_inherit_empty_scope_policy(self) -> None:
@@ -245,8 +330,7 @@ class SemanticBoundaryTests(unittest.TestCase):
             RulePlan.model_validate(prior)
 
     def test_receipt_without_artifact_is_a_model_protocol_failure(self) -> None:
-        runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32,
-                             "model": "test", "max_turns": 2, "wall_seconds": 10})
+        runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(runner, "_run", return_value={"result": '{"completed":true,"artifact":"execution.json"}'}) as run:
                 with self.assertRaisesRegex(ModelProtocolError, "Missing or invalid audit artifact"):
@@ -280,8 +364,7 @@ class SemanticBoundaryTests(unittest.TestCase):
         request = field_check_request()
         request["checks"] = request["checks"][:1]
         request["binding"]["excluded_rows"] = [
-            {"row": row, "reason_type": "non_record", "reason": "independently reviewed non-record",
-             "evidence_locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": f"A{row}"}}
+            {"row": row, "reason_type": "non_record", "reason": "independently reviewed non-record", "evidence_locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": f"A{row}"}}
             for row in (2, 3, 4)
         ]
         result = check_fields(FIELD_DOCUMENT, CheckRequest.model_validate(request))
@@ -299,6 +382,7 @@ class SemanticBoundaryTests(unittest.TestCase):
 
     def test_narrow_field_checker_command_writes_complete_result(self) -> None:
         import ppap_deep.semantic.checker_tools as checker_tools
+
         tool = Path(checker_tools.__file__)
         with tempfile.TemporaryDirectory() as directory:
             location = Path(directory)
@@ -307,7 +391,9 @@ class SemanticBoundaryTests(unittest.TestCase):
             request.write_text(json.dumps(field_check_request()))
             completed = subprocess.run(
                 [sys.executable, str(tool), str(source), "--request", str(request), "--out", str(output)],
-                capture_output=True, text=True, check=False,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             saved = json.loads(output.read_text())
@@ -315,23 +401,35 @@ class SemanticBoundaryTests(unittest.TestCase):
 
     def test_runner_counts_only_stream_tool_pairs_and_compact_boundaries(self) -> None:
         grant = {
-            "base_url": "http://127.0.0.1:12345/v1", "token": "x" * 32, "model": "test",
-            "max_turns": 2, "wall_seconds": 10,
+            "base_url": "http://127.0.0.1:12345/v1",
+            "token": "x" * 32,
+            "model": "test",
+            "max_turns": 2,
+            "wall_seconds": 10,
         }
         events = [
             {"type": "system", "subtype": "init"},
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "id": "call-1", "name": "read_file", "input": {}},
-                {"type": "tool_use", "id": "call-2", "name": "read_file", "input": {}},
-            ]}},
-            {"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": "call-1", "content": "ok", "is_error": False},
-                {"type": "tool_result", "tool_use_id": "orphan", "content": "?", "is_error": False},
-                {"type": "tool_result", "tool_use_id": "call-1", "content": "duplicate", "is_error": False},
-            ]}},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "id": "call-1", "name": "read_file", "input": {}},
+                        {"type": "tool_use", "id": "call-2", "name": "read_file", "input": {}},
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call-1", "content": "ok", "is_error": False},
+                        {"type": "tool_result", "tool_use_id": "orphan", "content": "?", "is_error": False},
+                        {"type": "tool_result", "tool_use_id": "call-1", "content": "duplicate", "is_error": False},
+                    ]
+                },
+            },
             {"type": "system", "subtype": "compact_boundary"},
-            {"type": "result", "stop_reason": "end_turn", "is_error": False,
-             "usage": {"input_tokens": 10, "output_tokens": 5}},
+            {"type": "result", "stop_reason": "end_turn", "is_error": False, "usage": {"input_tokens": 10, "output_tokens": 5}},
         ]
 
         def launch(*_args: object, **kwargs: object) -> object:
@@ -445,35 +543,76 @@ class SemanticBoundaryTests(unittest.TestCase):
                 snapshot(path)
 
     def test_missing_clause_is_rejected(self) -> None:
-        report = AuditReport.model_validate({"checks": [{
-            "audit_id": "target-1", "rule_id": "other", "status": "UNABLE", "reason": "unknown",
-            "total": 1, "checked": 0, "unknown": 1, "evidence": [], "diagnostic": "unsupported_structure",
-        }]})
+        report = AuditReport.model_validate(
+            {
+                "checks": [
+                    {
+                        "audit_id": "target-1",
+                        "rule_id": "other",
+                        "status": "UNABLE",
+                        "reason": "unknown",
+                        "total": 1,
+                        "checked": 0,
+                        "unknown": 1,
+                        "evidence": [],
+                        "diagnostic": "unsupported_structure",
+                    }
+                ]
+            }
+        )
         with self.assertRaisesRegex(ValueError, "缺项"):
             validate_report(report, {"target-1": plan()}, {"target-1": DOCUMENT})
 
     def test_unknown_scope_cannot_pass(self) -> None:
-        report = AuditReport.model_validate({"checks": [{
-            "audit_id": "target-1", "rule_id": "R1", "status": "PASS", "reason": "looks okay",
-            "total": 2, "checked": 1, "unknown": 1, "evidence": [CITATION],
-        }]})
+        report = AuditReport.model_validate(
+            {
+                "checks": [
+                    {
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "status": "PASS",
+                        "reason": "looks okay",
+                        "total": 2,
+                        "checked": 1,
+                        "unknown": 1,
+                        "evidence": [CITATION],
+                    }
+                ]
+            }
+        )
         with self.assertRaisesRegex(ValueError, "PASS"):
             validate_report(report, {"target-1": plan()}, {"target-1": DOCUMENT})
 
     def test_bad_document_reference_is_rejected(self) -> None:
-        report = AuditReport.model_validate({"checks": [{
-            "audit_id": "target-1", "rule_id": "R1", "status": "PASS", "reason": "checked",
-            "total": 1, "checked": 1, "unknown": 0,
-            "evidence": [{"document_id": "another-version", "locator": CITATION["locator"]}],
-        }]})
+        report = AuditReport.model_validate(
+            {
+                "checks": [
+                    {
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "status": "PASS",
+                        "reason": "checked",
+                        "total": 1,
+                        "checked": 1,
+                        "unknown": 0,
+                        "evidence": [{"document_id": "another-version", "locator": CITATION["locator"]}],
+                    }
+                ]
+            }
+        )
         with self.assertRaisesRegex(ValueError, "证据来源"):
             validate_report(report, {"target-1": plan()}, {"target-1": DOCUMENT})
 
     def test_artifact_without_completion_receipt_is_rejected(self) -> None:
-        runner = GrokRunner({
-            "base_url": "https://example.invalid", "token": "x" * 32, "model": "test",
-            "max_turns": 2, "wall_seconds": 10,
-        })
+        runner = GrokRunner(
+            {
+                "base_url": "https://example.invalid",
+                "token": "x" * 32,
+                "model": "test",
+                "max_turns": 2,
+                "wall_seconds": 10,
+            }
+        )
         runner._run = lambda *_args, **_kwargs: {"structured_output": {"completed": False, "artifact": "execution.json"}}  # type: ignore[method-assign]
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "completion receipt"):

@@ -1,4 +1,5 @@
 """Representative browser audit loop against isolated-dev stack."""
+
 from __future__ import annotations
 
 import os
@@ -145,9 +146,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 page.wait_for_selector("#audit-preparation")
                 page.wait_for_selector('[data-testid="submit-audit"]:not([disabled])')
                 page.get_by_test_id("source-upload").set_input_files(str(newer))
-                page.wait_for_function(
-                    """() => document.querySelector('[data-testid="draft-items"]').innerText.includes('report-v2.xlsx')"""
-                )
+                page.wait_for_function("""() => document.querySelector('[data-testid="draft-items"]').innerText.includes('report-v2.xlsx')""")
                 page.get_by_test_id("item-rule").last.select_option(RULE_A)
                 page.get_by_test_id("submit-audit").click()
                 page.wait_for_selector('[data-testid="previous-round"]')

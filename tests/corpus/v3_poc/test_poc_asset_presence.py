@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from ppap_corpus_contracts.poc_oracle import (
     DEFAULT_POC_DATASET_ROOT,
     DEFAULT_POC_EXPECTED_XLSX,

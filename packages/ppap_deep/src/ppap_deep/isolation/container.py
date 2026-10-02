@@ -19,6 +19,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -150,7 +151,9 @@ class ContainerRuntime:
         version = subprocess.run(
             [str(config.grok_executable), "--version"],
             env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "GROK_DISABLE_AUTOUPDATER": "1"},
-            capture_output=True, timeout=10, check=False,
+            capture_output=True,
+            timeout=10,
+            check=False,
         )
         if version.returncode != 0 or not version.stdout.decode(errors="replace").startswith("grok 1.0.40 "):
             raise ValueError("Verified Grok 1.0.40 is required")
@@ -218,7 +221,16 @@ class ContainerRuntime:
     def _write_grant(self, execution_id: UUID, run: Path) -> None:
         grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id))
         url = urlsplit(grant.base_url)
-        if url.scheme != "http" or url.hostname not in {"127.0.0.1", "localhost"} or url.hostname != self.config.gateway_host or url.username or url.password or url.query or url.fragment or grant.model != self.config.model:
+        if (
+            url.scheme != "http"
+            or url.hostname not in {"127.0.0.1", "localhost"}
+            or url.hostname != self.config.gateway_host
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or grant.model != self.config.model
+        ):  # noqa: E501
             raise ControllerFault("ISOLATION_UNAVAILABLE")
         target = run / "grant" / "model.json"
         write_json(target, grant.model_dump(mode="json"))
@@ -243,17 +255,30 @@ class ContainerRuntime:
                 str(self.config.prlimit_executable),
                 f"--as={self.config.memory_mib * 1024 * 1024}",
                 f"--nproc={self.config.max_processes}",
-                "--fsize=268435456", "--nofile=128", "--core=0",
+                "--fsize=268435456",
+                "--nofile=128",
+                "--core=0",
                 "--",
                 str(self.config.setpriv_executable),
-                "--no-new-privs", "--reuid=10001", "--regid=10001", "--clear-groups",
-                "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all",
+                "--no-new-privs",
+                "--reuid=10001",
+                "--regid=10001",
+                "--clear-groups",
+                "--bounding-set=-all",
+                "--inh-caps=-all",
+                "--ambient-caps=-all",
                 "--",
-                str(self.config.python_executable), "-m", "ppap_deep.isolation.guest_entry",
+                str(self.config.python_executable),
+                "-m",
+                "ppap_deep.isolation.guest_entry",
             ],
-            cwd=run / "work", env=env, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            close_fds=True, start_new_session=True,
+            cwd=run / "work",
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            start_new_session=True,
         )
         self.active[execution_id] = process
         last_progress: Progress | None = None
@@ -455,15 +480,12 @@ class ContainerRuntime:
                 # Terminal errors can echo a request; redact the only guest credential.
                 raw = json.dumps(facts, ensure_ascii=False)
                 stages.append(json.loads(raw.replace(token, "[redacted]")) if token else facts)
-        payload = {"code": code, "stages": stages}
+        payload: dict[str, Any] = {"code": code, "stages": stages}
         if usage is not None:
             payload["usage"] = {key: usage[key] for key in ("completed_requests", "input_tokens", "output_tokens", "uncertain", "in_flight", "budget_exhausted") if type(usage.get(key)) in (int, bool)}
             failure = usage.get("transport_failure")
             if isinstance(failure, dict):
-                payload["transport_failure"] = {
-                    key: failure[key] for key in ("phase", "error_type", "response_bytes", "last_event", "provider_status")
-                    if type(failure.get(key)) in (int, str)
-                }
+                payload["transport_failure"] = {key: failure[key] for key in ("phase", "error_type", "response_bytes", "last_event", "provider_status") if type(failure.get(key)) in (int, str)}
         if outer is not None:
             payload["guest"] = outer
         write_json(destination / "diagnostic.json", payload)

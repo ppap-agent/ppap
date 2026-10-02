@@ -5,13 +5,14 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-
+from ppap_application import build_product_store
 from ppap_core.capabilities import report as capability_report
 from ppap_core.db import postgres_ready
 from ppap_core.feishu import (
@@ -40,11 +41,11 @@ from ppap_core.feishu_drive import (
 )
 from ppap_core.feishu_usage import (
     FeishuUsageError,
+    apply_report_credential,
+    query_tenant_ai_item,
     quota_payload,
     quota_unavailable,
-    query_tenant_ai_item,
     remaining_trial_points,
-    apply_report_credential,
     report_usage_record,
     tenant_access_token,
 )
@@ -53,7 +54,6 @@ from ppap_core.feishu_writeback import (
     round_return_url,
     write_round_history,
 )
-from ppap_core.writeback_targets import public_target
 from ppap_core.files import (
     MAX_UPLOAD_BYTES,
     ObjectExists,
@@ -66,16 +66,18 @@ from ppap_core.files import (
 )
 from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import EDITION_COOKIE, SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
-from ppap_core.logs import QUIET_PATHS, bind, configure as configure_logs, emit, new_request_id, reset, round_id_from_path
+from ppap_core.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
+from ppap_core.logs import configure as configure_logs
 from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
-from ppap_application import build_product_store
+from ppap_core.writeback_targets import public_target
 from ppap_product_store import AuthStore
-from ppap_api.audit_routes import register_audit_routes
-from ppap_api.rule_routes import register_rule_routes
-from ppap_api.report_routes import register_report_routes
-from ppap_api.office_routes import register_office_routes
+
 from ppap_api import web_contract as wc
+from ppap_api.audit_routes import register_audit_routes
+from ppap_api.office_routes import register_office_routes
+from ppap_api.report_routes import register_report_routes
+from ppap_api.rule_routes import register_rule_routes
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -167,11 +169,7 @@ def create_app(
             if principal:
                 tokens.extend(bind(tenant_id=principal.tenant_id))
             if path not in QUIET_PATHS:
-                level = (
-                    logging.INFO
-                    if settings.profile == "production" or str(settings.LOG_FORMAT).strip().lower() == "json"
-                    else logging.DEBUG
-                )
+                level = logging.INFO if settings.profile == "production" or str(settings.LOG_FORMAT).strip().lower() == "json" else logging.DEBUG
                 emit(
                     "http_request",
                     level=level,
@@ -365,12 +363,14 @@ def create_app(
         grants = store.grants(resource_id, principal.user_id) if resource else set()
         if resource is None or not can_read(principal, resource, grants):
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        return JSONResponse({
-            "id": resource.id,
-            "tenant_id": resource.tenant_id,
-            "kind": resource.kind,
-            "review_allowed": can_review(principal, resource, grants),
-        })
+        return JSONResponse(
+            {
+                "id": resource.id,
+                "tenant_id": resource.tenant_id,
+                "kind": resource.kind,
+                "review_allowed": can_review(principal, resource, grants),
+            }
+        )
 
     @app.post("/files", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FileCreateRequest))
     def files_create(body: dict, request: Request) -> JSONResponse:
@@ -497,6 +497,7 @@ def create_app(
     @app.get("/files/{file_id}/versions/{version_id}/preview", response_model=wc.PreviewResponse)
     def files_preview(file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
+
         principal, denied = require_file_read(request, file_id)
         if denied:
             return denied
@@ -578,6 +579,7 @@ def create_app(
     @app.get("/integrations/feishu/files", response_model=wc.DriveFilesList)
     def feishu_files_list(request: Request, folder_token: str = "", page_token: str = ""):
         from ppap_core.feishu_drive import list_drive_folder
+
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -644,6 +646,7 @@ def create_app(
     @app.get("/integrations/feishu/usage/quota", response_model=wc.QuotaEstimate)
     def feishu_usage_quota(request: Request, ai_item_id: str = "", target_count: int | None = Query(None, ge=0, le=200)) -> JSONResponse:
         from ppap_core.feishu_usage import estimate_audit
+
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
@@ -700,29 +703,32 @@ def create_app(
         # Preparation cannot report a charge. Failure leaves the event pending.
         try:
             tenant_token = tenant_access_token(
-                http, settings.feishu_app_id, settings.feishu_app_secret, ticket,
+                http,
+                settings.feishu_app_id,
+                settings.feishu_app_secret,
+                ticket,
                 session.principal.tenant_key,
             )
-            report_token = apply_report_credential(
-                http, session.access_token, row["ai_item_id"], row["trace_id"]
-            )
+            report_token = apply_report_credential(http, session.access_token, row["ai_item_id"], row["trace_id"])
         except FeishuUsageError:
             return JSONResponse({"error": "feishu_usage_prepare_failed"}, status_code=502)
         claim = store.claim_usage_report(session.principal, event_id)
         if claim is None:
             current = store.usage_event(session.principal, event_id)
-            return JSONResponse(store.usage_event_public(current), status_code=409)
+            return JSONResponse(store.usage_event_public(cast(dict, current)), status_code=409)
         try:
             record_id = report_usage_record(
-                http, tenant_token, report_token, row["ai_item_id"],
-                row["trace_id"], row["consumed_points"],
+                http,
+                tenant_token,
+                report_token,
+                row["ai_item_id"],
+                row["trace_id"],
+                row["consumed_points"],
             )
         except FeishuUsageError:
             store.settle_usage_external(session.principal, event_id, claim, "unknown")
             return JSONResponse({"error": "feishu_usage_report_unknown"}, status_code=502)
-        settled = store.settle_usage_external(
-            session.principal, event_id, claim, "confirmed", record_id
-        )
+        settled = store.settle_usage_external(session.principal, event_id, claim, "confirmed", record_id)
         body = store.usage_event_public(settled)
         body["skipped"] = False
         return JSONResponse(body)
@@ -750,9 +756,7 @@ def create_app(
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         return_url = round_return_url(settings.canonical_web_url(), round_body["id"])
         try:
-            result = write_round_history(
-                http, session.access_token, file_token, round_body, return_url
-            )
+            result = write_round_history(http, session.access_token, file_token, round_body, return_url)
         except FeishuWritebackError as exc:
             code = str(exc)
             if code == "invalid_file_token":

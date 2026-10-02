@@ -1,9 +1,11 @@
 """Prepare engine rules from customer files, then validate before publication."""
+
 from __future__ import annotations
 
 import uuid
 
 from ppap_core.contracts import RuleItem
+from ppap_core.rule_profile import normalize_rule_profile
 from ppap_core.types import PpapDocumentType
 
 RULE_FILE_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".doc", ".docx", ".md", ".pdf", ".json"}
@@ -39,9 +41,13 @@ def normalize_rule_body(value: dict) -> dict:
     doc_type = PpapDocumentType.from_string(raw_type) if isinstance(raw_type, str) else PpapDocumentType.UNKNOWN
     if doc_type == PpapDocumentType.UNKNOWN:
         raise ValueError("unknown_rule_type")
-    profile = value.get("rule_profile", "v3")
-    if not isinstance(profile, str) or profile not in {"v2", "v3"}:
+    raw_profile = value.get("rule_profile")
+    if raw_profile is not None and not isinstance(raw_profile, str):
         raise ValueError("invalid_rule_profile")
+    try:
+        profile = normalize_rule_profile(raw_profile)
+    except ValueError:
+        raise ValueError("invalid_rule_profile") from None
     raw_rules = value.get("rules")
     if not isinstance(raw_rules, list) or not raw_rules:
         raise ValueError("empty_rules")

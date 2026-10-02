@@ -1,10 +1,10 @@
 """Audit draft/round/review semantics. Table names live in migrations; this is product logic."""
+
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
-
 
 TARGET = "target"
 REFERENCE = "reference"

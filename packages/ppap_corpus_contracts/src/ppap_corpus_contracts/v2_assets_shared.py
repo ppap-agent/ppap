@@ -479,10 +479,7 @@ def reconcile_v2_oracle_assets(
         lines = [f"- file={spec.file_name} file_type={spec.file_type}" for spec in missing]
         parts.append("V2 oracle assets missing:\n" + "\n".join(lines))
     if ambiguous:
-        lines = [
-            f"- file={spec.file_name} file_type={spec.file_type} -> {paths}"
-            for spec, paths in ambiguous
-        ]
+        lines = [f"- file={spec.file_name} file_type={spec.file_type} -> {paths}" for spec, paths in ambiguous]
         parts.append("V2 oracle assets ambiguous:\n" + "\n".join(lines))
     if parts:
         raise AssertionError("\n".join(parts))
@@ -556,14 +553,8 @@ def _select_long_feedback_oracle_cases(
             )
 
             existing = state["expected"].get(rule_index)
-            if existing is not None and (
-                existing.status != status
-                or existing.rule_desc != rule_desc
-                or existing.manual_reason != manual_reason
-            ):
-                raise AssertionError(
-                    f"Conflicting duplicate row in long feedback CSV: file={file_name!r}, rule={rule_index}"
-                )
+            if existing is not None and (existing.status != status or existing.rule_desc != rule_desc or existing.manual_reason != manual_reason):
+                raise AssertionError(f"Conflicting duplicate row in long feedback CSV: file={file_name!r}, rule={rule_index}")
 
             state["expected"][rule_index] = RuleExpectation(
                 status=status,
@@ -607,9 +598,7 @@ def build_cases_from_long_feedback(
     resolved = reconcile_v2_oracle_assets(
         selected,
         dataset_files=index_dataset_files(dataset_root),
-        manifest_paths=(
-            _load_manifest_path_index(manifest_path.expanduser().resolve()) if manifest_path else {}
-        ),
+        manifest_paths=(_load_manifest_path_index(manifest_path.expanduser().resolve()) if manifest_path else {}),
     )
     return [
         FileCase(

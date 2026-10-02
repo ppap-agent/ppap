@@ -1,4 +1,5 @@
 """Upgrade empty and previous databases through the canonical migration runner."""
+
 from __future__ import annotations
 
 import unittest
@@ -24,7 +25,7 @@ class SchemaUpgradeTests(unittest.TestCase):
         runner = (self.schema.MIGRATIONS / "apply.sh").read_text()
         self.assertIn("LC_ALL=C", runner)
         self.assertIn('"$MIGRATIONS_DIR"/[0-9][0-9][0-9][0-9]_*.sql', runner)
-        self.assertIn("psql -d \"$PPAP_PG_DATABASE\" -v ON_ERROR_STOP=1 -f \"$migration\"", runner)
+        self.assertIn('psql -d "$PPAP_PG_DATABASE" -v ON_ERROR_STOP=1 -f "$migration"', runner)
         for name in versions:
             self.assertNotIn(name, runner)
 
@@ -48,21 +49,13 @@ class SchemaUpgradeTests(unittest.TestCase):
 
             first_apply = self.schema.apply(empty)
             self.schema.require(first_apply, "apply empty")
-            executed = [
-                line.removeprefix("applying ")
-                for line in (first_apply.stdout or b"").decode().splitlines()
-                if line.startswith("applying ")
-            ]
+            executed = [line.removeprefix("applying ") for line in (first_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
             self.assertEqual(executed, versions)
             self.assertEqual(self.schema.applied(empty), versions)
 
             second_apply = self.schema.apply(empty)
             self.schema.require(second_apply, "re-apply empty")
-            repeated = [
-                line.removeprefix("applying ")
-                for line in (second_apply.stdout or b"").decode().splitlines()
-                if line.startswith("applying ")
-            ]
+            repeated = [line.removeprefix("applying ") for line in (second_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
             self.assertEqual(repeated, versions)
             self.assertEqual(self.schema.applied(empty), versions)
 
@@ -81,11 +74,7 @@ class SchemaUpgradeTests(unittest.TestCase):
 
             previous_apply = self.schema.apply(previous)
             self.schema.require(previous_apply, "upgrade previous")
-            executed = [
-                line.removeprefix("applying ")
-                for line in (previous_apply.stdout or b"").decode().splitlines()
-                if line.startswith("applying ")
-            ]
+            executed = [line.removeprefix("applying ") for line in (previous_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
             self.assertEqual(executed, versions)
             self.assertEqual(self.schema.applied(previous), versions)
 

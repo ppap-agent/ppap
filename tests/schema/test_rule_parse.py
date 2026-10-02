@@ -1,13 +1,13 @@
 """Actual PostgreSQL acceptance, lease and authorization boundaries for rule jobs."""
-from concurrent.futures import ThreadPoolExecutor
+
 import json
 import os
 import unittest
-
-import pytest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
+import pytest
 
 
 class RuleParseDatabaseTests(unittest.TestCase):
@@ -16,22 +16,29 @@ class RuleParseDatabaseTests(unittest.TestCase):
         self.schema = schema_tools
         self.memory_objects_type = memory_objects_type
         self.rule_body = sample_rule_body_factory
+
     def test_idempotent_acceptance_unknown_lease_late_result_and_current_source_authorization(self):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
-        from ppap_product_store import AuthStore
         from ppap_core.db import connect
         from ppap_core.settings import Settings
+        from ppap_product_store import AuthStore
         from ppap_worker import process_claimed
 
         self.schema.require_postgres()
         database = "ppap_rule_parse_" + uuid.uuid4().hex[:12]
-        self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self.schema.migrator_user()}"), "create isolated rule parse DB")
+        self.schema.require(
+            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {database} OWNER {self.schema.migrator_user()}"),
+            "create isolated rule parse DB",
+        )  # noqa: E501
         try:
             self.schema.require(self.schema.apply(database), "apply rule parse schema")
             settings = Settings(
-                pg_database=database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")),
-                pg_migrator_user=self.schema.migrator_user(), pg_migrator_password=self.schema.migrator_password(),
+                pg_database=database,
+                pg_host=os.environ.get("PGHOST", "127.0.0.1"),
+                pg_port=int(os.environ.get("PGPORT", "5432")),
+                pg_migrator_user=self.schema.migrator_user(),
+                pg_migrator_password=self.schema.migrator_password(),
             )
             objects = self.memory_objects_type()
             api = AuthStore(settings, objects)
@@ -84,7 +91,9 @@ class RuleParseDatabaseTests(unittest.TestCase):
                     conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (source.file_id, alice.user_id))
                 self.assertEqual(client.get("/rules/parse/" + job.id).status_code, 403)
         finally:
-            self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB")
+            self.schema.require(
+                self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop isolated rule parse DB"
+            )  # noqa: E501
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Deep product adapter contracts. These tests do not measure model judgment."""
+
 from __future__ import annotations
 
 import hashlib
@@ -7,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
 
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.files import ObjectMissing
@@ -18,7 +18,6 @@ from ppap_deep.isolation.model_gateway import Grants, local_gateway
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.protocol import ResultBundle
-
 
 ENGINE = "a" * 64
 ROUND = "00000000-0000-4000-8000-000000000099"
@@ -36,21 +35,32 @@ def _clauses() -> list[dict]:
     ]
 
 
-def _spec(*, title: str = "客户规则", tenant: str = "tenant-a", target_bytes: bytes = b"target",
-          clauses: list[dict] | None = None) -> ExecuteRequest:
+def _spec(*, title: str = "客户规则", tenant: str = "tenant-a", target_bytes: bytes = b"target", clauses: list[dict] | None = None) -> ExecuteRequest:
     target = FrozenFile(
-        file_version_id=TARGET, file_id="file-target", role="target", filename="plan.xlsx",
-        sha256=hashlib.sha256(target_bytes).hexdigest(), rule_version_id=RULE, rule_title=title,
+        file_version_id=TARGET,
+        file_id="file-target",
+        role="target",
+        filename="plan.xlsx",
+        sha256=hashlib.sha256(target_bytes).hexdigest(),
+        rule_version_id=RULE,
+        rule_title=title,
         rule_body={"kind": "engine", "rules": clauses if clauses is not None else _clauses()},
         rule_source_file_version_id="original-rule-version",
     )
     reference = FrozenFile(
-        file_version_id=REFERENCE, file_id="file-reference", role="reference", filename="flow.pdf",
+        file_version_id=REFERENCE,
+        file_id="file-reference",
+        role="reference",
+        filename="flow.pdf",
         sha256=hashlib.sha256(b"reference").hexdigest(),
     )
     return ExecuteRequest(
-        protocol_revision=DEEP_PROTOCOL_REVISION, round_id=ROUND, tenant_id=tenant,
-        job_id="job-one", executor="ppap-deep", executor_revision=DEEP_PROTOCOL_REVISION,
+        protocol_revision=DEEP_PROTOCOL_REVISION,
+        round_id=ROUND,
+        tenant_id=tenant,
+        job_id="job-one",
+        executor="ppap-deep",
+        executor_revision=DEEP_PROTOCOL_REVISION,
         files=[target, reference],
     )
 
@@ -60,24 +70,45 @@ def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
     target, reference = spec.files
     cells = {f"A{index}": {"value": f"observed-{index}", "state": "known"} for index in range(1, 4)}
     documents = {
-        TARGET: {"source": {"file": "document-0.xlsx", "sha256": target.sha256, "format": ".xlsx"},
-                 "tables": [{"id": "Sheet1", "rows": 3, "cols": 1, "cells": cells, "merges": []}], "limitations": []},
-        REFERENCE: {"source": {"file": "document-1.pdf", "sha256": reference.sha256, "format": ".pdf"},
-                    "tables": [], "pages": [{"page": 1, "blocks": [{"text": "flow relation"}]}], "limitations": []},
+        TARGET: {
+            "source": {"file": "document-0.xlsx", "sha256": target.sha256, "format": ".xlsx"},
+            "tables": [{"id": "Sheet1", "rows": 3, "cols": 1, "cells": cells, "merges": []}],
+            "limitations": [],
+        },
+        REFERENCE: {"source": {"file": "document-1.pdf", "sha256": reference.sha256, "format": ".pdf"}, "tables": [], "pages": [{"page": 1, "blocks": [{"text": "flow relation"}]}], "limitations": []},
     }
-    source = {"source": {"file": "rule-0.json", "sha256": rule.sha256, "format": ".json"},
-              "kind": "published_rule", "rule_version_id": RULE, "rule_body": target.rule_body,
-              "clauses": target.rule_body["rules"], "origin": {"file_version_id": "original-rule-version"},
-              "tables": [], "limitations": []}
-    plan = {"source_sha256": rule.sha256, "plan_revision": rule.plan_revision, "rules": [
-        {"id": clause["id"], "description": clause["rule_to_check"], "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
-         "scope": "本轮资料", "predicate": {"kind": "semantic", "question": clause["rule_to_check"]},
-         "missing_evidence": "UNABLE", "ambiguities": [],
-         "empty_scope_status": "NA" if clause["id"] == "R4" else "UNABLE",
-         "empty_scope_basis": "附加要求不适用" if clause["id"] == "R4" else "规则未规定空范围通过"}
-        for clause in target.rule_body["rules"]
-    ]}
-    cell = lambda address: {"document_id": TARGET, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}
+    source = {
+        "source": {"file": "rule-0.json", "sha256": rule.sha256, "format": ".json"},
+        "kind": "published_rule",
+        "rule_version_id": RULE,
+        "rule_body": target.rule_body,
+        "clauses": target.rule_body["rules"],
+        "origin": {"file_version_id": "original-rule-version"},
+        "tables": [],
+        "limitations": [],
+    }
+    plan = {
+        "source_sha256": rule.sha256,
+        "plan_revision": rule.plan_revision,
+        "rules": [
+            {
+                "id": clause["id"],
+                "description": clause["rule_to_check"],
+                "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
+                "scope": "本轮资料",
+                "predicate": {"kind": "semantic", "question": clause["rule_to_check"]},
+                "missing_evidence": "UNABLE",
+                "ambiguities": [],
+                "empty_scope_status": "NA" if clause["id"] == "R4" else "UNABLE",
+                "empty_scope_basis": "附加要求不适用" if clause["id"] == "R4" else "规则未规定空范围通过",
+            }
+            for clause in target.rule_body["rules"]
+        ],
+    }
+
+    def cell(address):
+        return {"document_id": TARGET, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}
+
     pdf = {"document_id": REFERENCE, "locator": {"kind": "pdf_block", "page": 1, "block": 1}}
     examples = [
         ("PASS", [cell("A1")], None, 1, 0),
@@ -88,19 +119,37 @@ def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
     checks, proofs = [], []
     for clause, (status, evidence, diagnostic, checked, unknown) in zip(target.rule_body["rules"], examples, strict=True):
         key = {"audit_id": TARGET, "rule_id": clause["id"]}
-        checks.append({**key, "status": status, "reason": "record reviewed", "total": 1,
-                       "checked": checked, "unknown": unknown, "evidence": evidence, "diagnostic": diagnostic})
-        proofs.append({"kind": "semantic", **key, "scope_basis": "one identified record",
-                       "records": [{"record_id": clause["id"], "role": "prerequisite" if not evidence else "excluded" if status == "NA" else "applicable",
-                                    **({"exclusion_basis": "The optional clause is not triggered"} if status == "NA" else
-                                       {"applicability_basis": "The clause checks this identified item"} if evidence else {}),
-                                    "status": status, "reason": "record reviewed", "evidence": evidence}]})
-    return ResultBundle.model_validate({
-        "execution_id": str(submission.execution_id), "semantic_engine_revision": ENGINE,
-        "documents": documents, "rule_sources": {RULE: source}, "plans": {RULE: plan},
-        "report": {"checks": checks}, "trace": {"bindings": [], "proofs": proofs},
-        "input_tokens": 120, "output_tokens": 30,
-    })
+        checks.append({**key, "status": status, "reason": "record reviewed", "total": 1, "checked": checked, "unknown": unknown, "evidence": evidence, "diagnostic": diagnostic})
+        proofs.append(
+            {
+                "kind": "semantic",
+                **key,
+                "scope_basis": "one identified record",
+                "records": [
+                    {
+                        "record_id": clause["id"],
+                        "role": "prerequisite" if not evidence else "excluded" if status == "NA" else "applicable",
+                        **({"exclusion_basis": "The optional clause is not triggered"} if status == "NA" else {"applicability_basis": "The clause checks this identified item"} if evidence else {}),
+                        "status": status,
+                        "reason": "record reviewed",
+                        "evidence": evidence,
+                    }
+                ],
+            }
+        )
+    return ResultBundle.model_validate(
+        {
+            "execution_id": str(submission.execution_id),
+            "semantic_engine_revision": ENGINE,
+            "documents": documents,
+            "rule_sources": {RULE: source},
+            "plans": {RULE: plan},
+            "report": {"checks": checks},
+            "trace": {"bindings": [], "proofs": proofs},
+            "input_tokens": 120,
+            "output_tokens": 30,
+        }
+    )
 
 
 class SemanticProductContractTests(unittest.TestCase):
@@ -111,8 +160,7 @@ class SemanticProductContractTests(unittest.TestCase):
         self.assertEqual(DeepClient("unused").timeout, DEEP_TOTAL_SECONDS + 30)
         self.assertEqual(DEEP_REQUEST_TIMEOUT, DEEP_TOTAL_SECONDS + 30)
         with tempfile.TemporaryDirectory() as temporary:
-            with local_gateway(Path(temporary) / "gateway.sock", upstream="https://provider.example/v1",
-                               model="test-model", provider_key="test-provider-key") as gateway:
+            with local_gateway(Path(temporary) / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key") as gateway:
                 self.assertEqual(gateway.http.grants.ttl, DEEP_TOTAL_SECONDS)
 
     def test_effective_published_rule_source_and_title_independence(self) -> None:
@@ -145,10 +193,16 @@ class SemanticProductContractTests(unittest.TestCase):
         self.assertEqual(semantic["rule_source_file_version_id"], "original-rule-version")
         self.assertEqual(semantic["scope"], {"total": 1, "checked": 1, "unknown": 0})
         self.assertEqual(semantic["sources"][0]["file_version_id"], TARGET)
-        self.assertEqual(semantic["sources"][1], {
-            "file_version_id": REFERENCE, "filename": "flow.pdf", "role": "reference",
-            "locator": {"kind": "pdf_block", "page": 1, "block": 1}, "excerpt": "flow relation",
-        })
+        self.assertEqual(
+            semantic["sources"][1],
+            {
+                "file_version_id": REFERENCE,
+                "filename": "flow.pdf",
+                "role": "reference",
+                "locator": {"kind": "pdf_block", "page": 1, "block": 1},
+                "excerpt": "flow relation",
+            },
+        )
         self.assertTrue(response.coverage.locator_gap)  # Explicit UNABLE has no source.
 
     def test_missing_clause_and_wrong_evidence_version_are_rejected(self) -> None:
@@ -174,9 +228,7 @@ class SemanticProductContractTests(unittest.TestCase):
             return real_import(name, *args, **kwargs)
 
         with patch("builtins.__import__", side_effect=guarded_import):
-            response = SemanticRuntime(_BundleRuntime(spec), objects).execute(
-                spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext()
-            )
+            response = SemanticRuntime(_BundleRuntime(spec), objects).execute(spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext())
         self.assertEqual(response.note, "deep_semantic_audit")
         self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
         self.assertTrue(any(key.endswith("/bundle.json") for key in objects.writes))

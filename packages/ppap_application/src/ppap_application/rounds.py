@@ -1,4 +1,5 @@
 """Application orchestration for a Standard audit round."""
+
 from __future__ import annotations
 
 import tempfile
@@ -17,7 +18,7 @@ from ppap_core.audits import (
 )
 from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
 from ppap_core.rule_coverage import COVERAGE_MAPPED, MODE_RULE_ITEMS
-from ppap_core.types import PpapDocumentType
+from ppap_core.types import cross_file_doc_type_name
 
 
 def _declarations(item: RoundInput) -> tuple[tuple[str, str], ...]:
@@ -46,9 +47,7 @@ def builtin_rule_input(item: RoundInput) -> RuleInput:
         if not declarations:
             raise ValueError("builtin_rules_unavailable")
         builtin_rules = [
-            {"id": str(index), "category": description, "priority": "P0",
-             "rule_to_check": description, "type_of_rule": "text"}
-            for index, (_method, description) in enumerate(declarations, 1)
+            {"id": str(index), "category": description, "priority": "P0", "rule_to_check": description, "type_of_rule": "text"} for index, (_method, description) in enumerate(declarations, 1)
         ]
     return RuleInput(
         rule_id=item.rule_version_id,
@@ -70,15 +69,11 @@ def _audit_input(item: RoundInput, path: str) -> AuditInput:
     )
 
 
-def _doc_type_key(audit: AuditInput) -> str | None:
-    inferred = PpapDocumentType.infer_from_signals(
-        filename=audit.file_metadata.get("original_filename", ""),
-        minimum_score=8,
-        min_margin=4,
-    )
-    if inferred is None or inferred is PpapDocumentType.UNKNOWN:
-        return None
-    return inferred.get_type_name()
+def _doc_type_key(audit: AuditInput, rule_type: str | None = None) -> str | None:
+    """Cross-file type uses the shared standard inference steps."""
+    metadata = audit.file_metadata or {}
+    filename = str(metadata.get("original_filename") or "")
+    return cross_file_doc_type_name(filename=filename, content=audit.content or "", rule_type=rule_type)
 
 
 def _write_temp(item: RoundInput, data: bytes) -> str:
@@ -101,9 +96,7 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
     for item in targets:
         execution = _rule_execution(item)
         needs_engine = item.rule_kind() != KIND_PRESENCE and (
-            not execution
-            or execution.get("mode") != MODE_RULE_ITEMS
-            or any(row.get("coverage") == COVERAGE_MAPPED for row in execution.get("items") or [])
+            not execution or execution.get("mode") != MODE_RULE_ITEMS or any(row.get("coverage") == COVERAGE_MAPPED for row in execution.get("items") or [])
         )
         if needs_engine:
             rules_by_version[item.file_version_id] = builtin_rule_input(item)
@@ -126,11 +119,9 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
             audit = _audit_input(item, path)
             audits_by_version[item.file_version_id] = audit
             by_audit_id[item.file_version_id] = audit
-            if item.role == TARGET:
-                rule = rules_by_version.get(item.file_version_id)
-                type_key = rule.type if rule is not None else (item.rule_body or {}).get("type")
-            else:
-                type_key = _doc_type_key(audit)
+            rule = rules_by_version.get(item.file_version_id)
+            rule_type = rule.type if rule is not None else (item.rule_body or {}).get("type")
+            type_key = _doc_type_key(audit, rule_type)
             if type_key:
                 by_doc_type.setdefault(type_key, []).append(audit)
             if item.role != TARGET:
@@ -159,10 +150,7 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
             audit = audits_by_version[target.file_version_id]
             if execution and execution.get("mode") == MODE_RULE_ITEMS:
                 mapped_items = [row for row in execution.get("items") or [] if row.get("coverage") == COVERAGE_MAPPED]
-                results = (
-                    run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
-                    if mapped_items else []
-                )
+                results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context) if mapped_items else []
                 projected = findings_from_rule_execution(results, target=target, execution=execution)
             else:
                 results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)

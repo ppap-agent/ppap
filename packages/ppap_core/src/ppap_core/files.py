@@ -1,4 +1,5 @@
 """File version identity and remote-fetch SSRF bounds. SHA-256 is content identity, not S3 ETag."""
+
 from __future__ import annotations
 
 import hashlib
@@ -70,20 +71,13 @@ def attachment_content_disposition(filename: str) -> str:
     except ValueError:
         name = "download"
     encoded = quote(name, safe=_ATTR_CHAR)
-    return f'attachment; filename="{_ascii_filename_fallback(name)}"; filename*=UTF-8\'\'{encoded}'
+    return f"attachment; filename=\"{_ascii_filename_fallback(name)}\"; filename*=UTF-8''{encoded}"
 
 
 def _ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if ip.version == 6 and ip.ipv4_mapped is not None:
         return _ip_blocked(ip.ipv4_mapped)
-    return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
 
 
 def _literal_host_blocked(hostname: str) -> bool:

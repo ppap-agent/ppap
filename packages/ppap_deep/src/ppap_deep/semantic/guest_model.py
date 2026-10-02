@@ -137,8 +137,10 @@ class GrokRunner:
         if output_contract is not None:
             (work / "output_schema.json").write_text(json.dumps(output_contract))
             prompt += "\nThe exact output contract is in output_schema.json in this working directory. Read it before constructing the result. "
-        (work / "prompt.txt").write_text(prompt + "\nUse tool calls to read inputs and finish the work before the final response. "
-                                        "The final response ends this stage: return it only after completing the requested work, never to announce progress or intent.")
+        (work / "prompt.txt").write_text(
+            prompt + "\nUse tool calls to read inputs and finish the work before the final response. "
+            "The final response ends this stage: return it only after completing the requested work, never to announce progress or intent."
+        )
         command = [
             "/usr/local/bin/grok",
             "--agent",

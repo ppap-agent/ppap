@@ -1,33 +1,26 @@
 """List related Feishu files from the current cloud document. Mocked HTTP only."""
+
 from __future__ import annotations
 
 import json
 import os
 import unittest
-
-import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.feishu import UserTokens
 from ppap_core.feishu_drive import extract_doc_token_from_url, list_doc_links
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
-from ppap_api import create_app
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -95,9 +88,7 @@ class _DocLinksMock:
                                 {
                                     "text_run": {
                                         "content": "see file",
-                                        "text_element_style": {
-                                            "link": {"url": "https://foo.feishu.cn/file/file-token"}
-                                        },
+                                        "text_element_style": {"link": {"url": "https://foo.feishu.cn/file/file-token"}},
                                     }
                                 }
                             ]

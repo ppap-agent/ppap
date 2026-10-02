@@ -1,4 +1,5 @@
 """Responses-compatible URL helpers. No Chat Completions fallback. No OPENAI_* names."""
+
 from __future__ import annotations
 
 from ppap_core.settings import Settings

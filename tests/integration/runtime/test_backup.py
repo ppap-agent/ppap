@@ -1,4 +1,5 @@
 """Live backup/restore against a docker compose production stack."""
+
 from __future__ import annotations
 
 import json
@@ -111,10 +112,7 @@ def _backup(dest: Path) -> None:
 def _restore(backup: Path) -> None:
     _pause_app()
     try:
-        terminate = (
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            "WHERE datname = 'ppap' AND pid <> pg_backend_pid();"
-        )
+        terminate = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'ppap' AND pid <> pg_backend_pid();"
         _require_ok(
             "terminate",
             _compose("exec", "-T", "postgres", "sh", "-c", f'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -c "{terminate}"'),

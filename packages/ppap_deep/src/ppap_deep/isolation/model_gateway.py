@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -70,16 +70,16 @@ class Grants:
     def issue(self, execution_id: UUID) -> str:
         with self.lock:
             now = time.monotonic()
-            self.leases = {
-                key: lease for key, lease in self.leases.items()
-                if lease.expires > now and lease.execution_id != execution_id
-            }
+            self.leases = {key: lease for key, lease in self.leases.items() if lease.expires > now and lease.execution_id != execution_id}
             if len(self.leases) >= self.capacity:
                 raise ValueError("Gateway capacity exceeded")
             token = secrets.token_urlsafe(48)
             self.leases[hashlib.sha256(token.encode()).hexdigest()] = Lease(
-                execution_id, now + self.ttl, self.requests,
-                self.input_budget, self.output_budget,
+                execution_id,
+                now + self.ttl,
+                self.requests,
+                self.input_budget,
+                self.output_budget,
             )
             return token
 
@@ -121,8 +121,8 @@ class Grants:
                 raise ValueError("No pending inference")
             lease.in_flight = False
             lease.completed_requests += 1
-            lease.input_tokens += counts[0]
-            lease.output_tokens += counts[1]
+            lease.input_tokens += cast(int, counts[0])
+            lease.output_tokens += cast(int, counts[1])
             if lease.input_tokens > lease.input_budget or lease.output_tokens > lease.output_budget:
                 # Usage is confirmed, not uncertain. The one in-flight request
                 # may cross the input threshold because encrypted reasoning
@@ -247,7 +247,8 @@ class Handler(BaseHTTPRequestHandler):
             lease = self.server.grants.authorize(authorization[7:], body, len(raw))
             url = self.server.upstream
             phase = "provider_request"
-            upstream = http.client.HTTPSConnection(str(url.hostname), port=url.port or 443, timeout=min(300, max(1, lease.expires - time.monotonic())))
+            # The 3.12 typeshed types this port as str. Runtime still needs an int.
+            upstream = http.client.HTTPSConnection(str(url.hostname), port=cast(Any, url.port or 443), timeout=min(300, max(1, lease.expires - time.monotonic())))
             upstream.request("POST", url.path.rstrip("/") + "/responses", json.dumps(body), {"Authorization": "Bearer " + self.server.provider_key, "Content-Type": "application/json"})
             phase = "provider_headers"
             response = upstream.getresponse()
@@ -283,10 +284,19 @@ class Handler(BaseHTTPRequestHandler):
                         if line.startswith(b"data: ") and line[6:].strip() != b"[DONE]":
                             event = json.loads(line[6:])
                             kind = event.get("type")
-                            last_event = kind if kind in {
-                                "response.created", "response.in_progress", "response.completed",
-                                "response.failed", "response.incomplete", "error",
-                            } else "other"
+                            last_event = (
+                                kind
+                                if kind
+                                in {
+                                    "response.created",
+                                    "response.in_progress",
+                                    "response.completed",
+                                    "response.failed",
+                                    "response.incomplete",
+                                    "error",
+                                }
+                                else "other"
+                            )
                             if event.get("type") == "response.completed":
                                 if provider_usage is not None:
                                     raise ValueError("Duplicate provider completion")
@@ -330,10 +340,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(403, "Execution request rejected")
         finally:
             if lease is not None and not recorded:
-                self.server.grants.finish_unknown(lease, {
-                    "phase": phase, "error_type": error_type, "response_bytes": total,
-                    "last_event": last_event, "provider_status": provider_status,
-                })
+                self.server.grants.finish_unknown(
+                    lease,
+                    {
+                        "phase": phase,
+                        "error_type": error_type,
+                        "response_bytes": total,
+                        "last_event": last_event,
+                        "provider_status": provider_status,
+                    },
+                )
             self.close_connection = True
             if upstream:
                 upstream.close()
@@ -366,8 +382,10 @@ class LocalGateway:
             raise ValueError("Invalid local gateway configuration")
         socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         grants = Grants(
-            model, requests=requests,
-            input_tokens=input_tokens, output_tokens=output_tokens,
+            model,
+            requests=requests,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
         self.http = Gateway(("127.0.0.1", 0), grants, upstream, provider_key)
         try:
@@ -410,8 +428,13 @@ def local_gateway(
 ) -> LocalGateway:
     """Return a context manager for an execution-scoped grant gateway."""
     return LocalGateway(
-        socket_path, upstream=upstream, model=model, provider_key=provider_key,
-        input_tokens=input_tokens, output_tokens=output_tokens, requests=requests,
+        socket_path,
+        upstream=upstream,
+        model=model,
+        provider_key=provider_key,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        requests=requests,
     )
 
 
@@ -430,7 +453,15 @@ class GrantHandler(socketserver.StreamRequestHandler):
             execution_id = UUID(request["execution_id"])
             grants = self.server.grants
             if request["method"] == "issue":
-                result: dict[str, Any] = {"base_url": self.server.base_url, "token": grants.issue(execution_id), "model": grants.model, "max_turns": 64, "max_total_turns": grants.requests, "max_total_tokens": grants.input_budget + grants.output_budget, "wall_seconds": grants.ttl}
+                result: dict[str, Any] = {
+                    "base_url": self.server.base_url,
+                    "token": grants.issue(execution_id),
+                    "model": grants.model,
+                    "max_turns": 64,
+                    "max_total_turns": grants.requests,
+                    "max_total_tokens": grants.input_budget + grants.output_budget,
+                    "wall_seconds": grants.ttl,
+                }  # noqa: E501
             elif request["method"] == "usage":
                 result = grants.usage(execution_id)
             elif request["method"] == "revoke":

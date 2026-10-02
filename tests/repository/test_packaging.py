@@ -1,4 +1,5 @@
 """Fast workspace smoke; clean distribution correctness is validated separately in CI."""
+
 from __future__ import annotations
 
 import os

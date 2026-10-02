@@ -1,4 +1,5 @@
 """Worker-side UDS client. Does not open a Docker socket or accept host commands."""
+
 from __future__ import annotations
 
 import json
@@ -57,8 +58,7 @@ class DeepClient:
         self.socket_path = str(socket_path or "").strip()
         self.timeout = timeout
 
-    def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None,
-                on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
+    def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
         if not self.socket_path:
             raise DeepUnavailable()
         path = Path(self.socket_path)

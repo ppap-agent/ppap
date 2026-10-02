@@ -1,25 +1,23 @@
 """Feishu Drive/Docs import into common file versions. Mocked HTTP only."""
+
 from __future__ import annotations
 
 import json
 import os
 import unittest
-
-import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
-
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.feishu import UserTokens
 from ppap_core.feishu_drive import (
-    FetchPlan,
-    PermanentFailure,
     RETRY_SLEEP_MS,
     Attempt,
+    FetchPlan,
+    PermanentFailure,
     export_tasks_url,
     files_download_url,
     import_drive_material,
@@ -28,16 +26,11 @@ from ppap_core.feishu_drive import (
 from ppap_core.fixtures import RULE_A
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
-from ppap_api import create_app
 from ppap_worker import process_claimed
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -256,9 +249,7 @@ class FeishuImportTests(unittest.TestCase):
 
     def test_fixture_session_cannot_import_without_user_token(self):
         self._login_fixture("alice")
-        response = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
-        )
+        response = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "feishu_user_token_missing")
 
@@ -269,17 +260,13 @@ class FeishuImportTests(unittest.TestCase):
 
     def test_folder_meta_is_rejected(self):
         self._login_feishu_user()
-        response = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "folder-token", "doc_type": "folder"}
-        )
+        response = self.client.post("/integrations/feishu/files/import", json={"file_token": "folder-token", "doc_type": "folder"})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "unsupported_doc_type")
 
     def test_drive_file_import_becomes_common_version_and_round(self):
         self._login_feishu_user("alice")
-        imported = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
-        )
+        imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
         self.assertEqual(imported.status_code, 201)
         version = imported.json()
         self.assertEqual(version["status"], "ready")
@@ -311,9 +298,7 @@ class FeishuImportTests(unittest.TestCase):
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["execution"], "completed")
         original = body["findings"][0]
-        download = self.client.get(
-            f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download"
-        )
+        download = self.client.get(f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download")
         self.assertEqual(download.status_code, 200)
         self.assertEqual(download.content, b"target-bytes")
         self._login_fixture("carol")
@@ -322,9 +307,7 @@ class FeishuImportTests(unittest.TestCase):
 
     def test_sheet_export_import(self):
         self._login_feishu_user("alice")
-        imported = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "sheet-token", "doc_type": "sheet"}
-        )
+        imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "sheet-token", "doc_type": "sheet"})
         self.assertEqual(imported.status_code, 201)
         version = imported.json()
         self.assertEqual(version["original_filename"], "cloud-sheet.xlsx")
@@ -349,19 +332,20 @@ class FeishuImportTests(unittest.TestCase):
 
     def test_imported_targets_and_references_use_common_draft_and_replay(self):
         self._login_feishu_user("alice")
-        target_import = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
-        )
-        reference_import = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "sheet-token", "doc_type": "sheet"}
-        )
+        target_import = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
+        reference_import = self.client.post("/integrations/feishu/files/import", json={"file_token": "sheet-token", "doc_type": "sheet"})
         self.assertEqual(target_import.status_code, 201)
         self.assertEqual(reference_import.status_code, 201)
         draft = self.client.post("/drafts").json()["id"]
-        saved = self.client.put(f"/drafts/{draft}", json={"items": [
-            {"file_version_id": target_import.json()["id"], "role": "target", "rule_version_id": RULE_A},
-            {"file_version_id": reference_import.json()["id"], "role": "reference"},
-        ]})
+        saved = self.client.put(
+            f"/drafts/{draft}",
+            json={
+                "items": [
+                    {"file_version_id": target_import.json()["id"], "role": "target", "rule_version_id": RULE_A},
+                    {"file_version_id": reference_import.json()["id"], "role": "reference"},
+                ]
+            },
+        )
         self.assertEqual(saved.status_code, 200)
         first = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-initiate-1"})
         self.assertEqual(first.status_code, 201)
@@ -371,9 +355,7 @@ class FeishuImportTests(unittest.TestCase):
         self.assertEqual(roles["reference"], "cloud-sheet.xlsx")
         self.assertTrue(any(row["role"] == "target" for row in body["inputs"]))
         downloads_before = self.feishu.drive_attempts
-        export_posts = sum(
-            1 for method, url in self.feishu.calls if method == "POST" and url.endswith("/drive/v1/export_tasks")
-        )
+        export_posts = sum(1 for method, url in self.feishu.calls if method == "POST" and url.endswith("/drive/v1/export_tasks"))
         self.assertEqual(export_posts, 1)
         replay = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-initiate-1"})
         self.assertEqual(replay.status_code, 201)
@@ -387,9 +369,7 @@ class FeishuImportTests(unittest.TestCase):
         done = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(done["execution"], "completed")
         target = next(row for row in done["inputs"] if row["role"] == "target")
-        original = self.client.get(
-            f"/rounds/{round_id}/files/{target['file_id']}/versions/{target['file_version_id']}/download"
-        )
+        original = self.client.get(f"/rounds/{round_id}/files/{target['file_id']}/versions/{target['file_version_id']}/download")
         self.assertEqual(original.content, b"target-bytes")
         self._login_fixture("carol")
         denied = self.client.get(f"/rounds/{round_id}")
@@ -397,22 +377,23 @@ class FeishuImportTests(unittest.TestCase):
 
     def test_rule_required_at_accept_and_user_token_required_for_import(self):
         self._login_feishu_user("alice")
-        imported = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
-        )
+        imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
         self.assertEqual(imported.status_code, 201)
         draft = self.client.post("/drafts").json()["id"]
-        saved = self.client.put(f"/drafts/{draft}", json={"items": [
-            {"file_version_id": imported.json()["id"], "role": "target"},
-        ]})
+        saved = self.client.put(
+            f"/drafts/{draft}",
+            json={
+                "items": [
+                    {"file_version_id": imported.json()["id"], "role": "target"},
+                ]
+            },
+        )
         self.assertEqual(saved.status_code, 200)
         missing_rule = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "k"})
         self.assertEqual(missing_rule.status_code, 400)
         self.assertEqual(missing_rule.json()["error"], "rule_required")
         self._login_fixture("alice")
-        fixture = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
-        )
+        fixture = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
         self.assertEqual(fixture.status_code, 409)
         self.assertEqual(fixture.json()["error"], "feishu_user_token_missing")
 

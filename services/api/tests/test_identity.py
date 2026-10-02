@@ -1,38 +1,32 @@
 """Identity and Feishu OAuth surface. Not an S02 live login proof."""
+
 from __future__ import annotations
 
 import os
 import unittest
-
-import pytest
 from unittest.mock import patch
 
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.feishu import (
     AppMismatch,
     AppTicket,
     Challenge,
     EncryptedEvent,
+    FeishuError,
     UnauthenticatedEvent,
     accept_event,
     parse_event,
     user_info,
-    FeishuError,
 )
 from ppap_core.fixtures import RESOURCE_A, RESOURCE_B, SUBJECTS
 from ppap_core.identity import Principal, Resource, can_read, can_review, identity_key, safe_return_to
 from ppap_core.settings import Settings
-from ppap_api import create_app
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -135,9 +129,12 @@ class FeishuParseTests(unittest.TestCase):
             def get(self, *args, **kwargs):
                 class R:
                     status_code = 200
+
                     def json(self):
                         return {"data": {"email": "a@b.c", "name": "Ada"}}
+
                 return R()
+
         with self.assertRaises(FeishuError):
             user_info(Http(), "token")
 
@@ -200,6 +197,7 @@ class HttpAuthTests(unittest.TestCase):
 
     def test_oauth_state_and_off_origin_return(self):
         from urllib.parse import parse_qs, urlparse
+
         start = self.client.get("/login/feishu?return_to=https://evil.example/x", follow_redirects=False)
         self.assertEqual(start.status_code, 302)
         query = parse_qs(urlparse(start.headers["location"]).query)
@@ -212,12 +210,13 @@ class HttpAuthTests(unittest.TestCase):
 
     def test_report_consent_is_explicit_and_limited_to_document_creation_and_writing(self):
         from urllib.parse import parse_qs, urlparse
-        normal = self.client.get('/login/feishu', follow_redirects=False)
-        self.assertEqual(parse_qs(urlparse(normal.headers['location']).query).get('scope'), ['offline_access'])
-        report = self.client.get('/login/feishu?purpose=report', follow_redirects=False)
-        query = parse_qs(urlparse(report.headers['location']).query)
-        self.assertEqual(query.get('scope'), ['offline_access docx:document:create docx:document:write_only'])
-        self.assertEqual(self.client.get('/login/feishu?purpose=arbitrary', follow_redirects=False).status_code, 400)
+
+        normal = self.client.get("/login/feishu", follow_redirects=False)
+        self.assertEqual(parse_qs(urlparse(normal.headers["location"]).query).get("scope"), ["offline_access"])
+        report = self.client.get("/login/feishu?purpose=report", follow_redirects=False)
+        query = parse_qs(urlparse(report.headers["location"]).query)
+        self.assertEqual(query.get("scope"), ["offline_access docx:document:create docx:document:write_only"])
+        self.assertEqual(self.client.get("/login/feishu?purpose=arbitrary", follow_redirects=False).status_code, 400)
 
     def test_oauth_callback_binds_tenant_subject_not_email(self):
         from urllib.parse import parse_qs, urlparse
@@ -284,9 +283,7 @@ class HttpAuthTests(unittest.TestCase):
     def test_login_disabled_without_feishu_credentials(self):
         with _clean_env(PPAP_BUILD_SHA="a" * 40):
             settings = Settings()
-        client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings))
-        )
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings)))
         self.assertEqual(client.get("/login/feishu").status_code, 409)
 
     def test_unauthenticated_and_unknown_resource(self):
@@ -397,12 +394,12 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["identity"]["subject"], "ou_ada")
         self.assertIn("refresh_token", http.grants)
-        self.assertIn('Max-Age=43200', _done.headers['set-cookie'])
+        self.assertIn("Max-Age=43200", _done.headers["set-cookie"])
         # Rotation keeps the same product session, and a fresh access token
         # does not trigger another provider refresh on the next request.
-        refreshes = http.grants.count('refresh_token')
-        self.assertEqual(client.get('/me', cookies={'ppap_session': raw}).status_code, 200)
-        self.assertEqual(http.grants.count('refresh_token'), refreshes)
+        refreshes = http.grants.count("refresh_token")
+        self.assertEqual(client.get("/me", cookies={"ppap_session": raw}).status_code, 200)
+        self.assertEqual(http.grants.count("refresh_token"), refreshes)
 
     def test_oauth_invalid_refresh_revokes_session(self):
         http = _TokenHttp(expires_in=0, refresh_expires_in=2592000, fail_refresh=True)
@@ -440,7 +437,6 @@ class HttpAuthTests(unittest.TestCase):
         done = client.get("/login/feishu/callback", params={"code": "ok", "state": state}, follow_redirects=False)
         self.assertEqual(done.status_code, 303)
         self.assertEqual(done.headers["location"], dest)
-
 
     def test_allowlist_blocks_unknown_tenant_session(self):
         from urllib.parse import parse_qs, urlparse
@@ -506,9 +502,7 @@ class HttpAuthTests(unittest.TestCase):
             settings = Settings()
         store = self.auth_store(settings)
         store.seed_isolated_dev()
-        client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store, _TokenHttp())
-        )
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store, _TokenHttp()))
         logged = client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(logged.status_code, 200)
         cookie = logged.cookies.get("ppap_session")
@@ -557,27 +551,33 @@ class _TokenHttp:
         if grant == "refresh_token":
             if self.fail_refresh:
                 return _Resp({"code": 99991663, "msg": "invalid refresh token"})
-            return _Resp({
+            return _Resp(
+                {
+                    "code": 0,
+                    "access_token": "u-new",
+                    "refresh_token": "ur-new",
+                    "expires_in": 7200,
+                    "refresh_token_expires_in": self.refresh_expires_in,
+                }
+            )
+        return _Resp(
+            {
                 "code": 0,
-                "access_token": "u-new",
-                "refresh_token": "ur-new",
-                "expires_in": 7200,
+                "access_token": "u-ada",
+                "refresh_token": "ur-ada",
+                "expires_in": self.expires_in,
                 "refresh_token_expires_in": self.refresh_expires_in,
-            })
-        return _Resp({
-            "code": 0,
-            "access_token": "u-ada",
-            "refresh_token": "ur-ada",
-            "expires_in": self.expires_in,
-            "refresh_token_expires_in": self.refresh_expires_in,
-        })
+            }
+        )
 
     def get(self, url, **kwargs):
-        return _Resp({
-            "data": {
-                "tenant_key": "tk-live",
-                "open_id": "ou_ada",
-                "name": "Ada",
-                "email": "hidden@example.com",
+        return _Resp(
+            {
+                "data": {
+                    "tenant_key": "tk-live",
+                    "open_id": "ou_ada",
+                    "name": "Ada",
+                    "email": "hidden@example.com",
+                }
             }
-        })
+        )

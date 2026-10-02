@@ -1,4 +1,5 @@
 """Settings and HTTP surface tests. They do not prove Live Stories."""
+
 from __future__ import annotations
 
 import os
@@ -6,24 +7,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[3]
-
-from pydantic import ValidationError
-
+from dotenv import dotenv_values
+from ppap_api import create_app
 from ppap_core.capabilities import report
 from ppap_core.llm import llm_configured, responses_url
-from dotenv import dotenv_values
-
 from ppap_core.settings import ISOLATED_DEV_LLM_BASE_URL, ISOLATED_DEV_LLM_MODEL, ISOLATED_DEV_SECRET, Settings
-from ppap_api import create_app
+from pydantic import ValidationError
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 

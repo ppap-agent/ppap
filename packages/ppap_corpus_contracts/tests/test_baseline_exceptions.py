@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from ppap_corpus_contracts.baseline_exceptions import (
-    B,
     BASELINE_RULE_BEHAVIORS,
+    B,
     ObservedRuleOutcome,
     behavior_matches,
     classify_v2_baseline_outcomes,
@@ -68,9 +66,7 @@ def test_python_exception_text_is_not_diagnostic_authority() -> None:
     second = outcome_from_agent_rule(rule_index=2, agent_rule_count=5, raised=TypeError("y"))
     assert first.semantic == second.semantic
     assert first.diagnostic_code is None
-    new, drifted, stale = classify_v2_baseline_outcomes(
-        "a.pdf", "pdf", {2: _obs("PASS", second)}, known
-    )
+    new, drifted, stale = classify_v2_baseline_outcomes("a.pdf", "pdf", {2: _obs("PASS", second)}, known)
     assert new == frozenset()
     assert drifted == frozenset()
     assert stale == frozenset()

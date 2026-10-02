@@ -3,6 +3,7 @@
 Log records are identifiers and outcome names only. Tokens and customer content
 do not belong in this stream.
 """
+
 from __future__ import annotations
 
 import json
@@ -90,15 +91,16 @@ class JsonFormatter(logging.Formatter):
 class RedactQuery(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         # Uvicorn access logs otherwise include signed file capabilities and OAuth codes.
-        if isinstance(record.args, tuple) and len(record.args) == 5 and isinstance(record.args[2], str):
+        query = record.args[2] if isinstance(record.args, tuple) else None
+        if isinstance(record.args, tuple) and len(record.args) == 5 and isinstance(query, str):
             values = list(record.args)
-            values[2] = values[2].split('?', 1)[0]
+            values[2] = query.split("?", 1)[0]
             record.args = tuple(values)
         return True
 
 
 def configure(settings: Any) -> None:
-    access = logging.getLogger('uvicorn.access')
+    access = logging.getLogger("uvicorn.access")
     if not any(isinstance(item, RedactQuery) for item in access.filters):
         access.addFilter(RedactQuery())
     handler = logging.StreamHandler(sys.stderr)

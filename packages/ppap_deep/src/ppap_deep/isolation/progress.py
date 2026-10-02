@@ -16,10 +16,6 @@ class Progress(BaseModel):
 
     @model_validator(mode="after")
     def verified_only_after_validation(self) -> Progress:
-        if self.verified_clauses is not None and (
-            self.phase != "validating"
-            or self.total_clauses is None
-            or self.verified_clauses > self.total_clauses
-        ):
+        if self.verified_clauses is not None and (self.phase != "validating" or self.total_clauses is None or self.verified_clauses > self.total_clauses):
             raise ValueError("Invalid verified progress")
         return self

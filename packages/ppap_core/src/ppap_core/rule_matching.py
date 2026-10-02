@@ -426,7 +426,8 @@ class RuleMatchingAIService:
                 temperature=0.0,
                 json_format=True,
                 operation="rule_matching",
-                request_timeout=120, retry_limit=0,
+                request_timeout=120,
+                retry_limit=0,
             )
 
             if response:
@@ -442,7 +443,7 @@ class RuleMatchingAIService:
 
             return None
 
-        except Exception as e:
+        except Exception:
             raise ValueError("rule_matching_failed") from None
 
 

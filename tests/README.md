@@ -24,6 +24,9 @@ Repository contract:
 uv sync --locked
 git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
 uv run --no-sync python -m compileall -q packages services tests
+uv run --no-sync ruff check packages services tests scripts
+uv run --no-sync ruff format --check packages services tests scripts
+uv run --no-sync mypy --no-incremental
 node deploy/insforge/verify-config.mjs
 docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null

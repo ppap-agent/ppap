@@ -1,7 +1,11 @@
 """Thin adapter: current RoundWork ↔ bounded Deep spec, Deep result ↔ product findings."""
+
 from __future__ import annotations
 
+from typing import Literal, cast
+
 from ppap_core.audits import REFERENCE, TARGET, RoundWork
+
 from ppap_deep.client import DeepError
 from ppap_deep.protocol import DeepCoverage, DeepFinding, ExecuteRequest, ExecuteResponse, FrozenFile
 
@@ -17,7 +21,7 @@ def spec_from_work(work: RoundWork, executor: str, executor_revision: str, proto
             FrozenFile(
                 file_version_id=item.file_version_id,
                 file_id=item.file_id,
-                role=TARGET if item.role == TARGET else REFERENCE,
+                role=cast(Literal["target", "reference"], TARGET if item.role == TARGET else REFERENCE),
                 filename=item.filename,
                 sha256=item.sha256 or "",
                 content_type=item.content_type or "",

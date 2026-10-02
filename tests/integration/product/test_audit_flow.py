@@ -1,41 +1,38 @@
 """Product audit draft/round/review loop. Does not copy checker corpus into E2E."""
+
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
 import unittest
-
-import pytest
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
-
+import pytest
 from fastapi.testclient import TestClient
-
-from ppap_core.audits import evaluate_round
+from ppap_api import create_app
 from ppap_core.fixtures import RULE_A, USER_BOB
 from ppap_core.settings import Settings
-from ppap_api import create_app
 from ppap_worker import process_claimed
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def rule_body():
     return {
-        "kind": "engine", "rule_profile": "v3", "type": "控制计划",
-        "customers": ["测试客户"], "models": ["M1"], "parts": ["P1"],
+        "kind": "engine",
+        "rule_profile": "v3",
+        "type": "控制计划",
+        "customers": ["测试客户"],
+        "models": ["M1"],
+        "parts": ["P1"],
         "rules": [{"id": "1", "category": "基本信息", "priority": "P0", "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
     }
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -51,9 +48,7 @@ class AuditFlowTests(unittest.TestCase):
         self.settings = Settings()
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
-        self.client = TestClient(
-            create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store)
-        )
+        self.client = TestClient(create_app(self.settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.store))
 
     def tearDown(self):
         self._env.stop()
@@ -73,11 +68,7 @@ class AuditFlowTests(unittest.TestCase):
 
     def _upload(self, name: str, body: bytes, file_id: str | None = None) -> dict:
         meta = {"original_filename": name, "content_type": "application/octet-stream", "byte_size": len(body)}
-        created = (
-            self.client.post(f"/files/{file_id}/versions", json=meta)
-            if file_id
-            else self.client.post("/files", json=meta)
-        )
+        created = self.client.post(f"/files/{file_id}/versions", json=meta) if file_id else self.client.post("/files", json=meta)
         self.assertEqual(created.status_code, 201)
         file_id, vid = created.json()["file_id"], created.json()["id"]
         self.assertEqual(self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=body).status_code, 200)
@@ -91,30 +82,32 @@ class AuditFlowTests(unittest.TestCase):
         process_claimed(self.store, claimed, "test-worker")
 
     def test_reaudit_draft_acceptance_retains_authorized_predecessor(self):
-        self._login('alice')
-        target = self._upload('report.xlsx', b'target-bytes')
+        self._login("alice")
+        target = self._upload("report.xlsx", b"target-bytes")
+
         def draft():
-            ident = self.client.post('/drafts').json()['id']
-            self.client.put(f'/drafts/{ident}', json={'items':[{'file_version_id':target['id'],'role':'target','rule_version_id':RULE_A}]})
+            ident = self.client.post("/drafts").json()["id"]
+            self.client.put(f"/drafts/{ident}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
             return ident
+
         first_draft = draft()
-        first = self.client.post(f'/drafts/{first_draft}/accept', json={'idempotency_key':'first-report'}).json()
+        first = self.client.post(f"/drafts/{first_draft}/accept", json={"idempotency_key": "first-report"}).json()
         second_draft = draft()
-        payload = {'idempotency_key':'second-report','predecessor_id':first['id']}
-        second = self.client.post(f'/drafts/{second_draft}/accept', json=payload)
+        payload = {"idempotency_key": "second-report", "predecessor_id": first["id"]}
+        second = self.client.post(f"/drafts/{second_draft}/accept", json=payload)
         self.assertEqual(second.status_code, 201)
-        self.assertEqual(second.json()['predecessor_id'], first['id'])
-        self.assertEqual(self.client.get(f'/drafts/{second_draft}').json()['status'], 'accepted')
-        self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json=payload).json()['id'], second.json()['id'])
-        self.assertEqual(self.client.post(f'/drafts/{second_draft}/accept', json={'idempotency_key':'second-report'}).status_code, 409)
+        self.assertEqual(second.json()["predecessor_id"], first["id"])
+        self.assertEqual(self.client.get(f"/drafts/{second_draft}").json()["status"], "accepted")
+        self.assertEqual(self.client.post(f"/drafts/{second_draft}/accept", json=payload).json()["id"], second.json()["id"])
+        self.assertEqual(self.client.post(f"/drafts/{second_draft}/accept", json={"idempotency_key": "second-report"}).status_code, 409)
         third_draft = draft()
         self._execute(
             "DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
             (first["id"], self.store.principal_for_fixture("alice").user_id),
         )
-        third = self.client.post(f'/drafts/{third_draft}/accept', json={'idempotency_key':'third-report','predecessor_id':first['id']})
+        third = self.client.post(f"/drafts/{third_draft}/accept", json={"idempotency_key": "third-report", "predecessor_id": first["id"]})
         self.assertEqual(third.status_code, 201)
-        self.assertEqual(third.json()['predecessor_id'], first['id'])
+        self.assertEqual(third.json()["predecessor_id"], first["id"])
 
     def test_draft_does_not_create_a_round(self):
         self._login("alice")
@@ -177,9 +170,7 @@ class AuditFlowTests(unittest.TestCase):
         self.assertFalse(body["coverage"]["locator_gap"])
         self.assertTrue(any(row["locator"] and row["locator"]["kind"] == "file_version" for row in body["findings"]))
         original = body["findings"][0]
-        download = self.client.get(
-            f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download"
-        )
+        download = self.client.get(f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download")
         self.assertIn(download.content, {b"target-bytes", b"reference-bytes"})
 
     def test_cross_tenant_and_review_permission(self):
@@ -201,9 +192,7 @@ class AuditFlowTests(unittest.TestCase):
         visible = self.client.get(f"/rounds/{round_id}")
         self.assertEqual(visible.status_code, 200)
         finding = visible.json()["findings"][0]
-        original = self.client.get(
-            f"/rounds/{round_id}/files/{finding['locator']['file_id']}/versions/{finding['locator']['file_version_id']}/download"
-        )
+        original = self.client.get(f"/rounds/{round_id}/files/{finding['locator']['file_id']}/versions/{finding['locator']['file_version_id']}/download")
         self.assertEqual(original.status_code, 200)
         self.assertEqual(original.content, b"secret-bytes")
         reviewed = self.client.put(
@@ -213,10 +202,12 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(reviewed.status_code, 200)
         self.assertEqual(reviewed.json()["findings"][0]["review"]["judgment"], "同意")
         self.assertEqual(
-            str(self._scalar(
-                "SELECT user_id FROM product.reviews WHERE round_id = %s AND item_key = %s",
-                (round_id, finding["item_key"]),
-            )),
+            str(
+                self._scalar(
+                    "SELECT user_id FROM product.reviews WHERE round_id = %s AND item_key = %s",
+                    (round_id, finding["item_key"]),
+                )
+            ),
             USER_BOB,
         )
 
@@ -248,15 +239,15 @@ class AuditFlowTests(unittest.TestCase):
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rev"}).json()["id"]
         self._finish_worker()
         finding = self.client.get(f"/rounds/{round_id}").json()["findings"][0]
-        self.assertEqual([row['id'] for row in self.client.get('/rounds?unreviewed=true').json()['rounds']], [round_id])
+        self.assertEqual([row["id"] for row in self.client.get("/rounds?unreviewed=true").json()["rounds"]], [round_id])
         machine = finding["status"]
         saved = self.client.put(
             f"/rounds/{round_id}/reviews",
             json={"item_key": finding["item_key"], "judgment": "需修改", "rationale": "字段不清", "next_step": "补传", "version": 0},
         )
         self.assertEqual(saved.status_code, 200)
-        self.assertEqual(self.client.get('/rounds?unreviewed=true').json()['rounds'], [])
-        self.assertEqual(len(self.client.get('/rounds').json()['rounds']), 1)
+        self.assertEqual(self.client.get("/rounds?unreviewed=true").json()["rounds"], [])
+        self.assertEqual(len(self.client.get("/rounds").json()["rounds"]), 1)
         again = saved.json()["findings"][0]
         self.assertEqual(again["status"], machine)
         self.assertEqual(again["review"]["judgment"], "需修改")
@@ -311,20 +302,14 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(old["findings"][0]["review"]["judgment"], "旧复核")
         self.assertEqual(new["predecessor_id"], old_id)
         self.assertIsNone(new["findings"][0]["review"])
-        old_bytes = self.client.get(
-            f"/rounds/{old_id}/files/{first['file_id']}/versions/{first['id']}/download"
-        )
-        new_bytes = self.client.get(
-            f"/rounds/{new_id}/files/{second['file_id']}/versions/{second['id']}/download"
-        )
+        old_bytes = self.client.get(f"/rounds/{old_id}/files/{first['file_id']}/versions/{first['id']}/download")
+        new_bytes = self.client.get(f"/rounds/{new_id}/files/{second['file_id']}/versions/{second['id']}/download")
         self.assertEqual(old_bytes.content, b"version-one")
         self.assertEqual(new_bytes.content, b"version-two")
 
     def test_staging_cannot_be_accepted(self):
         self._login("alice")
-        created = self.client.post(
-            "/files", json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": 4}
-        )
+        created = self.client.post("/files", json={"original_filename": "a.bin", "content_type": "application/octet-stream", "byte_size": 4})
         file_id, vid = created.json()["file_id"], created.json()["id"]
         self.client.put(f"/files/{file_id}/versions/{vid}/blob", content=b"wait")
         draft = self.client.post("/drafts").json()["id"]
@@ -479,11 +464,10 @@ class AuditFlowTests(unittest.TestCase):
         bob_list = self.client.get("/rounds").json()["rounds"]
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
-
     def test_selected_rule_items_are_frozen_and_cover_unchecked(self):
+        from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
         from ppap_excel_audit_engine import app_runtime
         from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
-        from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 
         self._login("alice")
         source = self._upload("rules.json", b"{}")
@@ -512,9 +496,16 @@ class AuditFlowTests(unittest.TestCase):
         def fake_run(audit, rule, group_context=None):
             return [
                 AuditResultItem(
-                    status="PASS", classification="规则", item=row["rule_to_check"], priority="P0", suggestions="",
+                    status="PASS",
+                    classification="规则",
+                    item=row["rule_to_check"],
+                    priority="P0",
+                    suggestions="",
                     evidence=AuditEvidence(
-                        required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                        required="structure",
+                        used="structure",
+                        source_format="xlsx",
+                        prepared_format="xlsx",
                         sources=(EvidenceSource(kind="structure", locator="B2"),),
                     ),
                 )
@@ -537,25 +528,44 @@ class AuditFlowTests(unittest.TestCase):
 
 
 class PresenceEvaluationTests(unittest.TestCase):
-
     def test_presence_does_not_import_engine(self):
         # Engine tests can run first in discovery. Verify lazy imports in a fresh interpreter.
-        result = subprocess.run([sys.executable, "-c", """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
 import sys
 from ppap_core.audits import RoundInput, RoundWork, evaluate_round
 work = RoundWork('r1', 't1', [RoundInput('target', 'f1', 'v1', 'a.xlsx', 'ready',
     rule_version_id='rule-1', rule_title='资料就绪', rule_body={'kind': 'presence'})])
 assert evaluate_round(work)['findings'][0]['status'] == 'PASS'
 assert 'ppap_excel_audit_engine' not in sys.modules
-"""], cwd=ROOT, capture_output=True, text=True, timeout=15)
+""",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_round_payload_does_not_import_engine(self):
-        result = subprocess.run([sys.executable, "-c", """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
 import sys
 from ppap_worker import run_claimed_job
 result = run_claimed_job("audit", {"round_id": "abc"})
 assert result["note"] == "round_audit"
 assert "ppap_excel_audit_engine.app_runtime" not in sys.modules
-"""], cwd=ROOT, capture_output=True, text=True, timeout=15)
+""",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)

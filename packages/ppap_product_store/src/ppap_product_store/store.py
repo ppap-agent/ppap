@@ -2,23 +2,19 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 import psycopg
-from psycopg.errors import UniqueViolation
-from psycopg.rows import dict_row
-
-from psycopg.types.json import Jsonb
-
 from ppap_core.audits import (
     ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
-    ClaimedJob,
     DRAFT_ACCEPTED,
     DRAFT_OPEN,
     EXEC_COMPLETED,
     EXEC_FAILED,
     EXEC_QUEUED,
     EXEC_RUNNING,
+    ClaimedJob,
     RoundInput,
     RoundWork,
     job_payload,
@@ -30,6 +26,8 @@ from ppap_core.audits import (
     require_targets,
 )
 from ppap_core.db import connect
+from ppap_core.feishu import UserTokens
+from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.files import (
     FAILED,
     MAX_UPLOAD_BYTES,
@@ -57,8 +55,6 @@ from ppap_core.fixtures import (
     USER_BOB,
     USER_CAROL,
 )
-from ppap_core.feishu import UserTokens
-from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.identity import (
     PROVIDER_FEISHU,
     Principal,
@@ -69,10 +65,13 @@ from ppap_core.identity import (
     new_token,
     token_hash,
 )
+from ppap_core.rules import normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
 from ppap_core.settings import Settings
-from ppap_core.rules import normalize_rule_body, rule_title, rule_parse_request, rule_parse_view
 from ppap_core.storage import S3Objects
 from ppap_core.writeback_targets import normalize_external_ref, public_target
+from psycopg.errors import UniqueViolation
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 
 def _now() -> datetime:
@@ -180,9 +179,7 @@ class AuthStore:
         return str(row[0]) if row and row[0] else None
 
     def upsert_feishu_identity(self, tenant_key: str, subject: str, display_name: str = "") -> Principal:
-        provider, app_id, tenant_key, subject = identity_key(
-            PROVIDER_FEISHU, self.settings.feishu_app_id, tenant_key, subject
-        )
+        provider, app_id, tenant_key, subject = identity_key(PROVIDER_FEISHU, self.settings.feishu_app_id, tenant_key, subject)
         for _ in range(3):
             try:
                 return self._upsert_feishu_identity_once(provider, app_id, tenant_key, subject, display_name)
@@ -190,9 +187,7 @@ class AuthStore:
                 continue
         raise RuntimeError("identity_upsert_conflict")
 
-    def _upsert_feishu_identity_once(
-        self, provider: str, app_id: str, tenant_key: str, subject: str, display_name: str
-    ) -> Principal:
+    def _upsert_feishu_identity_once(self, provider: str, app_id: str, tenant_key: str, subject: str, display_name: str) -> Principal:
         with self._conn() as conn:
             with conn.transaction():
                 existing = conn.execute(
@@ -209,18 +204,19 @@ class AuthStore:
                 if existing:
                     user_id, tenant_id, role, name = existing
                     return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, role, name)
-                tenant_id = conn.execute(
-                    """
+                tenant_id = cast(
+                    tuple[Any, ...],
+                    conn.execute(
+                        """
                     INSERT INTO product.tenants (id, provider, external_key, display_name)
                     VALUES (gen_random_uuid(), %s, %s, %s)
                     ON CONFLICT (provider, external_key) DO UPDATE SET display_name = EXCLUDED.display_name
                     RETURNING id
                     """,
-                    (provider, tenant_key, "feishu:" + tenant_key),
-                ).fetchone()[0]
-                user_id = conn.execute(
-                    "INSERT INTO product.users (id) VALUES (gen_random_uuid()) RETURNING id"
-                ).fetchone()[0]
+                        (provider, tenant_key, "feishu:" + tenant_key),
+                    ).fetchone(),
+                )[0]
+                user_id = cast(tuple[Any, ...], conn.execute("INSERT INTO product.users (id) VALUES (gen_random_uuid()) RETURNING id").fetchone())[0]
                 conn.execute(
                     """
                     INSERT INTO product.identities (id, user_id, provider, app_id, tenant_key, subject, display_name)
@@ -236,9 +232,7 @@ class AuthStore:
                     """,
                     (user_id, tenant_id),
                 )
-                return Principal(
-                    str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, "member", display_name
-                )
+                return Principal(str(user_id), str(tenant_id), provider, app_id, tenant_key, subject, "member", display_name)
 
     def create_session(self, principal: Principal, tokens: UserTokens | None = None, ttl_seconds: int = 43200) -> str:
         raw = new_token()
@@ -264,17 +258,25 @@ class AuthStore:
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    token_hash(raw), principal.user_id, principal.tenant_id, expires_at,
-                    access_token, refresh_token, access_expires_at, refresh_expires_at,
+                    token_hash(raw),
+                    principal.user_id,
+                    principal.tenant_id,
+                    expires_at,
+                    access_token,
+                    refresh_token,
+                    access_expires_at,
+                    refresh_expires_at,
                 ),
             )
         return raw
 
     def load_session(self, raw: str) -> Session | None:
         with self._conn() as conn:
-            conn.row_factory = dict_row
-            row = conn.execute(
-                """
+            conn.row_factory = cast(Any, dict_row)
+            session_row = cast(
+                dict[str, Any] | None,
+                conn.execute(
+                    """
                 SELECT s.user_id, s.tenant_id, s.expires_at, s.access_token, s.refresh_token,
                        s.access_expires_at, s.refresh_expires_at,
                        i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
@@ -286,27 +288,28 @@ class AuthStore:
                 WHERE s.token_hash = %s AND s.revoked_at IS NULL AND s.expires_at > now()
                 LIMIT 1
                 """,
-                (token_hash(raw),),
-            ).fetchone()
-        if not row:
+                    (token_hash(raw),),
+                ).fetchone(),
+            )
+        if not session_row:
             return None
         principal = Principal(
-            str(row["user_id"]),
-            str(row["tenant_id"]),
-            row["provider"],
-            row["app_id"],
-            row["tenant_key"],
-            row["subject"],
-            row["role"],
-            row["display_name"],
+            str(session_row["user_id"]),
+            str(session_row["tenant_id"]),
+            session_row["provider"],
+            session_row["app_id"],
+            session_row["tenant_key"],
+            session_row["subject"],
+            session_row["role"],
+            session_row["display_name"],
         )
         return Session(
             principal,
-            row["expires_at"],
-            row["access_token"] or "",
-            row["refresh_token"] or "",
-            row["access_expires_at"],
-            row["refresh_expires_at"],
+            session_row["expires_at"],
+            session_row["access_token"] or "",
+            session_row["refresh_token"] or "",
+            session_row["access_expires_at"],
+            session_row["refresh_expires_at"],
         )
 
     def principal_from_token(self, raw: str) -> Principal | None:
@@ -367,8 +370,7 @@ class AuthStore:
                     VALUES (%s, %s, %s, %s), (%s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                     """,
-                    (TENANT_A, PROVIDER_FEISHU, "isolated-dev-a", "isolated-dev-a",
-                     TENANT_B, PROVIDER_FEISHU, "isolated-dev-b", "isolated-dev-b"),
+                    (TENANT_A, PROVIDER_FEISHU, "isolated-dev-a", "isolated-dev-a", TENANT_B, PROVIDER_FEISHU, "isolated-dev-b", "isolated-dev-b"),
                 )
                 for user_id in (USER_ALICE, USER_BOB, USER_CAROL):
                     conn.execute(
@@ -410,9 +412,16 @@ class AuthStore:
                     ON CONFLICT DO NOTHING
                     """,
                     (
-                        RESOURCE_A, USER_ALICE, RESOURCE_A, USER_ALICE,
-                        RESOURCE_A, USER_BOB,
-                        RESOURCE_B, USER_CAROL, RESOURCE_B, USER_CAROL,
+                        RESOURCE_A,
+                        USER_ALICE,
+                        RESOURCE_A,
+                        USER_ALICE,
+                        RESOURCE_A,
+                        USER_BOB,
+                        RESOURCE_B,
+                        USER_CAROL,
+                        RESOURCE_B,
+                        USER_CAROL,
                     ),
                 )
                 conn.execute(
@@ -422,8 +431,14 @@ class AuthStore:
                     ON CONFLICT (id) DO NOTHING
                     """,
                     (
-                        RULE_A, TENANT_A, "资料就绪", Jsonb(PRESENCE_RULE_BODY),
-                        RULE_B, TENANT_B, "资料就绪", Jsonb(PRESENCE_RULE_BODY),
+                        RULE_A,
+                        TENANT_A,
+                        "资料就绪",
+                        Jsonb(PRESENCE_RULE_BODY),
+                        RULE_B,
+                        TENANT_B,
+                        "资料就绪",
+                        Jsonb(PRESENCE_RULE_BODY),
                     ),
                 )
 
@@ -657,10 +672,13 @@ class AuthStore:
                     VALUES (%s, %s, %s, %s, 'queued') ON CONFLICT (id) DO NOTHING""",
                     (job_id, principal.tenant_id, kind, Jsonb(payload)),
                 )
-                row = conn.execute(
-                    "SELECT tenant_id, kind, payload, status, result, lease_until < now() FROM engine.jobs WHERE id = %s",
-                    (job_id,),
-                ).fetchone()
+                row = cast(
+                    tuple[Any, ...],
+                    conn.execute(
+                        "SELECT tenant_id, kind, payload, status, result, lease_until < now() FROM engine.jobs WHERE id = %s",
+                        (job_id,),
+                    ).fetchone(),
+                )
                 if str(row[0]) != principal.tenant_id or row[1] != kind:
                     raise KeyError("missing")
                 if row[2] != payload:
@@ -709,12 +727,16 @@ class AuthStore:
         out = []
         for row in rows:
             body = row[2] or {}
-            out.append({
-                "id": str(row[0]), "title": row[1], "kind": str(body.get("kind") or "engine"),
-                "created_at": row[3].isoformat(),
-                "predecessor_id": str(row[4]) if row[4] else None,
-                **{field: body.get(field) for field in ("type", "rule_profile", "customers", "models", "parts")},
-            })
+            out.append(
+                {
+                    "id": str(row[0]),
+                    "title": row[1],
+                    "kind": str(body.get("kind") or "engine"),
+                    "created_at": row[3].isoformat(),
+                    "predecessor_id": str(row[4]) if row[4] else None,
+                    **{field: body.get(field) for field in ("type", "rule_profile", "customers", "models", "parts")},
+                }
+            )
         return out
 
     def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
@@ -735,7 +757,10 @@ class AuthStore:
         if row is None:
             return None
         return {
-            "id": str(row[0]), "title": row[1], "body": row[2], "created_at": row[3].isoformat(),
+            "id": str(row[0]),
+            "title": row[1],
+            "body": row[2],
+            "created_at": row[3].isoformat(),
             "source_file_version_id": str(row[4]) if row[4] else None,
             "source_file_id": str(row[5]) if row[5] else None,
             "predecessor_id": str(row[6]) if row[6] else None,
@@ -759,7 +784,7 @@ class AuthStore:
                     """,
                     (rule_id, principal.tenant_id, title, Jsonb(body), source_file_version_id, predecessor, principal.user_id),
                 )
-        return self.get_rule(principal.tenant_id, rule_id)
+        return cast(dict, self.get_rule(principal.tenant_id, rule_id))
 
     def create_draft(self, principal: Principal, predecessor_id: str | None = None) -> dict:
         if predecessor_id:
@@ -797,10 +822,10 @@ class AuthStore:
                     (draft_id, principal.user_id, draft_id, principal.user_id),
                 )
                 if predecessor_id:
-                    inherited = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
-                    if inherited:
-                        self.save_draft_writeback(conn, draft_id, inherited)
-        return self.get_draft(draft_id)
+                    writeback = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
+                    if writeback:
+                        self.save_draft_writeback(conn, draft_id, writeback)
+        return cast(dict, self.get_draft(draft_id))
 
     def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0) -> list[dict]:
         with self._conn() as conn:
@@ -813,7 +838,7 @@ class AuthStore:
                    ORDER BY d.updated_at DESC, d.id DESC LIMIT %s OFFSET %s""",
                 (principal.tenant_id, DRAFT_OPEN, principal.user_id, limit, offset),
             ).fetchall()
-            return [self._draft_public(conn, row[0]) for row in rows]
+            return [cast(dict, self._draft_public(conn, row[0])) for row in rows]
 
     def get_draft(self, draft_id: str) -> dict | None:
         parsed = _as_uuid(draft_id)
@@ -833,7 +858,11 @@ class AuthStore:
         return ANALYSIS_STANDARD
 
     def save_draft(
-        self, principal: Principal, draft_id: str, items: list[dict] | None, analysis_mode: str | None = None,
+        self,
+        principal: Principal,
+        draft_id: str,
+        items: list[dict] | None,
+        analysis_mode: str | None = None,
         writeback_target=None,
     ) -> dict:
         parsed = _as_uuid(draft_id)
@@ -874,7 +903,7 @@ class AuthStore:
                 if writeback_target is not None:
                     self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
-                return self._draft_public(conn, parsed)
+                return cast(dict, self._draft_public(conn, parsed))
 
     def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
         draft = self.get_draft(draft_id)
@@ -888,13 +917,11 @@ class AuthStore:
             raise KeyError("missing")
         if predecessor_id:
             resource = self.resource(predecessor_id)
-            if resource is None or resource.kind != 'audit_round' or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
-                raise KeyError('missing')
+            if resource is None or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+                raise KeyError("missing")
         with self._conn() as conn:
             with conn.transaction():
-                return self._accept_locked(
-                    conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None
-                )
+                return self._accept_locked(conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None)
 
     def resubmit_round(
         self,
@@ -955,8 +982,7 @@ class AuthStore:
             ).fetchone()
         return ident if row else None
 
-    def settle_report(self, principal: Principal, ident: str, status: str, document_id: str | None = None,
-                      error_code: str | None = None) -> None:
+    def settle_report(self, principal: Principal, ident: str, status: str, document_id: str | None = None, error_code: str | None = None) -> None:
         with self._conn() as conn:
             conn.execute(
                 """UPDATE product.report_exports SET status=%s, document_id=COALESCE(%s,document_id), error_code=%s
@@ -971,8 +997,7 @@ class AuthStore:
         with self._conn() as conn:
             return self._round_public(conn, parsed)
 
-    def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0,
-                    q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
+    def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:
             rows = conn.execute(
@@ -988,7 +1013,7 @@ class AuthStore:
                    ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
                 (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, limit, offset),
             ).fetchall()
-            return [self._round_history(conn, row[0]) for row in rows]
+            return [cast(dict, self._round_history(conn, row[0])) for row in rows]
 
     def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
         rid, fid, vid = _as_uuid(round_id), _as_uuid(file_id), _as_uuid(version_id)
@@ -1008,8 +1033,8 @@ class AuthStore:
         return self._version_from_row(row) if row else None
 
     def round_bundle(self, round_id: str):
-        from zipfile import ZIP_DEFLATED, ZipFile
         import tempfile
+        from zipfile import ZIP_DEFLATED, ZipFile
 
         from ppap_core.bundles import archive_member_names
 
@@ -1045,9 +1070,7 @@ class AuthStore:
 
         return f"ppap-round-{work.round_id[:8]}.zip", chunks()
 
-    def save_review(
-        self, principal: Principal, round_id: str, item_key: str, judgment: str, rationale: str, next_step: str, version: int
-    ) -> dict:
+    def save_review(self, principal: Principal, round_id: str, item_key: str, judgment: str, rationale: str, next_step: str, version: int) -> dict:
         text, why, nxt, seen = normalize_review(judgment, rationale, next_step, version)
         parsed = _as_uuid(round_id)
         key = str(item_key or "").strip()
@@ -1086,7 +1109,7 @@ class AuthStore:
                     ).fetchone()
                     if not row:
                         raise ValueError("review_conflict")
-                return self._round_public(conn, parsed)
+                return cast(dict, self._round_public(conn, parsed))
 
     def round_work(self, round_id: str) -> RoundWork | None:
         parsed = _as_uuid(round_id)
@@ -1157,8 +1180,10 @@ class AuthStore:
                 ).fetchone()
                 if not row:
                     return None
-                updated = conn.execute(
-                    """
+                updated = cast(
+                    tuple[Any, ...],
+                    conn.execute(
+                        """
                     UPDATE engine.jobs
                     SET status = 'leased',
                         attempt = attempt + 1,
@@ -1168,8 +1193,9 @@ class AuthStore:
                     WHERE id = %s
                     RETURNING attempt, payload
                     """,
-                    (worker_ident, row[0]),
-                ).fetchone()
+                        (worker_ident, row[0]),
+                    ).fetchone(),
+                )
                 conn.execute(
                     """
                     INSERT INTO engine.attempts (id, job_id, attempt, worker_id, diagnostic)
@@ -1353,7 +1379,7 @@ class AuthStore:
             execution = None
             if rule and self.rule_execution_factory is not None:
                 execution = self.rule_execution_factory(rule[2], row.get("original_filename") or "")
-            row.update(
+            cast(dict[str, Any], row).update(
                 rule_version_id=str(rule[0]) if rule else None,
                 rule_title=rule[1] if rule else None,
                 rule_body=rule[2] if rule else None,
@@ -1419,13 +1445,9 @@ class AuthStore:
             resource = self.resource(str(existing[0]))
             if resource is None or not can_read(principal, resource, self.grants(str(existing[0]), principal.user_id)):
                 raise KeyError("missing")
-            if (
-                existing[1] != fingerprint
-                or (str(existing[2]) if existing[2] else None) != predecessor_id
-                or existing[3] != analysis_mode
-            ):
+            if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id or existing[3] != analysis_mode:
                 raise ValueError("idempotency_conflict")
-            return self._round_public(conn, str(existing[0]))
+            return cast(dict, self._round_public(conn, str(existing[0])))
         analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
@@ -1445,8 +1467,15 @@ class AuthStore:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                round_id, principal.tenant_id, principal.user_id, source_draft_id, predecessor_id,
-                key, fingerprint, EXEC_QUEUED, analysis_mode,
+                round_id,
+                principal.tenant_id,
+                principal.user_id,
+                source_draft_id,
+                predecessor_id,
+                key,
+                fingerprint,
+                EXEC_QUEUED,
+                analysis_mode,
             ),
         )
         for row in prepared:
@@ -1454,7 +1483,11 @@ class AuthStore:
                 """INSERT INTO product.round_inputs (round_id, file_version_id, role, rule_version_id, rule_title, rule_body, rule_execution)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    round_id, row["file_version_id"], row["role"], row["rule_version_id"], row["rule_title"],
+                    round_id,
+                    row["file_version_id"],
+                    row["role"],
+                    row["rule_version_id"],
+                    row["rule_title"],
                     Jsonb(row["rule_body"]) if row["rule_body"] is not None else None,
                     Jsonb(row["rule_execution"]) if row.get("rule_execution") is not None else None,
                 ),
@@ -1493,7 +1526,7 @@ class AuthStore:
                 (DRAFT_ACCEPTED, source_draft_id),
             )
         self._record_round_usage(conn, principal, round_id, prepared)
-        return self._round_public(conn, round_id)
+        return cast(dict, self._round_public(conn, round_id))
 
     def _record_round_usage(self, conn, principal, round_id, prepared) -> None:
         if not self.settings.usage_charge_enabled:
@@ -1501,8 +1534,7 @@ class AuthStore:
         item_id = self.settings.feishu_ai_item_id.strip()
         if not item_id or principal.provider != PROVIDER_FEISHU:
             return
-        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                     ("usage:" + principal.tenant_id + ":" + item_id,))
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + principal.tenant_id + ":" + item_id,))
         consumed = self._trial_ledger_consumed(conn, principal.tenant_id, item_id)
         remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, consumed)
         points = audit_usage_points(sum(row["role"] == "target" for row in prepared))
@@ -1512,8 +1544,7 @@ class AuthStore:
                    (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
                     external_status, trace_id, round_id)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (str(uuid.uuid4()), principal.tenant_id, principal.user_id, item_id, amount,
-                 trial, "none" if trial else "pending", round_id + (":trial" if trial else ":partner"), round_id),
+                (str(uuid.uuid4()), principal.tenant_id, principal.user_id, item_id, amount, trial, "none" if trial else "pending", round_id + (":trial" if trial else ":partner"), round_id),
             )
 
     def _draft_public(self, conn, draft_id: str) -> dict | None:
@@ -1640,19 +1671,19 @@ class AuthStore:
             (round_id,),
         ).fetchall()
         # A clause ID is an identity, not a lexical or numeric display order.
-        clause_order = {
-            identity: position
-            for position, identity in enumerate(
-                (str(item[1]), str(clause["id"]))
-                for item in inputs
-                for clause in (item[7] or {}).get("rules", [])
+        clause_order = {identity: position for position, identity in enumerate((str(item[1]), str(clause["id"])) for item in inputs for clause in (item[7] or {}).get("rules", []))}
+        findings.sort(
+            key=lambda finding: (
+                clause_order.get(
+                    cast(
+                        tuple[str, str],
+                        ((finding[6] or {}).get("file_version_id"), str((finding[6] or {}).get("rule_item_id", ""))),
+                    ),
+                    len(clause_order),
+                ),
+                finding[0],
             )
-        }
-        findings.sort(key=lambda finding: (
-            clause_order.get(((finding[6] or {}).get("file_version_id"),
-                              str((finding[6] or {}).get("rule_item_id", ""))), len(clause_order)),
-            finding[0],
-        ))
+        )
         job = conn.execute(
             """
             SELECT j.payload, a.diagnostic, j.updated_at FROM engine.jobs j
@@ -1735,11 +1766,13 @@ class AuthStore:
         return int(row[0]) if row else 0
 
     def _trial_ledger_consumed(self, conn, tenant_id: str, ai_item_id: str) -> int:
-        current = int(conn.execute(
-            """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
+        current = int(
+            conn.execute(
+                """SELECT COALESCE(SUM(consumed_points), 0) FROM product.usage_events
                WHERE tenant_id = %s AND ai_item_id = %s AND is_free_trial""",
-            (tenant_id, ai_item_id),
-        ).fetchone()[0])
+                (tenant_id, ai_item_id),
+            ).fetchone()[0]
+        )
         return current + self._trial_baseline_consumed(conn, tenant_id, ai_item_id)
 
     def file_source(self, file_version_id: str) -> dict | None:
@@ -1801,15 +1834,26 @@ class AuthStore:
         )
 
     def usage_event_public(self, row: dict) -> dict:
-        result = {key: row.get(key) for key in (
-            "id", "user_id", "ai_item_id", "consumed_points", "is_free_trial", "external_status",
-            "external_record_id", "trace_id", "created_at", "round_id",
-        )}
+        result = {
+            key: row.get(key)
+            for key in (
+                "id",
+                "user_id",
+                "ai_item_id",
+                "consumed_points",
+                "is_free_trial",
+                "external_status",
+                "external_record_id",
+                "trace_id",
+                "created_at",
+                "round_id",
+            )
+        }
         for key in ("id", "user_id", "round_id"):
             if result[key] is not None:
                 result[key] = str(result[key])
         created = result["created_at"]
-        if hasattr(created, "isoformat"):
+        if created is not None and hasattr(created, "isoformat"):
             result["created_at"] = created.isoformat()
         started = row.get("reporting_at")
         if isinstance(started, str):
@@ -1818,8 +1862,7 @@ class AuthStore:
             result["external_status"] = "unknown"
         return result
 
-    def list_usage_events(self, principal: Principal, limit: int = 50, offset: int = 0,
-                          since=None, until=None) -> list[dict]:
+    def list_usage_events(self, principal: Principal, limit: int = 50, offset: int = 0, since=None, until=None) -> list[dict]:
         with self._conn() as conn:
             rows = self._usage_rows(conn, principal, limit, offset, since, until)
         return [self.usage_event_public(row) for row in rows]

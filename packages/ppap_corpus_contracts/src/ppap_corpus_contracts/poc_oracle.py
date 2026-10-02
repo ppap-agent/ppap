@@ -10,7 +10,7 @@ from uuid import NAMESPACE_DNS, uuid5
 
 import pandas as pd
 from ppap_core.contracts import AuditInput, GroupContextInput
-from ppap_core.types import PpapDocumentType
+from ppap_core.types import PpapDocumentType, cross_file_doc_type_name
 
 RULE_GROUPS = 12
 RULE_BLOCK_SIZE = 5
@@ -50,9 +50,7 @@ class PocCase:
 
     def __post_init__(self) -> None:
         if not self.expected:
-            raise AssertionError(
-                f"V3 oracle incomplete: file={self.file_name} seq={self.file_seq} has 0 PASS/NG expectations"
-            )
+            raise AssertionError(f"V3 oracle incomplete: file={self.file_name} seq={self.file_seq} has 0 PASS/NG expectations")
 
 
 @dataclass(frozen=True)
@@ -159,9 +157,7 @@ def _load_expected_from_xlsx(
             continue
 
         if not rule_map:
-            raise AssertionError(
-                f"V3 oracle incomplete: file={file_name} seq={file_seq or '(missing)'} has 0 PASS/NG expectations"
-            )
+            raise AssertionError(f"V3 oracle incomplete: file={file_name} seq={file_seq or '(missing)'} has 0 PASS/NG expectations")
         expected[file_name] = rule_map
 
     if not expected:
@@ -205,9 +201,7 @@ def _build_poc_cases(
         file_path = dataset_index[file_name]
         file_seq = file_seq_map[file_name]
         if not rule_map:
-            raise AssertionError(
-                f"V3 oracle incomplete: file={file_name} seq={file_seq} has 0 PASS/NG expectations"
-            )
+            raise AssertionError(f"V3 oracle incomplete: file={file_name} seq={file_seq} has 0 PASS/NG expectations")
 
         cases.append(
             PocCase(
@@ -263,10 +257,10 @@ def build_group_context_for_bundle(bundle_cases: List[PocCase]) -> GroupContextI
             project_id="default",
         )
         by_audit_id[audit_file.audit_id] = audit_file
-        doc_type = POC_SEQ_TO_DOC_TYPE.get(case.file_seq)
-        if doc_type is None:
+        type_name = cross_file_doc_type_name(filename=case.file_name, content=audit_file.content or "")
+        if type_name is None:
             continue
-        by_doc_type.setdefault(doc_type.get_type_name(), []).append(audit_file)
+        by_doc_type.setdefault(type_name, []).append(audit_file)
 
     return GroupContextInput(
         task_group_id=str(task_group_id),

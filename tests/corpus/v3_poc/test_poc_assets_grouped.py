@@ -9,8 +9,6 @@ from typing import Any, Dict, List
 import pytest
 from dotenv import load_dotenv
 from ppap_core.rule_profile import RULE_PROFILE_V3
-from ppap_excel_audit_engine.routing import resolve_engine_agent_class
-
 from ppap_corpus_contracts.poc_oracle import (
     DEFAULT_POC_DATASET_ROOT,
     DEFAULT_POC_EXPECTED_XLSX,
@@ -23,6 +21,7 @@ from ppap_corpus_contracts.poc_oracle import (
     load_poc_cases,
     parse_seq_filter,
 )
+from ppap_excel_audit_engine.routing import resolve_engine_agent_class
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = REPO_ROOT

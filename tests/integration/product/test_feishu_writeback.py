@@ -1,37 +1,30 @@
 """Write common round findings back into the source Feishu doc. Mocked HTTP only."""
+
 from __future__ import annotations
 
 import json
 import os
 import unittest
-
-import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
-
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.audits import RoundInput, findings_from_engine_results
 from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceDiagnostic, EvidenceSource
 from ppap_core.feishu import UserTokens
 from ppap_core.feishu_writeback import FeishuWritebackError, comment_text, history_text, report_blocks, structured_blocks, writeback_state
-from ppap_core.writeback_targets import normalize_external_ref, public_target
 from ppap_core.fixtures import RULE_A
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
-from ppap_api import create_app
+from ppap_core.writeback_targets import normalize_external_ref, public_target
 from ppap_worker import process_claimed
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -60,12 +53,15 @@ class HistorySemanticsTests(unittest.TestCase):
                 EvidenceSource(kind="structure", locator="Sheet1!A1"),
                 EvidenceSource(kind="visual", locator="Sheet1 image 2"),
             ),
-            diagnostics=(
-                EvidenceDiagnostic(code="partial_structure", stage="structure", severity="warning", message="部分结构缺失"),
-            ),
+            diagnostics=(EvidenceDiagnostic(code="partial_structure", stage="structure", severity="warning", message="部分结构缺失"),),
         )
         result = AuditResultItem(
-            classification="签字", item="签字检查", priority="P0", status="NG", suggestions="缺少签字", evidence=evidence,
+            classification="签字",
+            item="签字检查",
+            priority="P0",
+            status="NG",
+            suggestions="缺少签字",
+            evidence=evidence,
         )
         mapped = findings_from_engine_results([result], target=target)
         body = {
@@ -87,16 +83,17 @@ class HistorySemanticsTests(unittest.TestCase):
         findings = []
         for target, status in [(first, "PASS"), (second, "NG")]:
             result = AuditResultItem(
-                classification="签字", item="签字检查", priority="P0", status=status, suggestions="缺少签字" if status == "NG" else "",
+                classification="签字",
+                item="签字检查",
+                priority="P0",
+                status=status,
+                suggestions="缺少签字" if status == "NG" else "",
             )
             findings.extend(findings_from_engine_results([result], target=target)["findings"])
         findings[1]["review"] = {"judgment": "PASS", "rationale": "人工接受", "next_step": "", "version": 1}
         body = {
             "execution": "completed",
-            "inputs": [
-                {"role": "target", "rule_version_id": RULE_A, "file_version_id": target.file_version_id, "original_filename": target.filename}
-                for target in (first, second)
-            ],
+            "inputs": [{"role": "target", "rule_version_id": RULE_A, "file_version_id": target.file_version_id, "original_filename": target.filename} for target in (first, second)],
             "findings": findings,
         }
         text = history_text(body)
@@ -131,9 +128,7 @@ class HistorySemanticsTests(unittest.TestCase):
         target = RoundInput("target", "file-1", "version-1", "report.xlsx", "ready")
         for status in ("NG", "UNKNOWN", None):
             with self.subTest(status=status):
-                results = [] if status is None else [
-                    AuditResultItem(classification="签字", item="签字检查", priority="P0", status=status, suggestions="")
-                ]
+                results = [] if status is None else [AuditResultItem(classification="签字", item="签字检查", priority="P0", status=status, suggestions="")]
                 mapped = findings_from_engine_results(results, target=target)
                 finding = mapped["findings"][0]
                 self.assertEqual(finding["status"], "NG" if status == "NG" else "ERR")
@@ -216,34 +211,67 @@ class HistorySemanticsTests(unittest.TestCase):
 
     def test_deep_unable_and_na_are_not_written_as_pass(self):
         body = {
-            "analysis_mode": "deep", "execution": "completed",
+            "analysis_mode": "deep",
+            "execution": "completed",
             "inputs": [
-                {"role": "target", "file_version_id": "target-v", "original_filename": "plan.xlsx", "rule_version_id": "rule-v",
-                 "rule": {"title": "客户规则", "source_file_version_id": "original-v", "body": {"rules": [
-                     {"id": "R1", "rule_to_check": "频次须明确"}, {"id": "R2", "rule_to_check": "参考资料适用性"},
-                 ]}}},
+                {
+                    "role": "target",
+                    "file_version_id": "target-v",
+                    "original_filename": "plan.xlsx",
+                    "rule_version_id": "rule-v",
+                    "rule": {
+                        "title": "客户规则",
+                        "source_file_version_id": "original-v",
+                        "body": {
+                            "rules": [
+                                {"id": "R1", "rule_to_check": "频次须明确"},
+                                {"id": "R2", "rule_to_check": "参考资料适用性"},
+                            ]
+                        },
+                    },
+                },
                 {"role": "reference", "file_version_id": "reference-v", "original_filename": "flow.pdf"},
             ],
             "findings": [
-                {"item": "频次须明确", "status": "UNABLE", "suggestions": "请提供图例", "locator": {"file_version_id": "target-v", "semantic": {
-                    "rule_version_id": "rule-v", "clause_id": "R1", "rule_text": "频次须明确", "scope": {"total": 5, "checked": 3, "unknown": 2},
-                    "sources": [{"file_version_id": "target-v", "filename": "plan.xlsx", "role": "target", "locator": {"kind": "xlsx_cell", "sheet": "控制计划", "cell": "B2"}, "excerpt": "待确认"}],
-                }}},
-                {"item": "参考资料适用性", "status": "NA", "suggestions": "此组不适用", "locator": {"file_version_id": "target-v", "semantic": {
-                    "rule_version_id": "rule-v", "clause_id": "R2", "rule_text": "参考资料适用性", "scope": {"total": 1, "checked": 1, "unknown": 0},
-                    "sources": [{"file_version_id": "reference-v", "filename": "flow.pdf", "role": "reference", "locator": {"kind": "pdf_block", "page": 2, "block": 3}, "excerpt": "不适用"}],
-                }}},
+                {
+                    "item": "频次须明确",
+                    "status": "UNABLE",
+                    "suggestions": "请提供图例",
+                    "locator": {
+                        "file_version_id": "target-v",
+                        "semantic": {
+                            "rule_version_id": "rule-v",
+                            "clause_id": "R1",
+                            "rule_text": "频次须明确",
+                            "scope": {"total": 5, "checked": 3, "unknown": 2},
+                            "sources": [
+                                {"file_version_id": "target-v", "filename": "plan.xlsx", "role": "target", "locator": {"kind": "xlsx_cell", "sheet": "控制计划", "cell": "B2"}, "excerpt": "待确认"}
+                            ],
+                        },
+                    },
+                },
+                {
+                    "item": "参考资料适用性",
+                    "status": "NA",
+                    "suggestions": "此组不适用",
+                    "locator": {
+                        "file_version_id": "target-v",
+                        "semantic": {
+                            "rule_version_id": "rule-v",
+                            "clause_id": "R2",
+                            "rule_text": "参考资料适用性",
+                            "scope": {"total": 1, "checked": 1, "unknown": 0},
+                            "sources": [{"file_version_id": "reference-v", "filename": "flow.pdf", "role": "reference", "locator": {"kind": "pdf_block", "page": 2, "block": 3}, "excerpt": "不适用"}],
+                        },
+                    },
+                },
             ],
         }
         self.assertEqual(writeback_state(body), "ready")
         summary = history_text(body)
         self.assertIn("审核结果：UNABLE、NA", summary)
         self.assertIn("条款核验记录（按条款累计）：共 6 条，已判断 4 条，无法判断 2 条", summary)
-        report_text = "\n".join(
-            element["text_run"]["content"]
-            for block in report_blocks(body)
-            for element in (block.get("text") or {}).get("elements", [])
-        )
+        report_text = "\n".join(element["text_run"]["content"] for block in report_blocks(body) for element in (block.get("text") or {}).get("elements", []))
         self.assertIn("条款核验记录（按条款累计）：共 6 条，已判断 4 条，无法判断 2 条", report_text)
         self.assertIn("本条核验记录：共 5 条，已判断 3 条，无法判断 2 条", report_text)
         self.assertNotIn("审核结果：PASS", summary)
@@ -251,8 +279,13 @@ class HistorySemanticsTests(unittest.TestCase):
         self.assertIn("参考资料适用性（NA）：此组不适用", comment_text(body))
 
     def test_deep_global_failure_does_not_create_a_fake_finding(self):
-        body = {"analysis_mode": "deep", "execution": "failed", "failure": {"code": "MODEL_TIMEOUT"},
-                "inputs": [{"role": "target", "file_version_id": "v1", "original_filename": "plan.xlsx"}], "findings": []}
+        body = {
+            "analysis_mode": "deep",
+            "execution": "failed",
+            "failure": {"code": "MODEL_TIMEOUT"},
+            "inputs": [{"role": "target", "file_version_id": "v1", "original_filename": "plan.xlsx"}],
+            "findings": [],
+        }
         self.assertEqual(writeback_state(body), "round_incomplete")
         with self.assertRaises(FeishuWritebackError):
             history_text(body)
@@ -390,18 +423,14 @@ class FeishuWritebackTests(unittest.TestCase):
         self._login_feishu_user()
         round_id = self._complete_round()
         self._login_fixture("alice")
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "feishu_user_token_missing")
 
     def test_pass_round_inserts_history_and_return_url(self):
         self._login_feishu_user()
         round_id = self._complete_round()
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["inserted"])
@@ -420,9 +449,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self._login_feishu_user()
         round_id = self._complete_round("plan.xlsx")
         self._set_findings(round_id, "NG", "缺项", "零件号")
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["commented"])
         comment = next(call for call in self.feishu.calls if "/comments" in call[1])
@@ -431,9 +458,7 @@ class FeishuWritebackTests(unittest.TestCase):
 
         self.feishu.calls.clear()
         self._set_findings(round_id, "ERR")
-        blocked = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        blocked = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.json()["error"], "round_has_errors")
         self.assertEqual(self.feishu.calls, [])
@@ -442,9 +467,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self._login_feishu_user()
         round_id = self._complete_round()
         self._set_unmapped_locator(round_id)
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "round_incomplete")
         self.assertEqual(self.feishu.calls, [])
@@ -460,9 +483,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self._bind_writeback(draft)
         queued = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "feishu-writeback-queued"})
         queued_id = queued.json()["id"]
-        incomplete = self.client.post(
-            f"/integrations/feishu/rounds/{queued_id}/writeback", json={"file_token": "docx-token"}
-        )
+        incomplete = self.client.post(f"/integrations/feishu/rounds/{queued_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(incomplete.status_code, 409)
         self.assertEqual(incomplete.json()["error"], "round_incomplete")
         claimed = self.store.claim_job("test-worker")
@@ -471,17 +492,13 @@ class FeishuWritebackTests(unittest.TestCase):
 
         round_id = self._complete_round()
         self.feishu.fail_insert = True
-        failed = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        failed = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(failed.status_code, 502)
         self.assertEqual(failed.json()["error"], "feishu_writeback_failed")
 
         self.feishu.fail_insert = False
         self._login_feishu_user("carol")
-        denied = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        denied = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(denied.status_code, 403)
 
     def test_writeback_uses_stored_target_and_ignores_caller_token(self):
@@ -491,9 +508,7 @@ class FeishuWritebackTests(unittest.TestCase):
         self.assertTrue(reloaded["writeback"]["available"])
         self.assertNotIn("object_ref", json.dumps(reloaded))
         self.assertNotIn("docx-token", json.dumps(reloaded))
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "other-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "other-token"})
         self.assertEqual(response.status_code, 200)
         insert = next(call for call in self.feishu.calls if call[0] == "POST" and call[1].endswith("/children"))
         self.assertIn("/documents/docx-token/blocks/docx-token/children", insert[1])
@@ -502,9 +517,7 @@ class FeishuWritebackTests(unittest.TestCase):
     def test_writeback_without_stored_target_is_conflict(self):
         self._login_feishu_user()
         round_id = self._complete_round(writeback=False)
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "writeback_target_missing")
         self.assertEqual(self.feishu.calls, [])
@@ -522,9 +535,7 @@ class FeishuWritebackTests(unittest.TestCase):
             json={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]},
         )
         self.assertEqual(saved.status_code, 200)
-        accepted = self.client.post(
-            f"/drafts/{draft['id']}/accept", json={"idempotency_key": "feishu-writeback-again", "predecessor_id": round_id}
-        )
+        accepted = self.client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "feishu-writeback-again", "predecessor_id": round_id})
         self.assertEqual(accepted.status_code, 201)
         claimed = self.store.claim_job("test-worker")
         self.assertIsNotNone(claimed)
@@ -540,9 +551,7 @@ class FeishuWritebackTests(unittest.TestCase):
         round_id = self._complete_round("plan.xlsx")
         self._set_findings(round_id, "NG", "缺项", "零件号")
         self.feishu.fail_comment = True
-        response = self.client.post(
-            f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"}
-        )
+        response = self.client.post(f"/integrations/feishu/rounds/{round_id}/writeback", json={"file_token": "docx-token"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["inserted"])
         self.assertFalse(response.json()["commented"])

@@ -1,8 +1,8 @@
 """Bounded rule calls use the real adapter with an external SDK stub."""
-from types import SimpleNamespace
-import unittest
-from unittest.mock import patch
 
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 class SDK:
@@ -79,11 +79,13 @@ class RuleAIClientTests(unittest.TestCase):
                 self.assertEqual(len(sdk.calls), 1)
 
     def test_json_image_and_usage_use_responses_shape(self):
-        sdk = SDK(SimpleNamespace(
-            status="completed",
-            output_text='{"ok": true}',
-            usage=SimpleNamespace(input_tokens=9, output_tokens=5, output_tokens_details=SimpleNamespace(reasoning_tokens=2)),
-        ))
+        sdk = SDK(
+            SimpleNamespace(
+                status="completed",
+                output_text='{"ok": true}',
+                usage=SimpleNamespace(input_tokens=9, output_tokens=5, output_tokens_details=SimpleNamespace(reasoning_tokens=2)),
+            )
+        )
         client = self.client(sdk)
         with patch("ppap_excel_audit_engine.checkers.client.record_token_usage") as record_usage:
             self.assertEqual(client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"], json_format=True), '{"ok": true}')
@@ -96,10 +98,13 @@ class RuleAIClientTests(unittest.TestCase):
         )
         request = sdk.calls[0]
         self.assertEqual(request["text"], {"format": {"type": "json_object"}})
-        self.assertEqual(request["input"][1]["content"], [
-            {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "high"},
-            {"type": "input_text", "text": "inspect"},
-        ])
+        self.assertEqual(
+            request["input"][1]["content"],
+            [
+                {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "high"},
+                {"type": "input_text", "text": "inspect"},
+            ],
+        )
 
     def test_reasoning_tokens_are_part_of_output_total(self):
         from ppap_core.token_tracker import TokenTracker

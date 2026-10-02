@@ -1,19 +1,18 @@
 """Real-model protocol smoke, not acceptance for customer A1–A12 samples."""
+
 from __future__ import annotations
 
-from io import BytesIO
 import json
 import os
 import time
 import unittest
 import urllib.error
 import urllib.request
-from uuid import uuid4
 from http.cookiejar import CookieJar
+from io import BytesIO
+from uuid import uuid4
 
 from openpyxl import Workbook
-
-
 from ppap_core.db import connect
 from ppap_core.settings import Settings
 from ppap_deep.client import DEEP_REQUEST_TIMEOUT
@@ -62,11 +61,15 @@ class LiveDeepRoundTests(unittest.TestCase):
         self.assertEqual(status, 200)
 
         def upload(name: str, content_type: str, payload: bytes) -> dict:
-            status, created = client.json("POST", "/files", {
-                "original_filename": name,
-                "content_type": content_type,
-                "byte_size": len(payload),
-            })
+            status, created = client.json(
+                "POST",
+                "/files",
+                {
+                    "original_filename": name,
+                    "content_type": content_type,
+                    "byte_size": len(payload),
+                },
+            )
             self.assertEqual(status, 201, created)
             file_id, version_id = created["file_id"], created["id"]
             status, _blob = client.request("PUT", f"/files/{file_id}/versions/{version_id}/blob", payload)
@@ -76,20 +79,32 @@ class LiveDeepRoundTests(unittest.TestCase):
             return ready_file
 
         rule_body = {
-            "kind": "engine", "type": "控制计划", "rule_profile": "v3",
-            "customers": [], "models": [], "parts": [],
-            "rules": [{
-                "id": "part-number", "category": "基本信息", "priority": "P1",
-                "rule_to_check": "核对控制计划中所有数据行的零件号均非空；列名为零件号，数据行从第2行开始。",
-                "type_of_rule": "table",
-            }],
+            "kind": "engine",
+            "type": "控制计划",
+            "rule_profile": "v3",
+            "customers": [],
+            "models": [],
+            "parts": [],
+            "rules": [
+                {
+                    "id": "part-number",
+                    "category": "基本信息",
+                    "priority": "P1",
+                    "rule_to_check": "核对控制计划中所有数据行的零件号均非空；列名为零件号，数据行从第2行开始。",
+                    "type_of_rule": "table",
+                }
+            ],
         }
         rule_source = upload("semantic-rule.json", "application/json", json.dumps(rule_body, ensure_ascii=False).encode())
-        status, published = client.json("POST", "/rules", {
-            "title": "Live semantic rule " + uuid4().hex[:8],
-            "body": rule_body,
-            "source_file_version_id": rule_source["id"],
-        })
+        status, published = client.json(
+            "POST",
+            "/rules",
+            {
+                "title": "Live semantic rule " + uuid4().hex[:8],
+                "body": rule_body,
+                "source_file_version_id": rule_source["id"],
+            },
+        )
         self.assertEqual(status, 201, published)
         workbook = Workbook()
         sheet = workbook.active

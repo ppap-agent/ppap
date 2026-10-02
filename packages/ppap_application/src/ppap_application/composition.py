@@ -1,4 +1,5 @@
 """Composition roots for application capabilities and persistence."""
+
 from __future__ import annotations
 
 from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution

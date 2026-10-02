@@ -45,9 +45,7 @@ class S3Objects:
         client = s3_client(self.settings)
         bucket = self.settings.s3_bucket
         try:
-            client.put_object(
-                Bucket=bucket, Key=key, Body=body, ContentType=content_type, IfNoneMatch="*"
-            )
+            client.put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type, IfNoneMatch="*")
             return
         except ParamValidationError:
             pass

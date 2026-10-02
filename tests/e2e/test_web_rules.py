@@ -1,4 +1,5 @@
 """Customer rule review/publication against the actual isolated-dev stack."""
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,12 @@ class RulePreparationTests(unittest.TestCase):
 
         title = "规则导入 " + uuid.uuid4().hex[:8]
         source = {
-            "kind": "engine", "type": "控制计划", "rule_profile": "v3",
-            "customers": ["测试客户"], "models": [], "parts": [],
+            "kind": "engine",
+            "type": "控制计划",
+            "rule_profile": "v3",
+            "customers": ["测试客户"],
+            "models": [],
+            "parts": [],
             "rules": [{"id": "1", "category": "基本信息", "priority": None, "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
         }
         with sync_playwright() as playwright:

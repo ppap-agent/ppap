@@ -1,4 +1,5 @@
 """Round-scoped original-file archive names. Does not own object storage."""
+
 from __future__ import annotations
 
 from pathlib import Path

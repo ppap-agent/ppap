@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date
-from fastapi import FastAPI, Request, Query
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from typing import Any, cast
 
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ppap_core.files import ObjectMissing, attachment_content_disposition, original_filename, safe_content_type
 from ppap_core.identity import can_read, can_review
 from ppap_product_store import AuthStore
+
 from ppap_api import web_contract as wc
 
 
@@ -33,13 +35,18 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if isinstance(exc, KeyError):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         code = str(exc)
-        status = 409 if code in {
-            "idempotency_conflict",
-            "draft_already_accepted",
-            "file_not_ready",
-            "review_conflict",
-            "deep_not_available",
-        } else 400
+        status = (
+            409
+            if code
+            in {
+                "idempotency_conflict",
+                "draft_already_accepted",
+                "file_not_ready",
+                "review_conflict",
+                "deep_not_available",
+            }
+            else 400
+        )
         return JSONResponse({"error": code}, status_code=status)
 
     @app.get("/rules", response_model=wc.RulesList)
@@ -104,7 +111,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         draft = store.get_draft(draft_id)
-        if draft is None or store.resource(draft_id).tenant_id != principal.tenant_id:
+        if draft is None or cast(Any, store.resource(draft_id)).tenant_id != principal.tenant_id:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(draft)
 
@@ -130,14 +137,15 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         try:
-            round_body = store.accept_draft(principal, draft_id, body.get("idempotency_key"), body.get("predecessor_id"))
+            round_body = store.accept_draft(principal, draft_id, cast(str, body.get("idempotency_key")), body.get("predecessor_id"))
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(round_body, status_code=201)
 
     @app.get("/rounds", response_model=wc.RoundList)
-    def rounds_list(request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0),
-                    q: str = Query("", max_length=200), execution: str = "", unreviewed: bool = False) -> JSONResponse:
+    def rounds_list(
+        request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0), q: str = Query("", max_length=200), execution: str = "", unreviewed: bool = False
+    ) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -147,9 +155,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         return JSONResponse({"rounds": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.get("/usage", response_model=wc.UsageList)
-    def usage_list(request: Request, limit: int = Query(50, ge=1, le=50),
-                   offset: int = Query(0, ge=0), since: date | None = None,
-                   until: date | None = None) -> JSONResponse:
+    def usage_list(request: Request, limit: int = Query(50, ge=1, le=50), offset: int = Query(0, ge=0), since: date | None = None, until: date | None = None) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
@@ -216,6 +222,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
     @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/preview", response_model=wc.PreviewResponse)
     def rounds_preview(round_id: str, file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
+
         principal, denied = require_object(request, round_id)
         if denied:
             return denied
@@ -241,7 +248,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             created = store.resubmit_round(
                 principal,
                 round_id,
-                body.get("idempotency_key"),
+                cast(str, body.get("idempotency_key")),
                 items,
             )
         except (KeyError, ValueError) as exc:
@@ -258,10 +265,10 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 principal,
                 round_id,
                 str(body.get("item_key") or ""),
-                body.get("judgment"),
-                body.get("rationale"),
-                body.get("next_step"),
-                body.get("version"),
+                cast(str, body.get("judgment")),
+                cast(str, body.get("rationale")),
+                cast(str, body.get("next_step")),
+                cast(int, body.get("version")),
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)

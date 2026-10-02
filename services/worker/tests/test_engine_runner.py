@@ -1,4 +1,5 @@
 """Worker engine_runner coverage for every target and unused references."""
+
 from __future__ import annotations
 
 import unittest
@@ -52,8 +53,19 @@ class EngineRunnerTests(unittest.TestCase):
             "round-multi",
             "t1",
             [
-                RoundInput("target", first["file_id"], first["id"], "a.xlsx", "ready", rule_version_id="rule-1", rule_title="控制计划", rule_body={"kind": "engine", "rule_profile": "v3", "type": "控制计划"}),
-                RoundInput("target", second["file_id"], second["id"], "b.xlsx", "ready", rule_version_id="rule-2", rule_title="PFMEA", rule_body={"kind": "engine", "rule_profile": "v2", "type": "过程失效模式及后果分析"}),
+                RoundInput(
+                    "target", first["file_id"], first["id"], "a.xlsx", "ready", rule_version_id="rule-1", rule_title="控制计划", rule_body={"kind": "engine", "rule_profile": "v3", "type": "控制计划"}
+                ),  # noqa: E501
+                RoundInput(
+                    "target",
+                    second["file_id"],
+                    second["id"],
+                    "b.xlsx",
+                    "ready",
+                    rule_version_id="rule-2",
+                    rule_title="PFMEA",
+                    rule_body={"kind": "engine", "rule_profile": "v2", "type": "过程失效模式及后果分析"},
+                ),  # noqa: E501
                 RoundInput("reference", reference["file_id"], reference["id"], "context.pdf", "ready"),
                 RoundInput("reference", "missing-file", "missing-version", "gone.pdf", "ready"),
             ],
@@ -70,7 +82,10 @@ class EngineRunnerTests(unittest.TestCase):
                     priority="P0",
                     suggestions="",
                     evidence=AuditEvidence(
-                        required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                        required="structure",
+                        used="structure",
+                        source_format="xlsx",
+                        prepared_format="xlsx",
                         sources=(EvidenceSource(kind="structure", locator="A1"),),
                     ),
                 )
@@ -125,8 +140,15 @@ class EngineRunnerTests(unittest.TestCase):
             "t1",
             [
                 RoundInput(
-                    "target", first["file_id"], first["id"], "plan.xlsx", "ready",
-                    rule_version_id="rule-keep", rule_title="控制计划", rule_body=body, rule_execution=execution,
+                    "target",
+                    first["file_id"],
+                    first["id"],
+                    "plan.xlsx",
+                    "ready",
+                    rule_version_id="rule-keep",
+                    rule_title="控制计划",
+                    rule_body=body,
+                    rule_execution=execution,
                 ),
             ],
         )
@@ -140,7 +162,10 @@ class EngineRunnerTests(unittest.TestCase):
                     priority="P0",
                     suggestions="",
                     evidence=AuditEvidence(
-                        required="structure", used="structure", source_format="xlsx", prepared_format="xlsx",
+                        required="structure",
+                        used="structure",
+                        source_format="xlsx",
+                        prepared_format="xlsx",
                         sources=(EvidenceSource(kind="structure", locator="A1"),),
                     ),
                 )
@@ -156,6 +181,71 @@ class EngineRunnerTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in result["coverage"]["rule_items"]], ["keep", "extra"])
         self.assertEqual(result["coverage"]["rule_items"][1]["coverage"], "unsupported")
         self.assertNotIn("customer-only", " ".join(row["item"] for row in result["findings"]))
+
+    def test_cross_file_type_uses_standard_inference_before_rule_type(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_worker import engine_runner
+
+        inferred = self._upload("控制计划.xlsx", b"plan")
+        fallback = self._upload("a.xlsx", b"pfmea")
+        unknown = self._upload("notes.pdf", b"ref")
+        work = RoundWork(
+            "round-types",
+            "t1",
+            [
+                RoundInput(
+                    "target",
+                    inferred["file_id"],
+                    inferred["id"],
+                    "控制计划.xlsx",
+                    "ready",
+                    rule_version_id="rule-other",
+                    rule_title="其他",
+                    rule_body={"kind": "engine", "rule_profile": "v3", "type": "过程失效模式及后果分析"},
+                ),
+                RoundInput(
+                    "target",
+                    fallback["file_id"],
+                    fallback["id"],
+                    "a.xlsx",
+                    "ready",
+                    rule_version_id="rule-pfmea",
+                    rule_title="PFMEA",
+                    rule_body={"kind": "engine", "rule_profile": "v2", "type": "过程失效模式及后果分析"},
+                ),
+                RoundInput("reference", unknown["file_id"], unknown["id"], "notes.pdf", "ready"),
+            ],
+        )
+        calls = []
+
+        def fake_run(audit, rule, group_context=None):
+            calls.append(group_context)
+            return [
+                AuditResultItem(
+                    status="PASS",
+                    classification="规则",
+                    item=audit.file_metadata["original_filename"],
+                    priority="P0",
+                    suggestions="",
+                    evidence=AuditEvidence(
+                        required="structure",
+                        used="structure",
+                        source_format="xlsx",
+                        prepared_format="xlsx",
+                        sources=(EvidenceSource(kind="structure", locator="A1"),),
+                    ),
+                )
+            ]
+
+        with patch.object(app_runtime, "run_audit_engine", fake_run):
+            engine_runner(work, self.store)
+        context = calls[0]
+        self.assertEqual([item.audit_id for item in context.by_doc_type["控制计划"]], [inferred["id"]])
+        self.assertEqual(
+            [item.audit_id for item in context.by_doc_type["潜在过程失效模式及后果分析"]],
+            [fallback["id"]],
+        )
+        self.assertNotIn(unknown["id"], [item.audit_id for items in context.by_doc_type.values() for item in items])
 
 
 if __name__ == "__main__":

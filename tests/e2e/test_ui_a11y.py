@@ -12,7 +12,15 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 JOB = "00000000-0000-4000-8000-000000000001"
 SOURCE = "00000000-0000-4000-8000-000000000002"
 VERSION = "00000000-0000-4000-8000-000000000003"
-BODY = {"kind": "engine", "type": "控制计划", "rule_profile": "v3", "customers": [], "models": [], "parts": [], "rules": [{"id": "1", "category": "A", "priority": None, "rule_to_check": "检查 A", "type_of_rule": "table"}]}
+BODY = {
+    "kind": "engine",
+    "type": "控制计划",
+    "rule_profile": "v3",
+    "customers": [],
+    "models": [],
+    "parts": [],
+    "rules": [{"id": "1", "category": "A", "priority": None, "rule_to_check": "检查 A", "type_of_rule": "table"}],
+}  # noqa: E501
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
@@ -74,7 +82,7 @@ class UiA11yTests(unittest.TestCase):
                     route.fulfill(status=204, headers=cors)
                     return
                 path = request.url.split("?", 1)[0]
-                path = path[path.find("/api") + 4:] if "/api" in path else path.replace("http://127.0.0.1:8080", "")
+                path = path[path.find("/api") + 4 :] if "/api" in path else path.replace("http://127.0.0.1:8080", "")
                 if path == "/public-config":
                     route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev"}, headers=cors)
                 elif path == "/me":
@@ -84,7 +92,17 @@ class UiA11yTests(unittest.TestCase):
                 elif path == "/rules":
                     route.fulfill(json={"rules": []}, headers=cors)
                 elif path.startswith("/rules/parse/"):
-                    route.fulfill(json={"id": JOB, "status": "succeeded", "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "控制计划", "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION}}, headers=cors)
+                    route.fulfill(
+                        json={
+                            "id": JOB,
+                            "status": "succeeded",
+                            "source_file_id": SOURCE,
+                            "source_file_version_id": VERSION,
+                            "document_type": "控制计划",
+                            "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION},
+                        },
+                        headers=cors,
+                    )  # noqa: E501
                 else:
                     route.fulfill(status=404, json={"error": "unexpected_test_request"}, headers=cors)
 

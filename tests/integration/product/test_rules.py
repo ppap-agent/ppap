@@ -1,22 +1,25 @@
 """Rule preparation through real file extraction and Product API boundaries."""
+
 from __future__ import annotations
 
 import io
 import json
 import os
 import unittest
-
-import pytest
 import uuid
-from datetime import timedelta
 from unittest.mock import patch
 
+import pytest
 
 
 def rule_body():
     return {
-        "kind": "engine", "rule_profile": "v3", "type": "控制计划",
-        "customers": ["测试客户"], "models": ["M1"], "parts": ["P1"],
+        "kind": "engine",
+        "rule_profile": "v3",
+        "type": "控制计划",
+        "customers": ["测试客户"],
+        "models": ["M1"],
+        "parts": ["P1"],
         "rules": [{"id": "1", "category": "基本信息", "priority": "P0", "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
     }
 
@@ -53,7 +56,7 @@ class RuleParsingTests(unittest.TestCase):
         body = parse_rule_file("控制计划规则.xlsx", excel_rule(), ai=ai)
         self.assertEqual(body, rule_body())
         self.assertIn("必须填写零件号", ai.requests[0]["user_prompt"])
-        self.assertIn('<SHEET name=', ai.requests[0]["user_prompt"])
+        self.assertIn("<SHEET name=", ai.requests[0]["user_prompt"])
         self.assertEqual(len(ai.requests), 1)
         self.assertEqual(ai.requests[0]["request_timeout"], 120)
         self.assertEqual(ai.requests[0]["retry_limit"], 0)
@@ -251,7 +254,6 @@ class RuleApiTests(unittest.TestCase):
 
     def test_same_request_resumes_one_job_and_unknown_is_not_automatically_reexecuted(self):
         from ppap_worker import process_claimed
-        from datetime import datetime, timezone
 
         source = self.upload()
         request_id = str(uuid.uuid4())

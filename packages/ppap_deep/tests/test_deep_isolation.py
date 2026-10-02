@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import http.client
 import json
+import os
 import tempfile
 import threading
 import time
@@ -34,21 +34,19 @@ class GatewayGrantTests(unittest.TestCase):
                     return event
                 raise http.client.IncompleteRead(b"must-not-be-retained")
 
-        with tempfile.TemporaryDirectory() as temporary, patch(
-            "ppap_deep.isolation.model_gateway.http.client.HTTPSConnection"
-        ) as upstream:
+        with tempfile.TemporaryDirectory() as temporary, patch("ppap_deep.isolation.model_gateway.http.client.HTTPSConnection") as upstream:
             upstream.return_value.getresponse.return_value = InterruptedResponse()
             with local_gateway(
-                Path(temporary) / "gateway.sock", upstream="https://provider.example/v1",
-                model="test-model", provider_key="test-provider-key",
+                Path(temporary) / "gateway.sock",
+                upstream="https://provider.example/v1",
+                model="test-model",
+                provider_key="test-provider-key",
             ) as gateway:
                 execution_id = uuid4()
                 token = grant_request(str(gateway.socket_path), "issue", execution_id)["token"]
                 connection = http.client.HTTPConnection("127.0.0.1", gateway.http.server_address[1], timeout=2)
                 try:
-                    connection.request("POST", "/v1/responses",
-                        body=json.dumps({"model": "test-model", "input": "private input", "stream": True}),
-                        headers={"Authorization": "Bearer " + token})
+                    connection.request("POST", "/v1/responses", body=json.dumps({"model": "test-model", "input": "private input", "stream": True}), headers={"Authorization": "Bearer " + token})
                     response = connection.getresponse()
                     self.assertEqual(response.status, 200)
                     with self.assertRaises(http.client.IncompleteRead):
@@ -59,11 +57,16 @@ class GatewayGrantTests(unittest.TestCase):
                 self.assertTrue(usage["uncertain"])
                 self.assertFalse(usage["in_flight"])
                 self.assertEqual(usage["completed_requests"], 0)
-                self.assertEqual(usage.get("transport_failure"), {
-                    "phase": "provider_read", "error_type": "IncompleteRead",
-                    "response_bytes": len(event), "last_event": "response.created",
-                    "provider_status": 200,
-                })
+                self.assertEqual(
+                    usage.get("transport_failure"),
+                    {
+                        "phase": "provider_read",
+                        "error_type": "IncompleteRead",
+                        "response_bytes": len(event),
+                        "last_event": "response.created",
+                        "provider_status": 200,
+                    },
+                )
                 self.assertEqual(upstream.return_value.request.call_count, 1)
                 serialized = json.dumps(usage)
                 for private in (token, "test-provider-key", "private input", "must-not-be-retained"):
@@ -81,10 +84,7 @@ class GatewayGrantTests(unittest.TestCase):
         release_first_eof = threading.Event()
         upstream_calls: list[dict] = []
         usages = [{"input_tokens": 3, "output_tokens": 5}, {"input_tokens": 2, "output_tokens": 4}]
-        events = [
-            ("data: " + json.dumps({"type": "response.completed", "response": {"usage": usage}}) + "\n\n").encode()
-            for usage in usages
-        ]
+        events = [("data: " + json.dumps({"type": "response.completed", "response": {"usage": usage}}) + "\n\n").encode() for usage in usages]
 
         class FakeResponse:
             status = 200
@@ -119,7 +119,8 @@ class GatewayGrantTests(unittest.TestCase):
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
             try:
                 connection.request(
-                    "POST", "/v1/responses",
+                    "POST",
+                    "/v1/responses",
                     body=json.dumps({"model": model, "input": prompt, "stream": True, "max_output_tokens": 10}),
                     headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
                 )
@@ -135,13 +136,15 @@ class GatewayGrantTests(unittest.TestCase):
             finally:
                 connection.close()
 
-        with tempfile.TemporaryDirectory() as temporary, patch(
-            "ppap_deep.isolation.model_gateway.http.client.HTTPSConnection", FakeHTTPSConnection
-        ):
+        with tempfile.TemporaryDirectory() as temporary, patch("ppap_deep.isolation.model_gateway.http.client.HTTPSConnection", FakeHTTPSConnection):
             with local_gateway(
-                Path(temporary) / "gateway.sock", upstream="https://provider.example/v1",
-                model="test-model", provider_key="test-provider-key",
-                requests=2, input_tokens=1000, output_tokens=20,
+                Path(temporary) / "gateway.sock",
+                upstream="https://provider.example/v1",
+                model="test-model",
+                provider_key="test-provider-key",
+                requests=2,
+                input_tokens=1000,
+                output_tokens=20,
             ) as gateway:
                 execution_id = uuid4()
                 token = grant_request(str(gateway.socket_path), "issue", execution_id)["token"]
@@ -191,10 +194,17 @@ class GatewayGrantTests(unittest.TestCase):
         token = grants.issue(uuid4())
         lease = grants.authorize(token, {"model": "test-model", "input": "opaque"}, 226_359)
         grants.record_usage(lease, {"input_tokens": 101, "output_tokens": 2})
-        self.assertEqual(grants.usage(lease.execution_id), {
-            "completed_requests": 1, "input_tokens": 101, "output_tokens": 2,
-            "uncertain": False, "in_flight": False, "budget_exhausted": True,
-        })
+        self.assertEqual(
+            grants.usage(lease.execution_id),
+            {
+                "completed_requests": 1,
+                "input_tokens": 101,
+                "output_tokens": 2,
+                "uncertain": False,
+                "in_flight": False,
+                "budget_exhausted": True,
+            },
+        )
         self.assertFalse(grants.active(lease))
         with self.assertRaises(ValueError):
             grants.authorize(token, {"model": "test-model", "input": "next"}, 1)
@@ -214,10 +224,17 @@ class GatewayGrantTests(unittest.TestCase):
         token = grants.issue(uuid4())
         lease = grants.authorize(token, {"model": "test-model", "input": "one", "max_output_tokens": 10}, 20)
         grants.finish_unknown(lease)
-        self.assertEqual(grants.usage(lease.execution_id), {
-            "completed_requests": 0, "input_tokens": 0, "output_tokens": 0,
-            "uncertain": True, "in_flight": False, "budget_exhausted": False,
-        })
+        self.assertEqual(
+            grants.usage(lease.execution_id),
+            {
+                "completed_requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "uncertain": True,
+                "in_flight": False,
+                "budget_exhausted": False,
+            },
+        )
         with self.assertRaises(ValueError):
             grants.authorize(token, {"model": "test-model", "input": "two", "max_output_tokens": 1}, 1)
 
@@ -234,21 +251,44 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
             execution_id = uuid4()
-            bundle = ResultBundle.model_validate({
-                "execution_id": str(execution_id), "semantic_engine_revision": "0" * 64,
-                "documents": {}, "rule_sources": {}, "plans": {},
-                "report": {"checks": [{"audit_id": "file-1", "rule_id": "R1", "status": "UNABLE",
-                                       "reason": "No reliable evidence", "total": 1, "checked": 0,
-                                       "unknown": 1, "evidence": [], "diagnostic": "budget_exhausted"}]},
-                "trace": {"bindings": [], "proofs": [{"kind": "semantic", "audit_id": "file-1",
-                                                    "rule_id": "R1", "scope_basis": "one record",
-                                                    "records": [{"record_id": "row-1", "role": "prerequisite",
-                                                                 "status": "UNABLE", "reason": "No reliable evidence",
-                                                                 "evidence": []}]}]},
-            })
+            bundle = ResultBundle.model_validate(
+                {
+                    "execution_id": str(execution_id),
+                    "semantic_engine_revision": "0" * 64,
+                    "documents": {},
+                    "rule_sources": {},
+                    "plans": {},
+                    "report": {
+                        "checks": [
+                            {
+                                "audit_id": "file-1",
+                                "rule_id": "R1",
+                                "status": "UNABLE",
+                                "reason": "No reliable evidence",
+                                "total": 1,
+                                "checked": 0,
+                                "unknown": 1,
+                                "evidence": [],
+                                "diagnostic": "budget_exhausted",
+                            }
+                        ]
+                    },
+                    "trace": {
+                        "bindings": [],
+                        "proofs": [
+                            {
+                                "kind": "semantic",
+                                "audit_id": "file-1",
+                                "rule_id": "R1",
+                                "scope_basis": "one record",
+                                "records": [{"record_id": "row-1", "role": "prerequisite", "status": "UNABLE", "reason": "No reliable evidence", "evidence": []}],
+                            }
+                        ],
+                    },
+                }
+            )
             (run / "work" / "result" / "bundle.json").write_text(bundle.model_dump_json())
-            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857,
-                     "uncertain": False, "in_flight": False, "budget_exhausted": True}
+            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857, "uncertain": False, "in_flight": False, "budget_exhausted": True}
             with patch("ppap_deep.isolation.container.grant_request", return_value=usage):
                 runtime._export(run, root / "work", True, execution_id, time.monotonic() + 2, threading.Event())
             exported = json.loads((root / "work" / "result" / "bundle.json").read_text())
@@ -267,10 +307,8 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
             execution_id = uuid4()
-            pending = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5,
-                       "uncertain": True, "in_flight": True, "budget_exhausted": False}
-            settled = {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9,
-                       "uncertain": False, "in_flight": False, "budget_exhausted": False}
+            pending = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5, "uncertain": True, "in_flight": True, "budget_exhausted": False}
+            settled = {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "uncertain": False, "in_flight": False, "budget_exhausted": False}
             with patch("ppap_deep.isolation.container.grant_request", side_effect=[pending, settled]) as request:
                 runtime._export(run, root / "work", True, execution_id, time.monotonic() + 2, threading.Event())
             self.assertEqual([call.args[1] for call in request.call_args_list], ["usage", "usage"])
@@ -315,8 +353,7 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime = object.__new__(ContainerRuntime)
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
-            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857,
-                     "uncertain": True, "in_flight": False, "budget_exhausted": True}
+            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857, "uncertain": True, "in_flight": False, "budget_exhausted": True}
             with patch("ppap_deep.isolation.container.grant_request", return_value=usage):
                 with self.assertRaises(ControllerFault) as failure:
                     runtime._export(run, root / "work", True, uuid4(), time.monotonic() + 2, threading.Event())
@@ -335,11 +372,8 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime = object.__new__(ContainerRuntime)
             runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
             runtime.journal = root / "journal"
-            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857,
-                     "uncertain": False, "in_flight": False, "budget_exhausted": True}
-            for cancelled, deadline, expected in ((True, time.monotonic() + 2, "CANCELLED"),
-                                                  (False, time.monotonic() - 1, "MODEL_TIMEOUT"),
-                                                  (False, time.monotonic() + 2, "MODEL_PROTOCOL_ERROR")):
+            usage = {"completed_requests": 42, "input_tokens": 4_025_240, "output_tokens": 89_857, "uncertain": False, "in_flight": False, "budget_exhausted": True}
+            for cancelled, deadline, expected in ((True, time.monotonic() + 2, "CANCELLED"), (False, time.monotonic() - 1, "MODEL_TIMEOUT"), (False, time.monotonic() + 2, "MODEL_PROTOCOL_ERROR")):
                 with self.subTest(expected=expected), patch("ppap_deep.isolation.container.grant_request", return_value=usage):
                     event = threading.Event()
                     if cancelled:
@@ -407,7 +441,11 @@ class ContainerBoundaryTests(unittest.TestCase):
                 captured["env"] = kwargs["env"]
                 return FinishedProcess()
 
-            with patch.dict(os.environ, {"DATABASE_URL": "private", "S3_SECRET_ACCESS_KEY": "private"}), patch("ppap_deep.isolation.container.subprocess.Popen", side_effect=spawn), patch("ppap_deep.isolation.container._kill_tree"):
+            with (
+                patch.dict(os.environ, {"DATABASE_URL": "private", "S3_SECRET_ACCESS_KEY": "private"}),
+                patch("ppap_deep.isolation.container.subprocess.Popen", side_effect=spawn),
+                patch("ppap_deep.isolation.container._kill_tree"),
+            ):  # noqa: E501
                 runtime._execute(root, time.monotonic() + 2, threading.Event(), None, uuid4())
             self.assertNotIn("DATABASE_URL", captured["env"])
             self.assertNotIn("S3_SECRET_ACCESS_KEY", captured["env"])
@@ -439,15 +477,26 @@ class ContainerBoundaryTests(unittest.TestCase):
             (root / "work").mkdir()
             stage = root / "work" / "audit"
             stage.mkdir()
-            (stage / "stdout.jsonl").write_text(json.dumps({
-                "type": "result", "stop_reason": "end_turn", "structured_output": "private full reasoning",
-            }) + "\n")
+            (stage / "stdout.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "stop_reason": "end_turn",
+                        "structured_output": "private full reasoning",
+                    }
+                )
+                + "\n"
+            )
             (root / "grant").mkdir()
             (root / "grant" / "model.json").write_text(json.dumps({"token": "Z" * 64}))
             runtime = object.__new__(ContainerRuntime)
             runtime.config = RuntimeConfig(
-                state=root, gateway_socket=root / "gateway.sock", gateway_host="127.0.0.1",
-                model="test-model", model_revision="0" * 64, app_revision="0" * 40,
+                state=root,
+                gateway_socket=root / "gateway.sock",
+                gateway_host="127.0.0.1",
+                model="test-model",
+                model_revision="0" * 64,
+                app_revision="0" * 40,
                 sandbox_profile="off",
             )
             runtime.active = {}
@@ -478,19 +527,29 @@ class ContainerBoundaryTests(unittest.TestCase):
             runtime.journal = root / "journal"
             runtime.attempts = root / "attempts"
             runtime.config = RuntimeConfig(
-                state=root, gateway_socket=root / "gateway.sock", gateway_host="127.0.0.1",
-                model="test-model", model_revision="0" * 64, app_revision="0" * 40,
+                state=root,
+                gateway_socket=root / "gateway.sock",
+                gateway_host="127.0.0.1",
+                model="test-model",
+                model_revision="0" * 64,
+                app_revision="0" * 40,
                 sandbox_profile="off",
             )
             spec = SnapshotSpec(
-                execution_id=uuid4(), submission_id=uuid4(), project_id="test",
-                sha256="0" * 64, format=".xlsx", semantic_engine_revision="0" * 64,
+                execution_id=uuid4(),
+                submission_id=uuid4(),
+                project_id="test",
+                sha256="0" * 64,
+                format=".xlsx",
+                semantic_engine_revision="0" * 64,
             )
             run = root / "run"
             run.mkdir()
-            with patch.object(runtime, "_new_run_dir", return_value=run), patch.object(
-                runtime, "_execute", side_effect=ControllerFault("MODEL_PROTOCOL_ERROR")
-            ), patch.object(runtime, "_diagnostic", side_effect=PermissionError("diagnostic unwritable")):
+            with (
+                patch.object(runtime, "_new_run_dir", return_value=run),
+                patch.object(runtime, "_execute", side_effect=ControllerFault("MODEL_PROTOCOL_ERROR")),
+                patch.object(runtime, "_diagnostic", side_effect=PermissionError("diagnostic unwritable")),
+            ):
                 with self.assertRaises(ControllerFault) as raised:
                     runtime.run(spec, inputs, work, time.monotonic() + 2, threading.Event())
             self.assertEqual(raised.exception.code, "MODEL_PROTOCOL_ERROR")

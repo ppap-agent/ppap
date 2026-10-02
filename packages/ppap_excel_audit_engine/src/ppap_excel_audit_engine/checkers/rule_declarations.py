@@ -27,6 +27,7 @@ def declarations_for_target(doc_type: str, filename: str, rule_profile: str) -> 
     from pathlib import Path as FilePath
 
     from ppap_core.types import PpapDocumentType
+
     from ppap_excel_audit_engine.routing import resolve_engine_agent_class
 
     name = filename or "document.xlsx"

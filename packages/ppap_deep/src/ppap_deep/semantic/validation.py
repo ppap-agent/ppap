@@ -53,7 +53,14 @@ def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -
             raise ValueError("Invalid published rule snapshot")
         ids = set()
         for row in clauses:
-            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"].strip() or not isinstance(row.get("rule_to_check"), str) or not row["rule_to_check"].strip() or row["id"] in ids:
+            if (
+                not isinstance(row, dict)
+                or not isinstance(row.get("id"), str)
+                or not row["id"].strip()
+                or not isinstance(row.get("rule_to_check"), str)
+                or not row["rule_to_check"].strip()
+                or row["id"] in ids
+            ):  # noqa: E501
                 raise ValueError("Invalid published rule clause")
             ids.add(row["id"])
         if "origin" in snapshot and (not isinstance(snapshot["origin"], dict) or not isinstance(snapshot["origin"].get("file_version_id"), str) or not snapshot["origin"]["file_version_id"].strip()):

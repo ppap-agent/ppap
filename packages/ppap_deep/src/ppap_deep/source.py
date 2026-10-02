@@ -1,4 +1,5 @@
 """Controller file source: frozen file_version_id → object bytes. Not a Worker RPC field."""
+
 from __future__ import annotations
 
 from uuid import UUID
@@ -7,6 +8,7 @@ from ppap_core.db import connect
 from ppap_core.files import ObjectMissing
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
+
 from ppap_deep.client import DeepError
 from ppap_deep.controller import FileSource
 from ppap_deep.protocol import ExecuteRequest
@@ -15,6 +17,7 @@ from ppap_deep.protocol import ExecuteRequest
 def authorize_execution(settings: Settings):
     """The caller may name a leased attempt, not select arbitrary objects or rules."""
     from ppap_api.store import AuthStore
+
     from ppap_deep.mapping import spec_from_work
 
     store = AuthStore(settings, role="worker")

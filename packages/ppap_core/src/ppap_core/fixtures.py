@@ -1,4 +1,5 @@
 """Isolated-dev fixtures for object-authorization tests. Not an S02 OAuth proof."""
+
 from __future__ import annotations
 
 TENANT_A = "00000000-0000-4000-8000-00000000000a"

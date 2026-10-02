@@ -66,17 +66,11 @@ def discover_v2_cross_format_pairs(
         excel_hits = excel_by_id.get(pair_id, [])
         pdf_hits = pdf_by_id.get(pair_id, [])
         if len(excel_hits) > 1 or len(pdf_hits) > 1:
-            ambiguous.append(
-                f"- pair={pair_id} excel={[case.file_name for case in excel_hits]} "
-                f"pdf={[case.file_name for case in pdf_hits]}"
-            )
+            ambiguous.append(f"- pair={pair_id} excel={[case.file_name for case in excel_hits]} pdf={[case.file_name for case in pdf_hits]}")
     if ambiguous:
         raise AssertionError("V2 cross-format pairs ambiguous:\n" + "\n".join(ambiguous))
 
-    pairs = [
-        CrossFormatPair(pair_id=pair_id, excel=excel_by_id[pair_id][0], pdf=pdf_by_id[pair_id][0])
-        for pair_id in sorted(set(excel_by_id) & set(pdf_by_id))
-    ]
+    pairs = [CrossFormatPair(pair_id=pair_id, excel=excel_by_id[pair_id][0], pdf=pdf_by_id[pair_id][0]) for pair_id in sorted(set(excel_by_id) & set(pdf_by_id))]
     if not pairs:
         raise AssertionError("No V2 PDF/Excel pairs discovered from oracle assets")
     return pairs

@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 _REPO = Path(__file__).resolve().parents[2]
 _DEFAULT_V2_ROOT = _REPO / "assets" / "v2.0plus"
 _DEFAULT_V2_CSV = _REPO / "assets" / "全量测试 - 4.8文件测试反馈（云端） - 4.8（云端）.csv"

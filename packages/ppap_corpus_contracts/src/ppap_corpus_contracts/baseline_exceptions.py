@@ -42,10 +42,7 @@ def _norm_status(value: str) -> str:
 
 
 def behavior_matches(known: BaselineRuleBehavior, observed: ObservedRuleOutcome) -> bool:
-    return (
-        _norm_status(known.expected_status) == _norm_status(observed.expected_status)
-        and known.actual.semantic == observed.actual.semantic
-    )
+    return _norm_status(known.expected_status) == _norm_status(observed.expected_status) and known.actual.semantic == observed.actual.semantic
 
 
 def classify_v2_baseline_outcomes(
@@ -54,11 +51,7 @@ def classify_v2_baseline_outcomes(
     observed: Mapping[int, ObservedRuleOutcome],
     known: Iterable[BaselineRuleBehavior] | None = None,
 ) -> tuple[frozenset[int], frozenset[int], frozenset[int]]:
-    records = {
-        item.rule_index: item
-        for item in (BASELINE_RULE_BEHAVIORS if known is None else known)
-        if item.file_name == file_name and item.file_type == file_type
-    }
+    records = {item.rule_index: item for item in (BASELINE_RULE_BEHAVIORS if known is None else known) if item.file_name == file_name and item.file_type == file_type}
     new_mismatches: set[int] = set()
     drifted: set[int] = set()
     mismatched = {rule for rule, outcome in observed.items() if outcome.is_mismatch}

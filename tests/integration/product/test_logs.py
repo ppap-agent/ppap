@@ -1,4 +1,5 @@
 """Structured logs carry request/tenant/round/job/attempt ids, not customer content."""
+
 from __future__ import annotations
 
 import io
@@ -6,25 +7,19 @@ import json
 import logging
 import os
 import unittest
-
-import pytest
 from unittest.mock import patch
 
-
+import pytest
+from ppap_api import create_app
 from ppap_core.audits import ClaimedJob
 from ppap_core.fixtures import TENANT_A
-from ppap_core.logs import JsonFormatter, LOGGER, bind, emit, new_request_id, reset, round_id_from_path
+from ppap_core.logs import LOGGER, JsonFormatter, bind, emit, new_request_id, reset, round_id_from_path
 from ppap_core.settings import Settings
-from ppap_api import create_app
 from ppap_worker import process_claimed
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -84,9 +79,7 @@ class LogTests(unittest.TestCase):
             settings = Settings()
         store = self.auth_store(settings)
         store.seed_isolated_dev()
-        client = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store)
-        )
+        client = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store))
         buf = _json_logger()
         health = client.get("/health")
         self.assertEqual(health.status_code, 200)

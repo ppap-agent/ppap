@@ -1,11 +1,11 @@
 """Worker job dispatch. Does not prove a full product audit round."""
+
 from __future__ import annotations
 
 import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
 
 from ppap_worker import run_claimed_job
 

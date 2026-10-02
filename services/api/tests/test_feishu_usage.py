@@ -1,32 +1,25 @@
 """Partner AI quota check and usage observations. Mocked HTTP only."""
+
 from __future__ import annotations
 
 import json
 import os
 import unittest
-
-import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
-
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.feishu import UserTokens
 from ppap_core.feishu_usage import PartnerAiItem, audit_usage_points, estimate_audit, quota_sufficient, remaining_trial_points, split_trial_and_partner
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
-from ppap_api import create_app
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -264,6 +257,7 @@ class FeishuUsageTests(unittest.TestCase):
 
     def test_cutover_baseline_sql_records_wanxiang_lian_dian_and_baolong(self):
         from pathlib import Path as P
+
         sql = (P(__file__).resolve().parents[3] / "migrations" / "0018_trial_cutover_baseline.sql").read_text()
         self.assertIn("'1406548d3c95175d'", sql)
         self.assertIn("'1629d31db550975f'", sql)

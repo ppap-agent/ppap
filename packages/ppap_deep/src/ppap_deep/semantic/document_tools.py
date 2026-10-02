@@ -157,9 +157,12 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
         clauses = published.get("clauses")
         version = published.get("rule_version_id")
         if (
-            not isinstance(version, str) or not version.strip()
-            or not isinstance(body, dict) or not isinstance(body.get("rules"), list)
-            or not isinstance(clauses, list) or not 1 <= len(clauses) <= 256
+            not isinstance(version, str)
+            or not version.strip()
+            or not isinstance(body, dict)
+            or not isinstance(body.get("rules"), list)
+            or not isinstance(clauses, list)
+            or not 1 <= len(clauses) <= 256
             or clauses != body["rules"]
         ):
             raise ValueError("Published rule body and clauses differ")
@@ -231,7 +234,7 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
     elif suffix == ".docx":
         from docx import Document
 
-        document = Document(path)
+        document = Document(str(path))
         within(len(document.paragraphs), limits.paragraphs, "paragraphs")
         within(len(document.tables), limits.tables, "tables")
         result["paragraphs"] = [{"location": f"paragraph:{i + 1}", "text": active_text(p._p)} for i, p in enumerate(document.paragraphs)]

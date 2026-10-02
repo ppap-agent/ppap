@@ -1,33 +1,24 @@
 """Docs-addon host login through the common Feishu round. Mocked HTTP only."""
+
 from __future__ import annotations
 
 import json
 import os
 import unittest
-
-import pytest
-from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
-
-
+import pytest
 from fastapi.testclient import TestClient
-
+from ppap_api import create_app
 from ppap_core.feishu import TOKEN_URL, USER_INFO_URL, exchange_host_code
 from ppap_core.fixtures import RULE_A
-from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
-from ppap_api import create_app
 from ppap_worker import process_claimed
 
 
 def _clean_env(**extra: str):
-    keep = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))
-    }
+    keep = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
     keep.update(extra)
     return patch.dict(os.environ, keep, clear=True)
 
@@ -231,9 +222,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         ]
 
     def _draft_for_imported_file(self):
-        imported = self.client.post(
-            "/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"}
-        )
+        imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
         self.assertEqual(imported.status_code, 201)
         created = self.client.post("/drafts")
         self.assertEqual(created.status_code, 201)
@@ -242,12 +231,15 @@ class FeishuDocsAddonTests(unittest.TestCase):
         source = self.store.file_source(imported_id)
         self.assertEqual(source["object_ref"], "xlsx-token")
         self.assertEqual(source["object_kind"], "file")
-        saved = self.client.put(f"/drafts/{draft}", json={
-            "items": [
-                {"file_version_id": imported_id, "role": "target", "rule_version_id": RULE_A},
-            ],
-            "writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": "current-doc"},
-        })
+        saved = self.client.put(
+            f"/drafts/{draft}",
+            json={
+                "items": [
+                    {"file_version_id": imported_id, "role": "target", "rule_version_id": RULE_A},
+                ],
+                "writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": "current-doc"},
+            },
+        )
         self.assertEqual(saved.status_code, 200)
         dumped = json.dumps(saved.json())
         self.assertTrue(saved.json()["writeback"]["available"])
@@ -314,11 +306,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(replay.json()["id"], submitted.json()["id"])
         still = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(still["remaining_trial_ai_points"], 9500)
-        events = [
-            row
-            for row in self._usage_events()
-            if row["trace_id"] == submitted.json()["id"] + ":trial"
-        ]
+        events = [row for row in self._usage_events() if row["trace_id"] == submitted.json()["id"] + ":trial"]
         self.assertEqual(len(events), 1)
         self.assertTrue(events[0]["is_free_trial"])
         self.assertEqual(events[0]["consumed_points"], 500)
@@ -388,9 +376,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
             FEISHU_APP_SECRET="secret",
         ):
             settings = Settings()
-        client = TestClient(
-            create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings), self.http)
-        )
+        client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, self.auth_store(settings), self.http))
         response = client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "invalid_host_code")

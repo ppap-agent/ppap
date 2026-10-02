@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from ppap_corpus_contracts.cross_format import (
     classify_pair_rules,
     discover_v2_cross_format_pairs,
@@ -45,12 +44,8 @@ def test_v2_cross_format_pair(pair: Any) -> None:
     rules = sorted(set(pair.excel.expected) | set(pair.pdf.expected))
     pdf_observed = collect_v2_rule_outcomes(pair.pdf)
     excel_observed = collect_v2_rule_outcomes(pair.excel)
-    pdf_outcomes = {
-        rule: pdf_observed[rule].actual if rule in pdf_observed else MISSING_OUTCOME for rule in rules
-    }
-    excel_outcomes = {
-        rule: excel_observed[rule].actual if rule in excel_observed else MISSING_OUTCOME for rule in rules
-    }
+    pdf_outcomes = {rule: pdf_observed[rule].actual if rule in pdf_observed else MISSING_OUTCOME for rule in rules}
+    excel_outcomes = {rule: excel_observed[rule].actual if rule in excel_observed else MISSING_OUTCOME for rule in rules}
     verdicts = classify_pair_rules(pair.pair_id, pdf_outcomes, excel_outcomes, KNOWN_PAIR_DIVERGENCES)
 
     new = [item for item in verdicts if item.kind == "new"]
@@ -58,10 +53,7 @@ def test_v2_cross_format_pair(pair: Any) -> None:
     stale = [item for item in verdicts if item.kind == "stale"]
     allowed = sum(1 for item in verdicts if item.kind == "allowed")
     consistent = sum(1 for item in verdicts if item.kind == "consistent")
-    print(
-        f"pair={pair.pair_id} consistent={consistent} allowed={allowed} "
-        f"new={len(new)} changed={len(changed)} stale={len(stale)}"
-    )
+    print(f"pair={pair.pair_id} consistent={consistent} allowed={allowed} new={len(new)} changed={len(changed)} stale={len(stale)}")
 
     parts: list[str] = []
     if new:
@@ -69,9 +61,6 @@ def test_v2_cross_format_pair(pair: Any) -> None:
     if changed:
         parts.append("changed divergences:\n- " + "\n- ".join(_format_verdict(item) for item in changed))
     if stale:
-        parts.append(
-            "stale cross-format baseline:\n- "
-            + "\n- ".join(f"rule {item.rule_index}" for item in stale)
-        )
+        parts.append("stale cross-format baseline:\n- " + "\n- ".join(f"rule {item.rule_index}" for item in stale))
     if parts:
         pytest.fail(f"{pair.pair_id}:\n" + "\n".join(parts))

@@ -1,4 +1,5 @@
 """Customer path aliases are nginx behavior, checked by nginx itself."""
+
 from __future__ import annotations
 
 import subprocess

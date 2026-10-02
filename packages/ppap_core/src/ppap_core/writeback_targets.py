@@ -1,4 +1,5 @@
 """Provider-neutral writeback/origin records. Never expose object_ref in public JSON."""
+
 from __future__ import annotations
 
 

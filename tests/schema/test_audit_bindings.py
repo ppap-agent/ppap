@@ -1,13 +1,13 @@
 """Per-target rules and acceptance concurrency against actual PostgreSQL."""
-from concurrent.futures import ThreadPoolExecutor
+
 import os
 import threading
 import time
 import unittest
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-import uuid
-
 
 
 class AuditDatabaseCase(unittest.TestCase):
@@ -25,17 +25,29 @@ class AuditDatabaseCase(unittest.TestCase):
 
         self.schema.require_postgres()
         self.database = "ppap_bindings_" + uuid.uuid4().hex[:12]
-        self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()}"), "create isolated audit DB")
-        self.addCleanup(lambda: self.schema.require(self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"))
+        self.schema.require(
+            self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"CREATE DATABASE {self.database} OWNER {self.schema.migrator_user()}"),
+            "create isolated audit DB",
+        )  # noqa: E501
+        self.addCleanup(
+            lambda: self.schema.require(
+                self.schema.psql(self.schema.bootstrap_user(), self.schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {self.database} WITH (FORCE)"), "drop isolated audit DB"
+            )
+        )  # noqa: E501
         if self.previous_schema:
-
             for migration in self.schema.migration_files():
                 if migration.name >= "0010":
                     break
                 self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(migration)), "apply prior audit schema")
         else:
             self.schema.require(self.schema.apply(self.database), "apply audit schema")
-        self.settings = Settings(pg_database=self.database, pg_host=os.environ.get("PGHOST", "127.0.0.1"), pg_port=int(os.environ.get("PGPORT", "5432")), pg_migrator_user=self.schema.migrator_user(), pg_migrator_password=self.schema.migrator_password())
+        self.settings = Settings(
+            pg_database=self.database,
+            pg_host=os.environ.get("PGHOST", "127.0.0.1"),
+            pg_port=int(os.environ.get("PGPORT", "5432")),
+            pg_migrator_user=self.schema.migrator_user(),
+            pg_migrator_password=self.schema.migrator_password(),
+        )  # noqa: E501
         self.store = build_product_store(self.settings, objects=self.memory_objects_type())
         self.store.seed_isolated_dev()
         self.alice = self.store.principal_for_fixture("alice")
@@ -50,26 +62,28 @@ class AuditDatabaseCase(unittest.TestCase):
         self.store.save_draft(self.alice, draft["id"], items)
         return draft["id"]
 
+
 class AuditBindingDatabaseTests(AuditDatabaseCase):
     def test_resumable_drafts_keep_origin_and_respect_grants(self):
         from ppap_core.fixtures import RULE_A
-        file = self.upload('draft.txt')
-        items = [{'file_version_id':file.id, 'role':'target', 'rule_version_id':RULE_A}]
+
+        file = self.upload("draft.txt")
+        items = [{"file_version_id": file.id, "role": "target", "rule_version_id": RULE_A}]
         draft = self.draft(items)
-        first = self.store.accept_draft(self.alice, draft, 'origin')
-        next_draft = self.store.create_draft(self.alice, first['id'])['id']
+        first = self.store.accept_draft(self.alice, draft, "origin")
+        next_draft = self.store.create_draft(self.alice, first["id"])["id"]
         self.store.save_draft(self.alice, next_draft, items)
         rows = self.store.list_drafts(self.alice)
-        self.assertEqual([row['id'] for row in rows], [next_draft])
-        self.assertEqual(rows[0]['predecessor_id'], first['id'])
-        self.assertTrue(rows[0]['updated_at'])
-        bob = self.store.principal_for_fixture('bob')
+        self.assertEqual([row["id"] for row in rows], [next_draft])
+        self.assertEqual(rows[0]["predecessor_id"], first["id"])
+        self.assertTrue(rows[0]["updated_at"])
+        bob = self.store.principal_for_fixture("bob")
         self.assertEqual(self.store.list_drafts(bob), [])
-        bob_draft = self.store.create_draft(bob, first['id'])
-        self.assertEqual(bob_draft['predecessor_id'], first['id'])
+        bob_draft = self.store.create_draft(bob, first["id"])
+        self.assertEqual(bob_draft["predecessor_id"], first["id"])
         self.assertEqual(self.store.list_drafts(bob), [])
-        accepted = self.store.accept_draft(self.alice, next_draft, 'resumed')
-        self.assertEqual(accepted['predecessor_id'], first['id'])
+        accepted = self.store.accept_draft(self.alice, next_draft, "resumed")
+        self.assertEqual(accepted["predecessor_id"], first["id"])
         self.assertEqual(self.store.list_drafts(self.alice), [])
 
     def test_each_target_keeps_its_rule_snapshot_through_replay_and_explicit_resubmit(self):
@@ -77,7 +91,11 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
 
         first, second, reference = [self.upload(name) for name in ("a.xlsx", "b.xlsx", "context.pdf")]
         rule = self.store.publish_rule(self.alice, "客户规则", self.rule_body(), reference.id)
-        items = [{"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": second.id, "role": "target", "rule_version_id": rule["id"]}, {"file_version_id": reference.id, "role": "reference"}]
+        items = [
+            {"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A},
+            {"file_version_id": second.id, "role": "target", "rule_version_id": rule["id"]},
+            {"file_version_id": reference.id, "role": "reference"},
+        ]  # noqa: E501
         draft = self.draft(items)
         accepted = self.store.accept_draft(self.alice, draft, "per-input")
         by_id = {item["file_version_id"]: item for item in accepted["inputs"]}
@@ -169,9 +187,9 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
     previous_schema = True
 
     def test_upgrade_copies_frozen_head_not_current_rule_and_preserves_results(self):
-        from psycopg.types.json import Jsonb
         from ppap_core.audits import request_fingerprint
         from ppap_core.fixtures import RULE_A
+        from psycopg.types.json import Jsonb
 
         target, reference = self.upload("target.xlsx"), self.upload("reference.xlsx")
         draft, round_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -181,14 +199,20 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
                 conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s,%s,%s)", (ident, self.alice.tenant_id, kind))
                 conn.execute("INSERT INTO product.resource_grants VALUES (%s,%s,'read')", (ident, self.alice.user_id))
             conn.execute("INSERT INTO product.audit_drafts (id,tenant_id,created_by,rule_version_id,status) VALUES (%s,%s,%s,%s,'accepted')", (draft, self.alice.tenant_id, self.alice.user_id, RULE_A))
-            conn.execute("INSERT INTO product.audit_rounds (id,tenant_id,created_by,source_draft_id,rule_version_id,rule_title,rule_body,idempotency_key,request_fingerprint,execution) VALUES (%s,%s,%s,%s,%s,'Frozen title',%s,'old-key','old-fingerprint','completed')", (round_id, self.alice.tenant_id, self.alice.user_id, draft, RULE_A, Jsonb(frozen)))
+            conn.execute(
+                "INSERT INTO product.audit_rounds (id,tenant_id,created_by,source_draft_id,rule_version_id,rule_title,rule_body,idempotency_key,request_fingerprint,execution) VALUES (%s,%s,%s,%s,%s,'Frozen title',%s,'old-key','old-fingerprint','completed')",  # noqa: E501
+                (round_id, self.alice.tenant_id, self.alice.user_id, draft, RULE_A, Jsonb(frozen)),
+            )  # noqa: E501
             for version, role in ((target, "target"), (reference, "reference")):
                 conn.execute("INSERT INTO product.draft_items VALUES (%s,%s,%s)", (draft, version.id, role))
                 conn.execute("INSERT INTO product.round_inputs VALUES (%s,%s,%s)", (round_id, version.id, role))
             conn.execute("INSERT INTO product.findings (id,round_id,item_key,classification,item,status) VALUES (%s,%s,'check','A','Original result','NG')", (str(uuid.uuid4()), round_id))
             conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
         for _ in range(2):
-            self.schema.require(self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "0010_input_rule_bindings.sql")), "upgrade input rule snapshots")
+            self.schema.require(
+                self.schema.psql(self.schema.migrator_user(), self.schema.migrator_password(), self.database, "-f", str(self.schema.MIGRATIONS / "0010_input_rule_bindings.sql")),
+                "upgrade input rule snapshots",
+            )  # noqa: E501
         self.schema.require(self.schema.apply(self.database), "upgrade to current before using current store")
         loaded = self.store.get_round(round_id)
         by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
@@ -210,11 +234,14 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
     def prepared(self):
         from ppap_core.fixtures import RULE_A
+
         target, reference = self.upload("target.xlsx"), self.upload("reference.pdf")
-        return self.draft([
-            {"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A},
-            {"file_version_id": reference.id, "role": "reference"},
-        ])
+        return self.draft(
+            [
+                {"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A},
+                {"file_version_id": reference.id, "role": "reference"},
+            ]
+        )
 
     def test_concurrent_rounds_share_trial_and_replay_does_not_charge(self):
         drafts = [self.prepared(), self.prepared()]
@@ -243,6 +270,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
     def test_usage_error_rolls_back_round_and_job(self):
         from unittest.mock import patch
+
         draft = self.prepared()
         with patch.object(self.store, "_record_round_usage", side_effect=RuntimeError("test rollback")):
             with self.assertRaises(RuntimeError):

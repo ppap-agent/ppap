@@ -1,4 +1,5 @@
 """Feishu Partner AI quota check and usage observations. Not a billing product."""
+
 from __future__ import annotations
 
 import json
@@ -43,9 +44,7 @@ def split_trial_and_partner(remaining_trial: int, points: int) -> list[tuple[int
     return [(remaining, True), (need - remaining, False)]
 
 
-def quota_messages(
-    enabled: bool | None, user_quota: int | None, ai_package_purchased: bool | None, sufficient: bool
-) -> tuple[str, str]:
+def quota_messages(enabled: bool | None, user_quota: int | None, ai_package_purchased: bool | None, sufficient: bool) -> tuple[str, str]:
     purchased = bool(ai_package_purchased)
     on = bool(enabled)
     quota = int(user_quota or 0)
@@ -113,8 +112,10 @@ def query_tenant_ai_item(http, access_token: str, ai_item_id: str) -> PartnerAiI
     status = int(getattr(response, "status_code", 0) or 0)
     if status < 200 or status >= 300 or body.get("code") != 0:
         raise FeishuUsageError("feishu_ai_item_failed")
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    item = data.get("tenant_ai_item") if isinstance(data.get("tenant_ai_item"), dict) else {}
+    data_value = body.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
+    item_value = data.get("tenant_ai_item")
+    item = item_value if isinstance(item_value, dict) else {}
     if not item:
         raise FeishuUsageError("feishu_ai_item_failed")
     try:
@@ -126,9 +127,7 @@ def query_tenant_ai_item(http, access_token: str, ai_item_id: str) -> PartnerAiI
 
 def quota_payload(item: PartnerAiItem, remaining_trial: int) -> dict[str, object]:
     sufficient = quota_sufficient(item.enabled, item.user_quota)
-    message, detailed = quota_messages(
-        item.enabled, item.user_quota, item.ai_package_purchased, sufficient
-    )
+    message, detailed = quota_messages(item.enabled, item.user_quota, item.ai_package_purchased, sufficient)
     return {
         "enabled": item.enabled,
         "user_quota": item.user_quota,
@@ -212,16 +211,15 @@ def apply_report_credential(http, user_token: str, ai_item_id: str, trace_id: st
         body = _response_json(response)
     except Exception as exc:
         raise FeishuUsageError("feishu_usage_report_failed") from exc
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    data_value = body.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
     token = str(data.get("token") or data.get("report_token") or "").strip()
     if not _ok(response) or not token:
         raise FeishuUsageError("feishu_usage_report_failed")
     return token
 
 
-def report_usage_record(
-    http, tenant_token: str, report_token: str, ai_item_id: str, trace_id: str, points: int
-) -> str:
+def report_usage_record(http, tenant_token: str, report_token: str, ai_item_id: str, trace_id: str, points: int) -> str:
     payload = {
         "report_token": report_token,
         "record": {
@@ -243,7 +241,8 @@ def report_usage_record(
         body = _response_json(response)
     except Exception as exc:
         raise FeishuUsageError("feishu_usage_report_failed") from exc
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    data_value = body.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
     record_id = str(data.get("id") or "").strip()
     if not _ok(response) or not record_id:
         raise FeishuUsageError("feishu_usage_report_failed")

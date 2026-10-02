@@ -20,3 +20,4 @@ apps/web/runtime-config.json
 playwright/.auth/
 test-results/
 .insforge/
+.cache/

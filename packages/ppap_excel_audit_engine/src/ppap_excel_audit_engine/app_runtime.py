@@ -24,6 +24,8 @@ from ppap_docops.word import (
     LegacyDocConversionLimits,
     convert_legacy_doc_to_docx,
 )
+from ppap_pdf_to_excel import convert_pdf_to_excel_auto, load_workbook_auto
+from ppap_vision.image import extract_images_from_bytes
 from pydantic import BaseModel
 
 from ppap_excel_audit_engine.checkers.client import AIClient
@@ -41,8 +43,6 @@ from ppap_excel_audit_engine.docx_quality import (
 from ppap_excel_audit_engine.engine import run_audit
 from ppap_excel_audit_engine.routing import resolve_engine_agent_class
 from ppap_excel_audit_engine.runtime import AuditRuntime
-from ppap_pdf_to_excel import convert_pdf_to_excel_auto, load_workbook_auto
-from ppap_vision.image import extract_images_from_bytes
 
 
 class AuditResult(BaseModel):
