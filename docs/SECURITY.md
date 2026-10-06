@@ -31,3 +31,17 @@ self-hosted InsForge Custom Compute 需要把宿主机 `docker.sock` 挂进 InsF
 只有路径真正产生外部效果时才考虑幂等、未知结果和 readback。未知的非幂等结果不能盲目重试。
 
 LLM、飞书、Partner AI 和其它可访问远程环境可以直接用于相关开发/验证；它们的临时不可用不阻塞无关 Core 路径。
+
+## Deep runtime 的信任边界与演进要求
+
+当前实现与配置以 [runtime.py](../packages/ppap_deep/src/ppap_deep/runtime.py)、[container.py](../packages/ppap_deep/src/ppap_deep/isolation/container.py) 和 [部署说明](../deploy/deep/README.md) 为准。`container-only` 在可信 Linux 容器内降权启动 guest，并清理环境、capabilities 和继承描述符；在 `sandbox_profile=off` 下不保证对恶意 guest 的独立文件系统或网络隔离。不能把降权、进程资源限制或外部容器的存在称为 per-execution gVisor/VM 隔离，也不能因 model key 未进入 guest 就宣称不存在数据外传风险。
+
+以下是后端演进与上线必须验证的要求，不是对当前部署能力的额外保证：
+
+- Worker → Controller 保持有界业务协议、租户/对象授权与冻结版本校验。执行配置只由可信 Controller 选择；文档、模型输出和 Worker RPC 不能授予任意命令、路径、挂载、镜像、环境或调试能力。Worker 不获得 Docker socket、Kubernetes 管理凭据或 hypervisor 权限。
+- 不可信 guest 仅获得本次运行输入、必要工作空间和有预算的短期模型 capability；provider key、产品数据库与对象存储管理凭据留在可信边界。将 gateway 移到另一执行域时须校验调用身份、授权范围、过期/撤销和网络出口，不以暴露 loopback 服务替代这些边界。
+- 更强隔离后端须在目标部署上验证跨执行/跨租户文件与进程不可达、禁止出口（包括云 metadata 与控制面）、只读输入、资源总量限制及子进程回收。共享 UID、网络和文件系统的串行 guest 不能仅通过增加并发宣称已隔离。
+- lease 丢失、超时、Controller 崩溃和结果提交竞态都要保持 fencing 与撤权语义。无法确认模型消费、grant 撤销或 sandbox 清理时 fail closed；恢复先读回/对账，不盲目重放付费请求。
+- guest 输出始终是不可信输入；产物读取须限制大小、文件类型与符号链接，验证 schema、冻结输入身份、coverage 和 evidence/locator 后才发布。日志默认只留有界、脱敏的执行事实；交互调试须显式授权、限时且可审计，不默认保存客户原文或完整模型轨迹。
+
+架构分层、状态 authority 与条件性 AX 评估见 [Architecture](ARCHITECTURE.md#deep-执行环境的演进约束提议)。更强隔离可以由安全需求独立触发，不以引入 AX 或扩大量级为前提。
