@@ -1,7 +1,9 @@
 ------------------------- MODULE GreenfieldApproval -------------------------
 EXTENDS Naturals, FiniteSets, Sequences
 
-\* Requirements-level, single-case model. Values stand for versions, not bytes.
+\* Requirements-level, machine-assisted single-case path. Values stand for
+\* versions, not bytes. Independent human checking of unknown machine results
+\* is scoped separately in GreenfieldManualReview, not proved by this model.
 CONSTANTS MaxSub, MaxRev, FaultyStale, FaultyRewrite,
           FaultyApproval, FaultyResend, FaultyCoverage
 ASSUME /\ MaxSub = 2
