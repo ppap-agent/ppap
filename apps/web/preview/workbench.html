@@ -39,7 +39,7 @@
       <div class="heading"><h1>PPAP · 本地预览台</h1><p class="hint">概念原型与现有页面 · 模拟数据 · 不连接现网</p></div>
       <div class="toolbar" role="group" aria-label="预览设置">
         <label class="group"><span class="label">页面</span><select id="page" aria-label="页面">
-          <option value="intake">统一审核旅程</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="new">新建审核</option><option value="draft">审核草稿</option><option value="history">审核结果</option><option value="round">审核详情</option><option value="rules">规则库</option><option value="rule">规则详情</option><option value="import">上传规则</option><option value="usage">用量记录</option>
+          <option value="intake">统一审核旅程</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="requirements">审核要求</option><option value="usage">用量记录</option>
         </select></label>
         <div id="scenes" class="group" role="group" aria-label="数据场景"><span class="label">场景</span><button data-scene="populated" type="button">有数据</button><button data-scene="empty" type="button">空状态</button><button data-scene="error" type="button">错误</button><button data-scene="long" type="button">长列表</button></div>
         <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="390" type="button">手机</button><button data-width="820" type="button">平板</button><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
@@ -52,7 +52,7 @@
     <main class="stage" aria-label="预览画布"><div id="device" class="device"><iframe id="product" title="PPAP 产品预览"></iframe></div></main>
   </div>
   <script>
-    const paths = {concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', new: '/', draft: '/?draft=66666666-6666-4666-8666-666666666666', history: '/audit-files', round: '/?round=33333333-3333-4333-8333-333333333333', rules: '/rules', rule: '/rules?rule=44444444-4444-4444-8444-444444444444', import: '/rules?new=1', usage: '/usage'};
+    const paths = {concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', requirements: '/preview/intake.html?view=requirements', usage: '/preview/intake.html?view=usage'};
     const choices = {scene: ['populated', 'empty', 'error', 'long'], width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
     const state = {page: paths[query.get('page')] ? query.get('page') : 'intake', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: choices.width.includes(query.get('width')) ? query.get('width') : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light'};
@@ -85,7 +85,7 @@
     frame.addEventListener('load', () => {
       const opened = new URL(frame.contentWindow.location.href);
       const path = opened.pathname;
-      const actual = path === '/preview/concept.html' ? (opened.searchParams.get('stage') === 'response' ? 'amendment' : 'concept') : path === '/preview/intake.html' ? (opened.searchParams.get('step') === 'progress' ? 'progress' : 'intake') : path === '/audit-files' ? 'history' : path === '/usage' ? 'usage' : path === '/rules' ? (opened.searchParams.has('rule') ? 'rule' : opened.searchParams.has('new') || opened.searchParams.has('parse') ? 'import' : 'rules') : path === '/' ? (opened.searchParams.has('round') ? 'round' : opened.searchParams.has('draft') ? 'draft' : 'new') : null;
+      const actual = path === '/preview/concept.html' ? (opened.searchParams.get('stage') === 'response' ? 'amendment' : 'concept') : path === '/preview/intake.html' ? (['requirements', 'usage'].includes(opened.searchParams.get('view')) ? opened.searchParams.get('view') : opened.searchParams.get('step') === 'progress' ? 'progress' : 'intake') : null;
       if (actual && actual !== state.page) { state.page = actual; render(false); }
     });
     render(true);

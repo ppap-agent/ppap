@@ -163,6 +163,7 @@ class RuleDetail(TypedDict):
     source_file_version_id: str | None
     predecessor_id: NotRequired[str | None]
     created_by: NotRequired[str | None]
+    case_context: NotRequired[CaseContext]
 
 
 class RuleCandidate(TypedDict):
@@ -191,6 +192,8 @@ class RulePublishRequest(TypedDict):
     body: EngineRuleBody
     source_file_version_id: str
     predecessor_id: NotRequired[str | None]
+    request_id: NotRequired[str]
+    case_context: NotRequired[CaseContext]
 
 
 class JobError(TypedDict):
@@ -232,6 +235,10 @@ class MaterialWire(TypedDict):
     status: str
 
 
+class CaseContext(TypedDict):
+    registration: str
+
+
 class Draft(TypedDict):
     id: str
     status: str
@@ -240,6 +247,7 @@ class Draft(TypedDict):
     predecessor_id: str | None
     analysis_mode: AnalysisMode
     writeback: WritebackTarget
+    case_context: NotRequired[CaseContext]
 
 
 class DraftCreateRequest(TypedDict, total=False):
@@ -262,6 +270,7 @@ class DraftSaveRequest(TypedDict, total=False):
     items: list[DraftInputItem]
     analysis_mode: AnalysisMode
     writeback_target: WritebackTargetRequest | None
+    case_context: CaseContext
 
 
 class DraftAcceptRequest(TypedDict):
@@ -351,11 +360,18 @@ class FindingLocator(TypedDict, total=False):
     semantic: SemanticEvidence
 
 
+class ReviewCitation(TypedDict):
+    file_version_id: str
+    location: str
+    excerpt: str
+
+
 class Review(TypedDict):
     judgment: str
     rationale: str
     next_step: str
     version: int
+    citations: NotRequired[list[ReviewCitation]]
 
 
 class Finding(TypedDict):
@@ -379,6 +395,7 @@ class RuleCoverageItem(TypedDict):
     reason: NotRequired[str]
     item_key: NotRequired[str]
     status: NotRequired[FindingStatus]
+    review: NotRequired[Review | None]
 
 
 class Coverage(TypedDict, total=False):
@@ -411,6 +428,7 @@ class Round(TypedDict):
     created_at: str | None
     analysis_mode: AnalysisMode
     writeback: WritebackTarget
+    case_context: NotRequired[CaseContext]
     progress: RoundProgress | None
     failure: RoundFailure | None
     inputs: list[MaterialWire]
@@ -458,6 +476,7 @@ class ReviewRequest(TypedDict):
     rationale: str
     next_step: str
     version: int
+    citations: NotRequired[list[ReviewCitation]]
 
 
 class UsageEvent(TypedDict):

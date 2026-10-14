@@ -38,7 +38,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url)
 
   // API calls, uploads, runtime configuration, and third-party resources must always remain network-only.
-  if (request.method !== 'GET' || url.origin !== self.location.origin || isJsonRequest(request)) return
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || isJsonRequest(request)) return
 
   if (isStaticAsset(request, url)) {
     event.respondWith(

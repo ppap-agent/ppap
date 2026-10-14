@@ -126,10 +126,23 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if "rule_version_id" in body:
             return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
         try:
-            draft = store.save_draft(principal, draft_id, items, analysis_mode, writeback_target)
+            draft = store.save_draft(principal, draft_id, items, analysis_mode, writeback_target, body.get("case_context"))
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(draft)
+
+    @app.get("/drafts/{draft_id}/round", response_model=wc.Round | None)
+    def drafts_round(draft_id: str, request: Request):
+        _principal, denied = require_object(request, draft_id)
+        if denied:
+            return denied
+        round_id = store.draft_round_id(draft_id)
+        if round_id is None:
+            return None
+        _principal, denied = require_object(request, round_id)
+        if denied:
+            return denied
+        return store.get_round(round_id)
 
     @app.post("/drafts/{draft_id}/accept", response_model=wc.Round, status_code=201, openapi_extra=wc.openapi_body(wc.DraftAcceptRequest))
     def drafts_accept(draft_id: str, body: dict, request: Request) -> JSONResponse:
@@ -269,6 +282,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 cast(str, body.get("rationale")),
                 cast(str, body.get("next_step")),
                 cast(int, body.get("version")),
+                body.get("citations"),
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)

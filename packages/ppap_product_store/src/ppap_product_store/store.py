@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -747,7 +748,7 @@ class AuthStore:
             row = conn.execute(
                 """
                 SELECT r.id, r.title, r.body, r.created_at, r.source_file_version_id,
-                       fv.file_id, r.predecessor_id, r.created_by
+                       fv.file_id, r.predecessor_id, r.created_by, r.case_context
                 FROM product.rule_versions r
                 LEFT JOIN product.file_versions fv ON fv.id = r.source_file_version_id
                 WHERE r.tenant_id = %s AND r.id = %s
@@ -765,11 +766,17 @@ class AuthStore:
             "source_file_id": str(row[5]) if row[5] else None,
             "predecessor_id": str(row[6]) if row[6] else None,
             "created_by": str(row[7]) if row[7] else None,
+            "case_context": row[8] or {},
         }
 
-    def publish_rule(self, principal: Principal, title, body, source_file_version_id, predecessor_id=None) -> dict:
+    def publish_rule(self, principal: Principal, title, body, source_file_version_id, predecessor_id=None, request_id=None, case_context=None) -> dict:
         title, body = rule_title(title), normalize_rule_body(body)
-        rule_id = str(uuid.uuid4())
+        rule_id = _as_uuid(request_id) if request_id else str(uuid.uuid4())
+        if not rule_id:
+            raise ValueError("invalid_rule_request")
+        context = case_context or {}
+        if not isinstance(context, dict) or len(json.dumps(context, ensure_ascii=False).encode()) > 262144:
+            raise ValueError("invalid_case_context")
         with self._conn() as conn:
             with conn.transaction():
                 self._prepared_items(conn, principal, [{"file_version_id": source_file_version_id, "role": "reference"}])
@@ -779,11 +786,22 @@ class AuthStore:
                 conn.execute(
                     """
                     INSERT INTO product.rule_versions
-                        (id, tenant_id, title, body, source_file_version_id, predecessor_id, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        (id, tenant_id, title, body, source_file_version_id, predecessor_id, created_by, case_context)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING
                     """,
-                    (rule_id, principal.tenant_id, title, Jsonb(body), source_file_version_id, predecessor, principal.user_id),
+                    (rule_id, principal.tenant_id, title, Jsonb(body), source_file_version_id, predecessor, principal.user_id, Jsonb(context)),
                 )
+                existing = conn.execute("SELECT tenant_id, title, body, source_file_version_id, predecessor_id, case_context FROM product.rule_versions WHERE id = %s", (rule_id,)).fetchone()
+                if not existing or str(existing[0]) != principal.tenant_id:
+                    raise KeyError("missing")
+                if (
+                    existing[1] != title
+                    or existing[2] != body
+                    or str(existing[3]) != str(source_file_version_id)
+                    or (str(existing[4]) if existing[4] else None) != (str(predecessor) if predecessor else None)
+                    or existing[5] != context
+                ):
+                    raise ValueError("idempotency_conflict")
         return cast(dict, self.get_rule(principal.tenant_id, rule_id))
 
     def create_draft(self, principal: Principal, predecessor_id: str | None = None) -> dict:
@@ -847,6 +865,17 @@ class AuthStore:
         with self._conn() as conn:
             return self._draft_public(conn, parsed)
 
+    def draft_round_id(self, draft_id: str) -> str | None:
+        parsed = _as_uuid(draft_id)
+        if not parsed:
+            return None
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM product.audit_rounds WHERE source_draft_id = %s ORDER BY created_at DESC, id DESC LIMIT 1",
+                (parsed,),
+            ).fetchone()
+        return str(row[0]) if row else None
+
     def _offered_analysis_mode(self, value, allow_reject: bool = True) -> str:
         mode = normalize_analysis_mode(value)
         if mode != ANALYSIS_DEEP:
@@ -864,6 +893,7 @@ class AuthStore:
         items: list[dict] | None,
         analysis_mode: str | None = None,
         writeback_target=None,
+        case_context: dict | None = None,
     ) -> dict:
         parsed = _as_uuid(draft_id)
         if not parsed:
@@ -903,6 +933,10 @@ class AuthStore:
                 if writeback_target is not None:
                     self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
+                if case_context is not None:
+                    if not isinstance(case_context, dict) or len(json.dumps(case_context, ensure_ascii=False).encode()) > 262144:
+                        raise ValueError("invalid_case_context")
+                    conn.execute("UPDATE product.audit_drafts SET case_context = %s, updated_at = now() WHERE id = %s", (Jsonb(case_context), parsed))
                 return cast(dict, self._draft_public(conn, parsed))
 
     def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
@@ -1070,7 +1104,7 @@ class AuthStore:
 
         return f"ppap-round-{work.round_id[:8]}.zip", chunks()
 
-    def save_review(self, principal: Principal, round_id: str, item_key: str, judgment: str, rationale: str, next_step: str, version: int) -> dict:
+    def save_review(self, principal: Principal, round_id: str, item_key: str, judgment: str, rationale: str, next_step: str, version: int, citations: list[dict] | None = None) -> dict:
         text, why, nxt, seen = normalize_review(judgment, rationale, next_step, version)
         parsed = _as_uuid(round_id)
         key = str(item_key or "").strip()
@@ -1083,16 +1117,32 @@ class AuthStore:
                     (parsed, key),
                 ).fetchone()
                 if not finding:
-                    raise KeyError("missing")
+                    coverage_row = conn.execute("SELECT coverage FROM product.audit_rounds WHERE id = %s", (parsed,)).fetchone()
+                    coverage = (coverage_row[0] or {}).get("rule_items", []) if coverage_row else []
+                    if not any(key == f"coverage:{row.get('file_version_id')}:{row.get('id')}" and row.get("coverage") != "executed" for row in coverage):
+                        raise KeyError("missing")
+                cites = citations or []
+                if not isinstance(cites, list) or len(cites) > 20:
+                    raise ValueError("invalid_review_citations")
+                versions = {str(row[0]) for row in conn.execute("SELECT file_version_id FROM product.round_inputs WHERE round_id = %s", (parsed,)).fetchall()}
+                for cite in cites:
+                    if (
+                        not isinstance(cite, dict)
+                        or cite.get("file_version_id") not in versions
+                        or any(not isinstance(cite.get(field), str) or not cite[field].strip() or len(cite[field]) > 4000 for field in ("location", "excerpt"))
+                    ):
+                        raise ValueError("invalid_review_citations")
+                if text.startswith("manual-") and (not why or not cites):
+                    raise ValueError("manual_review_evidence_required")
                 if seen == 0:
                     try:
                         conn.execute(
                             """
                             INSERT INTO product.reviews
-                                (round_id, item_key, user_id, judgment, rationale, next_step, version)
-                            VALUES (%s, %s, %s, %s, %s, %s, 1)
+                                (round_id, item_key, user_id, judgment, rationale, next_step, version, citations)
+                            VALUES (%s, %s, %s, %s, %s, %s, 1, %s)
                             """,
-                            (parsed, key, principal.user_id, text, why, nxt),
+                            (parsed, key, principal.user_id, text, why, nxt, Jsonb(cites)),
                         )
                     except UniqueViolation as exc:
                         raise ValueError("review_conflict") from exc
@@ -1101,11 +1151,11 @@ class AuthStore:
                         """
                         UPDATE product.reviews
                         SET judgment = %s, rationale = %s, next_step = %s, user_id = %s,
-                            version = version + 1, updated_at = now()
+                            version = version + 1, updated_at = now(), citations = %s
                         WHERE round_id = %s AND item_key = %s AND version = %s
                         RETURNING version
                         """,
-                        (text, why, nxt, principal.user_id, parsed, key, seen),
+                        (text, why, nxt, principal.user_id, Jsonb(cites), parsed, key, seen),
                     ).fetchone()
                     if not row:
                         raise ValueError("review_conflict")
@@ -1492,6 +1542,10 @@ class AuthStore:
                     Jsonb(row["rule_execution"]) if row.get("rule_execution") is not None else None,
                 ),
             )
+        if source_draft_id:
+            conn.execute("UPDATE product.audit_rounds SET case_context = (SELECT case_context FROM product.audit_drafts WHERE id = %s) WHERE id = %s", (source_draft_id, round_id))
+        elif predecessor_id:
+            conn.execute("UPDATE product.audit_rounds SET case_context = (SELECT case_context FROM product.audit_rounds WHERE id = %s) WHERE id = %s", (predecessor_id, round_id))
         target = self.draft_writeback(conn, source_draft_id) if source_draft_id else None
         if target is None and predecessor_id:
             target = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
@@ -1550,7 +1604,7 @@ class AuthStore:
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.analysis_mode
+            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.analysis_mode, d.case_context
             FROM product.audit_drafts d
             WHERE d.id = %s
             """,
@@ -1575,6 +1629,7 @@ class AuthStore:
             "updated_at": row[3].isoformat(),
             "predecessor_id": str(row[4]) if row[4] else None,
             "analysis_mode": normalize_analysis_mode(row[5]),
+            "case_context": row[6] or {},
             "writeback": public_target(self.draft_writeback(conn, str(row[0]))),
             "items": [
                 {
@@ -1642,7 +1697,7 @@ class AuthStore:
         row = conn.execute(
             """
             SELECT id, execution, coverage, predecessor_id,
-                   source_draft_id, result_attempt, created_at, analysis_mode
+                   source_draft_id, result_attempt, created_at, analysis_mode, case_context
             FROM product.audit_rounds WHERE id = %s
             """,
             (round_id,),
@@ -1662,7 +1717,7 @@ class AuthStore:
         findings = conn.execute(
             """
             SELECT f.item_key, f.classification, f.item, f.priority, f.status, f.suggestions, f.locator,
-                   rv.judgment, rv.rationale, rv.next_step, rv.version
+                   rv.judgment, rv.rationale, rv.next_step, rv.version, rv.citations
             FROM product.findings f
             LEFT JOIN product.reviews rv ON rv.round_id = f.round_id AND rv.item_key = f.item_key
             WHERE f.round_id = %s
@@ -1699,15 +1754,25 @@ class AuthStore:
         progress = diagnostic.get("progress")
         if progress and row[1] == EXEC_RUNNING:
             progress = {**progress, "updated_at": job[2].isoformat()}
+        coverage = dict(row[2] or {})
+        reviews = {
+            review[0]: {"judgment": review[1], "rationale": review[2], "next_step": review[3], "version": review[4], "citations": review[5] or []}
+            for review in conn.execute(
+                "SELECT item_key, judgment, rationale, next_step, version, citations FROM product.reviews WHERE round_id = %s AND item_key LIKE 'coverage:%%'", (round_id,)
+            ).fetchall()
+        }
+        if coverage.get("rule_items"):
+            coverage["rule_items"] = [{**item, "review": reviews.get(f"coverage:{item.get('file_version_id')}:{item.get('id')}")} for item in coverage["rule_items"]]
         return {
             "id": str(row[0]),
             "execution": row[1],
-            "coverage": row[2] or {},
+            "coverage": coverage,
             "predecessor_id": str(row[3]) if row[3] else None,
             "source_draft_id": str(row[4]) if row[4] else None,
             "result_attempt": row[5],
             "created_at": row[6].isoformat() if row[6] is not None else None,
             "analysis_mode": normalize_analysis_mode(row[7]),
+            "case_context": row[8] or {},
             "writeback": public_target(self._target_row(conn, "round_writeback_targets", "round_id", str(row[0]))),
             **_executor_public(payload),
             "progress": progress,
@@ -1740,6 +1805,7 @@ class AuthStore:
                         "rationale": item[8],
                         "next_step": item[9],
                         "version": item[10],
+                        "citations": item[11] or [],
                     },
                 }
                 for item in findings

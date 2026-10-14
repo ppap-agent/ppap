@@ -88,7 +88,7 @@ export async function connect() {
   const runtime = await fetch('/runtime-config.json').then(r => r.json())
   apiUrl = runtime.api_url
   const config = await request<PublicConfig>('/public-config')
-  apiUrl = config.api_url; profile = config.profile
+  apiUrl = runtime.api_url || config.api_url; profile = config.profile
   deepOffered = config.deep_offered === true
   feishuAppId = config.feishu_app_id || ''
 }
@@ -108,16 +108,18 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
     return {}
   })
   if (!response.ok) {
+    if (response.status === 401 && result.error === 'unauthenticated' && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
     const error = new Error(messages[result.error] || `请求失败（${response.status}）：${result.error || '请稍后重试'}`)
-    ;(error as Error & {code?: string}).code = result.error
+    Object.assign(error, {code: result.error, status: response.status})
     throw error
   }
   return result as T
 }
-export async function upload(file: File, role: Material['role']): Promise<Material> {
+export async function upload(file: File, role: Material['role'], onStaged?: (material: Material) => void): Promise<Material> {
   if (file.size > 64 * 1024 * 1024) throw new Error(`${file.name} 超过 64 MiB。`)
   const version = await request<FileVersion, FileCreateRequest>('/files', 'POST', {original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream'})
   const material = {file_id: version.file_id, file_version_id: version.id, original_filename: file.name, role, rule_version_id: null}
+  onStaged?.(material)
   const path = `/files/${version.file_id}/versions/${version.id}`
   const response = await fetch(apiUrl + path + '/blob', {method: 'PUT', credentials: 'include', headers: {'Content-Type': file.type || 'application/octet-stream'}, body: file})
   if (!response.ok) throw new Error(`${file.name} 上传失败，请重新选择文件。`)

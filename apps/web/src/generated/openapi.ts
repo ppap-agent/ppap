@@ -74,6 +74,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/drafts/{draft_id}/round": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Drafts Round */
+        get: operations["drafts_round_drafts__draft_id__round_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/enter-current": {
         parameters: {
             query?: never;
@@ -926,6 +943,11 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** CaseContext */
+        CaseContext: {
+            /** Registration */
+            registration: string;
+        };
         /** Coverage */
         Coverage: {
             /** Checked */
@@ -986,6 +1008,7 @@ export interface components {
              * @enum {string}
              */
             analysis_mode: "standard" | "deep";
+            case_context?: components["schemas"]["CaseContext"];
             /** Id */
             id: string;
             /** Items */
@@ -1295,6 +1318,8 @@ export interface components {
         };
         /** Review */
         Review: {
+            /** Citations */
+            citations?: components["schemas"]["ReviewCitation"][];
             /** Judgment */
             judgment: string;
             /** Next Step */
@@ -1304,6 +1329,15 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ReviewCitation */
+        ReviewCitation: {
+            /** Excerpt */
+            excerpt: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Location */
+            location: string;
+        };
         /** Round */
         Round: {
             /**
@@ -1311,6 +1345,7 @@ export interface components {
              * @enum {string}
              */
             analysis_mode: "standard" | "deep";
+            case_context?: components["schemas"]["CaseContext"];
             coverage: components["schemas"]["Coverage"];
             /** Created At */
             created_at: string | null;
@@ -1460,6 +1495,7 @@ export interface components {
             priority?: string | null;
             /** Reason */
             reason?: string;
+            review?: components["schemas"]["Review"] | null;
             /** Rule To Check */
             rule_to_check: string;
             /**
@@ -1472,6 +1508,7 @@ export interface components {
         RuleDetail: {
             /** Body */
             body: components["schemas"]["EngineRuleBody"] | components["schemas"]["PresenceRuleBody"];
+            case_context?: components["schemas"]["CaseContext"];
             /** Created At */
             created_at: string;
             /** Created By */
@@ -1792,6 +1829,11 @@ export interface operations {
                      * @enum {string}
                      */
                     analysis_mode?: "standard" | "deep";
+                    /** CaseContext */
+                    case_context?: {
+                        /** Registration */
+                        registration: string;
+                    };
                     /** Items */
                     items?: {
                         /** File Version Id */
@@ -1866,6 +1908,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Round"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drafts_round_drafts__draft_id__round_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Round"] | null;
                 };
             };
             /** @description Validation Error */
@@ -3192,6 +3265,15 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** Citations */
+                    citations?: {
+                        /** Excerpt */
+                        excerpt: string;
+                        /** File Version Id */
+                        file_version_id: string;
+                        /** Location */
+                        location: string;
+                    }[];
                     /** Item Key */
                     item_key: string;
                     /** Judgment */
@@ -3277,8 +3359,15 @@ export interface operations {
             content: {
                 "application/json": {
                     body: components["schemas"]["EngineRuleBody"];
+                    /** CaseContext */
+                    case_context?: {
+                        /** Registration */
+                        registration: string;
+                    };
                     /** Predecessor Id */
                     predecessor_id?: string | null;
+                    /** Request Id */
+                    request_id?: string;
                     /** Source File Version Id */
                     source_file_version_id: string;
                     /** Title */

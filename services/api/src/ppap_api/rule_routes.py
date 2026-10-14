@@ -57,6 +57,8 @@ def register_rule_routes(app: FastAPI, store, principal_of):
                 body.get("body"),
                 body.get("source_file_version_id"),
                 body.get("predecessor_id"),
+                body.get("request_id"),
+                body.get("case_context"),
             )
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)

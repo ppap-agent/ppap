@@ -16,9 +16,14 @@ need() {
 
 preflight() {
   need kubectl
-  need docker
-  docker compose version >/dev/null
-  docker buildx version >/dev/null
+  if [[ "${1:-}" == native ]]; then
+    need uv
+    need pnpm
+  else
+    need docker
+    docker compose version >/dev/null
+    docker buildx version >/dev/null
+  fi
   need jq
   need ssh
   need ssh-keygen
@@ -83,7 +88,7 @@ wait_for_port() {
 }
 
 start_forward() {
-  "${kctl[@]}" -n "$1" port-forward --address 127.0.0.1 "$2" "$3" >&2 &
+  "${kctl[@]}" -n "$1" port-forward --address 127.0.0.1 "$2" "$3" >/dev/null &
   tunnel_pids+=("$!")
   wait_for_port "${3%%:*}"
 }
@@ -137,14 +142,77 @@ run() {
   done
 }
 
+run_native() {
+  preflight native
+  for port in 8080 4173 15432 19000 12222; do
+    if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+      echo "Local port $port is already in use." >&2
+      exit 1
+    fi
+  done
+  setup_bridge
+  load_remote_settings
+  trap 'stop_tunnels' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  start_forward ppap-test service/ppap-current-postgres 15432:5432
+  start_forward ppap-test service/ppap-current-silo 19000:9000
+  start_forward ppap-remote-dev pod/ppap-remote-dev-bridge 12222:2222
+  ssh -q -N -T -i "$key_path" -p 12222 \
+    -o BatchMode=yes -o ExitOnForwardFailure=yes \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -R 0.0.0.0:8080:127.0.0.1:8080 dev@127.0.0.1 &
+  tunnel_pids+=("$!")
+  (
+    cd "$repo_dir"
+    export PPAP_PROFILE=remote-dev PPAP_SERVICE=api
+    export PPAP_PG_HOST=127.0.0.1 PPAP_PG_PORT=15432
+    export PPAP_PG_DATABASE="$PPAP_REMOTE_PG_DATABASE"
+    export PPAP_PG_API_USER="$PPAP_REMOTE_PG_API_USER"
+    export PPAP_PG_API_PASSWORD="$PPAP_REMOTE_PG_API_PASSWORD"
+    export PPAP_CURRENT_TENANT_ALLOWLIST="$PPAP_REMOTE_TENANT_ALLOWLIST"
+    export PPAP_S3_ENDPOINT=http://127.0.0.1:19000
+    export PPAP_S3_REGION="$PPAP_REMOTE_S3_REGION" PPAP_S3_BUCKET="$PPAP_REMOTE_S3_BUCKET"
+    export PPAP_S3_ACCESS_KEY="$PPAP_REMOTE_S3_ACCESS_KEY" PPAP_S3_SECRET_KEY="$PPAP_REMOTE_S3_SECRET_KEY"
+    export PPAP_WEB_URL=http://127.0.0.1:4173 PPAP_PUBLIC_API_URL=http://127.0.0.1:8080
+    export PPAP_ONLYOFFICE_URL=https://onlyoffice.icoastline.com
+    export PPAP_ONLYOFFICE_API_URL=http://ppap-remote-dev-api.ppap-remote-dev.svc.cluster.local:8080
+    export PPAP_ONLYOFFICE_SECRET="$PPAP_REMOTE_ONLYOFFICE_SECRET"
+    export PPAP_DEEP_CUSTOMER_ENABLED="$PPAP_REMOTE_DEEP_CUSTOMER_ENABLED"
+    export PPAP_DEEP_EXECUTOR_REVISION="$PPAP_REMOTE_DEEP_EXECUTOR_REVISION"
+    export PPAP_USAGE_CHARGE_ENABLED=false LOG_FORMAT=text
+    exec uv run --no-sync --env-file .env --package ppap-api python -m uvicorn ppap_api:app \
+      --host 127.0.0.1 --port 8080 --reload --reload-dir packages --reload-dir services --no-access-log
+  ) &
+  tunnel_pids+=("$!")
+  wait_for_port 8080
+  (
+    cd "$repo_dir/apps/web"
+    export PPAP_PUBLIC_API_URL=http://127.0.0.1:8080
+    exec pnpm exec vite --host 127.0.0.1 --port 4173 --strictPort
+  ) &
+  tunnel_pids+=("$!")
+  wait_for_port 4173
+  echo "Native remote-dev is ready at http://127.0.0.1:4173/"
+  echo "Standard uses the existing cluster Worker. Ctrl-C stops only these local processes and tunnels."
+  while true; do
+    for pid in "${tunnel_pids[@]}"; do
+      kill -0 "$pid" 2>/dev/null || { echo "A local process or tunnel stopped" >&2; exit 1; }
+    done
+    sleep 2
+  done
+}
+
 case "${1:-up}" in
   up) run ;;
   up-live) run live ;;
+  up-native) run_native ;;
   setup-bridge) preflight; setup_bridge ;;
   cleanup-bridge)
     preflight
     "${kctl[@]}" delete -f "$script_dir/bridge.yaml" --ignore-not-found
     "${kctl[@]}" -n ppap-remote-dev delete secret ppap-remote-dev-public-key --ignore-not-found
     ;;
-  *) echo "Usage: $0 [up|up-live|setup-bridge|cleanup-bridge]" >&2; exit 2 ;;
+  *) echo "Usage: $0 [up|up-live|up-native|setup-bridge|cleanup-bridge]" >&2; exit 2 ;;
 esac
