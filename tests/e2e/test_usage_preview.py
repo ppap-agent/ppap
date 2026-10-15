@@ -11,6 +11,27 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class UsagePreviewTests(unittest.TestCase):
+    def test_returning_to_usage_unmounts_the_inactive_archive_history_sheet(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/__preview?page=audit&scene=usage-ready&view=usage&width=390")
+            preview = page.frame_locator("iframe")
+            preview.get_by_role("button", name="打开产品导航", exact=True).click()
+            preview.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核文件", exact=True).click()
+            preview.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            expect(preview.get_by_role("heading", name="第 3 次审核", exact=True)).to_be_visible()
+            preview.get_by_role("button", name="历史审核记录", exact=True).click()
+            expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_be_visible()
+            page.frames[1].evaluate("history.go(-2)")
+            expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_have_count(0)
+            expect(preview.get_by_role("table", name="逐文件用量记录", exact=True)).to_be_visible()
+            page.get_by_role("button", name="切换明暗主题", exact=True).click()
+            page.reload()
+            expect(preview.get_by_role("table", name="逐文件用量记录", exact=True)).to_be_visible()
+            self.assertIn("view=usage", page.url)
+            browser.close()
+
     def test_service_notices_keep_the_three_confirmed_texts_and_open_shared_support(self):
         notices = {
             "usage-ai-disabled": "飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度",
