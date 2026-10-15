@@ -601,12 +601,85 @@ class AuditRuleMatch(TypedDict):
     gaps: list[str]
 
 
+class AuditProgress(TypedDict):
+    completed: int
+    total: int
+
+
+class AuditEvidenceReference(TypedDict):
+    file_version_id: str
+    locator: SemanticLocator | None
+    excerpt: str
+    location_gap: str | None
+    rendition: Literal["original", "derived"]
+    derived_file_version_id: str | None
+
+
+class AuditClauseEvaluation(TypedDict):
+    rule_item: RuleItem
+    execution: Literal["queued", "running", "completed", "failed"]
+    coverage: CoverageState
+    finding: Finding | None
+    evidence_verified: bool
+    scope: SemanticScope | None
+    scope_notice: str | None
+    evidence: list[AuditEvidenceReference]
+
+
+class AuditResultCounts(TypedDict):
+    """Terminal checks only: failed/ERR, uncovered, unknown, then verified PASS/NG.
+
+    Categories are exclusive; queued/running and verified NA do not add counts.
+    """
+
+    pass_count: int
+    ng_count: int
+    unknown_count: int
+    not_covered_count: int
+    error_count: int
+
+
+class AuditFileSummary(TypedDict):
+    conclusion: Literal["PASS", "NG", "UNKNOWN"]
+    text: str
+    corrective_actions: list[str]
+    extended_suggestions: list[str]
+
+
+class AuditFileReport(TypedDict):
+    state: Literal["not_eligible", "pending", "generating", "ready", "failed"]
+    report_id: str | None
+    reason: str | None
+
+
+class AuditFileReview(TypedDict):
+    round_id: str
+    file_version_id: str
+    result_attempt: int | None
+    rule: BoundRule
+    execution: Literal["queued", "running", "completed", "review_failed"]
+    progress: AuditProgress
+    failure: RoundFailure | None
+    conclusion: Literal["PASS", "NG", "UNKNOWN"] | None
+    counts: AuditResultCounts
+    checks: list[AuditClauseEvaluation]
+    summary: AuditFileSummary | None
+    report: AuditFileReport
+
+
+class AuditAcceptance(TypedDict):
+    request_id: str
+    state: Literal["pending", "accepted", "rejected"]
+    reason: str | None
+
+
 class AuditTaskFile(TypedDict):
     file: FileVersion
     selection: Literal["selected", "unselected", "removed"]
     removal_reason: str | None
     validation: AuditFileValidation
     match: AuditRuleMatch | None
+    audit: NotRequired[AuditFileReview | None]
 
 
 class AuditTask(TypedDict):
@@ -624,6 +697,10 @@ class AuditTask(TypedDict):
     files: list[AuditTaskFile]
     completion_reason: Literal["no_matching_rules", "processed"] | None
     estimated_points: int | None
+    acceptance: NotRequired[AuditAcceptance]
+    progress: NotRequired[AuditProgress]
+    notification_enabled: NotRequired[bool]
+    usage_notice: NotRequired[str | None]
 
 
 def add_ui_contract(app: FastAPI) -> None:
@@ -643,8 +720,9 @@ def add_ui_contract(app: FastAPI) -> None:
                     raise ValueError(f"conflicting OpenAPI schema: {name}")
             else:
                 schemas[name] = definition
-        for name in ("AuditTask", "AuditTaskFile", "AuditFileValidation", "AuditRuleMatch"):
-            schemas[name]["x-contract-stage"] = "ui-draft"
+        for name in definitions:
+            if name.startswith("Audit"):
+                schemas[name]["x-contract-stage"] = "ui-draft"
         return spec
 
     app.openapi = openapi  # type: ignore[method-assign]  # FastAPI's schema-extension hook.

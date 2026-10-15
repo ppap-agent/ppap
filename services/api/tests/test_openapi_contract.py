@@ -61,6 +61,17 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_review_keeps_execution_evidence_and_report_lifecycles_distinct(self):
+        schemas = app.openapi()["components"]["schemas"]
+        for name in ("AuditFileReview", "AuditClauseEvaluation", "AuditEvidenceReference", "AuditFileReport", "AuditAcceptance"):
+            self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")
+        self.assertEqual(schemas["AuditFileReview"]["properties"]["execution"]["enum"], ["queued", "running", "completed", "review_failed"])
+        self.assertIn("result_attempt", schemas["AuditFileReview"]["properties"])
+        self.assertIn({"type": "null"}, schemas["AuditEvidenceReference"]["properties"]["locator"]["anyOf"])
+        self.assertIn("location_gap", schemas["AuditEvidenceReference"]["required"])
+        self.assertEqual(schemas["AuditAcceptance"]["properties"]["state"]["enum"], ["pending", "accepted", "rejected"])
+        self.assertIn("not_eligible", schemas["AuditFileReport"]["properties"]["state"]["enum"])
+
     def test_ui_task_contract_is_explicit_without_inventing_a_runtime_endpoint(self):
         spec = app.openapi()
         task = spec["components"]["schemas"]["AuditTask"]

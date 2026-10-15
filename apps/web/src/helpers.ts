@@ -13,7 +13,7 @@ export function findingShortTitle(item: Finding, fallbackNumber: number) {
   return `${fallbackNumber} · ${item.classification || '条款'}`
 }
 
-export function sourceLocation(source: SemanticSource) {
+export function sourceLocation(source: Pick<SemanticSource, 'locator'>) {
   const place = source.locator
   if (place.kind === 'xlsx_cell') return `${place.sheet}!${place.cell}`
   if (place.kind === 'xlsx_range') return `${place.sheet}!${place.start}:${place.end}`

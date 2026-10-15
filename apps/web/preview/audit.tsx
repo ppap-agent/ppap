@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from 'react'
 import '../src/index.css'
 import {AuditIntake, type AuditIntakeAdapter, type AuditTaskFile} from '../src/audit/intake'
 import {Button} from '../src/components/ui/button'
+import {fixtureAcceptance, fixtureResults, FixtureOriginal} from './audit-results'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -22,6 +23,8 @@ const driveCatalog = [
 ]
 let nextTask = 1
 let driveReads = 0
+const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
+const acceptanceReads = new Map<string, number>()
 function sample(index: number): AuditTaskFile {
   const id = `preview-file-${crypto.randomUUID()}`
   const document = documents[index]
@@ -52,7 +55,27 @@ const adapter: AuditIntakeAdapter = {
     return files
   },
   readValidation: async row => driveCatalog.some(fixture => fixture.source.token === row.file.file_id) ? {state: 'valid', reasons: []} : row.validation,
-  readMatch: async task => adapter.match(task.files, task.analysis_mode, task.customer_preference, task),
+  confirm: async (task, requestId) => {
+    const result = accepted.get(task.id) || fixtureAcceptance(task, requestId)
+    if (scene === 'confirm-rule-conflict') {
+      const rule = result.files[0].match?.rule
+      if (rule?.body.kind === 'engine') rule.body.rules[0].rule_to_check = '同一规则 ID 的错误改写'
+    }
+    accepted.set(task.id, result)
+    if (scene === 'confirm-unknown') throw new Error('preview_response_lost')
+    return result
+  },
+  readTask: async task => {
+    if (task.round_id) return fixtureResults(task, scene)
+    const result = accepted.get(task.id)
+    if (result) {
+      const reads = (acceptanceReads.get(task.id) || 0) + 1
+      acceptanceReads.set(task.id, reads)
+      if (scene === 'confirm-unknown' && reads === 1) return {...task, acceptance: {request_id: task.acceptance!.request_id, state: 'pending', reason: null}}
+      return result
+    }
+    return adapter.match(task.files, task.analysis_mode, task.customer_preference, task)
+  },
   receive: files => files.map(file => {
     const reason = file.size > 200 * 1024 * 1024 ? '文件超过 200 MB 设计上限' : !/\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name) ? '非审核支持格式' : ''
     return {file: {file_id: `preview-local-${crypto.randomUUID()}`, id: `preview-local-version-${crypto.randomUUID()}`, original_filename: file.name, content_type: file.type, byte_size: file.size, status: 'local_preview', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: reason ? 'invalid' : 'pending', reasons: [reason || '待真实预检查：本预览只登记本机文件，尚未执行真实解析。']}, match: null}
@@ -65,7 +88,7 @@ const adapter: AuditIntakeAdapter = {
       const document = documents[index]
       const known = Number.isInteger(index) && index >= 0 && Boolean(document)
       const matched = known && scene !== 'unmatched' && !(scene === 'partial' && index === 2)
-      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules: [{id: `${index + 1}.1`, category: '示例', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}]}} : null, gaps: []}}
+      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules: [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]}} : null, gaps: []}}
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates remain Product API-owned.
@@ -102,8 +125,12 @@ function Preview() {
       const result = adapter.match(...args)
       return scene === 'matching' ? {...result, state: 'matching', estimated_points: null, files: result.files.map((file, index) => file.selection === 'selected' ? {...file, match: {state: index === 0 ? 'matching' : 'pending', metadata: {customer: null, model: null, part: null}, document_type: null, rule: null, gaps: []}} : file)} : result
     },
-    readMatch: task => scene === 'matching' ? defer(`识别结果 · ${task.number}`, adapter.match(task.files, task.analysis_mode, task.customer_preference, task)) : adapter.readMatch(task),
+    confirm: async (task, requestId) => {
+      const result = await adapter.confirm(task, requestId)
+      return scene === 'confirm-loading' ? defer(`受理回执 · ${task.number}`, result) : result
+    },
+    readTask: task => scene === 'matching' && !task.round_id && !task.acceptance ? defer(`识别结果 · ${task.number}`, adapter.match(task.files, task.analysis_mode, task.customer_preference, task)) : scene === 'audit-loading' && task.round_id ? adapter.readTask(task).then(result => defer(`审核结果 · ${task.number}`, result)) : adapter.readTask(task),
   }
-  return <>{['matching', 'drive-loading'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled}/></>
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

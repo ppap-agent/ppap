@@ -1,0 +1,73 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import type {components} from '../generated/openapi'
+import {resultConsistencyError, sameFrozenInputs, sameSnapshot} from './result-projection.ts'
+
+type Task = components['schemas']['AuditTask']
+function projection(): Task {
+  const rule: components['schemas']['BoundRule'] = {id: 'rule-v1', title: '冻结规则', body: {kind: 'engine', type: '控制计划', rule_profile: 'v3', customers: [], models: [], parts: [], rules: [{id: '1', category: '频次', priority: null, rule_to_check: '频次须一致。', type_of_rule: 'table'}]}}
+  const checks: components['schemas']['AuditClauseEvaluation'][] = [{rule_item: structuredClone(rule.body.kind === 'engine' ? rule.body.rules[0] : null!), execution: 'completed', coverage: 'executed', evidence_verified: true, scope: {checked: 1, total: 1, unknown: 0}, scope_notice: null, finding: {item_key: '1', item: '频次', status: 'PASS', classification: '已核对', suggestions: '', priority: null, locator: null, review: null}, evidence: [{file_version_id: 'file-v1', locator: {kind: 'xlsx_cell', sheet: '审核', cell: 'C12'}, excerpt: '每班', location_gap: null, rendition: 'original', derived_file_version_id: null}]}]
+  return {id: 'task-1', number: '001', state: 'completed', completion_reason: 'processed', analysis_mode: 'standard', source_draft_id: null, round_id: 'round-1', customer_preference: null, created_at: '', updated_at: '', estimated_points: null, files: [{file: {id: 'file-v1', file_id: 'file-1', original_filename: '控制计划.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 1024, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', metadata: {customer: null, model: null, part: null}, document_type: '控制计划', rule: structuredClone(rule), gaps: []}, audit: {file_version_id: 'file-v1', round_id: 'round-1', result_attempt: 1, rule, execution: 'completed', progress: {completed: 1, total: 1}, failure: null, conclusion: 'PASS', checks, counts: {pass_count: 1, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, summary: {conclusion: 'PASS', text: '满足要求', corrective_actions: [], extended_suggestions: []}, report: {state: 'ready', report_id: 'report-1', reason: null}}}]}
+}
+const error = (task: Task) => resultConsistencyError(task, task.files[0])
+
+test('snapshot equality ignores property order, not values or array order', () => {
+  assert.equal(sameSnapshot({a: 1, b: [{c: null}]}, {b: [{c: null}], a: 1}), true)
+  assert.equal(sameSnapshot({a: 1}, {a: 2}), false)
+  assert.equal(sameSnapshot([1, 2], [2, 1]), false)
+  assert.equal(sameSnapshot({a: undefined}, {}), false)
+})
+test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('readback preserves the accepted round, file versions, rules and input selection', () => {
+  const before = projection(), after = structuredClone(before)
+  after.notification_enabled = false
+  assert.equal(sameFrozenInputs(before, after), true)
+  after.files[0].file.id = 'different-version'
+  assert.equal(sameFrozenInputs(before, after), false)
+  after.files[0].file.id = before.files[0].file.id
+  after.files[0].match!.rule!.title = 'new-rule'
+  assert.equal(sameFrozenInputs(before, after), false)
+  after.files[0].match = structuredClone(before.files[0].match)
+  after.files[0].selection = 'removed'
+  assert.equal(sameFrozenInputs(before, after), false)
+  after.files[0].selection = 'selected'; after.round_id = 'new-round'
+  assert.equal(sameFrozenInputs(before, after), false)
+})
+test('changed rule snapshots and item bodies cannot masquerade under the same IDs', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.rule.title = '不同版本内容'
+  assert.match(error(task), /冻结文件或规则不一致/)
+  audit.rule.title = '冻结规则'
+  audit.checks[0].rule_item.rule_to_check = '改写的要求'
+  assert.match(error(task), /审核项与冻结规则不一致/)
+})
+test('out-of-round evidence and contradictory counts invalidate trusted output', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.checks[0].evidence[0].file_version_id = 'another-version'
+  assert.match(error(task), /冻结文件范围/)
+  audit.checks[0].evidence[0].file_version_id = 'file-v1'
+  audit.counts.ng_count = 1
+  assert.match(error(task), /计数与条目明细不一致/)
+})
+test('unknown and failed checks cannot earn PASS or a formal report', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.checks[0].finding!.status = 'UNABLE'; audit.checks[0].evidence_verified = false
+  audit.counts = {pass_count: 0, ng_count: 0, unknown_count: 1, not_covered_count: 0, error_count: 0}
+  assert.match(error(task), /PASS 结论缺少完整/)
+  audit.conclusion = 'UNKNOWN'; audit.summary = null
+  assert.match(error(task), /不能生成正式/)
+  audit.execution = 'review_failed'; audit.checks[0].execution = 'failed'
+  audit.counts = {...audit.counts, unknown_count: 0, error_count: 1}
+  assert.match(error(task), /不能生成正式/)
+})
+test('empty rules, wrong progress and conflicting summary fail closed', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.summary!.conclusion = 'NG'
+  assert.match(error(task), /总结与审核明细不一致/)
+  audit.summary = null; audit.progress.completed = 0
+  assert.match(error(task), /进度与条目状态不一致/)
+  audit.checks = []; audit.progress = {completed: 0, total: 0}
+  if (audit.rule.body.kind === 'engine') audit.rule.body.rules = []
+  task.files[0].match!.rule = structuredClone(audit.rule)
+  assert.match(error(task), /审核项与冻结规则不一致/)
+})

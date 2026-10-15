@@ -934,6 +934,108 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** AuditAcceptance */
+        AuditAcceptance: {
+            /** Reason */
+            reason: string | null;
+            /** Request Id */
+            request_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "accepted" | "rejected";
+        };
+        /** AuditClauseEvaluation */
+        AuditClauseEvaluation: {
+            /**
+             * Coverage
+             * @enum {string}
+             */
+            coverage: "mapped" | "unsupported" | "executed";
+            /** Evidence */
+            evidence: components["schemas"]["AuditEvidenceReference"][];
+            /** Evidence Verified */
+            evidence_verified: boolean;
+            /**
+             * Execution
+             * @enum {string}
+             */
+            execution: "queued" | "running" | "completed" | "failed";
+            finding: components["schemas"]["Finding"] | null;
+            rule_item: components["schemas"]["RuleItem"];
+            scope: components["schemas"]["SemanticScope"] | null;
+            /** Scope Notice */
+            scope_notice: string | null;
+        };
+        /** AuditEvidenceReference */
+        AuditEvidenceReference: {
+            /** Derived File Version Id */
+            derived_file_version_id: string | null;
+            /** Excerpt */
+            excerpt: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Location Gap */
+            location_gap: string | null;
+            /** Locator */
+            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"] | null;
+            /**
+             * Rendition
+             * @enum {string}
+             */
+            rendition: "original" | "derived";
+        };
+        /** AuditFileReport */
+        AuditFileReport: {
+            /** Reason */
+            reason: string | null;
+            /** Report Id */
+            report_id: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "not_eligible" | "pending" | "generating" | "ready" | "failed";
+        };
+        /** AuditFileReview */
+        AuditFileReview: {
+            /** Checks */
+            checks: components["schemas"]["AuditClauseEvaluation"][];
+            /** Conclusion */
+            conclusion: ("PASS" | "NG" | "UNKNOWN") | null;
+            counts: components["schemas"]["AuditResultCounts"];
+            /**
+             * Execution
+             * @enum {string}
+             */
+            execution: "queued" | "running" | "completed" | "review_failed";
+            failure: components["schemas"]["RoundFailure"] | null;
+            /** File Version Id */
+            file_version_id: string;
+            progress: components["schemas"]["AuditProgress"];
+            report: components["schemas"]["AuditFileReport"];
+            /** Result Attempt */
+            result_attempt: number | null;
+            /** Round Id */
+            round_id: string;
+            rule: components["schemas"]["BoundRule"];
+            summary: components["schemas"]["AuditFileSummary"] | null;
+        };
+        /** AuditFileSummary */
+        AuditFileSummary: {
+            /**
+             * Conclusion
+             * @enum {string}
+             */
+            conclusion: "PASS" | "NG" | "UNKNOWN";
+            /** Corrective Actions */
+            corrective_actions: string[];
+            /** Extended Suggestions */
+            extended_suggestions: string[];
+            /** Text */
+            text: string;
+        };
         /** AuditFileValidation */
         AuditFileValidation: {
             /** Reasons */
@@ -943,6 +1045,31 @@ export interface components {
              * @enum {string}
              */
             state: "pending" | "checking" | "valid" | "invalid" | "error";
+        };
+        /** AuditProgress */
+        AuditProgress: {
+            /** Completed */
+            completed: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * AuditResultCounts
+         * @description Terminal checks only: failed/ERR, uncovered, unknown, then verified PASS/NG.
+         *
+         *     Categories are exclusive; queued/running and verified NA do not add counts.
+         */
+        AuditResultCounts: {
+            /** Error Count */
+            error_count: number;
+            /** Ng Count */
+            ng_count: number;
+            /** Not Covered Count */
+            not_covered_count: number;
+            /** Pass Count */
+            pass_count: number;
+            /** Unknown Count */
+            unknown_count: number;
         };
         /** AuditRuleMatch */
         AuditRuleMatch: {
@@ -963,6 +1090,7 @@ export interface components {
          * @description UI-0 contract; not a claim that a task runtime operation exists.
          */
         AuditTask: {
+            acceptance?: components["schemas"]["AuditAcceptance"];
             /**
              * Analysis Mode
              * @enum {string}
@@ -980,8 +1108,11 @@ export interface components {
             files: components["schemas"]["AuditTaskFile"][];
             /** Id */
             id: string;
+            /** Notification Enabled */
+            notification_enabled?: boolean;
             /** Number */
             number: string;
+            progress?: components["schemas"]["AuditProgress"];
             /** Round Id */
             round_id: string | null;
             /** Source Draft Id */
@@ -993,9 +1124,12 @@ export interface components {
             state: "matching" | "pending_confirm" | "reviewing" | "completed";
             /** Updated At */
             updated_at: string;
+            /** Usage Notice */
+            usage_notice?: string | null;
         };
         /** AuditTaskFile */
         AuditTaskFile: {
+            audit?: components["schemas"]["AuditFileReview"] | null;
             file: components["schemas"]["FileVersion"];
             match: components["schemas"]["AuditRuleMatch"] | null;
             /** Removal Reason */
