@@ -61,6 +61,27 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_templates_keep_versions_coverage_and_support_outside_audit_rules(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
+        reference = schemas["AuditTemplateReference"]
+        self.assertEqual(set(reference["required"]), {"customer_id", "template_id", "file_version_id"})
+        catalog = schemas["AuditTemplateCatalog"]["properties"]
+        self.assertIn("coverage_universe", catalog)
+        customer = schemas["AuditTemplateCustomer"]["properties"]
+        self.assertIn("effective_rule_types", customer)
+        item = schemas["AuditTemplateItem"]["properties"]
+        for field in ("reference", "file", "preview_access", "download_access", "share_access"):
+            self.assertIn(field, item)
+        self.assertNotIn("rule", item)
+        self.assertNotIn("report", item)
+        self.assertEqual(schemas["AuditTemplateQuery"]["properties"]["page_size"]["const"], 10)
+        self.assertIn("complete", schemas["AuditTemplateZip"]["required"])
+        self.assertEqual(schemas["AuditSupportInfo"]["properties"]["state"]["enum"], ["configured", "unavailable"])
+        for name in ("AuditTemplateCatalog", "AuditTemplatePage", "AuditTemplateZip", "AuditSupportInfo"):
+            self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")
+        self.assertNotIn("/templates", spec["paths"])
+
     def test_ui_archive_separates_provider_document_history_and_access_boundaries(self):
         schemas = app.openapi()["components"]["schemas"]
         reference = schemas["AuditResultReference"]

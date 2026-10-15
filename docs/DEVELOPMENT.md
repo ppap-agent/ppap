@@ -152,4 +152,6 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 文件档案及历次审核使用 `scene=archive-ready`。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。
 
-在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。
+客户模板库使用 `scene=templates-ready`。XLSX/ZIP 是明确标识的本机示例字节，不是客户飞书文件。覆盖度使用服务合同中的显式 17 类字典及生效规则类型并集，不能直接以当前 `/rule-types` 的 18 项或模板附件数代替。模板预览固定文件版本；客户 ZIP 固定文件夹修订和完整集合。全局支持未取得有效配置时显示不可用，不虚构联系方式。
+
+在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。

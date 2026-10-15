@@ -1,0 +1,185 @@
+"""#170 UI-only catalog and support interactions, not real Feishu integration."""
+
+import os
+import re
+import unittest
+import zipfile
+
+from playwright.sync_api import expect, sync_playwright
+
+PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
+
+
+@unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
+class TemplatePreviewTests(unittest.TestCase):
+    def test_return_from_an_initial_template_deep_link_reads_the_original_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-completed&view=templates&task=preview-recovery-task")
+            page.get_by_role("button", name="返回审核", exact=True).click()
+            expect(page.get_by_text("PPAP Audit / PPAP-恢复示例", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="正在恢复任务", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_unmatched_task_returns_from_templates_without_matching_or_accepting_again(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=unmatched")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            address = page.url
+            page.get_by_role("button", name="标准模板", exact=True).first.click()
+            page.get_by_role("button", name="选择客户 示例客户 B", exact=True).click()
+            page.get_by_role("button", name="返回审核", exact=True).click()
+            self.assertEqual(page.url, address)
+            expect(page.get_by_text("未匹配到生效规则", exact=True)).to_have_count(3)
+            expect(page.get_by_role("button", name="结束任务", exact=True)).to_be_enabled()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_mobile_catalog_shows_files_without_horizontal_page_overflow(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?view=templates")
+            row = page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))
+            expect(row).to_be_visible()
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            box = row.bounding_box()
+            self.assertLess(box["y"] + box["height"], 844)
+            browser.close()
+
+    def test_preview_error_keeps_the_requested_template_version_and_a_download_exit(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-preview-error")
+            row = page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))
+            row.get_by_role("button", name="预览", exact=True).click()
+            dialog = page.get_by_role("dialog", name="模板预览", exact=True)
+            expect(dialog.get_by_role("alert")).to_contain_text("未改用其他模板")
+            expect(dialog.get_by_text("版本：preview-template-a-1-v1", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            with page.expect_download():
+                row.get_by_role("button", name="下载", exact=True).click()
+            browser.close()
+
+    def test_catalog_back_keeps_pre_task_upload_and_customer_selection(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_label("选择审核文件", exact=True).set_input_files(
+                {"name": "未建任务.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"sample"}
+            )
+            page.get_by_role("combobox", name="客户（可选）").click()
+            page.get_by_role("option", name="示例客户", exact=True).click()
+            page.get_by_role("button", name="查看客户模板", exact=True).click()
+            expect(page.get_by_role("heading", name="客户模板库", exact=True)).to_be_visible()
+            page.go_back()
+            expect(page.get_by_text("未建任务.xlsx", exact=True).first).to_be_visible()
+            expect(page.get_by_role("combobox", name="客户（可选）")).to_contain_text("示例客户")
+            page.get_by_role("button", name="查看客户模板", exact=True).click()
+            page.get_by_role("button", name="返回审核", exact=True).click()
+            expect(page.get_by_text("未建任务.xlsx", exact=True).first).to_be_visible()
+            browser.close()
+
+    def test_catalog_coverage_is_rule_type_union_and_template_pagination_is_independent(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?view=templates")
+            expect(page.get_by_text("支持 6/17 类文件", exact=True)).to_be_visible()
+            expect(page.get_by_text("共 12 份模板 · 第 1/2 页", exact=True)).to_be_visible()
+            expect(page.get_by_role("table", name="客户模板").get_by_role("row")).to_have_count(11)
+            page.get_by_role("button", name="下一页模板", exact=True).click()
+            expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
+            row = page.get_by_role("row", name=re.compile("示例归档模板 11.xlsx"))
+            row.get_by_role("button", name="预览", exact=True).click()
+            dialog = page.get_by_role("dialog", name="模板预览", exact=True)
+            expect(dialog.get_by_text("版本：preview-template-a-11-v1", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("cell", name="A1：示例模板，仅用于交互预览", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_template_search_and_denied_access_never_substitute_a_file(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-denied")
+            expect(page.get_by_role("button", name="管理文件夹权限", exact=True)).to_be_disabled()
+            expect(page.get_by_text("只有服务确认的文件夹管理者可修改权限。", exact=True)).to_be_visible()
+            row = page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))
+            expect(row.get_by_role("button", name="预览", exact=True)).to_be_disabled()
+            expect(row.get_by_role("button", name="下载", exact=True)).to_be_disabled()
+            page.get_by_role("textbox", name="搜索模板", exact=True).fill("不存在")
+            expect(page.get_by_text("没有符合条件的模板。", exact=True)).to_be_visible()
+            page.get_by_role("button", name="清除模板搜索", exact=True).click()
+            expect(row).to_be_visible()
+            browser.close()
+
+    def test_late_customer_response_cannot_replace_current_customer(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-race")
+            expect(page.get_by_text("模板清单 · 示例客户 A", exact=True)).to_be_visible()
+            page.get_by_role("button", name="选择客户 示例客户 B", exact=True).click()
+            expect(page.get_by_role("heading", name="示例客户 B", exact=True)).to_be_visible()
+            expect(page.get_by_role("row", name=re.compile("示例客户B模板.xlsx"))).to_be_visible()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("heading", name="示例客户 B", exact=True)).to_be_visible()
+            expect(page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))).to_have_count(0)
+            browser.close()
+
+    def test_downloads_have_actual_template_bytes_and_complete_customer_zip(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?view=templates")
+            row = page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))
+            with page.expect_download() as single:
+                row.get_by_role("button", name="下载", exact=True).click()
+            with zipfile.ZipFile(single.value.path()) as workbook:
+                self.assertIn("xl/workbook.xml", workbook.namelist())
+            with page.expect_download() as package:
+                page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
+            with zipfile.ZipFile(package.value.path()) as archive:
+                self.assertEqual(len(archive.namelist()), 13)
+                self.assertIn("示例控制计划模板.xlsx", archive.namelist())
+                self.assertIn("示例归档模板 12.xlsx", archive.namelist())
+                self.assertIn("preview-template-a-12-v1", archive.read("模板清单.txt").decode())
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_incomplete_zip_is_not_downloaded_as_complete(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            downloads = []
+            page.on("download", lambda download: downloads.append(download))
+            page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-zip-incomplete")
+            page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("未下载不完整或身份不符的模板包")
+            self.assertEqual(downloads, [])
+            browser.close()
+
+    def test_global_support_is_available_on_mobile_and_preserves_current_upload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "保留草稿.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
+            page.get_by_role("button", name="打开审核任务", exact=True).click()
+            page.get_by_role("button", name="联系我们", exact=True).click()
+            dialog = page.get_by_role("dialog", name="联系我们", exact=True)
+            expect(dialog.get_by_text("服务信息暂不可用", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("textbox", name="问题追踪编号", exact=True)).to_have_value(re.compile(r"^[a-zA-Z0-9-]+$"))
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            expect(page.get_by_text("保留草稿.xlsx", exact=True).first).to_be_visible()
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            browser.close()

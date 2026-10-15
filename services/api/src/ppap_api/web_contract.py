@@ -920,6 +920,80 @@ class AuditUploadItem(TypedDict):
     retry_allowed: bool
 
 
+class AuditTemplateReference(TypedDict):
+    """A template file version, never a rule snapshot or an audit report."""
+
+    customer_id: str
+    template_id: str
+    file_version_id: str
+
+
+class AuditTemplateCustomer(TypedDict):
+    customer_id: str
+    name: str
+    effective_rule_types: list[str]
+
+
+class AuditTemplateCatalog(TypedDict):
+    """Only customers with effective rules; coverage uses this explicit dictionary."""
+
+    coverage_universe: list[str]
+    customers: list[AuditTemplateCustomer]
+
+
+class AuditTemplateItem(TypedDict):
+    reference: AuditTemplateReference
+    file: FileVersion
+    document_type: str
+    updated_at: str
+    preview_access: AuditArchiveAccess
+    download_access: AuditArchiveAccess
+    share_access: AuditArchiveAccess
+
+
+class AuditTemplateQuery(TypedDict):
+    customer_id: str
+    search: str
+    page: int
+    page_size: Literal[10]
+
+
+class AuditTemplatePage(TypedDict):
+    query: AuditTemplateQuery
+    folder_id: str
+    folder_revision: str
+    folder_template_count: int
+    creator_name: str | None
+    manage_access: AuditArchiveAccess
+    zip_access: AuditArchiveAccess
+    items: list[AuditTemplateItem]
+    total: int
+
+
+class AuditTemplateZip(TypedDict):
+    """One complete folder snapshot; partial bytes must not be called a complete ZIP."""
+
+    customer_id: str
+    folder_id: str
+    folder_revision: str
+    templates: list[AuditTemplateReference]
+    filename: str
+    byte_size: int
+    complete: bool
+    access: AuditArchiveAccess
+
+
+class AuditSupportInfo(TypedDict):
+    """Current confirmed service configuration, not invented fallback contacts."""
+
+    state: Literal["configured", "unavailable"]
+    config_version: str | None
+    phone: str | None
+    email: str | None
+    service_hours: str | None
+    qr_available: bool
+
+
 def add_ui_contract(app: FastAPI) -> None:
     """Extend native OpenAPI components, without documenting fake endpoints."""
     native_openapi = app.openapi
@@ -928,7 +1002,20 @@ def add_ui_contract(app: FastAPI) -> None:
         spec = native_openapi()
         schemas = spec.setdefault("components", {}).setdefault("schemas", {})
         definitions = {}
-        for contract in (AuditTask, AuditUploadItem, AuditReportUpdate, AuditShareTargetsPage, AuditShareReadRequest, AuditArchivePage, AuditHistoryPage, AuditHistoryDetail):
+        for contract in (
+            AuditTask,
+            AuditUploadItem,
+            AuditReportUpdate,
+            AuditShareTargetsPage,
+            AuditShareReadRequest,
+            AuditArchivePage,
+            AuditHistoryPage,
+            AuditHistoryDetail,
+            AuditTemplateCatalog,
+            AuditTemplatePage,
+            AuditTemplateZip,
+            AuditSupportInfo,
+        ):
             root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")
             definitions.update(root.pop("$defs", {}))
             definitions[contract.__name__] = root

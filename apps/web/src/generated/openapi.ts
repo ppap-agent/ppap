@@ -1414,6 +1414,27 @@ export interface components {
             targets: components["schemas"]["AuditShareTarget"][];
         };
         /**
+         * AuditSupportInfo
+         * @description Current confirmed service configuration, not invented fallback contacts.
+         */
+        AuditSupportInfo: {
+            /** Config Version */
+            config_version: string | null;
+            /** Email */
+            email: string | null;
+            /** Phone */
+            phone: string | null;
+            /** Qr Available */
+            qr_available: boolean;
+            /** Service Hours */
+            service_hours: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "configured" | "unavailable";
+        };
+        /**
          * AuditTask
          * @description UI-0 contract; not a claim that a task runtime operation exists.
          */
@@ -1470,6 +1491,102 @@ export interface components {
              */
             selection: "selected" | "unselected" | "removed";
             validation: components["schemas"]["AuditFileValidation"];
+        };
+        /**
+         * AuditTemplateCatalog
+         * @description Only customers with effective rules; coverage uses this explicit dictionary.
+         */
+        AuditTemplateCatalog: {
+            /** Coverage Universe */
+            coverage_universe: string[];
+            /** Customers */
+            customers: components["schemas"]["AuditTemplateCustomer"][];
+        };
+        /** AuditTemplateCustomer */
+        AuditTemplateCustomer: {
+            /** Customer Id */
+            customer_id: string;
+            /** Effective Rule Types */
+            effective_rule_types: string[];
+            /** Name */
+            name: string;
+        };
+        /** AuditTemplateItem */
+        AuditTemplateItem: {
+            /** Document Type */
+            document_type: string;
+            download_access: components["schemas"]["AuditArchiveAccess"];
+            file: components["schemas"]["FileVersion"];
+            preview_access: components["schemas"]["AuditArchiveAccess"];
+            reference: components["schemas"]["AuditTemplateReference"];
+            share_access: components["schemas"]["AuditArchiveAccess"];
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AuditTemplatePage */
+        AuditTemplatePage: {
+            /** Creator Name */
+            creator_name: string | null;
+            /** Folder Id */
+            folder_id: string;
+            /** Folder Revision */
+            folder_revision: string;
+            /** Folder Template Count */
+            folder_template_count: number;
+            /** Items */
+            items: components["schemas"]["AuditTemplateItem"][];
+            manage_access: components["schemas"]["AuditArchiveAccess"];
+            query: components["schemas"]["AuditTemplateQuery"];
+            /** Total */
+            total: number;
+            zip_access: components["schemas"]["AuditArchiveAccess"];
+        };
+        /** AuditTemplateQuery */
+        AuditTemplateQuery: {
+            /** Customer Id */
+            customer_id: string;
+            /** Page */
+            page: number;
+            /**
+             * Page Size
+             * @constant
+             */
+            page_size: 10;
+            /** Search */
+            search: string;
+        };
+        /**
+         * AuditTemplateReference
+         * @description A template file version, never a rule snapshot or an audit report.
+         */
+        AuditTemplateReference: {
+            /** Customer Id */
+            customer_id: string;
+            /** File Version Id */
+            file_version_id: string;
+            /** Template Id */
+            template_id: string;
+        };
+        /**
+         * AuditTemplateZip
+         * @description One complete folder snapshot; partial bytes must not be called a complete ZIP.
+         */
+        AuditTemplateZip: {
+            access: components["schemas"]["AuditArchiveAccess"];
+            /** Byte Size */
+            byte_size: number;
+            /** Complete */
+            complete: boolean;
+            /** Customer Id */
+            customer_id: string;
+            /** Filename */
+            filename: string;
+            /** Folder Id */
+            folder_id: string;
+            /** Folder Revision */
+            folder_revision: string;
+            /** Templates */
+            templates: components["schemas"]["AuditTemplateReference"][];
         };
         /**
          * AuditUploadItem
