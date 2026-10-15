@@ -1,5 +1,5 @@
 // Stitch: projects/13261964020862199279/screens/5bc532c5a9a142a8a378434ddfe73fd5
-import {useRef, useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {ArrowLeft, ArrowRight, BookOpen, Check, ClipboardCheck, Files, HelpCircle, Menu, Plus, Search, UploadCloud, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -18,15 +18,17 @@ import {FeishuPicker, type DrivePickerSource} from './feishu-picker'
 import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {AuditWorkspace, type OriginalRenderer} from './workspace'
 import {sameFrozenInputs} from './result-projection'
+import {useUploads, type UploadAdapter, type UploadRow} from './uploads'
+import {TransferList} from './transfer-list'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
-export type AuditIntakeAdapter = AuditAcceptanceAdapter & {
-  receive: (files: File[]) => AuditTaskFile[]
+export type AuditIntakeAdapter = AuditAcceptanceAdapter & UploadAdapter & {
   samples: () => AuditTaskFile[]
-  drive: DrivePickerSource & {receive: (files: components['schemas']['DriveFile'][]) => AuditTaskFile[]}
+  drive: DrivePickerSource
   readValidation: (file: AuditTaskFile) => Promise<AuditTaskFile['validation']>
   match: (files: AuditTaskFile[], mode: AuditTask['analysis_mode'], customer: string | null, previous: AuditTask | null) => AuditTask
+  authenticate: () => Promise<void>
 }
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -51,18 +53,25 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
   const input = useRef<HTMLInputElement>(null)
   const ruleTrigger = useRef<HTMLButtonElement | null>(null)
   const driveTrigger = useRef<HTMLButtonElement | null>(null)
-  const drafts = useRef(new Map<string, {files: AuditTaskFile[]; mode: AuditTask['analysis_mode']; customer: string; step: typeof step}>())
+  const drafts = useRef(new Map<string, {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: typeof step}>())
   const draftEpoch = useRef(0)
   const validationReads = useRef(new Set<string>())
   const activeTaskId = useRef<string | null>(null)
   const taskReadEpoch = useRef(new Map<string, number>())
   const taskReads = useRef(new Set<string>())
+  const restoreEpoch = useRef(0)
+  const [recovery, setRecovery] = useState<{id: string; state: 'loading' | 'error' | 'unauthenticated' | 'forbidden' | 'not_found'; message: string} | null>(() => {
+    const id = new URL(location.href).searchParams.get('task')
+    return id ? {id, state: 'loading', message: ''} : null
+  })
+  const uploads = useUploads(adapter, (file, removed) => setFiles(rows => rows.some(row => row.file.id === file.id || row.selection !== 'removed' && row.file.file_id === file.file_id) ? rows : [...rows, {file, selection: removed ? 'removed' : 'selected', removal_reason: removed ? '传输期间排除，不纳入识别' : null, validation: {state: 'pending', reasons: ['待真实预检查：本预览只登记本机文件，尚未执行真实解析。']}, match: null}]))
   const active = files.filter(row => row.selection !== 'removed')
   const valid = active.filter(row => row.validation.state === 'valid')
   const waiting = active.filter(row => row.validation.state === 'pending' || row.validation.state === 'checking')
   const exceptions = active.filter(row => row.validation.state === 'invalid' || row.validation.state === 'error')
   const selected = valid.filter(row => row.selection === 'selected')
-  const blocked = waiting.length ? `还有 ${waiting.length} 份文件等待预检查，不能开始识别。` : exceptions.length ? '请先处理或移除异常文件。' : !selected.length ? '至少选择一份可审核文件。' : ''
+  const transferBlocked = uploads.rows.some(row => !row.removed && row.receipt.state !== 'ready')
+  const blocked = transferBlocked ? '请先处理或排除未完成的传输，再开始识别。' : waiting.length ? `还有 ${waiting.length} 份文件等待预检查，不能开始识别。` : exceptions.length ? '请先处理或移除异常文件。' : !selected.length ? '至少选择一份可审核文件。' : ''
   const matchingFiles = task?.files.filter(row => row.selection === 'selected') ?? []
   const matched = matchingFiles.filter(row => row.match?.state === 'matched' && row.match.rule)
   const noMatches = Boolean(task?.state === 'pending_confirm' && !matched.length && task.files.every(row => row.selection !== 'selected' || row.match?.state === 'unmatched'))
@@ -79,39 +88,79 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
     if (activeTaskId.current === next.id) {setFiles(structuredClone(next.files)); setStep('match')}
   })
   const confirmation = task ? acceptance.observations[task.id] : undefined
-  const confirmationLocked = Boolean(confirmation && confirmation.phase !== 'rejected')
+  const confirmationLocked = Boolean(confirmation && confirmation.phase !== 'rejected' || task?.acceptance?.state === 'pending' && confirmation?.phase !== 'rejected')
   const canConfirm = task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'matched' || row.match?.state === 'unmatched') && !confirmationLocked
   function confirm(current: AuditTask) {
     taskReadEpoch.current.set(current.id, (taskReadEpoch.current.get(current.id) || 0) + 1)
     taskReads.current.delete(current.id)
     void acceptance.confirm(current)
   }
-  function retainDraft() {if (task && !workbench) drafts.current.set(task.id, {files: structuredClone(files), mode, customer, step})}
-  function clearReads() {draftEpoch.current += 1; validationReads.current.clear(); setChecking([])}
-  function newTask() {retainDraft(); clearReads(); activeTaskId.current = null; setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false)}
+  function retainDraft() {if (task && !workbench) drafts.current.set(task.id, {files: structuredClone(files), uploads: uploads.snapshot(), mode, customer, step})}
+  function clearReads() {draftEpoch.current += 1; validationReads.current.clear(); setChecking([]); uploads.reset()}
+  function taskAddress(id: string | null) {
+    const url = new URL(location.href)
+    if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
+    history.pushState(null, '', url)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id}, location.origin)
+  }
+  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
   function openTask(row: AuditTask) {
+    if (!acceptance.restore(row)) {setError('任务回执与原请求不一致，未替换当前文件。'); return}
+    restoreEpoch.current += 1; setRecovery(null)
     retainDraft()
     clearReads()
     activeTaskId.current = row.id
     const saved = row.round_id ? undefined : drafts.current.get(row.id)
+    if (saved) uploads.restore(saved.uploads)
     setTask(row); setFiles(structuredClone(saved?.files ?? row.files)); setMode(saved?.mode ?? row.analysis_mode); setCustomer(saved?.customer ?? row.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
+    taskAddress(row.id)
   }
+  async function recover(id: string, login = false) {
+    const epoch = ++restoreEpoch.current
+    acceptance.suspend(id)
+    taskReadEpoch.current.set(id, (taskReadEpoch.current.get(id) || 0) + 1); taskReads.current.delete(id); setReadStatus(rows => ({...rows, [id]: {busy: false, error: ''}}))
+    retainDraft(); clearReads(); activeTaskId.current = null; setTask(null); setFiles([]); setRecovery({id, state: 'loading', message: ''})
+    try {
+      if (login) await adapter.authenticate()
+      const next = await adapter.readTask(id)
+      if (restoreEpoch.current !== epoch) return
+      if (next.id !== id) throw new Error('task_identity_mismatch')
+      if (!acceptance.restore(next)) throw new Error('acceptance_snapshot_mismatch')
+      const saved = !next.round_id && next.acceptance?.state !== 'pending' ? drafts.current.get(next.id) : undefined
+      if (saved) uploads.restore(saved.uploads)
+      saveTask(next, {activate: true}); setFiles(structuredClone(saved?.files ?? next.files)); setMode(saved?.mode ?? next.analysis_mode); setCustomer(saved?.customer ?? next.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
+    } catch (failure) {
+      if (restoreEpoch.current !== epoch) return
+      const status = failure instanceof Error && 'status' in failure ? failure.status : null
+      const state = status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden' : status === 404 ? 'not_found' : 'error'
+      setRecovery({id, state, message: state === 'unauthenticated' ? '登录已失效。恢复登录后，只读取原任务，不会再次受理。' : state === 'forbidden' ? '当前账号无权访问此任务。未扩大文件或任务权限。' : state === 'not_found' ? '未找到此任务。此预览不会持久化临时任务；请使用固定恢复样例。' : '暂时不能恢复任务。未创建新任务，也未重发审核确认。'})
+    }
+  }
+  function restoreAddress() {
+    const id = new URL(location.href).searchParams.get('task')
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id}, location.origin)
+    if (id) void recover(id)
+    else {retainDraft(); restoreEpoch.current += 1; clearReads(); setRecovery(null); activeTaskId.current = null; setTask(null); setFiles([]); setMode('standard'); setCustomer('auto'); setStep('upload')}
+  }
+  const addressCurrent = useRef(restoreAddress)
+  addressCurrent.current = restoreAddress
+  useEffect(() => {
+    const changed = () => addressCurrent.current()
+    changed(); window.addEventListener('popstate', changed)
+    return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed)}
+  }, [])
   function receive(picked: File[]) {
     if (!picked.length || confirmationLocked || workbench) return
-    try {setFiles(rows => [...rows, ...adapter.receive(picked)]); setStep('check'); setError('')}
-    catch {setError('未能登记文件，请重新选择；已有文件仍保留。')}
+    uploads.add(picked.map(file => ({kind: 'local', file}))); setStep('check'); setError('')
   }
   function receiveDrive(picked: components['schemas']['DriveFile'][]) {
     if (confirmationLocked || workbench) return
-    try {
-      const received = adapter.drive.receive(picked)
-      setFiles(rows => [...rows, ...received.filter(file => !rows.some(row => row.selection !== 'removed' && row.file.file_id === file.file.file_id))])
-      setStep('check'); setDriveOpen(false); setError('')
-    } catch {setError('未能登记所选飞书文件，已有文件仍保留。'); setDriveOpen(false)}
+    uploads.add(picked.map(file => ({kind: 'feishu', file}))); setStep('check'); setDriveOpen(false); setError('')
   }
   const driveButton = <Button variant="outline" onClick={event => {driveTrigger.current = event.currentTarget; setDriveOpen(true)}}>从飞书选择</Button>
   function remove(id: string) {
     if (confirmationLocked || workbench) return
+    uploads.rows.filter(row => row.receipt.file?.id === id).forEach(row => uploads.remove(row.id))
     const update = (rows: AuditTaskFile[]) => rows.map(row => row.file.id === id ? {...row, selection: 'removed' as const, removal_reason: row.validation.reasons[0] || (step === 'match' ? '未匹配到规则' : '识别前移除')} : row)
     setFiles(update)
     if (step === 'match' && task) saveTask({...task, files: update(task.files)})
@@ -139,7 +188,7 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
       taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1)
       taskReads.current.delete(next.id)
       setReadStatus(rows => ({...rows, [next.id]: {busy: false, error: ''}}))
-      saveTask(next, {activate: true}); setStep('match'); setError('')
+      saveTask(next, {activate: true}); setStep('match'); setError(''); taskAddress(next.id)
     }
     catch {setError('读取匹配结果失败，文件与选择已保留。请返回检查后再读取。')}
   }
@@ -149,7 +198,7 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
     taskReads.current.add(current.id)
     setReadStatus(rows => ({...rows, [current.id]: {busy: true, error: ''}}))
     try {
-      const next = await adapter.readTask(current)
+      const next = await adapter.readTask(current.id)
       if (taskReadEpoch.current.get(current.id) !== epoch) return
       if (next.id !== current.id) throw new Error('task_identity_mismatch')
       if (current.round_id && !sameFrozenInputs(current, next)) throw new Error('frozen_input_mismatch')
@@ -191,13 +240,14 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
         <p role="note" className="text-xs text-muted-foreground">示例数据，不会启动真实审核或收费。实际上传、格式检查、规则匹配与持久化尚未接入。</p>
         <ol aria-label="审核步骤" className="flex flex-wrap gap-4 border-b pb-4">{['上传与检查', '确认规则', 'AI审核'].map((label, index) => <li key={label} aria-current={(workbench ? 2 : step === 'match' ? 1 : 0) === index ? 'step' : undefined} className="flex items-center gap-2"><span className="text-muted-foreground">{index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight className="size-3 text-muted-foreground"/>}</li>)}</ol>
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
+        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取原任务，不创建任务或启动审核。' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
         <header className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">{step === 'upload' ? '上传 PPAP 文件' : step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1><p className="text-muted-foreground">{step === 'match' ? '分别核对每份文件匹配的规则。未匹配文件不会进入审核。' : '先选择收到的文件，再核对可审核范围。不需要填写额外的事项表单。'}</p></header>
         {step !== 'match' && <div className="flex flex-wrap items-end justify-between gap-4"><div className="grid gap-2"><Label htmlFor="audit-customer">客户（可选）</Label><Select value={customer} onValueChange={setCustomer}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别客户</SelectItem><SelectItem value="sample-customer">示例客户</SelectItem></SelectContent></Select></div>{step === 'check' && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}</div>}
         <input ref={input} type="file" className="sr-only" aria-label="选择审核文件" multiple accept=".xlsx,.xls,.xlsm,.doc,.docx,.pdf" onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
         {step === 'upload' && <section className="space-y-5"><div className="flex flex-col items-center gap-4 rounded-lg border border-dashed px-4 py-12 text-center" data-dragging={dragging} onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={event => {event.preventDefault(); setDragging(false); receive(Array.from(event.dataTransfer.files))}}><UploadCloud className="size-8 text-muted-foreground"/><h2 className="text-base font-medium">拖入本地文件</h2><p className="text-muted-foreground">Excel、Word、PDF · 设计上限每份 200 MB</p><p className="max-w-md text-xs text-muted-foreground">本预览只读取文件名和大小，不上传字节，也不会把任意文件判为可审核。</p><div className="flex flex-wrap justify-center gap-2"><Button onClick={() => input.current?.click()}>选择本地文件</Button>{driveButton}</div></div><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-muted-foreground">要走查后续交互，可使用明确的三文件示例。</p><Button variant="outline" onClick={() => {setFiles(rows => [...rows, ...adapter.samples()]); setStep('check')}}>使用三类文件示例<ArrowRight/></Button></div></section>}
         {step === 'upload' && active.length > 0 && <section className="space-y-4 border-t pt-5"><h2 className="font-semibold">已选择文件 · {active.length} 份</h2><ItemGroup>{active.map(row => <Item role="listitem" key={row.file.id}><ItemContent><FileName name={row.file.original_filename}/></ItemContent><Button variant="ghost" size="icon" aria-label={`移除 ${row.file.original_filename}`} onClick={() => remove(row.file.id)}><X/></Button></Item>)}</ItemGroup><Button onClick={() => setStep('check')}>继续核对<ArrowRight/></Button></section>}
         {step === 'check' && <>
+          <TransferList rows={uploads.rows} onRead={uploads.read} onRetry={uploads.retry} onRemove={uploads.remove}/>
           <section className="space-y-3"><h2 className="font-semibold">可审核文件 · {valid.length} 份</h2>{valid.length ? table(valid, true) : <p className="py-4 text-muted-foreground">尚无完成预检查的可审核文件。</p>}</section>
           {waiting.length > 0 && <section className="space-y-3 border-t pt-5"><h2 className="font-semibold">等待预检查 · {waiting.length} 份</h2><p className="text-muted-foreground">等待检查不代表文件异常。读取结果不会创建审核任务。</p>{table(waiting, false)}</section>}
           {exceptions.length > 0 && <section className="space-y-3 border-t pt-5"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">异常文件 · {exceptions.length} 份</h2><Button variant="outline" size="sm" onClick={() => exceptions.forEach(row => remove(row.file.id))}>一键移除异常文件</Button></div>{table(exceptions, false)}</section>}

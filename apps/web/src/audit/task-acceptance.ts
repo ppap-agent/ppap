@@ -5,7 +5,7 @@ import {sameSnapshot} from './result-projection'
 type Task = components['schemas']['AuditTask']
 export type AuditAcceptanceAdapter = {
   confirm: (task: Task, requestId: string) => Promise<Task>
-  readTask: (task: Task) => Promise<Task>
+  readTask: (taskId: string, requestId?: string) => Promise<Task>
 }
 type Observation = {requestId: string; phase: 'sending' | 'unknown' | 'reading' | 'accepted' | 'rejected'; message: string}
 
@@ -32,10 +32,11 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
     const requestId = readOnly ? current!.requestId : crypto.randomUUID()
     if (!readOnly) inputs.current.set(requestId, structuredClone(task))
     const input = inputs.current.get(requestId)!
-    remember(task.id, {requestId, phase: readOnly ? 'reading' : 'sending', message: ''})
+    const observation: Observation = {requestId, phase: readOnly ? 'reading' : 'sending', message: ''}
+    remember(task.id, observation)
     try {
-      const next = await (readOnly ? adapter.readTask({...structuredClone(input), acceptance: {request_id: requestId, state: 'pending', reason: null}}) : adapter.confirm(structuredClone(input), requestId))
-      if (operations.current.get(task.id)?.requestId !== requestId) return
+      const next = await (readOnly ? adapter.readTask(input.id, requestId) : adapter.confirm(structuredClone(input), requestId))
+      if (operations.current.get(task.id) !== observation) return
       if (acceptedSnapshot(input, next, requestId)) {
         remember(task.id, {requestId, phase: 'accepted', message: ''}); onAccepted(next)
       } else if (next.id === task.id && next.state === 'pending_confirm' && !next.round_id && next.acceptance?.request_id === requestId && next.acceptance.state === 'rejected') {
@@ -44,8 +45,25 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
         remember(task.id, {requestId, phase: 'unknown', message: '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
       }
     } catch {
-      if (operations.current.get(task.id)?.requestId === requestId) remember(task.id, {requestId, phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
+      if (operations.current.get(task.id) === observation) remember(task.id, {requestId, phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
     }
   }
-  return {observations, confirm: (task: Task) => run(task, false), reconcile: (task: Task) => run(task, true)}
+  function suspend(taskId: string) {
+    const current = operations.current.get(taskId)
+    if (current && ['sending', 'reading'].includes(current.phase)) remember(taskId, {...current, phase: 'unknown', message: '正在恢复任务，先读取原请求结果，不要重复开始审核。'})
+  }
+  function restore(task: Task) {
+    if (task.acceptance?.state === 'accepted') {
+      const requestId = task.acceptance.request_id, current = operations.current.get(task.id), input = inputs.current.get(requestId)
+      if (!task.round_id || !['reviewing', 'completed'].includes(task.state) || current && current.requestId !== requestId || input && !acceptedSnapshot(input, task, requestId)) return false
+      remember(task.id, {requestId, phase: 'accepted', message: ''})
+      return true
+    }
+    if (task.acceptance?.state !== 'pending' || operations.current.has(task.id)) return true
+    const requestId = task.acceptance.request_id
+    inputs.current.set(requestId, structuredClone(task))
+    remember(task.id, {requestId, phase: 'unknown', message: '恢复到尚未取得回执的确认请求。请读取原请求结果，不要重复开始审核。'})
+    return true
+  }
+  return {observations, restore, suspend, confirm: (task: Task) => run(task, false), reconcile: (task: Task) => run(task, true)}
 }

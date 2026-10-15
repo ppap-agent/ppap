@@ -61,6 +61,14 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_upload_distinguishes_unknown_from_a_retryable_terminal_failure(self):
+        upload = app.openapi()["components"]["schemas"]["AuditUploadItem"]
+        self.assertEqual(upload["x-contract-stage"], "ui-draft")
+        self.assertEqual(upload["properties"]["state"]["enum"], ["uploading", "ready", "failed", "unknown"])
+        self.assertIn("request_id", upload["required"])
+        self.assertIn("retry_allowed", upload["required"])
+        self.assertIn({"type": "null"}, upload["properties"]["file"]["anyOf"])
+
     def test_ui_review_keeps_execution_evidence_and_report_lifecycles_distinct(self):
         schemas = app.openapi()["components"]["schemas"]
         for name in ("AuditFileReview", "AuditClauseEvaluation", "AuditEvidenceReference", "AuditFileReport", "AuditAcceptance"):

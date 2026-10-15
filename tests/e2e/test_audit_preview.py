@@ -5,6 +5,7 @@ The production browser suite remains separate and unchanged.
 """
 
 import os
+import re
 import unittest
 
 try:
@@ -17,6 +18,182 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_fresh_recovery_rejects_an_older_acceptance_receipt(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for action in ["返回示例读取 1", "令示例读取 1 失败"]:
+                with self.subTest(action=action):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    page.goto(PREVIEW + "/preview/audit.html?scene=confirm-loading")
+                    page.get_by_role("button", name="使用三类文件示例").click()
+                    page.get_by_role("button", name="开始识别", exact=True).click()
+                    page.get_by_role("button", name="开始审核", exact=True).click()
+                    page.get_by_role("button", name="PPAP Audit", exact=True).click()
+                    page.go_back()
+                    expect(page.get_by_text("不符合 1 · 无法判断 1", exact=True)).to_be_visible()
+                    page.get_by_role("button", name=action, exact=True).click()
+                    expect(page.get_by_text("不符合 1 · 无法判断 1", exact=True)).to_be_visible()
+                    expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="PFMEA.xlsx NG 2/2 项 · 无正式报告", exact=True)).to_be_visible()
+                    page.close()
+            browser.close()
+
+    def test_fresh_recovery_rejects_an_older_read_of_the_same_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-race&task=preview-recovery-task")
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            page.get_by_role("button", name="新建审核任务", exact=True).click()
+            page.go_back()
+            expect(page.get_by_text("不符合 1 · 无法判断 1", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_text("不符合 1 · 无法判断 1", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="PFMEA.xlsx NG 2/2 项 · 无正式报告", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_browser_back_forward_keeps_choices_and_an_unfinished_upload_request(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
+            page.get_by_role("button", name="使用三类文件示例").click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "附加.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            page.go_back()
+            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            page.go_forward()
+            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
+            expect(page.get_by_role("button", name="重试传输 附加.pdf", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取传输 附加.pdf", exact=True).click()
+            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+            expect(page.get_by_text("附加.pdf", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_recovery_late_response_cannot_replace_new_uploads(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-loading&task=preview-recovery-task")
+            expect(page.get_by_role("heading", name="正在恢复任务", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回新建", exact=True).click()
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新选择.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(page.get_by_text("新选择.pdf", exact=True)).to_be_visible()
+            expect(page.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_harness_keeps_the_task_link_and_reads_it_after_page_reload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1100, "height": 1000})
+            page.goto(PREVIEW + "/__preview?page=audit&scene=restore-pending&width=390")
+            product = page.frame_locator("#product")
+            expect(product.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page).to_have_url(re.compile("task=preview-recovery-task"))
+            page.get_by_role("button", name="切换明暗主题", exact=True).click()
+            page.reload()
+            expect(product.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_restoring_an_unknown_confirmation_does_not_enable_another_command(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-unknown&task=preview-recovery-task")
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+            expect(page.get_by_text("请求：preview-recovery-request", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取受理结果", exact=True).click()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取受理结果", exact=True).click()
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_recovery_errors_do_not_create_a_task_and_login_can_read_the_original(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-denied&task=preview-recovery-task")
+            expect(page.get_by_text("当前账号无权访问此任务。未扩大文件或任务权限。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-missing&task=missing")
+            expect(page.get_by_text("未找到此任务。此预览不会持久化临时任务；请使用固定恢复样例。", exact=True)).to_be_visible()
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-auth&task=preview-recovery-task")
+            page.get_by_role("button", name="恢复登录", exact=True).click()
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_late_upload_receipt_cannot_repopulate_a_new_draft(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "旧草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            page.get_by_role("button", name="新建审核任务", exact=True).click()
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_text("旧草稿.pdf", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+            expect(page.get_by_text("新草稿.pdf", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_removed_upload_stays_out_of_precheck_when_the_receipt_arrives(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已排除.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            page.get_by_role("button", name="排除传输 已排除.pdf", exact=True).click()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
+            expect(page.get_by_text("传输期间排除，不纳入识别", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_a_deep_link_restores_the_same_frozen_task_after_reload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-reviewing&task=preview-recovery-task")
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            expect(page.get_by_text("PPAP Audit / PPAP-恢复示例", exact=True)).to_be_visible()
+            page.reload()
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_partial_transfer_keeps_successes_and_unknown_reads_do_not_resend(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=upload-partial")
+            page.get_by_label("选择审核文件", exact=True).set_input_files(
+                [
+                    {"name": "已接收.pdf", "mimeType": "application/pdf", "buffer": b"preview"},
+                    {"name": "明确失败.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"preview"},
+                    {"name": "结果未知.docx", "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "buffer": b"preview"},
+                ]
+            )
+            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="待处理传输 · 2 份", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="重试传输 结果未知.docx", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="重试传输 明确失败.xlsx", exact=True).click()
+            expect(page.get_by_role("heading", name="等待预检查 · 2 份", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取传输 结果未知.docx", exact=True).click()
+            expect(page.get_by_role("button", name="重试传输 结果未知.docx", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取传输 结果未知.docx", exact=True).click()
+            expect(page.get_by_role("heading", name="等待预检查 · 3 份", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="待处理传输 · 0 份", exact=True)).to_have_count(0)
+            expect(page.get_by_text("已接收.pdf", exact=True)).to_have_count(1)
+            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
+            browser.close()
+
     def test_a_result_read_preserves_a_notification_change_made_while_waiting(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

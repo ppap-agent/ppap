@@ -1141,6 +1141,27 @@ export interface components {
             selection: "selected" | "unselected" | "removed";
             validation: components["schemas"]["AuditFileValidation"];
         };
+        /**
+         * AuditUploadItem
+         * @description A request receipt, not proof of parsing or a task before matching.
+         *
+         *     retry_allowed requires a terminal failure with no previous write in flight.
+         *     Unknown/non-ready observation alone never permits another upload.
+         */
+        AuditUploadItem: {
+            file: components["schemas"]["FileVersion"] | null;
+            /** Reason */
+            reason: string | null;
+            /** Request Id */
+            request_id: string;
+            /** Retry Allowed */
+            retry_allowed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "uploading" | "ready" | "failed" | "unknown";
+        };
         /** BoundRule */
         BoundRule: {
             /** Body */

@@ -703,6 +703,20 @@ class AuditTask(TypedDict):
     usage_notice: NotRequired[str | None]
 
 
+class AuditUploadItem(TypedDict):
+    """A request receipt, not proof of parsing or a task before matching.
+
+    retry_allowed requires a terminal failure with no previous write in flight.
+    Unknown/non-ready observation alone never permits another upload.
+    """
+
+    request_id: str
+    state: Literal["uploading", "ready", "failed", "unknown"]
+    file: FileVersion | None
+    reason: str | None
+    retry_allowed: bool
+
+
 def add_ui_contract(app: FastAPI) -> None:
     """Extend native OpenAPI components, without documenting fake endpoints."""
     native_openapi = app.openapi
@@ -710,9 +724,11 @@ def add_ui_contract(app: FastAPI) -> None:
     def openapi() -> dict[str, Any]:
         spec = native_openapi()
         schemas = spec.setdefault("components", {}).setdefault("schemas", {})
-        root = TypeAdapter(AuditTask).json_schema(ref_template="#/components/schemas/{model}")
-        definitions = root.pop("$defs", {})
-        definitions["AuditTask"] = root
+        definitions = {}
+        for contract in (AuditTask, AuditUploadItem):
+            root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")
+            definitions.update(root.pop("$defs", {}))
+            definitions[contract.__name__] = root
         for name, definition in definitions.items():
             if name in schemas:
                 existing = {key: value for key, value in schemas[name].items() if key != "x-contract-stage"}
