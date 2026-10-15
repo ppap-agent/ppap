@@ -46,7 +46,7 @@
             <option value="reports-share-ready">组织内分享</option><option value="reports-share-partial">部分发送失败</option><option value="reports-share-unknown">发送回执未知</option><option value="reports-share-revoked">分享权限撤销</option><option value="reports-share-race">发送回执迟到</option>
             <option value="reports-share-partial-retry-unknown">重试回执未知</option><option value="reports-share-partial-retry-not-accepted">重试未受理</option><option value="reports-share-partial-target-blocked">重试资格冲突</option>
             <option value="reports-share-directory-loading">目标目录读取中</option><option value="reports-share-directory-error">目录暂时失败</option><option value="reports-share-directory-empty">目录无结果</option><option value="reports-share-directory-denied">目录无权限</option><option value="reports-share-directory-change">已选目标资格变更</option><option value="reports-share-directory-paging">目标搜索与分页</option><option value="reports-share-directory-foreign">跨组织目标</option>
-          </optgroup></select></label>
+          </optgroup><optgroup label="文件档案与历史"><option value="archive-ready">文件档案与历次审核</option><option value="archive-original-denied">报告可读／原件无权</option><option value="archive-history-list-error">历史清单读取失败</option><option value="archive-history-conflict">历史结果冲突</option><option value="archive-history-race">历史响应迟到</option><option value="archive-report-failed">历史报告生成失败</option></optgroup></select></label>
         <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="390" type="button">手机</button><button data-width="820" type="button">平板</button><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
         <div class="spacer"></div>
         <button id="theme" type="button" aria-label="切换明暗主题">深色</button>
@@ -62,7 +62,7 @@
     const choices = {scene: Array.from(document.querySelectorAll('#scene option'), option => option.value), width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
     const savedWidth = Number(query.get('width'));
-    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : query.get('scene')?.startsWith('reports-') ? 'preview-report-task' : ''), report: query.get('report') || (query.get('scene')?.startsWith('reports-') ? '1' : '')};
+    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : query.get('scene')?.startsWith('reports-') ? 'preview-report-task' : ''), view: query.get('view') === 'archive' || query.get('scene')?.startsWith('archive-') ? 'archive' : '', archiveDoc: query.get('archiveDoc') || '', auditRef: query.get('auditRef') || '', archiveReport: query.get('archiveReport') || '', report: query.get('report') || (query.get('scene')?.startsWith('reports-') ? '1' : '')};
     const frame = document.getElementById('product');
     const device = document.getElementById('device');
     const custom = document.getElementById('custom-width');
@@ -77,7 +77,7 @@
       for (const option of document.querySelectorAll('#scene option')) {
         option.hidden = state.page === 'audit' ? ['empty', 'long'].includes(option.value) : !['populated', 'empty', 'error', 'long'].includes(option.value);
       }
-      for (const button of document.querySelectorAll('[data-read]')) button.hidden = state.page !== 'audit' || !['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading'].includes(state.scene);
+      for (const button of document.querySelectorAll('[data-read]')) button.hidden = state.page !== 'audit' || !['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race'].includes(state.scene);
       for (const button of document.querySelectorAll('[data-width]')) button.setAttribute('aria-pressed', String(button.dataset.width === state.width));
       device.classList.toggle('fluid', state.width === 'fluid');
       device.style.setProperty('--frame-width', state.width === 'fluid' ? '100%' : `${state.width}px`);
@@ -90,6 +90,7 @@
         target.searchParams.set('theme', state.theme);
         if (state.task) target.searchParams.set('task', state.task);
         if (state.report) target.searchParams.set('report', state.report);
+        for (const key of ['view', 'archiveDoc', 'auditRef', 'archiveReport']) if (state[key]) target.searchParams.set(key, state[key]);
         destination = target.pathname + target.search;
         if (!reload && frame.contentDocument) {
           frame.contentDocument.documentElement.classList.toggle('dark', state.theme === 'dark');
@@ -102,16 +103,24 @@
       if (reload) frame.src = destination;
     }
     document.getElementById('page').addEventListener('change', event => { state.page = event.target.value; render(true); });
-    document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; render(true); });
+    document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; state.view = state.scene.startsWith('archive-') ? 'archive' : ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; render(true); });
     for (const button of document.querySelectorAll('[data-width]')) button.addEventListener('click', () => { state.width = button.dataset.width; render(false); });
     custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
     document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
     document.getElementById('refresh').addEventListener('click', () => { frame.contentWindow.location.reload(); });
     for (const button of document.querySelectorAll('[data-read]')) button.addEventListener('click', () => frame.contentWindow.postMessage({type: 'ppap-preview-read', failed: button.dataset.read === 'fail'}, location.origin));
     window.addEventListener('message', event => {
-      if (event.origin !== location.origin || event.source !== frame.contentWindow || event.data?.type !== 'ppap-audit-task' || event.data.task !== null && (typeof event.data.task !== 'string' || event.data.task.length > 256)) return;
+      if (event.origin !== location.origin || event.source !== frame.contentWindow) return;
+      if (event.data?.type === 'ppap-audit-view') {
+        if (!['archive', 'audit'].includes(event.data.view)) return;
+        if (['archiveDoc', 'auditRef', 'archiveReport'].some(key => event.data[key] != null && (typeof event.data[key] !== 'string' || event.data[key].length > 1200))) return;
+        state.view = event.data.view === 'archive' ? 'archive' : '';
+        for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) state[key] = state.view ? event.data[key] || '' : '';
+        render(false); return;
+      }
+      if (event.data?.type !== 'ppap-audit-task' || event.data.task !== null && (typeof event.data.task !== 'string' || event.data.task.length > 256)) return;
       if (event.data.report != null && (typeof event.data.report !== 'string' || event.data.report.length > 256)) return;
-      state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; render(false);
+      state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; state.view = ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; render(false);
     });
     frame.addEventListener('load', () => {
       const opened = new URL(frame.contentWindow.location.href);

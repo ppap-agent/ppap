@@ -19,6 +19,22 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('a finding cannot impersonate another frozen rule item', () => {
+  const task = projection()
+  task.files[0].audit!.checks[0].finding!.item_key = 'other-rule'
+  assert.match(error(task), /审核项与冻结规则不一致/)
+})
+test('explicitly incomplete scope cannot earn PASS or a formal report, but can retain verified NG', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.checks[0].scope = {checked: 0, total: 1, unknown: 1}
+  assert.match(error(task), /PASS 结论缺少完整/)
+  audit.conclusion = 'NG'; audit.summary = null
+  audit.checks[0].finding!.status = 'NG'
+  audit.counts = {...audit.counts, pass_count: 0, ng_count: 1}
+  assert.match(error(task), /不能生成正式/)
+  audit.report = {state: 'not_eligible', report_id: null, reason: '范围未完成'}
+  assert.equal(error(task), '')
+})
 test('sharing accepts only a ready frozen report and its exact PDF artifact', () => {
   const task = projection(), row = task.files[0], reference = reportReference(task, row)!
   assert.equal(shareContentFor(task, [reference], 'link'), null)

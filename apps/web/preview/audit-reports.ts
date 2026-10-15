@@ -44,6 +44,7 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     return {task, row, audit: row.audit}
   }
   function savePackage(job: components['schemas']['AuditReportPackage']) {
+    if (!job.reports.every(reference => reference.task_id === job.reports[0].task_id)) return
     const task = tasks.get(job.reports[0].task_id)!
     tasks.set(task.id, {...task, report_package: structuredClone(job)})
   }

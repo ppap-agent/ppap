@@ -27,6 +27,268 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_history_rejects_a_share_job_for_another_frozen_report(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-share-scope-conflict&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("未用最新记录替换")
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="分享", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_history_report_address_restores_exact_old_record_after_reload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            page.reload()
+            expect(page.get_by_role("heading", name="历史报告", exact=True)).to_be_visible()
+            expect(page.get_by_text("第 2 次审核 · 原件修订 Rev B", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="返回本次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_missing_history_address_never_falls_back_to_latest(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001&auditRef=%5B%22missing%22%2C%22round%22%2C%22version%22%2C1%5D&archiveReport=1")
+            expect(page.get_by_role("alert")).to_contain_text("未打开其他文档")
+            expect(page.get_by_role("heading", name="历史报告", exact=True)).to_have_count(0)
+            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_archive_small_screen_keeps_filename_readable_and_history_in_sheet(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            row = page.get_by_role("row", name=re.compile("档案 A001"))
+            name = row.get_by_text("控制计划.xlsx", exact=True)
+            expect(name).to_be_visible()
+            self.assertGreater(row.get_by_role("cell").nth(1).bounding_box()["width"], 250)
+            self.assertLess(name.bounding_box()["height"], 30)
+            self.assertTrue(page.locator("body").evaluate("node => node.scrollWidth <= window.innerWidth"))
+            row.get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="历史审核记录", exact=True).click()
+            page.get_by_role("dialog").get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(page.get_by_role("dialog")).to_have_count(0)
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_archive_package_keeps_cross_task_versions_after_selection_changes(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True).check()
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A002", exact=True).check()
+            page.get_by_role("button", name="打包所选 2 份历史报告", exact=True).click()
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True).uncheck()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            with page.expect_download() as download:
+                page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+            import zipfile
+
+            with zipfile.ZipFile(download.value.path()) as archive:
+                index = archive.read("报告清单.txt").decode()
+                self.assertIn("preview-archive-task-A001-3-version-1", index)
+                self.assertIn("preview-archive-task-A002-1-version-1", index)
+                self.assertNotIn("preview-archive-task-A001-4-version-1", index)
+            browser.close()
+
+    def test_historical_share_keeps_old_report_scope_after_return(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            page.get_by_role("button", name="分享", exact=True).click()
+            dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
+            expect(dialog).to_contain_text("第 2 次审核")
+            dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True).check()
+            dialog.get_by_role("button", name="发送给 1 个目标", exact=True).click()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="返回本次审核", exact=True).click()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            page.get_by_role("button", name="分享", exact=True).click()
+            expect(dialog).to_contain_text("第 2 次审核")
+            dialog.get_by_role("button", name="读取发送结果", exact=True).click()
+            expect(dialog.get_by_text("已发送", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_history_list_failure_can_retry_without_opening_another_record(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-history-list-error&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("历史审核清单暂不可用，未打开其他文档。")
+            page.get_by_role("button", name="重新读取这次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_historical_report_regeneration_keeps_round_and_attempt(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-report-failed&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            page.get_by_role("button", name="查看报告失败原因", exact=True).click()
+            page.get_by_role("button", name="重生成同一结果", exact=True).click()
+            expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("生成中", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取当次报告状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            expect(page.get_by_text("第 2 次审核 · 原件修订 Rev B", exact=True)).to_be_visible()
+            expect(page.get_by_text(re.compile("执行尝试：1"))).to_be_visible()
+            browser.close()
+
+    def test_history_conflicting_conclusion_does_not_render_report_or_original(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-history-conflict&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("未用最新记录替换")
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_have_count(0)
+            expect(page.get_by_role("region", name="原件预览", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_browser_back_from_archive_preserves_pre_task_upload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=populated")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核文件", exact=True).click()
+            expect(page.get_by_role("heading", name="审核文件", exact=True)).to_be_visible()
+            page.go_back()
+            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
+            expect(page.get_by_role("table").get_by_text("PFMEA.xlsx", exact=True)).to_be_visible()
+            page.go_forward()
+            expect(page.get_by_role("heading", name="审核文件", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_archive_report_access_does_not_imply_original_or_private_task_access(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-original-denied&view=archive")
+            page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_disabled()
+            page.get_by_role("tab", name="核对原件", exact=True).click()
+            expect(page.get_by_text("本次原件不可访问", exact=True)).to_be_visible()
+            expect(page.get_by_text("示例原件 · 非真实 Office 连接", exact=True)).to_have_count(0)
+            page.get_by_role("tab", name="审核详情", exact=True).click()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_historical_report_deleted_or_denied_never_opens_newest_pdf(self):
+        for scene in ("archive-report-deleted", "archive-report-denied"):
+            with self.subTest(scene=scene), sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                page = browser.new_page(viewport={"width": 1280, "height": 1000})
+                page.goto(PREVIEW + "/preview/audit.html?scene=" + scene + "&view=archive")
+                page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+                page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+                page.get_by_role("button", name="查看报告", exact=True).click()
+                expect(page.get_by_text("本次报告不可访问", exact=True)).to_be_visible()
+                expect(page.get_by_text("第 2 次审核 · 原件修订 Rev B", exact=True)).to_be_visible()
+                expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="分享", exact=True)).to_be_disabled()
+                page.get_by_role("button", name="返回本次审核", exact=True).click()
+                expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+                browser.close()
+
+    def test_historical_report_download_and_return_keep_the_selected_audit(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            expect(page.get_by_role("heading", name="历史报告", exact=True)).to_be_visible()
+            expect(page.get_by_text("第 2 次审核 · 原件修订 Rev B", exact=True)).to_be_visible()
+            with page.expect_download() as download:
+                page.get_by_role("button", name="下载当前报告", exact=True).click()
+            self.assertEqual(download.value.suggested_filename, "控制计划.xlsx-审核报告.pdf")
+            page.get_by_role("button", name="返回本次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="选择第 2 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
+            browser.close()
+
+    def test_late_history_response_cannot_replace_the_record_selected_after_it(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-history-race&view=archive")
+            row = page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001"))
+            row.get_by_role("button", name="查看审核记录", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_be_visible()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(page.get_by_text("正在读取当次冻结审核…", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="原件预览", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="选择第 1 次审核", exact=True).click()
+            expect(page.get_by_role("heading", name="第 1 次审核", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("heading", name="第 1 次审核", exact=True)).to_be_visible()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_have_count(0)
+            expect(page.get_by_text("审核异常，没有通过总结。", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_archive_history_uses_selected_round_original_without_opening_private_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            row = page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001"))
+            row.get_by_role("button", name="查看审核记录", exact=True).click()
+            expect(page.get_by_role("heading", name="历史审核", exact=True)).to_be_visible()
+            expect(page.get_by_text("原件修订：Rev C", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).first.click()
+            original = page.get_by_role("region", name="原件预览", exact=True)
+            expect(original.get_by_text("冻结版本：preview-archive-task-A001-2-version-1", exact=True)).to_be_visible()
+            expect(original.get_by_text("冻结版本：preview-archive-task-A001-3-version-1", exact=True)).to_have_count(0)
+            expect(page.get_by_role("checkbox", name="完成后飞书通知", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="返回文件档案", exact=True).click()
+            expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_archive_counts_documents_not_rounds_and_keeps_latest_completed_beside_activity(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready")
+            page.get_by_role("button", name="审核文件", exact=True).click()
+            expect(page.get_by_role("heading", name="审核文件", exact=True)).to_be_visible()
+            expect(page.get_by_text("共 12 份文档", exact=True)).to_be_visible()
+            table = page.get_by_role("table", name="审核文件档案", exact=True)
+            expect(table.get_by_role("row")).to_have_count(11)
+            first = table.get_by_role("row", name=re.compile("档案 A001"))
+            expect(first.get_by_text("第 3 次审核 · PASS", exact=True).last).to_be_visible()
+            expect(first.get_by_text("第 4 次审核中", exact=True).last).to_be_visible()
+            expect(table.get_by_text("控制计划.xlsx", exact=True)).to_have_count(2)
+            expect(page.get_by_role("button", name="下一页", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_mobile_single_file_share_uses_current_pdf_and_restores_trigger_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -386,7 +648,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(page.get_by_role("button", name=filename + "-审核报告 无正式报告", exact=True)).to_be_visible()
                 expect(page.get_by_role("checkbox", name="选择报告 " + filename, exact=True)).to_be_disabled()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_disabled()
-            expect(page.get_by_text("审核异常，没有正式审核报告。", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("审核异常，没有正式审核报告。", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="查看报告失败原因", exact=True)).to_have_count(0)
@@ -421,7 +683,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(product.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
             expect(product.locator("html")).to_have_class("dark")
             page.get_by_role("combobox", name="场景", exact=True).select_option("reports-none")
-            expect(product.get_by_text("审核异常，没有正式审核报告。", exact=True)).to_be_visible()
+            expect(product.get_by_role("region", name="当前报告", exact=True).get_by_text("审核异常，没有正式审核报告。", exact=True)).to_be_visible()
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=not-this-file")
             expect(page.get_by_text("所选报告不在当前任务的冻结范围内。请从文件报告清单选择，不自动打开另一份报告。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_have_count(0)
@@ -847,7 +1109,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="开始识别", exact=True).click()
             page.get_by_role("button", name="开始审核", exact=True).click()
             expect(page.get_by_role("button", name="正在确认…", exact=True)).to_be_disabled()
-            page.get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("button", name="新建审核任务", exact=True).click()
             page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新草稿.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()

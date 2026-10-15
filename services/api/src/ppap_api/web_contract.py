@@ -804,6 +804,108 @@ class AuditTask(TypedDict):
     report_share: NotRequired[AuditReportShare | None]
 
 
+class AuditResultReference(TypedDict):
+    task_id: str
+    round_id: str
+    file_version_id: str
+    result_attempt: int | None
+
+
+class AuditArchiveAccess(TypedDict):
+    state: Literal["allowed", "denied", "unknown", "deleted"]
+    reason: str | None
+
+
+class AuditHistoryEntry(TypedDict):
+    document_id: str
+    reference: AuditResultReference
+    sequence: int
+    audited_at: str
+    initiator: str
+    execution: Literal["queued", "running", "completed", "review_failed"]
+    conclusion: Literal["PASS", "NG", "UNKNOWN"] | None
+    source_revision: str | None
+    report: AuditFileReport
+    report_access: AuditArchiveAccess
+
+
+class AuditArchiveDocument(TypedDict):
+    """Opaque product identity mapped to a confirmed provider document, not file_id."""
+
+    document_id: str
+    provider: Literal["feishu"]
+    title: str
+    metadata: Metadata
+    document_type: str | None
+    updated_at: str
+    latest_completed: AuditHistoryEntry | None
+    latest_activity: AuditHistoryEntry | None
+
+
+class AuditArchiveCategory(TypedDict):
+    id: str
+    label: str
+    count: int
+    parts: list[AuditArchivePart]
+
+
+class AuditArchivePart(TypedDict):
+    id: str
+    label: str
+    count: int
+
+
+class AuditArchiveQuery(TypedDict):
+    search: str
+    category_id: str | None
+    document_type: str | None
+    customer: str | None
+    initiator: str | None
+    from_date: str | None
+    through_date: str | None
+    page: int
+    page_size: Literal[10]
+
+
+class AuditArchivePage(TypedDict):
+    query: AuditArchiveQuery
+    documents: list[AuditArchiveDocument]
+    total: int
+    document_count: int
+    categories: list[AuditArchiveCategory]
+    document_types: list[str]
+    customers: list[str]
+    initiators: list[str]
+
+
+class AuditHistoryPage(TypedDict):
+    document: AuditArchiveDocument
+    entries: list[AuditHistoryEntry]
+    default_reference: AuditResultReference | None
+
+
+class AuditArchiveOriginal(TypedDict):
+    file_version_id: str
+    file: FileVersion | None
+    access: AuditArchiveAccess
+
+
+class AuditHistoryDetail(TypedDict):
+    """Authorized frozen content, not permission to read the whole source task.
+
+    report_share, when present, belongs to this single full report reference.
+    Do not inherit the source task's latest, unrelated share operation.
+    """
+
+    entry: AuditHistoryEntry
+    file: AuditTaskFile
+    frozen_file_version_ids: list[str]
+    originals: list[AuditArchiveOriginal]
+    source_task_access: AuditArchiveAccess
+    report_access: AuditArchiveAccess
+    report_share: NotRequired[AuditReportShare | None]
+
+
 class AuditUploadItem(TypedDict):
     """A request receipt, not proof of parsing or a task before matching.
 
@@ -826,7 +928,7 @@ def add_ui_contract(app: FastAPI) -> None:
         spec = native_openapi()
         schemas = spec.setdefault("components", {}).setdefault("schemas", {})
         definitions = {}
-        for contract in (AuditTask, AuditUploadItem, AuditReportUpdate, AuditShareTargetsPage, AuditShareReadRequest):
+        for contract in (AuditTask, AuditUploadItem, AuditReportUpdate, AuditShareTargetsPage, AuditShareReadRequest, AuditArchivePage, AuditHistoryPage, AuditHistoryDetail):
             root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")
             definitions.update(root.pop("$defs", {}))
             definitions[contract.__name__] = root

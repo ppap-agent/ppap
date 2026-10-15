@@ -61,6 +61,23 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_archive_separates_provider_document_history_and_access_boundaries(self):
+        schemas = app.openapi()["components"]["schemas"]
+        reference = schemas["AuditResultReference"]
+        self.assertEqual(set(reference["required"]), {"task_id", "round_id", "file_version_id", "result_attempt"})
+        document = schemas["AuditArchiveDocument"]["properties"]
+        self.assertIn("document_id", document)
+        self.assertNotIn("object_ref", document)
+        self.assertNotIn("task", document)
+        self.assertIn("latest_completed", document)
+        detail = schemas["AuditHistoryDetail"]["properties"]
+        self.assertIn("frozen_file_version_ids", detail)
+        self.assertIn("originals", detail)
+        self.assertIn("source_task_access", detail)
+        self.assertIn("report_access", detail)
+        self.assertEqual(schemas["AuditArchiveQuery"]["properties"]["page_size"]["const"], 10)
+        self.assertEqual(schemas["AuditHistoryDetail"]["x-contract-stage"], "ui-draft")
+
     def test_ui_share_uses_organization_targets_and_per_target_recovery(self):
         schemas = app.openapi()["components"]["schemas"]
         target = schemas["AuditShareTarget"]["properties"]

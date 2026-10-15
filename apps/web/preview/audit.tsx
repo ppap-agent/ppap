@@ -8,6 +8,7 @@ import {fixtureAcceptance, fixtureResults, FixtureOriginal} from './audit-result
 import {fixtureReports, fixtureReport, withReportBytes} from './audit-reports'
 import reportSamples from './report-samples.json'
 import {fixtureSharing} from './audit-sharing'
+import {fixtureArchive} from './audit-archive'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -145,6 +146,14 @@ const adapter: AuditIntakeAdapter = {
   },
 }
 
+const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, pending) => {
+  const matched = adapter.match(adapter.samples(), 'standard', null, null)
+  taskStore.delete(matched.id)
+  const seed = {...matched, id, number: `PPAP-历史示例-${sequence}`, files: matched.files.map((row, index) => ({...row, file: {...row.file, file_id: `${id}-file-${index}`, id: `${id}-version-${index}`}}))}
+  const accepted = fixtureAcceptance(seed, `${id}-accept`)
+  return pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
+})
+
 // A fixed read fixture, not persistence of arbitrary uploads or a second runtime API.
 if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsWith('reports-')) {
   const files = adapter.samples().map((row, index) => ({...row, file: {...row.file, id: `preview-recovery-version-${index}`}}))
@@ -211,6 +220,12 @@ function Preview() {
       return scene === 'reports-generate-race' ? defer(`报告生成回执 · ${args[0].file_version_id}`, result) : result
     },
   }), [defer])
+  const controlledArchive = useMemo(() => ({...archiveAdapter,
+    readHistory: async (...args: Parameters<typeof archiveAdapter.readHistory>) => {
+      const result = await archiveAdapter.readHistory(...args)
+      return scene === 'archive-history-race' && result.entry.sequence === 2 ? defer('历史审核 · 第 2 次', result) : result
+    },
+  }), [defer])
   const controlledSharing = useMemo(() => ({...sharingAdapter,
     listTargets: async (...args: Parameters<typeof sharingAdapter.listTargets>) => {
       const result = await sharingAdapter.listTargets(...args)
@@ -221,6 +236,6 @@ function Preview() {
       return scene === 'reports-share-race' ? defer('分享发送回执', result) : result
     },
   }), [defer])
-  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

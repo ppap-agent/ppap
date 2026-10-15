@@ -1,6 +1,6 @@
 import type {components} from '../src/generated/openapi'
-import type {AuditTask, AuditTaskFile} from '../src/audit/intake'
-import type {AuditEvidence} from '../src/audit/workspace'
+import type {AuditTask} from '../src/audit/intake'
+import type {AuditEvidence} from '../src/audit/review-content'
 import {Alert, AlertDescription, AlertTitle} from '../src/components/ui/alert'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../src/components/ui/table'
 import {fixtureReport} from './audit-reports'
@@ -65,6 +65,6 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
   return {...task, state: pending ? 'reviewing' : 'completed', completion_reason: pending ? null : 'processed', progress: {completed: selected.length, total: selected.length}, files}
 }
 
-export function FixtureOriginal({file, evidence}: {file: AuditTaskFile; evidence: AuditEvidence | null}) {
-  return <div className="space-y-4"><Alert><AlertTitle>示例原件 · 非真实 Office 连接</AlertTitle><AlertDescription>此区域只演示冻结文件和证据的切换，不证明真实排版或定位能力。</AlertDescription></Alert><Table><TableHeader><TableRow><TableHead>文件</TableHead><TableHead>示例摘录</TableHead></TableRow></TableHeader><TableBody><TableRow><TableCell className="whitespace-normal">{file.file.original_filename}</TableCell><TableCell className="whitespace-normal">{evidence?.excerpt || '选择判定依据后，在这里核对对应的文件。'}</TableCell></TableRow></TableBody></Table></div>
+export function FixtureOriginal({file, evidence}: {file: components['schemas']['FileVersion']; evidence: AuditEvidence | null}) {
+  return <div className="space-y-4"><Alert><AlertTitle>示例原件 · 非真实 Office 连接</AlertTitle><AlertDescription>此区域只演示冻结文件和证据的切换，不证明真实排版或定位能力。</AlertDescription></Alert><Table><TableHeader><TableRow><TableHead>文件</TableHead><TableHead>示例摘录</TableHead></TableRow></TableHeader><TableBody><TableRow><TableCell className="whitespace-normal">{file.original_filename}</TableCell><TableCell className="whitespace-normal">{evidence?.excerpt || '选择判定依据后，在这里核对对应的文件。'}</TableCell></TableRow></TableBody></Table></div>
 }

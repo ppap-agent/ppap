@@ -946,6 +946,107 @@ export interface components {
              */
             state: "pending" | "accepted" | "rejected";
         };
+        /** AuditArchiveAccess */
+        AuditArchiveAccess: {
+            /** Reason */
+            reason: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "allowed" | "denied" | "unknown" | "deleted";
+        };
+        /** AuditArchiveCategory */
+        AuditArchiveCategory: {
+            /** Count */
+            count: number;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Parts */
+            parts: components["schemas"]["AuditArchivePart"][];
+        };
+        /**
+         * AuditArchiveDocument
+         * @description Opaque product identity mapped to a confirmed provider document, not file_id.
+         */
+        AuditArchiveDocument: {
+            /** Document Id */
+            document_id: string;
+            /** Document Type */
+            document_type: string | null;
+            latest_activity: components["schemas"]["AuditHistoryEntry"] | null;
+            latest_completed: components["schemas"]["AuditHistoryEntry"] | null;
+            metadata: components["schemas"]["Metadata"];
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "feishu";
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AuditArchiveOriginal */
+        AuditArchiveOriginal: {
+            access: components["schemas"]["AuditArchiveAccess"];
+            file: components["schemas"]["FileVersion"] | null;
+            /** File Version Id */
+            file_version_id: string;
+        };
+        /** AuditArchivePage */
+        AuditArchivePage: {
+            /** Categories */
+            categories: components["schemas"]["AuditArchiveCategory"][];
+            /** Customers */
+            customers: string[];
+            /** Document Count */
+            document_count: number;
+            /** Document Types */
+            document_types: string[];
+            /** Documents */
+            documents: components["schemas"]["AuditArchiveDocument"][];
+            /** Initiators */
+            initiators: string[];
+            query: components["schemas"]["AuditArchiveQuery"];
+            /** Total */
+            total: number;
+        };
+        /** AuditArchivePart */
+        AuditArchivePart: {
+            /** Count */
+            count: number;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
+        /** AuditArchiveQuery */
+        AuditArchiveQuery: {
+            /** Category Id */
+            category_id: string | null;
+            /** Customer */
+            customer: string | null;
+            /** Document Type */
+            document_type: string | null;
+            /** From Date */
+            from_date: string | null;
+            /** Initiator */
+            initiator: string | null;
+            /** Page */
+            page: number;
+            /**
+             * Page Size
+             * @constant
+             */
+            page_size: 10;
+            /** Search */
+            search: string;
+            /** Through Date */
+            through_date: string | null;
+        };
         /** AuditClauseEvaluation */
         AuditClauseEvaluation: {
             /**
@@ -1054,6 +1155,54 @@ export interface components {
              */
             state: "pending" | "checking" | "valid" | "invalid" | "error";
         };
+        /**
+         * AuditHistoryDetail
+         * @description Authorized frozen content, not permission to read the whole source task.
+         *
+         *     report_share, when present, belongs to this single full report reference.
+         *     Do not inherit the source task's latest, unrelated share operation.
+         */
+        AuditHistoryDetail: {
+            entry: components["schemas"]["AuditHistoryEntry"];
+            file: components["schemas"]["AuditTaskFile"];
+            /** Frozen File Version Ids */
+            frozen_file_version_ids: string[];
+            /** Originals */
+            originals: components["schemas"]["AuditArchiveOriginal"][];
+            report_access: components["schemas"]["AuditArchiveAccess"];
+            report_share?: components["schemas"]["AuditReportShare"] | null;
+            source_task_access: components["schemas"]["AuditArchiveAccess"];
+        };
+        /** AuditHistoryEntry */
+        AuditHistoryEntry: {
+            /** Audited At */
+            audited_at: string;
+            /** Conclusion */
+            conclusion: ("PASS" | "NG" | "UNKNOWN") | null;
+            /** Document Id */
+            document_id: string;
+            /**
+             * Execution
+             * @enum {string}
+             */
+            execution: "queued" | "running" | "completed" | "review_failed";
+            /** Initiator */
+            initiator: string;
+            reference: components["schemas"]["AuditResultReference"];
+            report: components["schemas"]["AuditFileReport"];
+            report_access: components["schemas"]["AuditArchiveAccess"];
+            /** Sequence */
+            sequence: number;
+            /** Source Revision */
+            source_revision: string | null;
+        };
+        /** AuditHistoryPage */
+        AuditHistoryPage: {
+            default_reference: components["schemas"]["AuditResultReference"] | null;
+            document: components["schemas"]["AuditArchiveDocument"];
+            /** Entries */
+            entries: components["schemas"]["AuditHistoryEntry"][];
+        };
         /** AuditProgress */
         AuditProgress: {
             /** Completed */
@@ -1154,6 +1303,17 @@ export interface components {
             pass_count: number;
             /** Unknown Count */
             unknown_count: number;
+        };
+        /** AuditResultReference */
+        AuditResultReference: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Result Attempt */
+            result_attempt: number | null;
+            /** Round Id */
+            round_id: string;
+            /** Task Id */
+            task_id: string;
         };
         /** AuditRuleMatch */
         AuditRuleMatch: {

@@ -5,26 +5,22 @@ import type {AuditReportAdapter, AuditReportReference, AuditReportPackage} from 
 
 type Task = components['schemas']['AuditTask']
 type Report = components['schemas']['AuditFileReport']
+type ReportItem = {reference: AuditReportReference; report: Report}
 
-/** Only report projections change here. Audit input, attempt and findings do not. */
-export function useReportActions(task: Task, onChange: (task: Task) => void, adapter?: AuditReportAdapter) {
-  const current = useRef(task), alive = useRef(true), pending = useRef(new Set<string>())
-  current.current = task
+/** Report operations accept fixed references, not ownership of a private task. */
+export function useReportGeneration(items: ReportItem[], onChange: (reference: AuditReportReference, report: Report) => void, adapter?: AuditReportAdapter) {
+  const current = useRef(items), alive = useRef(true), pending = useRef(new Set<string>())
+  current.current = items
   const [busy, setBusy] = useState<string[]>([])
-  const packaging = useRef(false), [packageBusy, setPackageBusy] = useState(false)
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
-  function locate(reference: AuditReportReference) {
-    const row = current.current.files.find(file => file.file.id === reference.file_version_id)
-    return row && sameSnapshot(reportReference(current.current, row), reference) ? row : null
-  }
+  const locate = (reference: AuditReportReference) => current.current.find(item => sameSnapshot(item.reference, reference))?.report
   function commit(reference: AuditReportReference, report: Report) {
-    const row = locate(reference)
-    if (!alive.current || !row?.audit) return
-    const next = {...current.current, files: current.current.files.map(file => file === row ? {...file, audit: {...row.audit!, report}} : file)}
-    current.current = next; onChange(next)
+    if (!alive.current || !locate(reference)) return
+    current.current = current.current.map(item => sameSnapshot(item.reference, reference) ? {...item, report} : item)
+    onChange(reference, report)
   }
   async function run(reference: AuditReportReference, readOnly: boolean) {
-    const row = locate(reference), previous = row?.audit?.report
+    const previous = locate(reference)
     if (!adapter || !previous || pending.current.has(reference.report_id)) return
     if (readOnly ? previous.generation_request?.state !== 'pending' : previous.state !== 'failed' || !previous.regenerate_allowed || previous.generation_request?.state === 'pending') return
     const requestId = readOnly ? previous.generation_request!.request_id : crypto.randomUUID()
@@ -33,45 +29,57 @@ export function useReportActions(task: Task, onChange: (task: Task) => void, ada
     commit(reference, observation)
     try {
       const update = await (readOnly ? adapter.readRegeneration(structuredClone(reference), requestId) : adapter.regenerate(structuredClone(reference), requestId))
-      const latest = locate(reference)?.audit?.report
+      const latest = locate(reference)
       if (!alive.current || latest !== observation) return
       if (!sameSnapshot(update.reference, reference) || update.receipt.request_id !== requestId || update.report && update.report.report_id !== reference.report_id) throw new Error('report_receipt_mismatch')
       if (update.receipt.state === 'accepted' && (!update.report || update.report.state === 'not_eligible')) throw new Error('invalid_report_receipt')
       commit(reference, {...(update.report || latest), generation_request: update.receipt})
     } catch {
-      const latest = locate(reference)?.audit?.report
+      const latest = locate(reference)
       if (latest === observation) commit(reference, {...latest, generation_request: {request_id: requestId, state: 'pending', reason: '报告生成结果未知。只读取原请求，不重复生成或重审。'}})
-    } finally {
-      pending.current.delete(reference.report_id)
-      if (alive.current) setBusy([...pending.current])
-    }
+    } finally {pending.current.delete(reference.report_id); if (alive.current) setBusy([...pending.current])}
   }
-  function commitPackage(job: AuditReportPackage) {
-    if (!alive.current) return
-    const next = {...current.current, report_package: job}
-    current.current = next; onChange(next)
-  }
-  async function runPackage(readOnly: boolean, reports?: AuditReportReference[]) {
-    if (!adapter || packaging.current) return
-    const previous = current.current.report_package
+  return {busy, regenerate: (reference: AuditReportReference) => run(reference, false), read: (reference: AuditReportReference) => run(reference, true)}
+}
+
+export function useReportPackage(job: AuditReportPackage | null | undefined, onChange: (job: AuditReportPackage) => void, eligible: (reference: AuditReportReference) => boolean, adapter?: AuditReportAdapter) {
+  const current = useRef(job), alive = useRef(true), pending = useRef(false)
+  current.current = job
+  const [packageBusy, setPackageBusy] = useState(false)
+  useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
+  function commit(next: AuditReportPackage) {if (alive.current) {current.current = next; onChange(next)}}
+  async function run(readOnly: boolean, reports?: AuditReportReference[]) {
+    if (!adapter || pending.current) return
+    const previous = current.current
     if (readOnly ? !previous : previous && (previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state))) return
     const references = structuredClone(readOnly ? previous!.reports : reports || [])
-    if (references.length < 2 || references.some(reference => !locate(reference))) return
+    // Reading an existing job never depends on the current page or selection.
+    if (references.length < 2 || new Set(references.map(reference => JSON.stringify(reference))).size !== references.length || !readOnly && references.some(reference => !eligible(reference))) return
     if (!readOnly && previous?.state === 'failed' && previous.receipt.state !== 'rejected' && !previous.retry_allowed && sameSnapshot(references, previous.reports)) return
     const requestId = readOnly ? previous!.receipt.request_id : crypto.randomUUID()
-    packaging.current = true; setPackageBusy(true)
+    pending.current = true; setPackageBusy(true)
     const observation: AuditReportPackage = readOnly ? previous! : {package_id: null, reports: references, receipt: {request_id: requestId, state: 'pending', reason: null}, state: 'pending', artifact: null, reason: 'ZIP 受理结果未知；只读取原打包请求。', retry_allowed: false}
-    if (!readOnly) commitPackage(observation)
+    if (!readOnly) commit(observation)
     try {
-      const job = await (readOnly ? adapter.readPackage(requestId) : adapter.createPackage(references, requestId))
-      const latest = current.current.report_package
-      if (!alive.current || latest !== observation) return
-      if (job.receipt.request_id !== requestId || !sameSnapshot(job.reports, references) || job.state === 'ready' && (!job.package_id || job.artifact?.content_type !== 'application/zip')) throw new Error('package_receipt_mismatch')
-      commitPackage(job)
-    } catch {
-      const latest = current.current.report_package
-      if (latest === observation) commitPackage({...latest, reason: 'ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。'})
-    } finally {packaging.current = false; if (alive.current) setPackageBusy(false)}
+      const next = await (readOnly ? adapter.readPackage(requestId) : adapter.createPackage(references, requestId))
+      if (!alive.current || current.current !== observation) return
+      if (next.receipt.request_id !== requestId || !sameSnapshot(next.reports, references) || next.state === 'ready' && (!next.package_id || !next.artifact?.artifact_id || next.artifact.content_type !== 'application/zip' || next.artifact.byte_size <= 0)) throw new Error('package_receipt_mismatch')
+      commit(next)
+    } catch {if (current.current === observation) commit({...observation, reason: 'ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。'})}
+    finally {pending.current = false; if (alive.current) setPackageBusy(false)}
   }
-  return {busy, packageBusy, regenerate: (reference: AuditReportReference) => run(reference, false), read: (reference: AuditReportReference) => run(reference, true), createPackage: (reports: AuditReportReference[]) => runPackage(false, reports), readPackage: () => runPackage(true)}
+  return {packageBusy, createPackage: (reports: AuditReportReference[]) => run(false, reports), readPackage: () => run(true)}
+}
+
+/** The task view updates only report projections; historical views use the same cores. */
+export function useReportActions(task: Task, onChange: (task: Task) => void, adapter?: AuditReportAdapter) {
+  const current = useRef(task)
+  current.current = task
+  const generation = useReportGeneration(task.files.flatMap(row => {const reference = reportReference(task, row); return reference && row.audit ? [{reference, report: row.audit.report}] : []}), (reference, report) => {
+    const latest = current.current
+    const next = {...latest, files: latest.files.map(row => sameSnapshot(reportReference(latest, row), reference) && row.audit ? {...row, audit: {...row.audit, report}} : row)}
+    current.current = next; onChange(next)
+  }, adapter)
+  const packaging = useReportPackage(task.report_package, job => {const next = {...current.current, report_package: job}; current.current = next; onChange(next)}, reference => current.current.files.some(row => sameSnapshot(reportReference(current.current, row), reference)), adapter)
+  return {...generation, ...packaging}
 }

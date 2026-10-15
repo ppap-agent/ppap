@@ -1,24 +1,23 @@
 // Stitch: projects/13261964020862199279/screens/ad9a81d6958e49eea105a9ea887cc3cf
-import {useEffect, useRef, useState, lazy, Suspense} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
-import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Checkbox} from '../components/ui/checkbox'
 import {Item, ItemContent, ItemGroup} from '../components/ui/item'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {FileName} from '../journey/file-name'
-import {resultConsistencyError, reportReady, reportReference} from './result-projection'
+import {resultConsistencyError, reportReady, reportReference, shareContentFor, sameSnapshot} from './result-projection'
 import {readReportPdf, type AuditReportAdapter} from './report-contract'
 import {useReportActions} from './report-actions'
 import {ReportPackage} from './report-package'
+import {ReportPreview} from './report-preview'
 import {ReportShareDialog} from './report-share'
 import {useShareActions} from './share-actions'
 import type {AuditSharingAdapter} from './sharing-contract'
 
 type Task = components['schemas']['AuditTask']
 const labels = {not_eligible: '无正式报告', pending: '待生成', generating: '生成中', ready: '就绪', failed: '生成失败'}
-const PdfSource = lazy(() => import('../journey/pdf-source').then(module => ({default: module.PdfSource})))
 
 export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy, readError, adapter, onChange, sharingAdapter}: {task: Task; initialFile: string; onBack: () => void; onChoose: (fileId: string) => void; onRead: () => void; busy: boolean; readError: string; adapter?: AuditReportAdapter; onChange: (task: Task) => void; sharingAdapter?: AuditSharingAdapter}) {
   const rows = task.files.filter(file => file.selection === 'selected')
@@ -34,7 +33,10 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
   const ready = Boolean(file && reportReady(task, file))
   const reference = file ? reportReference(task, file) : null
   const actions = useReportActions(task, onChange, adapter)
-  const sharing = useShareActions(task, onChange, sharingAdapter)
+  const currentTask = useRef(task); currentTask.current = task
+  const contentFor = (reports: components['schemas']['AuditReportReference'][], mode: 'link' | 'file') => shareContentFor(currentTask.current, reports, mode)
+  const sharing = useShareActions(task.report_share, job => {const next = {...currentTask.current, report_share: job}; currentTask.current = next; onChange(next)}, contentFor, sharingAdapter)
+  const describe = (reference: components['schemas']['AuditReportReference']) => {const row = task.files.find(row => sameSnapshot(reportReference(task, row), reference)); return {name: row?.file.original_filename || '历史文件', conclusion: row?.audit?.conclusion || '结论待核对'}}
   const [shareScope, setShareScope] = useState<components['schemas']['AuditReportReference'][] | null>(null)
   const shareTrigger = useRef<HTMLButtonElement | null>(null)
   const downloads = useRef<string[]>([]), alive = useRef(true)
@@ -65,24 +67,6 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
     } catch {if (alive.current) setZipDownloadError('ZIP 暂时无法下载。已就绪 PDF 保留，只需重试下载。')}
     finally {if (alive.current) setDownloading(false)}
   }
-  const [pdf, setPdf] = useState<{key: string; url: string; error: string} | null>(null)
-  const [reload, setReload] = useState(0)
-  const pdfKey = ready && reference ? JSON.stringify([reference, report?.artifact]) : ''
-  useEffect(() => {
-    if (!pdfKey || !adapter) return
-    let current = true, url = ''
-    const [ref, artifact] = JSON.parse(pdfKey)
-    void readReportPdf(adapter, ref, artifact).then(blob => {
-      if (!current) return
-      url = URL.createObjectURL(blob); setPdf({key: pdfKey, url, error: ''})
-    }).catch(() => {if (current) setPdf({key: pdfKey, url: '', error: 'PDF 暂时无法读取。审核与生成状态未改变，可以重新读取。'})})
-    return () => {current = false; if (url) URL.revokeObjectURL(url)}
-  }, [pdfKey, adapter, reload])
-  const currentPdf = pdf?.key === pdfKey ? pdf : null
-  function download() {
-    if (!currentPdf?.url || !report?.artifact) return
-    const link = document.createElement('a'); link.href = currentPdf.url; link.download = report.artifact.filename; link.click()
-  }
   const list = <ItemGroup aria-label="逐文件报告清单">{rows.map(row => {
     const ready = reportReady(task, row)
     const status = statusFor(row)
@@ -99,8 +83,8 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
     {readError && <Alert variant="destructive"><AlertTitle>报告状态暂时无法读取</AlertTitle><AlertDescription>{readError}</AlertDescription></Alert>}
     <div className="flex flex-wrap items-center gap-2"><Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button className="@3xl:hidden" variant="outline">文件报告 · {rows.length} 份</Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>文件报告</SheetTitle><SheetDescription>当前预览与批量勾选分别保存；只有就绪报告可勾选。</SheetDescription></SheetHeader><div className="overflow-y-auto p-4">{list}</div></SheetContent></Sheet>{selectedReports.length > 1 ? <Button disabled={!adapter || actions.packageBusy || task.report_package?.receipt.state === 'pending' || task.report_package?.state === 'generating'} onClick={() => void actions.createPackage(selectedReports.map(row => reportReference(task, row)!))}>打包所选 {selectedReports.length} 份报告</Button> : selectedReports.length === 1 && <Button disabled={!adapter || downloading} onClick={() => void downloadSelected()}>下载所选 1 份报告</Button>}<Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取报告状态…' : '读取报告状态'}</Button><Button variant="outline" disabled={!sharingAdapter || !selectedReports.length && !ready && !task.report_share} onClick={event => {shareTrigger.current = event.currentTarget; setShareScope(selectedReports.length ? selectedReports.map(row => reportReference(task, row)!) : ready && reference ? [reference] : [])}}>分享</Button>{!sharingAdapter && <span className="text-xs text-muted-foreground">分享接口尚未接入。</span>}</div>
     {pdfDownloadError && <Alert variant="destructive"><AlertTitle>PDF 下载未完成</AlertTitle><AlertDescription>{pdfDownloadError}</AlertDescription></Alert>}
-    <ReportPackage task={task} busy={actions.packageBusy || downloading} onRead={() => void actions.readPackage()} onDownload={() => void downloadZip()} onRetry={() => {if (task.report_package?.state === 'failed' && task.report_package.retry_allowed) void actions.createPackage(task.report_package.reports)}} downloadError={zipDownloadError}/>
-    <div className="grid min-w-0 gap-6 @3xl:grid-cols-[16rem_minmax(0,1fr)]"><aside className="hidden min-w-0 border-r pr-4 @3xl:block">{list}</aside><section className="min-w-0 space-y-4" aria-label="当前报告">{file ? <><div className="flex flex-wrap items-start justify-between gap-3"><h2 className="min-w-0 flex-1 break-all text-lg font-semibold">{file.file.original_filename}-审核报告</h2><Button disabled={!currentPdf?.url} onClick={download}>下载当前报告</Button></div><Badge variant="outline">{statusFor(file)}</Badge>{report?.generated_at && <p className="text-xs text-muted-foreground">生成于 {report.generated_at.replace('T', ' ')}</p>}<p className="text-xs text-muted-foreground">审核规则：{file.audit?.rule.title || '—'} · 本轮冻结结果</p>{issue ? <Alert variant="destructive"><AlertTitle>不能展示正式报告</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert> : <p className="text-muted-foreground">{report?.reason || (ready ? '报告对应本次冻结审核结果。' : 'PDF 产物元数据尚未取得。')}</p>}{reference && report && <div className="space-y-2">{report.generation_request?.state === 'pending' ? <><p role="status">{report.generation_request.reason}</p><p className="break-all text-xs text-muted-foreground">生成请求：{report.generation_request.request_id}</p><Button variant="outline" disabled={actions.busy.includes(reference.report_id)} onClick={() => void actions.read(reference)}>读取生成结果</Button></> : report.state === 'failed' && <><Button variant="outline" disabled={!adapter || !report.regenerate_allowed || actions.busy.includes(reference.report_id)} onClick={() => void actions.regenerate(reference)}>重生成同一结果</Button><p className="text-xs text-muted-foreground">{report.regenerate_reason || '服务未提供重生成许可；未推定收费政策。'}</p></>}</div>}{ready && adapter ? currentPdf?.error ? <Alert variant="destructive"><AlertTitle>无法读取 PDF</AlertTitle><AlertDescription>{currentPdf.error}<Button variant="outline" onClick={() => {setPdf(null); setReload(value => value + 1)}}>重新读取 PDF</Button></AlertDescription></Alert> : currentPdf?.url ? <div className="h-[65dvh] min-h-96 overflow-hidden border"><Suspense fallback={<p role="status">正在加载 PDF 阅读器…</p>}><PdfSource key={currentPdf.url} url={currentPdf.url} name={report!.artifact!.filename}/></Suspense></div> : <p role="status">正在读取 PDF…</p> : ready ? <p>报告读取接口尚未接入，不能下载占位文件。</p> : null}</> : <p>{rows.length ? '所选报告不在当前任务的冻结范围内。请从文件报告清单选择，不自动打开另一份报告。' : '没有进入审核的文件，未开始审核，也没有报告。'}</p>}</section></div>
-    {shareScope !== null && sharingAdapter && <ReportShareDialog task={task} reports={shareScope} adapter={sharingAdapter} actions={sharing} trigger={shareTrigger.current} onClose={() => setShareScope(null)}/>}
+    <ReportPackage job={task.report_package} nameFor={reference => describe(reference).name} busy={actions.packageBusy || downloading} onRead={() => void actions.readPackage()} onDownload={() => void downloadZip()} onRetry={() => {if (task.report_package?.state === 'failed' && task.report_package.retry_allowed) void actions.createPackage(task.report_package.reports)}} downloadError={zipDownloadError}/>
+    <div className="grid min-w-0 gap-6 @3xl:grid-cols-[16rem_minmax(0,1fr)]"><aside className="hidden min-w-0 border-r pr-4 @3xl:block">{list}</aside>{file ? <ReportPreview name={file.file.original_filename} rule={file.audit?.rule.title || '—'} reference={reference} report={report} ready={ready} issue={issue} adapter={adapter}>{reference && report && <div className="space-y-2">{report.generation_request?.state === 'pending' ? <><p role="status">{report.generation_request.reason}</p><p className="break-all text-xs text-muted-foreground">生成请求：{report.generation_request.request_id}</p><Button variant="outline" disabled={actions.busy.includes(reference.report_id)} onClick={() => void actions.read(reference)}>读取生成结果</Button></> : report.state === 'failed' && <><Button variant="outline" disabled={!adapter || !report.regenerate_allowed || actions.busy.includes(reference.report_id)} onClick={() => void actions.regenerate(reference)}>重生成同一结果</Button><p className="text-xs text-muted-foreground">{report.regenerate_reason || '服务未提供重生成许可；未推定收费政策。'}</p></>}</div>}</ReportPreview> : <p>{rows.length ? '所选报告不在当前任务的冻结范围内。请从文件报告清单选择，不自动打开另一份报告。' : '没有进入审核的文件，未开始审核，也没有报告。'}</p>}</div>
+    {shareScope !== null && sharingAdapter && <ReportShareDialog share={task.report_share} contentFor={contentFor} describe={describe} reports={shareScope} adapter={sharingAdapter} actions={sharing} trigger={shareTrigger.current} onClose={() => setShareScope(null)}/>}
   </section>
 }
