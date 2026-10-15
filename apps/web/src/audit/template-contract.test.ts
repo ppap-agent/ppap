@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import {zipSync} from 'fflate'
 import {coveredTypes, readTemplateFile, readTemplateZip, validCatalog, validTemplatePage, type AuditTemplateAdapter, type TemplateCatalog, type TemplateItem, type TemplatePage, type TemplateZip} from './template-contract.ts'
 
 const allowed = {state: 'allowed' as const, reason: null}
@@ -7,9 +8,10 @@ const catalog: TemplateCatalog = {coverage_universe: Array.from({length: 17}, (_
 const reference = {customer_id: 'customer-a', template_id: 'template-1', file_version_id: 'v1'}
 const item: TemplateItem = {reference, file: {id: 'v1', file_id: 'template-1', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 3, status: 'ready', sha256: null}, document_type: 'type-0', updated_at: '2026-10-16T00:00:00Z', preview_access: allowed, download_access: allowed, share_access: allowed}
 const page: TemplatePage = {query: {customer_id: 'customer-a', search: '', page: 1, page_size: 10}, folder_id: 'folder-a', folder_revision: 'rev-1', folder_template_count: 1, creator_name: null, manage_access: allowed, zip_access: allowed, items: [item], total: 1}
-const zip: TemplateZip = {customer_id: 'customer-a', folder_id: 'folder-a', folder_revision: 'rev-1', templates: [reference], filename: 'a.zip', byte_size: 3, complete: true, access: allowed}
+const zipBlob = new Blob([new Uint8Array(zipSync({'a.xlsx': new TextEncoder().encode('abc')}))], {type: 'application/zip'})
+const zip: TemplateZip = {customer_id: 'customer-a', folder_id: 'folder-a', folder_revision: 'rev-1', templates: [{reference, filename: 'a.xlsx', byte_size: 3}], manifest_filename: null, filename: 'a.zip', byte_size: zipBlob.size, complete: true, access: allowed}
 const folder = {customer_id: 'customer-a', folder_id: 'folder-a', folder_revision: 'rev-1', folder_template_count: 1}
-const adapter: AuditTemplateAdapter = {readCatalog: async () => catalog, listTemplates: async () => page, readFile: async () => ({reference, blob: new Blob(['abc'], {type: item.file.content_type})}), readZip: async () => ({snapshot: zip, blob: new Blob(['PK!'], {type: 'application/zip'})})}
+const adapter: AuditTemplateAdapter = {readCatalog: async () => catalog, listTemplates: async () => page, readFile: async () => ({reference, blob: new Blob(['abc'], {type: item.file.content_type})}), readZip: async () => ({snapshot: zip, blob: zipBlob})}
 
 test('template coverage counts a union within an explicit 17-type universe, never attachments', () => {
   assert.equal(validCatalog(catalog), true)
@@ -32,10 +34,13 @@ test('template reads reject unknown permissions and bytes for another version', 
   for (const state of ['denied', 'unknown', 'deleted'] as const) await assert.rejects(readTemplateFile(adapter, {...item, preview_access: {state, reason: null}}, 'preview'))
   await assert.rejects(readTemplateFile({...adapter, readFile: async () => ({reference: {...reference, file_version_id: 'v2'}, blob: new Blob(['abc'], {type: item.file.content_type})})}, item, 'preview'))
   await assert.rejects(readTemplateFile({...adapter, readFile: async () => ({reference, blob: new Blob(['abc'], {type: 'text/html'})})}, item, 'download'))
+  await assert.rejects(readTemplateFile(adapter, {...item, file: {...item.file, status: 'staging'}}, 'download'))
+  assert.equal(validTemplatePage({...page, items: [{...item, file: {...item.file, status: 'staging'}}]}, page.query), false)
 })
 
 test('template ZIPs require the same complete folder revision, distinct versions and actual ZIP bytes', async () => {
-  assert.equal((await readTemplateZip(adapter, folder)).blob.size, 3)
-  for (const change of [{complete: false}, {customer_id: 'b'}, {folder_id: 'b'}, {folder_revision: 'rev-2'}, {templates: []}, {templates: [reference, reference]}, {byte_size: 2}, {access: {state: 'unknown' as const, reason: null}}]) await assert.rejects(readTemplateZip({...adapter, readZip: async () => ({snapshot: {...zip, ...change}, blob: new Blob(['PK!'], {type: 'application/zip'})})}, folder))
+  assert.equal((await readTemplateZip(adapter, folder)).blob.size, zipBlob.size)
+  for (const change of [{complete: false}, {customer_id: 'b'}, {folder_id: 'b'}, {folder_revision: 'rev-2'}, {templates: []}, {templates: [zip.templates[0], zip.templates[0]]}, {byte_size: 2}, {access: {state: 'unknown' as const, reason: null}}, {templates: [{...zip.templates[0], filename: 'other.xlsx'}]}, {templates: [{...zip.templates[0], byte_size: 100}]}]) await assert.rejects(readTemplateZip({...adapter, readZip: async () => ({snapshot: {...zip, ...change}, blob: zipBlob})}, folder))
   await assert.rejects(readTemplateZip({...adapter, readZip: async () => ({snapshot: zip, blob: new Blob(['bad'], {type: 'application/zip'})})}, folder))
+  await assert.rejects(readTemplateZip({...adapter, readZip: async () => ({snapshot: {...zip, byte_size: 2}, blob: new Blob(['PK'], {type: 'application/zip'})})}, folder))
 })

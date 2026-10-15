@@ -10,11 +10,13 @@ import reportSamples from './report-samples.json'
 import {fixtureSharing} from './audit-sharing'
 import {fixtureArchive} from './audit-archive'
 import {fixtureTemplates} from './audit-templates'
+import type {AuditSupportAdapter} from '../src/audit/template-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
 const scene = query.get('scene') || 'populated'
 const templateAdapter = fixtureTemplates(scene)
+const supportAdapter: AuditSupportAdapter | undefined = scene === 'support-empty' ? {read: async () => ({state: 'configured', config_version: 'preview-empty-config', phone: null, email: null, service_hours: null, qr_available: false}), readQr: async () => {throw new Error('no_preview_qr')}} : undefined
 document.documentElement.classList.toggle('dark', query.get('theme') === 'dark')
 const documents = [
   ...reportSamples.documents,
@@ -244,6 +246,6 @@ function Preview() {
       return scene === 'templates-race' && args[0].customer_id === 'preview-customer-a' ? defer('模板清单 · 示例客户 A', result) : result
     },
   }), [defer])
-  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} supportAdapter={supportAdapter} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

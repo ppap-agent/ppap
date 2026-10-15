@@ -21,7 +21,7 @@ function download(blob: Blob, name: string) {
 }
 const accessReason = (access: TemplateItem['preview_access']) => access.reason || ({denied: '当前账号无权访问。', unknown: '访问权限尚未确认。', deleted: '该文件已删除。', allowed: ''}[access.state])
 
-export function AuditTemplates({adapter, onReturn, onFeedback}: {adapter: AuditTemplateAdapter; onReturn: () => void; onFeedback: () => void}) {
+export function AuditTemplates({active, adapter, onReturn, onFeedback}: {active: boolean; adapter: AuditTemplateAdapter; onReturn: () => void; onFeedback: () => void}) {
   const [catalog, setCatalog] = useState<TemplateCatalog | null>(null), [catalogError, setCatalogError] = useState(''), [reloadCatalog, setReloadCatalog] = useState(0)
   const [customerId, setCustomerId] = useState(''), [customerSearch, setCustomerSearch] = useState('')
   const [search, setSearch] = useState(''), [pageNumber, setPageNumber] = useState(1), [page, setPage] = useState<TemplatePage | null>(null)
@@ -29,6 +29,7 @@ export function AuditTemplates({adapter, onReturn, onFeedback}: {adapter: AuditT
   const [preview, setPreview] = useState<TemplateItem | null>(null), [downloadError, setDownloadError] = useState(''), [downloadBusy, setDownloadBusy] = useState('')
   const trigger = useRef<HTMLButtonElement | null>(null), epoch = useRef(0), alive = useRef(true), currentCustomer = useRef(customerId), transferring = useRef(false)
   currentCustomer.current = customerId
+  useEffect(() => {if (!active) setPreview(null)}, [active])
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
   useEffect(() => {
     let current = true
@@ -87,6 +88,6 @@ export function AuditTemplates({adapter, onReturn, onFeedback}: {adapter: AuditT
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><Button variant="ghost" className="justify-start" onClick={onFeedback}>更多模板请补充</Button><p className="text-xs text-muted-foreground">模板分享尚未接入；未发送任何消息。</p></div>
       </div>
     </div>}
-    {preview && <TemplatePreview item={preview} adapter={adapter} onClose={() => setPreview(null)} trigger={trigger.current}/>}
+    {active && preview && <TemplatePreview item={preview} adapter={adapter} onClose={() => setPreview(null)} trigger={trigger.current}/>}
   </section>
 }

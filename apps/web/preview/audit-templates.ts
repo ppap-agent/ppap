@@ -37,7 +37,7 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
       for (const item of files) {entries[item.file.original_filename] = new Uint8Array(await bytes.get(item.file.id)!.arrayBuffer()); index.push(`${item.file.original_filename}\n${item.file.id}`)}
       entries['模板清单.txt'] = strToU8(index.join('\n'))
       const blob = new Blob([new Uint8Array(zipSync(entries))], {type: 'application/zip'})
-      return {snapshot: {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: files.map(row => row.reference), filename: `${folder.customer_id}-示例模板.zip`, byte_size: blob.size, complete: scene !== 'templates-zip-incomplete', access: allowed}, blob}
+      return {snapshot: {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: files.map(row => ({reference: row.reference, filename: row.file.original_filename, byte_size: row.file.byte_size})), manifest_filename: '模板清单.txt', filename: `${folder.customer_id}-示例模板.zip`, byte_size: blob.size, complete: scene !== 'templates-zip-incomplete', access: allowed}, blob}
     },
   }
 }

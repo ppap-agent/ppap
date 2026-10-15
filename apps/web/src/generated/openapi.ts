@@ -1585,8 +1585,18 @@ export interface components {
             folder_id: string;
             /** Folder Revision */
             folder_revision: string;
+            /** Manifest Filename */
+            manifest_filename: string | null;
             /** Templates */
-            templates: components["schemas"]["AuditTemplateReference"][];
+            templates: components["schemas"]["AuditTemplateZipEntry"][];
+        };
+        /** AuditTemplateZipEntry */
+        AuditTemplateZipEntry: {
+            /** Byte Size */
+            byte_size: number;
+            /** Filename */
+            filename: string;
+            reference: components["schemas"]["AuditTemplateReference"];
         };
         /**
          * AuditUploadItem

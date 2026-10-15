@@ -77,6 +77,7 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertNotIn("report", item)
         self.assertEqual(schemas["AuditTemplateQuery"]["properties"]["page_size"]["const"], 10)
         self.assertIn("complete", schemas["AuditTemplateZip"]["required"])
+        self.assertEqual(set(schemas["AuditTemplateZipEntry"]["required"]), {"reference", "filename", "byte_size"})
         self.assertEqual(schemas["AuditSupportInfo"]["properties"]["state"]["enum"], ["configured", "unavailable"])
         for name in ("AuditTemplateCatalog", "AuditTemplatePage", "AuditTemplateZip", "AuditSupportInfo"):
             self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")

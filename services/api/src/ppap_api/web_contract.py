@@ -970,13 +970,20 @@ class AuditTemplatePage(TypedDict):
     total: int
 
 
+class AuditTemplateZipEntry(TypedDict):
+    reference: AuditTemplateReference
+    filename: str
+    byte_size: int
+
+
 class AuditTemplateZip(TypedDict):
     """One complete folder snapshot; partial bytes must not be called a complete ZIP."""
 
     customer_id: str
     folder_id: str
     folder_revision: str
-    templates: list[AuditTemplateReference]
+    templates: list[AuditTemplateZipEntry]
+    manifest_filename: str | None
     filename: str
     byte_size: int
     complete: bool

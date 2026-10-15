@@ -12,6 +12,53 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplatePreviewTests(unittest.TestCase):
+    def test_empty_configured_support_has_an_explicit_unavailable_exit(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=support-empty")
+            page.get_by_role("button", name="联系我们", exact=True).click()
+            dialog = page.get_by_role("dialog", name="联系我们", exact=True)
+            expect(dialog.get_by_text("服务信息暂不可用", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="重新读取服务信息", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_browser_back_closes_template_portal_without_losing_task_or_catalog_page(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=unmatched")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="标准模板", exact=True).first.click()
+            page.get_by_role("button", name="下一页模板", exact=True).click()
+            page.get_by_role("row", name=re.compile("示例归档模板 11.xlsx")).get_by_role("button", name="预览", exact=True).click()
+            expect(page.get_by_role("dialog", name="模板预览", exact=True)).to_be_visible()
+            page.go_back()
+            expect(page.get_by_role("dialog", name="模板预览", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="结束任务", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="标准模板", exact=True).first.click()
+            expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
+            expect(page.get_by_role("dialog", name="模板预览", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_preview_harness_keeps_the_template_surface_after_refresh_and_theme_change(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/__preview?page=audit&scene=templates-ready&view=templates")
+            preview = page.frame_locator("iframe")
+            expect(preview.get_by_role("heading", name="客户模板库", exact=True)).to_be_visible()
+            page.reload()
+            expect(preview.get_by_role("heading", name="客户模板库", exact=True)).to_be_visible()
+            page.get_by_role("button", name="切换明暗主题", exact=True).click()
+            expect(preview.get_by_role("heading", name="客户模板库", exact=True)).to_be_visible()
+            preview.get_by_role("button", name="返回审核", exact=True).click()
+            expect(preview.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            page.reload()
+            expect(preview.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            browser.close()
+
     def test_return_from_an_initial_template_deep_link_reads_the_original_task(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -181,5 +228,6 @@ class TemplatePreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("textbox", name="问题追踪编号", exact=True)).to_have_value(re.compile(r"^[a-zA-Z0-9-]+$"))
             dialog.get_by_role("button", name="关闭", exact=True).click()
             expect(page.get_by_text("保留草稿.xlsx", exact=True).first).to_be_visible()
+            expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
             self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
