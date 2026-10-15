@@ -227,6 +227,8 @@ exit 0
                 "--add-host",
                 "ppap-current-web:127.0.0.1",
                 "--add-host",
+                "ppap-current-office:127.0.0.1",
+                "--add-host",
                 "web-base.ppap-test.svc.cluster.local:127.0.0.1",
                 "-v",
                 f"{TKE / 'edition-proxy.conf'}:/etc/nginx/conf.d/default.conf:ro",

@@ -25,7 +25,7 @@ services:
       PPAP_S3_SECRET_KEY: ${PPAP_REMOTE_S3_SECRET_KEY:?run through deploy/remote-dev/run.sh}
       PPAP_WEB_URL: http://127.0.0.1:4173
       PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
-      PPAP_ONLYOFFICE_URL: https://onlyoffice.icoastline.com
+      PPAP_ONLYOFFICE_URL: http://127.0.0.1:8082
       PPAP_ONLYOFFICE_API_URL: http://ppap-remote-dev-api.ppap-remote-dev.svc.cluster.local:8080
       PPAP_ONLYOFFICE_SECRET: ${PPAP_REMOTE_ONLYOFFICE_SECRET:?run through deploy/remote-dev/run.sh}
       PPAP_USAGE_CHARGE_ENABLED: "false"

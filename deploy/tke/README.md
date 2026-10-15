@@ -19,6 +19,21 @@ Validation and deployment consume the same rendered object stream from `deploy/t
 
 Secret `ppap-current` is not in git. Create it once from the production env file (passwords, LLM, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services.
 
+ONLYOFFICE Community 10.0 has a separate Deployment, ClusterIP Service and Secret
+`ppap-current-office`; it does not replace the legacy instance or depend on
+remote-dev. Create its JWT Secret once, without putting its value in Git:
+
+```sh
+openssl rand -hex 48 | tr -d '\n' | kubectl -n ppap-test create secret generic ppap-current-office --from-file=jwt-secret=/dev/stdin
+```
+
+The API and Document Server read the same key through `secretKeyRef`. The browser
+uses `https://ppap.icoastline.com/office`; edition-proxy forwards that virtual path
+including WebSocket upgrades independently of the edition cookie. Document Server
+downloads exact originals from `http://ppap-current-api:8080/office/content` using
+short-lived signed tickets. No Mac, port-forward, new DNS name or TLS certificate
+is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
+
 ```sh
 export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"
 ./deploy/tke/apply-current.sh

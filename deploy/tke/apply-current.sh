@@ -10,6 +10,7 @@ command -v docker >/dev/null 2>&1
 docker info >/dev/null
 
 kubectl -n ppap-test get secret ppap-current >/dev/null
+kubectl -n ppap-test get secret ppap-current-office >/dev/null
 
 # The migration ConfigMap carries the canonical numbered SQL files plus
 # migrations/apply.sh. Filename order is the single migration authority.
@@ -31,9 +32,9 @@ done
 for job in ppap-current-init-db ppap-current-init-bucket; do
   kubectl -n ppap-test wait --for=condition=complete "job/$job" --timeout=300s
 done
-for deployment in ppap-current-api ppap-current-worker ppap-current-web edition-proxy; do
+for deployment in ppap-current-office ppap-current-api ppap-current-worker ppap-current-web edition-proxy; do
   kubectl -n ppap-test rollout status "deployment/$deployment" --timeout=300s
 done
-for service in ppap-current-postgres ppap-current-silo ppap-current-api ppap-current-web edition-proxy; do
+for service in ppap-current-postgres ppap-current-silo ppap-current-office ppap-current-api ppap-current-web edition-proxy; do
   kubectl -n ppap-test get "service/$service" >/dev/null
 done

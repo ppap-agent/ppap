@@ -11,7 +11,7 @@ import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTri
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
 import {JudgmentEditor} from './judgment'
-import {decisionInputKey, isManual, judgmentComplete, requirementSatisfied, type Judgment} from './judgment-state'
+import {decisionInputKey, judgmentComplete, requirementSatisfied, type Judgment} from './judgment-state'
 import {DocumentPane} from './source-reader'
 import {sourceKey, type DemoDocument, type SourceFile, type SourceFocus} from './source-documents'
 import type {DecisionEvidence, DecisionInput} from './decision'
@@ -113,14 +113,6 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
     showPane('review')
     requestAnimationFrame(() => {reviewStart.current?.scrollIntoView({block: 'start'}); reviewStart.current?.focus({preventScroll: true})})
   }
-  function cite(location: string, excerpt: string) {
-    if (!file || !row || !judgment || frozen || !isManual(judgment)) return
-    const source = sourceKey(file), citations = [...(judgment.citations ?? [])]
-    const index = citations.findIndex(item => item.source === source && item.location === location || (!item.source || item.source === source) && !item.location && !item.excerpt)
-    if (index >= 0) citations[index] = {source, location, excerpt}
-    else citations.push({source, location, excerpt})
-    onChange(row, {...judgment, citations, confirmed: undefined}); returnToJudgment()
-  }
   function clauseHref(id: string) {const url = new URL(location.href); url.searchParams.set('clause', id); for (const key of ['reviewPane', 'reviewFile', 'reviewLocation']) url.searchParams.delete(key); return url.pathname + url.search}
   const epoch = navigation.current
   const continueAfterSave = next ? () => {if (currentTaskActive.current && navigation.current === epoch && currentContext.current === context && nextPending.current) select(nextPending.current)} : undefined
@@ -155,7 +147,7 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
       </ResizablePanel></TabsContent>
       {wide && <ResizableHandle withHandle className="mx-4"/>}
       <TabsContent value="source" forceMount asChild {...(wide ? {role: 'region', 'aria-labelledby': undefined} : {})}><ResizablePanel aria-label="原件阅读" defaultSize="58%" minSize={wide ? '360px' : '0%'} data-mobile-active={pane === 'source'} className="min-w-0">
-        <section className="flex h-[max(32rem,calc(100dvh-13rem))] min-w-0 flex-col gap-3 lg:h-full" aria-label="当前原件"><div ref={sourceStart} className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 lg:hidden"><p className="min-w-0 flex-1 break-words text-sm font-medium">{row?.displayId || row?.id} · {row?.title}</p><Button variant="outline" size="sm" onClick={returnToJudgment}><ArrowLeft/>返回判断</Button></div>{input.files.length === 1 && file ? <FileName name={file.name} className="text-sm font-medium"/> : <Select value={selectedFile} onValueChange={value => {navigation.current++; setSelectedFile(value); setFocus(null); writeOptions({reviewFile: value, reviewLocation: ''})}}><SelectTrigger className="w-full min-w-0" aria-label="复核原件"><SelectValue placeholder="选择原件" className="min-w-0"/></SelectTrigger><SelectContent className="max-w-[calc(100vw-2rem)]">{input.files.map((item: SourceFile) => <SelectItem key={sourceKey(item)} value={sourceKey(item)} textValue={item.name}><FileIcon name={item.name}/><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{item.name}{input.files.filter(file => file.name === item.name).length > 1 && item.material ? ` · 上传版本 ${item.material.file_version_id.slice(0, 8)}` : ''}</span></SelectItem>)}</SelectContent></Select>}<DocumentPane key={file ? sourceKey(file) : 'none'} file={file} row={row} documents={documents} current={input.files} side="复核" onCite={!frozen && isManual(judgment ?? undefined) ? cite : undefined} focus={focus?.fileKey === selectedFile && focus.clauseId === row?.id ? focus : undefined} onClose={returnToJudgment}/></section>
+        <section className="flex h-[max(32rem,calc(100dvh-13rem))] min-w-0 flex-col gap-3 lg:h-full" aria-label="当前原件"><div ref={sourceStart} className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 lg:hidden"><p className="min-w-0 flex-1 break-words text-sm font-medium">{row?.displayId || row?.id} · {row?.title}</p><Button variant="outline" size="sm" onClick={returnToJudgment}><ArrowLeft/>返回判断</Button></div>{input.files.length === 1 && file ? <FileName name={file.name} className="text-sm font-medium"/> : <Select value={selectedFile} onValueChange={value => {navigation.current++; setSelectedFile(value); setFocus(null); writeOptions({reviewFile: value, reviewLocation: ''})}}><SelectTrigger className="w-full min-w-0" aria-label="复核原件"><SelectValue placeholder="选择原件" className="min-w-0"/></SelectTrigger><SelectContent className="max-w-[calc(100vw-2rem)]">{input.files.map((item: SourceFile) => <SelectItem key={sourceKey(item)} value={sourceKey(item)} textValue={item.name}><FileIcon name={item.name}/><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{item.name}{input.files.filter(file => file.name === item.name).length > 1 && item.material ? ` · 上传版本 ${item.material.file_version_id.slice(0, 8)}` : ''}</span></SelectItem>)}</SelectContent></Select>}<DocumentPane key={file ? sourceKey(file) : 'none'} file={file} row={row} documents={documents} current={input.files} side="复核" focus={focus?.fileKey === selectedFile && focus.clauseId === row?.id ? focus : undefined} onClose={returnToJudgment}/></section>
       </ResizablePanel></TabsContent>
     </ResizablePanelGroup></div>
   </section></Tabs>

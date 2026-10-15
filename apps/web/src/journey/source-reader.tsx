@@ -37,7 +37,7 @@ function SourceSelect({label, value, onChange, files, current}: {label: string; 
   return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className="w-full min-w-0"><SelectValue className="min-w-0" placeholder="选择文件"/></SelectTrigger><SelectContent className="max-w-[calc(100vw-2rem)]">{files.map((file, index) => <SelectItem key={sourceKey(file)} value={sourceKey(file)} textValue={file.name}><FileIcon name={file.name}/><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{file.name}{file.material ? '' : ' · '}{file.material ? '' : file.localFile ? ['未解析', '未读取', '未知', '待核对'].includes(file.revision) ? '修订待核对' : `登记修订 ${file.revision}` : `Rev ${file.revision}`} · {sourceVersionLabel(file)}{files.filter(item => item.name === file.name).length > 1 ? file.material ? ` · 上传版本 ${file.material.file_version_id}` : ` · 第 ${index + 1} 份` : ''}{current.some(item => sourceKey(item) === sourceKey(file)) ? '' : ' · 历史'}</span></SelectItem>)}</SelectContent></Select>
 }
 
-export function DocumentPane({file, documents, row, current, onClose, side, focus, onCite}: {file?: SourceFile; documents: DemoDocument[]; row?: DecisionEvidence; current: SourceFile[]; onClose: () => void; side: string; focus?: SourceFocus; onCite?: (location: string, excerpt: string) => void}) {
+export function DocumentPane({file, documents, row, current, onClose, side, focus}: {file?: SourceFile; documents: DemoDocument[]; row?: DecisionEvidence; current: SourceFile[]; onClose: () => void; side: string; focus?: SourceFocus}) {
   const candidates = documents.filter(doc => file && sourceKey(doc) === sourceKey(file))
   const doc = candidates.length === 1 ? candidates[0] : null
   const [page, setPage] = useState('content'), [zoom, setZoom] = useState(100), [highlight, setHighlight] = useState(true)
@@ -57,7 +57,7 @@ export function DocumentPane({file, documents, row, current, onClose, side, focu
     const timer = window.setTimeout(() => setStatus('ready'), 450)
     return () => window.clearTimeout(timer)
   }, [status])
-  if (file?.material) return <RemoteSourcePane file={file.material} roundId={file.roundId} focus={focus} onCite={onCite}/>
+  if (file?.material) return <RemoteSourcePane file={file.material} roundId={file.roundId} focus={focus}/>
   if (file?.localFile) return <LocalSourcePane file={{...file, localFile: file.localFile}} side={side}/>
   if (!doc) return <section className={"flex flex-col min-h-0 flex-1 bg-background border [&_>_[hidden]]:hidden [&_>_footer]:flex [&_>_footer]:shrink-0 [&_>_footer]:flex-wrap [&_>_footer]:items-center [&_>_footer]:gap-2.5 [&_>_footer]:py-2.5 [&_>_footer]:px-3 [&_>_footer]:text-xs [&_>_footer]:text-muted-foreground [&_>_footer]:border-t [&_>_footer_>_span]:flex-1"} aria-label={`${side}阅读区`}>
     <div className={"flex-1 min-h-45 overflow-auto p-5.5 bg-background  max-md:min-h-0 "}><div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}><BookOpen/>

@@ -43,9 +43,9 @@ def read_ticket(token: str, secret: str) -> dict:
 def preview_config(settings, version) -> dict:
     extension = Path(version.original_filename).suffix.lower().lstrip(".")
     if extension not in OFFICE_TYPES:
-        return {"available": False, "notice": "此格式使用原件或文字预览。"}
+        return {"available": False, "notice": "此格式暂不支持在线原件预览，请下载原件核对。"}
     if not settings.onlyoffice_url or not settings.onlyoffice_api_url or len(settings.onlyoffice_secret) < 32:
-        return {"available": False, "notice": "未配置 Office 排版预览，当前显示文字摘录。"}
+        return {"available": False, "notice": "未配置原件预览，请下载原件核对。"}
     for url in (settings.onlyoffice_url, settings.onlyoffice_api_url):
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.netloc or parts.username or parts.password or parts.query or parts.fragment:

@@ -49,6 +49,15 @@ setup_bridge() {
   "${kctl[@]}" -n ppap-remote-dev wait --for=condition=Ready pod/ppap-remote-dev-bridge --timeout=180s
 }
 
+setup_office() {
+  if [[ -z "$("${kctl[@]}" -n ppap-remote-dev get secret ppap-remote-dev-office --ignore-not-found -o name)" ]]; then
+    openssl rand -hex 48 | tr -d '\n' | "${kctl[@]}" -n ppap-remote-dev create secret generic ppap-remote-dev-office \
+      --from-file=jwt-secret=/dev/stdin
+  fi
+  "${kctl[@]}" apply -f "$script_dir/onlyoffice.yaml"
+  "${kctl[@]}" -n ppap-remote-dev rollout status deployment/ppap-remote-dev-office --timeout=600s
+}
+
 config_value() {
   jq -er --arg key "$1" '.data[$key]' <<< "$config_json"
 }
@@ -58,7 +67,7 @@ secret_value() {
 }
 
 load_remote_settings() {
-  local config_json secret_json
+  local config_json secret_json office_secret_json
   config_json="$("${kctl[@]}" -n ppap-test get configmap ppap-current -o json)"
   secret_json="$("${kctl[@]}" -n ppap-test get secret ppap-current -o json)"
   export PPAP_REMOTE_PG_DATABASE="$(config_value PPAP_PG_DATABASE)"
@@ -72,9 +81,8 @@ load_remote_settings() {
   export PPAP_REMOTE_S3_ACCESS_KEY="$(secret_value PPAP_S3_ACCESS_KEY)"
   export PPAP_REMOTE_S3_SECRET_KEY="$(secret_value PPAP_S3_SECRET_KEY)"
   export PPAP_BUILD_SHA="$(git -C "$repo_dir" rev-parse HEAD)"
-  # This shared Document Server does not validate browser JWTs. This separate
-  # secret still signs local, ten-minute /office/content capability tickets.
-  export PPAP_REMOTE_ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
+  office_secret_json="$("${kctl[@]}" -n ppap-remote-dev get secret ppap-remote-dev-office -o json)"
+  export PPAP_REMOTE_ONLYOFFICE_SECRET="$(jq -er '.data["jwt-secret"]' <<< "$office_secret_json" | base64 -d)"
 }
 
 wait_for_port() {
@@ -105,13 +113,14 @@ run() {
   if [[ "${1:-}" == live ]]; then
     compose+=(-f "$repo_dir/deploy/isolated-dev/web-dev.yaml" -f "$script_dir/api-dev.yaml")
   fi
-  for port in 8080 4173 15432 19000 12222; do
+  for port in 8080 4173 8082 15432 19000 12222; do
     if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
       echo "Local port $port is already in use. Stop the other stack first." >&2
       exit 1
     fi
   done
   setup_bridge
+  setup_office
   load_remote_settings
   trap 'stop_tunnels; "${compose[@]}" down >/dev/null 2>&1 || true' EXIT
   trap 'exit 130' INT
@@ -119,6 +128,7 @@ run() {
   start_forward ppap-test service/ppap-current-postgres 15432:5432
   start_forward ppap-test service/ppap-current-silo 19000:9000
   start_forward ppap-remote-dev pod/ppap-remote-dev-bridge 12222:2222
+  start_forward ppap-remote-dev service/ppap-remote-dev-office 8082:80
   ssh -q -N -T -i "$key_path" -p 12222 \
     -o BatchMode=yes -o ExitOnForwardFailure=yes \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -144,13 +154,14 @@ run() {
 
 run_native() {
   preflight native
-  for port in 8080 4173 15432 19000 12222; do
+  for port in 8080 4173 8082 15432 19000 12222; do
     if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
       echo "Local port $port is already in use." >&2
       exit 1
     fi
   done
   setup_bridge
+  setup_office
   load_remote_settings
   trap 'stop_tunnels' EXIT
   trap 'exit 130' INT
@@ -158,6 +169,7 @@ run_native() {
   start_forward ppap-test service/ppap-current-postgres 15432:5432
   start_forward ppap-test service/ppap-current-silo 19000:9000
   start_forward ppap-remote-dev pod/ppap-remote-dev-bridge 12222:2222
+  start_forward ppap-remote-dev service/ppap-remote-dev-office 8082:80
   ssh -q -N -T -i "$key_path" -p 12222 \
     -o BatchMode=yes -o ExitOnForwardFailure=yes \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -176,7 +188,7 @@ run_native() {
     export PPAP_S3_REGION="$PPAP_REMOTE_S3_REGION" PPAP_S3_BUCKET="$PPAP_REMOTE_S3_BUCKET"
     export PPAP_S3_ACCESS_KEY="$PPAP_REMOTE_S3_ACCESS_KEY" PPAP_S3_SECRET_KEY="$PPAP_REMOTE_S3_SECRET_KEY"
     export PPAP_WEB_URL=http://127.0.0.1:4173 PPAP_PUBLIC_API_URL=http://127.0.0.1:8080
-    export PPAP_ONLYOFFICE_URL=https://onlyoffice.icoastline.com
+    export PPAP_ONLYOFFICE_URL=http://127.0.0.1:8082
     export PPAP_ONLYOFFICE_API_URL=http://ppap-remote-dev-api.ppap-remote-dev.svc.cluster.local:8080
     export PPAP_ONLYOFFICE_SECRET="$PPAP_REMOTE_ONLYOFFICE_SECRET"
     export PPAP_DEEP_CUSTOMER_ENABLED="$PPAP_REMOTE_DEEP_CUSTOMER_ENABLED"

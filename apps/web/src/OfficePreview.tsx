@@ -41,12 +41,12 @@ export default function OfficePreview({scriptUrl, config, onFailed}: {scriptUrl:
         await loadEditor(scriptUrl)
         if (disposed) return
         if (!window.DocsAPI) throw new Error('Office 服务未就绪')
-        editor = new window.DocsAPI.DocEditor(id, {...configRef.current, events: {onDocumentReady: () => { setLoading(false) }, onError: () => { if (!disposed) onFailedRef.current() }}})
+        editor = new window.DocsAPI.DocEditor(id, {...configRef.current, events: {onDocumentReady: () => { if (!disposed) setLoading(false) }, onError: () => { if (!disposed) onFailedRef.current() }}})
       } catch { if (!disposed) onFailedRef.current() }
     })()
     return () => { disposed = true; editor?.destroyEditor() }
   }, [scriptUrl, id])
-  return <div className="relative h-[min(72dvh,54rem)] min-h-[28rem] w-full overflow-hidden rounded-lg border bg-muted/20">
+  return <div className="absolute inset-0 overflow-hidden rounded-md border bg-muted/20">
     <div id={id} className="size-full" />
     {loading && <div className="absolute inset-0 grid place-items-center bg-background/80" role="status">
       <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground shadow-sm">

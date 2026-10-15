@@ -51,10 +51,21 @@ neither SSH nor the local API receives a public ingress. A dedicated SSH key
 lives under the gitignored `.local/remote-dev` directory. Only the public key
 is stored in Kubernetes. The reverse tunnel and local API stop together.
 
-The shared OnlyOffice currently does not validate browser JWTs and permits
-private-address downloads. A fresh local secret still signs PPAP's short-lived
-file tickets. If the shared OnlyOffice policy changes, recheck those two
-conditions before using remote-dev.
+Remote-dev uses its own ONLYOFFICE Community 10.0 service, pinned by image digest
+in `onlyoffice.yaml`. It does not replace the shared `le3` instance. `run.sh`
+creates a separate JWT Secret once and reads it into the local API environment
+without printing or saving its value. Both browser configuration and PPAP's
+short-lived file tickets are signed. Macros stay disabled in the API config.
+
+The service has no public ingress. A fourth localhost-only port-forward exposes
+it at `http://127.0.0.1:8082`; close the local stack to close this access. Private
+address downloads are needed to fetch exact originals through the existing API
+bridge. Metadata-address downloads and WOPI are disabled. Only preview caches
+live in this service; PPAP originals, audit rounds and reviews remain in their
+existing stores. No shared database migration is involved.
+
+The preview Deployment and its JWT Secret remain in the cluster when the local
+stack stops. Local cleanup of the bridge does not delete this separate service.
 
 To remove the temporary Pod, Service, and public-key Secret after development:
 

@@ -10,6 +10,8 @@ data:
   PPAP_BUILD_SHA: 13b614d71c87c7e9a46f7bb80f7155c8c650afb4
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
+  PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
+  PPAP_ONLYOFFICE_API_URL: http://ppap-current-api:8080
   PPAP_PG_HOST: ppap-current-postgres
   PPAP_PG_PORT: "5432"
   PPAP_PG_DATABASE: ppap
@@ -412,6 +414,11 @@ spec:
           env:
             - name: PPAP_SERVICE
               value: api
+            - name: PPAP_ONLYOFFICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current-office
+                  key: jwt-secret
           resources:
             requests:
               cpu: 100m

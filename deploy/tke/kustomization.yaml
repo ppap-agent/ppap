@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - current.yaml
   - edition-proxy.yaml
+  - onlyoffice.yaml
 
 configMapGenerator:
   - name: edition-proxy

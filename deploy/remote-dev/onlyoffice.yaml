@@ -1,0 +1,92 @@
+# Dedicated, read-only preview service. Does not replace the shared le3 instance.
+# The JWT Secret is created separately; originals stay in PPAP object storage.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppap-remote-dev-office
+  namespace: ppap-remote-dev
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ppap-remote-dev-office
+  template:
+    metadata:
+      labels:
+        app: ppap-remote-dev-office
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: onlyoffice
+          # Official Community 10.0.0.1, pinned to its multi-platform digest.
+          image: onlyoffice/documentserver@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: JWT_ENABLED
+              value: "true"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-remote-dev-office
+                  key: jwt-secret
+            - name: ALLOW_PRIVATE_IP_ADDRESS
+              value: "true"
+            - name: ALLOW_META_IP_ADDRESS
+              value: "false"
+            - name: WOPI_ENABLED
+              value: "false"
+            - name: NGINX_ACCESS_LOG
+              value: "false"
+            - name: PLUGINS_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: shared-memory
+              mountPath: /dev/shm
+      volumes:
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppap-remote-dev-office
+  namespace: ppap-remote-dev
+spec:
+  type: ClusterIP
+  selector:
+    app: ppap-remote-dev-office
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
