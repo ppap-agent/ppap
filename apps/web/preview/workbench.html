@@ -41,11 +41,12 @@
         <label class="group"><span class="label">页面</span><select id="page" aria-label="页面">
           <option value="audit">V3.1 上传与规则确认</option><option value="intake">统一审核旅程（原型）</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="requirements">审核要求</option><option value="usage">用量记录</option>
         </select></label>
-        <div id="scenes" class="group" role="group" aria-label="数据场景"><span class="label">场景（切换会重置）</span><button data-scene="populated" type="button">有数据</button><button data-scene="empty" type="button">空状态</button><button data-scene="error" type="button">错误</button><button data-scene="long" type="button">长列表</button><button data-scene="invalid" type="button">异常文件</button><button data-scene="partial" type="button">部分匹配</button><button data-scene="unmatched" type="button">零匹配</button></div>
+        <div id="scenes" class="group" role="group" aria-label="数据场景"><span class="label">场景（切换会重置）</span><button data-scene="populated" type="button">有数据</button><button data-scene="empty" type="button">空状态</button><button data-scene="error" type="button">错误</button><button data-scene="long" type="button">长列表</button><button data-scene="invalid" type="button">异常文件</button><button data-scene="partial" type="button">部分匹配</button><button data-scene="unmatched" type="button">零匹配</button><button data-scene="checking" type="button">预检查中</button><button data-scene="matching" type="button">识别中</button><button data-scene="drive-loading" type="button">飞书读取中</button><button data-scene="drive-error" type="button">飞书读取失败</button><button data-scene="drive-denied" type="button">飞书待授权</button><button data-scene="drive-empty" type="button">飞书空列表</button></div>
         <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="390" type="button">手机</button><button data-width="820" type="button">平板</button><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
         <div class="spacer"></div>
         <button id="theme" type="button" aria-label="切换明暗主题">深色</button>
         <button id="refresh" type="button">刷新</button>
+        <button data-read="return" type="button">返回一次示例读取</button><button data-read="fail" type="button">令一次示例读取失败</button>
         <a id="standalone" class="action" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
       </div>
     </header>
@@ -53,7 +54,7 @@
   </div>
   <script>
     const paths = {audit: '/preview/audit.html', concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', requirements: '/preview/intake.html?view=requirements', usage: '/preview/intake.html?view=usage'};
-    const choices = {scene: ['populated', 'empty', 'error', 'long', 'invalid', 'partial', 'unmatched'], width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
+    const choices = {scene: ['populated', 'empty', 'error', 'long', 'invalid', 'partial', 'unmatched', 'checking', 'matching', 'drive-loading', 'drive-error', 'drive-denied', 'drive-empty'], width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
     const savedWidth = Number(query.get('width'));
     const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light'};
@@ -69,8 +70,9 @@
       document.getElementById('scenes').hidden = state.page === 'concept' || state.page === 'intake' || state.page === 'progress' || state.page === 'amendment';
       for (const button of document.querySelectorAll('[data-scene]')) {
         button.setAttribute('aria-pressed', String(button.dataset.scene === state.scene));
-        button.hidden = state.page === 'audit' ? ['empty', 'long'].includes(button.dataset.scene) : ['invalid', 'partial', 'unmatched'].includes(button.dataset.scene);
+        button.hidden = state.page === 'audit' ? ['empty', 'long'].includes(button.dataset.scene) : !['populated', 'empty', 'error', 'long'].includes(button.dataset.scene);
       }
+      for (const button of document.querySelectorAll('[data-read]')) button.hidden = state.page !== 'audit' || !['matching', 'drive-loading'].includes(state.scene);
       for (const button of document.querySelectorAll('[data-width]')) button.setAttribute('aria-pressed', String(button.dataset.width === state.width));
       device.classList.toggle('fluid', state.width === 'fluid');
       device.style.setProperty('--frame-width', state.width === 'fluid' ? '100%' : `${state.width}px`);
@@ -98,6 +100,7 @@
     custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
     document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
     document.getElementById('refresh').addEventListener('click', () => { frame.contentWindow.location.reload(); });
+    for (const button of document.querySelectorAll('[data-read]')) button.addEventListener('click', () => frame.contentWindow.postMessage({type: 'ppap-preview-read', failed: button.dataset.read === 'fail'}, location.origin));
     frame.addEventListener('load', () => {
       const opened = new URL(frame.contentWindow.location.href);
       const path = opened.pathname;

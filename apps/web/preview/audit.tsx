@@ -1,6 +1,8 @@
 import {createRoot} from 'react-dom/client'
+import {useEffect, useRef, useState} from 'react'
 import '../src/index.css'
 import {AuditIntake, type AuditIntakeAdapter, type AuditTaskFile} from '../src/audit/intake'
+import {Button} from '../src/components/ui/button'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -12,17 +14,33 @@ const documents = [
   {type: '过程流程图', name: '过程流程图.pdf', rule: '示例过程流程图规则 · v3', mime: 'application/pdf'},
 ]
 let nextTask = 1
+let driveReads = 0
 function sample(index: number): AuditTaskFile {
   const id = `preview-file-${crypto.randomUUID()}`
   const document = documents[index]
   return {file: {file_id: `preview-document-${index}`, id, original_filename: document.name, content_type: document.mime, byte_size: 240000 + index * 80000, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}
 }
 const adapter: AuditIntakeAdapter = {
+  drive: {
+    list: async () => {
+      driveReads += 1
+      if (scene === 'drive-denied') throw new Error('authorization_required')
+      if (scene === 'drive-error' && driveReads === 1) throw new Error('preview_read_failed')
+      return {files: scene === 'drive-empty' ? [] : [...documents.map((document, index) => ({token: `preview-document-${index}`, name: document.name, type: 'file'})), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
+    },
+    receive: files => files.map(file => ({...sample(Number(file.token.replace('preview-document-', ''))), validation: {state: 'pending', reasons: ['示例飞书文件已选择，等待预检查。没有导入真实云端文件。']}})),
+  },
   samples: () => {
     const files = documents.map((_, index) => sample(index))
+    if (scene === 'checking') {
+      files[1].validation = {state: 'checking', reasons: ['示例：等待预检查结果']}
+      files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
+    }
     if (scene === 'invalid') files.push({...sample(0), file: {...sample(0).file, original_filename: '加密文件.xlsx'}, validation: {state: 'invalid', reasons: ['文件加密或异常，无法识别']}})
     return files
   },
+  readValidation: async row => row.file.file_id.startsWith('preview-document-') ? {state: 'valid', reasons: []} : row.validation,
+  readMatch: async task => adapter.match(task.files, task.analysis_mode, task.customer_preference, task),
   receive: files => files.map(file => {
     const reason = file.size > 200 * 1024 * 1024 ? '文件超过 200 MB 设计上限' : !/\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name) ? '非审核支持格式' : ''
     return {file: {file_id: `preview-local-${crypto.randomUUID()}`, id: `preview-local-version-${crypto.randomUUID()}`, original_filename: file.name, content_type: file.type, byte_size: file.size, status: 'local_preview', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: reason ? 'invalid' : 'pending', reasons: [reason || '待真实预检查：本预览只登记本机文件，尚未执行真实解析。']}, match: null}
@@ -43,4 +61,37 @@ const adapter: AuditIntakeAdapter = {
   },
 }
 
-createRoot(document.getElementById('app')!).render(<AuditIntake adapter={adapter}/>)
+function Preview() {
+  const [reads, setReads] = useState<{id: number; label: string; finish: () => void; fail: () => void}[]>([])
+  const readNumber = useRef(0)
+  function defer<T>(label: string, result: T): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const id = ++readNumber.current
+      setReads(rows => [...rows, {id, label, finish: () => resolve(result), fail: () => reject(new Error('preview_read_failed'))}])
+    })
+  }
+  useEffect(() => {
+    const deliver = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== 'ppap-preview-read') return
+      const first = reads[0]
+      if (!first) return
+      if (event.data.failed) first.fail(); else first.finish()
+      setReads(rows => rows.filter(row => row.id !== first.id))
+    }
+    window.addEventListener('message', deliver)
+    return () => window.removeEventListener('message', deliver)
+  }, [reads])
+  const controlled: AuditIntakeAdapter = {...adapter,
+    drive: {...adapter.drive, list: async pageToken => {
+      const result = await adapter.drive.list(pageToken)
+      return scene === 'drive-loading' ? defer('飞书文件列表', result) : result
+    }},
+    match: (...args) => {
+      const result = adapter.match(...args)
+      return scene === 'matching' ? {...result, state: 'matching', estimated_points: null, files: result.files.map((file, index) => file.selection === 'selected' ? {...file, match: {state: index === 0 ? 'matching' : 'pending', metadata: {customer: null, model: null, part: null}, document_type: null, rule: null, gaps: []}} : file)} : result
+    },
+    readMatch: task => scene === 'matching' ? defer(`识别结果 · ${task.number}`, adapter.match(task.files, task.analysis_mode, task.customer_preference, task)) : adapter.readMatch(task),
+  }
+  return <>{['matching', 'drive-loading'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled}/></>
+}
+createRoot(document.getElementById('app')!).render(<Preview/>)
