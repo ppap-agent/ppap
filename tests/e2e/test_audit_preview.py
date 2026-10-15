@@ -75,10 +75,15 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=unmatched")
             page.get_by_role("button", name="使用三类文件示例").click()
             page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="移除", exact=True).first.click()
             page.get_by_role("button", name="结束任务", exact=True).click()
             expect(page.get_by_text("未匹配到可用规则，未开始审核", exact=True)).to_be_visible()
             expect(page.get_by_text("未产生审核费用，也没有生成报告。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            expect(page.get_by_text("未匹配到规则", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button").click()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
             browser.close()
 
     def test_local_bytes_are_not_claimed_as_validated_and_narrow_layout_is_usable(self):
