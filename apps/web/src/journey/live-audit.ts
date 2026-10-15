@@ -4,17 +4,18 @@ import {useAccess} from './access'
 import {acceptanceKey, draftPlan, message, readAcceptance, sameAcceptedPlan, useRemote} from './remote'
 import type {CheckPlan, CheckPreparationState, CheckRequest} from './check-preparation-state'
 
-export type LiveCheck = {busy: boolean; error: string; ready: boolean; start: () => void; reconcile: () => void; deepOffered: boolean; targets: string[]; quota: QuotaEstimate | null}
-export function useLiveAudit({id, registration, items, state, plan, onChange, ready = true}: {
+export type LiveCheck = {busy: boolean; error: string; ready: boolean; start: () => void; reconcile: () => void; deepOffered: boolean; targets: string[]; quota: QuotaEstimate | null; quotaError: string; refreshQuota: () => void}
+export function useLiveAudit({id, registration, items, state, plan, onChange, ready = true, beforeStart}: {
   id: string; registration: object; items: Material[]; state: CheckPreparationState; plan: CheckPlan | null
   onChange: (state: SetStateAction<CheckPreparationState | undefined>) => void
   ready?: boolean
+  beforeStart?: () => Promise<void>
 }) {
   const access = useAccess(), enabled = Boolean(access?.principal && !access.preview)
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [roundId, setRoundId] = useState(state.request?.phase === 'accepted' ? state.request.runId : '')
   const working = useRef(false), latest = useRef({registration, state, plan, items}); latest.current = {registration, state, plan, items}
   const remote = useRemote<Round>(enabled && roundId ? `/rounds/${roundId}` : null, 3000)
-  const quota = useRemote<QuotaEstimate>(enabled && items.some(item => item.role === 'target') ? `/integrations/feishu/usage/quota?target_count=${items.filter(item => item.role === 'target').length}` : null)
+  const quota = useRemote<QuotaEstimate>(enabled && state.request?.phase !== 'accepted' && items.some(item => item.role === 'target') ? `/integrations/feishu/usage/quota?target_count=${items.filter(item => item.role === 'target').length}` : null)
   const key = enabled ? acceptanceKey(access!.principal!.user_id, id) : ''
   function accepted(round: Round, requestRecord?: CheckRequest) {
     const current = latest.current
@@ -40,6 +41,7 @@ export function useLiveAudit({id, registration, items, state, plan, onChange, re
     if (!enabled || !ready || working.current || !latest.current.plan) return
     working.current = true; setBusy(true); setError('')
     try {
+      await beforeStart?.()
       const current = latest.current, selected = current.items
       if (!selected.some(item => item.role === 'target')) throw new Error('没有与本次要求类型对应的待审文件，请核对文件分类或审核要求。')
       if (selected.some(item => item.role === 'target' && !item.rule_version_id)) throw new Error('请先确认并保存本次审核要求。')
@@ -61,5 +63,5 @@ export function useLiveAudit({id, registration, items, state, plan, onChange, re
       onChange(current => current?.request ? {...current, request: {...current.request, phase: 'unknown'}} : current)
     } finally {working.current = false; setBusy(false)}
   }
-  return {round: remote.value, roundError: remote.error, refresh: remote.refresh, setRound: remote.setValue, enabled, live: enabled ? {busy, ready, error: error || quota.error || (!ready ? '部分选中文件尚未上传到服务器，请重新上传后再开始审核。' : ''), start: () => void start(), reconcile: () => void reconcile(), deepOffered, targets: items.filter(item => item.role === 'target').map(item => item.original_filename), quota: quota.value} satisfies LiveCheck : undefined}
+  return {round: remote.value, roundError: remote.error, refresh: remote.refresh, setRound: remote.setValue, enabled, live: enabled ? {busy, ready, error: error || (!ready ? '部分选中文件尚未上传到服务器，请重新上传后再开始审核。' : ''), start: () => void start(), reconcile: () => void reconcile(), deepOffered, targets: items.filter(item => item.role === 'target').map(item => item.original_filename), quota: quota.value, quotaError: quota.error, refreshQuota: quota.refresh} satisfies LiveCheck : undefined}
 }

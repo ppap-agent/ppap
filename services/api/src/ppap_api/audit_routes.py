@@ -67,11 +67,11 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
 
     @app.get("/drafts", response_model=wc.DraftList)
-    def drafts_list(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0)) -> JSONResponse:
+    def drafts_list(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0), q: str = Query("", max_length=200)) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
-        rows = store.list_drafts(principal, limit + 1, offset)
+        rows = store.list_drafts(principal, limit + 1, offset, q)
         return JSONResponse({"drafts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
     @app.post("/file-analyses", response_model=wc.AnalysisJob, status_code=202, openapi_extra=wc.openapi_body(wc.FileAnalysisRequest))

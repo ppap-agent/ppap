@@ -1,132 +1,190 @@
-import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
-import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components/ui/collapsible'
-// Stitch reference: projects/13261964020862199279/screens/bdfb4223cfbf4e768ecfc41ecccd3cad.
-// Three structures on the intake route: clauses first, source comparison, and one clause at a time.
+// Stitch: projects/13261964020862199279/screens/4f2a97d0c3ac4281831991348b3e11b4.
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft, ArrowRight, BookOpen, Check, FileText, Plus, UploadCloud} from 'lucide-react'
+import {ArrowLeft, ArrowRight, BookOpen, ChevronDown, LoaderCircle, Plus, UploadCloud} from 'lucide-react'
+import {Alert, AlertDescription} from '../components/ui/alert'
+import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
-import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {Checkbox} from '../components/ui/checkbox'
-import {Input} from '../components/ui/input'
-import {Textarea} from '../components/ui/textarea'
+import {Collapsible, CollapsibleContent, CollapsibleTrigger} from '../components/ui/collapsible'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
-import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle} from '../components/ui/sheet'
-import {basisConfirmed, basisIssues, confirmBasis, demoBasis, localBasis, resolveBasisConflict, type RequirementBasis, type RequirementClause} from './requirements-state'
+import {Input} from '../components/ui/input'
+import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
+import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle} from '../components/ui/sheet'
+import {Textarea} from '../components/ui/textarea'
+import {basisConfirmed, basisIssues, clauseIssues, clauseSourceReady, confirmBasis, demoBasis, resolveBasisConflict, type RequirementBasis, type RequirementClause} from './requirements-state'
 import {fileAccept, useLocalUploads} from './local-files'
 import {SourceReaderButton} from './source-reader'
 import {copyForCase, scopeMatches, scopeLabel, sourceContent, type RequirementCollection, type RequirementScope} from './requirement-library-state'
 import {receiveRequirement, RuleExtraction} from './rule-extraction'
-import {publishBasis} from './product'
+import {canonical, publishBasis} from './product'
 import {isPreview, useAccess} from './access'
 import {message} from './remote'
 
-const layouts = [{id: 'clauses', name: '条款优先'}, {id: 'source', name: '原文对照'}, {id: 'guided', name: '逐项核对'}] as const
-type Layout = typeof layouts[number]['id']
-const currentLayout = (): Layout => layouts.find(item => item.id === new URLSearchParams(location.search).get('basisLayout'))?.id ?? 'clauses'
 const applicability = {pending: '待确认', apply: '适用', exclude: '不适用'} as const
+const separateTitle = (clause: RequirementClause) => clause.title.trim() && !clause.text.trim().startsWith(clause.title.trim())
+export type RequirementCatalogRead = {loading: boolean; error: string; reload: () => void}
 
-export function RequirementOriginal({basis}: {basis: RequirementBasis}) {
+export function RequirementOriginal({basis, label = '阅读要求原件'}: {basis: RequirementBasis; label?: string}) {
   if (!basis.source.localFile && !basis.server) return null
   const file = {name: basis.source.filename, revision: basis.source.version || '待核对', sourceVersion: 1, localFile: basis.source.localFile, material: basis.server?.material}
-  return <SourceReaderButton file={file} label="阅读要求原件" input={{receiptId: basis.source.version || '要求草稿', scope: basis.source.title, files: [file], evidence: [], clarification: null}}/>
+  return <SourceReaderButton file={file} label={label} input={{receiptId: basis.source.version || '要求草稿', scope: basis.source.title, files: [file], evidence: [], clarification: null}}/>
 }
 
-export function BasisSummary({basis}: {basis: RequirementBasis | null | undefined}) {
-  if (!basis) return <p className={"text-foreground leading-relaxed"}>此历史演示没有已确认的条款快照。不能据此声称要求已完整覆盖。</p>
-  return <Collapsible className="my-4 min-w-0 max-w-full"><CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="max-w-full"><BookOpen size={17}/><span className="min-w-0 truncate" title={`${basis.source.title} · ${basis.source.version}`}>{basis.source.title} · {basis.source.version}{basis.library && basis.library.content !== sourceContent(basis) ? ' · 本次有调整' : ''}</span><span className="shrink-0">{basis.clauses.filter(item => item.applicability === 'apply').length} 条适用要求</span></Button></CollapsibleTrigger><CollapsibleContent>
-    <div><RequirementOriginal basis={basis}/>{basis.confirmed && <p>确认人：{basis.confirmed.by} · {new Date(basis.confirmed.at).toLocaleString('zh-CN')}</p>}{basis.clauses.map(clause => <article key={clause.id}><strong>{clause.id} · {clause.title} · {applicability[clause.applicability]}</strong><p>{clause.text}</p><small>{clause.source} · {clause.location}</small>{clause.reason && <p>理由：{clause.reason}</p>}</article>)}{basis.conflict.active && <p>冲突裁定：{basis.conflict.choice === 'internal' ? '内部模板 v1' : basis.conflict.choice === 'customer' ? '客户要求 v2' : '待确认'} · {basis.conflict.reason || '未记录理由'}</p>}</div>
-  </CollapsibleContent></Collapsible>
+export function BasisSummary({basis, compact = false}: {basis: RequirementBasis | null | undefined; compact?: boolean}) {
+  if (!basis) return <p className="text-sm text-muted-foreground">本轮没有可读取的审核依据快照。</p>
+  return <Collapsible className={`${compact ? '' : 'my-4'} min-w-0 max-w-full`}>
+    <CollapsibleTrigger asChild><Button variant="outline" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left"><BookOpen/><span className="min-w-0 break-words">审核依据<span className={compact ? 'max-sm:sr-only' : ''}> · {basis.source.title} · {basis.source.version}</span></span><ChevronDown className="shrink-0"/></Button></CollapsibleTrigger>
+    <CollapsibleContent><div className="space-y-4 pt-4 text-sm">
+      {compact && <p className="break-words font-medium sm:hidden">{basis.source.title} · {basis.source.version}</p>}
+      <div className="flex flex-wrap items-center gap-3"><RequirementOriginal basis={basis} label="查看原件"/><span className="text-muted-foreground">{basis.clauses.filter(item => item.applicability === 'apply').length} 条适用</span>{basis.confirmed && <span className="text-xs text-muted-foreground">确认人：{basis.confirmed.by} · {new Date(basis.confirmed.at).toLocaleString('zh-CN')}</span>}</div>
+      {basis.clauses.map(clause => <article key={clause.id} className="space-y-2 border-t pt-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><span className="mr-2 text-muted-foreground">{clause.id}</span>{separateTitle(clause) && <strong>{clause.title}</strong>}</div><Badge variant="outline">{applicability[clause.applicability]}</Badge></div><p className="whitespace-pre-wrap break-words leading-relaxed">{clause.text}</p><p className="break-words text-xs text-muted-foreground">{clause.source} · {clause.location}</p>{clause.reason && <p className="break-words">不适用理由：{clause.reason}</p>}</article>)}
+      {basis.conflict.active && <p>冲突裁定：{basis.conflict.choice === 'internal' ? '内部模板 v1' : basis.conflict.choice === 'customer' ? '客户要求 v2' : '待确认'} · {basis.conflict.reason || '理由待记录'}</p>}
+    </div></CollapsibleContent>
+  </Collapsible>
 }
 
-export function Requirements({basis, scopeKey, scope, collections, context, readonly = false, onChange, onConfirm, onBack, backLabel}: {
-  basis: RequirementBasis | null; scopeKey: string; context: string; readonly?: boolean
-  scope: RequirementScope; collections: RequirementCollection[]
-  backLabel?: string
+export function Requirements({basis, scopeKey, scope, scopeReady = true, collections, catalog, context, readonly = false, onChange, onConfirm, onBack, backLabel}: {
+  basis: RequirementBasis | null; scopeKey: string; scope: RequirementScope; scopeReady?: boolean
+  collections: RequirementCollection[]; catalog?: RequirementCatalogRead; context: string; readonly?: boolean; backLabel?: string
   onChange: (basis: RequirementBasis) => void; onConfirm: (basis: RequirementBasis) => void; onBack: () => void
 }) {
-  const [layout, setLayout] = useState(currentLayout)
-  const [sourceOpen, setSourceOpen] = useState(false)
-  const [candidate, setCandidate] = useState<RequirementBasis | null>(null)
-  const [focused, setFocused] = useState(basis?.clauses[0]?.id ?? '')
-  const [editing, setEditing] = useState<string | null>(null)
-  const [sourceClause, setSourceClause] = useState<string | null>(null)
-  const access = useAccess(), [publishing, setPublishing] = useState(false), [remoteError, setRemoteError] = useState('')
-  const upload = useLocalUploads(async ([entry]) => {const next = await receiveRequirement(entry, onChange); change(next); setFocused('')}, scopeKey)
-  const picker = useRef<HTMLInputElement>(null)
-  const current = basis?.clauses.find(item => item.id === focused) ?? basis?.clauses[0]
-  const issues = basisIssues(basis)
-  const confirmed = basisConfirmed(basis, scopeKey)
-  const collection = collections.find(item => item.id === basis?.library?.collectionId || item.versions.some(version => version.id === basis?.source.id || version.id === basis?.library?.versionId))
-  const latest = collection?.versions.at(-1)
-  const selectedVersion = collection?.versions.find(version => version.id === basis?.library?.versionId || version.id === basis?.source.id)
-  if (!readonly && selectedVersion && !scopeMatches(scope, selectedVersion.scope)) issues.push('当前事项不在所选版本的声明范围内，请重新选择适用版本或上传本次要求。')
-  if (!readonly && basis?.library && !selectedVersion) issues.push('找不到此来源版本，请重新选择可读取的要求来源。')
-  function change(next: RequirementBasis) { if (!readonly) onChange({...next, confirmed: null}) }
-  function patch(id: string, patch: Partial<RequirementClause>) {
-    if (basis) change({...basis, clauses: basis.clauses.map(item => item.id === id ? {...item, ...patch} : item)})
-  }
-  function switchLayout(next: Layout) {
-    setLayout(next)
-    const url = new URL(location.href); url.searchParams.set('basisLayout', next); history.replaceState(null, '', url)
-  }
+  const [sourceOpen, setSourceOpen] = useState(false), [showSourceHistory, setShowSourceHistory] = useState(false)
+  const [candidate, setCandidate] = useState<RequirementBasis | null>(null), [query, setQuery] = useState('')
+  const [editing, setEditing] = useState<string | null>(null), [sourceClause, setSourceClause] = useState<string | null>(null)
+  const [publishing, setPublishing] = useState(false), [remoteError, setRemoteError] = useState('')
+  const picker = useRef<HTMLInputElement>(null), page = useRef<HTMLElement>(null), sourceTrigger = useRef<HTMLButtonElement>(null)
+  const mounted = useRef(true), working = useRef(false), latest = useRef({basis, scopeKey, readonly, onChange, onConfirm})
+  latest.current = {basis, scopeKey, readonly, onChange, onConfirm}
+  const access = useAccess()
   useEffect(() => {
-    const sync = () => setLayout(currentLayout())
-    const key = (event: KeyboardEvent) => {if (!isPreview() || !import.meta.env.DEV) return;
-      if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || (event.target as HTMLElement)?.closest('input,textarea,select,button,[contenteditable]')) return
-      const index = layouts.findIndex(item => item.id === layout)
-      switchLayout(layouts[(index + (event.key === 'ArrowRight' ? 1 : 2)) % 3].id)
+    mounted.current = true
+    const url = new URL(location.href)
+    if (url.searchParams.has('basisLayout')) {url.searchParams.delete('basisLayout'); history.replaceState(null, '', url)}
+    return () => {mounted.current = false}
+  }, [])
+  const upload = useLocalUploads(async ([entry]) => {
+    const owner = scopeKey
+    const receive = (next: RequirementBasis) => {
+      if (mounted.current && latest.current.scopeKey === owner && !latest.current.readonly && !working.current) latest.current.onChange({...next, confirmed: null})
     }
-    window.addEventListener('popstate', sync); window.addEventListener('keydown', key)
-    return () => {window.removeEventListener('popstate', sync); window.removeEventListener('keydown', key)}
-  }, [layout])
+    receive(await receiveRequirement(entry, receive))
+    if (mounted.current) {setEditing(null); setSourceClause(null)}
+  }, scopeKey)
+  const locked = readonly || publishing || upload.busy
+  const collection = collections.find(item => item.id === basis?.library?.collectionId || item.versions.some(version => version.id === basis?.source.id || version.id === basis?.library?.versionId))
+  const selectedVersion = collection?.versions.find(version => version.id === basis?.library?.versionId || version.id === basis?.source.id)
+  const latestVersion = collection?.versions.at(-1)
+  const issues = basisIssues(basis)
+  if (!readonly && basis?.library) {
+    if (catalog?.loading) issues.push('正在读取所选要求版本。')
+    else if (catalog?.error) issues.push('暂时无法核对所选版本，请重新读取要求目录。')
+    else if (!selectedVersion) issues.push('找不到此来源版本，请重新选择可读取的要求来源。')
+  }
+  if (!readonly && selectedVersion && !scopeMatches(scope, selectedVersion.scope)) issues.push('当前事项不在所选版本的声明范围内，请重新选择适用版本或上传本次要求。')
+  const confirmed = basisConfirmed(basis, scopeKey)
+  const checked = basis?.clauses.filter(clause => !clauseIssues(clause).length).length ?? 0
+  const source = basis?.clauses.find(clause => clause.id === sourceClause)
+  const mixedApplicability = basis?.clauses.some(clause => clause.applicability !== 'apply')
+  const versions = collections.flatMap(family => (showSourceHistory ? [...family.versions].reverse() : family.versions.slice(-1)).map(version => ({family, version})))
+    .filter(({version}) => `${version.basis.source.title} ${scopeLabel(version.scope)} ${version.basis.source.version}`.toLowerCase().includes(query.trim().toLowerCase()))
+  function change(next: RequirementBasis) {
+    if (mounted.current && !latest.current.readonly && !working.current) {onChange({...next, confirmed: null}); setRemoteError('')}
+  }
+  function patch(id: string, next: Partial<RequirementClause>) {
+    if (basis) change({...basis, clauses: basis.clauses.map(clause => clause.id === id ? {...clause, ...next} : clause)})
+  }
   function addClause() {
-    if (!basis) return
+    if (!basis || locked) return
     const id = `M-${crypto.randomUUID().slice(0, 6)}`
     change({...basis, source: {...basis.source, state: basis.source.origin === 'local' ? 'manual' : basis.source.state}, clauses: [...basis.clauses, {id, title: '', text: '', original: '', source: basis.source.filename, location: '', applicability: 'pending', reason: '', checked: false}]})
-    setFocused(id); setEditing(id)
+    setEditing(id)
   }
   async function confirm() {
-    if (!basis || publishing) return
-    setPublishing(true); setRemoteError('')
+    if (!basis || working.current || locked || !scopeReady || issues.length) return
+    const snapshot = structuredClone(basis), owner = scopeKey
+    working.current = true; setPublishing(true); setRemoteError('')
     try {
-      const published = isPreview() ? basis : await publishBasis(basis)
-      onConfirm(confirmBasis(published, scopeKey, access?.principal?.display_name))
-    } catch (cause) {setRemoteError(message(cause))}
-    finally {setPublishing(false)}
+      const published = isPreview() ? snapshot : await publishBasis(snapshot)
+      const current = latest.current
+      if (mounted.current && !current.readonly && current.scopeKey === owner && canonical(current.basis) === canonical(snapshot)) current.onConfirm(confirmBasis(published, owner, access?.principal?.display_name))
+    } catch (cause) {if (mounted.current) setRemoteError(message(cause))}
+    finally {working.current = false; if (mounted.current) setPublishing(false)}
   }
-  function sourceText(clause: RequirementClause) {
-    return <div className={"break-all py-5.5 px-0 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:my-2.5 [&_h3]:mx-0 [&_blockquote]:my-4 [&_blockquote]:mx-0 [&_blockquote]:pl-4 [&_blockquote]:border-l [&_blockquote]:leading-relaxed [&_small]:text-muted-foreground"}><p className={"flex gap-2 items-start text-muted-foreground text-sm [&_svg]:shrink-0 [&_svg]:mt-0.5"}><FileText size={17}/>{clause.source} · {clause.location || '位置待补充'}</p><h3>{clause.title || '待录入条款'}</h3>{clause.original ? <blockquote>{clause.original}</blockquote> : <p>未解析原文。请在自己的原件中核对，再录入条款及页码或单元格位置。</p>}{basis?.source.origin === 'demo' && <small>示例来源片段；不是已上传文件的解析结果。</small>}{clause.original && clause.text !== clause.original && <p className={"text-foreground leading-relaxed"}>当前条款与来源片段不同。请核对修改是否改变含义。</p>}</div>
+  function continueChecking() {
+    if (!basis) return
+    if (basis.library && catalog?.error) {catalog.reload(); return}
+    if (basis.library && !selectedVersion || selectedVersion && !scopeMatches(scope, selectedVersion.scope)) {setCandidate(null); setSourceOpen(true); return}
+    const missing = basis.clauses.find(clause => clauseIssues(clause).length)
+    let setup = ''
+    if (!basis.source.title.trim() || !basis.source.version.trim()) setup = 'metadata'
+    else if (['unparsed', 'failed'].includes(basis.source.state)) setup = basis.server ? 'extraction' : 'metadata'
+    else if (!basis.clauses.length) setup = basis.source.origin === 'local' && !basis.server ? 'metadata' : 'clauses'
+    else if (!missing && basis.conflict.active) setup = 'conflict'
+    const target = setup ? page.current?.querySelector<HTMLElement>(`[data-basis-setup="${setup}"]`) : missing ? document.getElementById(`basis-clause-${missing.id}`) : page.current?.querySelector<HTMLElement>('[aria-label^="条款 "]')
+    target?.scrollIntoView({block: 'center'})
+    if (missing && !clauseSourceReady(missing)) setEditing(missing.id)
+    requestAnimationFrame(() => {
+      const control = target?.querySelector<HTMLElement>('[data-basis-missing="true"]:not(:disabled)') ?? target?.querySelector<HTMLElement>('input:not(:disabled),textarea:not(:disabled),select:not(:disabled),button:not(:disabled)') ?? target
+      control?.focus({preventScroll: true})
+    })
   }
-  function clauseRow(clause: RequirementClause) {
-    return <article className={"min-w-0 py-6 px-0 border-b [&_header]:flex [&_header]:items-center [&_header]:gap-2.5 [&_header_>_div]:flex [&_header_>_div]:items-center [&_header_>_div]:gap-2.5 [&_header]:justify-between [&_header_>_div]:flex-wrap [&_header_>_div]:min-w-0 [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:break-all [&_fieldset]:flex [&_fieldset]:flex-wrap [&_fieldset]:gap-y-2 [&_fieldset]:gap-x-5 [&_fieldset]:p-0 [&_fieldset]:border-0 [&_fieldset_label]:inline-flex [&_fieldset_label]:items-center [&_fieldset_label]:min-h-9 [&_fieldset_label]:gap-2 [&_fieldset_label]:cursor-pointer max-md:[&_fieldset_label]:min-h-11"} key={clause.id}>
-      <header><div><span className={"text-muted-foreground text-sm tabular-nums"}>{clause.id}</span><h2>{clause.title || '待录入条款'}</h2><span className={"text-muted-foreground text-sm"}>{applicability[clause.applicability]}</span></div><Button variant="ghost" onClick={() => {setFocused(clause.id); setSourceClause(clause.id)}}><BookOpen size={16}/>出处</Button></header>
-      {editing === clause.id && !readonly ? <div className={"grid gap-3 mt-3.5 [&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-sm"}><label>条款名称<Input value={clause.title} onChange={event => patch(clause.id, {title: event.target.value, checked: false})}/></label><label>本次核对的条款<Textarea value={clause.text} onChange={event => patch(clause.id, {text: event.target.value, checked: false})}/></label><label>来源文件<Input value={clause.source} onChange={event => patch(clause.id, {source: event.target.value, checked: false})}/></label><label>页码或单元格位置<Input value={clause.location} placeholder="如第 3 页 §2，或工作表 B4" onChange={event => patch(clause.id, {location: event.target.value, checked: false})}/></label><Button variant="outline" onClick={() => setEditing(null)}>收起编辑</Button></div> : <><p className={"mt-3 mr-0 mb-2 ml-0 leading-relaxed break-all"}>{clause.text || '尚未录入条款正文。'}</p><div className={"flex gap-2.5 items-center justify-between text-muted-foreground text-sm break-all"}><span>{clause.source} · {clause.location || '出处待补充'}</span>{!readonly && <Button variant="ghost" onClick={() => setEditing(clause.id)}>编辑条款</Button>}</div></>}
-      {!readonly && <div className={"flex flex-wrap items-center gap-y-3.5 gap-x-6 mt-4"}><RadioGroup value={clause.applicability} onValueChange={value => patch(clause.id, {applicability: value as RequirementClause['applicability']})} aria-label={`${clause.id} 本次适用性`} className="flex flex-wrap"><div className="flex flex-wrap gap-4">{Object.entries(applicability).map(([value, label]) => <label className="flex items-center gap-2 text-sm" key={value}><RadioGroupItem value={value}/>{label}</label>)}</div></RadioGroup><label className={"inline-flex items-center min-h-9 gap-2 cursor-pointer max-md:min-h-11"}><Checkbox aria-label={`${clause.id} 已核对条款与出处`} checked={clause.checked} onCheckedChange={value => patch(clause.id, {checked: value === true})}/>已核对条款与出处</label></div>}
-      {clause.applicability === 'exclude' && (readonly ? <p>不适用理由：{clause.reason}</p> : <label className={"grid gap-1.5 text-muted-foreground text-sm mt-3"}>不适用理由<Textarea value={clause.reason} onChange={event => patch(clause.id, {reason: event.target.value})} placeholder="说明本事项为何不适用，并提供依据"/></label>)}
-      {!readonly && clause.id.startsWith('M-') && <Button variant="ghost" onClick={() => {if (basis) change({...basis, clauses: basis.clauses.filter(item => item.id !== clause.id)})}}>移除此未提交条款</Button>}
-    </article>
-  }
-  return <section className={"min-w-0 pb-14 text-foreground text-sm leading-relaxed"}>
-    <Button variant="ghost" className={""} onClick={onBack}><ArrowLeft size={16}/>{backLabel ?? (readonly ? '返回当前工作' : '资料归属')}</Button>
-    <header className={"flex justify-between gap-4.5 items-start mt-4.5 mr-0 mb-6.5 ml-0 [&_h1]:m-0 [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:tracking-tight [&_p]:text-muted-foreground [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 max-md:[&_h1]:text-2xl"}><div><h1>{readonly ? '本次审核依据' : '确认审核依据'}</h1><p>{context}</p></div>{confirmed && <span className={"inline-flex gap-1.5 items-center text-foreground whitespace-nowrap"}><Check size={17}/>已确认</span>}</header>
-    <div className={"flex gap-5 items-center justify-between py-4.5 px-0 border-y [&_>_div:first-child]:min-w-0 [&_>_div:first-child]:grid [&_>_div:first-child]:gap-1 [&_>_div:first-child]:break-all [&_span]:m-0 [&_span]:text-muted-foreground [&_span]:text-sm [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-sm [&_strong]:text-base max-xl:items-start max-xl:flex-col"}><div><span>要求来源</span><strong>{basis ? `${basis.source.title} · ${basis.source.version || '版本待确认'}` : '尚未选择'}</strong>{basis && <p>{basis.source.filename}</p>}{basis && <RequirementOriginal basis={basis}/>}</div>{!readonly && <div className={"flex flex-wrap gap-2 shrink-0"}><Button variant="outline" disabled={upload.busy} onClick={() => {setCandidate(null); setSourceOpen(true)}}>选择已有版本</Button><Button variant="outline" disabled={upload.busy} onClick={() => picker.current?.click()}><UploadCloud size={16}/>上传要求文件</Button></div>}</div>
-    {!readonly && <input ref={picker} type="file" className={"sr-only"} aria-label="要求文件选择器" accept={fileAccept} disabled={upload.busy} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>}
-    {upload.busy && <p role="status">正在保存要求原件…</p>}{upload.error && <p role="alert" className={"text-foreground leading-relaxed"}>{upload.error}</p>}
-    {basis?.library && basis.library.content !== sourceContent(basis) && <p className={"text-foreground leading-relaxed"}>本次条款已调整，不等同于来源版本。此调整仅保存在当前事项。</p>}
-    {basis && latest && latest.id !== basis.source.id && <p className={"text-foreground leading-relaxed"}>已有新版本 {latest.basis.source.version}。本次仍使用 {basis.source.version}，未自动替换。{readonly ? '本次依据已固定；新要求的影响仍需另行评估。' : '如需更换，请选择已有版本，并重新确认每条要求。'}</p>}
-    {!basis && <div className={"py-15 px-0 max-w-140 [&_svg]:text-muted-foreground [&_h2]:mt-4 [&_h2]:mr-0 [&_h2]:mb-2 [&_h2]:ml-0 [&_h2]:text-xl [&_h2]:font-semibold [&_p]:text-muted-foreground"}><BookOpen size={28}/><h2>先确定要依据什么判断</h2><p>选择现有版本，或上传客户发来的要求。系统不会把名称相同当成内容相同。</p></div>}
+  return <section ref={page} className="min-w-0 space-y-6 pb-8 text-sm">
+    <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft/>{backLabel || '返回审核准备'}</Button>
+    <header className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold tracking-tight">{readonly ? '本次审核依据' : '确认本次审核依据'}</h1>{(readonly || confirmed) && <Badge variant="outline">{readonly ? '只读' : '已确认'}</Badge>}</div><p className="break-words text-muted-foreground">{context}</p></header>
+    <input hidden ref={picker} type="file" aria-label="要求文件选择器" accept={fileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
+    {basis ? <section className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b pb-5" aria-label="本次要求来源">
+      <div className="min-w-0 space-y-2"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-base font-semibold">{basis.source.title || '要求名称待补充'}</h2><Badge variant="outline">{basis.source.version || '版本待核对'}</Badge><span className="text-muted-foreground">{basis.clauses.length} 条</span></div><p className="break-words text-xs text-muted-foreground">{basis.source.filename}</p></div>
+      <div className="flex flex-wrap items-center gap-2"><RequirementOriginal basis={basis} label="查看原件"/>{!readonly && <><Button variant="outline" size="sm" disabled={locked} onClick={() => {setCandidate(null); setQuery(''); setSourceOpen(true)}}>更换来源</Button><Button variant="ghost" size="sm" disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>上传新要求</Button></>}</div>
+    </section> : <section className="space-y-4 border-y py-8"><h2 className="text-base font-semibold">选择本次使用的审核要求</h2><div className="flex flex-wrap gap-3"><Button variant="outline" disabled={locked} onClick={() => {setCandidate(null); setQuery(''); setSourceOpen(true)}}><BookOpen/>选择已有版本</Button><Button variant="outline" disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>上传要求文件</Button></div></section>}
+    {upload.busy && <p role="status" className="flex items-center gap-2 text-muted-foreground"><LoaderCircle className="size-4 animate-spin motion-reduce:animate-none"/>正在保存要求原件…</p>}
+    {(upload.error || remoteError) && <Alert variant="destructive"><AlertDescription>{upload.error || remoteError}</AlertDescription></Alert>}
     {basis && <>
-      <RuleExtraction basis={basis} readonly={readonly} onChange={change}/>{remoteError && <p role="alert" className={"text-sm text-destructive"}>{remoteError}</p>}
-      {basis.source.origin === 'local' && !basis.server && <div className={"[&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-sm flex flex-wrap gap-4 items-end py-5.5 px-0 border-b [&_>_div]:flex-[1_1_100%] [&_p]:text-muted-foreground [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 [&_label]:w-55 [&_label]:max-w-full"}><div><strong>{basis.source.state === 'failed' ? '要求提取失败' : basis.source.state === 'manual' ? '人工录入条款' : '文件已收到，尚未解析'}</strong><p>{basis.source.state === 'failed' ? '尚无提取结果。原件记录仍在，可人工录入或更换文件。' : '本原型不解析真实文件。请按原件录入条款，并保留出处。'}</p></div><label>版本<Input disabled={readonly} value={basis.source.version} onChange={event => change({...basis, source: {...basis.source, version: event.target.value}})}/></label>{!readonly && <Button variant="outline" onClick={addClause}><Plus size={16}/>录入条款</Button>}{!readonly && basis.source.state === 'unparsed' && <Button variant="ghost" onClick={() => change({...basis, source: {...basis.source, state: 'failed'}})}>模拟提取失败</Button>}</div>}
-      {basis.conflict.active && <section className={"[&_fieldset]:flex [&_fieldset]:flex-wrap [&_fieldset]:gap-y-2 [&_fieldset]:gap-x-5 [&_fieldset]:p-0 [&_fieldset]:border-0 [&_fieldset_label]:inline-flex [&_fieldset_label]:items-center [&_fieldset_label]:min-h-9 [&_fieldset_label]:gap-2 [&_fieldset_label]:cursor-pointer p-5 my-6 mx-0 border-l bg-muted [&_h2]:text-lg [&_h2]:mt-0 [&_h2]:mr-0 [&_h2]:mb-1.5 [&_h2]:ml-0 [&_h2]:font-semibold [&_p]:mt-0 [&_p]:mr-0 [&_p]:mb-3 [&_p]:ml-0 [&_legend]:mb-2 [&_legend]:font-semibold max-md:p-4 max-md:[&_fieldset_label]:min-h-11"}><h2>{readonly ? '公差依据已确认' : '同一尺寸有两个公差定义'}</h2>{readonly ? <><p>本次采用：{basis.conflict.choice === 'internal' ? '内部模板 v1 · ±0.05 mm' : '客户 v2 · ±0.10 mm'}</p><p>依据：{basis.conflict.reason}</p></> : <><p>客户 v2：±0.10 mm；内部模板 v1：±0.05 mm。选择本次依据，不会修改任一原版本。</p><RadioGroup value={basis.conflict.choice} onValueChange={value => change(resolveBasisConflict(basis, value as RequirementBasis['conflict']['choice']))} aria-label="本次采用的要求"><div className="flex flex-wrap gap-4">{([{id: 'pending', label: '待确认'}, {id: 'customer', label: '客户 v2 · ±0.10 mm'}, {id: 'internal', label: '内部 v1 · ±0.05 mm'}] as const).map(item => <label key={item.id}><RadioGroupItem value={item.id}/>{item.label}</label>)}</div></RadioGroup><label className={"grid gap-1.5 text-muted-foreground text-sm mt-3"}>裁定依据与理由<Textarea placeholder="如已确认的协议、要求适用范围及确认人" value={basis.conflict.reason} onChange={event => change({...basis, conflict: {...basis.conflict, reason: event.target.value}})}/></label></>}</section>}
-      <div className={["grid min-w-0 mt-3.5",({"source":"grid-cols-[minmax(0,_1.25fr)_minmax(260px,_.8fr)] gap-7.5 items-start max-xl:grid-cols-[minmax(0,_1fr)]","guided":"grid-cols-[210px_minmax(0,_1fr)] gap-7 items-start max-md:grid-cols-[minmax(0,_1fr)] max-md:gap-2"} as Record<string,string>)[String(layout)] ?? "",""].filter(Boolean).join("")}>
-        {layout === 'guided' ? <><nav className={"grid gap-1 pt-3.5 max-md:flex max-md:overflow-x-auto"} aria-label="条款列表">{basis.clauses.map(clause => <Button variant="ghost" key={clause.id} aria-current={current?.id === clause.id ? 'step' : undefined} onClick={() => setFocused(clause.id)}>{clause.id} · {clause.title || '新条款'}<span>{clause.checked && clause.applicability !== 'pending' ? '已核对' : '待核对'}</span></Button>)}</nav><div>{current && clauseRow(current)}{current && <div className={"flex justify-between items-center mt-4 text-muted-foreground"}><span>第 {basis.clauses.indexOf(current) + 1} / {basis.clauses.length} 条</span><Button variant="outline" disabled={basis.clauses.indexOf(current) === basis.clauses.length - 1} onClick={() => setFocused(basis.clauses[basis.clauses.indexOf(current) + 1].id)}>下一条<ArrowRight size={16}/></Button></div>}</div></> : <><div>{basis.clauses.map(clauseRow)}</div>{layout === 'source' && current && <aside className={"sticky top-5 border-l pt-5 pr-0 pb-5 pl-6 [&_label]:grid [&_label]:gap-2 [&_label]:text-sm [&_label]:text-muted-foreground max-xl:static max-xl:border-l-0 max-xl:border-t max-xl:py-5 max-xl:px-0"}><label>对照条款<NativeSelect value={current.id} onChange={event => setFocused(event.target.value)}>{basis.clauses.map(clause => <NativeSelectOption key={clause.id} value={clause.id}>{clause.id} · {clause.title || '新条款'}</NativeSelectOption>)}</NativeSelect></label>{sourceText(current)}</aside>}</>}
-      </div>
-      {!readonly && (basis.source.origin === 'demo' || basis.server) && <Button variant="ghost" className={""} onClick={addClause}><Plus size={16}/>补充要求</Button>}
-      <footer className={"flex items-start justify-between gap-5 py-6 px-0 [&_p]:mt-1.5 [&_p]:mr-0 [&_p]:mb-0 [&_p]:ml-0 [&_p]:text-muted-foreground [&_p]:text-sm [&_ul]:pl-4.5 [&_ul]:mt-2.5 [&_ul]:text-sm max-md:flex-col"}><div><strong>{confirmed ? '已固定本次审核依据' : `${basis.clauses.filter(clause => clause.checked && clause.applicability !== 'pending' && (clause.applicability !== 'exclude' || clause.reason.trim())).length} / ${basis.clauses.length} 条已核对`}</strong>{issues.length ? <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">还有 {issues.length} 项待处理</Button></CollapsibleTrigger><CollapsibleContent><ul>{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></CollapsibleContent></Collapsible> : <p>确认的是检查范围，不是审核结论。</p>}</div>{readonly ? <Button variant="outline" onClick={onBack}>返回当前工作</Button> : <Button className={""} disabled={issues.length > 0 || upload.busy || publishing} onClick={() => void confirm()}>确认本次要求<ArrowRight size={16}/></Button>}</footer>
+      <div data-basis-setup="extraction"><RuleExtraction basis={basis} readonly={locked} onChange={change}/></div>
+      {basis.library && basis.library.content !== sourceContent(basis) && <p className="text-muted-foreground">本次条款有调整，不覆盖来源版本。</p>}
+      {latestVersion && latestVersion.id !== basis.source.id && <p className="text-muted-foreground">已有版本 {latestVersion.basis.source.version}；本次仍使用 {basis.source.version}，未自动替换。</p>}
+      {!readonly && basis.source.origin === 'local' && (!basis.server || !basis.source.version.trim() || !basis.source.title.trim()) && <section data-basis-setup="metadata" className="space-y-4" aria-label="要求登记信息">
+        {!basis.server && <p className="text-muted-foreground">{basis.source.state === 'failed' ? '要求提取未完成，可按原件补录。' : '此预览不提取真实条款，请按原件录入。'}</p>}
+        <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1.5">要求名称<Input data-basis-missing={!basis.source.title.trim()} disabled={locked} value={basis.source.title} onChange={event => change({...basis, source: {...basis.source, title: event.target.value}})}/></label><label className="grid gap-1.5">版本<Input data-basis-missing={!basis.source.version.trim()} disabled={locked} value={basis.source.version} onChange={event => change({...basis, source: {...basis.source, version: event.target.value}})}/></label></div>
+        {!basis.server && <div className="flex flex-wrap gap-2"><Button data-basis-missing={!basis.clauses.length} variant="outline" disabled={locked} onClick={addClause}><Plus/>录入条款</Button>{isPreview() && basis.source.state === 'unparsed' && <Button variant="ghost" disabled={locked} onClick={() => change({...basis, source: {...basis.source, state: 'failed'}})}>模拟提取失败</Button>}</div>}
+      </section>}
+      {basis.conflict.active && <section data-basis-setup="conflict" className="space-y-3 border-l-2 pl-4" aria-label="公差冲突裁定"><h2 className="text-base font-semibold">{readonly ? '本轮公差依据' : '确认公差依据'}</h2>{readonly ? <><p>{basis.conflict.choice === 'internal' ? '内部模板 v1 · ±0.05 mm' : '客户要求 v2 · ±0.10 mm'}</p><p className="whitespace-pre-wrap break-words">{basis.conflict.reason}</p></> : <><RadioGroup value={basis.conflict.choice} disabled={locked} onValueChange={value => change(resolveBasisConflict(basis, value as RequirementBasis['conflict']['choice']))} aria-label="本次采用的要求"><div className="flex flex-wrap gap-x-5">{[{id: 'pending', label: '待确认'}, {id: 'customer', label: '客户 v2 · ±0.10 mm'}, {id: 'internal', label: '内部 v1 · ±0.05 mm'}].map(item => <label key={item.id} className="flex min-h-9 items-center gap-2 max-md:min-h-11"><RadioGroupItem value={item.id}/>{item.label}</label>)}</div></RadioGroup><label className="grid gap-1.5">裁定依据与理由<Textarea disabled={locked} value={basis.conflict.reason} onChange={event => change({...basis, conflict: {...basis.conflict, reason: event.target.value}})}/></label></>}</section>}
+      <section data-basis-setup="clauses" aria-label="本次审核条款">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3"><h2 className="text-base font-semibold">审核条款 <span className="ml-2 text-sm font-normal text-muted-foreground">{readonly ? `${basis.clauses.filter(clause => clause.applicability === 'apply').length} 条适用` : `${checked}/${basis.clauses.length} 条已核对`}</span></h2>{!readonly && basis.clauses.some(clause => clause.applicability === 'pending') && <Button variant="outline" size="sm" disabled={locked} onClick={() => change({...basis, clauses: basis.clauses.map(clause => clause.applicability === 'pending' ? {...clause, applicability: 'apply'} : clause)})}>将待确认条款设为适用</Button>}</div>
+        {basis.clauses.map((clause, index) => <article id={`basis-clause-${clause.id}`} key={clause.id} tabIndex={-1} aria-label={`条款 ${clause.id}`} className="grid min-w-0 scroll-mt-20 grid-cols-[1.5rem_minmax(0,1fr)] gap-3 border-b py-5 outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-4">
+          <span className="pt-1 text-xs tabular-nums text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
+          <div className="min-w-0 space-y-3">
+            {editing === clause.id && !readonly ? <div className="grid gap-3"><label className="grid gap-1.5">条款名称<Input data-basis-missing={!clause.title.trim()} disabled={locked} value={clause.title} onChange={event => patch(clause.id, {title: event.target.value, checked: false})}/></label><label className="grid gap-1.5">条款正文<Textarea data-basis-missing={!clause.text.trim()} disabled={locked} value={clause.text} onChange={event => patch(clause.id, {text: event.target.value, checked: false})}/></label><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1.5">来源文件<Input data-basis-missing={!clause.source.trim()} disabled={locked} value={clause.source} onChange={event => patch(clause.id, {source: event.target.value, checked: false})}/></label><label className="grid gap-1.5">页码或单元格位置<Input data-basis-missing={!clause.location.trim() || clause.location.includes('待核对')} disabled={locked} value={clause.location} placeholder="如第 3 页 §2，或工作表 B4" onChange={event => patch(clause.id, {location: event.target.value, checked: false})}/></label></div><Button variant="outline" size="sm" className="w-fit" onClick={() => setEditing(null)}>完成编辑</Button></div> : <>{(separateTitle(clause) || readonly && mixedApplicability) && <div className="flex flex-wrap items-start justify-between gap-2">{separateTitle(clause) && <h3 className="break-words font-semibold">{clause.title}</h3>}{readonly && mixedApplicability && <Badge variant="outline">{applicability[clause.applicability]}</Badge>}</div>}<p className="whitespace-pre-wrap break-words leading-relaxed">{clause.text || '条款正文待录入'}</p><p className="break-words text-xs text-muted-foreground">{clause.source === basis.source.filename || clause.source === basis.source.title ? '' : `${clause.source} · `}{clause.location || '出处待补充'}</p></>}
+            <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
+              {!readonly && <><RadioGroup value={clause.applicability} disabled={locked} onValueChange={value => patch(clause.id, {applicability: value as RequirementClause['applicability']})} aria-label={`${clause.id} 本次适用性`} className="w-auto"><div className="flex flex-wrap gap-x-4">{Object.entries(applicability).map(([value, label]) => <label key={value} className="flex min-h-9 items-center gap-2 max-md:min-h-11"><RadioGroupItem data-basis-missing={clause.applicability === 'pending' && value === 'pending'} value={value}/>{label}</label>)}</div></RadioGroup><label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox data-basis-missing={!clause.checked} aria-label={`${clause.id} 已核对条款与出处`} disabled={locked} checked={clause.checked} onCheckedChange={value => patch(clause.id, {checked: value === true})}/>原文已核对</label></>}
+              <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={event => {sourceTrigger.current = event.currentTarget; setSourceClause(clause.id)}}><BookOpen/>核对出处</Button>{!readonly && editing !== clause.id && <Button variant="ghost" size="sm" disabled={locked} onClick={() => setEditing(clause.id)}>编辑</Button>}</div>
+            </div>
+            {clause.applicability === 'exclude' && (readonly ? <p className="whitespace-pre-wrap break-words">不适用理由：{clause.reason}</p> : <label className="grid gap-1.5">不适用理由<Textarea data-basis-missing={!clause.reason.trim()} disabled={locked} value={clause.reason} onChange={event => patch(clause.id, {reason: event.target.value})} placeholder="说明本事项为何不适用，并提供依据"/></label>)}
+            {!readonly && clause.id.startsWith('M-') && <Button variant="ghost" size="sm" disabled={locked} onClick={() => change({...basis, clauses: basis.clauses.filter(item => item.id !== clause.id)})}>移除此未提交条款</Button>}
+          </div>
+        </article>)}
+        {!readonly && (basis.source.origin === 'demo' || basis.server) && <Button variant="ghost" size="sm" className="mt-3" disabled={locked} onClick={addClause}><Plus/>补充要求</Button>}
+      </section>
+      <footer className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-4">
+        <div className="min-w-0 flex-1 space-y-1">{readonly ? null : <><p role="status" className="break-words text-muted-foreground">{publishing ? '正在保存本次审核依据…' : !scopeReady ? '先补全事项范围，再确认本次适用性。' : issues[0] || '条款与适用范围已核对。'}</p>{issues.length > 1 && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm" className="h-auto">查看 {issues.length} 项待处理<ChevronDown/></Button></CollapsibleTrigger><CollapsibleContent><ul className="max-h-40 space-y-1 overflow-auto py-2">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></CollapsibleContent></Collapsible>}</> }</div>
+        {readonly ? <Button variant="outline" onClick={onBack}>{backLabel || '返回审核准备'}</Button> : !scopeReady ? <Button onClick={onBack}>补全事项范围<ArrowRight/></Button> : issues.length && !publishing ? <Button variant="outline" disabled={upload.busy || catalog?.loading} onClick={continueChecking}>{basis.library && catalog?.error ? '重新读取要求目录' : basis.library && !selectedVersion || selectedVersion && !scopeMatches(scope, selectedVersion.scope) ? '更换要求版本' : '继续核对'}<ArrowRight/></Button> : <Button disabled={locked || issues.length > 0} onClick={() => void confirm()}>{publishing && <LoaderCircle className="animate-spin motion-reduce:animate-none"/>}确认本次要求<ArrowRight/></Button>}
+      </footer>
     </>}
-    <Dialog open={sourceOpen} onOpenChange={setSourceOpen}><DialogContent className={"max-h-[calc(100dvh_-_40px)] overflow-y-auto w-[min(580px,_calc(100vw_-_32px))]"}><DialogHeader><DialogTitle>选择审核要求</DialogTitle><DialogDescription>{basis ? '使用新来源会替换当前未提交的要求草稿。取消则保留原内容。' : '选定来源后，再逐条确认本次适用性。'} 草稿版本不可选用。</DialogDescription></DialogHeader><div className={"grid gap-2.5 [&_span]:grid [&_span]:gap-1.5 [&_small]:text-foreground [&_small]:font-normal"}>{collections.flatMap(item => [...item.versions].reverse().map(version => <Button variant="outline" key={version.id} disabled={!scopeMatches(scope, version.scope)} onClick={() => setCandidate(copyForCase(item, version))} aria-pressed={candidate?.library?.versionId === version.id}><span><strong>{version.basis.source.title} · {version.basis.source.version}</strong><small>{scopeLabel(version.scope)} · {version.basis.clauses.length} 条{!scopeMatches(scope, version.scope) ? ' · 范围不符' : ''}</small></span></Button>))}{scopeMatches(scope, {customer: '北辰汽车', part: '支架 P-204', revision: 'B'}) && isPreview() && <Button variant="outline" onClick={() => setCandidate(demoBasis(true))} aria-pressed={candidate?.conflict.active === true}><span><strong>冲突示例：客户 v2 与内部模板 v1</strong><small>同一孔径公差不同，需裁定来源</small></span></Button>}</div>{!collections.some(item => item.versions.some(version => scopeMatches(scope, version.scope))) && <p>没有范围一致的已保存版本。可上传本次要求，或回工作台先核对并保存适用版本。</p>}{candidate && <p className={"text-sm break-all"}>将使用：{candidate.source.title} · {candidate.source.version || '版本待确认'}{candidate.conflict.active ? '，并核对内部模板冲突' : ''}</p>}<Button disabled={!candidate} className={""} onClick={() => {if (!candidate) return; change(candidate); setFocused(candidate.clauses[0]?.id ?? ''); setEditing(null); setSourceOpen(false)}}>使用此来源</Button></DialogContent></Dialog>
-    <Sheet open={sourceClause !== null} onOpenChange={open => !open && setSourceClause(null)}><SheetContent className={"w-[min(500px,_92vw)] max-w-125 overflow-y-auto"}><SheetHeader><SheetTitle>核对出处</SheetTitle><SheetDescription>对照条款与来源，不能把编辑后的说明当作原文。</SheetDescription></SheetHeader>{basis?.clauses.find(clause => clause.id === sourceClause) && sourceText(basis.clauses.find(clause => clause.id === sourceClause)!)}</SheetContent></Sheet>
-    {isPreview() && import.meta.env.DEV && <aside className={"fixed z-10 bottom-5 left-[50%] flex items-center gap-2.5 p-1.5 border rounded-lg bg-muted shadow-sm text-foreground text-xs whitespace-nowrap max-sm:bottom-3.5"} aria-label="要求页方案切换"><Button variant="ghost" aria-label="上一种要求布局" onClick={() => switchLayout(layouts[(layouts.findIndex(item => item.id === layout) + 2) % 3].id)}><ArrowLeft size={16}/></Button><span>布局方案　{layouts.findIndex(item => item.id === layout) + 1} / 3 · {layouts.find(item => item.id === layout)?.name}</span><Button variant="ghost" aria-label="下一种要求布局" onClick={() => switchLayout(layouts[(layouts.findIndex(item => item.id === layout) + 1) % 3].id)}><ArrowRight size={16}/></Button></aside>}
+    <Dialog open={sourceOpen} onOpenChange={setSourceOpen}><DialogContent className="max-h-[calc(100dvh-32px)] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>选择审核要求</DialogTitle><DialogDescription>{!scopeReady ? '事项范围尚未完整。先补全范围，才能确认有限定条件的要求是否适用。' : basis ? '使用新来源会替换当前未提交的要求草稿。' : '选择本次适用的已发布版本。'}</DialogDescription></DialogHeader>
+      <Input type="search" maxLength={200} aria-label="搜索要求版本" placeholder="搜索要求、客户或版本" value={query} onChange={event => setQuery(event.target.value)}/>
+      <label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox checked={showSourceHistory} onCheckedChange={value => setShowSourceHistory(value === true)}/>显示历史版本</label>
+      {catalog?.loading && <p role="status" className="text-sm text-muted-foreground">正在读取要求目录…</p>}
+      {catalog?.error && <Alert variant="destructive"><AlertDescription>{catalog.error}<div className="mt-2"><Button variant="outline" size="sm" onClick={catalog.reload}>重新读取要求目录</Button></div></AlertDescription></Alert>}
+      <RadioGroup value={candidate?.library?.versionId || (candidate?.conflict.active ? 'demo-conflict' : '')} onValueChange={id => {if (id === 'demo-conflict') {setCandidate(demoBasis(true)); return} const selected = versions.find(item => item.version.id === id); if (selected && scopeMatches(scope, selected.version.scope)) setCandidate(copyForCase(selected.family, selected.version))}} aria-label="审核要求版本">
+        {versions.map(({version}) => <label key={version.id} className="flex items-start gap-3 border-b py-3 text-sm"><RadioGroupItem value={version.id} disabled={locked || catalog?.loading || Boolean(catalog?.error) || !scopeMatches(scope, version.scope)} className="mt-1"/><span className="min-w-0 space-y-1 text-left"><span className="block break-words font-medium">{version.basis.source.title}</span><span className="block break-words text-muted-foreground">{scopeLabel(version.scope)}</span><span className="block text-xs text-muted-foreground">{version.basis.source.version} · {version.basis.clauses.length} 条{!scopeMatches(scope, version.scope) ? scopeReady ? ' · 范围不符' : ' · 范围待核对' : ''}{showSourceHistory && version.at ? ` · ${new Date(version.at).toLocaleString('zh-CN')}` : ''}</span></span></label>)}
+        {isPreview() && !query && scopeMatches(scope, {customer: '北辰汽车', part: '支架 P-204', revision: 'B'}) && <label className="flex items-start gap-3 py-3 text-sm"><RadioGroupItem value="demo-conflict"/><span><span className="block font-medium">冲突示例：客户 v2 与内部模板 v1</span><span className="text-muted-foreground">同一孔径公差不同，需裁定来源。</span></span></label>}
+      </RadioGroup>
+      {!catalog?.loading && !catalog?.error && !versions.length && <p className="text-sm text-muted-foreground">{query ? '没有匹配的要求版本。' : '还没有已发布的要求，可上传本次要求。'}</p>}
+      <div className="flex flex-wrap justify-between gap-3">{!scopeReady ? <Button variant="outline" onClick={() => {setSourceOpen(false); onBack()}}>补全事项范围</Button> : <Button variant="ghost" disabled={locked} onClick={() => {setSourceOpen(false); picker.current?.click()}}>上传本次要求</Button>}<Button disabled={!candidate || locked || catalog?.loading || Boolean(catalog?.error)} onClick={() => {if (!candidate) return; change(candidate); setEditing(null); setSourceOpen(false)}}>使用此版本<ArrowRight/></Button></div>
+    </DialogContent></Dialog>
+    <Sheet open={sourceClause !== null} onOpenChange={open => !open && setSourceClause(null)}><SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-full sm:data-[side=right]:max-w-160" onCloseAutoFocus={event => {if (sourceTrigger.current?.isConnected) {event.preventDefault(); sourceTrigger.current.focus()}}}>
+      <div className="pr-8"><SheetHeader><SheetTitle>核对条款 {source?.id} 的出处</SheetTitle><SheetDescription>{source?.source} · {source?.location || '位置待补充'}</SheetDescription></SheetHeader></div>
+      {source && <div className="space-y-5 py-2 text-sm leading-relaxed">{source.original ? <section className="space-y-2"><h3 className="font-medium">来源摘录</h3><blockquote className="whitespace-pre-wrap break-words border-l-2 pl-4">{source.original}</blockquote></section> : <p className="text-muted-foreground">没有已提取的来源摘录，请查看原件并补充出处。</p>}{source.text !== source.original && <section className="space-y-2"><h3 className="font-medium">本次条款</h3><p className="whitespace-pre-wrap break-words">{source.text || '正文待录入'}</p></section>}{basis?.source.origin === 'demo' && <p className="text-xs text-muted-foreground">这是固定示例的来源片段。</p>}</div>}
+      <div className="mt-auto border-t pt-4"><SheetFooter>{basis && <RequirementOriginal basis={basis} label="查看要求原件"/>}{source && !readonly && <Button disabled={locked} onClick={() => {patch(source.id, {checked: true}); setSourceClause(null)}}>标记已核对并返回</Button>}<SheetClose asChild><Button variant="outline">返回条款</Button></SheetClose></SheetFooter></div>
+    </SheetContent></Sheet>
   </section>
 }

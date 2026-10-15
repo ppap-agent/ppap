@@ -83,9 +83,6 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-* { @apply border-border; }
-body { @apply bg-background text-foreground antialiased; }
-
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -125,7 +122,7 @@ body { @apply bg-background text-foreground antialiased; }
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
   }
   html {
     @apply font-sans;

@@ -3,6 +3,7 @@
 import type {LocalFileRef} from './local-files'
 import {isObject} from './saved-draft'
 export type SourceFile = {name: string; revision: string; sourceVersion: number; pending?: boolean; localFile?: LocalFileRef; material?: import('../api').Material; roundId?: string}
+export type SourceFocus = {location: string; requestId: number}
 export type DemoDocument = SourceFile & {
   origin: string; kind: 'flow' | 'control' | 'dimension'
   process?: string; readable?: boolean; measurements?: number[]
@@ -16,7 +17,7 @@ export function validDemoDocument(value: unknown): value is DemoDocument {
 }
 export const mergeDocuments = (...groups: DemoDocument[][]) => [...new Map(groups.flat().map(doc => [sourceKey(doc), doc])).values()]
 export const sourceKey = (file: SourceFile) => JSON.stringify([file.name, file.revision, file.sourceVersion, Boolean(file.pending), ...(file.material ? [file.material.file_version_id] : file.localFile ? [file.localFile.id] : [])])
-export const sourceVersionLabel = (file: SourceFile) => file.pending ? '待登记' : `文件 v${file.sourceVersion}`
+export const sourceVersionLabel = (file: SourceFile) => file.pending ? '待登记' : file.material ? '本轮固定版本' : `文件 v${file.sourceVersion}`
 export function demoDocument(file: SourceFile, flavor: DemoFlavor, origin: string): DemoDocument {
   return {...file, origin,
     kind: flavor.startsWith('flow') ? 'flow' : flavor.startsWith('control') ? 'control' : 'dimension',

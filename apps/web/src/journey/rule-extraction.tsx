@@ -25,7 +25,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
   const working = useRef(false), consumed = useRef(''), latest = useRef(basis); latest.current = basis
   useEffect(() => {
     const result = job.value?.result
-    if (['ready', 'manual'].includes(latest.current.source.state)) return
+    if (readonly || !job.value || job.value.id !== latest.current.server?.parseId || ['ready', 'manual'].includes(latest.current.source.state)) return
     if (job.value?.status === 'failed' && consumed.current !== job.value.id) {
       consumed.current = job.value.id
       setError(result && 'error' in result ? `要求提取失败：${result.error}` : '要求提取失败，可重新提取或按原件补录条款。')
@@ -37,7 +37,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
       consumed.current = job.value.id
       onChange(parsedBasis(latest.current, result))
     } else if ('error' in result) {consumed.current = job.value!.id; setError(`要求提取未完成：${result.error}`)}
-  }, [job.value, onChange])
+  }, [job.value, onChange, readonly])
   if (!basis.server || readonly) return null
   if (basis.source.state === 'ready' || basis.source.state === 'manual' && basis.server.body.type) return <p className="text-sm text-muted-foreground">适用资料：{basis.server.body.type}</p>
   const pending = Boolean(basis.server.parseId && !['succeeded', 'failed'].includes(job.value?.status || ''))

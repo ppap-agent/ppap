@@ -14,9 +14,9 @@ import {useRemote} from './remote'
 const layouts = ['额度与明细', '明细优先', '待核对优先']
 const stamp = (value: string) => new Date(value).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false})
 export function UsageWorkspace({onOpen}: {onOpen: (id: string, owner?: CheckOwner) => void}) {
-  return isPreview() ? <PreviewUsage onOpen={onOpen}/> : <ProductUsage onOpen={onOpen}/>
+  return isPreview() ? <PreviewUsage onOpen={onOpen}/> : <ProductUsage/>
 }
-function ProductUsage({onOpen}: {onOpen: (id: string) => void}) {
+function ProductUsage() {
   const [offset, setOffset] = useState(0)
   const usage = useRemote<UsageList>(`/usage?limit=50&offset=${offset}`)
   const quota = useRemote<QuotaEstimate>('/integrations/feishu/usage/quota?target_count=0')
@@ -26,7 +26,7 @@ function ProductUsage({onOpen}: {onOpen: (id: string) => void}) {
     {quota.value && <p className="text-sm text-muted-foreground">{!quota.value.usage_charge_enabled ? '当前环境未启用扣费' : `可用额度：${quota.value.user_quota ?? '暂不可用'}`}</p>}
     {usage.error && <p role="alert">{usage.error}</p>}
     {usage.loading && !usage.value && <p role="status">正在读取用量…</p>}
-    <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>点数</TableHead><TableHead>类型</TableHead><TableHead>审核</TableHead></TableRow></TableHeader><TableBody>{usage.value?.events.map(event => <TableRow key={event.id}><TableCell>{dateLabel(event.created_at)}</TableCell><TableCell>{event.consumed_points}</TableCell><TableCell>{event.is_free_trial ? '试用' : '标准用量'}</TableCell><TableCell>{event.round_id && <Button variant="ghost" onClick={() => onOpen(event.round_id!)}>查看审核<ArrowRight/></Button>}</TableCell></TableRow>)}</TableBody></Table>
+    <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>点数</TableHead><TableHead>类型</TableHead><TableHead>审核</TableHead></TableRow></TableHeader><TableBody>{usage.value?.events.map(event => <TableRow key={event.id}><TableCell>{dateLabel(event.created_at)}</TableCell><TableCell>{event.consumed_points}</TableCell><TableCell>{event.is_free_trial ? '试用' : '标准用量'}</TableCell><TableCell>{event.round_id && <Button variant="ghost" asChild><a href={`/?round=${encodeURIComponent(event.round_id)}`}>查看审核<ArrowRight/></a></Button>}</TableCell></TableRow>)}</TableBody></Table>
     {usage.value && !usage.value.events.length && <p className="text-sm text-muted-foreground">暂无用量记录</p>}
     <div className="flex justify-end gap-2"><Button variant="outline" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>上一页</Button><Button variant="outline" disabled={usage.value?.next_offset == null} onClick={() => setOffset(usage.value!.next_offset!)}>下一页</Button></div>
   </section>

@@ -61,9 +61,12 @@ export function writeDraft<T>(key: string, value: T) {
   notifyDrafts()
 }
 
-export function useSavedDraft<T extends object>(key: string, initial: () => T, validate: (value: unknown) => value is T) {
+export function useSavedDraft<T extends object>(key: string, initial: () => T, validate: (value: unknown) => value is T, restore?: (saved: T) => T) {
   const [loaded] = useState(() => ({key, ...loadDraft(key, validate)}))
-  const [value, setValue] = useState<T>(() => loaded.saved?.value ?? initial())
+  const [value, setValue] = useState<T>(() => {
+    const saved = loaded.saved?.value ?? initial()
+    return restore ? restore(saved) : saved
+  })
   const [saveError, setSaveError] = useState(loaded.error)
   const [retry, setRetry] = useState(0)
   const expected = useRef(loaded.raw)

@@ -12,7 +12,7 @@ export type RequirementBasis = {
   conflict: {active: boolean; choice: 'pending' | 'customer' | 'internal'; reason: string}
   confirmed: {at: string; by: string; scope: string; content: string} | null
   library?: {collectionId: string; versionId: string; content: string}
-  server?: {body: import('../api').RuleBody; material: import('../api').Material; ruleId?: string; parseId?: string; publishedContent?: string}
+  server?: {body: import('../api').RuleBody; material: import('../api').Material; ruleId?: string; parseId?: string; publishedContent?: string; verifiedContent?: string}
 }
 export const customerSource = 'P204_客户审核要求_v2.pdf'
 export const internalSource = '内部尺寸模板_v1.pdf'
@@ -39,18 +39,22 @@ export function resolveBasisConflict(basis: RequirementBasis, choice: Requiremen
     checked: false, applicability: 'pending',
   })}
 }
+export const clauseSourceReady = (clause: RequirementClause) => [clause.title, clause.text, clause.source, clause.location].every(value => value.trim()) && !clause.location.includes('待核对')
+export function clauseIssues(clause: RequirementClause): string[] {
+  const issues: string[] = []
+  if (!clauseSourceReady(clause)) issues.push(`${clause.id}：补全条款与出处。`)
+  if (!clause.checked) issues.push(`${clause.id}：核对条款与来源。`)
+  if (clause.applicability === 'pending') issues.push(`${clause.id}：确认是否适用。`)
+  if (clause.applicability === 'exclude' && !clause.reason.trim()) issues.push(`${clause.id}：说明不适用理由。`)
+  return issues
+}
 export function basisIssues(basis: RequirementBasis | null | undefined): string[] {
   if (!basis) return ['请选择已有要求版本，或上传要求文件。']
   const issues: string[] = []
   if (!basis.source.title.trim() || !basis.source.version.trim()) issues.push('补全要求名称与版本。')
   if (['unparsed', 'failed'].includes(basis.source.state)) issues.push('要求文件尚无可核对条款；请人工录入，或更换文件。')
   if (!basis.clauses.length) issues.push('至少记录一条要求。')
-  for (const clause of basis.clauses) {
-    if (!clause.title.trim() || !clause.text.trim() || !clause.source.trim() || !clause.location.trim() || clause.location.includes('待核对')) issues.push(`${clause.id}：补全条款与出处。`)
-    if (!clause.checked) issues.push(`${clause.id}：核对条款与来源。`)
-    if (clause.applicability === 'pending') issues.push(`${clause.id}：确认是否适用。`)
-    if (clause.applicability === 'exclude' && !clause.reason.trim()) issues.push(`${clause.id}：说明不适用理由。`)
-  }
+  issues.push(...basis.clauses.flatMap(clauseIssues))
   if (!basis.clauses.some(clause => clause.applicability === 'apply')) issues.push('本次至少需要一条适用要求；不能用空范围开始审核。')
   if (basis.conflict.active && (basis.conflict.choice === 'pending' || !basis.conflict.reason.trim())) issues.push('确认公差冲突的依据，并记录理由。')
   return issues

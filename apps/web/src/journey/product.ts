@@ -1,6 +1,7 @@
 import {request, type FileVersion, type Material, type Round, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api'
 import {isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state'
 import type {RequirementCollection} from './requirement-library-state'
+import {sourceContent} from './requirement-library-state'
 import type {DecisionEvidence, DecisionInput} from './decision'
 
 export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): RequirementBasis {
@@ -20,7 +21,7 @@ export const canonical = (value: unknown): string => JSON.stringify(value, (_, i
 export async function loadRuleCollections(): Promise<RequirementCollection[]> {
   const listed = await request<RulesList>('/rules')
   const details = await Promise.all(listed.rules.map(row => request<RuleDetail>(`/rules/${row.id}`)))
-  return (await Promise.all(details.map(async rule => {
+  const collections = (await Promise.all(details.map(async rule => {
     if (rule.body.kind !== 'engine' || !rule.source_file_id || !rule.source_file_version_id) return []
     const file = await request<FileVersion>(`/files/${rule.source_file_id}/versions/${rule.source_file_version_id}`).catch(() => null)
     const material: Material = {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: file?.original_filename || rule.title, role: 'reference', rule_version_id: null}
@@ -41,14 +42,25 @@ export async function loadRuleCollections(): Promise<RequirementCollection[]> {
     basis.source.id = rule.id; basis.source.filename = material.original_filename
     if (!rule.case_context?.registration) basis.source.version = rule.created_at.slice(0, 16).replace('T', ' ')
     basis.server!.publishedContent = canonical({body: rule.body, title: basis.source.title, version: basis.source.version})
+    if (basis.clauses.every(clause => clause.checked && clause.location.trim() && !clause.location.includes('待核对'))) basis.server!.verifiedContent = sourceContent(basis)
     return [{id: rule.id, draft: null, versions: [{id: rule.id, basis, scope, reason, at: rule.created_at, baseId: rule.predecessor_id || null}]}]
   }))).flat()
+  const byId = new Map(collections.map(collection => [collection.id, collection.versions[0]]))
+  const grouped = new Map<string, RequirementCollection>()
+  for (const collection of collections) {
+    const version = collection.versions[0], seen = new Set<string>()
+    let root = version
+    while (root.baseId && byId.has(root.baseId) && !seen.has(root.baseId)) {seen.add(root.id); root = byId.get(root.baseId)!}
+    const family = grouped.get(root.id) ?? {id: root.id, draft: null, versions: []}
+    family.versions.push(version); grouped.set(root.id, family)
+  }
+  return [...grouped.values()].map(collection => ({...collection, versions: collection.versions.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))}))
 }
 // Reuse an immutable version only after reading its full content. Unknown publication is reconciled by the same source and body.
 export async function publishBasis(basis: RequirementBasis, declaration?: {scope: RequirementCollection['versions'][number]['scope']; reason: string}): Promise<RequirementBasis> {
   const body = basisRuleBody(basis), content = canonical(body), server = basis.server!
   const signature = canonical({body, title: basis.source.title, version: basis.source.version})
-  if (!declaration && server.ruleId && server.publishedContent === signature) return basis
+  if (!declaration && server.ruleId && server.publishedContent === signature && server.verifiedContent === sourceContent(basis)) return basis
   const title = basis.source.title.trim()
   const case_context = {registration: JSON.stringify({basis: {...basis, confirmed: null, server: undefined, library: undefined}, ...declaration})}
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical({title, body, source: server.material.file_version_id, case_context}))))
@@ -74,7 +86,8 @@ export async function publishBasis(basis: RequirementBasis, declaration?: {scope
       rule = found
     }
   }
-  return {...basis, server: {...server, ruleId: rule.id, body, publishedContent: signature}}
+  const published = {...basis, source: {...basis.source, id: rule.id}, server: {...server, ruleId: rule.id, body, publishedContent: signature}}
+  return {...published, server: {...published.server, verifiedContent: sourceContent(published)}}
 }
 export function sourceLocation(locator: Record<string, unknown>) {
   if (locator.kind === 'xlsx_cell') return `${locator.sheet} · ${locator.cell}`

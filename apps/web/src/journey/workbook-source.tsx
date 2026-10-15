@@ -8,15 +8,16 @@ import {Input} from '../components/ui/input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {cellName, cellPosition, columnName, containingMerge, inRange, rangeName, type CellPosition, type WorkbookReply, type WorkbookView} from './workbook-data'
+import type {SourceFocus} from './source-documents'
 const rowsPerView = 60, columnsPerView = 16
-export function WorkbookSource({blob, name}: {blob: Blob; name: string}) {
+export function WorkbookSource({blob, name, focus, onCite}: {blob: Blob; name: string; focus?: SourceFocus; onCite?: (location: string, excerpt: string) => void}) {
   const [book, setBook] = useState<WorkbookView | null>(null), [error, setError] = useState('')
   const [sheetIndex, setSheetIndex] = useState(0), [selected, setSelected] = useState<CellPosition>({r: 0, c: 0})
   const [origin, setOrigin] = useState<CellPosition>({r: 0, c: 0}), [address, setAddress] = useState('A1')
   const [query, setQuery] = useState(''), [search, setSearch] = useState(''), [matchIndex, setMatchIndex] = useState(-1)
   const [zoom, setZoom] = useState(100), [notice, setNotice] = useState('')
   const host = useRef<HTMLDivElement>(null)
-  const pendingLocation = useRef<{point: CellPosition; focus: boolean} | null>(null)
+  const pendingLocation = useRef<{point: CellPosition; sheet: number; focus: boolean} | null>(null)
   useEffect(() => {
     let current = true
     const worker = new Worker(new URL('./workbook-source.worker.ts', import.meta.url), {type: 'module'})
@@ -36,12 +37,32 @@ export function WorkbookSource({blob, name}: {blob: Blob; name: string}) {
     return () => {current = false; finish()}
   }, [blob])
   useEffect(() => {
+    if (!book || !focus) return
+    // Accept explicit worksheet/cell locations only. Never infer a worksheet from a filename.
+    const excel = /^(?:'((?:[^']|'')+)'|([^!]+))!\s*(\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6})(?=$|[:：、,，;\s])/.exec(focus.location)
+    const separator = focus.location.lastIndexOf(' · ')
+    const sheetLabel = separator >= 0 ? focus.location.slice(0, separator).trim().replace(/^工作表\s*/, '') : ''
+    const sheetName = excel ? (excel[1]?.replaceAll("''", "'") ?? excel[2]).trim() : sheetLabel.startsWith("'") && sheetLabel.endsWith("'") ? sheetLabel.slice(1, -1).replaceAll("''", "'") : sheetLabel
+    const addressLabel = excel?.[3] ?? (separator >= 0 ? /^(\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6})(?=$|[:：、,，;\s])/.exec(focus.location.slice(separator + 3).trim())?.[1] : undefined)
+    const index = book.sheets.findIndex(item => item.name === sheetName)
+    const point = addressLabel ? cellPosition(addressLabel) : null
+    const target = book.sheets[index]
+    if (!point || !target?.range || !inRange(point, target.range)) {setNotice('证据位置无法直接定位，请在原件中核对。'); return}
+    const anchor = containingMerge(target, point)?.s ?? point
+    pendingLocation.current = {point: anchor, sheet: index, focus: false}
+    setSheetIndex(index); setSelected(anchor); setAddress(cellName(anchor))
+    setOrigin({r: target.range.s.r + Math.floor((anchor.r - target.range.s.r) / rowsPerView) * rowsPerView,
+      c: target.range.s.c + Math.floor((anchor.c - target.range.s.c) / columnsPerView) * columnsPerView})
+    setQuery(''); setSearch(''); setMatchIndex(-1); setNotice(`已定位 ${target.name} · ${cellName(anchor)}`)
+  }, [book, focus])
+  useEffect(() => {
     const pending = pendingLocation.current
-    if (!pending) return
+    if (!pending || pending.sheet !== sheetIndex) return
     // Run after React commits the requested row/column window, without waiting for a paint.
     const element = host.current?.querySelector<HTMLElement>(`[data-cell="${cellName(pending.point)}"]`)
-    element?.scrollIntoView({block: 'nearest', inline: 'nearest'})
-    if (pending.focus) element?.focus({preventScroll: true})
+    if (!element) return
+    element.scrollIntoView({block: 'nearest', inline: 'nearest'})
+    if (pending.focus) element.focus({preventScroll: true})
     pendingLocation.current = null
   }, [selected, origin, sheetIndex])
   const sheet = book?.sheets[sheetIndex], range = sheet?.range
@@ -49,7 +70,7 @@ export function WorkbookSource({blob, name}: {blob: Blob; name: string}) {
   function choose(point: CellPosition, focus = false) {
     if (!range || !sheet || !inRange(point, range)) {setNotice('此位置不在已读取的工作表范围内。'); return}
     const anchor = containingMerge(sheet, point)?.s ?? point
-    pendingLocation.current = {point: anchor, focus}
+    pendingLocation.current = {point: anchor, sheet: sheetIndex, focus}
     setSelected(anchor); setAddress(cellName(anchor)); setNotice('')
     setOrigin(old => ({r: anchor.r < old.r || anchor.r >= old.r + rowsPerView ? range.s.r + Math.floor((anchor.r - range.s.r) / rowsPerView) * rowsPerView : old.r,
       c: anchor.c < old.c || anchor.c >= old.c + columnsPerView ? range.s.c + Math.floor((anchor.c - range.s.c) / columnsPerView) * columnsPerView : old.c}))
@@ -96,6 +117,6 @@ export function WorkbookSource({blob, name}: {blob: Blob; name: string}) {
       })}</TableRow>)}</TableBody></Table> : <p className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>此工作表没有可显示的单元格。图形等内容请下载原件核对。</p>}
     </div>
     {range && <div className={"flex gap-1.5 flex-wrap items-center border-t py-1 px-2 shrink-0 text-xs text-muted-foreground max-md:gap-0.5"}><span>第 {origin.r + 1}–{end.r + 1} 行 / {range.e.r + 1}</span><Button variant="ghost" size="icon-sm" aria-label="前一组行" disabled={origin.r <= range.s.r} onClick={() => setOrigin(value => ({...value, r: Math.max(range.s.r, value.r - rowsPerView)}))}><ChevronLeft/></Button><Button variant="ghost" size="icon-sm" aria-label="后一组行" disabled={end.r >= range.e.r} onClick={() => setOrigin(value => ({...value, r: value.r + rowsPerView}))}><ChevronRight/></Button><span>{columnName(origin.c)}–{columnName(end.c)} 列 / {columnName(range.e.c)}</span><Button variant="ghost" size="icon-sm" aria-label="前一组列" disabled={origin.c <= range.s.c} onClick={() => setOrigin(value => ({...value, c: Math.max(range.s.c, value.c - columnsPerView)}))}><ChevronLeft/></Button><Button variant="ghost" size="icon-sm" aria-label="后一组列" disabled={end.c >= range.e.c} onClick={() => setOrigin(value => ({...value, c: value.c + columnsPerView}))}><ChevronRight/></Button></div>}
-    <section className={"border-t py-2 px-2.5 max-h-45 overflow-auto shrink-0 text-sm [&>div]:flex [&>div]:flex-wrap [&>div]:gap-2 [&>div]:items-center [&>div]:justify-between [&_strong]:break-all [&_strong]:min-w-0 [&_pre]:my-1 [&_pre]:mx-0 [&_p]:break-all [&_p]:my-1 [&_p]:mx-0 [&_[role=status]:empty]:hidden max-md:max-h-27.5"} aria-label="选中单元格"><div><strong>{location}</strong><Button variant="ghost" size="sm" disabled={!range} onClick={() => {void copy()}}><Copy/>复制位置与内容</Button></div><pre>{cell?.text || '（空白）'}</pre>{cell?.formula && <p>公式（未重算）：<code>={cell.formula}</code></p>}{cell && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">保存值与格式</Button></CollapsibleTrigger><CollapsibleContent><p>原始值：{cell.raw ?? '未保存结果'}</p><p>数值格式：{cell.format || '常规'}</p></CollapsibleContent></Collapsible>}<p role="status">{notice}</p></section>
+    <section className={"border-t py-2 px-2.5 max-h-45 overflow-auto shrink-0 text-sm [&>div]:flex [&>div]:flex-wrap [&>div]:gap-2 [&>div]:items-center [&>div]:justify-between [&_strong]:break-all [&_strong]:min-w-0 [&_pre]:my-1 [&_pre]:mx-0 [&_p]:break-all [&_p]:my-1 [&_p]:mx-0 [&_[role=status]:empty]:hidden max-md:max-h-36"} aria-label="选中单元格"><div><strong>{location}</strong>{onCite ? <Button variant="outline" size="sm" disabled={!range} onClick={() => onCite(location, `${cell?.text || '（空白）'}${cell?.formula ? `\n公式（未重算）：=${cell.formula}` : ''}`)}>引用此处</Button> : <Button variant="ghost" size="sm" disabled={!range} onClick={() => {void copy()}}><Copy/>复制位置与内容</Button>}</div><pre>{cell?.text || '（空白）'}</pre>{cell?.formula && <p>公式（未重算）：<code>={cell.formula}</code></p>}{cell && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">保存值与格式</Button></CollapsibleTrigger><CollapsibleContent><p>原始值：{cell.raw ?? '未保存结果'}</p><p>数值格式：{cell.format || '常规'}</p></CollapsibleContent></Collapsible>}<p role="status">{notice}</p></section>
   </div>
 }

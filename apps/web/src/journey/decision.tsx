@@ -1,12 +1,11 @@
 import {isPreview} from './access'
 import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components/ui/collapsible'
 // Stitch: projects/13261964020862199279/screens/2886cf1575be44bbb169efc64abc14fe.
-// Three structures on the same case: evidence-first, decision desk, and guided steps.
+// One review workspace; decision and delivery remain separate user tasks.
 // Uploaded originals and synthetic examples stay distinct. Not a production approval system.
-import {useEffect, useState} from 'react'
-import {ArrowLeft, ArrowRight, FileCheck2} from 'lucide-react'
+import {useContext, useEffect, useRef, useState} from 'react'
+import {ArrowLeft, ArrowRight, ChevronDown} from 'lucide-react'
 import {Button} from '../components/ui/button'
-import {Badge} from '../components/ui/badge'
 import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {Input} from '../components/ui/input'
 import {Textarea} from '../components/ui/textarea'
@@ -18,7 +17,9 @@ import {isObject, loadDraft, readDraft, useSavedDraft} from './saved-draft'
 import {SourceReaderButton} from './source-reader'
 import {mergeDocuments, sourceKey, type DemoDocument} from './source-documents'
 import {ReceiptCheckActions, ReceiptCheckPreparation, readReceiptCheck, receiptReviewState, receiptInputKey, useReceiptRecheck} from './receipt-recheck'
-import {JudgmentEditor} from './judgment'
+import {ReviewWorkspace} from './review-workspace'
+import {RoundReviewContext, serverJudgments} from './review-record'
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
 import {decisionInputKey, judgmentComplete, judgmentLabels, judgmentsAfterCheck, requirementSatisfied, validJudgment, type Judgment} from './judgment-state'
 import {DeliveryWorkspace} from './delivery'
 import {deliveryLabel, recoveredDelivery, validDelivery, type DeliveryState} from './delivery-state'
@@ -71,7 +72,6 @@ type DecisionDraft = {
   workingInput?: DecisionInput; followup?: FollowupState
   appliedCheck?: string
 }
-const layouts = ['依据优先', '决定工作台', '分步确认']
 export function validDraft(value: unknown): value is DecisionDraft {
   if (!isObject(value) || !['inputKey', 'signer', 'reason'].every(key => typeof value[key] === 'string') || !isObject(value.judgments)) return false
   if (!Object.values(value.judgments).every(validJudgment)) return false
@@ -156,14 +156,43 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
   const checking = allowFollowup && checkReview.pending
   const [showFollowup, setShowFollowup] = useState(Boolean(value.followup?.draft || value.followup?.composer))
   const [judgments, setJudgments] = field('judgments')
+  const reviewSession = useContext(RoundReviewContext)
+  useEffect(() => {
+    if (!reviewSession || value.record) return
+    const observed = serverJudgments(reviewSession.round, input)
+    setJudgments(current => {
+      const merged = {...current}
+      for (const [key, judgment] of Object.entries(observed)) {
+        const local = current[key]
+        if (!local || !local.pendingSave && (local.confirmed || local.value === 'pending' && !local.reason.trim() && !local.citations?.length)) merged[key] = judgment
+      }
+      return JSON.stringify(merged) === JSON.stringify(current) ? current : merged
+    })
+  }, [reviewSession?.round, input.roundId])
   const [signer, setSigner] = field('signer'); const [reason, setReason] = field('reason')
   const [choice, setChoice] = field('choice'); const [acknowledged, setAcknowledged] = field('acknowledged')
   const [record, setRecord] = field('record'); const [report, setReport] = field('report')
   const [downloadRequested, setDownloadRequested] = field('downloadRequested')
   const [fulfillment, setFulfillment] = field('fulfillment')
   useEffect(() => {setFulfillment(current => current ? recoveredDelivery(current) : current)}, [])
-  const [layout, setLayout] = useState(() => Math.max(0, ['evidence', 'desk', 'steps'].indexOf(new URLSearchParams(location.search).get('decisionLayout') ?? 'evidence')))
-  const [step, setStep] = useState(0); const [confirmOpen, setConfirmOpen] = useState(false)
+  const taskFromRoute = () => {
+    const task = new URLSearchParams(location.search).get('reviewTask')
+    return task === 'decision' ? 1 : task === 'delivery' ? 2 : task === 'review' ? 0 : value.record ? 2 : 0
+  }
+  const [step, setStep] = useState(taskFromRoute), taskHeading = useRef<HTMLHeadingElement>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  useEffect(() => {
+    const sync = () => setStep(taskFromRoute())
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
+  }, [Boolean(value.record)])
+  function openTask(next: number) {
+    setStep(next)
+    const url = new URL(location.href)
+    url.searchParams.set('reviewTask', next === 1 ? 'decision' : next === 2 ? 'delivery' : 'review')
+    history.pushState(null, '', url)
+    requestAnimationFrame(() => {taskHeading.current?.scrollIntoView({block: 'nearest'}); taskHeading.current?.focus({preventScroll: true})})
+  }
   const [failReport, setFailReport] = useState(false)
   const snapshot = record?.input ?? input
   const changed = value.inputKey !== inputKey && (() => {
@@ -190,37 +219,23 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
     }, 500)
     return () => window.clearTimeout(timer)
   }, [report, record, failReport])
-  function selectLayout(next: number) {
-    setLayout(next); const url = new URL(location.href); url.searchParams.set('decisionLayout', ['evidence', 'desk', 'steps'][next]); history.replaceState(null, '', url)
-  }
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => {if (!isPreview() || !import.meta.env.DEV) return;
-      if (showFollowup) return
-      if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || (event.target as HTMLElement)?.closest('input,textarea,select,button,[role="dialog"],[contenteditable]')) return
-      selectLayout((layout + (event.key === 'ArrowRight' ? 1 : 2)) % 3)
-    }
-    window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key)
-  }, [layout, showFollowup])
   function recordNow() {
     if (!canRecord || !choice) return
     setRecord({id: `${input.receiptId}-D01`, outcome: choice, by: signer.trim(), reason: reason.trim(), at: new Date().toISOString(), input: structuredClone(input), judgments: structuredClone(judgments), ...(value.followup ? {followup: structuredClone(value.followup)} : {})})
-    setConfirmOpen(false); setStep(2)
+    setConfirmOpen(false); openTask(2)
   }
-  const evidence = <section className={""} aria-label="逐条依据与复核"><h2>依据与复核</h2><p>{snapshot.evidence.length} 条要求 · {record ? '已固定人工判断' : checking ? '此前复核暂存，待处理本次检查结果' : `${relevant.length - missingReview.length} / ${relevant.length} 项判断已记录 · ${satisfiedCount} 项已确认满足`}</p>{snapshot.evidence.map(row => {
-    const judgment = (record?.judgments ?? judgments)[row.id] ?? {value: 'pending', reason: ''}
-    const frozen = Boolean(record || changed || historical || followup.draft || checking)
-    const replies = followup.history.flatMap((item, index) => followup.requests.filter(request => request.clauseId === row.id && item.answers[request.id]?.trim()).map(request => ({request, text: item.answers[request.id], batch: index + 1})))
-    const latest = replies.filter(reply => reply.batch === replies.at(-1)?.batch)
-    return <article key={row.id}><header><h3>{row.displayId || row.id} · {row.title}</h3><Badge variant={row.result === '不满足' || row.result === '执行失败' ? 'destructive' : row.result === '满足' ? 'secondary' : 'outline'} className="shrink-0">机器：{row.result}</Badge></header><p>{row.requirement !== row.title ? row.requirement : null}</p>{latest.map(reply => <div key={reply.request.id} className={"my-4 mx-0 pl-3.5 border-l text-sm [&_p]:whitespace-pre-wrap"}><strong>第 {reply.batch} 批答复 · {requestLabel(reply.request, followup)}{currentRequest(reply.request, followup) ? '' : '（旧版或已撤销）'}</strong><p>针对：{reply.request.question}</p><p>{reply.text}</p></div>)}<Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">机器检查依据</Button></CollapsibleTrigger><CollapsibleContent><p>{row.explanation}</p>{row.sources.map((source, index) => <div className={"pt-3 pr-0 pb-3 pl-3.5 border-l my-3 mx-0 [&_small]:block [&_small]:text-muted-foreground [&_small]:mt-1 [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_pre]:mt-2.5 [&_pre]:mr-0 [&_pre]:mb-0 [&_pre]:ml-0"} key={index}><strong>{source.file}</strong><small>{source.location}</small><pre>{source.excerpt}</pre></div>)}</CollapsibleContent></Collapsible>{row.result !== '不适用' && <JudgmentEditor input={snapshot} row={row} judgment={judgment} frozen={frozen} documents={documents} onChange={next => {setJudgments(current => ({...current, [row.id]: next})); setAcknowledged(false)}}/>}
-      {allowFollowup && !frozen && row.result !== '不适用' && !requirementSatisfied(input, row, judgment) && <Button variant="outline" onClick={() => {if (!followup.requests.some(request => request.clauseId === row.id)) update(current => ({...current, followup: {...(current.followup ?? emptyFollowup()), composer: {clauseId: row.id, text: ''}}})); setShowFollowup(true)}}>{followup.requests.some(request => request.clauseId === row.id) ? '查看补正与答复' : `请求补正 ${row.displayId || row.id}`}</Button>}
-    </article>
-  })}</section>
+  const replies = Object.fromEntries(snapshot.evidence.map(row => {
+    const all = followup.history.flatMap((item, index) => followup.requests.filter(request => request.clauseId === row.id && item.answers[request.id]?.trim()).map(request => ({request, text: item.answers[request.id], batch: index + 1})))
+    return [row.id, all.filter(reply => reply.batch === all.at(-1)?.batch).map(reply => ({title: `第 ${reply.batch} 批答复 · ${requestLabel(reply.request, followup)}${currentRequest(reply.request, followup) ? '' : '（旧版或已撤销）'}`, question: reply.request.question, text: reply.text}))]
+  }))
+  const evidence = <ReviewWorkspace key={decisionInputKey(snapshot)} input={snapshot} documents={documents} taskActive={step === 0} judgments={record?.judgments ?? judgments} replies={replies} frozen={Boolean(record || changed || historical || followup.draft || checking)} onChange={(row, judgment) => {setJudgments(current => ({...current, [row.id]: judgment})); setAcknowledged(false)}} onRequest={allowFollowup ? row => {if (!followup.requests.some(request => request.clauseId === row.id)) update(current => ({...current, followup: {...(current.followup ?? emptyFollowup()), composer: {clauseId: row.id, text: ''}}})); setShowFollowup(true)} : undefined}/>
+
   const decision = <section className={"grid gap-3.5"} aria-label="决定"><h2>{record ? '决定已记录' : '作出决定'}</h2>{record ? <><strong className={"text-2xl text-foreground"}>{record.outcome}</strong><p>{record.reason}</p><dl><div><dt>决定人</dt><dd>{record.by}</dd></div><div><dt>记录时间</dt><dd>{new Date(record.at).toLocaleString('zh-CN')}</dd></div><div><dt>决定编号</dt><dd>{record.id}</dd></div></dl><p>此决定固定当时的要求、文件与人工判断。新增资料不能改写本记录。</p></> : <>
     <p>决定仅适用于本次已确认条款和文件版本，不代表 PPAP 全项或实际产线能力批准。</p>
     <div className={"py-3.5 px-4 bg-background border-l [&_ul]:pl-4.5 [&_ul]:mt-2 [&_ul]:mr-0 [&_ul]:mb-0 [&_ul]:ml-0 [&_ul]:text-muted-foreground"} role="status"><strong>{blockers.length ? '批准条件未满足' : '依据已确认，可以作出决定'}</strong>{blockers.length > 0 && <ul>{blockers.map((item, index) => <li key={index}>{item}</li>)}</ul>}</div>
-    <fieldset disabled={changed || historical}><legend>本轮决定</legend><RadioGroup value={choice} onValueChange={value => {setChoice(value as RecordedDecision['outcome']); setAcknowledged(false)}}>{(['批准本次范围', '不批准'] as const).map(option => <label key={option}><RadioGroupItem value={option} disabled={option === '批准本次范围' && blockers.length > 0}/>{option}</label>)}</RadioGroup></fieldset>
-    <label>决定人<Input value={signer} disabled={changed || historical} onChange={event => {setSigner(event.target.value); setAcknowledged(false)}} placeholder="填写审核员姓名"/></label>
-    <label>决定理由<Textarea value={reason} disabled={changed || historical} onChange={event => {setReason(event.target.value); setAcknowledged(false)}} placeholder="说明本次范围、依据与决定"/></label>
+    <fieldset className="space-y-3" disabled={changed || historical}><legend>本轮决定</legend><RadioGroup value={choice} onValueChange={value => {setChoice(value as RecordedDecision['outcome']); setAcknowledged(false)}}>{(['批准本次范围', '不批准'] as const).map(option => <label key={option}><RadioGroupItem value={option} disabled={option === '批准本次范围' && blockers.length > 0}/>{option}</label>)}</RadioGroup></fieldset>
+    <label className="grid gap-1.5">决定人<Input value={signer} disabled={changed || historical} onChange={event => {setSigner(event.target.value); setAcknowledged(false)}} placeholder="填写审核员姓名"/></label>
+    <label className="grid gap-1.5">决定理由<Textarea value={reason} disabled={changed || historical} onChange={event => {setReason(event.target.value); setAcknowledged(false)}} placeholder="说明本次范围、依据与决定"/></label>
     <label className={"[&_[role=checkbox]]:mt-1 [&_[role=checkbox]]:shrink-0"}><Checkbox checked={acknowledged} disabled={changed || historical} onCheckedChange={state => setAcknowledged(state === true)}/><span>我已核对本次要求、证据和复核记录，并以有权决定的审核员身份记录此模拟决定。</span></label>
     <Button className={""} disabled={!canRecord} onClick={() => setConfirmOpen(true)}>核对并记录决定<ArrowRight/></Button>{missingReview.length > 0 && <p>先记录剩余 {missingReview.length} 项的人工判断及理由；暂不决定时可返回工作台，草稿会保留。</p>}
   </>}</section>
@@ -236,12 +251,24 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
       if (current.record) return current
       const received = receiveReply(current.workingInput ?? initialInput, current.followup ?? emptyFollowup(), current.judgments)
       return received ? {...current, workingInput: received.input, followup: received.state, judgments: {}, choice: '', reason: '', acknowledged: false} : current
-    }); setShowFollowup(false); setStep(0)
+    }); setShowFollowup(false); openTask(0)
   }}/></div>
-  return <div className={"min-w-0 pb-12 text-sm leading-relaxed [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-0 [&_h2]:mr-0 [&_h2]:mb-2 [&_h2]:ml-0 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:m-0 [&_p]:my-2 [&_p]:mx-0 [&_p]:text-muted-foreground [&_p]:break-all [&_article]:border-t [&_article]:py-5 [&_article]:px-0 [&_article_header]:flex [&_article_header]:items-center [&_article_header]:justify-between [&_article_header]:gap-3 [&_label]:grid [&_label]:gap-1.5 [&_label]:text-sm [&_fieldset]:border-0 [&_fieldset]:flex [&_fieldset]:flex-wrap [&_fieldset]:gap-4 [&_fieldset]:p-0 [&_legend]:mb-2 [&_legend]:font-semibold [&_fieldset_label]:flex [&_fieldset_label]:items-center [&_fieldset_label]:gap-2 [&_fieldset_label]:min-h-10 [&_dl]:grid [&_dl]:gap-2.5 [&_dl]:m-0 [&_dl_div]:grid [&_dl_div]:grid-cols-[80px_minmax(0,1fr)] [&_dl_div]:gap-2.5 [&_dt]:text-muted-foreground [&_dd]:m-0 [&_dd]:break-all max-sm:[&_label:has([role=checkbox])]:min-h-11 max-sm:[&_article_header]:items-start"}><Button variant="ghost" onClick={onBack}><ArrowLeft/>{backLabel ?? (initialInput.receipts ? '返回补件复审' : '返回事项')}</Button><header className={"flex items-start justify-between gap-6 mb-7.5 [&_h1]:m-0 [&_h1]:text-2xl [&_h1]:leading-tight [&_h1]:font-bold [&_h1]:tracking-tight max-sm:items-start max-sm:gap-3 max-sm:mb-6.5 max-sm:[&_h1]:text-3xl"}><div><h1>{record ? '决定与交付' : '复核与决定'}</h1><p>{snapshot.scope}</p></div><FileCheck2 aria-hidden="true"/></header>
+  // Stitch: projects/13261964020862199279/screens/34f7796e5001437da045ab5abdd66a89.
+  return <div className="min-w-0 pb-6 text-sm leading-relaxed">
+    <header className="mb-3 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label={backLabel ?? (initialInput.receipts ? '返回补件复审' : '返回事项')} title={backLabel ?? (initialInput.receipts ? '返回补件复审' : '返回事项')}><ArrowLeft/></Button>
+          <h1 ref={taskHeading} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">{step === 1 ? `审核决定${input.roundId ? '（原型）' : ''}` : step === 2 ? `报告与交付${input.roundId ? '（原型）' : ''}` : '人工复核'}</h1>
+        </div>
+        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="sm">{step === 0 ? '后续流程' : '切换任务'}{input.roundId ? '（原型）' : ''}<ChevronDown/></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{step !== 1 && <DropdownMenuItem onSelect={() => openTask(1)}>审核决定</DropdownMenuItem>}{step !== 2 && <DropdownMenuItem onSelect={() => openTask(2)}>报告与交付</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
+      </div>
+      <p className="break-words text-muted-foreground">{snapshot.scope}</p>
+    </header>
+    {step !== 0 && <div className="mb-3"><Button variant="ghost" size="sm" onClick={() => openTask(0)}><ArrowLeft/>返回人工复核</Button>{input.roundId && <p className="mt-2 text-sm text-muted-foreground">此后续流程仅保存本机原型记录，未接入正式批准或交付。</p>}</div>}
     {latestReceiptId && latestReceiptId !== initialInput.receiptId && <p role="status" className={""}>正在查看历史批次 {snapshot.receiptId}。本页决定不适用于后续轮次。</p>}
     {saveError && <p role="alert">{saveError}</p>}{changed && <p role="alert">资料快照已变化。这里只保留原复核和决定，不能将旧结论用于新版本。</p>}
-    <div className={"flex flex-wrap items-start gap-y-0 gap-x-6 border-b pb-2 mb-3"}><BasisSummary basis={snapshot.basis}/><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">资料与澄清 · {snapshot.files.length} 份</Button></CollapsibleTrigger><CollapsibleContent>{snapshot.files.map(file => <p key={sourceKey(file)}>{file.name} · Rev {file.revision} · 原件 v{file.sourceVersion}</p>)}<SourceReaderButton input={snapshot} documents={documents} label="阅读本次资料"/>{snapshot.clarification && <p>收到的说明：{snapshot.clarification}</p>}</CollapsibleContent></Collapsible>
+    <div className="mb-3 flex flex-wrap items-center gap-x-4 border-b pb-2"><BasisSummary basis={snapshot.basis} compact/><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">资料与澄清 · {snapshot.files.length} 份<ChevronDown/></Button></CollapsibleTrigger><CollapsibleContent><div className="space-y-3 py-3">{snapshot.files.map(file => <p key={sourceKey(file)}>{file.name}{file.material ? ' · 本轮固定版本' : ` · Rev ${file.revision} · 原件 v${file.sourceVersion}`}</p>)}<SourceReaderButton input={snapshot} documents={documents} label="阅读本次资料"/>{snapshot.clarification && <p>收到的说明：{snapshot.clarification}</p>}</div></CollapsibleContent></Collapsible>
       {snapshot.receipts && <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">收件历史 · {snapshot.receipts.length} 批</Button></CollapsibleTrigger><CollapsibleContent>{snapshot.receipts.map(receipt => <section key={receipt.id}><h3>{receipt.source}</h3>{receipt.files.map((file, i) => <p key={i}>{file.name} · Rev {file.revision} · 原件 v{file.sourceVersion}</p>)}<p className="whitespace-pre-wrap">{receipt.notes}</p></section>)}</CollapsibleContent></Collapsible>}
     </div>
     {allowFollowup && followup.requests.length > 0 && <div className={"flex flex-wrap gap-2 my-3 mx-0"}><Button variant="outline" onClick={() => setShowFollowup(true)}>{record || historical ? '查看补正历史' : followup.draft ? '继续登记本批回件' : '补正与回件'}<ArrowRight/></Button><span role="status">{followup.history.length} 批回件{followup.draft ? ' · 本批待登记，暂不能决定' : ''}</span></div>}
@@ -250,10 +277,8 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
       if (current.record || current.followup?.draft || receiptInputKey(active) !== receiptInputKey(result) || current.appliedCheck === token) return current
       return {...current, workingInput: structuredClone(result), appliedCheck: token, judgments: judgmentsAfterCheck(active, result, current.judgments), choice: '', reason: '', acknowledged: false}
     })}/>}
-    {layout === 0 && <>{evidence}<div className={"grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-10 border-t pt-7 mt-2 max-xl:grid-cols-1 max-xl:gap-7"}>{decision}{output}</div></>}
-    {layout === 1 && <div className={"grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-10 max-xl:grid-cols-1 max-xl:gap-7"}><div>{decision}{output}</div>{evidence}</div>}
-    {layout === 2 && <><nav className={"flex flex-wrap gap-2 mb-6"} aria-label="决定步骤">{['核对依据', '记录决定', '交付结果'].map((label, index) => <Button key={label} variant={step === index ? 'secondary' : 'ghost'} aria-current={step === index ? 'step' : undefined} onClick={() => setStep(index)}>{index + 1} · {label}</Button>)}</nav>{[evidence, decision, output][step]}{step < 2 && <Button variant="outline" onClick={() => setStep(step + 1)}>继续：{step === 0 ? '记录决定' : '交付结果'}<ArrowRight/></Button>}</>}
-    {isPreview() && import.meta.env.DEV && <div className={"fixed z-10 bottom-5 left-[50%] flex items-center gap-2.5 p-1.5 border rounded-lg bg-muted shadow-sm text-foreground text-xs whitespace-nowrap max-sm:bottom-3.5"} role="toolbar" aria-label="决定页布局"><Button variant="ghost" aria-label="上一种决定布局" onClick={() => selectLayout((layout + 2) % 3)}><ArrowLeft size={16}/></Button><span>{layout + 1} / 3 · {layouts[layout]}</span><Button variant="ghost" aria-label="下一种决定布局" onClick={() => selectLayout((layout + 1) % 3)}><ArrowRight size={16}/></Button></div>}
+    <div hidden={step !== 0} className="mt-4 min-w-0">{evidence}</div>
+    {step === 1 && decision}{step === 2 && output}
     <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}><DialogContent><DialogHeader><DialogTitle>确认{choice}</DialogTitle><DialogDescription>记录后将固定本次范围、要求、证据和人工判断；不会自动发送报告。</DialogDescription></DialogHeader><p>{input.scope}</p><p>{input.basis?.source.title} · {input.basis?.source.version}</p><p>决定人：{signer}</p><p>{reason}</p><div className={"flex flex-wrap gap-2 my-3 mx-0"}><Button variant="outline" onClick={() => setConfirmOpen(false)}>返回修改</Button><Button disabled={!canRecord} onClick={recordNow}>确认记录</Button></div></DialogContent></Dialog>
   </div>
 }

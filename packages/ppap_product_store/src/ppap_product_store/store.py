@@ -845,7 +845,8 @@ class AuthStore:
                         self.save_draft_writeback(conn, draft_id, writeback)
         return cast(dict, self.get_draft(draft_id))
 
-    def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0) -> list[dict]:
+    def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "") -> list[dict]:
+        needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT d.id FROM product.audit_drafts d
@@ -853,8 +854,11 @@ class AuthStore:
                      AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id
                                  AND g.user_id = %s AND g.capability IN ('read', 'review'))
                      AND EXISTS (SELECT 1 FROM product.draft_items i WHERE i.draft_id = d.id)
+                     AND (%s = '' OR d.case_context::text ILIKE %s OR EXISTS (
+                         SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
+                         WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
                    ORDER BY d.updated_at DESC, d.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, DRAFT_OPEN, principal.user_id, limit, offset),
+                (principal.tenant_id, DRAFT_OPEN, principal.user_id, q, needle, needle, limit, offset),
             ).fetchall()
             return [cast(dict, self._draft_public(conn, row[0])) for row in rows]
 
@@ -1041,11 +1045,11 @@ class AuthStore:
                      AND (NOT %s OR EXISTS (
                          SELECT 1 FROM product.findings f WHERE f.round_id = r.id
                          AND NOT EXISTS (SELECT 1 FROM product.reviews v WHERE v.round_id = f.round_id AND v.item_key = f.item_key)))
-                     AND (%s = '' OR EXISTS (
+                     AND (%s = '' OR r.case_context::text ILIKE %s OR EXISTS (
                          SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
                    ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, limit, offset),
+                (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
             ).fetchall()
             return [cast(dict, self._round_history(conn, row[0])) for row in rows]
 
@@ -1648,7 +1652,7 @@ class AuthStore:
     def _round_history(self, conn, round_id) -> dict | None:
         row = conn.execute(
             """
-            SELECT id, execution, predecessor_id, created_at, analysis_mode
+            SELECT id, execution, predecessor_id, created_at, analysis_mode, case_context, coverage
             FROM product.audit_rounds WHERE id = %s
             """,
             (round_id,),
@@ -1666,14 +1670,46 @@ class AuthStore:
             (round_id,),
         ).fetchall()
         counts = conn.execute(
-            "SELECT status, COUNT(*) FROM product.findings WHERE round_id = %s GROUP BY status",
+            "SELECT status, COUNT(*), array_agg(item_key) FROM product.findings WHERE round_id = %s GROUP BY status",
             (round_id,),
         ).fetchall()
         result_counts = {"PASS": 0, "NG": 0, "ERR": 0, "UNABLE": 0, "NA": 0}
-        for status, n in counts:
+        finding_keys = set()
+        reviewable_keys = set()
+        for status, n, keys in counts:
+            finding_keys.update(keys)
             if status in result_counts:
                 result_counts[status] = int(n)
-        reviewed_count = conn.execute("SELECT COUNT(*) FROM product.reviews WHERE round_id = %s", (round_id,)).fetchone()[0]
+                if status != "NA":
+                    reviewable_keys.update(keys)
+        coverage_items = (row[6] or {}).get("rule_items", [])
+        uncovered = [item for item in coverage_items if isinstance(item, dict) and item.get("coverage") != "executed" and item.get("item_key") not in finding_keys]
+        uncovered_count = len(uncovered)
+        reviewable_keys.update(f"coverage:{item.get('file_version_id')}:{item.get('id')}" for item in uncovered)
+        versions = {str(item[2]) for item in inputs}
+        # Match the review workspace: a stored row alone does not complete a judgment.
+        reviewed_count = sum(
+            key in reviewable_keys
+            and judgment in {"confirm", "disagree", "unknown", "manual-satisfied", "manual-unsatisfied"}
+            and bool(rationale.strip())
+            and (
+                not judgment.startswith("manual-")
+                or isinstance(citations, list)
+                and bool(citations)
+                and all(
+                    isinstance(cite, dict) and cite.get("file_version_id") in versions and all(isinstance(cite.get(field), str) and cite[field].strip() for field in ("location", "excerpt"))
+                    for cite in citations
+                )
+            )
+            for key, judgment, rationale, citations in conn.execute("SELECT item_key, judgment, rationale, citations FROM product.reviews WHERE round_id = %s", (round_id,)).fetchall()
+        )
+        try:
+            registration = json.loads((row[5] or {}).get("registration", "{}"))
+            scope = registration.get("scope", {}) if isinstance(registration, dict) else {}
+            scope = scope if isinstance(scope, dict) else {}
+        except (ValueError, TypeError):
+            scope = {}
+        labels = {key: value.strip()[:200] for key, value in scope.items() if key in {"customer", "supplier", "part", "revision", "plant"} and isinstance(value, str)}
         return {
             "id": str(row[0]),
             "execution": row[1],
@@ -1691,6 +1727,9 @@ class AuthStore:
             ],
             "result_counts": result_counts,
             "reviewed_count": reviewed_count,
+            "uncovered_count": uncovered_count,
+            "case_title": labels.get("part", ""),
+            "case_scope": " · ".join(filter(None, (labels.get("customer"), labels.get("supplier"), f"图纸 Rev {labels['revision']}" if labels.get("revision") else "", labels.get("plant")))),
         }
 
     def _round_public(self, conn, round_id: str) -> dict | None:

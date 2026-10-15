@@ -1116,7 +1116,7 @@ export interface components {
         };
         /** FindingLocator */
         FindingLocator: {
-            evidence?: components["schemas"]["Evidence"];
+            evidence?: components["schemas"]["Evidence"] | null;
             /** File Id */
             file_id?: string;
             /** File Version Id */
@@ -1408,6 +1408,10 @@ export interface components {
              * @enum {string}
              */
             analysis_mode: "standard" | "deep";
+            /** Case Scope */
+            case_scope: string;
+            /** Case Title */
+            case_title: string;
             /** Created At */
             created_at: string | null;
             /** Execution */
@@ -1424,6 +1428,8 @@ export interface components {
             };
             /** Reviewed Count */
             reviewed_count: number;
+            /** Uncovered Count */
+            uncovered_count?: number;
         };
         /** RoundSummaryInput */
         RoundSummaryInput: {
@@ -1718,6 +1724,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                q?: string;
             };
             header?: never;
             path?: never;

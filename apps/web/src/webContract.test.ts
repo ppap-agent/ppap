@@ -83,7 +83,6 @@ test('the web client stays behind the Product API boundary', () => {
 test('Web wire schemas are generated from FastAPI OpenAPI', () => {
   const generated = readFileSync(join(web, 'src', 'generated', 'openapi.ts'), 'utf8')
   const api = readFileSync(join(web, 'src', 'api.ts'), 'utf8')
-  const ruleTypes = readFileSync(join(web, 'src', 'rules', 'types.ts'), 'utf8')
   const pkg = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8'))
 
   assert.equal(pkg.devDependencies['openapi-typescript'], '7.13.0')
@@ -93,7 +92,7 @@ test('Web wire schemas are generated from FastAPI OpenAPI', () => {
   assert.equal(existsSync(join(repo, 'scripts', 'generate_web_contract.py')), false)
   assert.match(api, /from ['"]\.\/generated\/openapi['"]/)
   assert.match(api, /type MaterialWire = Schema<'MaterialWire'>/)
-  assert.match(ruleTypes, /export type \{RuleBody, RuleCandidate, RuleDetail, RuleItem\} from ['"]\.\.\/api['"]/)
+  assert.match(api, /export type RuleBody = Schema<'EngineRuleBody'>/)
 
   for (const legacy of [
     /export interface Rule\b/,

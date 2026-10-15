@@ -1,3 +1,5 @@
+// Stitch: projects/13261964020862199279/screens/5a80a77a4f524928b808862728d5677a (login)
+// and screens/9a6cb6189e92450da32d95a31820b41c (connection failure).
 import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react'
 import {ArrowRight, ChevronDown, ClipboardCheck, FolderClock, Gauge, LogOut} from 'lucide-react'
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
@@ -14,12 +16,12 @@ const AccessContext = createContext<{principal: PrincipalPublic | null; preview:
 export const useAccess = () => useContext(AccessContext)
 const emptyValidators: RecordValidators = {}
 
-export function AccountMenu({compact = false}: {compact?: boolean; className?: string}) {
+export function AccountMenu({compact = false, className}: {compact?: boolean; className?: string}) {
   const access = useAccess()
   const name = access?.principal?.display_name || (access?.preview ? '林悦 · 演示' : '审核账号')
   return <DropdownMenu>
-    <DropdownMenuTrigger asChild><Button variant="ghost" size={compact ? 'profile-icon' : 'profile'} aria-label={`${name}，账号菜单`}>
-      <span className={"flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm"}>{name.slice(0, 1)}</span>
+    <DropdownMenuTrigger asChild><Button variant="ghost" className={className} size={compact ? 'profile-icon' : 'profile'} aria-label={`${name}，账号菜单`}>
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-foreground">{name.slice(0, 1)}</span>
       {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><ChevronDown/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
@@ -34,15 +36,17 @@ export function ProductAccess({children, recordValidators = emptyValidators}: {c
   const preview = isPreview()
   const [principal, setPrincipal] = useState<PrincipalPublic | null>(null)
   const [ready, setReady] = useState(preview), [error, setError] = useState(''), [revision, setRevision] = useState(0)
+  const [canSignIn, setCanSignIn] = useState(false)
   const [records, setRecords] = useState(false), epoch = useRef(0)
   useEffect(() => {
     if (preview) return
     const current = ++epoch.current
     let active = true
-    setReady(false)
+    setReady(false); setCanSignIn(false)
     void (async () => {
       try {
         await connect()
+        if (active && epoch.current === current) setCanSignIn(true)
         let user: PrincipalPublic | null = null
         try {user = await request<PrincipalPublic>('/me')}
         catch (cause) {
@@ -79,9 +83,12 @@ export function ProductAccess({children, recordValidators = emptyValidators}: {c
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>
     <header className={"flex items-center gap-3 p-6"}><ClipboardCheck/><strong>PPAP</strong></header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
-      <h1 className={"text-3xl font-semibold tracking-tight"}>进入审核工作台</h1><p className={"text-muted-foreground"}>从收到的资料，到有依据的审核判断。</p>
-      {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      {!ready ? <p role="status">正在确认登录状态…</p> : <><Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button><Button variant="ghost" onClick={() => setRevision(value => value + 1)}>重新核对登录状态</Button></>}
+      <h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1>
+      {!ready ? <p role="status">正在确认登录状态…</p> : error ? <>
+        <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
+        <Button onClick={() => setRevision(value => value + 1)}>{canSignIn ? '重新读取登录状态' : '重试连接'}</Button>
+        {canSignIn && <Button variant="outline" asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}
+      </> : <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}
     </main>
   </div>
 }

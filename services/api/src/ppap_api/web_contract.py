@@ -356,7 +356,7 @@ class FindingLocator(TypedDict, total=False):
     filename: str
     locator: str
     rule_item_id: str
-    evidence: Evidence
+    evidence: Evidence | None
     semantic: SemanticEvidence
 
 
@@ -458,6 +458,9 @@ class RoundSummary(TypedDict):
     inputs: list[RoundSummaryInput]
     result_counts: dict[str, int]
     reviewed_count: int
+    uncovered_count: NotRequired[int]
+    case_title: str
+    case_scope: str
 
 
 class RoundList(TypedDict):

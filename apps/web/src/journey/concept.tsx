@@ -1,7 +1,7 @@
 import {isPreview} from './access'
 import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
 import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components/ui/collapsible'
-// Throwaway UI prototype: three overview structures, one synthetic PPAP case, no Product API.
+// Shared product journey. Later decision, delivery and amendment steps remain explicit prototypes.
 import {useEffect, useRef, useState} from 'react'
 import {
   ArrowLeft, ArrowRight, ChevronRight, CircleAlert,
@@ -83,7 +83,7 @@ type ReviewDraft = {
   decisionBatch?: {id: string; input: DecisionInput} | null
 }
 function freshReview(handoff?: IntakeHandoff): ReviewDraft {
-  return {route: handoff ? {stage: 'overview', variant: 'action'} : readRoute(), sent: !handoff && ['response', 'delta'].includes(readRoute().stage), selected: {conflict: true, scan: true, report: true}, review: {conflict: {outcome: 'pending', reason: ''}, scan: {outcome: 'pending', reason: ''}, report: {outcome: 'pending', reason: ''}}, messages: requestDefaults, due: '2026-10-20', replies: initialReplies, receivedFiles: [], receiptStep: 'upload', replySource: '', submission: null, rechecked: false, scanVerified: false, conflictReview: 'pending', decisionRecord: null, changeRecord: null}
+  return {route: handoff ? {stage: handoff.decisionInput?.roundId ? 'decision' : 'overview', variant: 'action'} : readRoute(), sent: !handoff && ['response', 'delta'].includes(readRoute().stage), selected: {conflict: true, scan: true, report: true}, review: {conflict: {outcome: 'pending', reason: ''}, scan: {outcome: 'pending', reason: ''}, report: {outcome: 'pending', reason: ''}}, messages: requestDefaults, due: '2026-10-20', replies: initialReplies, receivedFiles: [], receiptStep: 'upload', replySource: '', submission: null, rechecked: false, scanVerified: false, conflictReview: 'pending', decisionRecord: null, changeRecord: null}
 }
 function isReceivedFile(value: unknown): value is ReceivedFile {
   return isObject(value) && ['id', 'name', 'revision'].every(key => typeof value[key] === 'string')
@@ -280,7 +280,10 @@ function Request({go, sent, setSent, selected, setSelected, messages, setMessage
 
 export function ConceptApp({handoff, draftId, onHome, changeContext}: {handoff?: IntakeHandoff; draftId?: string; onHome?: () => void; changeContext?: {scope: ChangeScope; collections: RequirementCollection[]}} = {}) {
   const [recordKey] = useState(() => `review:${draftId ?? `standalone-${readRoute().stage === 'response' ? 'amendment' : 'concept'}`}`)
-  const {field, saveError} = useSavedDraft(recordKey, () => freshReview(handoff), isReviewDraft)
+  const {field, saveError} = useSavedDraft(recordKey, () => freshReview(handoff), isReviewDraft, (saved): ReviewDraft => {
+    const query = new URLSearchParams(location.search)
+    return query.has('clause') ? {...saved, route: {stage: 'decision', variant: 'action'}} : query.has('stage') ? {...saved, route: readRoute()} : saved
+  })
   const [route, setRoute] = field('route')
   const [sent, setSent] = field('sent')
   const [selected, setSelected] = field('selected')
@@ -314,7 +317,7 @@ export function ConceptApp({handoff, draftId, onHome, changeContext}: {handoff?:
     const resume = new URLSearchParams(location.search).get('resume')
     if (changeContext && changeSummary && resume === 'changes' || allSubmissions.length && resume === 'delta' || directDecision && resume === 'decision') {
       setRoute(current => ({...current, stage: resume === 'changes' ? 'changes' : resume === 'decision' ? 'decision' : 'delta'}))
-      const url = new URL(location.href); url.searchParams.delete('resume'); history.replaceState(null, '', url)
+      const url = new URL(location.href); url.searchParams.set('stage', resume === 'changes' ? 'changes' : resume === 'decision' ? 'decision' : 'delta'); url.searchParams.delete('resume'); history.replaceState(null, '', url)
     }
   }, [])
   useEffect(() => {
@@ -329,7 +332,7 @@ export function ConceptApp({handoff, draftId, onHome, changeContext}: {handoff?:
   }, [route.stage])
   const effectiveSelected = Object.fromEntries(requestRows.map(row => [row.id, selected[row.id] && review[row.id].outcome !== 'overturn'])) as Record<RequestKey, boolean>
   useEffect(() => {
-    const sync = () => {if (!handoff) setRoute(readRoute())}
+    const sync = () => {const next = readRoute(); if (!handoff || visibleStages.some(item => item.id === next.stage)) setRoute(next)}
     window.addEventListener('popstate', sync)
     return () => window.removeEventListener('popstate', sync)
   }, [handoff])
@@ -340,13 +343,13 @@ export function ConceptApp({handoff, draftId, onHome, changeContext}: {handoff?:
     const requested = next.variant ?? (stage === route.stage ? route.variant : available[0].id)
     const updated = {stage, variant: available.some(item => item.id === requested) ? requested : available[0].id}
     setRoute(updated)
-    if (!handoff) {
+    {
       const url = new URL(window.location.href)
       url.searchParams.set('stage', updated.stage)
-      url.searchParams.set('variant', updated.variant)
+      if (isPreview()) url.searchParams.set('variant', updated.variant)
       window.history.pushState(null, '', url)
     }
-    window.scrollTo({top: 0, behavior: 'smooth'})
+    window.scrollTo({top: 0})
   }
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {if (!isPreview() || !import.meta.env.DEV) return;
@@ -390,15 +393,15 @@ export function ConceptApp({handoff, draftId, onHome, changeContext}: {handoff?:
   return <div className={"flex min-h-dvh bg-background text-foreground text-base"}>
     <aside className={"sticky top-0 self-start flex flex-[0_0_224px] flex-col min-h-dvh pt-7 pr-3.5 pb-4.5 pl-3.5 border-r bg-background [&_nav]:grid [&_nav]:gap-1.5 max-xl:basis-47 max-lg:hidden"}>
       <div className={"flex items-center gap-2.5 pt-0 pr-3 pb-14 pl-3 text-lg font-bold tracking-tight [&_small]:ml-auto [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-medium [&_small]:tracking-wide"}><div className={"grid place-items-center w-7.5 h-7.5 rounded-lg bg-muted text-foreground"}><ClipboardCheck size={19}/></div><span>PPAP</span><small>{isPreview() ? '交互预览' : '审核工作台'}</small></div>
-      {onHome && <Button variant="ghost" onClick={onHome}><ArrowLeft/>工作台</Button>}
+      {onHome && <Button variant="ghost" className="justify-start" onClick={onHome}><ArrowLeft/>工作台</Button>}
       <div className={"pt-0 pr-3 pb-3 pl-3 text-muted-foreground text-xs font-semibold tracking-wide"}>审核团队{changeContext?.scope.customer ? ` · ${changeContext.scope.customer}` : ''}</div>
-      <nav aria-label="事项流程">{visibleStages.map(({id, label, icon: Icon}) => <Button variant="ghost" key={id} aria-current={route.stage === id ? 'page' : undefined} disabled={stageDisabled(id)} onClick={() => navigate({stage: id})}><Icon size={18}/><span>{directDecision && id === 'decision' ? '复核与决定' : label}</span></Button>)}</nav>
+      <nav aria-label="事项流程">{visibleStages.map(({id, label, icon: Icon}) => <Button variant="ghost" className="justify-start" key={id} aria-current={route.stage === id ? 'page' : undefined} disabled={stageDisabled(id)} onClick={() => navigate({stage: id})}><Icon size={18}/><span>{directDecision && id === 'decision' ? '人工复核' : label}</span></Button>)}</nav>
       <div className={"flex items-center gap-2.5 mt-auto pt-4.5 pr-2.5 pb-1 pl-2.5 border-t"}><AccountMenu/></div>
     </aside>
     <div className={"flex-1 min-w-0"}>
-      <header className={"flex items-center justify-between gap-3 h-15 py-0 px-10.5 border-b bg-background text-muted-foreground text-sm [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2.5 [&_>_div]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-foreground [&_strong]:font-semibold [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap max-xl:py-0 max-xl:px-7 max-lg:h-13.5 max-lg:py-0 max-lg:px-5.5 max-sm:py-0 max-sm:px-4.5"}><div><span className={"w-2 h-2 rounded-full bg-primary"}/><span>量产批准工作台</span><span className={"text-foreground"}>/</span><strong>{caseTitle}</strong></div><span className={"text-muted-foreground whitespace-nowrap max-sm:hidden"}>正式批准与交付尚为原型</span><AccountMenu compact className={"hidden max-lg:inline-flex"}/></header>
-      <nav ref={mobileNav} className={"hidden max-lg:flex max-lg:gap-1.5 max-lg:overflow-x-auto max-lg:py-2 max-lg:px-4.5 max-lg:border-b max-lg:bg-background"} aria-label="事项流程">{visibleStages.map(({id, label}) => <Button variant="ghost" key={id} aria-current={route.stage === id ? 'page' : undefined} disabled={stageDisabled(id)} onClick={() => navigate({stage: id})}>{directDecision && id === 'decision' ? '复核与决定' : label}</Button>)}</nav>
-      <main className={"w-full max-w-280 my-0 mx-auto pt-10.5 pr-12 pb-30 pl-12 max-xl:pr-7 max-xl:pl-7 max-lg:pt-8 max-sm:pt-6.5 max-sm:pr-4.5 max-sm:pb-29 max-sm:pl-4.5"}>
+      <header className={"flex items-center justify-between gap-3 h-15 py-0 px-10.5 border-b bg-background text-muted-foreground text-sm [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2.5 [&_>_div]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-foreground [&_strong]:font-semibold [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap max-xl:py-0 max-xl:px-7 max-lg:h-13.5 max-lg:py-0 max-lg:px-5.5 max-sm:py-0 max-sm:px-4.5"}><div><span className="max-lg:hidden">审核工作台</span>{onHome && <Button variant="ghost" size="sm" className="hidden max-lg:inline-flex" asChild><a href="/" onClick={event => {if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); onHome()}}}><ArrowLeft/>工作台</a></Button>}<span className={"text-foreground"}>/</span><strong>{caseTitle}</strong></div>{!handoff?.decisionInput?.roundId && <span className={"text-muted-foreground whitespace-nowrap max-sm:hidden"}>批准与交付：原型</span>}<AccountMenu compact className={"hidden max-lg:inline-flex"}/></header>
+      {!(directDecision && route.stage === 'decision') && <nav ref={mobileNav} className={"hidden max-lg:flex max-lg:gap-1.5 max-lg:overflow-x-auto max-lg:py-2 max-lg:px-4.5 max-lg:border-b max-lg:bg-background"} aria-label="事项流程">{visibleStages.map(({id, label}) => <Button variant="ghost" key={id} aria-current={route.stage === id ? 'page' : undefined} disabled={stageDisabled(id)} onClick={() => navigate({stage: id})}>{directDecision && id === 'decision' ? '人工复核' : label}</Button>)}</nav>}
+      <main className={directDecision && route.stage === 'decision' ? 'mx-auto w-full min-w-0 px-6 py-6 max-sm:px-4' : 'w-full max-w-280 my-0 mx-auto pt-10.5 pr-12 pb-30 pl-12 max-xl:pr-7 max-xl:pl-7 max-lg:pt-8 max-sm:pt-6.5 max-sm:pr-4.5 max-sm:pb-29 max-sm:pl-4.5'}>
         {onHome && !(directDecision && route.stage === 'decision') && <Button variant="ghost" className={"inline-flex items-center mr-0 mb-6 ml-0"} onClick={onHome}><ArrowLeft size={16}/> 工作台</Button>}
         {saveError && <p role="alert">{saveError}</p>}
         {route.stage !== 'changes' && changeContext && changeSummary && <div className={"flex gap-3.5 items-center justify-between py-3.5 px-0 mb-4 border-b text-primary max-md:flex-col max-md:items-start"}><span>{changeSummary.state} · 此页是此前依据</span><Button variant="outline" onClick={() => navigate({stage: 'changes'})}>查看变化与新轮次<ArrowRight/></Button></div>}

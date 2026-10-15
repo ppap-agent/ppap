@@ -7,11 +7,12 @@ import {Table, TableBody, TableCell, TableRow} from '../components/ui/table'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import OfficePreview from '../OfficePreview'
 import {message, useRemote} from './remote'
+import type {SourceFocus} from './source-documents'
 
 const WorkbookSource = lazy(() => import('../journey/workbook-source').then(module => ({default: module.WorkbookSource})))
 const WordSource = lazy(() => import('../journey/word-source').then(module => ({default: module.WordSource})))
 
-function Contents({file, roundId}: {file: Material; roundId?: string}) {
+function Contents({file, roundId, focus, onCite}: {file: Material; roundId?: string; focus?: SourceFocus; onCite?: (location: string, excerpt: string) => void}) {
   const [blob, setBlob] = useState<Blob | null>(null), [url, setUrl] = useState(''), [error, setError] = useState('')
   const [text, setText] = useState('')
   useEffect(() => {
@@ -34,7 +35,7 @@ function Contents({file, roundId}: {file: Material; roundId?: string}) {
   if (error) return <p role="alert">{error}</p>
   if (!blob) return <p role="status">正在读取原件…</p>
   return <Suspense fallback={<p role="status">正在准备内容阅读器…</p>}>
-    {['xls', 'xlsx', 'xlsm'].includes(extension || '') ? <WorkbookSource blob={blob} name={file.original_filename}/>
+    {['xls', 'xlsx', 'xlsm'].includes(extension || '') ? <WorkbookSource blob={blob} name={file.original_filename} focus={focus} onCite={onCite}/>
       : extension === 'docx' ? <WordSource blob={blob} name={file.original_filename}/>
         : extension === 'pdf' ? <iframe className={"h-full min-h-96 w-full border-0"} src={url} title={`${file.original_filename} 原件`} />
           : ['png', 'jpg', 'jpeg', 'webp'].includes(extension || '') ? <img className={"max-h-full max-w-full object-contain"} src={url} alt={file.original_filename}/>
@@ -43,8 +44,11 @@ function Contents({file, roundId}: {file: Material; roundId?: string}) {
   </Suspense>
 }
 
-export function RemoteSourcePane({file, roundId}: {file: Material; roundId?: string}) {
+export function RemoteSourcePane({file, roundId, focus, onCite}: {file: Material; roundId?: string; focus?: SourceFocus; onCite?: (location: string, excerpt: string) => void}) {
+  const [contentsOpened, setContentsOpened] = useState(false)
   const [office, setOffice] = useState<OfficePreviewResponse | null>(null), [officeFailed, setOfficeFailed] = useState(false), [mode, setMode] = useState('layout'), [attempt, setAttempt] = useState(0)
+  useEffect(() => {if (mode === 'contents') setContentsOpened(true)}, [mode])
+  useEffect(() => {if (focus && /\.(xls|xlsx|xlsm)$/i.test(file.original_filename)) setMode('contents')}, [focus, file.original_filename])
   useEffect(() => {
     const controller = new AbortController()
     setOffice(null); setOfficeFailed(false)
@@ -55,8 +59,8 @@ export function RemoteSourcePane({file, roundId}: {file: Material; roundId?: str
     <Tabs value={mode} onValueChange={setMode} className={"flex min-h-0 flex-1 flex-col"}>
       <div className={"flex flex-wrap items-center justify-between gap-2"}><TabsList><TabsTrigger value="layout" disabled={!office?.available || officeFailed}>排版原件</TabsTrigger><TabsTrigger value="contents">内容阅读</TabsTrigger></TabsList><div className={"flex gap-2"}><Button variant="ghost" size="icon" aria-label="重新读取原件" onClick={() => setAttempt(value => value + 1)}><RotateCcw/></Button><Button variant="outline" size="sm" asChild><a href={originalUrl(file, roundId)}><Download/>下载原件</a></Button></div></div>
       {officeFailed && <p role="status" className={"text-sm text-muted-foreground"}>排版服务暂不可用，可继续阅读内容或下载原件。</p>}
-      <TabsContent value="layout" className={"relative min-h-0 flex-1"}>{office?.available && office.script_url && office.config ? <OfficePreview key={attempt} scriptUrl={office.script_url} config={office.config} onFailed={() => {setOfficeFailed(true); setMode('contents')}}/> : <p role="status">正在连接排版服务…</p>}</TabsContent>
-      <TabsContent value="contents" className={"min-h-0 flex-1 overflow-auto"}><Contents key={attempt} file={file} roundId={roundId}/></TabsContent>
+      <TabsContent value="layout" forceMount className={mode === 'layout' ? 'relative min-h-0 flex-1' : 'hidden'}>{office?.available && office.script_url && office.config ? <OfficePreview key={attempt} scriptUrl={office.script_url} config={office.config} onFailed={() => {setOfficeFailed(true); setMode('contents')}}/> : <p role="status">正在连接排版服务…</p>}</TabsContent>
+      <TabsContent value="contents" forceMount className={mode === 'contents' ? 'min-h-0 flex-1 overflow-auto' : 'hidden'}>{(contentsOpened || mode === 'contents') && <Contents key={attempt} file={file} roundId={roundId} focus={focus} onCite={onCite}/>}</TabsContent>
     </Tabs>
   </section>
 }

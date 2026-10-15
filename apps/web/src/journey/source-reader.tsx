@@ -12,12 +12,12 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import type {DecisionEvidence, DecisionInput} from './decision'
-import {documentRows, sourceDocumentHTML, sourceKey, sourceVersionLabel, type DemoDocument, type SourceFile} from './source-documents'
+import {documentRows, sourceDocumentHTML, sourceKey, sourceVersionLabel, type DemoDocument, type SourceFile, type SourceFocus} from './source-documents'
 import {LocalSourcePane} from './local-source-pane'
 import {RemoteSourcePane} from './remote-source'
 
 type ReadingInput = Pick<DecisionInput, 'receiptId' | 'scope' | 'files' | 'evidence' | 'clarification' | 'receipts'>
-type Props = {input: ReadingInput; documents?: DemoDocument[]; clauseId?: string; file?: SourceFile; label?: string}
+type Props = {input: ReadingInput; documents?: DemoDocument[]; clauseId?: string; file?: SourceFile; label?: string; className?: string; variant?: 'outline' | 'ghost' | 'link'}
 const layouts = ['document', 'comparison', 'clauses']
 const labels = ['原件优先', '双文件对照', '逐条证据']
 function scopeLabel(scope: string) {
@@ -33,10 +33,10 @@ function scopeLabel(scope: string) {
 }
 
 function SourceSelect({label, value, onChange, files, current}: {label: string; value: string; onChange: (value: string) => void; files: SourceFile[]; current: SourceFile[]}) {
-  return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className={""}><SelectValue className="min-w-0" placeholder="选择文件"/></SelectTrigger><SelectContent>{files.map((file, index) => <SelectItem key={sourceKey(file)} value={sourceKey(file)}>{file.name} · {file.localFile ? ['未解析', '未读取', '未知', '待核对'].includes(file.revision) ? '修订待核对' : `登记修订 ${file.revision}` : `Rev ${file.revision}`} · {sourceVersionLabel(file)}{files.filter(item => item.name === file.name && item.revision === file.revision && item.sourceVersion === file.sourceVersion).length > 1 ? ` · 第 ${index + 1} 份` : ''}{current.some(item => sourceKey(item) === sourceKey(file)) ? '' : ' · 历史'}</SelectItem>)}</SelectContent></Select>
+  return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className={""}><SelectValue className="min-w-0" placeholder="选择文件"/></SelectTrigger><SelectContent>{files.map((file, index) => <SelectItem key={sourceKey(file)} value={sourceKey(file)}>{file.name}{file.material ? '' : ' · '}{file.material ? '' : file.localFile ? ['未解析', '未读取', '未知', '待核对'].includes(file.revision) ? '修订待核对' : `登记修订 ${file.revision}` : `Rev ${file.revision}`} · {sourceVersionLabel(file)}{files.filter(item => item.name === file.name).length > 1 ? file.material ? ` · 上传版本 ${file.material.file_version_id.slice(0, 8)}` : ` · 第 ${index + 1} 份` : ''}{current.some(item => sourceKey(item) === sourceKey(file)) ? '' : ' · 历史'}</SelectItem>)}</SelectContent></Select>
 }
 
-function DocumentPane({file, documents, row, current, onClose, side}: {file?: SourceFile; documents: DemoDocument[]; row?: DecisionEvidence; current: SourceFile[]; onClose: () => void; side: string}) {
+export function DocumentPane({file, documents, row, current, onClose, side, focus, onCite}: {file?: SourceFile; documents: DemoDocument[]; row?: DecisionEvidence; current: SourceFile[]; onClose: () => void; side: string; focus?: SourceFocus; onCite?: (location: string, excerpt: string) => void}) {
   const candidates = documents.filter(doc => file && sourceKey(doc) === sourceKey(file))
   const doc = candidates.length === 1 ? candidates[0] : null
   const [page, setPage] = useState('content'), [zoom, setZoom] = useState(100), [highlight, setHighlight] = useState(true)
@@ -56,7 +56,7 @@ function DocumentPane({file, documents, row, current, onClose, side}: {file?: So
     const timer = window.setTimeout(() => setStatus('ready'), 450)
     return () => window.clearTimeout(timer)
   }, [status])
-  if (file?.material) return <RemoteSourcePane file={file.material} roundId={file.roundId}/>
+  if (file?.material) return <RemoteSourcePane file={file.material} roundId={file.roundId} focus={focus} onCite={onCite}/>
   if (file?.localFile) return <LocalSourcePane file={{...file, localFile: file.localFile}} side={side}/>
   if (!doc) return <section className={"flex flex-col min-h-0 flex-1 bg-background border [&_>_[hidden]]:hidden [&_>_footer]:flex [&_>_footer]:shrink-0 [&_>_footer]:flex-wrap [&_>_footer]:items-center [&_>_footer]:gap-2.5 [&_>_footer]:py-2.5 [&_>_footer]:px-3 [&_>_footer]:text-xs [&_>_footer]:text-muted-foreground [&_>_footer]:border-t [&_>_footer_>_span]:flex-1"} aria-label={`${side}阅读区`}>
     <div className={"flex-1 min-h-45 overflow-auto p-5.5 bg-background  max-md:min-h-0 "}><div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}><BookOpen/>
@@ -132,5 +132,5 @@ function Reader({input, documents = [], clauseId, file, onClose}: Props & {onClo
 
 export function SourceReaderButton(props: Props) {
   const [open, setOpen] = useState(false)
-  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" size="sm" aria-label={props.file ? `${props.label ?? '打开原件'} · ${props.file.name}` : undefined}><BookOpen/>{props.label ?? '打开原件与证据'}</Button></DialogTrigger>{open && <Reader {...props} onClose={() => setOpen(false)}/>}</Dialog>
+  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant={props.variant ?? 'outline'} className={props.className} size="sm" aria-label={props.file ? props.label === props.file.name ? `阅读 ${props.file.name}` : `${props.label ?? '打开原件'} · ${props.file.name}` : undefined}><BookOpen/>{props.label ?? '打开原件与证据'}</Button></DialogTrigger>{open && <Reader {...props} onClose={() => setOpen(false)}/>}</Dialog>
 }
