@@ -61,6 +61,21 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_template_feedback_separates_attachments_submission_and_attempt_receipts(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
+        request = schemas["AuditTemplateFeedbackRequest"]
+        self.assertEqual(set(request["required"]), {"request_id", "file_version_ids"})
+        self.assertNotIn("customer", request["properties"])
+        self.assertNotIn("phone", request["properties"])
+        self.assertNotIn("email", request["properties"])
+        receipt = schemas["AuditTemplateFeedbackReceipt"]
+        self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "received", "rejected", "failed", "unknown"])
+        for field in ("request", "attempt_id", "submission_id", "received_file_version_ids", "received_at", "retry_allowed"):
+            self.assertIn(field, receipt["required"])
+        self.assertEqual(receipt["x-contract-stage"], "ui-draft")
+        self.assertNotIn("/template-feedback", spec["paths"])
+
     def test_ui_templates_keep_versions_coverage_and_support_outside_audit_rules(self):
         spec = app.openapi()
         schemas = spec["components"]["schemas"]

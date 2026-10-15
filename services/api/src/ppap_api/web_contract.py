@@ -990,6 +990,26 @@ class AuditTemplateZip(TypedDict):
     access: AuditArchiveAccess
 
 
+class AuditTemplateFeedbackRequest(TypedDict):
+    """A fixed attachment collection; profile and customer fields are service-owned."""
+
+    request_id: str
+    file_version_ids: list[str]
+
+
+class AuditTemplateFeedbackReceipt(TypedDict):
+    """Read the original attempt after an uncertain write, never blindly resubmit."""
+
+    request: AuditTemplateFeedbackRequest
+    attempt_id: str
+    state: Literal["pending", "received", "rejected", "failed", "unknown"]
+    submission_id: str | None
+    received_file_version_ids: list[str]
+    received_at: str | None
+    retry_allowed: bool
+    reason: str | None
+
+
 class AuditSupportInfo(TypedDict):
     """Current confirmed service configuration, not invented fallback contacts."""
 
@@ -1021,6 +1041,7 @@ def add_ui_contract(app: FastAPI) -> None:
             AuditTemplateCatalog,
             AuditTemplatePage,
             AuditTemplateZip,
+            AuditTemplateFeedbackReceipt,
             AuditSupportInfo,
         ):
             root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")

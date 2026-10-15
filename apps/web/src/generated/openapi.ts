@@ -1511,6 +1511,40 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * AuditTemplateFeedbackReceipt
+         * @description Read the original attempt after an uncertain write, never blindly resubmit.
+         */
+        AuditTemplateFeedbackReceipt: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Reason */
+            reason: string | null;
+            /** Received At */
+            received_at: string | null;
+            /** Received File Version Ids */
+            received_file_version_ids: string[];
+            request: components["schemas"]["AuditTemplateFeedbackRequest"];
+            /** Retry Allowed */
+            retry_allowed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "received" | "rejected" | "failed" | "unknown";
+            /** Submission Id */
+            submission_id: string | null;
+        };
+        /**
+         * AuditTemplateFeedbackRequest
+         * @description A fixed attachment collection; profile and customer fields are service-owned.
+         */
+        AuditTemplateFeedbackRequest: {
+            /** File Version Ids */
+            file_version_ids: string[];
+            /** Request Id */
+            request_id: string;
+        };
         /** AuditTemplateItem */
         AuditTemplateItem: {
             /** Document Type */

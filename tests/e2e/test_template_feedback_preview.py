@@ -1,0 +1,216 @@
+"""#170 UI-only feedback interactions; not proof of a real Bitable write."""
+
+import os
+import unittest
+
+from playwright.sync_api import expect, sync_playwright
+
+PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
+
+
+@unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
+class TemplateFeedbackPreviewTests(unittest.TestCase):
+    def test_incomplete_received_receipt_stays_unknown_until_the_original_attempt_is_read(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-incomplete-receipt")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files(
+                [{"name": "一.zip", "mimeType": "application/zip", "buffer": b"one"}, {"name": "二.doc", "mimeType": "application/msword", "buffer": b"two"}]
+            )
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_text("提交结果未知", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_have_count(0)
+            dialog.get_by_role("button", name="读取原提交结果", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 2 份材料", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("list", name="已收到的模板附件").get_by_role("listitem")).to_have_count(2)
+            browser.close()
+
+    def test_upload_failure_retry_and_unsupported_attachment_do_not_silently_drop_files(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-upload-failed")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files(
+                [{"name": "需要重试.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"}, {"name": "不能运行.exe", "mimeType": "application/octet-stream", "buffer": b"sample"}]
+            )
+            expect(dialog.get_by_role("button", name="重试上传", exact=True)).to_have_count(1)
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            dialog.get_by_role("button", name="重试上传", exact=True).click()
+            expect(dialog.get_by_text("上传结果未知", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="读取上传结果", exact=True).click()
+            expect(dialog.get_by_text("已上传", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            dialog.get_by_role("button", name="移除 不能运行.exe", exact=True).click()
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_attachment_preview_and_mobile_back_preserve_audit_and_feedback_selections(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=unmatched")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            original = page.url
+            page.get_by_role("button", name="反馈对应模板", exact=True).first.click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "非常长的模板附件名称-用户必须能识别完整文件名.zip", "mimeType": "application/zip", "buffer": b"opaque"})
+            dialog.get_by_role("button", name="查看 非常长的模板附件名称-用户必须能识别完整文件名.zip", exact=True).click()
+            attachment = page.get_by_role("dialog", name="附件查看", exact=True)
+            expect(attachment.get_by_text("压缩包不在浏览器内解压。请关闭后下载原附件。", exact=True)).to_be_visible()
+            attachment.get_by_role("button", name="关闭附件", exact=True).click()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            self.assertEqual(page.url, original)
+            page.get_by_role("button", name="标准模板", exact=True).first.click()
+            page.get_by_role("button", name="更多模板请补充", exact=True).click()
+            dialog.get_by_role("button", name="查看 非常长的模板附件名称-用户必须能识别完整文件名.zip", exact=True).click()
+            page.go_back()
+            expect(page.get_by_role("dialog")).to_have_count(0)
+            expect(page.get_by_role("button", name="结束任务", exact=True)).to_be_enabled()
+            self.assertEqual(page.url, original)
+            page.get_by_role("button", name="反馈对应模板", exact=True).first.click()
+            expect(dialog.get_by_text("非常长的模板附件名称-用户必须能识别完整文件名.zip", exact=True)).to_be_visible()
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            self.assertLessEqual(dialog.evaluate("element => element.scrollWidth"), 390)
+            browser.close()
+
+    def test_explicit_failed_submission_retries_the_same_materials_with_a_new_attempt(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-failed")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "重试材料.zip", "mimeType": "application/zip", "buffer": b"sample"})
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_text("提报未完成", exact=True)).to_be_visible()
+            reference = dialog.get_by_role("alert").get_by_text("请求：", exact=False).inner_text().splitlines()
+            dialog.get_by_role("button", name="安全重试提交", exact=True).click()
+            expect(dialog.get_by_text("提交结果未知", exact=True)).to_be_visible()
+            next_reference = dialog.get_by_role("alert").get_by_text("请求：", exact=False).inner_text().splitlines()
+            self.assertEqual(reference[0], next_reference[0])
+            self.assertNotEqual(reference[1], next_reference[1])
+            expect(dialog.get_by_role("button", name="移除 重试材料.zip", exact=True)).to_be_disabled()
+            dialog.get_by_role("button", name="读取原提交结果", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_upload_readback_after_close_ignores_the_removed_upload_late_reply(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-upload-loading")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "保留.zip", "mimeType": "application/zip", "buffer": b"kept"})
+            expect(dialog.get_by_text("上传中", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog.get_by_role("button", name="读取上传结果", exact=True).click()
+            expect(dialog.get_by_text("已上传", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="移除 保留.zip", exact=True).click()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            expect(dialog.get_by_text("保留.zip", exact=True)).to_have_count(0)
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            browser.close()
+
+    def test_close_releases_a_hung_submission_for_readback_and_fences_its_late_reply(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-submit-loading")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "第一批.zip", "mimeType": "application/zip", "buffer": b"one"})
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_role("button", name="正在等待回执…", exact=True)).to_be_disabled()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog.get_by_role("button", name="读取原提交结果", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="继续补充模板", exact=True).click()
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "第二批.docx", "mimeType": "application/octet-stream", "buffer": b"two"})
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            expect(dialog.get_by_text("第二批.docx", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_have_count(0)
+            expect(dialog.get_by_role("alert")).to_have_count(0)
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_upload_unknown_is_read_separately_before_a_submission_can_start(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-upload-unknown")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "现场.jpg", "mimeType": "image/jpeg", "buffer": b"sample"})
+            expect(dialog.get_by_text("上传结果未知", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            expect(dialog.get_by_role("button", name="重试上传", exact=True)).to_have_count(0)
+            dialog.get_by_role("button", name="读取上传结果", exact=True).click()
+            expect(dialog.get_by_text("已上传", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_enabled()
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_unknown_submit_survives_close_and_reads_the_original_attempt(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-unknown")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "固定材料.docx", "mimeType": "application/octet-stream", "buffer": b"sample"})
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_text("提交结果未知", exact=True)).to_be_visible()
+            reference = dialog.get_by_role("alert").inner_text()
+            expect(dialog.get_by_role("button", name="移除 固定材料.docx", exact=True)).to_be_disabled()
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_have_count(0)
+            expect(dialog.get_by_role("button", name="安全重试提交", exact=True)).to_have_count(0)
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="查看客户模板", exact=True).click()
+            page.get_by_role("button", name="更多模板请补充", exact=True).click()
+            expect(dialog.get_by_role("alert")).to_have_text(reference, use_inner_text=True)
+            dialog.get_by_role("button", name="读取原提交结果", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="返回审核", exact=True).click()
+            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_feedback_appends_removes_and_receives_only_its_own_fixed_attachments(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            expect(dialog.get_by_role("textbox")).to_have_count(0)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "模板.zip", "mimeType": "application/zip", "buffer": b"opaque zip bytes"})
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "说明.png", "mimeType": "image/png", "buffer": b"opaque image bytes"})
+            with page.expect_download() as download:
+                dialog.get_by_role("button", name="下载 模板.zip", exact=True).click()
+            self.assertEqual(download.value.path().read_bytes(), b"opaque zip bytes")
+            dialog.get_by_role("button", name="移除 说明.png", exact=True).click()
+            expect(dialog.get_by_text("待提交 1 份附件", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="提交材料", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            expect(dialog.get_by_text("材料待处理，不代表审核规则已生效，也不会自动重新匹配当前任务。", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            expect(page.get_by_role("heading", name="可审核文件 · 3 份", exact=True)).to_be_visible()
+            expect(page.get_by_text("模板.zip", exact=True)).to_have_count(0)
+            browser.close()
