@@ -17,6 +17,7 @@ import {FileName} from '../journey/file-name'
 import {resultConsistencyError} from './result-projection'
 import {AuditReports} from './reports'
 import type {AuditReportAdapter} from './report-contract'
+import type {AuditSharingAdapter} from './sharing-contract'
 
 type Task = components['schemas']['AuditTask']
 type TaskFile = components['schemas']['AuditTaskFile']
@@ -36,7 +37,7 @@ function checkLabel(check: Evaluation) {
 }
 
 /** Views a single frozen result projection. Source rendering is injected; fixture IDs never reach real APIs. */
-export function AuditWorkspace({task, busy, readError, onRead, onChange, renderOriginal, reportAdapter, onReportChange, onReportView}: {task: Task; busy: boolean; readError: string; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void}) {
+export function AuditWorkspace({task, busy, readError, onRead, onChange, renderOriginal, reportAdapter, onReportChange, onReportView, sharingAdapter}: {task: Task; busy: boolean; readError: string; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter}) {
   const queue = task.files.filter(row => row.selection === 'selected')
   const [selected, setSelected] = useState(queue[0]?.file.id || '')
   const [clause, setClause] = useState(''), [source, setSource] = useState<AuditEvidence | null>(null)
@@ -83,7 +84,7 @@ export function AuditWorkspace({task, busy, readError, onRead, onChange, renderO
       <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={() => showReport(file.file.id)}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
     </>}
   </> : <p>没有进入审核的文件。请返回任务列表。</p>}</section>
-  if (report !== null) return <AuditReports task={task} initialFile={report} onChoose={showReport} onBack={() => showReport(null)} onRead={onRead} busy={busy} readError={readError} adapter={reportAdapter} onChange={onReportChange}/>
+  if (report !== null) return <AuditReports task={task} initialFile={report} onChoose={showReport} onBack={() => showReport(null)} onRead={onRead} busy={busy} readError={readError} adapter={reportAdapter} onChange={onReportChange} sharingAdapter={sharingAdapter}/>
   return <section className="space-y-5"><header className="flex flex-wrap items-center justify-between gap-3"><div className="space-y-2"><h1 className="text-2xl font-semibold">审核工作台</h1><p role="status" className="text-muted-foreground">{task.state === 'completed' ? '审核已结束' : '审核中'} · 文件已结束 {task.progress?.completed ?? '—'}/{task.progress?.total ?? queue.length}</p></div><div className="flex flex-wrap items-center gap-3"><Button variant="outline" onClick={() => showReport(file?.file.id || '')}>报告中心</Button><Label><Checkbox checked={task.notification_enabled ?? true} onCheckedChange={value => onChange({...task, notification_enabled: value === true})}/>完成后飞书通知</Label><Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取审核结果…' : '读取审核结果'}</Button></div></header>
     {task.usage_notice && <Alert><AlertTitle>用量提示</AlertTitle><AlertDescription>{task.usage_notice}</AlertDescription></Alert>}{readError && <Alert variant="destructive"><AlertTitle>结果暂时无法读取</AlertTitle><AlertDescription>{readError} 原有结果与选择仍保留。</AlertDescription></Alert>}
     <Sheet open={queueOpen} onOpenChange={setQueueOpen}><SheetTrigger asChild><Button className="md:hidden" variant="outline">文件队列 · {queue.length} 份</Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>文件队列</SheetTitle><SheetDescription>切换文件不重启审核，异常文件仍保留。</SheetDescription></SheetHeader><div className="overflow-y-auto p-4">{fileQueue}</div></SheetContent></Sheet>

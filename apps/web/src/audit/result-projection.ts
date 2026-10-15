@@ -23,7 +23,17 @@ export function reportReference(task: Task, row: TaskFile): components['schemas'
 }
 export function reportReady(task: Task, row: TaskFile): boolean {
   const report = row.audit?.report
-  return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === `${row.file.original_filename}-审核报告.pdf`)
+  return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === `${row.file.original_filename}-审核报告.pdf`)
+}
+
+/** Build a send payload only for the selected frozen, ready artifacts. */
+export function shareContentFor(task: Task, reports: components['schemas']['AuditReportReference'][], mode: 'link' | 'file'): components['schemas']['AuditShareContent'] | null {
+  if (!reports.length || new Set(reports.map(reference => reference.file_version_id)).size !== reports.length || reports.some(reference => !task.files.some(row => reportReady(task, row) && sameSnapshot(reportReference(task, row), reference)))) return null
+  if (mode === 'link') return {kind: 'link', artifact: null, package_id: null}
+  if (reports.length === 1) return {kind: 'pdf', artifact: structuredClone(task.files.find(row => row.file.id === reports[0].file_version_id)!.audit!.report.artifact!), package_id: null}
+  const job = task.report_package
+  if (job?.state === 'ready' && job.receipt.state === 'accepted' && job.package_id && job.artifact?.artifact_id && job.artifact.content_type === 'application/zip' && job.artifact.byte_size > 0 && sameSnapshot(job.reports, reports)) return {kind: 'zip', artifact: structuredClone(job.artifact), package_id: job.package_id}
+  return null
 }
 
 /** Fail closed on contradictory projections; this does not replace server validation. */

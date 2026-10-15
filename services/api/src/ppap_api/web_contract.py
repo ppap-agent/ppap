@@ -720,6 +720,67 @@ class AuditTaskFile(TypedDict):
     audit: NotRequired[AuditFileReview | None]
 
 
+class AuditShareTargetReference(TypedDict):
+    id: str
+    kind: Literal["user", "group"]
+
+
+class AuditShareTarget(AuditShareTargetReference):
+    display_name: str
+    organization_id: str
+    eligibility: Literal["eligible", "blocked", "unknown"]
+    reason: str | None
+
+
+class AuditShareTargetsPage(TypedDict):
+    organization_id: str
+    organization_name: str
+    targets: list[AuditShareTarget]
+    next_page_token: str | None
+
+
+class AuditShareContent(TypedDict):
+    kind: Literal["link", "pdf", "zip"]
+    artifact: AuditReportArtifact | None
+    package_id: str | None
+
+
+class AuditReportShareRequest(TypedDict):
+    request_id: str
+    organization_id: str
+    reports: list[AuditReportReference]
+    targets: list[AuditShareTargetReference]
+    content: AuditShareContent
+
+
+class AuditShareAttemptReference(TypedDict):
+    target: AuditShareTargetReference
+    attempt_id: str
+
+
+class AuditShareReadRequest(TypedDict):
+    """Read specific attempts; a missing transport reply is not a retry permit."""
+
+    request_id: str
+    attempts: list[AuditShareAttemptReference]
+
+
+class AuditShareDelivery(TypedDict):
+    target: AuditShareTarget
+    attempt_id: str
+    state: Literal["pending", "sent", "failed", "unknown"]
+    reason: str | None
+    retry_allowed: bool
+
+
+class AuditReportShare(TypedDict):
+    """Current recoverable send operation, not a user-facing share history."""
+
+    request: AuditReportShareRequest
+    receipt: AuditAcceptance
+    deliveries: list[AuditShareDelivery]
+
+
 class AuditTask(TypedDict):
     """UI-0 contract; not a claim that a task runtime operation exists."""
 
@@ -740,6 +801,7 @@ class AuditTask(TypedDict):
     notification_enabled: NotRequired[bool]
     usage_notice: NotRequired[str | None]
     report_package: NotRequired[AuditReportPackage | None]
+    report_share: NotRequired[AuditReportShare | None]
 
 
 class AuditUploadItem(TypedDict):
@@ -764,7 +826,7 @@ def add_ui_contract(app: FastAPI) -> None:
         spec = native_openapi()
         schemas = spec.setdefault("components", {}).setdefault("schemas", {})
         definitions = {}
-        for contract in (AuditTask, AuditUploadItem, AuditReportUpdate):
+        for contract in (AuditTask, AuditUploadItem, AuditReportUpdate, AuditShareTargetsPage, AuditShareReadRequest):
             root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")
             definitions.update(root.pop("$defs", {}))
             definitions[contract.__name__] = root

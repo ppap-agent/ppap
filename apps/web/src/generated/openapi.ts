@@ -1109,6 +1109,28 @@ export interface components {
             /** Task Id */
             task_id: string;
         };
+        /**
+         * AuditReportShare
+         * @description Current recoverable send operation, not a user-facing share history.
+         */
+        AuditReportShare: {
+            /** Deliveries */
+            deliveries: components["schemas"]["AuditShareDelivery"][];
+            receipt: components["schemas"]["AuditAcceptance"];
+            request: components["schemas"]["AuditReportShareRequest"];
+        };
+        /** AuditReportShareRequest */
+        AuditReportShareRequest: {
+            content: components["schemas"]["AuditShareContent"];
+            /** Organization Id */
+            organization_id: string;
+            /** Reports */
+            reports: components["schemas"]["AuditReportReference"][];
+            /** Request Id */
+            request_id: string;
+            /** Targets */
+            targets: components["schemas"]["AuditShareTargetReference"][];
+        };
         /** AuditReportUpdate */
         AuditReportUpdate: {
             receipt: components["schemas"]["AuditAcceptance"];
@@ -1147,6 +1169,90 @@ export interface components {
              */
             state: "pending" | "matching" | "matched" | "unmatched" | "failed";
         };
+        /** AuditShareAttemptReference */
+        AuditShareAttemptReference: {
+            /** Attempt Id */
+            attempt_id: string;
+            target: components["schemas"]["AuditShareTargetReference"];
+        };
+        /** AuditShareContent */
+        AuditShareContent: {
+            artifact: components["schemas"]["AuditReportArtifact"] | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "link" | "pdf" | "zip";
+            /** Package Id */
+            package_id: string | null;
+        };
+        /** AuditShareDelivery */
+        AuditShareDelivery: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Reason */
+            reason: string | null;
+            /** Retry Allowed */
+            retry_allowed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "sent" | "failed" | "unknown";
+            target: components["schemas"]["AuditShareTarget"];
+        };
+        /**
+         * AuditShareReadRequest
+         * @description Read specific attempts; a missing transport reply is not a retry permit.
+         */
+        AuditShareReadRequest: {
+            /** Attempts */
+            attempts: components["schemas"]["AuditShareAttemptReference"][];
+            /** Request Id */
+            request_id: string;
+        };
+        /** AuditShareTarget */
+        AuditShareTarget: {
+            /** Display Name */
+            display_name: string;
+            /**
+             * Eligibility
+             * @enum {string}
+             */
+            eligibility: "eligible" | "blocked" | "unknown";
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "group";
+            /** Organization Id */
+            organization_id: string;
+            /** Reason */
+            reason: string | null;
+        };
+        /** AuditShareTargetReference */
+        AuditShareTargetReference: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "group";
+        };
+        /** AuditShareTargetsPage */
+        AuditShareTargetsPage: {
+            /** Next Page Token */
+            next_page_token: string | null;
+            /** Organization Id */
+            organization_id: string;
+            /** Organization Name */
+            organization_name: string;
+            /** Targets */
+            targets: components["schemas"]["AuditShareTarget"][];
+        };
         /**
          * AuditTask
          * @description UI-0 contract; not a claim that a task runtime operation exists.
@@ -1176,6 +1282,7 @@ export interface components {
             number: string;
             progress?: components["schemas"]["AuditProgress"];
             report_package?: components["schemas"]["AuditReportPackage"] | null;
+            report_share?: components["schemas"]["AuditReportShare"] | null;
             /** Round Id */
             round_id: string | null;
             /** Source Draft Id */

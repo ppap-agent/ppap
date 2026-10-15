@@ -7,6 +7,7 @@ import {Button} from '../src/components/ui/button'
 import {fixtureAcceptance, fixtureResults, FixtureOriginal} from './audit-results'
 import {fixtureReports, fixtureReport, withReportBytes} from './audit-reports'
 import reportSamples from './report-samples.json'
+import {fixtureSharing} from './audit-sharing'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -29,6 +30,7 @@ const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
 const reportAdapter = fixtureReports(taskStore, scene)
+const sharingAdapter = fixtureSharing(taskStore, scene)
 let recoveryRead = 0
 let authenticated = false
 const acceptanceReads = new Map<string, number>()
@@ -86,6 +88,7 @@ const adapter: AuditIntakeAdapter = {
       const result = await withReportBytes({...task, state: 'completed', completion_reason: 'processed', files})
       taskStore.set(id, result); return structuredClone(result)
     }
+    if (task.round_id && task.files.every(file => file.selection !== 'selected' || ['completed', 'review_failed'].includes(file.audit?.execution || ''))) return structuredClone(task)
     const result = accepted.get(id)
     if (result) {
       const reads = (acceptanceReads.get(id) || 0) + 1
@@ -208,6 +211,16 @@ function Preview() {
       return scene === 'reports-generate-race' ? defer(`报告生成回执 · ${args[0].file_version_id}`, result) : result
     },
   }), [defer])
-  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  const controlledSharing = useMemo(() => ({...sharingAdapter,
+    listTargets: async (...args: Parameters<typeof sharingAdapter.listTargets>) => {
+      const result = await sharingAdapter.listTargets(...args)
+      return scene === 'reports-share-directory-loading' ? defer('分享目标目录', result) : result
+    },
+    send: async (...args: Parameters<typeof sharingAdapter.send>) => {
+      const result = await sharingAdapter.send(...args)
+      return scene === 'reports-share-race' ? defer('分享发送回执', result) : result
+    },
+  }), [defer])
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

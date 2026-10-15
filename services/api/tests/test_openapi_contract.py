@@ -61,6 +61,23 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_share_uses_organization_targets_and_per_target_recovery(self):
+        schemas = app.openapi()["components"]["schemas"]
+        target = schemas["AuditShareTarget"]["properties"]
+        self.assertEqual(target["kind"]["enum"], ["user", "group"])
+        self.assertEqual(target["eligibility"]["enum"], ["eligible", "blocked", "unknown"])
+        self.assertIn("organization_id", target)
+        request = schemas["AuditReportShareRequest"]
+        self.assertEqual(set(request["required"]), {"request_id", "organization_id", "reports", "targets", "content"})
+        delivery = schemas["AuditShareDelivery"]["properties"]
+        self.assertEqual(delivery["state"]["enum"], ["pending", "sent", "failed", "unknown"])
+        self.assertIn("attempt_id", delivery)
+        self.assertIn("retry_allowed", delivery)
+        read = schemas["AuditShareReadRequest"]
+        self.assertEqual(set(read["required"]), {"request_id", "attempts"})
+        self.assertEqual(set(schemas["AuditShareAttemptReference"]["required"]), {"target", "attempt_id"})
+        self.assertEqual(schemas["AuditReportShare"]["x-contract-stage"], "ui-draft")
+
     def test_ui_reports_bind_pdf_and_packages_to_frozen_results(self):
         schemas = app.openapi()["components"]["schemas"]
         reference = schemas["AuditReportReference"]

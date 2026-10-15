@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, sameFrozenInputs, sameSnapshot, reportReady, reportReference} from './result-projection.ts'
+import {resultConsistencyError, sameFrozenInputs, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
 import {readReportPdf} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -19,6 +19,38 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('sharing accepts only a ready frozen report and its exact PDF artifact', () => {
+  const task = projection(), row = task.files[0], reference = reportReference(task, row)!
+  assert.equal(shareContentFor(task, [reference], 'link'), null)
+  row.audit!.report.generated_at = '2026-10-16T02:00:00Z'
+  row.audit!.report.artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf', byte_size: 9}
+  assert.deepEqual(shareContentFor(task, [reference], 'link'), {kind: 'link', artifact: null, package_id: null})
+  assert.deepEqual(shareContentFor(task, [reference], 'file'), {kind: 'pdf', artifact: row.audit!.report.artifact, package_id: null})
+  row.audit!.report.artifact.artifact_id = ''
+  assert.equal(shareContentFor(task, [reference], 'file'), null)
+  row.audit!.report.artifact.artifact_id = 'pdf-1'
+  assert.equal(shareContentFor(task, [{...reference, result_attempt: 2}], 'link'), null)
+  assert.equal(shareContentFor(task, [reference, reference], 'file'), null)
+  row.audit!.report.state = 'failed'
+  assert.equal(shareContentFor(task, [reference], 'link'), null)
+})
+test('multi-file sharing waits for the exact ready ZIP, not the latest package', () => {
+  const task = projection(), first = task.files[0]
+  first.audit!.report.generated_at = '2026-10-16T02:00:00Z'
+  first.audit!.report.artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf', byte_size: 9}
+  const second = structuredClone(first)
+  second.file.id = 'file-v2'; second.audit!.file_version_id = 'file-v2'; second.audit!.report.report_id = 'report-2'
+  task.files.push(second)
+  const reports = task.files.map(row => reportReference(task, row)!)
+  assert.equal(shareContentFor(task, reports, 'file'), null)
+  task.report_package = {package_id: 'zip-1', receipt: {request_id: 'pack-1', state: 'accepted', reason: null}, reports: structuredClone(reports), state: 'ready', artifact: {artifact_id: 'zip-bytes', filename: '审核报告.zip', content_type: 'application/zip', byte_size: 99}, reason: null, retry_allowed: false}
+  assert.deepEqual(shareContentFor(task, reports, 'file'), {kind: 'zip', artifact: task.report_package.artifact, package_id: 'zip-1'})
+  task.report_package.artifact!.artifact_id = ''
+  assert.equal(shareContentFor(task, reports, 'file'), null)
+  task.report_package.artifact!.artifact_id = 'zip-bytes'
+  task.report_package.reports[1].result_attempt = 2
+  assert.equal(shareContentFor(task, reports, 'file'), null)
+})
 test('a report reference cannot name a file outside the frozen task', () => {
   const task = projection(), outside = structuredClone(task.files[0])
   assert.deepEqual(reportReference(task, outside), {task_id: 'task-1', round_id: 'round-1', file_version_id: 'file-v1', result_attempt: 1, report_id: 'report-1'})
