@@ -27,6 +27,72 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_original_late_configuration_cannot_replace_a_new_read_or_another_file(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=original-loading")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
+            original = page.get_by_role("region", name="原件预览", exact=True)
+            expect(original.get_by_role("status")).to_contain_text("正在连接原件预览")
+            old = page.get_by_text("原件配置 · 控制计划.xlsx · 读取 1", exact=True).locator("..")
+            original.get_by_role("button", name="重新读取原件", exact=True).click()
+            latest = page.get_by_text("原件配置 · 控制计划.xlsx · 读取 2", exact=True).locator("..")
+            latest.get_by_role("button", name=re.compile("返回示例读取")).click()
+            notice = original.get_by_text("本次返回版本：", exact=False)
+            expect(notice).to_contain_text("读取观察 2")
+            old.get_by_role("button", name=re.compile("返回示例读取")).click()
+            expect(page.get_by_text("原件配置 · 控制计划.xlsx · 读取 1", exact=True)).to_have_count(0)
+            expect(notice).to_contain_text("读取观察 2")
+            page.get_by_role("tab", name="审核详情", exact=True).click()
+            page.get_by_role("button", name="查看依据 1.2", exact=True).click()
+            page.get_by_role("button", name="核对 PFMEA.xlsx", exact=True).click()
+            expect(original.get_by_role("status")).to_contain_text("正在连接原件预览")
+            expect(original.get_by_text("读取观察", exact=False)).to_have_count(0)
+            page.get_by_text("原件配置 · PFMEA.xlsx · 读取 1", exact=True).locator("..").get_by_role("button", name=re.compile("令示例读取.*失败")).click()
+            expect(original.get_by_text("原件预览暂不可用", exact=True)).to_be_visible()
+            expect(original.get_by_text("读取观察", exact=False)).to_have_count(0)
+            browser.close()
+
+    def test_original_read_failure_can_reread_and_download_the_same_frozen_version(self):
+        import tempfile
+        import zipfile
+        from pathlib import Path
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=original-error")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
+            original = page.get_by_role("region", name="原件预览", exact=True)
+            expect(original.get_by_text("原件预览暂不可用", exact=True)).to_be_visible()
+            version = original.get_by_text("冻结版本：", exact=False).inner_text().removeprefix("冻结版本：")
+            original.get_by_role("button", name="重新读取原件", exact=True).click()
+            expect(original.get_by_text("示例：已读取这次冻结版本。此环境不提供 Office 内嵌预览，请下载核对。", exact=False)).to_contain_text(f"本次返回版本：{version}")
+            with page.expect_download() as transfer:
+                original.get_by_role("link", name="下载原件", exact=True).click()
+            download = transfer.value
+            self.assertEqual(download.suggested_filename, "控制计划.xlsx")
+            with tempfile.TemporaryDirectory() as folder:
+                target = Path(folder) / download.suggested_filename
+                download.save_as(target)
+                with zipfile.ZipFile(target) as workbook:
+                    cells = workbook.read("xl/worksheets/sheet1.xml").decode()
+                    self.assertIn(version, cells)
+                    self.assertIn("交互预览输入，不是真实客户原件", cells)
+            page.get_by_role("tab", name="审核详情", exact=True).click()
+            expect(page.get_by_role("heading", name="PFMEA.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()
+            browser.close()
+
     def test_incomplete_scope_is_not_shown_as_pass_beside_a_valid_ng(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

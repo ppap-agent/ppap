@@ -14,6 +14,8 @@ import {fixtureFeedback} from './audit-feedback'
 import {fixtureTemplateSharing} from './audit-template-sharing'
 import {fixtureTemplatePermissions} from './audit-template-permissions'
 import {fixtureUsage} from './audit-usage'
+import {FixtureRemoteOriginal, fixtureOriginalFile} from './audit-original'
+import type {RemoteOriginalSource} from '../src/journey/remote-source'
 import type {AuditSupportAdapter} from '../src/audit/template-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
@@ -52,7 +54,8 @@ const transferAttempts = new WeakSet<File>()
 function sample(index: number): AuditTaskFile {
   const id = `preview-file-${crypto.randomUUID()}`
   const document = documents[index]
-  return {file: {file_id: `preview-document-${index}`, id, original_filename: document.name, content_type: document.mime, byte_size: 240000 + index * 80000, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}
+  const file: components['schemas']['FileVersion'] = {file_id: `preview-document-${index}`, id, original_filename: document.name, content_type: document.mime, byte_size: 240000 + index * 80000, status: 'ready', sha256: null}
+  return {file: scene.startsWith('original-') ? fixtureOriginalFile(file) : file, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}
 }
 const adapter: AuditIntakeAdapter = {
   authenticate: async () => {authenticated = true},
@@ -187,6 +190,14 @@ function Preview() {
       setReads(rows => [...rows, {id, label, finish: () => resolve(result), fail: () => reject(new Error('preview_read_failed'))}])
     })
   }, [])
+  const originalReads = useRef(new Map<string, number>())
+  const originalOffice = useCallback<RemoteOriginalSource['office']>(async file => {
+    const read = (originalReads.current.get(file.file_version_id) || 0) + 1
+    originalReads.current.set(file.file_version_id, read)
+    if (scene === 'original-error' && read === 1) throw new Error('preview_original_unavailable')
+    const result = {available: false, notice: `示例：已读取这次冻结版本。此环境不提供 Office 内嵌预览，请下载核对。本次返回版本：${file.file_version_id} · 读取观察 ${read}`}
+    return scene === 'original-loading' ? defer(`原件配置 · ${file.original_filename} · 读取 ${read}`, result) : result
+  }, [defer])
   useEffect(() => {
     const deliver = (event: MessageEvent) => {
       if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== 'ppap-preview-read') return
@@ -283,7 +294,7 @@ function Preview() {
       return scene === 'usage-race' && read === 1 ? defer('旧用量查询', result) : result
     },
   }), [defer])
-  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
-    <AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={supportAdapter} feedbackAdapter={controlledFeedback} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+    <AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={supportAdapter} feedbackAdapter={controlledFeedback} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

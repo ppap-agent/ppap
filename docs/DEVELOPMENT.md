@@ -150,6 +150,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview?page=audit`。场景切换会重置页面；宽度与主题切换保留当前交互。识别中和飞书读取中场景用预览台的“返回一次示例读取／令一次示例读取失败”控制响应，包括弹窗内的读取，不用定时器假装真实进度。
 
+原件读取使用 `scene=original-error`、`original-loading` 或 `original-unavailable`，选择三类文件示例后进入审核并核对 Excel 原件。它们复用产品原件阅读器，演示读取失败、重读和乱序返回；下载仅返回该冻结版本的明确示例 XLSX，不是客户原件，也不验证真实 Office、排版或定位。任意上传不生成替代原件，不向产品 API 发送示例身份。
+
 文件档案及历次审核使用 `scene=archive-ready`。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。
 
 客户模板库使用 `scene=templates-ready`。XLSX/ZIP 是明确标识的本机示例字节，不是客户飞书文件。覆盖度使用服务合同中的显式 17 类字典及生效规则类型并集，不能直接以当前 `/rule-types` 的 18 项或模板附件数代替。模板预览固定文件版本；客户 ZIP 固定文件夹修订和完整集合。全局支持未取得有效配置时显示不可用，不虚构联系方式。
