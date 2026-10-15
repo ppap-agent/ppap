@@ -17,6 +17,24 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_native_feishu_docs_and_sheets_are_selectable_but_not_prevalidated(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_role("button", name="从飞书选择", exact=True).click()
+            picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
+            for name in ("控制计划（飞书表格）", "控制计划（飞书文档）", "控制计划（旧版文档）"):
+                picker.get_by_role("checkbox", name="选择飞书文件 " + name, exact=True).check()
+            expect(picker.get_by_role("checkbox", name="选择飞书文件 现场照片.jpg", exact=True)).to_be_disabled()
+            picker.get_by_role("button", name="添加所选文件（3）", exact=True).click()
+            expect(page.get_by_role("heading", name="等待预检查 · 3 份", exact=True)).to_be_visible()
+            expect(page.get_by_text("控制计划（飞书表格）.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("控制计划（飞书文档）.docx", exact=True)).to_be_visible()
+            expect(page.get_by_text("控制计划（旧版文档）.docx", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
+            browser.close()
+
     def test_preview_harness_can_deliver_a_read_while_the_picker_is_modal(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -123,6 +141,7 @@ class AuditPreviewTests(unittest.TestCase):
             picker.get_by_role("checkbox", name="选择飞书文件 控制计划.xlsx", exact=True).check()
             picker.get_by_role("button", name="添加所选文件（2）", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("main")).to_be_focused()
             expect(page.get_by_role("heading", name="等待预检查 · 2 份", exact=True)).to_be_visible()
             page.get_by_role("button", name="从飞书选择", exact=True).click()
             picker.get_by_role("button", name="取消", exact=True).click()

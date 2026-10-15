@@ -13,6 +13,13 @@ const documents = [
   {type: '控制计划', name: '控制计划.xlsx', rule: '示例控制计划规则 · v2', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
   {type: '过程流程图', name: '过程流程图.pdf', rule: '示例过程流程图规则 · v3', mime: 'application/pdf'},
 ]
+const driveCatalog = [
+  ...documents.map((document, index) => ({source: {token: `preview-document-${index}`, name: document.name, type: 'file'}, index, filename: document.name, mime: document.mime})),
+  {source: {token: 'preview-native-sheet', name: '控制计划（飞书表格）', type: 'sheet'}, index: 1, filename: '控制计划（飞书表格）.xlsx', mime: documents[1].mime},
+  {source: {token: 'preview-native-bitable', name: '控制计划（多维表格）', type: 'bitable'}, index: 1, filename: '控制计划（多维表格）.xlsx', mime: documents[1].mime},
+  {source: {token: 'preview-native-docx', name: '控制计划（飞书文档）', type: 'docx'}, index: 1, filename: '控制计划（飞书文档）.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
+  {source: {token: 'preview-native-doc', name: '控制计划（旧版文档）', type: 'doc'}, index: 1, filename: '控制计划（旧版文档）.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
+]
 let nextTask = 1
 let driveReads = 0
 function sample(index: number): AuditTaskFile {
@@ -26,9 +33,14 @@ const adapter: AuditIntakeAdapter = {
       driveReads += 1
       if (scene === 'drive-denied') throw new Error('authorization_required')
       if (scene === 'drive-error' && driveReads === 1) throw new Error('preview_read_failed')
-      return {files: scene === 'drive-empty' ? [] : [...documents.map((document, index) => ({token: `preview-document-${index}`, name: document.name, type: 'file'})), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
+      return {files: scene === 'drive-empty' ? [] : [...driveCatalog.map(row => row.source), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
     },
-    receive: files => files.map(file => ({...sample(Number(file.token.replace('preview-document-', ''))), validation: {state: 'pending', reasons: ['示例飞书文件已选择，等待预检查。没有导入真实云端文件。']}})),
+    receive: files => files.map(file => {
+      const fixture = driveCatalog.find(row => row.source.token === file.token)
+      if (!fixture) throw new Error('unknown_preview_source')
+      const row = sample(fixture.index)
+      return {...row, file: {...row.file, file_id: fixture.source.token, original_filename: fixture.filename, content_type: fixture.mime}, validation: {state: 'pending', reasons: ['示例飞书文件已选择，等待预检查。没有导入真实云端文件。']}}
+    }),
   },
   samples: () => {
     const files = documents.map((_, index) => sample(index))
@@ -39,7 +51,7 @@ const adapter: AuditIntakeAdapter = {
     if (scene === 'invalid') files.push({...sample(0), file: {...sample(0).file, original_filename: '加密文件.xlsx'}, validation: {state: 'invalid', reasons: ['文件加密或异常，无法识别']}})
     return files
   },
-  readValidation: async row => row.file.file_id.startsWith('preview-document-') ? {state: 'valid', reasons: []} : row.validation,
+  readValidation: async row => driveCatalog.some(fixture => fixture.source.token === row.file.file_id) ? {state: 'valid', reasons: []} : row.validation,
   readMatch: async task => adapter.match(task.files, task.analysis_mode, task.customer_preference, task),
   receive: files => files.map(file => {
     const reason = file.size > 200 * 1024 * 1024 ? '文件超过 200 MB 设计上限' : !/\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name) ? '非审核支持格式' : ''
@@ -49,15 +61,15 @@ const adapter: AuditIntakeAdapter = {
     const matchedFiles = structuredClone(files).map(row => {
       if (row.selection !== 'selected') return {...row, match: null}
       // Map fixture identities, never infer real audit answers from filenames.
-      const index = Number(row.file.file_id.replace('preview-document-', ''))
+      const index = driveCatalog.find(fixture => fixture.source.token === row.file.file_id)?.index ?? -1
       const document = documents[index]
       const known = Number.isInteger(index) && index >= 0 && Boolean(document)
       const matched = known && scene !== 'unmatched' && !(scene === 'partial' && index === 2)
       return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules: [{id: `${index + 1}.1`, category: '示例', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}]}} : null, gaps: []}}
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
-    const estimates: Record<number, number> = {0: 0, 1: 500, 2: 1000, 3: 1500}
-    return {id: previous?.id || `preview-task-${crypto.randomUUID()}`, number: previous?.number || `PPAP-示例-${String(nextTask++).padStart(3, '0')}`, state: 'pending_confirm', analysis_mode: mode, created_at: previous?.created_at || new Date().toISOString(), updated_at: new Date().toISOString(), source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : estimates[count] ?? null}
+    // Fixture display only. Real estimates remain Product API-owned.
+    return {id: previous?.id || `preview-task-${crypto.randomUUID()}`, number: previous?.number || `PPAP-示例-${String(nextTask++).padStart(3, '0')}`, state: 'pending_confirm', analysis_mode: mode, created_at: previous?.created_at || new Date().toISOString(), updated_at: new Date().toISOString(), source_draft_id: null, round_id: null, customer_preference: customer, files: matchedFiles, completion_reason: null, estimated_points: scene === 'error' ? null : count * 500}
   },
 }
 
