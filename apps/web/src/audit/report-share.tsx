@@ -10,14 +10,14 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {FileName} from '../journey/file-name'
 import {ShareTargets} from './share-targets'
 import type {AuditSharingAdapter, ShareTarget} from './sharing-contract'
-import {shareRetryAllowed, shareUnresolved, type useShareActions, type ShareContentFor} from './share-actions'
-import type {ReportShare} from './sharing-contract'
+import {shareUnresolved, type useShareActions, type ShareContentFor} from './share-actions'
+import type {ReportShare, ShareRequest} from './sharing-contract'
+import {ShareResults} from './share-results'
 
 export type ShareDescription = (reference: Reference) => {name: string; conclusion: string; context?: string}
 type Reference = components['schemas']['AuditReportReference']
-const deliveryLabels = {pending: '等待发送回执', sent: '已发送', failed: '发送失败', unknown: '结果未知'}
 
-export function ReportShareDialog({share, describe, contentFor, reports, adapter, actions, onClose, trigger}: {share?: ReportShare | null; describe: ShareDescription; contentFor: ShareContentFor; reports: Reference[]; adapter: AuditSharingAdapter; actions: ReturnType<typeof useShareActions>; onClose: () => void; trigger: HTMLButtonElement | null}) {
+export function ReportShareDialog({share, describe, contentFor, reports, adapter, actions, onClose, trigger}: {share?: ReportShare | null; describe: ShareDescription; contentFor: ShareContentFor; reports: Reference[]; adapter: AuditSharingAdapter; actions: ReturnType<typeof useShareActions<ShareRequest>>; onClose: () => void; trigger: HTMLButtonElement | null}) {
   const [compose, setCompose] = useState(!share)
   const job = compose ? null : share
   const [targets, setTargets] = useState<ShareTarget[]>([])
@@ -36,7 +36,7 @@ export function ReportShareDialog({share, describe, contentFor, reports, adapter
       {!job && <Tabs value={mode} onValueChange={value => setMode(value as typeof mode)}><TabsList aria-label="交付方式"><TabsTrigger value="link">链接</TabsTrigger><TabsTrigger value="file">文件</TabsTrigger></TabsList><TabsContent value="link"><p className="text-sm">发送固定报告的应用入口；接收人访问时仍需组织鉴权。</p></TabsContent><TabsContent value="file">{content ? <p>附件：{content.artifact?.filename}</p> : <Alert><AlertTitle>所选 ZIP 尚未就绪</AlertTitle><AlertDescription>请先打包本次选择，不能改用其他报告或未就绪文件。<Button variant="outline" onClick={onClose}>返回报告页打包</Button></AlertDescription></Alert>}</TabsContent></Tabs>}
       {job && job.request.content.kind !== 'link' && <p>附件：{job.request.content.artifact?.filename}</p>}
       {actions.error && <Alert variant="destructive"><AlertTitle>回执待核对</AlertTitle><AlertDescription>{actions.error}</AlertDescription></Alert>}
-      {job ? <section className="space-y-3" aria-label="逐目标发送结果"><h3 className="font-semibold">发送结果</h3><p className="text-xs text-muted-foreground">已发送不表示对方已阅读。</p><ItemGroup>{job.deliveries.map(delivery => <Item role="listitem" aria-label={`发送到 ${delivery.target.display_name}`} size="xs" key={`${delivery.target.kind}:${delivery.target.id}`}><ItemContent><p className="font-medium">{delivery.target.display_name}</p><Badge variant="outline">{deliveryLabels[delivery.state]}</Badge>{delivery.reason && <p className="text-xs text-muted-foreground">{delivery.reason}</p>}</ItemContent>{delivery.state === 'failed' && <Button variant="outline" size="sm" disabled={!shareRetryAllowed(job, delivery)} onClick={() => void actions.retry(delivery.target)}>仅重试 {delivery.target.display_name}</Button>}</Item>)}</ItemGroup><Button variant="outline" disabled={actions.busyRead} onClick={() => void actions.read()}>{actions.busyRead ? '正在读取发送结果…' : '读取发送结果'}</Button></section> : <ShareTargets adapter={adapter} value={targets} onChange={setTargets}/>}
+      {job ? <ShareResults job={job} actions={actions}/> : <ShareTargets adapter={adapter} value={targets} onChange={setTargets}/>}
     </div>
     <DialogFooter className="shrink-0 flex-row flex-wrap items-center"><p className="mr-auto text-xs text-muted-foreground max-sm:w-full">关闭不撤回发送；原报告与勾选保留。</p><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && contentFor(reports, 'link') && <Button variant="outline" onClick={() => {setTargets([]); setMode('link'); setCompose(true)}}>新的分享</Button>}{!job && <Button disabled={!validTargets || !content} onClick={() => {if (content) {void actions.send({organization_id: targets[0].organization_id, reports, targets: targets.map(({kind, id}) => ({kind, id})), content}, targets); setCompose(false)}}}>发送给 {targets.length} 个目标</Button>}</DialogFooter>
   </DialogContent></Dialog>

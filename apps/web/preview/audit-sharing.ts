@@ -42,7 +42,7 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
       if (scene === 'reports-share-directory-denied' || scene === 'reports-share-directory-error' && directoryReads === 1) throw new Error('preview_directory_unavailable')
       const targets = catalog.filter(row => row.kind === kind && row.display_name.includes(query)).map(row => scene === 'reports-share-directory-change' && directoryReads > 1 && row.id === 'preview-member-li' ? {...row, eligibility: 'blocked' as const, reason: '示例：此人员已失去分享资格。'} : row)
       if (scene === 'reports-share-directory-foreign') targets.push({id: 'preview-foreign-member', kind: 'user', display_name: '其他组织人员（示例）', organization_id: 'preview-other-org', eligibility: 'eligible', reason: null})
-      if (scene === 'reports-share-directory-paging') {
+      if (scene.endsWith('share-directory-paging')) {
         if (pageToken && pageToken !== `next:${kind}:${query}`) throw new Error('preview_page_query_mismatch')
         return {...organization, targets: pageToken ? targets.slice(1) : targets.slice(0, 1), next_page_token: !pageToken && targets.length > 1 ? `next:${kind}:${query}` : null}
       }

@@ -61,6 +61,33 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_template_permission_change_has_its_own_revision_and_original_request_receipt(self):
+        schemas = app.openapi()["components"]["schemas"]
+        snapshot = schemas["AuditTemplatePermissions"]["properties"]
+        for field in ("folder", "permission_revision", "manage_access", "members", "actions", "query"):
+            self.assertIn(field, snapshot)
+        folder = schemas["AuditTemplatePermissionFolder"]
+        self.assertEqual(set(folder["required"]), {"customer_id", "folder_id"})
+        request = schemas["AuditTemplatePermissionRequest"]
+        self.assertEqual(set(request["required"]), {"request_id", "folder", "permission_revision", "action"})
+        receipt = schemas["AuditTemplatePermissionReceipt"]
+        self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "applied", "rejected", "conflict", "unknown"])
+        self.assertIn("result_revision", receipt["required"])
+        self.assertEqual(receipt["x-contract-stage"], "ui-draft")
+
+    def test_ui_template_share_freezes_customer_folder_and_template_versions_not_reports(self):
+        schemas = app.openapi()["components"]["schemas"]
+        scope = schemas["AuditTemplateShareScope"]["properties"]
+        for field in ("customer_id", "customer_name", "folder_id", "folder_revision", "templates", "link_access", "zip_access"):
+            self.assertIn(field, scope)
+        request = schemas["AuditTemplateShareRequest"]
+        self.assertEqual(set(request["required"]), {"request_id", "organization_id", "scope", "targets", "content"})
+        self.assertNotIn("reports", request["properties"])
+        self.assertEqual(schemas["AuditTemplateShareContent"]["properties"]["kind"]["enum"], ["link", "zip"])
+        job = schemas["AuditTemplateShare"]
+        self.assertEqual(job["properties"]["deliveries"]["items"]["$ref"], "#/components/schemas/AuditShareDelivery")
+        self.assertEqual(job["x-contract-stage"], "ui-draft")
+
     def test_ui_template_feedback_separates_attachments_submission_and_attempt_receipts(self):
         spec = app.openapi()
         schemas = spec["components"]["schemas"]

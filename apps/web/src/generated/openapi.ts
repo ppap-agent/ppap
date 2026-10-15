@@ -1575,6 +1575,83 @@ export interface components {
             total: number;
             zip_access: components["schemas"]["AuditArchiveAccess"];
         };
+        /**
+         * AuditTemplatePermissionAction
+         * @description One service-authorized choice, not a browser-defined ACL policy.
+         */
+        AuditTemplatePermissionAction: {
+            /** After */
+            after: string | null;
+            /** Before */
+            before: string | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            target: components["schemas"]["AuditShareTargetReference"];
+            /** Target Name */
+            target_name: string;
+        };
+        /** AuditTemplatePermissionFolder */
+        AuditTemplatePermissionFolder: {
+            /** Customer Id */
+            customer_id: string;
+            /** Folder Id */
+            folder_id: string;
+        };
+        /** AuditTemplatePermissionMember */
+        AuditTemplatePermissionMember: {
+            /** Display Name */
+            display_name: string;
+            /** Role */
+            role: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "direct" | "inherited" | "owner";
+            target: components["schemas"]["AuditShareTargetReference"];
+        };
+        /**
+         * AuditTemplatePermissionReceipt
+         * @description A matching ACL read is not confirmation that the original mutation succeeded.
+         */
+        AuditTemplatePermissionReceipt: {
+            /** Reason */
+            reason: string | null;
+            request: components["schemas"]["AuditTemplatePermissionRequest"];
+            /** Result Revision */
+            result_revision: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "applied" | "rejected" | "conflict" | "unknown";
+        };
+        /** AuditTemplatePermissionRequest */
+        AuditTemplatePermissionRequest: {
+            action: components["schemas"]["AuditTemplatePermissionAction"];
+            folder: components["schemas"]["AuditTemplatePermissionFolder"];
+            /** Permission Revision */
+            permission_revision: string;
+            /** Request Id */
+            request_id: string;
+        };
+        /** AuditTemplatePermissions */
+        AuditTemplatePermissions: {
+            /** Actions */
+            actions: components["schemas"]["AuditTemplatePermissionAction"][];
+            /** Creator Name */
+            creator_name: string | null;
+            folder: components["schemas"]["AuditTemplatePermissionFolder"];
+            manage_access: components["schemas"]["AuditArchiveAccess"];
+            /** Members */
+            members: components["schemas"]["AuditTemplatePermissionMember"][];
+            /** Permission Revision */
+            permission_revision: string;
+            /** Query */
+            query: string;
+        };
         /** AuditTemplateQuery */
         AuditTemplateQuery: {
             /** Customer Id */
@@ -1600,6 +1677,62 @@ export interface components {
             file_version_id: string;
             /** Template Id */
             template_id: string;
+        };
+        /** AuditTemplateShare */
+        AuditTemplateShare: {
+            /** Deliveries */
+            deliveries: components["schemas"]["AuditShareDelivery"][];
+            receipt: components["schemas"]["AuditAcceptance"];
+            request: components["schemas"]["AuditTemplateShareRequest"];
+        };
+        /** AuditTemplateShareContent */
+        AuditTemplateShareContent: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "link" | "zip";
+            package: components["schemas"]["AuditTemplateZip"] | null;
+        };
+        /** AuditTemplateShareReference */
+        AuditTemplateShareReference: {
+            /** Customer Id */
+            customer_id: string;
+            /** Folder Id */
+            folder_id: string;
+            /** Folder Revision */
+            folder_revision: string;
+            /** Templates */
+            templates: components["schemas"]["AuditTemplateReference"][];
+        };
+        /** AuditTemplateShareRequest */
+        AuditTemplateShareRequest: {
+            content: components["schemas"]["AuditTemplateShareContent"];
+            /** Organization Id */
+            organization_id: string;
+            /** Request Id */
+            request_id: string;
+            scope: components["schemas"]["AuditTemplateShareReference"];
+            /** Targets */
+            targets: components["schemas"]["AuditShareTargetReference"][];
+        };
+        /**
+         * AuditTemplateShareScope
+         * @description The entire customer folder, independent of list filtering and pagination.
+         */
+        AuditTemplateShareScope: {
+            /** Customer Id */
+            customer_id: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Folder Id */
+            folder_id: string;
+            /** Folder Revision */
+            folder_revision: string;
+            link_access: components["schemas"]["AuditArchiveAccess"];
+            /** Templates */
+            templates: components["schemas"]["AuditTemplateItem"][];
+            zip_access: components["schemas"]["AuditArchiveAccess"];
         };
         /**
          * AuditTemplateZip

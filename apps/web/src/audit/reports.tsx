@@ -35,7 +35,7 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
   const actions = useReportActions(task, onChange, adapter)
   const currentTask = useRef(task); currentTask.current = task
   const contentFor = (reports: components['schemas']['AuditReportReference'][], mode: 'link' | 'file') => shareContentFor(currentTask.current, reports, mode)
-  const sharing = useShareActions(task.report_share, job => {const next = {...currentTask.current, report_share: job}; currentTask.current = next; onChange(next)}, contentFor, sharingAdapter)
+  const sharing = useShareActions(task.report_share, job => {const next = {...currentTask.current, report_share: job}; currentTask.current = next; onChange(next)}, input => sameSnapshot(contentFor(input.reports, input.content.kind === 'link' ? 'link' : 'file'), input.content), sharingAdapter)
   const describe = (reference: components['schemas']['AuditReportReference']) => {const row = task.files.find(row => sameSnapshot(reportReference(task, row), reference)); return {name: row?.file.original_filename || '历史文件', conclusion: row?.audit?.conclusion || '结论待核对'}}
   const [shareScope, setShareScope] = useState<components['schemas']['AuditReportReference'][] | null>(null)
   const shareTrigger = useRef<HTMLButtonElement | null>(null)

@@ -990,6 +990,93 @@ class AuditTemplateZip(TypedDict):
     access: AuditArchiveAccess
 
 
+class AuditTemplateShareReference(TypedDict):
+    customer_id: str
+    folder_id: str
+    folder_revision: str
+    templates: list[AuditTemplateReference]
+
+
+class AuditTemplateShareScope(TypedDict):
+    """The entire customer folder, independent of list filtering and pagination."""
+
+    customer_id: str
+    customer_name: str
+    folder_id: str
+    folder_revision: str
+    templates: list[AuditTemplateItem]
+    link_access: AuditArchiveAccess
+    zip_access: AuditArchiveAccess
+
+
+class AuditTemplateShareContent(TypedDict):
+    kind: Literal["link", "zip"]
+    package: AuditTemplateZip | None
+
+
+class AuditTemplateShareRequest(TypedDict):
+    request_id: str
+    organization_id: str
+    scope: AuditTemplateShareReference
+    targets: list[AuditShareTargetReference]
+    content: AuditTemplateShareContent
+
+
+class AuditTemplateShare(TypedDict):
+    request: AuditTemplateShareRequest
+    receipt: AuditAcceptance
+    deliveries: list[AuditShareDelivery]
+
+
+class AuditTemplatePermissionFolder(TypedDict):
+    customer_id: str
+    folder_id: str
+
+
+class AuditTemplatePermissionMember(TypedDict):
+    target: AuditShareTargetReference
+    display_name: str
+    role: str
+    source: Literal["direct", "inherited", "owner"]
+
+
+class AuditTemplatePermissionAction(TypedDict):
+    """One service-authorized choice, not a browser-defined ACL policy."""
+
+    id: str
+    target: AuditShareTargetReference
+    target_name: str
+    before: str | None
+    after: str | None
+    label: str
+
+
+class AuditTemplatePermissions(TypedDict):
+    folder: AuditTemplatePermissionFolder
+    permission_revision: str
+    query: str
+    creator_name: str | None
+    manage_access: AuditArchiveAccess
+    members: list[AuditTemplatePermissionMember]
+    actions: list[AuditTemplatePermissionAction]
+
+
+class AuditTemplatePermissionRequest(TypedDict):
+    request_id: str
+    folder: AuditTemplatePermissionFolder
+    permission_revision: str
+    action: AuditTemplatePermissionAction
+
+
+class AuditTemplatePermissionReceipt(TypedDict):
+    """A matching ACL read is not confirmation that the original mutation succeeded."""
+
+    request: AuditTemplatePermissionRequest
+    state: Literal["pending", "applied", "rejected", "conflict", "unknown"]
+    result_revision: str | None
+    reason: str | None
+
+
 class AuditTemplateFeedbackRequest(TypedDict):
     """A fixed attachment collection; profile and customer fields are service-owned."""
 
@@ -1041,6 +1128,10 @@ def add_ui_contract(app: FastAPI) -> None:
             AuditTemplateCatalog,
             AuditTemplatePage,
             AuditTemplateZip,
+            AuditTemplateShareScope,
+            AuditTemplateShare,
+            AuditTemplatePermissions,
+            AuditTemplatePermissionReceipt,
             AuditTemplateFeedbackReceipt,
             AuditSupportInfo,
         ):

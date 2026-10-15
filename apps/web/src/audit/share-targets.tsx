@@ -9,7 +9,7 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {targetKey, type AuditSharingAdapter, type ShareTarget} from './sharing-contract'
 
 /** Organization targets are not Drive files. Eligibility comes from the service. */
-export function ShareTargets({adapter, value, onChange}: {adapter: AuditSharingAdapter; value: ShareTarget[]; onChange: (targets: ShareTarget[]) => void}) {
+export function ShareTargets({adapter, value, onChange}: {adapter: Pick<AuditSharingAdapter, 'listTargets'>; value: ShareTarget[]; onChange: (targets: ShareTarget[]) => void}) {
   const [kind, setKind] = useState<ShareTarget['kind']>('user'), [query, setQuery] = useState('')
   const [targets, setTargets] = useState<ShareTarget[]>([]), [nextPage, setNextPage] = useState('')
   const [organization, setOrganization] = useState<{id: string; name: string} | null>(null)

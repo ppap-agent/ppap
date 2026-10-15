@@ -11,6 +11,7 @@ const universe = ['全功能检验报告', '零部件设计验证计划和报告
 /** Local template bytes are conspicuously marked; no customer Drive files or rules are changed. */
 export function fixtureTemplates(scene: string): AuditTemplateAdapter {
   const bytes = new Map<string, Blob>()
+  const listReads = new Map<string, number>()
   const rows = (['a', 'b'] as const).flatMap(customer => Array.from({length: customer === 'a' ? 12 : 1}, (_, position): TemplateItem => {
     const index = position + 1, id = `preview-template-${customer}-${index}-v1`, name = customer === 'b' ? '示例客户B模板.xlsx' : index === 1 ? '示例控制计划模板.xlsx' : index === 2 ? '示例尺寸检验报告模板.xlsx' : `示例归档模板 ${index}.xlsx`
     const book = utils.book_new()
@@ -22,8 +23,10 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
   return {
     readCatalog: async () => ({coverage_universe: universe, customers: scene === 'templates-empty-customers' ? [] : [{customer_id: 'preview-customer-a', name: '示例客户 A', effective_rule_types: ['控制计划', '全功能检验报告', '潜在过程失效模式及后果分析', '过程流程图', '测量系统分析评价', '零件提交保证书', '控制计划']}, {customer_id: 'preview-customer-b', name: '示例客户 B', effective_rule_types: ['控制计划']}] }),
     listTemplates: async query => {
+      listReads.set(query.customer_id, (listReads.get(query.customer_id) || 0) + 1)
       const all = scene === 'templates-empty' ? [] : rows.filter(row => row.reference.customer_id === query.customer_id), filtered = all.filter(row => `${row.file.original_filename} ${row.document_type}`.includes(query.search))
-      return {query: structuredClone(query), folder_id: `preview-folder-${query.customer_id}`, folder_revision: 'preview-revision-1', folder_template_count: all.length, creator_name: '示例创建人', manage_access: {state: 'denied', reason: '只有服务确认的文件夹管理者可修改权限。'}, zip_access: scene === 'templates-denied' ? denied : allowed, items: structuredClone(filtered.slice((query.page - 1) * 10, query.page * 10)), total: filtered.length}
+      const manage = scene.startsWith('templates-permissions-') && !(scene === 'templates-permissions-restore-denied' && listReads.get(query.customer_id)! > 1)
+      return {query: structuredClone(query), folder_id: `preview-folder-${query.customer_id}`, folder_revision: 'preview-revision-1', folder_template_count: all.length, creator_name: '示例创建人', manage_access: manage ? allowed : {state: 'denied', reason: '只有服务确认的文件夹管理者可修改权限。'}, zip_access: scene === 'templates-denied' ? denied : allowed, items: structuredClone(filtered.slice((query.page - 1) * 10, query.page * 10)), total: filtered.length}
     },
     readFile: async (item, purpose) => {
       const row = rows.find(row => row.reference.file_version_id === item.reference.file_version_id && row.reference.customer_id === item.reference.customer_id && row.reference.template_id === item.reference.template_id)

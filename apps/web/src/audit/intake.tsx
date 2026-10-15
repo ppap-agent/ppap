@@ -30,6 +30,8 @@ import {AuditSupport} from './support'
 import type {AuditSupportAdapter, AuditTemplateAdapter} from './template-contract'
 import {TemplateFeedback} from './template-feedback'
 import type {AuditFeedbackAdapter} from './feedback-contract'
+import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
+import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -44,7 +46,7 @@ const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewi
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
-export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter}) {
+export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter}) {
   const [surface, setSurface] = useState<'audit' | 'archive' | 'templates'>(() => {const view = new URL(location.href).searchParams.get('view'); return view === 'archive' || view === 'templates' ? view : 'audit'})
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
@@ -289,7 +291,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
       <main id="audit-main" tabIndex={-1} className={`mx-auto w-full space-y-6 p-6 max-sm:p-4 ${workbench || surface !== 'audit' ? '' : 'max-w-5xl'}`}>
         <p role="note" className="text-xs text-muted-foreground">{surface === 'templates' ? '交互预览：示例模板，不会启动审核或收费。' : '示例数据，不会启动真实审核或收费。实际上传、格式检查、规则匹配与持久化尚未接入。'}</p>
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>档案读取接口尚未接入</AlertTitle><AlertDescription>不能把当前任务文件名当作已归档的来源文档。</AlertDescription></Alert>}</div>}
-        {templatesOpened && <div hidden={surface !== 'templates'}>{templateAdapter ? <AuditTemplates active={surface === 'templates'} adapter={templateAdapter} onReturn={() => showSurface('audit')} onFeedback={openFeedback}/> : <Alert><AlertTitle>模板库尚未接入</AlertTitle><AlertDescription>未使用审核规则或示例报告冒充客户模板。<Button variant="outline" onClick={() => showSurface('audit')}>返回审核</Button></AlertDescription></Alert>}</div>}
+        {templatesOpened && <div hidden={surface !== 'templates'}>{templateAdapter ? <AuditTemplates active={surface === 'templates'} adapter={templateAdapter} sharingAdapter={templateSharingAdapter} permissionAdapter={templatePermissionAdapter} onReturn={() => showSurface('audit')} onFeedback={openFeedback}/> : <Alert><AlertTitle>模板库尚未接入</AlertTitle><AlertDescription>未使用审核规则或示例报告冒充客户模板。<Button variant="outline" onClick={() => showSurface('audit')}>返回审核</Button></AlertDescription></Alert>}</div>}
         <div hidden={surface !== 'audit'} className="space-y-6">
         {!reportView && <ol aria-label="审核步骤" className="flex flex-wrap gap-4 border-b pb-4">{['上传与检查', '确认规则', 'AI审核'].map((label, index) => <li key={label} aria-current={(workbench ? 2 : step === 'match' ? 1 : 0) === index ? 'step' : undefined} className="flex items-center gap-2"><span className="text-muted-foreground">{index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight className="size-3 text-muted-foreground"/>}</li>)}</ol>}
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
