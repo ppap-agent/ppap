@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
+from fastapi import FastAPI
 from pydantic import TypeAdapter
 
 AnalysisMode = Literal["standard", "deep"]
@@ -585,3 +586,65 @@ class WritebackResponse(TypedDict, total=False):
 class HostLoginRequest(TypedDict):
     code: str
     redirect_uri: NotRequired[str]
+
+
+class AuditFileValidation(TypedDict):
+    state: Literal["pending", "checking", "valid", "invalid", "error"]
+    reasons: list[str]
+
+
+class AuditRuleMatch(TypedDict):
+    state: Literal["pending", "matching", "matched", "unmatched", "failed"]
+    metadata: Metadata
+    document_type: str | None
+    rule: BoundRule | None
+    gaps: list[str]
+
+
+class AuditTaskFile(TypedDict):
+    file: FileVersion
+    selection: Literal["selected", "unselected", "removed"]
+    removal_reason: str | None
+    validation: AuditFileValidation
+    match: AuditRuleMatch | None
+
+
+class AuditTask(TypedDict):
+    """UI-0 contract; not a claim that a task runtime operation exists."""
+
+    id: str
+    number: str
+    state: Literal["matching", "pending_confirm", "reviewing", "completed"]
+    analysis_mode: AnalysisMode
+    created_at: str
+    updated_at: str
+    source_draft_id: str | None
+    round_id: str | None
+    customer_preference: str | None
+    files: list[AuditTaskFile]
+    completion_reason: Literal["no_matching_rules", "processed"] | None
+    estimated_points: int | None
+
+
+def add_ui_contract(app: FastAPI) -> None:
+    """Extend native OpenAPI components, without documenting fake endpoints."""
+    native_openapi = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        spec = native_openapi()
+        schemas = spec.setdefault("components", {}).setdefault("schemas", {})
+        root = TypeAdapter(AuditTask).json_schema(ref_template="#/components/schemas/{model}")
+        definitions = root.pop("$defs", {})
+        definitions["AuditTask"] = root
+        for name, definition in definitions.items():
+            if name in schemas:
+                existing = {key: value for key, value in schemas[name].items() if key != "x-contract-stage"}
+                if existing != definition:
+                    raise ValueError(f"conflicting OpenAPI schema: {name}")
+            else:
+                schemas[name] = definition
+        for name in ("AuditTask", "AuditTaskFile", "AuditFileValidation", "AuditRuleMatch"):
+            schemas[name]["x-contract-stage"] = "ui-draft"
+        return spec
+
+    app.openapi = openapi  # type: ignore[method-assign]  # FastAPI's schema-extension hook.

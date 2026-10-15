@@ -61,6 +61,29 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_task_contract_is_explicit_without_inventing_a_runtime_endpoint(self):
+        spec = app.openapi()
+        task = spec["components"]["schemas"]["AuditTask"]
+        self.assertEqual(task["x-contract-stage"], "ui-draft")
+        self.assertEqual(task["properties"]["state"]["enum"], ["matching", "pending_confirm", "reviewing", "completed"])
+        self.assertIn("completion_reason", task["properties"])
+        self.assertNotIn("/tasks", spec["paths"])
+        self.assertNotIn("AuditTask", str(spec["paths"]))
+        self.assertIs(app.openapi(), spec)
+
+        def check_refs(value):
+            if isinstance(value, dict):
+                if "$ref" in value:
+                    name = value["$ref"].removeprefix("#/components/schemas/")
+                    self.assertIn(name, spec["components"]["schemas"])
+                for child in value.values():
+                    check_refs(child)
+            elif isinstance(value, list):
+                for child in value:
+                    check_refs(child)
+
+        check_refs(spec["components"]["schemas"])
+
     def test_major_web_operations_have_explicit_json_contracts(self):
         spec = app.openapi()
         paths = spec.get("paths") or {}

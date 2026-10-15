@@ -39,9 +39,9 @@
       <div class="heading"><h1>PPAP · 本地预览台</h1><p class="hint">概念原型与现有页面 · 模拟数据 · 不连接现网</p></div>
       <div class="toolbar" role="group" aria-label="预览设置">
         <label class="group"><span class="label">页面</span><select id="page" aria-label="页面">
-          <option value="intake">统一审核旅程</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="requirements">审核要求</option><option value="usage">用量记录</option>
+          <option value="audit">V3.1 上传与规则确认</option><option value="intake">统一审核旅程（原型）</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="requirements">审核要求</option><option value="usage">用量记录</option>
         </select></label>
-        <div id="scenes" class="group" role="group" aria-label="数据场景"><span class="label">场景</span><button data-scene="populated" type="button">有数据</button><button data-scene="empty" type="button">空状态</button><button data-scene="error" type="button">错误</button><button data-scene="long" type="button">长列表</button></div>
+        <div id="scenes" class="group" role="group" aria-label="数据场景"><span class="label">场景（切换会重置）</span><button data-scene="populated" type="button">有数据</button><button data-scene="empty" type="button">空状态</button><button data-scene="error" type="button">错误</button><button data-scene="long" type="button">长列表</button><button data-scene="invalid" type="button">异常文件</button><button data-scene="partial" type="button">部分匹配</button><button data-scene="unmatched" type="button">零匹配</button></div>
         <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="390" type="button">手机</button><button data-width="820" type="button">平板</button><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
         <div class="spacer"></div>
         <button id="theme" type="button" aria-label="切换明暗主题">深色</button>
@@ -52,25 +52,41 @@
     <main class="stage" aria-label="预览画布"><div id="device" class="device"><iframe id="product" title="PPAP 产品预览"></iframe></div></main>
   </div>
   <script>
-    const paths = {concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', requirements: '/preview/intake.html?view=requirements', usage: '/preview/intake.html?view=usage'};
-    const choices = {scene: ['populated', 'empty', 'error', 'long'], width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
+    const paths = {audit: '/preview/audit.html', concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', requirements: '/preview/intake.html?view=requirements', usage: '/preview/intake.html?view=usage'};
+    const choices = {scene: ['populated', 'empty', 'error', 'long', 'invalid', 'partial', 'unmatched'], width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
-    const state = {page: paths[query.get('page')] ? query.get('page') : 'intake', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: choices.width.includes(query.get('width')) ? query.get('width') : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light'};
+    const savedWidth = Number(query.get('width'));
+    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light'};
     const frame = document.getElementById('product');
     const device = document.getElementById('device');
     const custom = document.getElementById('custom-width');
     function render(reload) {
-      document.cookie = `ppap_preview_scene=${state.scene}; Path=/; SameSite=Lax`;
-      document.cookie = `ppap_preview_theme=${state.theme}; Path=/; SameSite=Lax`;
+      if (state.page !== 'audit') {
+        document.cookie = `ppap_preview_scene=${state.scene}; Path=/; SameSite=Lax`;
+        document.cookie = `ppap_preview_theme=${state.theme}; Path=/; SameSite=Lax`;
+      }
       document.getElementById('page').value = state.page;
       document.getElementById('scenes').hidden = state.page === 'concept' || state.page === 'intake' || state.page === 'progress' || state.page === 'amendment';
-      for (const button of document.querySelectorAll('[data-scene]')) button.setAttribute('aria-pressed', String(button.dataset.scene === state.scene));
+      for (const button of document.querySelectorAll('[data-scene]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.scene === state.scene));
+        button.hidden = state.page === 'audit' ? ['empty', 'long'].includes(button.dataset.scene) : ['invalid', 'partial', 'unmatched'].includes(button.dataset.scene);
+      }
       for (const button of document.querySelectorAll('[data-width]')) button.setAttribute('aria-pressed', String(button.dataset.width === state.width));
       device.classList.toggle('fluid', state.width === 'fluid');
       device.style.setProperty('--frame-width', state.width === 'fluid' ? '100%' : `${state.width}px`);
       custom.value = state.width === 'fluid' ? '' : state.width;
       document.getElementById('theme').textContent = state.theme === 'light' ? '深色' : '浅色';
-      const destination = paths[state.page];
+      let destination = paths[state.page];
+      if (state.page === 'audit') {
+        const target = new URL(destination, location.origin);
+        target.searchParams.set('scene', state.scene);
+        target.searchParams.set('theme', state.theme);
+        destination = target.pathname + target.search;
+        if (!reload && frame.contentDocument) {
+          frame.contentDocument.documentElement.classList.toggle('dark', state.theme === 'dark');
+          frame.contentWindow.history.replaceState(null, '', destination);
+        }
+      }
       document.getElementById('standalone').href = destination;
       const current = new URLSearchParams(state);
       history.replaceState(null, '', `/__preview?${current}`);
@@ -80,12 +96,12 @@
     for (const button of document.querySelectorAll('[data-scene]')) button.addEventListener('click', () => { state.scene = button.dataset.scene; render(true); });
     for (const button of document.querySelectorAll('[data-width]')) button.addEventListener('click', () => { state.width = button.dataset.width; render(false); });
     custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
-    document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(true); });
+    document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
     document.getElementById('refresh').addEventListener('click', () => { frame.contentWindow.location.reload(); });
     frame.addEventListener('load', () => {
       const opened = new URL(frame.contentWindow.location.href);
       const path = opened.pathname;
-      const actual = path === '/preview/concept.html' ? (opened.searchParams.get('stage') === 'response' ? 'amendment' : 'concept') : path === '/preview/intake.html' ? (['requirements', 'usage'].includes(opened.searchParams.get('view')) ? opened.searchParams.get('view') : opened.searchParams.get('step') === 'progress' ? 'progress' : 'intake') : null;
+      const actual = path === '/preview/audit.html' ? 'audit' : path === '/preview/concept.html' ? (opened.searchParams.get('stage') === 'response' ? 'amendment' : 'concept') : path === '/preview/intake.html' ? (['requirements', 'usage'].includes(opened.searchParams.get('view')) ? opened.searchParams.get('view') : opened.searchParams.get('step') === 'progress' ? 'progress' : 'intake') : null;
       if (actual && actual !== state.page) { state.page = actual; render(false); }
     });
     render(true);

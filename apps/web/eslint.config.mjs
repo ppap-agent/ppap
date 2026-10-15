@@ -7,7 +7,7 @@ export default defineConfig([
     ignores: ['dist/**', 'node_modules/**', '.pnpm-store/**', 'src/components/ui/**'],
   },
   {
-    files: ['src/**/*.{js,jsx,ts,tsx}'],
+    files: ['src/**/*.{js,jsx,ts,tsx}', 'preview/**/*.{js,jsx,ts,tsx}'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {ecmaFeatures: {jsx: true}, sourceType: 'module'},

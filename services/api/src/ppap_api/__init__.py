@@ -797,6 +797,7 @@ def create_app(
 
     register_audit_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of)
+    wc.add_ui_contract(app)
     return app
 
 

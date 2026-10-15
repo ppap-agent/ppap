@@ -19,6 +19,12 @@ export default defineConfig({
       configureServer(server: {middlewares: {use: (handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: () => void) => void) => void}}) {
         server.middlewares.use((req, res, next) => {
           const pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname
+          if (pathname === '/api' || pathname.startsWith('/api/')) {
+            res.statusCode = 503
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify({error: 'preview_has_no_business_api'}))
+            return
+          }
           if (pathname === '/__preview') {
             res.setHeader('Content-Type', 'text/html; charset=utf-8')
             res.setHeader('Cache-Control', 'no-store')
@@ -61,7 +67,7 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: {
+    proxy: preview ? undefined : {
       '/api': {target: process.env.PPAP_PUBLIC_API_URL || 'http://127.0.0.1:8080', changeOrigin: true, rewrite: path => path.replace(/^\/api/, '')},
     },
     host: preview ? '127.0.0.1' : docker ? '0.0.0.0' : '127.0.0.1',

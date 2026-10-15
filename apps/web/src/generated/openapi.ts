@@ -934,6 +934,79 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** AuditFileValidation */
+        AuditFileValidation: {
+            /** Reasons */
+            reasons: string[];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "checking" | "valid" | "invalid" | "error";
+        };
+        /** AuditRuleMatch */
+        AuditRuleMatch: {
+            /** Document Type */
+            document_type: string | null;
+            /** Gaps */
+            gaps: string[];
+            metadata: components["schemas"]["Metadata"];
+            rule: components["schemas"]["BoundRule"] | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "matching" | "matched" | "unmatched" | "failed";
+        };
+        /**
+         * AuditTask
+         * @description UI-0 contract; not a claim that a task runtime operation exists.
+         */
+        AuditTask: {
+            /**
+             * Analysis Mode
+             * @enum {string}
+             */
+            analysis_mode: "standard" | "deep";
+            /** Completion Reason */
+            completion_reason: ("no_matching_rules" | "processed") | null;
+            /** Created At */
+            created_at: string;
+            /** Customer Preference */
+            customer_preference: string | null;
+            /** Estimated Points */
+            estimated_points: number | null;
+            /** Files */
+            files: components["schemas"]["AuditTaskFile"][];
+            /** Id */
+            id: string;
+            /** Number */
+            number: string;
+            /** Round Id */
+            round_id: string | null;
+            /** Source Draft Id */
+            source_draft_id: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "matching" | "pending_confirm" | "reviewing" | "completed";
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AuditTaskFile */
+        AuditTaskFile: {
+            file: components["schemas"]["FileVersion"];
+            match: components["schemas"]["AuditRuleMatch"] | null;
+            /** Removal Reason */
+            removal_reason: string | null;
+            /**
+             * Selection
+             * @enum {string}
+             */
+            selection: "selected" | "unselected" | "removed";
+            validation: components["schemas"]["AuditFileValidation"];
+        };
         /** BoundRule */
         BoundRule: {
             /** Body */
