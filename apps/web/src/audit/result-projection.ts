@@ -2,6 +2,9 @@ import type {components} from '../generated/openapi'
 
 type Task = components['schemas']['AuditTask']
 type TaskFile = components['schemas']['AuditTaskFile']
+export function checkScopeComplete(item: components['schemas']['AuditClauseEvaluation']): boolean {
+  return !item.scope || item.scope.unknown === 0 && item.scope.checked === item.scope.total && (item.scope.total > 0 || item.finding?.status === 'NA')
+}
 
 /** Wire property order is irrelevant; array order and all snapshot values are not. */
 export function sameSnapshot(left: unknown, right: unknown): boolean {
@@ -51,6 +54,7 @@ export function frozenResultError(roundId: string | null, row: TaskFile, frozenF
   const frozen = new Set(frozenFileVersionIds)
   if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮冻结文件范围内。'
   const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.evidence_verified && item.finding)
+  if (valid.some(item => item.finding?.status === 'PASS' && !checkScopeComplete(item))) return 'PASS 结论缺少完整的检查范围，未知不能视为满足。'
   const counts = {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
   for (const item of audit.checks) {
     if (['queued', 'running'].includes(item.execution)) continue
@@ -61,7 +65,7 @@ export function frozenResultError(roundId: string | null, row: TaskFile, frozenF
     else if (item.finding.status === 'NG') counts.ng_count += 1
   }
   if (!sameSnapshot(counts, audit.counts)) return '审核计数与条目明细不一致。'
-  const complete = audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status) && (!item.scope || item.scope.unknown === 0 && item.scope.checked === item.scope.total && (item.scope.total > 0 || item.finding!.status === 'NA')))
+  const complete = audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status) && checkScopeComplete(item))
   if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与条目状态不一致。'
   if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return 'PASS 结论缺少完整、已验证的审核依据。'
   if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return 'NG 结论没有对应的已验证不符合项。'

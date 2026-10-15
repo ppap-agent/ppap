@@ -152,7 +152,7 @@ const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, p
   const seed = {...matched, id, number: `PPAP-历史示例-${sequence}`, files: matched.files.map((row, index) => ({...row, file: {...row.file, file_id: `${id}-file-${index}`, id: `${id}-version-${index}`}}))}
   const accepted = fixtureAcceptance(seed, `${id}-accept`)
   return pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
-})
+}, sharingAdapter.forReport)
 
 // A fixed read fixture, not persistence of arbitrary uploads or a second runtime API.
 if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsWith('reports-')) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
 import {resultConsistencyError, sameFrozenInputs, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
-import {readReportPdf} from './report-contract.ts'
+import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
 function projection(): Task {
@@ -34,6 +34,17 @@ test('explicitly incomplete scope cannot earn PASS or a formal report, but can r
   assert.match(error(task), /不能生成正式/)
   audit.report = {state: 'not_eligible', report_id: null, reason: '范围未完成'}
   assert.equal(error(task), '')
+})
+test('a valid NG cannot hide a second PASS whose scope is still unknown', () => {
+  const task = projection(), row = task.files[0], audit = row.audit!
+  const second = structuredClone(audit.checks[0])
+  second.rule_item.id = '2'; second.finding!.item_key = '2'; second.scope = {checked: 0, total: 1, unknown: 1}
+  audit.checks[0].finding!.status = 'NG'; audit.checks.push(second)
+  if (audit.rule.body.kind === 'engine') audit.rule.body.rules.push(structuredClone(second.rule_item))
+  row.match!.rule = structuredClone(audit.rule)
+  audit.progress = {completed: 2, total: 2}; audit.counts = {...audit.counts, ng_count: 1}; audit.conclusion = 'NG'; audit.summary = null; audit.report = {state: 'not_eligible', report_id: null, reason: null}
+  assert.match(error(task), /PASS 结论缺少完整/)
+  assert.equal(audit.checks[0].finding!.status, 'NG')
 })
 test('sharing accepts only a ready frozen report and its exact PDF artifact', () => {
   const task = projection(), row = task.files[0], reference = reportReference(task, row)!
@@ -88,6 +99,13 @@ test('PDF reads reject HTML, mismatched sizes and wrong media types', async () =
   const valid = new Blob(['%PDF-1.7\n'], {type: 'application/pdf'})
   assert.equal((await readReportPdf({readPdf: async () => valid}, reference, artifact)).size, 9)
   for (const blob of [new Blob(['<html>bad'], {type: 'application/pdf'}), new Blob(['%PDF-1.7\nextra'], {type: 'application/pdf'}), new Blob(['%PDF-1.7\n'], {type: 'text/html'})]) await assert.rejects(readReportPdf({readPdf: async () => blob}, reference, artifact), /invalid_pdf_artifact/)
+})
+test('ZIP downloads require an accepted ready artifact and matching bytes', async () => {
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'zip-1', reports: [], receipt: {request_id: 'request-1', state: 'accepted', reason: null}, state: 'ready', artifact: {artifact_id: 'zip-bytes', filename: 'reports.zip', content_type: 'application/zip', byte_size: 7}, reason: null, retry_allowed: false}
+  const valid = new Blob(['PKbytes'], {type: 'application/zip'})
+  assert.equal((await readReportZip({readPackageFile: async () => valid}, job)).size, 7)
+  for (const state of ['pending', 'rejected'] as const) await assert.rejects(readReportZip({readPackageFile: async () => {throw new Error('must_not_read')}}, {...job, receipt: {...job.receipt, state}}), /invalid_zip_artifact/)
+  for (const blob of [new Blob(['<html/>'], {type: 'application/zip'}), new Blob(['PKextra-bytes'], {type: 'application/zip'}), new Blob(['PKbytes'], {type: 'text/html'})]) await assert.rejects(readReportZip({readPackageFile: async () => blob}, job), /invalid_zip_artifact/)
 })
 test('readback preserves the accepted round, file versions, rules and input selection', () => {
   const before = projection(), after = structuredClone(before)

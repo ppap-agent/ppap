@@ -1,6 +1,8 @@
 import type {components} from '../src/generated/openapi'
 import {shareContentFor, sameSnapshot} from '../src/audit/result-projection'
 import {targetKey, type AuditSharingAdapter, type ShareTarget, type ReportShare} from '../src/audit/sharing-contract'
+import {shareUnresolved} from '../src/audit/share-actions'
+import type {AuditReportReference} from '../src/audit/report-contract'
 
 type Task = components['schemas']['AuditTask']
 const organization = {organization_id: 'preview-org', organization_name: '示例质量团队'}
@@ -14,18 +16,27 @@ const catalog: ShareTarget[] = [
 ]
 
 /** Controlled preview effects only; no Feishu IM API, permanent public URL or delivery claim. */
-export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSharingAdapter {
+export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSharingAdapter & {forReport: (reference: AuditReportReference) => ReportShare | null} {
   const jobs = new Map<string, ReportShare>()
   const reads = new Map<string, number>()
   const deniedAttempts = new Map<string, string>()
   const partial = scene.startsWith('reports-share-partial')
   let directoryReads = 0
+  function observed(job: ReportShare): ReportShare {
+    if (['reports-share-unknown', 'archive-share-unknown'].includes(scene) && (reads.get(job.request.request_id) || 0) < 2) return {...structuredClone(job), receipt: {...job.receipt, state: 'pending'}, deliveries: job.deliveries.map(row => ({...row, state: 'unknown', retry_allowed: false, reason: '示例：原发送回执仍未知，不重发。'}))}
+    return structuredClone(job)
+  }
   function save(job: ReportShare) {
     jobs.set(job.request.request_id, structuredClone(job))
     const task = tasks.get(job.request.reports[0].task_id)!
-    tasks.set(task.id, {...task, report_share: structuredClone(job)})
+    const related = [...jobs.values()].filter(row => row.request.reports.some(reference => reference.task_id === task.id)).map(observed)
+    tasks.set(task.id, {...task, report_share: related.find(shareUnresolved) || related.at(-1)!})
   }
   return {
+    forReport: reference => {
+      const related = [...jobs.values()].filter(job => job.request.reports.length === 1 && sameSnapshot(job.request.reports[0], reference)).map(observed)
+      return related.find(shareUnresolved) || related.at(-1) || null
+    },
     listTargets: async (query, kind, pageToken) => {
       directoryReads += 1
       if (scene === 'reports-share-directory-denied' || scene === 'reports-share-directory-error' && directoryReads === 1) throw new Error('preview_directory_unavailable')
@@ -56,7 +67,7 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
         return structuredClone(job)
       }
       save(job)
-      if (scene === 'reports-share-unknown') throw new Error('preview_share_receipt_lost')
+      if (scene === 'reports-share-unknown' || scene === 'archive-share-unknown') throw new Error('preview_share_receipt_lost')
       return {...structuredClone(job), deliveries: job.deliveries.map(row => ({...row, state: 'pending', reason: '示例：等待平台发送回执。'}))}
     },
     read: async ({request_id: requestId, attempts}) => {
@@ -72,7 +83,7 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
           save(job)
         }
       }
-      if (scene === 'reports-share-unknown' && count === 1) return {...structuredClone(job), receipt: {...job.receipt, state: 'pending'}, deliveries: job.deliveries.map(row => ({...row, state: 'unknown', retry_allowed: false, reason: '示例：原发送回执仍未知，不重发。'}))}
+      if (['reports-share-unknown', 'archive-share-unknown'].includes(scene) && count === 1) return observed(job)
       if (count > 1) {job.deliveries = job.deliveries.map(row => row.state === 'unknown' ? {...row, state: 'sent', reason: '示例：读回原发送已成功，未再次发送。'} : row); save(job)}
       return structuredClone(job)
     },

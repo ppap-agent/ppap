@@ -12,7 +12,7 @@ import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTri
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileName} from '../journey/file-name'
 import {ArchiveHistory} from './history'
-import {readReportPdf, type AuditReportAdapter, type AuditReportPackage, type AuditReportReference} from './report-contract'
+import {readReportPdf, readReportZip, type AuditReportAdapter, type AuditReportPackage, type AuditReportReference} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {useReportPackage} from './report-actions'
 import {ReportPackage} from './report-package'
@@ -52,8 +52,8 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
     try {
       const item = chosen[0], reference = item ? historyReportReference(item.entry) : null
       const artifact = job?.artifact
-      const blob = asPackage && job ? await reportAdapter.readPackageFile(structuredClone(job)) : reference && item.entry.report.artifact ? await readReportPdf(reportAdapter, reference, item.entry.report.artifact) : null
-      if (!blob || asPackage && job && (job.receipt.state !== 'accepted' || job.state !== 'ready' || !artifact || blob.type !== 'application/zip' || blob.size !== artifact.byte_size || await blob.slice(0, 2).text() !== 'PK')) throw new Error('invalid_archive_download')
+      const blob = asPackage && job ? await readReportZip(reportAdapter, job) : reference && item.entry.report.artifact ? await readReportPdf(reportAdapter, reference, item.entry.report.artifact) : null
+      if (!blob) throw new Error('invalid_archive_download')
       if (!alive.current) return
       url = URL.createObjectURL(blob); const link = window.document.createElement('a'); link.href = url; link.download = asPackage && job ? artifact!.filename : item.entry.report.artifact!.filename; link.click()
     } catch {if (alive.current) setDownloadError('下载未完成。固定报告集合仍保留，未改用最新版本。')}

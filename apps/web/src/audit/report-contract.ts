@@ -17,3 +17,11 @@ export async function readReportPdf(adapter: Pick<AuditReportAdapter, 'readPdf'>
   if (artifact.content_type !== 'application/pdf' || blob.type !== 'application/pdf' || blob.size !== artifact.byte_size || await blob.slice(0, 5).text() !== '%PDF-') throw new Error('invalid_pdf_artifact')
   return blob
 }
+
+export async function readReportZip(adapter: Pick<AuditReportAdapter, 'readPackageFile'>, job: AuditReportPackage): Promise<Blob> {
+  const artifact = job.artifact
+  if (job.receipt.state !== 'accepted' || job.state !== 'ready' || !job.package_id || !artifact?.artifact_id || artifact.content_type !== 'application/zip' || artifact.byte_size <= 0) throw new Error('invalid_zip_artifact')
+  const blob = await adapter.readPackageFile(structuredClone(job))
+  if (blob.type !== 'application/zip' || blob.size !== artifact.byte_size || await blob.slice(0, 2).text() !== 'PK') throw new Error('invalid_zip_artifact')
+  return blob
+}

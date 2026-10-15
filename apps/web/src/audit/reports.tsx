@@ -8,7 +8,7 @@ import {Item, ItemContent, ItemGroup} from '../components/ui/item'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {FileName} from '../journey/file-name'
 import {resultConsistencyError, reportReady, reportReference, shareContentFor, sameSnapshot} from './result-projection'
-import {readReportPdf, type AuditReportAdapter} from './report-contract'
+import {readReportPdf, readReportZip, type AuditReportAdapter} from './report-contract'
 import {useReportActions} from './report-actions'
 import {ReportPackage} from './report-package'
 import {ReportPreview} from './report-preview'
@@ -61,8 +61,7 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
     if (!adapter || !job || !artifact || job.state !== 'ready' || downloading) return
     setDownloading(true); setZipDownloadError('')
     try {
-      const blob = await adapter.readPackageFile(structuredClone(job))
-      if (blob.type !== 'application/zip' || blob.size !== artifact.byte_size || (await blob.slice(0, 2).text()) !== 'PK') throw new Error('invalid_zip_artifact')
+      const blob = await readReportZip(adapter, job)
       saveBlob(blob, artifact.filename)
     } catch {if (alive.current) setZipDownloadError('ZIP 暂时无法下载。已就绪 PDF 保留，只需重试下载。')}
     finally {if (alive.current) setDownloading(false)}

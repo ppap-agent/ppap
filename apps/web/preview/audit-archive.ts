@@ -1,6 +1,8 @@
 import type {components} from '../src/generated/openapi'
 import type {ArchiveDocument, AuditArchiveAdapter, HistoryDetail, HistoryEntry} from '../src/audit/archive-contract'
-import {resultKey, historyShareMatches} from '../src/audit/archive-contract'
+import {resultKey, historyReportReference} from '../src/audit/archive-contract'
+import type {AuditReportReference} from '../src/audit/report-contract'
+import type {ReportShare} from '../src/audit/sharing-contract'
 import {fixtureReport, withReportBytes} from './audit-reports'
 
 type Task = components['schemas']['AuditTask']
@@ -8,7 +10,7 @@ const allowed = {state: 'allowed' as const, reason: null}
 const denied = {state: 'denied' as const, reason: '示例：档案访问不授予私有来源任务权限。'}
 
 /** Provider-confirmed sample identities only. Arbitrary uploads are not archived. */
-export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (id: string, sequence: number, failed: boolean, pending: boolean) => Task): AuditArchiveAdapter {
+export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (id: string, sequence: number, failed: boolean, pending: boolean) => Task, readShare: (reference: AuditReportReference) => ReportShare | null): AuditArchiveAdapter {
   const documents: ArchiveDocument[] = []
   const entries = new Map<string, HistoryEntry[]>()
   const details = new Map<string, HistoryDetail>()
@@ -22,7 +24,8 @@ export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (i
         const history: HistoryEntry[] = []
         for (const sequence of index === 0 ? [4, 3, 2, 1] : [1]) {
           const failed = index === 3 || index === 0 && sequence === 1, pending = index === 0 && sequence === 4
-          let task = await withReportBytes(seed(`preview-archive-task-${short}-${sequence}`, sequence, failed, pending))
+          // Two files in one sample task/round retain distinct document identities.
+          let task = index === 2 ? tasks.get('preview-archive-task-A001-3')! : await withReportBytes(seed(`preview-archive-task-${short}-${sequence}`, sequence, failed, pending))
           if (scene === 'archive-report-failed' && index === 0 && sequence === 2) task = {...task, files: task.files.map(row => row.audit && row.file.original_filename === '控制计划.xlsx' ? {...row, audit: {...row.audit, report: {...row.audit.report, state: 'failed', artifact: null, generated_at: null, reason: '示例 PDF 生成失败，审核结果保留。', regenerate_allowed: true, regenerate_reason: '示例服务明确允许重生成同一结果；不代表生产收费政策。'}}} : row)}
           tasks.set(task.id, task)
           const file = task.files[index === 2 ? 0 : index === 3 ? 2 : 1], audit = file.audit!
@@ -61,8 +64,9 @@ export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (i
         tasks.set(task.id, task)
       }
       const file = task?.files.find(row => row.file.id === reference.file_version_id)
-      if (file?.audit) {result.file = structuredClone(file); result.entry.report = structuredClone(file.audit.report); result.report_share = structuredClone(task?.report_share || null)}
-      if (!historyShareMatches(result.entry, result.report_share)) result.report_share = null
+      if (file?.audit) {result.file = structuredClone(file); result.entry.report = structuredClone(file.audit.report)}
+      const reportReference = historyReportReference(result.entry)
+      result.report_share = reportReference ? readShare(reportReference) : null
       if (scene === 'archive-original-denied') result.originals = result.originals.map(row => ({...row, file: null, access: {state: 'denied', reason: '示例：当前账号可读报告，但不可读原件。'}}))
       if (['archive-report-deleted', 'archive-report-denied'].includes(scene) && result.entry.sequence === 2) {
         const access = {state: scene === 'archive-report-deleted' ? 'deleted' as const : 'denied' as const, reason: '示例：所选历史报告已删除或权限已变更；不会改开最新报告。'}

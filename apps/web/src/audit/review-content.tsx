@@ -10,7 +10,7 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {FileName} from '../journey/file-name'
-import {frozenResultError, sameSnapshot} from './result-projection'
+import {checkScopeComplete, frozenResultError, sameSnapshot} from './result-projection'
 
 type File = components['schemas']['AuditTaskFile']
 type Evaluation = components['schemas']['AuditClauseEvaluation']
@@ -24,6 +24,7 @@ function checkLabel(check: Evaluation) {
   if (check.execution === 'running') return '审核中'
   if (check.execution === 'failed') return '技术错误'
   if (check.coverage !== 'executed') return '未覆盖'
+  if (check.finding?.status === 'PASS' && !checkScopeComplete(check)) return '范围未完成'
   if (check.finding && ['PASS', 'NG', 'NA'].includes(check.finding.status) && !check.evidence_verified) return '依据待核对'
   return check.finding ? statusLabel[check.finding.status] : '结果未知'
 }

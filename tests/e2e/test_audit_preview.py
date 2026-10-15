@@ -27,6 +27,54 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_incomplete_scope_is_not_shown_as_pass_beside_a_valid_ng(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=scope-conflict")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            detail = page.get_by_role("region", name="审核详情", exact=True)
+            expect(detail.get_by_role("table").get_by_role("row", name=re.compile("1.1"))).to_contain_text("不符合")
+            expect(detail.get_by_role("table").get_by_role("row", name=re.compile("1.2"))).to_contain_text("范围未完成")
+            expect(detail.get_by_text("PASS 结论缺少完整的检查范围，未知不能视为满足。", exact=True).first).to_be_visible()
+            expect(detail.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
+            browser.close()
+
+    def test_two_archived_files_in_one_task_keep_their_own_unknown_share_requests(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-share-unknown&view=archive")
+            for document in ("A001", "A003"):
+                page.get_by_role("row", name=re.compile("档案 " + document)).get_by_role("button", name="查看审核记录", exact=True).click()
+                page.get_by_role("button", name="查看报告", exact=True).click()
+                page.get_by_role("button", name="分享", exact=True).click()
+                dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
+                dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True).check()
+                dialog.get_by_role("button", name="发送给 1 个目标", exact=True).click()
+                expect(dialog.get_by_text("结果未知", exact=True)).to_be_visible()
+                dialog.get_by_role("button", name="关闭", exact=True).click()
+                page.get_by_role("button", name="返回本次审核", exact=True).click()
+                page.get_by_role("button", name="返回文件档案", exact=True).click()
+            for document, name in (("A001", "控制计划.xlsx-审核报告"), ("A003", "PFMEA.xlsx-审核报告")):
+                page.get_by_role("row", name=re.compile("档案 " + document)).get_by_role("button", name="查看审核记录", exact=True).click()
+                page.get_by_role("button", name="查看报告", exact=True).click()
+                page.get_by_role("button", name="分享", exact=True).click()
+                dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
+                expect(dialog.get_by_role("button", name="发送给 0 个目标", exact=True)).to_have_count(0)
+                expect(dialog.get_by_text(name, exact=True)).to_be_visible()
+                dialog.get_by_role("button", name="读取发送结果", exact=True).click()
+                expect(dialog.get_by_text("结果未知", exact=True)).to_be_visible()
+                dialog.get_by_role("button", name="读取发送结果", exact=True).click()
+                expect(dialog.get_by_text("已发送", exact=True)).to_be_visible()
+                dialog.get_by_role("button", name="关闭", exact=True).click()
+                page.get_by_role("button", name="返回本次审核", exact=True).click()
+                page.get_by_role("button", name="返回文件档案", exact=True).click()
+            browser.close()
+
     def test_history_rejects_a_share_job_for_another_frozen_report(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
