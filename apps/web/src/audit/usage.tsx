@@ -1,0 +1,79 @@
+// Stitch: projects/13261964020862199279/screens/3deae156470647bda90de9665bafccff
+import {useEffect, useRef, useState} from 'react'
+import {RefreshCw} from 'lucide-react'
+import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
+import {Badge} from '../components/ui/badge'
+import {Button} from '../components/ui/button'
+import {Card, CardContent, CardHeader, CardTitle} from '../components/ui/card'
+import {Input} from '../components/ui/input'
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
+import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
+import {FileName} from '../journey/file-name'
+import {ArchiveHistory} from './history'
+import {readArchiveAddress, writeArchiveAddress, type AuditArchiveAdapter} from './archive-contract'
+import type {OriginalRenderer} from './review-content'
+import type {AuditReportAdapter} from './report-contract'
+import type {AuditSharingAdapter} from './sharing-contract'
+import {sameSnapshot} from './result-projection'
+import {readUsageQuery, writeUsageQuery, usageNotices, validUsagePage, type AuditUsageAdapter, type UsagePage, type UsageMetric, type UsageQuery} from './usage-contract'
+
+const states = {charged: '已扣', pending: '待扣', processing: '扣费处理中', unknown: '待核对', trial: '免费额度已扣'}
+const metricText = (metric?: UsageMetric) => metric?.value === null || !metric ? '—' : metric.value.toLocaleString('zh-CN')
+export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, sharingAdapter, renderOriginal, onOpenTask, onSupport}: {active: boolean; adapter?: AuditUsageAdapter; archiveAdapter?: AuditArchiveAdapter; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; onSupport: () => void}) {
+  const [query, setQuery] = useState(() => readUsageQuery(location.search)), [search, setSearch] = useState(query.search), [page, setPage] = useState<UsagePage | null>(null)
+  const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0), [address, setAddress] = useState(() => readArchiveAddress(location.search)), [route, setRoute] = useState(0)
+  const epoch = useRef(0), organization = useRef('')
+  useEffect(() => {
+    if (!active) return
+    const changed = () => {
+      const nextAddress = readArchiveAddress(location.search), next = readUsageQuery(location.search)
+      setAddress(nextAddress); setRoute(value => value + 1)
+      setQuery(current => sameSnapshot(current, next) ? current : next); setSearch(next.search)
+      writeUsageQuery(next)
+    }
+    changed(); window.addEventListener('popstate', changed); return () => window.removeEventListener('popstate', changed)
+  }, [active])
+  useEffect(() => {
+    const run = ++epoch.current
+    if (!active) {setPage(null); setLoading(false); return}
+    if (!adapter) {setPage(null); setLoading(false); setError('用量读取尚未接入，未使用本机记录或默认额度替代企业账。'); return}
+    setLoading(true); setError('')
+    void adapter.readUsage(structuredClone(query)).then(next => {
+      if (epoch.current !== run) return
+      if (!validUsagePage(next, query, organization.current)) throw new Error('usage_projection_mismatch')
+      organization.current = next.organization_id; setPage(next)
+    }).catch(failure => {if (epoch.current === run) {const status = failure instanceof Error && 'status' in failure ? failure.status : null; if (status === 401 || status === 403) setPage(null); setError(status === 401 ? '登录已失效。恢复登录后再读取用量。' : status === 403 ? '当前账号无权读取企业用量。未切换到其他企业。' : '暂时无法确认企业用量。未把读取失败当作零余额、零消费或已扣费。')}}).finally(() => {if (epoch.current === run) setLoading(false)})
+    return () => {epoch.current += 1}
+  }, [active, adapter, query, reload])
+  function filter(update: Partial<UsageQuery>) {const next = {...query, ...update, page: update.page || 1}; epoch.current += 1; setQuery(next); writeUsageQuery(next)}
+  function navigate(documentId: string | null, reference: typeof address.reference, report = false, replace = false) {writeArchiveAddress(documentId, reference, report, replace, 'usage'); setAddress(readArchiveAddress(location.search))}
+  if (!active) return null
+  const detailRequested = Boolean(address.documentId || address.reference || address.invalid || address.report)
+  if (detailRequested) return !address.invalid && address.documentId && address.reference && archiveAdapter ? <ArchiveHistory key={`${address.documentId}:${route}`} document={null} documentId={address.documentId} initialAddress={address} adapter={archiveAdapter} onNavigate={(reference, report, replace) => navigate(address.documentId, reference, report, replace)} onBack={() => navigate(null, null)} backLabel="返回用量记录" onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal}/> : <Alert><AlertTitle>这次消费的审核记录暂不可用</AlertTitle><AlertDescription>冻结引用不完整或历史读取尚未接入，未改开最新记录。<Button variant="outline" onClick={() => navigate(null, null)}>返回用量记录</Button></AlertDescription></Alert>
+  const current = page && sameSnapshot(page.query, query) ? page : null, summary = page?.summary
+  const metrics: [string, string, string | null | undefined][] = [['本月消费次数', metricText(summary?.consumption_count), summary?.consumption_count.reason], ['本月已扣点数', metricText(summary?.charged_points), summary?.charged_points.reason], ['本月待扣点数', metricText(summary?.pending_points), summary?.pending_points.reason], ['免费额度剩余/总额', `${metricText(summary?.free_remaining)} / ${metricText(summary?.free_total)}`, summary?.free_remaining.reason || summary?.free_total.reason]]
+  return <section className="min-w-0 space-y-6" aria-label="企业用量记录"><header className="space-y-2"><h1 className="text-2xl font-semibold">用量记录</h1><p className="text-muted-foreground">只读查询，不会触发扣费。每行是一份文件的一次审核，不按免费／付费分配重复计次。</p></header>
+    <section aria-label="自然月用量汇总" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-medium">{summary ? `${summary.month} · ${summary.timezone}` : '自然月汇总待读取'}</h2><p className="text-xs text-muted-foreground">{page?.organization_name}{summary ? ` · 服务更新于 ${summary.as_of}` : ''}</p></div>{(loading || error) && summary && <p role="status" className="text-sm">以下是上次已读汇总，尚未确认当前状态。</p>}<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([title, value, reason]) => <Card role="group" aria-label={title} size="sm" key={title}><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><p className="break-words text-2xl font-semibold tabular-nums">{value}</p>{reason && <p className="mt-2 text-xs text-muted-foreground">{reason}</p>}</CardContent></Card>)}</div><p className="text-xs text-muted-foreground">本月汇总不随下方时间、搜索或分页改变；跨月结算口径由服务提供。</p></section>
+    {current?.notices.map(notice => <Alert key={notice}><AlertTitle>额度提示</AlertTitle><AlertDescription>{usageNotices[notice]}<Button variant="outline" onClick={onSupport}>联系我们</Button></AlertDescription></Alert>)}
+    <form aria-label="筛选用量记录" className="flex flex-wrap items-center gap-2" onSubmit={event => {event.preventDefault(); filter({search: search.trim()})}}><Select value={query.range} onValueChange={range => filter({range: range as UsageQuery['range']})}><SelectTrigger className="w-36" aria-label="用量时间范围"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="7d">最近7天</SelectItem><SelectItem value="30d">最近30天</SelectItem><SelectItem value="90d">最近90天</SelectItem><SelectItem value="all">全部</SelectItem></SelectContent></Select><Input aria-label="搜索文件名或发起人" className="min-w-0 basis-full sm:max-w-sm sm:basis-0 sm:flex-1" value={search} placeholder="搜索文件名或发起人" onChange={event => setSearch(event.target.value)}/><Button variant="outline" type="submit">搜索</Button><Button variant="outline" type="button" disabled={loading} onClick={() => setReload(value => value + 1)}><RefreshCw/>刷新用量</Button></form>
+    {loading && <p role="status">正在读取企业用量…</p>}{error && <Alert variant="destructive"><AlertTitle>用量读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => setReload(value => value + 1)}>重新读取用量</Button></AlertDescription></Alert>}
+    {current && <div className="min-w-0 space-y-3">
+      {error && <p role="status">下方保留上次读取的记录，不代表当前余额或最新结算。</p>}
+      <p className="text-xs text-muted-foreground">明细范围：{current.from_date || '全部历史'} 至 {current.through_date}</p>
+      <Table aria-label="逐文件用量记录" className="min-w-[64rem]">
+        <TableHeader><TableRow><TableHead>时间</TableHead><TableHead>飞书订单号</TableHead><TableHead>文件 / 审核版本</TableHead><TableHead>扣费状态</TableHead><TableHead>发起人</TableHead><TableHead>点数</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
+        <TableBody>{current.entries.map(row => <TableRow key={row.usage_id} aria-label={`消费记录 ${row.usage_id}`}>
+          <TableCell><time dateTime={row.occurred_at} title={row.occurred_at}>{new Intl.DateTimeFormat('zh-CN', {timeZone: current.summary.timezone, dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23'}).format(new Date(row.occurred_at))}</time></TableCell>
+          <TableCell className="max-w-44 whitespace-normal break-all">{row.orders.length ? row.orders.map(order => <p key={order.order_id}>{order.order_id}</p>) : <><p>—</p><p className="text-muted-foreground">{row.order_reason}</p></>}</TableCell>
+          <TableCell className="min-w-48 max-w-72 whitespace-normal"><FileName name={row.filename}/><p className="mt-1 text-xs text-muted-foreground">第 {row.audit_sequence} 次审核 · 冻结文件版本</p></TableCell>
+          <TableCell className="max-w-56 whitespace-normal"><Badge variant="outline">{states[row.settlement.state]}</Badge>{row.settlement.reason && <p className="mt-1 text-xs text-muted-foreground">{row.settlement.reason}</p>}</TableCell>
+          <TableCell>{row.initiator}</TableCell>
+          <TableCell className="whitespace-normal"><p>{row.points} 点</p><p className="text-xs text-muted-foreground">{row.allocation.free_points !== null && row.allocation.paid_points !== null ? `免费 ${row.allocation.free_points} · 付费 ${row.allocation.paid_points}` : row.allocation.reason}</p></TableCell>
+          <TableCell className="max-w-48 whitespace-normal"><Button variant="ghost" size="sm" disabled={loading || Boolean(error) || !archiveAdapter || row.audit_access.state !== 'allowed' || !row.document_id} onClick={() => navigate(row.document_id, row.reference)}>打开该次审核</Button>{row.audit_access.state !== 'allowed' && <p className="text-xs text-muted-foreground">{row.audit_access.reason || '未取得这次审核的访问许可。'}</p>}</TableCell>
+        </TableRow>)}</TableBody>
+      </Table>
+      {!current.entries.length && !loading && !error && <p>当前筛选下没有消费记录。此结论不代表其他时间没有消费。</p>}
+      <footer className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">共 {current.total} 笔 · 第 {query.page}/{Math.max(1, Math.ceil(current.total / 10))} 页 · 每页10笔</p><div className="flex gap-2"><Button variant="outline" disabled={loading || Boolean(error) || query.page <= 1} onClick={() => filter({page: query.page - 1})}>上一页用量</Button><Button variant="outline" disabled={loading || Boolean(error) || query.page * 10 >= current.total} onClick={() => filter({page: query.page + 1})}>下一页用量</Button></div></footer>
+    </div>}
+  </section>
+}

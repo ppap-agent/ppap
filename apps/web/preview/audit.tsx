@@ -13,6 +13,7 @@ import {fixtureTemplates} from './audit-templates'
 import {fixtureFeedback} from './audit-feedback'
 import {fixtureTemplateSharing} from './audit-template-sharing'
 import {fixtureTemplatePermissions} from './audit-template-permissions'
+import {fixtureUsage} from './audit-usage'
 import type {AuditSupportAdapter} from '../src/audit/template-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
@@ -163,6 +164,7 @@ const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, p
   const accepted = fixtureAcceptance(seed, `${id}-accept`)
   return pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
 }, sharingAdapter.forReport)
+const usageAdapter = fixtureUsage(archiveAdapter, scene)
 
 // A fixed read fixture, not persistence of arbitrary uploads or a second runtime API.
 if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsWith('reports-')) {
@@ -274,7 +276,14 @@ function Preview() {
       return scene === 'templates-permissions-race' ? defer('权限修改回执', result) : result
     },
   }), [defer])
-  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
-    <AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} supportAdapter={supportAdapter} feedbackAdapter={controlledFeedback} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  const usageReads = useRef(0)
+  const controlledUsage = useMemo(() => ({...usageAdapter,
+    readUsage: async (...args: Parameters<typeof usageAdapter.readUsage>) => {
+      const read = ++usageReads.current, result = await usageAdapter.readUsage(...args)
+      return scene === 'usage-race' && read === 1 ? defer('旧用量查询', result) : result
+    },
+  }), [defer])
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+    <AuditIntake adapter={controlled} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={supportAdapter} feedbackAdapter={controlledFeedback} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

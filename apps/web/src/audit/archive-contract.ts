@@ -21,14 +21,14 @@ export function readArchiveAddress(search: string) {
   } catch {invalid = true}
   return {documentId, reference, invalid, report: params.get('archiveReport') === '1'}
 }
-export function writeArchiveAddress(documentId: string | null, reference: ResultReference | null, report = false, replace = false) {
+export function writeArchiveAddress(documentId: string | null, reference: ResultReference | null, report = false, replace = false, view: 'archive' | 'usage' = 'archive') {
   const url = new URL(location.href)
-  url.searchParams.set('view', 'archive')
+  url.searchParams.set('view', view)
   for (const [key, value] of Object.entries({archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null})) {
     if (value) url.searchParams.set(key, value); else url.searchParams.delete(key)
   }
   history[replace ? 'replaceState' : 'pushState'](null, '', url)
-  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: 'archive', archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null}, location.origin)
+  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null}, location.origin)
 }
 export function historyReportReference(entry: HistoryEntry): components['schemas']['AuditReportReference'] | null {
   return entry.reference.result_attempt !== null && entry.report.report_id ? {...entry.reference, result_attempt: entry.reference.result_attempt, report_id: entry.report.report_id} : null

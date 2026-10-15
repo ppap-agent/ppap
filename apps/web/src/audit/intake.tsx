@@ -32,6 +32,8 @@ import {TemplateFeedback} from './template-feedback'
 import type {AuditFeedbackAdapter} from './feedback-contract'
 import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
 import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
+import {AuditUsage} from './usage'
+import type {AuditUsageAdapter} from './usage-contract'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -46,10 +48,11 @@ const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewi
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
-export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter}) {
-  const [surface, setSurface] = useState<'audit' | 'archive' | 'templates'>(() => {const view = new URL(location.href).searchParams.get('view'); return view === 'archive' || view === 'templates' ? view : 'audit'})
+export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter}) {
+  const [surface, setSurface] = useState<'audit' | 'archive' | 'templates' | 'usage'>(() => {const view = new URL(location.href).searchParams.get('view'); return view === 'archive' || view === 'templates' || view === 'usage' ? view : 'audit'})
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
+  const [usageOpened, setUsageOpened] = useState(surface === 'usage')
   const [supportOpen, setSupportOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const feedbackTrigger = useRef<HTMLElement | null>(null)
@@ -65,7 +68,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
   const [task, setTask] = useState<AuditTask | null>(null)
   const [tasks, setTasks] = useState<AuditTask[]>([])
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
-  const [sheet, setSheet] = useState(false), [dialog, setDialog] = useState('')
+  const [sheet, setSheet] = useState(false)
   const [reportView, setReportView] = useState(() => new URL(location.href).searchParams.has('report'))
   const [error, setError] = useState(''), [dragging, setDragging] = useState(false)
   const [checking, setChecking] = useState<string[]>([])
@@ -171,7 +174,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
   function restoreAddress() {
     setFeedbackOpen(false)
     const view = new URL(location.href).searchParams.get('view')
-    if (view === 'archive' || view === 'templates') {surfaceRef.current = view; setSurface(view); if (view === 'archive') setArchiveOpened(true); else setTemplatesOpened(true); return}
+    if (view === 'archive' || view === 'templates' || view === 'usage') {surfaceRef.current = view; setSurface(view); if (view === 'archive') setArchiveOpened(true); else if (view === 'templates') setTemplatesOpened(true); else setUsageOpened(true); return}
     const fromOtherSurface = surfaceRef.current !== 'audit'
     surfaceRef.current = 'audit'
     setSurface('audit')
@@ -253,15 +256,19 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
     }
   }
   const shownTasks = tasks.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
-  function showSurface(value: 'audit' | 'archive' | 'templates') {
+  function showSurface(value: 'audit' | 'archive' | 'templates' | 'usage') {
     surfaceRef.current = value
     setSurface(value); setSheet(false)
     if (value === 'archive') setArchiveOpened(true)
     if (value === 'templates') setTemplatesOpened(true)
+    if (value === 'usage') setUsageOpened(true)
     const url = new URL(location.href)
+    for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) url.searchParams.delete(key)
     if (value !== 'audit') url.searchParams.set('view', value); else url.searchParams.delete('view')
     history.pushState(null, '', url)
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: value}, location.origin)
+    // A repeated top-level entry leaves its detail without changing the active surface.
+    if (value === surface && value !== 'audit') window.dispatchEvent(new PopStateEvent('popstate'))
     const id = url.searchParams.get('task')
     if (value === 'audit' && id && activeTaskId.current !== id) void recover(id)
   }
@@ -269,7 +276,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
     <Button className="justify-start" variant={surface === 'audit' ? 'secondary' : 'ghost'} onClick={() => showSurface('audit')}><ClipboardCheck/>PPAP Audit</Button>
     <Button className="justify-start" variant={surface === 'archive' ? 'secondary' : 'ghost'} onClick={() => showSurface('archive')}><Files/>审核文件</Button>
     <Button className="justify-start" variant={surface === 'templates' ? 'secondary' : 'ghost'} onClick={() => showSurface('templates')}><BookOpen/>模板库</Button>
-    <Button className="justify-start" variant="ghost" onClick={() => setDialog('用量记录')}>用量记录</Button>
+    <Button className="justify-start" variant={surface === 'usage' ? 'secondary' : 'ghost'} onClick={() => showSurface('usage')}>用量记录</Button>
   </nav>
   const taskRail = <div className="flex h-full min-w-0 flex-col gap-4">
     <Button variant="outline" onClick={newTask}><Plus/>新建审核任务</Button>
@@ -287,11 +294,12 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
     <aside className="sticky top-0 flex h-dvh w-44 shrink-0 flex-col gap-8 border-r p-4 max-lg:hidden"><div className="flex items-center gap-2 text-lg font-semibold"><ClipboardCheck/>PPAP</div>{navigation}<Button className="mt-auto justify-start" variant="ghost" onClick={() => setSupportOpen(true)}><HelpCircle/>联系我们</Button></aside>
     {surface === 'audit' && !reportView && <aside aria-label="审核任务" className="sticky top-0 h-dvh w-56 shrink-0 border-r p-4 max-xl:hidden">{taskRail}</aside>}
     <div className="min-w-0 flex-1">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className={surface !== 'audit' ? 'lg:hidden' : reportView ? '' : 'xl:hidden'} aria-label={surface !== 'audit' ? '打开产品导航' : '打开审核任务'}><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>{surface !== 'audit' ? '产品导航' : '审核任务'}</SheetTitle><SheetDescription>查看与切换本页示例，不启动真实审核。</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation}<Button variant="ghost" className="w-full justify-start" onClick={() => {setSheet(false); setSupportOpen(true)}}><HelpCircle/>联系我们</Button></div>{surface === 'audit' && taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit{surface === 'archive' ? ' / 审核文件' : surface === 'templates' ? ' / 模板库' : task ? ` / ${task.number}` : ' / 新建审核'}</span></div><Badge variant="outline">交互预览</Badge></header>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className={surface !== 'audit' ? 'lg:hidden' : reportView ? '' : 'xl:hidden'} aria-label={surface !== 'audit' ? '打开产品导航' : '打开审核任务'}><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>{surface !== 'audit' ? '产品导航' : '审核任务'}</SheetTitle><SheetDescription>查看与切换本页示例，不启动真实审核。</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation}<Button variant="ghost" className="w-full justify-start" onClick={() => {setSheet(false); setSupportOpen(true)}}><HelpCircle/>联系我们</Button></div>{surface === 'audit' && taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit{surface === 'archive' ? ' / 审核文件' : surface === 'templates' ? ' / 模板库' : surface === 'usage' ? ' / 用量记录' : task ? ` / ${task.number}` : ' / 新建审核'}</span></div><Badge variant="outline">交互预览</Badge></header>
       <main id="audit-main" tabIndex={-1} className={`mx-auto w-full space-y-6 p-6 max-sm:p-4 ${workbench || surface !== 'audit' ? '' : 'max-w-5xl'}`}>
         <p role="note" className="text-xs text-muted-foreground">{surface === 'templates' ? '交互预览：示例模板，不会启动审核或收费。' : '示例数据，不会启动真实审核或收费。实际上传、格式检查、规则匹配与持久化尚未接入。'}</p>
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>档案读取接口尚未接入</AlertTitle><AlertDescription>不能把当前任务文件名当作已归档的来源文档。</AlertDescription></Alert>}</div>}
         {templatesOpened && <div hidden={surface !== 'templates'}>{templateAdapter ? <AuditTemplates active={surface === 'templates'} adapter={templateAdapter} sharingAdapter={templateSharingAdapter} permissionAdapter={templatePermissionAdapter} onReturn={() => showSurface('audit')} onFeedback={openFeedback}/> : <Alert><AlertTitle>模板库尚未接入</AlertTitle><AlertDescription>未使用审核规则或示例报告冒充客户模板。<Button variant="outline" onClick={() => showSurface('audit')}>返回审核</Button></AlertDescription></Alert>}</div>}
+        {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={() => setSupportOpen(true)}/></div>}
         <div hidden={surface !== 'audit'} className="space-y-6">
         {!reportView && <ol aria-label="审核步骤" className="flex flex-wrap gap-4 border-b pb-4">{['上传与检查', '确认规则', 'AI审核'].map((label, index) => <li key={label} aria-current={(workbench ? 2 : step === 'match' ? 1 : 0) === index ? 'step' : undefined} className="flex items-center gap-2"><span className="text-muted-foreground">{index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight className="size-3 text-muted-foreground"/>}</li>)}</ol>}
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -326,8 +334,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
     </div>
     {driveOpen && <FeishuPicker source={adapter.drive} onAdd={receiveDrive} onClose={() => setDriveOpen(false)} trigger={driveTrigger.current}/>}
     <TemplateFeedback open={feedbackOpen} onClose={() => setFeedbackOpen(false)} adapter={feedbackAdapter} trigger={feedbackTrigger.current}/>
-    {supportOpen && <AuditSupport adapter={supportAdapter} scenario={surface === 'templates' ? '客户模板库' : surface === 'archive' ? '文件档案' : workbench ? '审核结果' : '上传与文件核对'} traceId={supportTrace} onClose={() => setSupportOpen(false)}/>}
-    <Dialog open={Boolean(dialog)} onOpenChange={open => {if (!open) setDialog('')}}><DialogContent><DialogHeader><DialogTitle>{dialog}</DialogTitle><DialogDescription>该页面尚未接入。本预览不执行外部操作。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">关闭后返回当前文件与选择，不会启动外部操作。</p></DialogContent></Dialog>
+    {supportOpen && <AuditSupport adapter={supportAdapter} scenario={surface === 'templates' ? '客户模板库' : surface === 'archive' ? '文件档案' : surface === 'usage' ? '用量记录' : workbench ? '审核结果' : '上传与文件核对'} traceId={supportTrace} onClose={() => setSupportOpen(false)}/>}
     <Dialog open={Boolean(ruleSource)} onOpenChange={open => {if (!open) setRuleSource(null)}}><DialogContent onCloseAutoFocus={event => {event.preventDefault(); ruleTrigger.current?.focus()}}><DialogHeader><DialogTitle>{ruleSource?.title}</DialogTitle><DialogDescription>当前匹配的只读候选条款。预览不发布规则，也不开始审核。</DialogDescription></DialogHeader><div className="max-h-80 space-y-4 overflow-y-auto">{ruleSource?.body.kind === 'engine' ? ruleSource.body.rules.map(rule => <article key={rule.id} className="space-y-2 border-t pt-3"><h3 className="text-sm font-semibold">{rule.id} · {rule.category}</h3><p className="whitespace-pre-wrap text-sm">{rule.rule_to_check}</p></article>) : <p className="text-sm">文件存在性检查。</p>}</div></DialogContent></Dialog>
   </div>
 }

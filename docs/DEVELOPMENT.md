@@ -158,4 +158,6 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 补充模板的三个入口共用本页附件与提报状态。`scene=feedback-unknown` 演示提交后丢失回执；`feedback-submit-loading` 和 `feedback-upload-loading` 可手动返回迟到结果。关闭后允许读取原请求，只有明确终结且允许重试才建立新尝试。此预览只保留本页内存中的附件字节，不写入飞书运营表，也不自动改变审核规则。
 
-在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_preview.py tests/e2e/test_template_feedback_preview.py tests/e2e/test_template_access_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。
+用量记录使用 `__preview?page=audit&view=usage&scene=usage-ready`。四卡读取服务提供的自然月汇总，不由明细筛选计算；每行固定一份文件的一次 500 点业务消费，免费／付费分配和技术重试不增加行数。历史入口复用冻结审核引用，不回退最新结果。`usage-quota-unknown`、`usage-revoked`、`usage-race` 分别演示未知额度、撤权和迟到读取；只读刷新不触发外部收费。这是共享 DTO 与明确样例，不是现有整轮用量账的逐文件投影，也不验证真实结算。
+
+在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_preview.py tests/e2e/test_template_feedback_preview.py tests/e2e/test_template_access_preview.py tests/e2e/test_usage_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。

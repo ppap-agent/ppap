@@ -61,6 +61,20 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_usage_is_a_read_projection_per_file_audit_not_a_pool_allocation(self):
+        schemas = app.openapi()["components"]["schemas"]
+        page = schemas["AuditUsagePage"]
+        self.assertEqual(page["x-contract-stage"], "ui-draft")
+        self.assertEqual(set(page["required"]), {"organization_id", "organization_name", "query", "summary", "entries", "total", "from_date", "through_date", "notices"})
+        entry = schemas["AuditUsageEntry"]["properties"]
+        for field in ("usage_id", "reference", "document_id", "audit_access", "orders", "allocation", "settlement", "initiator", "occurred_at"):
+            self.assertIn(field, entry)
+        self.assertEqual(entry["reference"]["$ref"], "#/components/schemas/AuditResultReference")
+        self.assertEqual(entry["points"]["const"], 500)
+        metric = schemas["AuditUsageMetric"]["properties"]
+        self.assertTrue(any(option["type"] == "null" for option in metric["value"]["anyOf"]))
+        self.assertEqual(schemas["AuditUsageQuery"]["properties"]["page_size"]["const"], 10)
+
     def test_ui_template_permission_change_has_its_own_revision_and_original_request_receipt(self):
         schemas = app.openapi()["components"]["schemas"]
         snapshot = schemas["AuditTemplatePermissions"]["properties"]

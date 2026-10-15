@@ -1786,6 +1786,126 @@ export interface components {
              */
             state: "uploading" | "ready" | "failed" | "unknown";
         };
+        /** AuditUsageAllocation */
+        AuditUsageAllocation: {
+            /** Free Points */
+            free_points: number | null;
+            /** Paid Points */
+            paid_points: number | null;
+            /** Reason */
+            reason: string | null;
+        };
+        /**
+         * AuditUsageEntry
+         * @description One stable file-audit obligation, not a free/paid pool slice or attempt.
+         */
+        AuditUsageEntry: {
+            allocation: components["schemas"]["AuditUsageAllocation"];
+            audit_access: components["schemas"]["AuditArchiveAccess"];
+            /** Audit Sequence */
+            audit_sequence: number;
+            /** Document Id */
+            document_id: string | null;
+            /** Filename */
+            filename: string;
+            /** Initiator */
+            initiator: string;
+            /** Occurred At */
+            occurred_at: string;
+            /** Order Reason */
+            order_reason: string | null;
+            /** Orders */
+            orders: components["schemas"]["AuditUsageOrder"][];
+            /**
+             * Points
+             * @constant
+             */
+            points: 500;
+            reference: components["schemas"]["AuditResultReference"];
+            settlement: components["schemas"]["AuditUsageSettlement"];
+            /** Usage Id */
+            usage_id: string;
+        };
+        /** AuditUsageMetric */
+        AuditUsageMetric: {
+            /** Reason */
+            reason: string | null;
+            /** Value */
+            value: number | null;
+        };
+        /** AuditUsageOrder */
+        AuditUsageOrder: {
+            /** Confirmed At */
+            confirmed_at: string;
+            /** Order Id */
+            order_id: string;
+        };
+        /**
+         * AuditUsagePage
+         * @description Read-only projection; date windows use summary.timezone, not browser time.
+         */
+        AuditUsagePage: {
+            /** Entries */
+            entries: components["schemas"]["AuditUsageEntry"][];
+            /** From Date */
+            from_date: string | null;
+            /** Notices */
+            notices: ("ai_disabled" | "no_package" | "paid_insufficient")[];
+            /** Organization Id */
+            organization_id: string;
+            /** Organization Name */
+            organization_name: string;
+            query: components["schemas"]["AuditUsageQuery"];
+            summary: components["schemas"]["AuditUsageSummary"];
+            /** Through Date */
+            through_date: string;
+            /** Total */
+            total: number;
+        };
+        /** AuditUsageQuery */
+        AuditUsageQuery: {
+            /** Page */
+            page: number;
+            /**
+             * Page Size
+             * @constant
+             */
+            page_size: 10;
+            /**
+             * Range
+             * @enum {string}
+             */
+            range: "7d" | "30d" | "90d" | "all";
+            /** Search */
+            search: string;
+        };
+        /** AuditUsageSettlement */
+        AuditUsageSettlement: {
+            /** Reason */
+            reason: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "charged" | "pending" | "processing" | "unknown" | "trial";
+        };
+        /**
+         * AuditUsageSummary
+         * @description Owner-provided natural-month projection; not a sum of the filtered page.
+         */
+        AuditUsageSummary: {
+            /** As Of */
+            as_of: string;
+            charged_points: components["schemas"]["AuditUsageMetric"];
+            consumption_count: components["schemas"]["AuditUsageMetric"];
+            free_remaining: components["schemas"]["AuditUsageMetric"];
+            free_total: components["schemas"]["AuditUsageMetric"];
+            /** Month */
+            month: string;
+            pending_points: components["schemas"]["AuditUsageMetric"];
+            /** Timezone */
+            timezone: string;
+        };
         /** BoundRule */
         BoundRule: {
             /** Body */

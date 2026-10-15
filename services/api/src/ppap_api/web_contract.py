@@ -920,6 +920,79 @@ class AuditUploadItem(TypedDict):
     retry_allowed: bool
 
 
+class AuditUsageQuery(TypedDict):
+    range: Literal["7d", "30d", "90d", "all"]
+    search: str
+    page: int
+    page_size: Literal[10]
+
+
+class AuditUsageMetric(TypedDict):
+    value: int | None
+    reason: str | None
+
+
+class AuditUsageSummary(TypedDict):
+    """Owner-provided natural-month projection; not a sum of the filtered page."""
+
+    month: str
+    timezone: str
+    as_of: str
+    consumption_count: AuditUsageMetric
+    charged_points: AuditUsageMetric
+    pending_points: AuditUsageMetric
+    free_remaining: AuditUsageMetric
+    free_total: AuditUsageMetric
+
+
+class AuditUsageOrder(TypedDict):
+    order_id: str
+    confirmed_at: str
+
+
+class AuditUsageAllocation(TypedDict):
+    free_points: int | None
+    paid_points: int | None
+    reason: str | None
+
+
+class AuditUsageSettlement(TypedDict):
+    state: Literal["charged", "pending", "processing", "unknown", "trial"]
+    reason: str | None
+
+
+class AuditUsageEntry(TypedDict):
+    """One stable file-audit obligation, not a free/paid pool slice or attempt."""
+
+    usage_id: str
+    occurred_at: str
+    filename: str
+    audit_sequence: int
+    initiator: str
+    points: Literal[500]
+    allocation: AuditUsageAllocation
+    orders: list[AuditUsageOrder]
+    order_reason: str | None
+    settlement: AuditUsageSettlement
+    reference: AuditResultReference
+    document_id: str | None
+    audit_access: AuditArchiveAccess
+
+
+class AuditUsagePage(TypedDict):
+    """Read-only projection; date windows use summary.timezone, not browser time."""
+
+    organization_id: str
+    organization_name: str
+    query: AuditUsageQuery
+    summary: AuditUsageSummary
+    entries: list[AuditUsageEntry]
+    total: int
+    from_date: str | None
+    through_date: str
+    notices: list[Literal["ai_disabled", "no_package", "paid_insufficient"]]
+
+
 class AuditTemplateReference(TypedDict):
     """A template file version, never a rule snapshot or an audit report."""
 
@@ -1134,6 +1207,7 @@ def add_ui_contract(app: FastAPI) -> None:
             AuditTemplatePermissionReceipt,
             AuditTemplateFeedbackReceipt,
             AuditSupportInfo,
+            AuditUsagePage,
         ):
             root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")
             definitions.update(root.pop("$defs", {}))
