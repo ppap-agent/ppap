@@ -26,10 +26,10 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   useEffect(() => {
     if (!active) return
     const changed = () => {
+      if (new URLSearchParams(location.search).get('view') !== 'usage') return
       const nextAddress = readArchiveAddress(location.search), next = readUsageQuery(location.search)
       setAddress(nextAddress); setRoute(value => value + 1)
       setQuery(current => sameSnapshot(current, next) ? current : next); setSearch(next.search)
-      writeUsageQuery(next)
     }
     changed(); window.addEventListener('popstate', changed); return () => window.removeEventListener('popstate', changed)
   }, [active])

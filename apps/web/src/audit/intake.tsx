@@ -173,8 +173,13 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
   }
   function restoreAddress() {
     setFeedbackOpen(false)
-    const view = new URL(location.href).searchParams.get('view')
-    if (view === 'archive' || view === 'templates' || view === 'usage') {surfaceRef.current = view; setSurface(view); if (view === 'archive') setArchiveOpened(true); else if (view === 'templates') setTemplatesOpened(true); else setUsageOpened(true); return}
+    const params = new URL(location.href).searchParams, view = params.get('view')
+    if (view === 'archive' || view === 'templates' || view === 'usage') {
+      surfaceRef.current = view; setSurface(view)
+      if (view === 'archive') setArchiveOpened(true); else if (view === 'templates') setTemplatesOpened(true); else setUsageOpened(true)
+      if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, ...Object.fromEntries(['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage'].map(key => [key, params.get(key)]))}, location.origin)
+      return
+    }
     const fromOtherSurface = surfaceRef.current !== 'audit'
     surfaceRef.current = 'audit'
     setSurface('audit')
