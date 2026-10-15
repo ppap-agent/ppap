@@ -11,6 +11,7 @@ import {canStartCheck, modeName, observeCheck, startCheck, type CheckPlan, type 
 import {readUsage, type CheckOwner} from './usage-state'
 import {isPreview} from './access'
 import type {LiveCheck} from './live-audit'
+import {FileList} from './file-collection'
 
 export function CheckPreparation({caseId, state, plan, onChange, onContinue, continueLabel = '查看审核进度', onHome, saveError, recheck, live, compact = false, disabledReason, onStart, nextAction}: {
   caseId: string; state: CheckPreparationState; plan: CheckPlan; onChange: (state: SetStateAction<CheckPreparationState | undefined>) => void
@@ -52,8 +53,8 @@ export function CheckPreparation({caseId, state, plan, onChange, onContinue, con
       {record.phase === 'accepted' && <Button className={"w-fit"} onClick={onContinue}>查看检查进度<ArrowRight/></Button>}
     </div>}
     <div className={"grid items-start gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,2fr)]"}>
-      <section className={"min-w-0"}><h2 className={"mb-3 font-semibold"}>本次检查范围</h2><Table><TableHeader><TableRow><TableHead>审核要求</TableHead><TableHead>处理范围</TableHead></TableRow></TableHeader><TableBody>{frozen.rows.map(row => <TableRow key={row.id}><TableCell><p className={"font-medium"}>{row.title}</p><p className={"mt-1 text-xs text-muted-foreground"}>{row.sources.join('、')}</p></TableCell><TableCell className={""}>{row.state === 'excluded' ? row.detail : live ? '覆盖情况以执行结果为准' : row.detail}</TableCell></TableRow>)}</TableBody></Table>
-        {live && <div className={"mt-4 flex flex-col gap-2 text-sm"}><strong>待审文件</strong>{live.targets.length ? live.targets.map(name => <p key={name} className={"break-all"}>{name}</p>) : <p className={"text-destructive"}>请返回核对资料类型，至少一份文件须对应本次要求。</p>}<p className={"text-muted-foreground"}>其余选中的资料作为联合审核的参考原件。</p></div>}
+      <section className={"min-w-0"}><h2 className={"mb-3 font-semibold"}>本次检查范围</h2><Table><TableHeader><TableRow><TableHead>审核要求</TableHead><TableHead>处理范围</TableHead></TableRow></TableHeader><TableBody>{frozen.rows.map(row => <TableRow key={row.id}><TableCell className="whitespace-normal"><p className="font-medium">{row.title}</p>{row.sources.length > 0 && <FileList label="关联原件" files={row.sources.map((name, index) => ({id: `${row.id}:${index}`, name}))}/>}</TableCell><TableCell className="whitespace-normal">{row.state === 'excluded' ? row.detail : live ? '覆盖情况以执行结果为准' : row.detail}</TableCell></TableRow>)}</TableBody></Table>
+        {live && <div className={"mt-4 flex flex-col gap-2 text-sm"}><strong>待审文件</strong>{live.targets.length ? <FileList files={live.targets.map((name, index) => ({id: String(index), name}))}/> : <p className={"text-destructive"}>请返回核对资料类型，至少一份文件须对应本次要求。</p>}<p className={"text-muted-foreground"}>其余选中的资料作为联合审核的参考原件。</p></div>}
       </section>
       <section className={"flex flex-col gap-5"}><div><h2 className={"mb-3 font-semibold"}>检查方式</h2>{modePicker}<p className={"mt-3 text-sm text-muted-foreground"}>{frozen.mode === 'standard' ? '执行已有适配检查，未支持的条款保留为未覆盖。' : '调查条款与原件的对应关系，核验证据后形成结果。'}</p></div>
         <div><h2 className={"font-semibold"}>本次用量</h2><p className={"mt-2 text-sm"}>{live ? live.quota?.usage_charge_enabled === false ? '当前环境不计费' : live.quota?.estimated_points !== undefined ? `${live.quota.estimated_points} 点` : '正在核对额度…' : `${frozen.estimate.low}–${frozen.estimate.high} 点（演示）`}</p>{live?.quota?.accept_allowed === false && <p role="alert" className={"mt-2 text-sm text-destructive"}>{live.quota.message || live.quota.accept_reason || '额度暂不可用'}</p>}</div>
@@ -62,7 +63,7 @@ export function CheckPreparation({caseId, state, plan, onChange, onContinue, con
       </section>
     </div>
     {recheck?.note && <p className={"text-sm text-muted-foreground"}>{recheck.note}</p>}
-    <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">查看本次文件版本</Button></CollapsibleTrigger><CollapsibleContent><ul className={"mt-2 space-y-2 text-sm"}>{frozen.files.map(file => <li key={file}>{file}</li>)}</ul></CollapsibleContent></Collapsible>
+    <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">查看本次文件版本</Button></CollapsibleTrigger><CollapsibleContent><FileList files={frozen.files.map((name, index) => ({id: String(index), name}))}/></CollapsibleContent></Collapsible>
     {!live && isPreview() && <Collapsible open={simulator} onOpenChange={setSimulator}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">演示受理情形</Button></CollapsibleTrigger><CollapsibleContent><NativeSelect value={state.outcome} onChange={event => update({outcome: event.target.value as CheckPreparationState['outcome']})}><NativeSelectOption value="accepted">正常受理</NativeSelectOption><NativeSelectOption value="unknown_accepted">回执丢失，已受理</NativeSelectOption><NativeSelectOption value="unknown_absent">回执丢失，未受理</NativeSelectOption><NativeSelectOption value="rejected">明确未受理</NativeSelectOption><NativeSelectOption value="waiting">等待</NativeSelectOption></NativeSelect></CollapsibleContent></Collapsible>}
   </section>
 }

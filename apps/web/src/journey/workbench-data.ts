@@ -15,13 +15,13 @@ async function readPages<T extends {id: string}>(path: string, previous: Page<T>
   const count = more ? 1 : previous?.pages ?? 1
   for (let page = 0; page < count; page++) {
     const result = decode(await request<unknown>(`${path}&offset=${offset}`, 'GET', undefined, signal))
-    if (result.next !== null && result.next <= offset) throw new Error('事项分页未能继续，请重新读取。')
+    if (result.next !== null && result.next <= offset) throw new Error('审核记录分页未能继续，请重新读取。')
     rows = [...new Map([...rows, ...result.rows].map(row => [row.id, row])).values()]
     pages++
     if (result.next === null || page === count - 1) return {rows, next: result.next, pages}
     offset = result.next
   }
-  throw new Error('事项尚未读取。')
+  throw new Error('审核记录尚未读取。')
 }
 
 export function useWorkbenchData(query: string, enabled: boolean, active: boolean) {

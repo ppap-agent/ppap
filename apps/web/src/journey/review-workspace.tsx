@@ -1,6 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/1455a90bd66e4891a879ebc715e815a2.
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft, ArrowRight, BookOpen, Check, ListFilter} from 'lucide-react'
+import {ArrowLeft, ArrowRight, Check, ListFilter} from 'lucide-react'
 import {Button} from '../components/ui/button'
 import {Badge} from '../components/ui/badge'
 import {Input} from '../components/ui/input'
@@ -15,6 +15,7 @@ import {decisionInputKey, isManual, judgmentComplete, requirementSatisfied, type
 import {DocumentPane} from './source-reader'
 import {sourceKey, type DemoDocument, type SourceFile, type SourceFocus} from './source-documents'
 import type {DecisionEvidence, DecisionInput} from './decision'
+import {FileIcon, FileName} from './file-name'
 
 const machineVariant = (row: DecisionEvidence) => row.result === '满足' ? 'secondary' as const : 'outline' as const
 function sourceFile(input: DecisionInput, row?: Pick<DecisionEvidence, 'sources'>) {
@@ -143,7 +144,7 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
               {row.explanation && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{row.explanation}</p>}
               {row.sources.length > 0 ? <div className="space-y-3">{row.sources.map((source, index) => {
                 const file = sourceFile(input, {sources: [source]})
-                return <div key={index} className="space-y-2">{file ? <Button variant="outline" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={() => openSource(source)}><BookOpen/>{source.location === '位置待核对' ? source.file : `${source.file} · ${source.location}`}</Button> : <><p className="break-words text-sm">{source.file}</p><p className="text-sm text-muted-foreground">此来源无法唯一对应本轮原件，请选择原件人工核对。</p></>}{source.excerpt && <blockquote className="whitespace-pre-wrap break-words border-l-2 pl-3 text-sm">{source.excerpt}</blockquote>}</div>
+                return <div key={index} className="space-y-2">{file ? <Button variant="outline" size="sm" className="h-auto max-w-full justify-start whitespace-normal text-left" onClick={() => openSource(source)}><FileIcon name={source.file}/><span className="min-w-0 [overflow-wrap:anywhere]">{source.location === '位置待核对' ? source.file : `${source.file} · ${source.location}`}</span></Button> : <><FileName name={source.file} className="text-sm"/><p className="text-sm text-muted-foreground">此来源无法唯一对应本轮原件，请选择原件人工核对。</p></>}{source.excerpt && <blockquote className="whitespace-pre-wrap break-words border-l-2 pl-3 text-sm">{source.excerpt}</blockquote>}</div>
               })}</div> : <p className="text-sm text-muted-foreground">{row.result === '未覆盖' ? '本条没有机器检查结果，可依据原件人工核对。' : '没有可定位的机器证据。'}</p>}
             </section>
             {replies[row.id]?.map((reply, index) => <section key={index} className="space-y-1 border-l-2 pl-3 text-sm"><strong>{reply.title}</strong><p>{reply.question}</p><p className="whitespace-pre-wrap break-words">{reply.text}</p></section>)}
@@ -154,7 +155,7 @@ export function ReviewWorkspace({input, documents, judgments, frozen, taskActive
       </ResizablePanel></TabsContent>
       {wide && <ResizableHandle withHandle className="mx-4"/>}
       <TabsContent value="source" forceMount asChild {...(wide ? {role: 'region', 'aria-labelledby': undefined} : {})}><ResizablePanel aria-label="原件阅读" defaultSize="58%" minSize={wide ? '360px' : '0%'} data-mobile-active={pane === 'source'} className="min-w-0">
-        <section className="flex h-[max(32rem,calc(100dvh-13rem))] min-w-0 flex-col gap-3 lg:h-full" aria-label="当前原件"><div ref={sourceStart} className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 lg:hidden"><p className="min-w-0 flex-1 break-words text-sm font-medium">{row?.displayId || row?.id} · {row?.title}</p><Button variant="outline" size="sm" onClick={returnToJudgment}><ArrowLeft/>返回判断</Button></div>{input.files.length === 1 && file ? <p className="break-words text-sm font-medium">{file.name}</p> : <Select value={selectedFile} onValueChange={value => {navigation.current++; setSelectedFile(value); setFocus(null); writeOptions({reviewFile: value, reviewLocation: ''})}}><SelectTrigger className="w-full min-w-0" aria-label="复核原件"><SelectValue placeholder="选择原件" className="min-w-0"/></SelectTrigger><SelectContent>{input.files.map((item: SourceFile) => <SelectItem key={sourceKey(item)} value={sourceKey(item)}>{item.name}{input.files.filter(file => file.name === item.name).length > 1 && item.material ? ` · 上传版本 ${item.material.file_version_id.slice(0, 8)}` : ''}</SelectItem>)}</SelectContent></Select>}<DocumentPane key={file ? sourceKey(file) : 'none'} file={file} row={row} documents={documents} current={input.files} side="复核" onCite={!frozen && isManual(judgment ?? undefined) ? cite : undefined} focus={focus?.fileKey === selectedFile && focus.clauseId === row?.id ? focus : undefined} onClose={returnToJudgment}/></section>
+        <section className="flex h-[max(32rem,calc(100dvh-13rem))] min-w-0 flex-col gap-3 lg:h-full" aria-label="当前原件"><div ref={sourceStart} className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 lg:hidden"><p className="min-w-0 flex-1 break-words text-sm font-medium">{row?.displayId || row?.id} · {row?.title}</p><Button variant="outline" size="sm" onClick={returnToJudgment}><ArrowLeft/>返回判断</Button></div>{input.files.length === 1 && file ? <FileName name={file.name} className="text-sm font-medium"/> : <Select value={selectedFile} onValueChange={value => {navigation.current++; setSelectedFile(value); setFocus(null); writeOptions({reviewFile: value, reviewLocation: ''})}}><SelectTrigger className="w-full min-w-0" aria-label="复核原件"><SelectValue placeholder="选择原件" className="min-w-0"/></SelectTrigger><SelectContent className="max-w-[calc(100vw-2rem)]">{input.files.map((item: SourceFile) => <SelectItem key={sourceKey(item)} value={sourceKey(item)} textValue={item.name}><FileIcon name={item.name}/><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{item.name}{input.files.filter(file => file.name === item.name).length > 1 && item.material ? ` · 上传版本 ${item.material.file_version_id.slice(0, 8)}` : ''}</span></SelectItem>)}</SelectContent></Select>}<DocumentPane key={file ? sourceKey(file) : 'none'} file={file} row={row} documents={documents} current={input.files} side="复核" onCite={!frozen && isManual(judgment ?? undefined) ? cite : undefined} focus={focus?.fileKey === selectedFile && focus.clauseId === row?.id ? focus : undefined} onClose={returnToJudgment}/></section>
       </ResizablePanel></TabsContent>
     </ResizablePanelGroup></div>
   </section></Tabs>
