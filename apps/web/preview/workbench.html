@@ -41,8 +41,7 @@
         <label class="group"><span class="label">页面</span><select id="page" aria-label="页面">
           <option value="audit">V3.1 上传与规则确认</option><option value="intake">统一审核旅程（原型）</option><option value="progress">检查进度演示</option><option value="concept">人工复核演示</option><option value="amendment">回件登记演示</option><option value="requirements">审核要求</option><option value="usage">用量记录</option>
         </select></label>
-        <div id="scenes" class="group" role="group" aria-label="数据场景"><span class="label">场景（切换会重置）</span><button data-scene="populated" type="button">有数据</button><button data-scene="empty" type="button">空状态</button><button data-scene="error" type="button">错误</button><button data-scene="long" type="button">长列表</button><button data-scene="invalid" type="button">异常文件</button><button data-scene="partial" type="button">部分匹配</button><button data-scene="unmatched" type="button">零匹配</button><button data-scene="checking" type="button">预检查中</button><button data-scene="matching" type="button">识别中</button><button data-scene="drive-loading" type="button">飞书读取中</button><button data-scene="drive-error" type="button">飞书读取失败</button><button data-scene="drive-denied" type="button">飞书待授权</button><button data-scene="drive-empty" type="button">飞书空列表</button><button data-scene="confirm-loading" type="button">受理回执中</button><button data-scene="confirm-unknown" type="button">受理结果未知</button><button data-scene="audit-loading" type="button">审核结果读取中</button><button data-scene="summary-conflict" type="button">总结冲突</button><button data-scene="evidence-outside" type="button">证据越界</button><button data-scene="rule-conflict" type="button">条款冲突</button><button data-scene="failed-report-ready" type="button">报告资格冲突</button></div>
-        <div id="recovery-scenes" class="group" role="group" aria-label="传输与恢复样例"><button data-scene="upload-partial" type="button">部分传输失败</button><button data-scene="upload-loading" type="button">传输中</button><button data-scene="restore-matching" type="button">恢复识别中</button><button data-scene="restore-pending" type="button">恢复待确认</button><button data-scene="restore-reviewing" type="button">恢复审核中</button><button data-scene="restore-completed" type="button">恢复已完成</button><button data-scene="restore-unknown" type="button">恢复受理未知</button><button data-scene="restore-loading" type="button">恢复读取中</button><button data-scene="restore-auth" type="button">恢复待登录</button><button data-scene="restore-denied" type="button">恢复无权</button><button data-scene="restore-missing" type="button">恢复不存在</button><button data-scene="restore-error" type="button">恢复离线</button></div>
+        <label id="scenes" class="group"><span class="label">场景（切换会重置）</span><select id="scene" aria-label="场景"><optgroup label="审核与规则"><option value="populated">有数据</option><option value="empty">空状态</option><option value="error">错误</option><option value="long">长列表</option><option value="invalid">异常文件</option><option value="partial">部分匹配</option><option value="unmatched">零匹配</option><option value="checking">预检查中</option><option value="matching">识别中</option><option value="drive-loading">飞书读取中</option><option value="drive-error">飞书读取失败</option><option value="drive-denied">飞书待授权</option><option value="drive-empty">飞书空列表</option><option value="confirm-loading">受理回执中</option><option value="confirm-unknown">受理结果未知</option><option value="audit-loading">审核结果读取中</option><option value="summary-conflict">总结冲突</option><option value="evidence-outside">证据越界</option><option value="rule-conflict">条款冲突</option><option value="failed-report-ready">报告资格冲突</option></optgroup><optgroup label="传输与恢复"><option value="upload-partial">部分传输失败</option><option value="upload-loading">传输中</option><option value="restore-matching">恢复识别中</option><option value="restore-pending">恢复待确认</option><option value="restore-reviewing">恢复审核中</option><option value="restore-completed">恢复已完成</option><option value="restore-unknown">恢复受理未知</option><option value="restore-loading">恢复读取中</option><option value="restore-auth">恢复待登录</option><option value="restore-denied">恢复无权</option><option value="restore-missing">恢复不存在</option><option value="restore-error">恢复离线</option></optgroup><optgroup label="报告"><option value="reports-ready">逐文件报告</option><option value="reports-generating">报告生成中</option><option value="reports-failed">报告失败</option><option value="reports-none">无正式报告</option><option value="reports-unknown">生成回执未知</option><option value="reports-policy">重生成未开放</option><option value="reports-zip-unknown">ZIP 回执未知</option><option value="reports-zip-failed">ZIP 失败</option><option value="reports-duplicate">同名报告</option><option value="reports-pdf-race">PDF 迟到</option><option value="reports-generate-race">报告回执迟到</option></optgroup></select></label>
         <div class="group" role="group" aria-label="预览宽度"><span class="label">宽度</span><button data-width="390" type="button">手机</button><button data-width="820" type="button">平板</button><button data-width="1440" type="button">桌面</button><button data-width="fluid" type="button">自适应</button><input id="custom-width" type="number" min="280" max="2400" step="1" aria-label="自定义宽度（像素）" title="自定义宽度（像素）" /></div>
         <div class="spacer"></div>
         <button id="theme" type="button" aria-label="切换明暗主题">深色</button>
@@ -55,10 +54,10 @@
   </div>
   <script>
     const paths = {audit: '/preview/audit.html', concept: '/preview/concept.html', intake: '/preview/intake.html', progress: '/preview/intake.html?step=progress&variant=action&scenario=running', amendment: '/preview/concept.html?stage=response&variant=tasks', requirements: '/preview/intake.html?view=requirements', usage: '/preview/intake.html?view=usage'};
-    const choices = {scene: Array.from(document.querySelectorAll('[data-scene]'), button => button.dataset.scene), width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
+    const choices = {scene: Array.from(document.querySelectorAll('#scene option'), option => option.value), width: ['390', '820', '1440', 'fluid'], theme: ['light', 'dark']};
     const query = new URLSearchParams(location.search);
     const savedWidth = Number(query.get('width'));
-    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : '')};
+    const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : query.get('scene')?.startsWith('reports-') ? 'preview-report-task' : ''), report: query.get('report') || (query.get('scene')?.startsWith('reports-') ? '1' : '')};
     const frame = document.getElementById('product');
     const device = document.getElementById('device');
     const custom = document.getElementById('custom-width');
@@ -69,12 +68,11 @@
       }
       document.getElementById('page').value = state.page;
       document.getElementById('scenes').hidden = state.page === 'concept' || state.page === 'intake' || state.page === 'progress' || state.page === 'amendment';
-      document.getElementById('recovery-scenes').hidden = state.page !== 'audit';
-      for (const button of document.querySelectorAll('[data-scene]')) {
-        button.setAttribute('aria-pressed', String(button.dataset.scene === state.scene));
-        button.hidden = state.page === 'audit' ? ['empty', 'long'].includes(button.dataset.scene) : !['populated', 'empty', 'error', 'long'].includes(button.dataset.scene);
+      document.getElementById('scene').value = state.scene;
+      for (const option of document.querySelectorAll('#scene option')) {
+        option.hidden = state.page === 'audit' ? ['empty', 'long'].includes(option.value) : !['populated', 'empty', 'error', 'long'].includes(option.value);
       }
-      for (const button of document.querySelectorAll('[data-read]')) button.hidden = state.page !== 'audit' || !['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading'].includes(state.scene);
+      for (const button of document.querySelectorAll('[data-read]')) button.hidden = state.page !== 'audit' || !['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'reports-pdf-race', 'reports-generate-race'].includes(state.scene);
       for (const button of document.querySelectorAll('[data-width]')) button.setAttribute('aria-pressed', String(button.dataset.width === state.width));
       device.classList.toggle('fluid', state.width === 'fluid');
       device.style.setProperty('--frame-width', state.width === 'fluid' ? '100%' : `${state.width}px`);
@@ -86,6 +84,7 @@
         target.searchParams.set('scene', state.scene);
         target.searchParams.set('theme', state.theme);
         if (state.task) target.searchParams.set('task', state.task);
+        if (state.report) target.searchParams.set('report', state.report);
         destination = target.pathname + target.search;
         if (!reload && frame.contentDocument) {
           frame.contentDocument.documentElement.classList.toggle('dark', state.theme === 'dark');
@@ -98,7 +97,7 @@
       if (reload) frame.src = destination;
     }
     document.getElementById('page').addEventListener('change', event => { state.page = event.target.value; render(true); });
-    for (const button of document.querySelectorAll('[data-scene]')) button.addEventListener('click', () => { state.scene = button.dataset.scene; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : ''; render(true); });
+    document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; render(true); });
     for (const button of document.querySelectorAll('[data-width]')) button.addEventListener('click', () => { state.width = button.dataset.width; render(false); });
     custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
     document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
@@ -106,7 +105,8 @@
     for (const button of document.querySelectorAll('[data-read]')) button.addEventListener('click', () => frame.contentWindow.postMessage({type: 'ppap-preview-read', failed: button.dataset.read === 'fail'}, location.origin));
     window.addEventListener('message', event => {
       if (event.origin !== location.origin || event.source !== frame.contentWindow || event.data?.type !== 'ppap-audit-task' || event.data.task !== null && (typeof event.data.task !== 'string' || event.data.task.length > 256)) return;
-      state.task = event.data.task || ''; render(false);
+      if (event.data.report != null && (typeof event.data.report !== 'string' || event.data.report.length > 256)) return;
+      state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; render(false);
     });
     frame.addEventListener('load', () => {
       const opened = new URL(frame.contentWindow.location.href);

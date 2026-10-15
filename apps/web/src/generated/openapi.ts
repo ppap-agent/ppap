@@ -988,8 +988,16 @@ export interface components {
         };
         /** AuditFileReport */
         AuditFileReport: {
+            artifact?: components["schemas"]["AuditReportArtifact"] | null;
+            /** Generated At */
+            generated_at?: string | null;
+            generation_request?: components["schemas"]["AuditAcceptance"] | null;
             /** Reason */
             reason: string | null;
+            /** Regenerate Allowed */
+            regenerate_allowed?: boolean;
+            /** Regenerate Reason */
+            regenerate_reason?: string | null;
             /** Report Id */
             report_id: string | null;
             /**
@@ -1053,6 +1061,60 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** AuditReportArtifact */
+        AuditReportArtifact: {
+            /** Artifact Id */
+            artifact_id: string;
+            /** Byte Size */
+            byte_size: number;
+            /**
+             * Content Type
+             * @enum {string}
+             */
+            content_type: "application/pdf" | "application/zip";
+            /** Filename */
+            filename: string;
+        };
+        /**
+         * AuditReportPackage
+         * @description One recoverable packaging job; report references are fixed at creation.
+         */
+        AuditReportPackage: {
+            artifact: components["schemas"]["AuditReportArtifact"] | null;
+            /** Package Id */
+            package_id: string | null;
+            /** Reason */
+            reason: string | null;
+            receipt: components["schemas"]["AuditAcceptance"];
+            /** Reports */
+            reports: components["schemas"]["AuditReportReference"][];
+            /** Retry Allowed */
+            retry_allowed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "generating" | "ready" | "failed";
+        };
+        /** AuditReportReference */
+        AuditReportReference: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Report Id */
+            report_id: string;
+            /** Result Attempt */
+            result_attempt: number;
+            /** Round Id */
+            round_id: string;
+            /** Task Id */
+            task_id: string;
+        };
+        /** AuditReportUpdate */
+        AuditReportUpdate: {
+            receipt: components["schemas"]["AuditAcceptance"];
+            reference: components["schemas"]["AuditReportReference"];
+            report: components["schemas"]["AuditFileReport"] | null;
+        };
         /**
          * AuditResultCounts
          * @description Terminal checks only: failed/ERR, uncovered, unknown, then verified PASS/NG.
@@ -1113,6 +1175,7 @@ export interface components {
             /** Number */
             number: string;
             progress?: components["schemas"]["AuditProgress"];
+            report_package?: components["schemas"]["AuditReportPackage"] | null;
             /** Round Id */
             round_id: string | null;
             /** Source Draft Id */

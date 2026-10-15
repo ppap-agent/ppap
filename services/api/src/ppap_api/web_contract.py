@@ -646,10 +646,30 @@ class AuditFileSummary(TypedDict):
     extended_suggestions: list[str]
 
 
+class AuditReportReference(TypedDict):
+    task_id: str
+    round_id: str
+    file_version_id: str
+    result_attempt: int
+    report_id: str
+
+
+class AuditReportArtifact(TypedDict):
+    artifact_id: str
+    filename: str
+    content_type: Literal["application/pdf", "application/zip"]
+    byte_size: int
+
+
 class AuditFileReport(TypedDict):
     state: Literal["not_eligible", "pending", "generating", "ready", "failed"]
     report_id: str | None
     reason: str | None
+    generated_at: NotRequired[str | None]
+    artifact: NotRequired[AuditReportArtifact | None]
+    regenerate_allowed: NotRequired[bool]
+    regenerate_reason: NotRequired[str | None]
+    generation_request: NotRequired[AuditAcceptance | None]
 
 
 class AuditFileReview(TypedDict):
@@ -671,6 +691,24 @@ class AuditAcceptance(TypedDict):
     request_id: str
     state: Literal["pending", "accepted", "rejected"]
     reason: str | None
+
+
+class AuditReportUpdate(TypedDict):
+    reference: AuditReportReference
+    receipt: AuditAcceptance
+    report: AuditFileReport | None
+
+
+class AuditReportPackage(TypedDict):
+    """One recoverable packaging job; report references are fixed at creation."""
+
+    package_id: str | None
+    reports: list[AuditReportReference]
+    receipt: AuditAcceptance
+    state: Literal["pending", "generating", "ready", "failed"]
+    artifact: AuditReportArtifact | None
+    reason: str | None
+    retry_allowed: bool
 
 
 class AuditTaskFile(TypedDict):
@@ -701,6 +739,7 @@ class AuditTask(TypedDict):
     progress: NotRequired[AuditProgress]
     notification_enabled: NotRequired[bool]
     usage_notice: NotRequired[str | None]
+    report_package: NotRequired[AuditReportPackage | None]
 
 
 class AuditUploadItem(TypedDict):
@@ -725,7 +764,7 @@ def add_ui_contract(app: FastAPI) -> None:
         spec = native_openapi()
         schemas = spec.setdefault("components", {}).setdefault("schemas", {})
         definitions = {}
-        for contract in (AuditTask, AuditUploadItem):
+        for contract in (AuditTask, AuditUploadItem, AuditReportUpdate):
             root = TypeAdapter(contract).json_schema(ref_template="#/components/schemas/{model}")
             definitions.update(root.pop("$defs", {}))
             definitions[contract.__name__] = root

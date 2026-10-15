@@ -16,8 +16,272 @@ except ImportError:
 PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 
+def open_reports(page, scene):
+    page.goto(PREVIEW + "/preview/audit.html?scene=" + scene)
+    page.get_by_role("button", name="使用三类文件示例").click()
+    page.get_by_role("button", name="开始识别", exact=True).click()
+    page.get_by_role("button", name="开始审核", exact=True).click()
+    page.get_by_role("button", name="读取审核结果", exact=True).click()
+    page.get_by_role("button", name="报告中心", exact=True).click()
+
+
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_all_unreportable_files_keep_their_records_without_a_download(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-none")
+            for filename in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
+                expect(page.get_by_role("button", name=filename + "-审核报告 无正式报告", exact=True)).to_be_visible()
+                expect(page.get_by_role("checkbox", name="选择报告 " + filename, exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_disabled()
+            expect(page.get_by_text("审核异常，没有正式审核报告。", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="查看报告失败原因", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_report_view_gives_the_pdf_space_and_keeps_task_navigation_available(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
+            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
+            page.get_by_role("region", name="PDF 页面", exact=True).focus()
+            expect(page.get_by_role("region", name="PDF 页面", exact=True)).to_be_focused()
+            expect(page.get_by_role("complementary", name="审核任务", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="打开审核任务", exact=True).click()
+            expect(page.get_by_role("dialog", name="审核任务", exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
+            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            expect(page.get_by_role("complementary", name="审核任务", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_report_address_survives_harness_changes_and_reload_without_opening_another_file(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/__preview?page=audit&scene=reports-ready&task=preview-report-task&report=preview-recovery-version-1&width=1440&theme=light")
+            product = page.frame_locator("#product")
+            expect(product.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            page.get_by_role("button", name="切换明暗主题", exact=True).click()
+            page.reload()
+            expect(product.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            expect(product.locator("html")).to_have_class("dark")
+            page.get_by_role("combobox", name="场景", exact=True).select_option("reports-none")
+            expect(product.get_by_text("审核异常，没有正式审核报告。", exact=True)).to_be_visible()
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=not-this-file")
+            expect(page.get_by_text("所选报告不在当前任务的冻结范围内。请从文件报告清单选择，不自动打开另一份报告。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_unknown_zip_can_be_recovered_without_creating_another_package(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-zip-unknown")
+            page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+            page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+            expect(page.get_by_role("heading", name="ZIP 受理结果未知", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="打包所选 2 份报告", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("heading", name="ZIP 受理结果未知", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_role("region", name="ZIP 工作", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_failed_zip_recovers_only_the_package_and_keeps_ready_pdfs(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-zip-failed")
+            page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+            page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="重试同一报告集合打包", exact=True).click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_same_named_reports_have_distinct_entries_and_frozen_identity_mapping(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-duplicate")
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx · 同名文件 1/2", exact=True).check()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx · 同名文件 2/2", exact=True).check()
+            page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+            identities = page.get_by_role("region", name="ZIP 工作", exact=True).get_by_text(re.compile("^冻结文件：")).all_text_contents()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            with page.expect_download() as download:
+                page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+            import zipfile
+
+            with zipfile.ZipFile(download.value.path()) as archive:
+                self.assertEqual(set(archive.namelist()), {"控制计划.xlsx-审核报告.pdf", "控制计划.xlsx-审核报告 (2).pdf", "报告清单.txt"})
+                index = archive.read("报告清单.txt").decode()
+                self.assertEqual(len(identities), 2)
+                self.assertNotEqual(identities[0], identities[1])
+                for identity in identities:
+                    self.assertIn(identity.split("：", 1)[1].split(" · ")[0], index)
+            browser.close()
+
+    def test_unknown_report_generation_reads_the_original_request(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-unknown")
+            page.get_by_role("button", name="控制计划.xlsx-审核报告 生成失败", exact=True).click()
+            page.get_by_role("button", name="重生成同一结果", exact=True).click()
+            request = page.get_by_text(re.compile("^生成请求："))
+            original = request.inner_text()
+            expect(page.get_by_role("button", name="重生成同一结果", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="读取生成结果", exact=True).click()
+            expect(request).to_have_text(original)
+            page.get_by_role("button", name="读取生成结果", exact=True).click()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_late_pdf_bytes_cannot_replace_the_current_file(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-pdf-race")
+            page.get_by_role("button", name="控制计划.xlsx-审核报告 就绪", exact=True).click()
+            page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+            expect(page.get_by_role("img", name="控制计划.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("img", name="控制计划.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
+            expect(page.get_by_role("img", name="PFMEA.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_late_generation_receipt_cannot_regress_a_fresh_ready_report(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-generate-race")
+            page.get_by_role("button", name="控制计划.xlsx-审核报告 生成失败", exact=True).click()
+            page.get_by_role("button", name="重生成同一结果", exact=True).click()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("生成中", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_report_list_on_mobile_preserves_batch_selection(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            open_reports(page, "reports-ready")
+            page.get_by_role("button", name="文件报告 · 3 份", exact=True).click()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+            page.get_by_role("button", name="控制计划.xlsx-审核报告 就绪", exact=True).click()
+            expect(page.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            page.get_by_role("button", name="文件报告 · 3 份", exact=True).click()
+            expect(page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True)).to_be_checked()
+            page.keyboard.press("Escape")
+            expect(page.get_by_role("button", name="下载所选 1 份报告", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_report_recovery_policy_does_not_block_other_ready_downloads(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-policy")
+            page.get_by_role("button", name="控制计划.xlsx-审核报告 生成失败", exact=True).click()
+            expect(page.get_by_role("button", name="重生成同一结果", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="PFMEA.xlsx-审核报告 就绪", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_failed_report_regeneration_preserves_the_audit_result(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-failed")
+            page.get_by_role("button", name="使用三类文件示例").click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            page.get_by_role("button", name="报告中心", exact=True).click()
+            page.get_by_role("button", name="控制计划.xlsx-审核报告 生成失败", exact=True).click()
+            page.get_by_role("button", name="重生成同一结果", exact=True).click()
+            expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("生成中", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="PFMEA.xlsx NG 2/2 项 · 报告已就绪", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_zip_uses_the_reports_selected_at_creation_not_later_checkboxes(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready")
+            page.get_by_role("button", name="使用三类文件示例").click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            page.get_by_role("button", name="报告中心", exact=True).click()
+            page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+            expect(page.get_by_role("checkbox", name="选择报告 过程流程图.pdf", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).uncheck()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_role("region", name="ZIP 工作", exact=True)).to_be_visible()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            with page.expect_download() as download:
+                page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+            import zipfile
+
+            with zipfile.ZipFile(download.value.path()) as archive:
+                self.assertEqual(set(archive.namelist()), {"PFMEA.xlsx-审核报告.pdf", "控制计划.xlsx-审核报告.pdf", "报告清单.txt"})
+                self.assertIn("冻结文件版本：preview-file-", archive.read("报告清单.txt").decode())
+                for name in ["PFMEA.xlsx-审核报告.pdf", "控制计划.xlsx-审核报告.pdf"]:
+                    self.assertTrue(archive.read(name).startswith(b"%PDF-"))
+            browser.close()
+
+    def test_report_page_returns_to_the_selected_audit_file(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_role("button", name="使用三类文件示例").click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="控制计划.xlsx PASS 2/2 项 · 报告已就绪", exact=True).click()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            with page.expect_download() as download:
+                page.get_by_role("button", name="下载当前报告", exact=True).click()
+            self.assertEqual(download.value.suggested_filename, "控制计划.xlsx-审核报告.pdf")
+            with open(download.value.path(), "rb") as stream:
+                data = stream.read()
+            self.assertTrue(data.startswith(b"%PDF-"))
+            import fitz
+
+            with fitz.open(stream=data, filetype="pdf") as document:
+                text = "".join(sheet.get_text() for sheet in document)
+                self.assertIn("示例报告", text)
+                self.assertIn("控制计划.xlsx", text)
+                self.assertIn("审核总结", text)
+            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
+            browser.close()
+
     def test_fresh_recovery_rejects_an_older_acceptance_receipt(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

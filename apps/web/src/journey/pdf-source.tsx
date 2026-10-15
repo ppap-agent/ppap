@@ -69,7 +69,7 @@ export function PdfSource({url, name}: {url: string; name: string}) {
       <Button variant="ghost" size="icon-sm" aria-label="放大 PDF" disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Plus/></Button>
       <Button variant="ghost" size="icon-sm" aria-label="旋转 PDF" onClick={() => setRotation(value => (value + 90) % 360)}><RotateCw/></Button>
     </div>
-    <div className={"relative flex-1 min-h-40 overflow-auto"} ref={viewport} aria-busy={!error && rendering}>
+    <div className={"relative flex-1 min-h-40 overflow-auto"} ref={viewport} role="region" aria-label="PDF 页面" tabIndex={0} aria-busy={!error && rendering}>
       {error ? <p role="alert" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>{error}</p> : rendering && <p role="status" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>正在排版第 {page} 页…</p>}
       <div className={"w-max min-w-full p-3 [&_canvas]:block [&_canvas]:m-auto [&_canvas]:bg-background"} ref={paper}/>
     </div>

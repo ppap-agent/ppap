@@ -3,6 +3,8 @@ import type {AuditTask, AuditTaskFile} from '../src/audit/intake'
 import type {AuditEvidence} from '../src/audit/workspace'
 import {Alert, AlertDescription, AlertTitle} from '../src/components/ui/alert'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../src/components/ui/table'
+import {fixtureReport} from './audit-reports'
+import reportSamples from './report-samples.json'
 
 type Review = components['schemas']['AuditFileReview']
 type Check = components['schemas']['AuditClauseEvaluation']
@@ -26,8 +28,8 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
   const crossFile = selected.find(file => file.match?.document_type === '控制计划')
   const files = task.files.map(file => {
     if (!file.audit || file.selection !== 'selected') return file
-    const failed = file.match?.document_type === '过程流程图'
-    const mixed = file.match?.document_type === 'PFMEA'
+    const failed = scene === 'reports-none' || file.match?.document_type === '过程流程图'
+    const mixed = !failed && file.match?.document_type === 'PFMEA'
     const checks: Check[] = file.audit.checks.map((check, index) => {
       const status = failed ? 'ERR' : mixed ? index === 0 ? 'NG' : 'UNABLE' : 'PASS'
       const evidenceFile = mixed && index === 0 && crossFile ? crossFile : file
@@ -40,6 +42,18 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
     if (scene === 'evidence-outside' && mixed) audit.checks[0].evidence[0].file_version_id = 'preview-not-in-this-round'
     if (scene === 'rule-conflict' && mixed) audit.checks[0].rule_item = {...audit.checks[0].rule_item, rule_to_check: '被错误改写的要求'}
     if (scene === 'failed-report-ready' && failed) audit.report = {state: 'ready', report_id: 'invalid-preview-report', reason: null}
+    if (!failed && (!mixed || scene.startsWith('reports-'))) {
+      const facts = reportSamples.documents[mixed ? 0 : 1]
+      audit.checks = audit.checks.map((check, index) => {
+        const fact = facts.checks[index], evidenceFile = index === 0 && crossFile ? crossFile : file
+        return {...check, finding: {...check.finding!, status: fact.status === 'NG' ? 'NG' : 'PASS', classification: fact.observation}, evidence_verified: true, scope: {checked: 1, total: 1, unknown: 0}, scope_notice: null, evidence: [{...check.evidence[0], file_version_id: evidenceFile.file.id, locator: {kind: 'xlsx_cell', sheet: '审核示例', cell: fact.cell}, excerpt: fact.observation, location_gap: null}]}
+      })
+      audit.counts = {...audit.counts, pass_count: facts.checks.filter(check => check.status === 'PASS').length, ng_count: facts.checks.filter(check => check.status === 'NG').length, unknown_count: 0}
+      audit.summary = {conclusion: mixed ? 'NG' : 'PASS', text: facts.summary, corrective_actions: facts.corrective_actions, extended_suggestions: []}
+      audit.report = {...fixtureReport(file.file.original_filename), report_id: `preview-report-${file.file.id}`}
+    }
+    if (['reports-failed', 'reports-unknown', 'reports-policy', 'reports-generate-race'].includes(scene) && !mixed && !failed) audit.report = {...audit.report, state: 'failed', artifact: null, generated_at: null, reason: '示例：PDF 生成服务终态失败，审核结果保留。', regenerate_allowed: scene !== 'reports-policy', regenerate_reason: scene === 'reports-policy' ? '重生成政策未批准，服务未开放此操作。已有报告下载不受影响。' : '仅示例服务允许恢复报告；不代表真实收费政策已定。'}
+    if (scene === 'reports-generating' && !mixed && !failed) audit.report = {...audit.report, state: 'generating', artifact: null, generated_at: null, reason: '示例：PDF 正在生成，审核不重跑。'}
     return {...file, audit}
   })
   if (scene === 'audit-input-conflict') {
@@ -47,7 +61,8 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
     row.file = {...row.file, id: 'preview-replaced-version', original_filename: '已被换成最新版本的文件.xlsx'}
     row.audit = {...row.audit!, file_version_id: row.file.id}
   }
-  return {...task, state: 'completed', completion_reason: 'processed', progress: {completed: selected.length, total: selected.length}, files}
+  const pending = files.some(file => file.audit && ['pending', 'generating'].includes(file.audit.report.state))
+  return {...task, state: pending ? 'reviewing' : 'completed', completion_reason: pending ? null : 'processed', progress: {completed: selected.length, total: selected.length}, files}
 }
 
 export function FixtureOriginal({file, evidence}: {file: AuditTaskFile; evidence: AuditEvidence | null}) {

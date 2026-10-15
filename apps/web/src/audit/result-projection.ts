@@ -16,6 +16,16 @@ export function sameFrozenInputs(before: Task, after: Task): boolean {
   return before.id === after.id && before.round_id === after.round_id && before.analysis_mode === after.analysis_mode && before.files.length === after.files.length && before.files.every(file => after.files.some(next => sameSnapshot(file.file, next.file) && file.selection === next.selection && file.removal_reason === next.removal_reason && sameSnapshot(file.match?.rule, next.match?.rule)))
 }
 
+export function reportReference(task: Task, row: TaskFile): components['schemas']['AuditReportReference'] | null {
+  if (!task.files.some(file => sameSnapshot(file, row))) return null
+  const audit = row.audit
+  return row.selection === 'selected' && !resultConsistencyError(task, row) && audit?.report.report_id && audit.result_attempt !== null && task.round_id === audit.round_id ? {task_id: task.id, round_id: audit.round_id, file_version_id: row.file.id, result_attempt: audit.result_attempt, report_id: audit.report.report_id} : null
+}
+export function reportReady(task: Task, row: TaskFile): boolean {
+  const report = row.audit?.report
+  return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === `${row.file.original_filename}-审核报告.pdf`)
+}
+
 /** Fail closed on contradictory projections; this does not replace server validation. */
 export function resultConsistencyError(task: Task, row: TaskFile): string {
   const audit = row.audit

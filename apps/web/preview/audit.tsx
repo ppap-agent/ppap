@@ -1,18 +1,19 @@
 import {createRoot} from 'react-dom/client'
-import {useEffect, useRef, useState} from 'react'
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import '../src/index.css'
 import {AuditIntake, type AuditIntakeAdapter, type AuditTask, type AuditTaskFile} from '../src/audit/intake'
 import type {components} from '../src/generated/openapi'
 import {Button} from '../src/components/ui/button'
 import {fixtureAcceptance, fixtureResults, FixtureOriginal} from './audit-results'
+import {fixtureReports, fixtureReport, withReportBytes} from './audit-reports'
+import reportSamples from './report-samples.json'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
 const scene = query.get('scene') || 'populated'
 document.documentElement.classList.toggle('dark', query.get('theme') === 'dark')
 const documents = [
-  {type: 'PFMEA', name: 'PFMEA.xlsx', rule: '示例 PFMEA 规则 · v1', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
-  {type: '控制计划', name: '控制计划.xlsx', rule: '示例控制计划规则 · v2', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
+  ...reportSamples.documents,
   {type: '过程流程图', name: '过程流程图.pdf', rule: '示例过程流程图规则 · v3', mime: 'application/pdf'},
 ]
 const driveCatalog = [
@@ -27,6 +28,7 @@ let driveReads = 0
 const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
+const reportAdapter = fixtureReports(taskStore, scene)
 let recoveryRead = 0
 let authenticated = false
 const acceptanceReads = new Map<string, number>()
@@ -55,6 +57,7 @@ const adapter: AuditIntakeAdapter = {
       files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
     }
     if (scene === 'invalid') files.push({...sample(0), file: {...sample(0).file, original_filename: '加密文件.xlsx'}, validation: {state: 'invalid', reasons: ['文件加密或异常，无法识别']}})
+    if (scene === 'reports-duplicate') {const duplicate = sample(1); files.push({...duplicate, file: {...duplicate.file, file_id: 'preview-duplicate-document'}})}
     return files
   },
   readValidation: async row => driveCatalog.some(fixture => fixture.source.token === row.file.file_id) ? {state: 'valid', reasons: []} : row.validation,
@@ -77,15 +80,21 @@ const adapter: AuditIntakeAdapter = {
     if (scene === 'restore-error' && recoveryRead === 1) throw new Error('preview_offline')
     const task = taskStore.get(id)
     if (!task) throw Object.assign(new Error('preview_not_found'), {status: 404})
-    if (scene.startsWith('restore-') && recoveryRead === (scene === 'restore-error' || scene === 'restore-auth' ? 2 : 1)) return structuredClone(task)
+    if (scene.startsWith('restore-') && recoveryRead === (scene === 'restore-error' || scene === 'restore-auth' ? 2 : 1) || scene.startsWith('reports-') && id === 'preview-report-task' && recoveryRead === 1) {const next = await withReportBytes(task); taskStore.set(id, next); return structuredClone(next)}
+    if (scene.startsWith('reports-') && task.round_id && task.files.every(file => file.selection !== 'selected' || ['completed', 'review_failed'].includes(file.audit?.execution || ''))) {
+      const files = task.files.map(file => file.audit?.report.state === 'generating' ? {...file, audit: {...file.audit, report: {...fixtureReport(file.file.original_filename), report_id: file.audit.report.report_id, generation_request: file.audit.report.generation_request}}} : file)
+      const result = await withReportBytes({...task, state: 'completed', completion_reason: 'processed', files})
+      taskStore.set(id, result); return structuredClone(result)
+    }
     const result = accepted.get(id)
     if (result) {
       const reads = (acceptanceReads.get(id) || 0) + 1
       acceptanceReads.set(id, reads)
       if (['confirm-unknown', 'restore-unknown'].includes(scene) && reads === 1) return {...(confirmationInputs.get(id) || task), acceptance: {request_id: requestId || task.acceptance!.request_id, state: 'pending', reason: null}}
-      return requestId ? result : fixtureResults(result, scene)
+      if (requestId) return result
+      const next = await withReportBytes(fixtureResults(result, scene)); taskStore.set(id, next); return next
     }
-    if (task.round_id) return fixtureResults(task, scene)
+    if (task.round_id) {const next = await withReportBytes(fixtureResults(task, scene)); taskStore.set(id, next); return next}
     return adapter.match(task.files, task.analysis_mode, task.customer_preference, task)
   },
   upload: async (input, requestId) => {
@@ -117,11 +126,13 @@ const adapter: AuditIntakeAdapter = {
     const matchedFiles = structuredClone(files).map(row => {
       if (row.selection !== 'selected') return {...row, match: null}
       // Map fixture identities, never infer real audit answers from filenames.
-      const index = driveCatalog.find(fixture => fixture.source.token === row.file.file_id)?.index ?? -1
+      const index = row.file.file_id === 'preview-duplicate-document' && scene === 'reports-duplicate' ? 1 : driveCatalog.find(fixture => fixture.source.token === row.file.file_id)?.index ?? -1
       const document = documents[index]
       const known = Number.isInteger(index) && index >= 0 && Boolean(document)
       const matched = known && scene !== 'unmatched' && !(scene === 'partial' && index === 2)
-      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules: [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]}} : null, gaps: []}}
+      const sampleChecks = reportSamples.documents[index]?.checks
+      const rules = sampleChecks ? sampleChecks.map(check => ({id: check.id, category: check.category, priority: null, rule_to_check: check.requirement, type_of_rule: 'table'})) : [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]
+      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps: []}}
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates remain Product API-owned.
@@ -132,13 +143,13 @@ const adapter: AuditIntakeAdapter = {
 }
 
 // A fixed read fixture, not persistence of arbitrary uploads or a second runtime API.
-if (scene.startsWith('restore-') && scene !== 'restore-missing') {
-  const files = documents.map((_, index) => {const row = sample(index); return {...row, file: {...row.file, id: `preview-recovery-version-${index}`}}})
+if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsWith('reports-')) {
+  const files = adapter.samples().map((row, index) => ({...row, file: {...row.file, id: `preview-recovery-version-${index}`}}))
   const matched = adapter.match(files, 'standard', null, null)
   taskStore.delete(matched.id)
-  const seed: AuditTask = {...matched, id: 'preview-recovery-task', number: 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
+  const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : scene === 'restore-completed' ? fixtureResults(frozen, scene) : frozen
+  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : scene === 'restore-completed' || scene.startsWith('reports-') ? fixtureResults(frozen, scene) : frozen
   taskStore.set(seed.id, snapshot)
   if (scene === 'restore-unknown') accepted.set(seed.id, frozen)
 }
@@ -146,12 +157,12 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing') {
 function Preview() {
   const [reads, setReads] = useState<{id: number; label: string; finish: () => void; fail: () => void}[]>([])
   const readNumber = useRef(0)
-  function defer<T>(label: string, result: T): Promise<T> {
+  const defer = useCallback(<T,>(label: string, result: T): Promise<T> => {
     return new Promise((resolve, reject) => {
       const id = ++readNumber.current
       setReads(rows => [...rows, {id, label, finish: () => resolve(result), fail: () => reject(new Error('preview_read_failed'))}])
     })
-  }
+  }, [])
   useEffect(() => {
     const deliver = (event: MessageEvent) => {
       if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== 'ppap-preview-read') return
@@ -187,6 +198,16 @@ function Preview() {
       return scene === 'matching' && !task?.round_id && !requestId ? defer(`识别结果 · ${task?.number}`, result) : scene === 'audit-loading' && (task?.round_id || result.round_id) ? defer(`审核结果 · ${task?.number}`, result) : scene === 'restore-loading' && recoveryRead === 1 ? defer(`恢复任务 · ${id}`, result) : result
     },
   }
-  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  const controlledReports = useMemo(() => ({...reportAdapter,
+    readPdf: async (...args: Parameters<typeof reportAdapter.readPdf>) => {
+      const result = await reportAdapter.readPdf(...args)
+      return scene === 'reports-pdf-race' ? defer(`PDF · ${args[0].file_version_id}`, result) : result
+    },
+    regenerate: async (...args: Parameters<typeof reportAdapter.regenerate>) => {
+      const result = await reportAdapter.regenerate(...args)
+      return scene === 'reports-generate-race' ? defer(`报告生成回执 · ${args[0].file_version_id}`, result) : result
+    },
+  }), [defer])
+  return <>{['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race'].includes(scene) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}<AuditIntake adapter={controlled} reportAdapter={controlledReports} renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

@@ -61,6 +61,21 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_reports_bind_pdf_and_packages_to_frozen_results(self):
+        schemas = app.openapi()["components"]["schemas"]
+        reference = schemas["AuditReportReference"]
+        self.assertEqual(set(reference["required"]), {"task_id", "round_id", "file_version_id", "result_attempt", "report_id"})
+        self.assertEqual(schemas["AuditReportArtifact"]["properties"]["content_type"]["enum"], ["application/pdf", "application/zip"])
+        report = schemas["AuditFileReport"]["properties"]
+        self.assertIn("generated_at", report)
+        self.assertIn("artifact", report)
+        self.assertIn("regenerate_allowed", report)
+        self.assertIn("generation_request", report)
+        package = schemas["AuditReportPackage"]
+        self.assertEqual(package["x-contract-stage"], "ui-draft")
+        self.assertIn("reports", package["required"])
+        self.assertIn("receipt", package["required"])
+
     def test_ui_upload_distinguishes_unknown_from_a_retryable_terminal_failure(self):
         upload = app.openapi()["components"]["schemas"]["AuditUploadItem"]
         self.assertEqual(upload["x-contract-stage"], "ui-draft")

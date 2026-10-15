@@ -20,6 +20,7 @@ import {AuditWorkspace, type OriginalRenderer} from './workspace'
 import {sameFrozenInputs} from './result-projection'
 import {useUploads, type UploadAdapter, type UploadRow} from './uploads'
 import {TransferList} from './transfer-list'
+import type {AuditReportAdapter} from './report-contract'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -34,7 +35,7 @@ const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewi
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
-export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer}) {
+export function AuditIntake({adapter, renderOriginal, reportAdapter}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter}) {
   const [files, setFiles] = useState<AuditTaskFile[]>([])
   const [step, setStepState] = useState<'upload' | 'check' | 'match'>('upload')
   const stepRef = useRef(step)
@@ -45,6 +46,7 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
   const [tasks, setTasks] = useState<AuditTask[]>([])
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const [sheet, setSheet] = useState(false), [dialog, setDialog] = useState('')
+  const [reportView, setReportView] = useState(() => new URL(location.href).searchParams.has('report'))
   const [error, setError] = useState(''), [dragging, setDragging] = useState(false)
   const [checking, setChecking] = useState<string[]>([])
   const [driveOpen, setDriveOpen] = useState(false)
@@ -95,13 +97,19 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
     taskReads.current.delete(current.id)
     void acceptance.confirm(current)
   }
+  function changeReport(next: AuditTask) {
+    taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1); taskReads.current.delete(next.id)
+    setReadStatus(rows => ({...rows, [next.id]: {busy: false, error: ''}})); saveTask(next)
+  }
   function retainDraft() {if (task && !workbench) drafts.current.set(task.id, {files: structuredClone(files), uploads: uploads.snapshot(), mode, customer, step})}
   function clearReads() {draftEpoch.current += 1; validationReads.current.clear(); setChecking([]); uploads.reset()}
   function taskAddress(id: string | null) {
+    setReportView(false)
     const url = new URL(location.href)
     if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
+    url.searchParams.delete('report')
     history.pushState(null, '', url)
-    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id}, location.origin)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
   function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
   function openTask(row: AuditTask) {
@@ -137,8 +145,9 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
     }
   }
   function restoreAddress() {
+    setReportView(new URL(location.href).searchParams.has('report'))
     const id = new URL(location.href).searchParams.get('task')
-    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id}, location.origin)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report')}, location.origin)
     if (id) void recover(id)
     else {retainDraft(); restoreEpoch.current += 1; clearReads(); setRecovery(null); activeTaskId.current = null; setTask(null); setFiles([]); setMode('standard'); setCustomer('auto'); setStep('upload')}
   }
@@ -233,14 +242,14 @@ export function AuditIntake({adapter, renderOriginal}: {adapter: AuditIntakeAdap
   return <div className="flex min-h-dvh bg-background text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3">跳到主要内容</a>
     <aside className="sticky top-0 flex h-dvh w-44 shrink-0 flex-col gap-8 border-r p-4 max-lg:hidden"><div className="flex items-center gap-2 text-lg font-semibold"><ClipboardCheck/>PPAP</div>{navigation}<Button className="mt-auto justify-start" variant="ghost" onClick={() => setDialog('联系我们')}><HelpCircle/>联系我们</Button></aside>
-    <aside aria-label="审核任务" className="sticky top-0 h-dvh w-56 shrink-0 border-r p-4 max-xl:hidden">{taskRail}</aside>
+    {!reportView && <aside aria-label="审核任务" className="sticky top-0 h-dvh w-56 shrink-0 border-r p-4 max-xl:hidden">{taskRail}</aside>}
     <div className="min-w-0 flex-1">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className="xl:hidden" aria-label="打开审核任务"><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>审核任务</SheetTitle><SheetDescription>查看与切换本页示例任务，不启动真实审核。</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation}</div>{taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit{task ? ` / ${task.number}` : ' / 新建审核'}</span></div><Badge variant="outline">交互预览</Badge></header>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className={reportView ? '' : 'xl:hidden'} aria-label="打开审核任务"><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>审核任务</SheetTitle><SheetDescription>查看与切换本页示例任务，不启动真实审核。</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation}</div>{taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit{task ? ` / ${task.number}` : ' / 新建审核'}</span></div><Badge variant="outline">交互预览</Badge></header>
       <main id="audit-main" tabIndex={-1} className={`mx-auto w-full space-y-6 p-6 max-sm:p-4 ${workbench ? '' : 'max-w-5xl'}`}>
         <p role="note" className="text-xs text-muted-foreground">示例数据，不会启动真实审核或收费。实际上传、格式检查、规则匹配与持久化尚未接入。</p>
-        <ol aria-label="审核步骤" className="flex flex-wrap gap-4 border-b pb-4">{['上传与检查', '确认规则', 'AI审核'].map((label, index) => <li key={label} aria-current={(workbench ? 2 : step === 'match' ? 1 : 0) === index ? 'step' : undefined} className="flex items-center gap-2"><span className="text-muted-foreground">{index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight className="size-3 text-muted-foreground"/>}</li>)}</ol>
+        {!reportView && <ol aria-label="审核步骤" className="flex flex-wrap gap-4 border-b pb-4">{['上传与检查', '确认规则', 'AI审核'].map((label, index) => <li key={label} aria-current={(workbench ? 2 : step === 'match' ? 1 : 0) === index ? 'step' : undefined} className="flex items-center gap-2"><span className="text-muted-foreground">{index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight className="size-3 text-muted-foreground"/>}</li>)}</ol>}
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取原任务，不创建任务或启动审核。' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
+        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取原任务，不创建任务或启动审核。' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} onReportChange={changeReport} onReportView={setReportView}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
         <header className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">{step === 'upload' ? '上传 PPAP 文件' : step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1><p className="text-muted-foreground">{step === 'match' ? '分别核对每份文件匹配的规则。未匹配文件不会进入审核。' : '先选择收到的文件，再核对可审核范围。不需要填写额外的事项表单。'}</p></header>
         {step !== 'match' && <div className="flex flex-wrap items-end justify-between gap-4"><div className="grid gap-2"><Label htmlFor="audit-customer">客户（可选）</Label><Select value={customer} onValueChange={setCustomer}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别客户</SelectItem><SelectItem value="sample-customer">示例客户</SelectItem></SelectContent></Select></div>{step === 'check' && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}</div>}
         <input ref={input} type="file" className="sr-only" aria-label="选择审核文件" multiple accept=".xlsx,.xls,.xlsm,.doc,.docx,.pdf" onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>

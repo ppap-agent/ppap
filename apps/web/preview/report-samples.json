@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-10-16T10:00:00+08:00",
+  "documents": [
+    {
+      "type": "PFMEA",
+      "name": "PFMEA.xlsx",
+      "rule": "示例 PFMEA 规则 · v1",
+      "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "asset": "pfmea",
+      "conclusion": "NG",
+      "checks": [
+        {"id": "1.1", "category": "频次一致性", "requirement": "示例条款，仅用于界面走查", "status": "NG", "observation": "示例：控制计划与 PFMEA 的频次不同。", "source": "控制计划.xlsx", "cell": "C12"},
+        {"id": "1.2", "category": "记录完整性", "requirement": "示例：指定的检查记录必须完整且可读。", "status": "PASS", "observation": "示例：已核对指定要求。", "source": "PFMEA.xlsx", "cell": "D18"}
+      ],
+      "summary": "存在一项已验证的不符合；其余要求已核对。",
+      "corrective_actions": ["核对并统一控制计划与 PFMEA 的频次。"]
+    },
+    {
+      "type": "控制计划",
+      "name": "控制计划.xlsx",
+      "rule": "示例控制计划规则 · v2",
+      "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "asset": "control-plan",
+      "conclusion": "PASS",
+      "checks": [
+        {"id": "2.1", "category": "频次一致性", "requirement": "示例条款，仅用于界面走查", "status": "PASS", "observation": "示例：已核对指定要求。", "source": "控制计划.xlsx", "cell": "C12"},
+        {"id": "2.2", "category": "记录完整性", "requirement": "示例：指定的检查记录必须完整且可读。", "status": "PASS", "observation": "示例：已核对指定要求。", "source": "控制计划.xlsx", "cell": "D18"}
+      ],
+      "summary": "本示例中的两项要求均已完成验证。",
+      "corrective_actions": []
+    }
+  ]
+}

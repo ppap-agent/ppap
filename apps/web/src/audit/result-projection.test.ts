@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, sameFrozenInputs, sameSnapshot} from './result-projection.ts'
+import {resultConsistencyError, sameFrozenInputs, sameSnapshot, reportReady, reportReference} from './result-projection.ts'
+import {readReportPdf} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
 function projection(): Task {
@@ -18,6 +19,28 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('a report reference cannot name a file outside the frozen task', () => {
+  const task = projection(), outside = structuredClone(task.files[0])
+  assert.deepEqual(reportReference(task, outside), {task_id: 'task-1', round_id: 'round-1', file_version_id: 'file-v1', result_attempt: 1, report_id: 'report-1'})
+  outside.file.id = 'outside-file-version'; outside.audit!.file_version_id = outside.file.id
+  assert.equal(reportReference(task, outside), null)
+})
+test('ready download requires PDF metadata for that file, not just a ready label', () => {
+  const task = projection(), row = task.files[0], report = row.audit!.report
+  assert.equal(reportReady(task, row), false)
+  report.generated_at = '2026-10-16T02:00:00Z'
+  report.artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf', byte_size: 9}
+  assert.equal(reportReady(task, row), true)
+  report.artifact.filename = '不同文件-审核报告.pdf'
+  assert.equal(reportReady(task, row), false)
+})
+test('PDF reads reject HTML, mismatched sizes and wrong media types', async () => {
+  const reference = {task_id: 'task-1', round_id: 'round-1', file_version_id: 'file-v1', result_attempt: 1, report_id: 'report-1'}
+  const artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf' as const, byte_size: 9}
+  const valid = new Blob(['%PDF-1.7\n'], {type: 'application/pdf'})
+  assert.equal((await readReportPdf({readPdf: async () => valid}, reference, artifact)).size, 9)
+  for (const blob of [new Blob(['<html>bad'], {type: 'application/pdf'}), new Blob(['%PDF-1.7\nextra'], {type: 'application/pdf'}), new Blob(['%PDF-1.7\n'], {type: 'text/html'})]) await assert.rejects(readReportPdf({readPdf: async () => blob}, reference, artifact), /invalid_pdf_artifact/)
+})
 test('readback preserves the accepted round, file versions, rules and input selection', () => {
   const before = projection(), after = structuredClone(before)
   after.notification_enabled = false

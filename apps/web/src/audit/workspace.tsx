@@ -6,7 +6,6 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
 import {Checkbox} from '../components/ui/checkbox'
-import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
 import {Input} from '../components/ui/input'
 import {Label} from '../components/ui/label'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
@@ -16,6 +15,8 @@ import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {FileName} from '../journey/file-name'
 import {resultConsistencyError} from './result-projection'
+import {AuditReports} from './reports'
+import type {AuditReportAdapter} from './report-contract'
 
 type Task = components['schemas']['AuditTask']
 type TaskFile = components['schemas']['AuditTaskFile']
@@ -35,13 +36,21 @@ function checkLabel(check: Evaluation) {
 }
 
 /** Views a single frozen result projection. Source rendering is injected; fixture IDs never reach real APIs. */
-export function AuditWorkspace({task, busy, readError, onRead, onChange, renderOriginal}: {task: Task; busy: boolean; readError: string; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer}) {
+export function AuditWorkspace({task, busy, readError, onRead, onChange, renderOriginal, reportAdapter, onReportChange, onReportView}: {task: Task; busy: boolean; readError: string; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void}) {
   const queue = task.files.filter(row => row.selection === 'selected')
   const [selected, setSelected] = useState(queue[0]?.file.id || '')
   const [clause, setClause] = useState(''), [source, setSource] = useState<AuditEvidence | null>(null)
   const [pane, setPane] = useState('details'), [queueOpen, setQueueOpen] = useState(false)
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
-  const [report, setReport] = useState<TaskFile | null>(null)
+  const [report, setReport] = useState<string | null>(() => {const id = new URL(location.href).searchParams.get('report'); return id === '1' ? queue[0]?.file.id || '' : id})
+  function showReport(id: string | null) {
+    setReport(id)
+    onReportView(id !== null)
+    const url = new URL(location.href)
+    if (id !== null) url.searchParams.set('report', id); else url.searchParams.delete('report')
+    history.replaceState(null, '', url)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: task.id, report: id}, location.origin)
+  }
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 112rem)').matches)
   useEffect(() => {const media = window.matchMedia('(min-width: 112rem)'); const changed = () => setWide(media.matches); media.addEventListener('change', changed); return () => media.removeEventListener('change', changed)}, [])
   const file = queue.find(row => row.file.id === selected) ?? queue[0]
@@ -71,13 +80,13 @@ export function AuditWorkspace({task, busy, readError, onRead, onChange, renderO
         return <div key={`${evidence.file_version_id}-${index}`} className="space-y-2 border-l pl-3"><p className="whitespace-pre-wrap text-sm">{evidence.excerpt || '未提供摘录。'}</p><p className="break-all text-xs text-muted-foreground">冻结版本：{evidence.file_version_id}</p><Button variant="outline" size="sm" disabled={!target} aria-label={`核对 ${target?.file.original_filename || '不在本轮的原件'}`} onClick={() => inspect(check, evidence)}>{target ? <FileName name={target.file.original_filename}/> : '原件不在冻结范围'}</Button></div>
       }) : <p className="text-muted-foreground">未提供来源证据，不能把空证据当作审核通过。</p>}</div></article>}
       <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">审核总结</h3>{issue ? <p role="alert">{issue}</p> : audit.summary ? <><p>{audit.summary.text}</p>{audit.summary.corrective_actions.length > 0 && <div className="space-y-2"><h4 className="font-medium">核心整改建议</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.corrective_actions.map(text => <li key={text}>{text}</li>)}</ul></div>}{audit.summary.extended_suggestions.length > 0 && <div className="space-y-2"><h4 className="font-medium">AI 延伸建议（不是客户要求）</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.extended_suggestions.map(text => <li key={text}>{text}</li>)}</ul></div>}</> : <p className="text-muted-foreground">{audit.execution === 'review_failed' ? '审核异常，没有通过总结。' : '总结尚未生成。'}</p>}</section>
-      <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !['ready', 'failed'].includes(audit.report.state)} onClick={() => setReport(file)}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
+      <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={() => showReport(file.file.id)}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
     </>}
   </> : <p>没有进入审核的文件。请返回任务列表。</p>}</section>
-  return <section className="space-y-5"><header className="flex flex-wrap items-center justify-between gap-3"><div className="space-y-2"><h1 className="text-2xl font-semibold">审核工作台</h1><p role="status" className="text-muted-foreground">{task.state === 'completed' ? '审核已结束' : '审核中'} · 文件已结束 {task.progress?.completed ?? '—'}/{task.progress?.total ?? queue.length}</p></div><div className="flex flex-wrap items-center gap-3"><Label><Checkbox checked={task.notification_enabled ?? true} onCheckedChange={value => onChange({...task, notification_enabled: value === true})}/>完成后飞书通知</Label><Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取审核结果…' : '读取审核结果'}</Button></div></header>
+  if (report !== null) return <AuditReports task={task} initialFile={report} onChoose={showReport} onBack={() => showReport(null)} onRead={onRead} busy={busy} readError={readError} adapter={reportAdapter} onChange={onReportChange}/>
+  return <section className="space-y-5"><header className="flex flex-wrap items-center justify-between gap-3"><div className="space-y-2"><h1 className="text-2xl font-semibold">审核工作台</h1><p role="status" className="text-muted-foreground">{task.state === 'completed' ? '审核已结束' : '审核中'} · 文件已结束 {task.progress?.completed ?? '—'}/{task.progress?.total ?? queue.length}</p></div><div className="flex flex-wrap items-center gap-3"><Button variant="outline" onClick={() => showReport(file?.file.id || '')}>报告中心</Button><Label><Checkbox checked={task.notification_enabled ?? true} onCheckedChange={value => onChange({...task, notification_enabled: value === true})}/>完成后飞书通知</Label><Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取审核结果…' : '读取审核结果'}</Button></div></header>
     {task.usage_notice && <Alert><AlertTitle>用量提示</AlertTitle><AlertDescription>{task.usage_notice}</AlertDescription></Alert>}{readError && <Alert variant="destructive"><AlertTitle>结果暂时无法读取</AlertTitle><AlertDescription>{readError} 原有结果与选择仍保留。</AlertDescription></Alert>}
     <Sheet open={queueOpen} onOpenChange={setQueueOpen}><SheetTrigger asChild><Button className="md:hidden" variant="outline">文件队列 · {queue.length} 份</Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>文件队列</SheetTitle><SheetDescription>切换文件不重启审核，异常文件仍保留。</SheetDescription></SheetHeader><div className="overflow-y-auto p-4">{fileQueue}</div></SheetContent></Sheet>
     <div className="grid min-w-0 gap-6 md:grid-cols-[12rem_minmax(0,1fr)]"><aside className="min-w-0 border-r pr-4 max-md:hidden">{fileQueue}</aside><div className="min-w-0">{wide ? <ResizablePanelGroup orientation="horizontal"><ResizablePanel defaultSize="40%" minSize="320px"><div className="pr-5">{details}</div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="60%" minSize="560px"><div className="pl-5">{originalPanel}</div></ResizablePanel></ResizablePanelGroup> : <Tabs value={pane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger><TabsTrigger value="original">核对原件</TabsTrigger></TabsList><TabsContent value="details">{details}</TabsContent><TabsContent value="original">{originalPanel}</TabsContent></Tabs>}</div></div>
-    <Dialog open={Boolean(report)} onOpenChange={open => {if (!open) setReport(null)}}><DialogContent><DialogHeader><DialogTitle>{report?.audit?.report.state === 'failed' ? '报告生成失败' : '报告预览入口'}</DialogTitle><DialogDescription>同一冻结审核结果的逐文件报告，不重跑审核。</DialogDescription></DialogHeader><p className="text-sm">{report?.audit?.report.reason || '本切片验证报告入口与资格；PDF 下载和分享由后续报告页面接入。'}</p><p className="break-all text-xs text-muted-foreground">结果版本：{report?.audit?.round_id} · {report?.audit?.result_attempt}</p></DialogContent></Dialog>
   </section>
 }
