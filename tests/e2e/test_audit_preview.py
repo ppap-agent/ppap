@@ -29,6 +29,26 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_old_recovery_uses_the_newer_task_files_rules_and_mode_already_read_from_the_server(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-recovery-current&task=preview-recovery-task")
+            expect(page.get_by_role("heading", name="正在恢复任务", exact=True)).to_be_visible()
+            page.get_by_role("textbox", name="搜索任务文件", exact=True).fill("PFMEA")
+            expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_contain_text("2 份文件")
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="其他页面新增.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("示例 PFMEA 新规则 · v2", exact=True)).to_be_visible()
+            expect(page.get_by_text("示例 PFMEA 规则 · v1", exact=True)).to_have_count(0)
+            expect(page.get_by_text("文件选择已有变更。请返回上一步，重新识别后再确认或结束任务。", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            expect(page.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 其他页面新增.xlsx", exact=True)).to_be_checked()
+            browser.close()
+
     def test_unmatched_removal_keeps_later_match_results_for_the_remaining_file(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

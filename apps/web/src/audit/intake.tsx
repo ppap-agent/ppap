@@ -168,6 +168,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     if (activate) activeTaskId.current = next.id
     setTask(current => activate || updateActive && current?.id === next.id ? mergeTaskSnapshot(current?.id === next.id ? current : undefined, combined, preserveNotification) : current)
     setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? mergeTaskSnapshot(row, combined, preserveNotification) : row) : [...rows, combined])
+    return combined
   }
   function changeDisplay(reference: DisplayReference, info: DisplayInfo) {
     const update = (current: AuditTask): AuditTask => current.id !== reference.task_id || current.round_id !== reference.round_id ? current : reconcileTaskDisplay(current, {...current, files: current.files.map(file => file.file.id === reference.file_version_id ? {...file, display_info: info} : file)})
@@ -185,8 +186,8 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   }
   const acceptance = useTaskAcceptance(adapter, next => {
     drafts.current.delete(next.id)
-    saveTask(next)
-    if (activeTaskId.current === next.id) {setFiles(structuredClone(next.files)); setStep('match')}
+    const current = saveTask(next)
+    if (activeTaskId.current === current.id) {setFiles(structuredClone(current.files)); setStep('match')}
   })
   const recognition = useTaskRecognition(adapter, (next, key) => {
     const target = recognitionTargets.current.get(key)
@@ -195,12 +196,12 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     const activate = Boolean(target && target.epoch === draftEpoch.current && (activeTaskId.current === key || activeUploadDraftId.current === key))
     taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1); taskReads.current.delete(next.id)
     setReadStatus(rows => ({...rows, [next.id]: {busy: false, error: ''}}))
-    saveTask(next, {activate, updateActive: activate})
+    const current = saveTask(next, {activate, updateActive: activate})
     if (activate) {
       endingTasks.current.delete(next.id)
       setEndStatus(rows => {const nextRows = {...rows}; delete nextRows[next.id]; return nextRows})
       drafts.current.delete(next.id); activeUploadDraftId.current = null
-      setFiles(structuredClone(next.files)); setStep('match'); setError(''); taskAddress(next.id, surfaceRef.current !== 'audit')
+      setFiles(structuredClone(current.files)); setStep('match'); setError(''); taskAddress(current.id, surfaceRef.current !== 'audit')
     }
   })
   const recognitionKey = task?.id || activeUploadDraftId.current || ''
@@ -260,10 +261,11 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     activeUploadDraftId.current = null
     activeTaskId.current = row.id
     if (recognition.get(row.id)) recognitionTargets.current.set(row.id, {epoch: draftEpoch.current, uploadId: null})
-    const saved = row.round_id ? undefined : drafts.current.get(row.id)
+    const current = saveTask(row, {activate: true})
+    const saved = current.round_id ? undefined : drafts.current.get(current.id)
     if (saved) uploads.restore(saved.uploads)
-    saveTask(row, {activate: true}); setFiles(structuredClone(saved ? mergeFileIntent(saved.files, row.files) : row.files)); setMode(saved?.mode ?? row.analysis_mode); setCustomer(saved?.customer ?? row.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
-    taskAddress(row.id)
+    setFiles(structuredClone(saved ? mergeFileIntent(saved.files, current.files) : current.files)); setMode(saved?.mode ?? current.analysis_mode); setCustomer(saved?.customer ?? current.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
+    taskAddress(current.id)
   }
   async function recover(id: string, login = false) {
     const epoch = ++restoreEpoch.current
@@ -278,9 +280,10 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (!acceptance.restore(next)) throw new Error('acceptance_snapshot_mismatch')
       if (recognition.get(id)) recognitionTargets.current.set(id, {epoch: draftEpoch.current, uploadId: null})
       setEndStatus(rows => {if (rows[id] !== 'rejected') return rows; const nextRows = {...rows}; delete nextRows[id]; return nextRows})
-      const saved = !next.round_id && next.acceptance?.state !== 'pending' ? drafts.current.get(next.id) : undefined
+      const current = saveTask(next, {activate: true})
+      const saved = !current.round_id && current.acceptance?.state !== 'pending' ? drafts.current.get(current.id) : undefined
       if (saved) uploads.restore(saved.uploads)
-      saveTask(next, {activate: true}); setFiles(structuredClone(saved ? mergeFileIntent(saved.files, next.files) : next.files)); setMode(saved?.mode ?? next.analysis_mode); setCustomer(saved?.customer ?? next.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
+      setFiles(structuredClone(saved ? mergeFileIntent(saved.files, current.files) : current.files)); setMode(saved?.mode ?? current.analysis_mode); setCustomer(saved?.customer ?? current.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
     } catch (failure) {
       if (restoreEpoch.current !== epoch) return
       invalidateDisplayAccess(id)
@@ -398,10 +401,10 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (!current.round_id && current.input_revision !== next.input_revision) throw new Error('task_input_revision_mismatch')
       if (current.round_id && !sameFrozenInputs(current, next)) throw new Error('frozen_input_mismatch')
       if (progressRegressed(current, next)) throw new Error('regressive_progress')
-      saveTask(next, {preserveNotification: true})
-      const saved = drafts.current.get(next.id)
-      if (saved?.step === 'match') saved.files = mergeFileIntent(saved.files, structuredClone(next.files))
-      if (activeTaskId.current === next.id && stepRef.current === 'match') setFiles(rows => mergeFileIntent(rows, structuredClone(next.files)))
+      const chosen = saveTask(next, {preserveNotification: true})
+      const saved = drafts.current.get(chosen.id)
+      if (saved?.step === 'match') saved.files = mergeFileIntent(saved.files, structuredClone(chosen.files))
+      if (activeTaskId.current === chosen.id && stepRef.current === 'match') setFiles(rows => mergeFileIntent(rows, structuredClone(chosen.files)))
       setReadStatus(rows => ({...rows, [current.id]: {busy: true, error: ''}}))
       return true
     } catch (failure) {

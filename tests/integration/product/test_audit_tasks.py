@@ -83,6 +83,8 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert ended.json()["state"] == "completed"
     assert ended.json()["completion_reason"] == "no_matching_rules"
     assert client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0}).json() == ended.json()
+    changed_end = client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0, "removals": [{"file_version_id": file["file_version_id"], "removal_reason": "结束后修改"}]})
+    assert changed_end.status_code == 409
     assert client.get(f"/audit-tasks/{task['id']}").json() == ended.json()
     assert client.get("/audit-tasks", params={"state": "completed", "q": "控制计划"}).json()["tasks"] == [ended.json()]
     assert client.get("/audit-tasks", params={"state": "matching"}).json()["tasks"] == []

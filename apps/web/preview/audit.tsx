@@ -80,7 +80,7 @@ const adapter: AuditIntakeAdapter = {
   },
   samples: () => {
     const files = documents.map((_, index) => sample(index))
-    if (scene === 'recognition-provenance-union') return [files[0]]
+    if (scene === 'recognition-provenance-union' || scene === 'recognition-recovery-current') return [files[0]]
     if (scene === 'checking' || scene === 'checking-loading') {
       files[1].validation = {state: 'checking', reasons: ['示例：等待预检查结果']}
       files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
@@ -202,6 +202,17 @@ const adapter: AuditIntakeAdapter = {
     return next
   },
   listTasks: async ({q, state, offset}) => {
+    if (scene === 'recognition-recovery-current' && q) {
+      const previous = taskStore.get('preview-recovery-task')!
+      if (previous.input_revision === 0) {
+        const added = sample(1)
+        added.file = {...added.file, file_id: 'preview-native-sheet', original_filename: '其他页面新增.xlsx'}
+        const next = fixtureMatch([...previous.files, added], 'deep', previous.customer_preference, previous, 'preview-other-recognition')
+        next.input_revision = 1
+        if (next.files[0].match?.rule) next.files[0].match.rule = {...next.files[0].match.rule, id: 'preview-rule-current-v2', title: '示例 PFMEA 新规则 · v2'}
+        taskStore.set(next.id, next)
+      }
+    }
     const tasks = [...taskStore.values()].filter(task => (!state || task.state === state) && `${task.number} ${task.files.map(row => row.file.original_filename).join(' ')}`.toLowerCase().includes(q.toLowerCase()))
     const page = tasks.slice(offset, offset + 20).map(task => scene === 'recognition-tasks-list-stale' && q ? recognitionReceipts.get(task.recognition_request_id || '') || task : task)
     return {tasks: structuredClone(page), next_offset: tasks.length > offset + 20 ? offset + 20 : null}
@@ -237,12 +248,12 @@ const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, p
 const usageAdapter = fixtureUsage(archiveAdapter, scene)
 
 // A fixed read fixture, not persistence of arbitrary uploads or a second runtime API.
-if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsWith('reports-')) {
+if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsWith('reports-') || scene === 'recognition-recovery-current') {
   const files = adapter.samples().map((row, index) => ({...row, file: {...row.file, id: `preview-recovery-version-${index}`}}))
   const matched = fixtureMatch(files, 'standard', null, null, crypto.randomUUID())
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  const snapshot = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
   if (scene.startsWith('restore-usage-')) snapshot.usage_notice = usageNotices.paid_insufficient
   if (scene.startsWith('restore-display-')) snapshot.files = snapshot.files.map(file => ({...file, display_info: {revision: 0, values: fileDisplayValues(file)}, display_edit_access: {state: 'allowed', reason: null}}))
   if (scene.startsWith('restore-estimate')) {
@@ -325,6 +336,7 @@ function Preview() {
     readTask: async (id, requestId) => {
       const task = taskStore.get(id)
       const result = await adapter.readTask(id, requestId)
+      if (scene === 'recognition-recovery-current' && recoveryRead === 1) return defer('旧任务恢复读取', result)
       if (scene === 'recognition-progress-removal' && !task?.round_id && !requestId) return defer('其余文件识别结果', result)
       const job = result.report_package
       if (scene === 'reports-zip-foreign' && job?.state === 'ready' && !foreignPackageReads.has(job.receipt.request_id)) {

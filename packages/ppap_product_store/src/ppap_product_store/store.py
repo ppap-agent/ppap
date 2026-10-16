@@ -1050,6 +1050,8 @@ class AuthStore:
                 if not vid or vid in removed or not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
                     raise ValueError("invalid_removal_reason")
                 row = next((row for row in task["files"] if row["file"]["id"] == vid), None)
+                if task["completion_reason"] and row and row["selection"] != "removed":
+                    raise ValueError("task_input_locked")
                 if not row or not (row["selection"] == "selected" and (row["match"] or {}).get("state") == "unmatched" or row["selection"] == "removed" and row["removal_reason"] == reason.strip()):
                     raise ValueError("task_not_zero_match")
                 removed[vid] = reason.strip()
