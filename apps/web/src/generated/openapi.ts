@@ -228,6 +228,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/file-uploads/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Files Upload Get */
+        get: operations["files_upload_get_file_uploads__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/file-validations": {
         parameters: {
             query?: never;
@@ -2075,6 +2092,8 @@ export interface components {
             reason: string | null;
             /** Request Id */
             request_id: string;
+            /** Resume Allowed */
+            resume_allowed?: boolean;
             /** Retry Allowed */
             retry_allowed: boolean;
             /**
@@ -3564,6 +3583,37 @@ export interface operations {
             };
         };
     };
+    files_upload_get_file_uploads__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditUploadItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     files_validate_file_validations_post: {
         parameters: {
             query?: never;
@@ -3651,6 +3701,10 @@ export interface operations {
                     content_type: string;
                     /** Original Filename */
                     original_filename: string;
+                    /** Request Id */
+                    request_id?: string;
+                    /** Sha256 */
+                    sha256?: string;
                 };
             };
         };
@@ -3693,6 +3747,10 @@ export interface operations {
                     content_type: string;
                     /** Original Filename */
                     original_filename: string;
+                    /** Request Id */
+                    request_id?: string;
+                    /** Sha256 */
+                    sha256?: string;
                 };
             };
         };
@@ -3799,7 +3857,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FileVersion"];
                 };
             };
             /** @description Validation Error */

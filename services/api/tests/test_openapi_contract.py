@@ -14,6 +14,8 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("POST", "/files"): True,
     ("POST", "/files/{file_id}/versions/{version_id}/finalize"): True,
     ("GET", "/files/{file_id}/versions/{version_id}"): False,
+    ("GET", "/file-uploads/{request_id}"): False,
+    ("PUT", "/files/{file_id}/versions/{version_id}/blob"): False,
     ("GET", "/files/{file_id}/versions/{version_id}/preview"): False,
     ("GET", "/integrations/feishu/files"): False,
     ("GET", "/integrations/feishu/docs/links"): False,
@@ -261,12 +263,14 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("reports", package["required"])
         self.assertIn("receipt", package["required"])
 
-    def test_ui_upload_distinguishes_unknown_from_a_retryable_terminal_failure(self):
-        upload = app.openapi()["components"]["schemas"]["AuditUploadItem"]
-        self.assertEqual(upload["x-contract-stage"], "ui-draft")
+    def test_upload_receipt_distinguishes_unknown_from_a_retryable_terminal_failure(self):
+        spec = app.openapi()
+        upload = spec["components"]["schemas"]["AuditUploadItem"]
+        self.assertEqual(_response_schema(spec["paths"]["/file-uploads/{request_id}"]["get"]), {"$ref": "#/components/schemas/AuditUploadItem"})
         self.assertEqual(upload["properties"]["state"]["enum"], ["uploading", "ready", "failed", "unknown"])
         self.assertIn("request_id", upload["required"])
         self.assertIn("retry_allowed", upload["required"])
+        self.assertEqual(upload["properties"]["resume_allowed"]["type"], "boolean")
         self.assertIn({"type": "null"}, upload["properties"]["file"]["anyOf"])
 
     def test_ui_review_keeps_execution_evidence_and_report_lifecycles_distinct(self):

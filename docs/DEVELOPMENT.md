@@ -146,6 +146,8 @@ That command serializes the real FastAPI `app.openapi()` schema and pipes it to 
 
 UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented. Preview adapters stay outside the production build entries.
 
+本地文件上传可在 `POST /files` 或新版本请求中提供成对的 `request_id` 与 `sha256`。该请求固定调用人、元信息和内容摘要，`FileVersion.id` 就是请求 ID；重放不创建第二版本。`GET /file-uploads/{request_id}` 只读原请求，未读到记录仍是 unknown，不许可新请求重传。服务明确返回 `resume_allowed` 时，用户可用原请求和相同内容继续；绑定上传的 `PUT /blob` 幂等并完成该版本，已就绪内容不能替换。旧无请求 ID 的三步上传仍保留。文件大小上限为 200 MiB；本地读取/散列与 API 仍使用整份文件，不承诺流式传输或跨设备恢复未传完的字节。飞书导入与完整 V3.1 Adapter 尚待接入。
+
 文件内容预检查使用 `POST /file-validations`（同一 `request_id`、文件与版本幂等受理）及 `GET /file-validations/{validation_id}` 读回。`GET /files/{file_id}/versions/{version_id}/validation` 可恢复该版本最新的检查请求；每次读取仍检查当前文件权限。它复用现有 Worker 队列，不创建草稿、审核轮次或用量记录，也不调用模型或匹配规则。任务租约失效显示 `unknown`，不自动重新领取；原 Worker 的有效回执仍可收敛。
 
 `FileVersion.ready` 只表示原件已保存；预检查 job 的 `succeeded` 只表示检查已完成。只有其 `result.state=valid` 才表示可进入后续识别。损坏、加密、无内容与检查基础设施错误分开表达，安全预算超限为 `error`，不是文件审核 NG。OOXML 检查有展开量、条目及 XML 访问预算；旧 DOC 保留既有 25 MiB 受限转换上限。该接口不表示 200 MB 上传链路、新版任务持久化或后续审核已经全部接通。

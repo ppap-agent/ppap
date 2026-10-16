@@ -188,13 +188,27 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
     def test_upgrade_copies_frozen_head_not_current_rule_and_preserves_results(self):
         from ppap_core.audits import request_fingerprint
+        from ppap_core.files import sha256_bytes, version_object_key
         from ppap_core.fixtures import RULE_A
         from psycopg.types.json import Jsonb
 
-        target, reference = self.upload("target.xlsx"), self.upload("reference.xlsx")
+        target, reference = str(uuid.uuid4()), str(uuid.uuid4())
         draft, round_id = str(uuid.uuid4()), str(uuid.uuid4())
         frozen = {"kind": "presence", "snapshot": "accepted before upgrade"}
         with self.store._conn() as conn:
+            # Seed the previous schema directly; current upload code requires current columns.
+            for version_id, name in ((target, "target.xlsx"), (reference, "reference.xlsx")):
+                file_id = str(uuid.uuid4())
+                object_key = version_object_key(self.alice.tenant_id, file_id, version_id)
+                self.store.objects.put_exclusive(object_key, b"x", "application/octet-stream")
+                conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'file')", (file_id, self.alice.tenant_id))
+                conn.execute("INSERT INTO product.files (id, tenant_id, created_by, original_filename) VALUES (%s, %s, %s, %s)", (file_id, self.alice.tenant_id, self.alice.user_id, name))
+                conn.execute(
+                    """INSERT INTO product.file_versions (id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status, finalized_at)
+                    VALUES (%s, %s, %s, %s, 'application/octet-stream', 1, %s, %s, 'ready', now())""",
+                    (version_id, file_id, self.alice.tenant_id, name, sha256_bytes(b"x"), object_key),
+                )
+                conn.execute("INSERT INTO product.resource_grants VALUES (%s, %s, 'read')", (file_id, self.alice.user_id))
             for ident, kind in ((draft, "audit_draft"), (round_id, "audit_round")):
                 conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s,%s,%s)", (ident, self.alice.tenant_id, kind))
                 conn.execute("INSERT INTO product.resource_grants VALUES (%s,%s,'read')", (ident, self.alice.user_id))
@@ -203,9 +217,9 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
                 "INSERT INTO product.audit_rounds (id,tenant_id,created_by,source_draft_id,rule_version_id,rule_title,rule_body,idempotency_key,request_fingerprint,execution) VALUES (%s,%s,%s,%s,%s,'Frozen title',%s,'old-key','old-fingerprint','completed')",  # noqa: E501
                 (round_id, self.alice.tenant_id, self.alice.user_id, draft, RULE_A, Jsonb(frozen)),
             )  # noqa: E501
-            for version, role in ((target, "target"), (reference, "reference")):
-                conn.execute("INSERT INTO product.draft_items VALUES (%s,%s,%s)", (draft, version.id, role))
-                conn.execute("INSERT INTO product.round_inputs VALUES (%s,%s,%s)", (round_id, version.id, role))
+            for version_id, role in ((target, "target"), (reference, "reference")):
+                conn.execute("INSERT INTO product.draft_items VALUES (%s,%s,%s)", (draft, version_id, role))
+                conn.execute("INSERT INTO product.round_inputs VALUES (%s,%s,%s)", (round_id, version_id, role))
             conn.execute("INSERT INTO product.findings (id,round_id,item_key,classification,item,status) VALUES (%s,%s,'check','A','Original result','NG')", (str(uuid.uuid4()), round_id))
             conn.execute("INSERT INTO product.reviews (round_id,item_key,user_id,judgment,version) VALUES (%s,'check',%s,'保留人工判断',1)", (round_id, self.alice.user_id))
         for _ in range(2):
@@ -216,14 +230,14 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
         self.schema.require(self.schema.apply(self.database), "upgrade to current before using current store")
         loaded = self.store.get_round(round_id)
         by_id = {row["file_version_id"]: row for row in loaded["inputs"]}
-        self.assertEqual(by_id[target.id]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})
-        self.assertIsNone(by_id[reference.id]["rule"])
+        self.assertEqual(by_id[target]["rule"], {"id": RULE_A, "title": "Frozen title", "body": frozen})
+        self.assertIsNone(by_id[reference]["rule"])
         self.assertEqual(loaded["findings"][0]["status"], "NG")
         self.assertEqual(loaded["findings"][0]["review"]["judgment"], "保留人工判断")
         self.assertEqual(self.store.accept_draft(self.alice, draft, "old-key")["id"], round_id)
         with self.store._conn() as conn:
             fingerprint = conn.execute("SELECT request_fingerprint FROM product.audit_rounds WHERE id=%s", (round_id,)).fetchone()[0]
-        self.assertEqual(fingerprint, request_fingerprint([{"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}]))
+        self.assertEqual(fingerprint, request_fingerprint([{"file_version_id": target, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference, "role": "reference"}]))
 
 
 class UsageAcceptanceTests(AuditDatabaseCase):

@@ -59,6 +59,7 @@ const acceptanceReads = new Map<string, number>()
 const uploadReceipts = new Map<string, components['schemas']['AuditUploadItem']>()
 const transferReads = new Map<string, number>()
 const transferAttempts = new WeakSet<File>()
+const transferCommands = new Map<string, number>()
 const recognitionReceipts = new Map<string, AuditTask>()
 const recognitionReads = new Map<string, number>()
 let recognitionCommands = 0
@@ -142,6 +143,17 @@ const adapter: AuditIntakeAdapter = {
     return next
   },
   upload: async (input, requestId) => {
+    if (scene === 'upload-resume' && input.kind === 'local') {
+      const existing = uploadReceipts.get(requestId)
+      transferCommands.set(requestId, (transferCommands.get(requestId) || 0) + 1)
+      if (existing?.file) {
+        const resumed = {...existing, state: 'ready' as const, file: {...existing.file, status: 'local_preview'}, reason: null, resume_allowed: false}
+        uploadReceipts.set(requestId, resumed)
+        return resumed
+      }
+      uploadReceipts.set(requestId, {request_id: requestId, state: 'uploading', file: {id: requestId, file_id: `preview-local-${requestId}`, original_filename: input.file.name, content_type: input.file.type, byte_size: input.file.size, status: 'staging', sha256: null}, reason: '示例：传输已登记，原件尚未收到。可继续同一传输。', retry_allowed: false, resume_allowed: true})
+      throw new Error('preview_upload_response_lost')
+    }
     let receipt: components['schemas']['AuditUploadItem']
     if (input.kind === 'feishu') {
       const fixture = driveCatalog.find(row => row.source.token === input.file.token)
@@ -313,7 +325,12 @@ function Preview() {
     },
     upload: async (input, requestId) => {
       const result = await adapter.upload(input, requestId)
+      if (scene === 'upload-resume') return defer(`继续传输回执 · ${input.file.name} · 请求 ${requestId} · 版本 ${result.file?.id} · 传输命令 ${transferCommands.get(requestId)}`, result)
       return scene === 'upload-loading' ? defer(`传输回执 · ${input.file.name}`, result) : result
+    },
+    readUpload: async requestId => {
+      const result = await adapter.readUpload(requestId)
+      return scene === 'upload-resume' ? defer(`读取传输回执 · ${result.file?.original_filename} · 请求 ${requestId} · 版本 ${result.file?.id} · 传输命令 ${transferCommands.get(requestId)}`, result) : result
     },
     drive: {...adapter.drive, list: async pageToken => {
       const result = await adapter.drive.list(pageToken)
@@ -418,7 +435,7 @@ function Preview() {
     const result = await supportAdapter.read()
     return scene === 'support-loading' ? defer('服务配置', result) : result
   }} : undefined, [defer])
-  return <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+  return <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

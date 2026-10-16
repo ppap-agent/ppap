@@ -8,6 +8,7 @@ export type UploadAdapter = {upload: (input: UploadInput, requestId: string) => 
 export type UploadRow = {id: string; input: UploadInput; receipt: Receipt; removed: boolean; busy: boolean}
 export const uploadName = (input: UploadInput) => input.file.name
 export const canRetryUpload = (row: UploadRow) => !row.removed && !row.busy && row.receipt.state === 'failed' && row.receipt.retry_allowed
+export const canResumeUpload = (row: UploadRow) => !row.removed && !row.busy && row.input.kind === 'local' && row.input.file instanceof File && row.receipt.state === 'uploading' && row.receipt.resume_allowed === true
 
 /** Receipts belong to a request and draft, never to a filename or whichever page is active. */
 export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, removed: boolean) => void) {
@@ -52,9 +53,15 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
     const next = {...row, busy: true}
     save(next); void execute(next, true)
   }
+  function resume(id: string) {
+    const row = current.current.get(id)
+    if (!row || !canResumeUpload(row)) return
+    const next = {...row, busy: true, receipt: {...row.receipt, resume_allowed: false}}
+    save(next); void execute(next, false)
+  }
   function remove(id: string) {const row = current.current.get(id); if (row) save({...row, removed: true})}
   function reset() {epoch.current += 1; current.current.clear(); setRows([])}
   function snapshot() {return [...current.current.values()].map(row => row.busy ? {...row, busy: false, receipt: {...row.receipt, state: 'unknown' as const, retry_allowed: false, reason: '页面切换时尚未取得回执，请读取原传输请求。'}} : row)}
   function restore(saved: UploadRow[]) {reset(); for (const row of saved) current.current.set(row.id, row); setRows([...current.current.values()])}
-  return {rows, add, retry, read, remove, reset, snapshot, restore}
+  return {rows, add, retry, read, resume, remove, reset, snapshot, restore}
 }

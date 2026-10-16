@@ -94,6 +94,8 @@ class FileCreateRequest(TypedDict):
     original_filename: str
     byte_size: int
     content_type: str
+    request_id: NotRequired[str]
+    sha256: NotRequired[str]
 
 
 class FileFinalizeRequest(TypedDict, total=False):
@@ -1054,6 +1056,7 @@ class AuditUploadItem(TypedDict):
     file: FileVersion | None
     reason: str | None
     retry_allowed: bool
+    resume_allowed: NotRequired[bool]
 
 
 class AuditUsageQuery(TypedDict):

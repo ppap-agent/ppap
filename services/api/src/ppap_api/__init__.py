@@ -377,15 +377,22 @@ def create_app(
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if ("request_id" in body or "sha256" in body) and (not body.get("request_id") or not body.get("sha256")):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
         try:
             version = store.create_staging(
                 principal,
                 str(body.get("original_filename") or ""),
                 str(body.get("content_type") or "application/octet-stream"),
                 int(body.get("byte_size") or 0),
+                request_id=body.get("request_id"),
+                expected_sha256=body.get("sha256"),
             )
-        except (ValueError, TypeError):
-            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except (ValueError, TypeError) as exc:
+            code = "upload_request_conflict" if str(exc) == "upload_request_conflict" else "invalid_upload"
+            return JSONResponse({"error": code}, status_code=409 if code == "upload_request_conflict" else 400)
         return JSONResponse(version.public(), status_code=201)
 
     @app.post("/files/{file_id}/versions", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FileCreateRequest))
@@ -393,6 +400,8 @@ def create_app(
         principal, denied = require_file_read(request, file_id)
         if denied:
             return denied
+        if ("request_id" in body or "sha256" in body) and (not body.get("request_id") or not body.get("sha256")):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
         try:
             version = store.create_staging(
                 principal,
@@ -400,14 +409,30 @@ def create_app(
                 str(body.get("content_type") or "application/octet-stream"),
                 int(body.get("byte_size") or 0),
                 file_id=file_id,
+                request_id=body.get("request_id"),
+                expected_sha256=body.get("sha256"),
             )
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
-        except (ValueError, TypeError):
-            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        except (ValueError, TypeError) as exc:
+            code = "upload_request_conflict" if str(exc) == "upload_request_conflict" else "invalid_upload"
+            return JSONResponse({"error": code}, status_code=409 if code == "upload_request_conflict" else 400)
         return JSONResponse(version.public(), status_code=201)
 
-    @app.put("/files/{file_id}/versions/{version_id}/blob")
+    @app.get("/file-uploads/{request_id}", response_model=wc.AuditUploadItem)
+    def files_upload_get(request_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            receipt = store.get_upload_request(principal, request_id)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except ValueError:
+            return JSONResponse({"error": "invalid_upload_request"}, status_code=400)
+        return JSONResponse(receipt)
+
+    @app.put("/files/{file_id}/versions/{version_id}/blob", response_model=wc.FileVersion)
     async def files_blob(file_id: str, version_id: str, request: Request):
         principal, denied = require_file_read(request, file_id)
         if denied:
@@ -426,8 +451,9 @@ def create_app(
             updated = store.put_blob(version, b"".join(chunks))
         except ObjectExists:
             return JSONResponse({"error": "object_exists"}, status_code=409)
-        except ValueError:
-            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        except ValueError as exc:
+            code = "upload_content_conflict" if str(exc) == "upload_content_conflict" else "invalid_upload"
+            return JSONResponse({"error": code}, status_code=409 if code == "upload_content_conflict" else 400)
         return JSONResponse(updated.public())
 
     @app.post("/files/{file_id}/versions/{version_id}/finalize", response_model=wc.FileVersion, openapi_extra=wc.openapi_body(wc.FileFinalizeRequest, required=False))

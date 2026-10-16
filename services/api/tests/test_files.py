@@ -6,7 +6,9 @@ import io
 import os
 import socket
 import unittest
+import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 from urllib.parse import quote, urlsplit
 
@@ -229,6 +231,94 @@ class FileHttpTests(unittest.TestCase):
         self.assertEqual(replay.json()["sha256"], sha256_bytes(first))
         overwrite = self.client.put(f"/files/{file_id}/versions/{v1}/blob", content=b"nope")
         self.assertEqual(overwrite.status_code, 409)
+
+    def test_upload_request_keeps_one_version_and_resumes_only_its_content(self):
+        self._login("alice")
+        request_id = str(uuid.uuid4())
+        content = b"one fixed upload"
+        body = {"request_id": request_id, "original_filename": "report.xlsx", "content_type": "application/octet-stream", "byte_size": len(content), "sha256": sha256_bytes(content)}
+        created = self.client.post("/files", json=body)
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["id"], request_id)
+        path = f"/files/{created.json()['file_id']}/versions/{request_id}"
+        observed = self.client.get(f"/file-uploads/{request_id}")
+        self.assertEqual(observed.status_code, 200)
+        self.assertEqual(observed.json()["state"], "uploading")
+        self.assertTrue(observed.json()["resume_allowed"])
+        self.assertEqual(self.client.post("/files", json=body).json(), created.json())
+        changed = self.client.post("/files", json={**body, "sha256": sha256_bytes(b"different")})
+        self.assertEqual(changed.status_code, 409)
+        self.assertEqual(self.client.put(path + "/blob", content=b"different").status_code, 409)
+        uploaded = self.client.put(path + "/blob", content=content)
+        self.assertEqual(uploaded.status_code, 200)
+        self.assertEqual(uploaded.json()["status"], "ready")
+        self.assertEqual(self.client.put(path + "/blob", content=content).json(), uploaded.json())
+        self.assertEqual(self.client.put(path + "/blob", content=b"replacement").status_code, 409)
+        ready = self.client.get(f"/file-uploads/{request_id}").json()
+        self.assertEqual(ready["state"], "ready")
+        self.assertFalse(ready["resume_allowed"])
+        self.assertEqual(ready["file"]["id"], request_id)
+        self.assertEqual(self.client.get(path + "/download").content, content)
+
+    def test_upload_request_survives_a_lost_object_write_reply(self):
+        self._login("alice")
+        request_id, content = str(uuid.uuid4()), b"received before lost reply"
+        body = {"request_id": request_id, "original_filename": "report.pdf", "content_type": "application/pdf", "byte_size": len(content), "sha256": sha256_bytes(content)}
+        version = self.client.post("/files", json=body).json()
+        path = f"/files/{version['file_id']}/versions/{request_id}"
+        write = self.store.objects.put_exclusive
+
+        def lost_reply(*args):
+            write(*args)
+            raise OSError("object write reply lost")
+
+        with patch.object(self.store.objects, "put_exclusive", side_effect=lost_reply):
+            with self.assertRaises(OSError):
+                self.client.put(path + "/blob", content=content)
+        with patch.object(self.store.objects, "get", side_effect=AssertionError("read receipt must not read or finalize objects")):
+            receipt = self.client.get(f"/file-uploads/{request_id}").json()
+        self.assertEqual(receipt["state"], "uploading")
+        self.assertTrue(receipt["resume_allowed"])
+        self.assertFalse(receipt["retry_allowed"])
+        resumed = self.client.put(path + "/blob", content=content)
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(resumed.json()["status"], "ready")
+        self.assertEqual(resumed.json()["id"], request_id)
+        self.assertEqual(self.client.get(path + "/download").content, content)
+
+    def test_concurrent_upload_creation_returns_the_same_fixed_version(self):
+        self._login("alice")
+        request_id = str(uuid.uuid4())
+        body = {"request_id": request_id, "original_filename": "same.xlsx", "content_type": "application/octet-stream", "byte_size": 5, "sha256": sha256_bytes(b"fixed")}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            replies = list(pool.map(lambda _: self.client.post("/files", json=body), range(2)))
+        self.assertEqual([reply.status_code for reply in replies], [201, 201])
+        self.assertEqual(replies[0].json(), replies[1].json())
+        self.assertEqual(replies[0].json()["id"], request_id)
+
+    def test_upload_receipt_is_private_and_absence_is_not_retry_permission(self):
+        self._login("alice")
+        absent = self.client.get(f"/file-uploads/{uuid.uuid4()}").json()
+        self.assertEqual(absent["state"], "unknown")
+        self.assertFalse(absent["resume_allowed"])
+        self.assertFalse(absent["retry_allowed"])
+        request_id = str(uuid.uuid4())
+        body = {"request_id": request_id, "original_filename": "a.pdf", "content_type": "application/pdf", "byte_size": 1, "sha256": sha256_bytes(b"a")}
+        self.assertEqual(self.client.post("/files", json=body).status_code, 201)
+        for subject in ("bob", "carol"):
+            self._login(subject)
+            self.assertEqual(self.client.get(f"/file-uploads/{request_id}").status_code, 403)
+            self.assertEqual(self.client.post("/files", json=body).status_code, 403)
+        self._login("alice")
+        self.assertEqual(self.client.get(f"/file-uploads/{request_id}").json()["state"], "uploading")
+
+    def test_upload_request_rejects_incomplete_identity_and_accepts_200_mb_declaration(self):
+        self._login("alice")
+        body = {"original_filename": "large.pdf", "content_type": "application/pdf", "byte_size": 200 * 1024 * 1024}
+        for addition in ({"request_id": None}, {"request_id": str(uuid.uuid4())}, {"sha256": "0" * 64}, {"request_id": "not-a-uuid", "sha256": "0" * 64}):
+            self.assertEqual(self.client.post("/files", json={**body, **addition}).status_code, 400)
+        self.assertEqual(self.client.post("/files", json=body).status_code, 201)
+        self.assertEqual(self.client.post("/files", json={**body, "byte_size": 200 * 1024 * 1024 + 1}).status_code, 400)
 
     def test_cross_tenant_download_denied(self):
         self._login("alice")

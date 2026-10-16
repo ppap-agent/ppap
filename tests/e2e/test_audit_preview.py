@@ -2839,6 +2839,42 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
             browser.close()
 
+    def test_resumable_upload_only_continues_its_original_request_after_an_explicit_action(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for removed in (False, True):
+                with self.subTest(removed=removed):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    page.goto(PREVIEW + "/preview/audit.html?scene=upload-resume")
+                    page.get_by_label("选择审核文件", exact=True).set_input_files(
+                        {"name": "待续传.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"preview"}
+                    )
+                    expect(page.get_by_role("button", name="重试传输 待续传.xlsx", exact=True)).to_be_disabled()
+                    expect(page.get_by_role("button", name="继续传输 待续传.xlsx", exact=True)).to_have_count(0)
+                    page.get_by_role("button", name="读取传输 待续传.xlsx", exact=True).click()
+                    control = page.get_by_role("complementary", name="预览事件控制", exact=True)
+                    identity = control.get_by_text(re.compile("^读取传输回执 · 待续传.xlsx · 请求 ")).inner_text()
+                    request_id, version_id = re.fullmatch(r"读取传输回执 · 待续传.xlsx · 请求 ([a-f0-9-]+) · 版本 ([a-f0-9-]+) · 传输命令 1", identity).groups()
+                    page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                    resume = page.get_by_role("button", name="继续传输 待续传.xlsx", exact=True)
+                    expect(resume).to_be_enabled()
+                    expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
+                    resume.click()
+                    expect(control.get_by_text(f"继续传输回执 · 待续传.xlsx · 请求 {request_id} · 版本 {version_id} · 传输命令 2", exact=True)).to_be_visible()
+                    if removed:
+                        page.get_by_role("button", name="排除传输 待续传.xlsx", exact=True).click()
+                    page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+                    if removed:
+                        expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+                        expect(page.get_by_text("传输期间排除，不纳入识别", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
+                    else:
+                        expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+                    expect(page.get_by_role("button", name="继续传输 待续传.xlsx", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(0)
+                    page.close()
+            browser.close()
+
     def test_a_result_read_preserves_a_notification_change_made_while_waiting(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

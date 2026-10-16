@@ -25,6 +25,7 @@ export type RuleParseJob = Schema<'RuleParseJob'>
 export type PublicConfig = Schema<'PublicConfig'>
 export type PrincipalPublic = Schema<'PrincipalPublic'>
 export type FileVersion = Schema<'FileVersion'>
+export type UploadReceipt = Schema<'AuditUploadItem'>
 export type DraftList = Schema<'DraftList'>
 export type RoundList = Schema<'RoundList'>
 export type RoundSummary = Schema<'RoundSummary'>
@@ -69,9 +70,11 @@ export type Material = Omit<MaterialWire, 'rule' | 'status'> & {
 
 export class UploadResultUnknown extends Error {
   material: Material
-  constructor(material: Material) {
+  requestId?: string
+  constructor(material: Material, requestId?: string) {
     super(`上传结果未确认：${material.original_filename}。请核对该文件版本，避免重复上传。`)
     this.material = material
+    this.requestId = requestId
   }
 }
 export const resultLabels:Record<FindingStatus,string> = {PASS:'通过', NG:'不符合', ERR:'检查异常', UNABLE:'无法判断', NA:'不适用'}
@@ -98,6 +101,7 @@ const messages: Record<string,string> = {
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
+  upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
 }
 export async function request<T, B = unknown>(path: string, method = 'GET', body?: B, signal?: AbortSignal): Promise<T> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('当前处于离线状态，请联网后重试。')
@@ -115,27 +119,63 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
   }
   return result as T
 }
-export async function upload(file: File, role: Material['role'], onStaged?: (material: Material) => void): Promise<Material> {
-  if (file.size > 64 * 1024 * 1024) throw new Error(`${file.name} 超过 64 MiB。`)
-  const version = await request<FileVersion, FileCreateRequest>('/files', 'POST', {original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream'})
-  const material = {file_id: version.file_id, file_version_id: version.id, original_filename: file.name, role, rule_version_id: null}
-  onStaged?.(material)
-  const path = `/files/${version.file_id}/versions/${version.id}`
-  const response = await fetch(apiUrl + path + '/blob', {method: 'PUT', credentials: 'include', headers: {'Content-Type': file.type || 'application/octet-stream'}, body: file})
-  if (!response.ok) throw new Error(`${file.name} 上传失败，请重新选择文件。`)
-  try {
-    await request<FileVersion, FileFinalizeRequest>(path + '/finalize', 'POST', {})
-  } catch (error) {
-    if (!(error instanceof TypeError)) throw error
-    let ready = false
-    try {
-      ready = (await request<FileVersion>(path)).status === 'ready'
-    } catch {
-      // The readback failed too, so the finalization result is unknown.
-    }
-    if (!ready) throw new UploadResultUnknown(material)
+function checkLocalUpload(version: FileVersion, file: File, requestId: string, sha256: string) {
+  const contentType = (file.type || 'application/octet-stream').split(';')[0].trim().toLowerCase()
+  if (version.id !== requestId || !version.file_id || version.original_filename !== file.name || version.byte_size !== file.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== sha256 || version.status === 'ready' && version.sha256 !== sha256) throw new Error('上传回执与原文件不一致，请先核对原传输请求。')
+  return version
+}
+export async function readLocalUpload(requestId: string): Promise<UploadReceipt> {
+  const receipt = await request<UploadReceipt>(`/file-uploads/${encodeURIComponent(requestId)}`)
+  if (receipt.request_id !== requestId || receipt.file && receipt.file.id !== requestId || receipt.state === 'ready' && receipt.file?.status !== 'ready') throw new Error('上传回执与原请求不一致，请重新读取。')
+  return receipt
+}
+export async function uploadLocalVersion(file: File, requestId: string, onStaged?: (version: FileVersion) => void): Promise<UploadReceipt> {
+  if (file.size > 200 * 1024 * 1024) throw new Error(`${file.name} 超过 200 MB。`)
+  const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
+  const input = {request_id: requestId, sha256, original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream'}
+  let staged: FileVersion | null = null
+  function observe(version: FileVersion) {
+    const next = checkLocalUpload(version, file, requestId, sha256)
+    if (!staged) onStaged?.(next)
+    staged = next
+    return next
   }
-  return material
+  try {
+    const version = observe(await request<FileVersion, FileCreateRequest>('/files', 'POST', input))
+    if (version.status === 'ready') return {request_id: requestId, state: 'ready', file: version, reason: null, retry_allowed: false}
+    const path = `/files/${encodeURIComponent(version.file_id)}/versions/${encodeURIComponent(version.id)}/blob`
+    const response = await fetch(apiUrl + path, {method: 'PUT', credentials: 'include', headers: {'Content-Type': file.type || 'application/octet-stream'}, body: file})
+    if (!response.ok) {
+      const error = new Error(`${file.name} 原件未接收（${response.status}），请核对原文件。`)
+      Object.assign(error, {status: response.status})
+      throw error
+    }
+    const ready = observe(await response.json() as FileVersion)
+    if (ready.status !== 'ready') throw new Error('尚未取得文件已接收的回执，请读取原传输请求。')
+    return {request_id: requestId, state: 'ready', file: ready, reason: null, retry_allowed: false}
+  } catch (error) {
+    if (error instanceof Error && 'status' in error && [400, 401, 403, 404, 409, 413, 415, 422].includes(Number(error.status))) return {request_id: requestId, state: 'failed', file: staged, reason: error.message, retry_allowed: false}
+    try {
+      const receipt = await readLocalUpload(requestId)
+      if (receipt.file) observe(receipt.file)
+      return receipt
+    } catch {
+      return {request_id: requestId, state: 'unknown', file: staged, reason: '未取得明确传输结果，文件可能已接收。请读取原请求，不要重新上传。', retry_allowed: false}
+    }
+  }
+}
+export async function upload(file: File, role: Material['role'], onStaged?: (material: Material) => void): Promise<Material> {
+  const requestId = crypto.randomUUID()
+  let staged: Material | undefined
+  const receipt = await uploadLocalVersion(file, requestId, version => {
+    staged = {file_id: version.file_id, file_version_id: version.id, original_filename: version.original_filename, role, rule_version_id: null}
+    onStaged?.(staged)
+  })
+  if (receipt.state === 'ready' && staged) return staged
+  if (staged && ['unknown', 'uploading'].includes(receipt.state)) throw new UploadResultUnknown(staged, requestId)
+  const error = new Error(receipt.reason || `上传结果未确认：${file.name}。请读取原传输请求，不要重新上传。`)
+  Object.assign(error, {requestId})
+  throw error
 }
 export function originalUrl(file: Material, roundId?: string) {
   return `${apiUrl}${roundId ? `/rounds/${encodeURIComponent(roundId)}` : ''}/files/${encodeURIComponent(file.file_id)}/versions/${encodeURIComponent(file.file_version_id)}/download`

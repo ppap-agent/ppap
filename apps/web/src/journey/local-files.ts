@@ -4,7 +4,7 @@ import {useEffect, useRef, useState} from 'react'
 export type LocalFileRef = {id: string; digest: string; size: number; type: string}
 export type LocalUpload = {file: File; ref: LocalFileRef}
 export const fileAccept = '.xls,.xlsx,.xlsm,.doc,.docx,.pdf,.png,.jpg,.jpeg,.webp,.txt,.csv'
-const maxBytes = 64 * 1024 * 1024
+const maxBytes = 200 * 1024 * 1024
 const supported = /\.(xlsx?|xlsm|docx?|pdf|png|jpe?g|webp|txt|csv)$/i
 export function validLocalFile(value: unknown): value is LocalFileRef {
   if (!value || typeof value !== 'object') return false
@@ -46,7 +46,7 @@ async function writeFiles(rows: StoredFile[], restore = false) {
 export async function storeLocalFiles(files: File[]): Promise<LocalUpload[]> {
   for (const file of files) {
     if (!supported.test(file.name)) throw new Error(`${file.name}：请选择 Excel、Word、PDF、图片或文本文件。`)
-    if (file.size > maxBytes) throw new Error(`${file.name} 超过 64 MB；此批文件尚未添加。`)
+    if (file.size > maxBytes) throw new Error(`${file.name} 超过 200 MB；此批文件尚未添加。`)
   }
   const uploads: LocalUpload[] = []
   for (const file of files) uploads.push({file, ref: {id: crypto.randomUUID(), digest: await digest(file), size: file.size, type: file.type}})
