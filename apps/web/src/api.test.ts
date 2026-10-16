@@ -52,6 +52,12 @@ test('connect leaves deep mode off unless public-config offers it', async () => 
   assert.equal(profile, 'production')
 })
 
+test('connect returns the server login capability instead of inferring it from a successful connection', async () => {
+  installFetch(url => jsonResponse(url === '/runtime-config.json' ? {api_url: '/api'} : {login: 'disabled', feishu_app_id: 'app-without-secret'}))
+  const config = await connect()
+  assert.equal(config?.login, 'disabled')
+})
+
 test('product requests send cookies and no custom token header', async () => {
   installFetch(url => {
     if (url === '/runtime-config.json') return jsonResponse({api_url: 'http://api.example'})

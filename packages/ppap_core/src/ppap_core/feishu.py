@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 from urllib.parse import urlencode
 
+import httpx
+
 from ppap_core.identity import constant_time_equal
 from ppap_core.settings import Settings
 
@@ -134,19 +136,25 @@ def _seconds(value: object) -> int:
 
 
 def _user_tokens(http, payload_body: dict) -> UserTokens:
-    response = http.post(
-        TOKEN_URL,
-        json=payload_body,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        timeout=20,
-    )
-    payload = response.json()
+    try:
+        response = http.post(
+            TOKEN_URL,
+            json=payload_body,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=20,
+        )
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise FeishuError("token_exchange_failed") from error
+    if not isinstance(payload, dict):
+        raise FeishuError("token_exchange_failed")
     token = payload.get("access_token")
     if response.status_code >= 400 or payload.get("code") not in (0, None) or not token:
         raise FeishuError("token_exchange_failed")
     now = datetime.now(timezone.utc)
     access_expires = now + timedelta(seconds=_seconds(payload.get("expires_in")))
-    refresh = payload.get("refresh_token") if isinstance(payload.get("refresh_token"), str) else ""
+    refresh_value = payload.get("refresh_token")
+    refresh = refresh_value if isinstance(refresh_value, str) else ""
     if refresh:
         refresh_expires = now + timedelta(seconds=_seconds(payload.get("refresh_token_expires_in")))
     else:
@@ -197,13 +205,20 @@ def refresh_user_token(http, settings: Settings, refresh_token: str) -> UserToke
 
 
 def user_info(http, user_access_token: str) -> dict[str, str]:
-    response = http.get(
-        USER_INFO_URL,
-        headers={"Authorization": "Bearer " + user_access_token, "Content-Type": "application/json"},
-        timeout=20,
-    )
-    payload = response.json()
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    try:
+        response = http.get(
+            USER_INFO_URL,
+            headers={"Authorization": "Bearer " + user_access_token, "Content-Type": "application/json"},
+            timeout=20,
+        )
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise FeishuError("user_info_unavailable") from error
+    if not isinstance(payload, dict):
+        raise FeishuError("user_info_unavailable")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        data = payload
     tenant_key = str(data.get("tenant_key") or data.get("tenantKey") or "").strip()
     subject = str(data.get("open_id") or data.get("openId") or "").strip()
     if response.status_code >= 400 or not tenant_key or not subject:

@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import cast
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI, Query, Request
@@ -261,20 +261,26 @@ def create_app(
     def login_feishu_callback(code: str = "", state: str = "", error: str = "") -> RedirectResponse:
         dest = store.consume_state(state) if state else None
         fallback = settings.canonical_web_url() + "/"
-        if error or not code or not dest:
+        if not dest:
             return RedirectResponse(fallback, status_code=303)
+
+        def failed(reason: str) -> RedirectResponse:
+            parts = urlsplit(dest)
+            query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != "auth_error"]
+            query.append(("auth_error", reason))
+            return RedirectResponse(urlunsplit(parts._replace(query=urlencode(query))), status_code=303)
+
+        if error or not code:
+            return failed("cancelled" if error == "access_denied" else "failed")
         try:
             tokens = exchange_code(http, settings, code)
             info = user_info(http, tokens.access_token)
             started = _start_feishu_session(store, settings, info, tokens)
             if started is None:
-                return RedirectResponse(
-                    settings.canonical_web_url() + "/?error=tenant_not_allowed",
-                    status_code=303,
-                )
+                return failed("tenant_not_allowed")
             _principal, raw = started
         except FeishuError:
-            return RedirectResponse(fallback, status_code=303)
+            return failed("failed")
         response = RedirectResponse(dest, status_code=303)
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response

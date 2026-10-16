@@ -94,6 +94,7 @@ export async function connect() {
   apiUrl = runtime.api_url || config.api_url; profile = config.profile
   deepOffered = config.deep_offered === true
   feishuAppId = config.feishu_app_id || ''
+  return config
 }
 const messages: Record<string,string> = {
   unauthenticated: '请先登录飞书。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',

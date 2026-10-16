@@ -15,6 +15,10 @@ export const isPreview = () => location.pathname.startsWith('/preview/') || loca
 const AccessContext = createContext<{principal: PrincipalPublic | null; preview: boolean; logout: () => void; records: () => void} | null>(null)
 export const useAccess = () => useContext(AccessContext)
 const emptyValidators: RecordValidators = {}
+const loginErrors: Record<string, string> = {
+  cancelled: '已取消飞书授权。需要登录后才能继续审核。',
+  tenant_not_allowed: '当前企业尚未开通此审核服务，请切换飞书账号或联系管理员。',
+}
 
 export function AccountMenu({compact = false, className}: {compact?: boolean; className?: string}) {
   const access = useAccess()
@@ -34,40 +38,49 @@ export function AccountMenu({compact = false, className}: {compact?: boolean; cl
 
 export function ProductAccess({children, recordValidators = emptyValidators}: {children: ReactNode; recordValidators?: RecordValidators}) {
   const preview = isPreview()
+  const [loginError] = useState(() => {
+    const reason = new URL(location.href).searchParams.get('auth_error')
+    return reason ? Object.hasOwn(loginErrors, reason) ? loginErrors[reason] : '飞书登录未完成，请重新登录。' : ''
+  })
   const [principal, setPrincipal] = useState<PrincipalPublic | null>(null)
   const [ready, setReady] = useState(preview), [error, setError] = useState(''), [revision, setRevision] = useState(0)
   const [canSignIn, setCanSignIn] = useState(false)
   const [records, setRecords] = useState(false), epoch = useRef(0)
   useEffect(() => {
     if (preview) return
+    const url = new URL(location.href)
+    if (url.searchParams.has('auth_error')) {url.searchParams.delete('auth_error'); history.replaceState(history.state, '', url)}
     const current = ++epoch.current
     let active = true
     setReady(false); setCanSignIn(false)
     void (async () => {
       try {
-        await connect()
-        if (active && epoch.current === current) setCanSignIn(true)
+        const config = await connect()
+        if (!active || epoch.current !== current) return
+        setCanSignIn(config.login === 'feishu')
         let user: PrincipalPublic | null = null
         try {user = await request<PrincipalPublic>('/me')}
         catch (cause) {
+          if (!active || epoch.current !== current) return
           if ((cause as {code?: string}).code !== 'unauthenticated') throw cause
-          if (isFeishuHost() && feishuAppId && /Lark|Feishu/i.test(navigator.userAgent)) {
+          if (!loginError && config.login === 'feishu' && isFeishuHost() && feishuAppId && /Lark|Feishu/i.test(navigator.userAgent)) {
             try {
               const code = await requestHostCode(feishuAppId)
+              if (!active || epoch.current !== current) return
               user = await request<PrincipalPublic, HostLoginRequest>('/login/feishu/host', 'POST', {code})
             } catch { /* The browser OAuth entry remains available. */ }
           }
         }
-        if (active && epoch.current === current) {setPrincipal(user); setError(''); setReady(true)}
-      } catch (cause) {if (active) {setError(cause instanceof TypeError ? '暂时无法连接审核服务，请重试。' : cause instanceof Error ? cause.message : '无法连接审核服务'); setReady(true)}}
+        if (active && epoch.current === current) {setPrincipal(user); setError(user ? '' : loginError); setReady(true)}
+      } catch (cause) {if (active && epoch.current === current) {setError(cause instanceof TypeError ? '暂时无法连接审核服务，请重试。' : cause instanceof Error ? cause.message : '无法连接审核服务'); setReady(true)}}
     })()
     return () => {active = false}
-  }, [preview, revision])
+  }, [preview, revision, loginError])
   useEffect(() => {
-    const expired = () => {epoch.current++; setPrincipal(null); setReady(true)}
+    const expired = () => {if (principal) {epoch.current++; setPrincipal(null); setReady(true)}}
     window.addEventListener('ppap-session-expired', expired)
     return () => window.removeEventListener('ppap-session-expired', expired)
-  }, [])
+  }, [principal])
   async function logout() {
     if (preview) {location.assign('/'); return}
     try {await request('/logout', 'POST'); epoch.current++; setPrincipal(null)}
@@ -88,7 +101,10 @@ export function ProductAccess({children, recordValidators = emptyValidators}: {c
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>{canSignIn ? '重新读取登录状态' : '重试连接'}</Button>
         {canSignIn && <Button variant="outline" asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}
-      </> : <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}
+      </> : canSignIn ? <Button asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button> : <>
+        <Alert><AlertDescription>当前无法使用飞书登录，请稍后重试。</AlertDescription></Alert>
+        <Button onClick={() => setRevision(value => value + 1)}>重新读取登录状态</Button>
+      </>}
     </main>
   </div>
 }
