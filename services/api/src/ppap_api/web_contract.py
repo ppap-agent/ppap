@@ -551,6 +551,7 @@ class DocLinksResponse(TypedDict):
 class FeishuFileImportRequest(TypedDict):
     file_token: str
     doc_type: str
+    request_id: NotRequired[str]
 
 
 class PreviewRow(TypedDict):

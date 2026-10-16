@@ -151,7 +151,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     return next
   },
   upload: async (input, requestId) => {
-    if (scene === 'upload-resume' && input.kind === 'local') {
+    if (scene === 'upload-resume') {
       const existing = uploadReceipts.get(requestId)
       transferCommands.set(requestId, (transferCommands.get(requestId) || 0) + 1)
       if (existing?.file) {
@@ -159,7 +159,8 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
         uploadReceipts.set(requestId, resumed)
         return resumed
       }
-      uploadReceipts.set(requestId, {request_id: requestId, state: 'uploading', file: {id: requestId, file_id: `preview-local-${requestId}`, original_filename: input.file.name, content_type: input.file.type, byte_size: input.file.size, status: 'staging', sha256: null}, reason: '示例：传输已登记，原件尚未收到。可继续同一传输。', retry_allowed: false, resume_allowed: true})
+      const source = input.kind === 'feishu' ? driveCatalog.find(row => row.source.token === input.file.token) : null
+      uploadReceipts.set(requestId, {request_id: requestId, state: 'uploading', file: {id: requestId, file_id: input.kind === 'feishu' ? input.file.token : `preview-local-${requestId}`, original_filename: source?.filename || input.file.name, content_type: source?.mime || input.file.type, byte_size: input.kind === 'local' ? input.file.size : 240000, status: 'staging', sha256: null}, reason: '示例：传输已登记，原件尚未收到。可继续同一传输。', retry_allowed: false, resume_allowed: true})
       throw new Error('preview_upload_response_lost')
     }
     let receipt: components['schemas']['AuditUploadItem']

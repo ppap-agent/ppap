@@ -8,7 +8,7 @@ export type UploadAdapter = {upload: (input: UploadInput, requestId: string) => 
 export type UploadRow = {id: string; input: UploadInput; receipt: Receipt; removed: boolean; busy: boolean}
 export const uploadName = (input: UploadInput) => input.file.name
 export const canRetryUpload = (row: UploadRow) => !row.removed && !row.busy && row.receipt.state === 'failed' && row.receipt.retry_allowed
-export const canResumeUpload = (row: UploadRow) => !row.removed && !row.busy && row.input.kind === 'local' && row.input.file instanceof File && row.receipt.state === 'uploading' && row.receipt.resume_allowed === true
+export const canResumeUpload = (row: UploadRow) => !row.removed && !row.busy && (row.input.kind === 'feishu' || row.input.file instanceof File) && row.receipt.state === 'uploading' && row.receipt.resume_allowed === true
 
 /** Receipts belong to a request and draft, never to a filename or whichever page is active. */
 export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, removed: boolean) => void) {

@@ -13,6 +13,56 @@ const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_c
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
 
+test('native Drive selection pages through the real API and reads back a lost import reply', async () => {
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const id = '0a3b1077-f018-4cac-be45-16599020f20e'
+  const source = {token: 'source-token', name: 'report.xlsx', type: 'file'}
+  const ready = {...file.file, id, sha256: 'a'.repeat(64)}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    calls.push(`${init?.method} ${input}`)
+    assert.equal(init?.credentials, 'include')
+    if (String(input).startsWith('/integrations/feishu/files?')) return json({files: [source], next_page_token: null})
+    if (init?.method === 'POST') {
+      assert.deepEqual(JSON.parse(String(init.body)), {request_id: id, file_token: 'source-token', doc_type: 'file'})
+      throw new TypeError('response lost after import')
+    }
+    return json({request_id: id, state: 'ready', file: ready, reason: null, retry_allowed: false})
+  }
+  assert.ok(adapter.drive)
+  assert.deepEqual((await adapter.drive.list('next / page')).files, [source])
+  const receipt = await adapter.upload({kind: 'feishu', file: source}, id)
+  assert.equal(receipt.state, 'ready')
+  assert.equal(receipt.file?.id, id)
+  assert.deepEqual(calls, ['GET /integrations/feishu/files?page_token=next+%2F+page', 'POST /integrations/feishu/files/import', `GET /file-uploads/${id}`])
+})
+
+test('native Drive unknown results permit readback, never an automatic second import', async () => {
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  const id = '0a3b1077-f018-4cac-be45-16599020f20e'
+  let posts = 0, reads = 0
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method === 'POST') {posts += 1; throw new TypeError('no response')}
+    reads += 1
+    return json({request_id: id, state: 'unknown', file: null, retry_allowed: false, reason: null})
+  }
+  assert.equal((await adapter.upload({kind: 'feishu', file: {token: 'token', name: 'cloud sheet', type: 'sheet'}}, id)).state, 'unknown')
+  assert.equal((await adapter.readUpload(id)).state, 'unknown')
+  assert.equal(posts, 1)
+  assert.equal(reads, 2)
+})
+
+test('native Drive distinguishes a missing user grant from an unclassified provider failure', async () => {
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
+  globalThis.fetch = async () => json({error: 'feishu_user_token_missing'}, 409)
+  await assert.rejects(adapter.drive!.list(), {message: 'authorization_required'})
+  const rejected = await adapter.upload({kind: 'feishu', file: {token: 'token', name: 'file.pdf', type: 'file'}}, 'request')
+  assert.equal(rejected.state, 'failed')
+  assert.equal(rejected.retry_allowed, false)
+  globalThis.fetch = async () => json({error: 'feishu_folder_failed'}, 502)
+  await assert.rejects(adapter.drive!.list(), error => error instanceof Error && error.message !== 'authorization_required')
+})
+
 test('native template coverage reads the authenticated catalog without inventing template files', async () => {
   const result = {coverage_universe: ['控制计划'], customers: [{customer_id: 'customer a', name: 'Customer A', effective_rule_types: ['控制计划']}]}
   globalThis.fetch = async (input, init) => {

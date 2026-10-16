@@ -4673,6 +4673,8 @@ export interface operations {
                     doc_type: string;
                     /** File Token */
                     file_token: string;
+                    /** Request Id */
+                    request_id?: string;
                 };
             };
         };

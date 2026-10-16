@@ -12,7 +12,7 @@ test('only an explicit terminal failure with retry authority permits another upl
   assert.equal(canRetryUpload({...row, removed: true}), false)
 })
 
-test('only an explicitly resumable local transfer can continue the same request', () => {
+test('only a server-authorized local or Drive transfer can continue the same request', () => {
   const row: UploadRow = {id: 'row', input: {kind: 'local', file: new File(['x'], 'a.pdf')}, removed: false, busy: false, receipt: {request_id: 'request', state: 'uploading', file: null, reason: '原件尚未接收', retry_allowed: false, resume_allowed: true}}
   assert.equal(canResumeUpload(row), true)
   assert.equal(canResumeUpload({...row, receipt: {...row.receipt, state: 'unknown'}}), false)
@@ -23,5 +23,10 @@ test('only an explicitly resumable local transfer can continue the same request'
   assert.equal(canResumeUpload({...row, busy: true}), false)
   assert.equal(canResumeUpload({...row, removed: true}), false)
   assert.equal(canResumeUpload({...row, input: {kind: 'local', file: undefined!}}), false)
-  assert.equal(canResumeUpload({...row, input: {kind: 'feishu', file: {token: 'token', name: 'a.xlsx', type: 'file', size: 1}}}), false)
+  const drive: UploadRow = {...row, input: {kind: 'feishu', file: {token: 'token', name: 'a.xlsx', type: 'file', size: 1}}}
+  assert.equal(canResumeUpload(drive), true)
+  assert.equal(canResumeUpload({...drive, receipt: {...drive.receipt, resume_allowed: undefined}}), false)
+  assert.equal(canResumeUpload({...drive, receipt: {...drive.receipt, state: 'unknown'}}), false)
+  assert.equal(canResumeUpload({...drive, busy: true}), false)
+  assert.equal(canResumeUpload({...drive, removed: true}), false)
 })

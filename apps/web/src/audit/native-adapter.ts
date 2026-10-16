@@ -1,4 +1,4 @@
-import {apiUrl, readLocalUpload, request, uploadLocalVersion, withResponseTrace} from '../api.ts'
+import {apiUrl, readLocalUpload, request, uploadLocalVersion, withResponseTrace, type FeishuFileImportRequest} from '../api.ts'
 import type {components} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
@@ -9,9 +9,16 @@ import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contrac
 import type {UploadAdapter} from './uploads'
 
 const nativeUploads: UploadAdapter = {
-  upload(input, requestId) {
-    if (input.kind !== 'local') throw new Error('飞书文件接收暂不可用，请先下载文件并本地上传。')
-    return uploadLocalVersion(input.file, requestId)
+  async upload(input, requestId) {
+    if (input.kind === 'local') return uploadLocalVersion(input.file, requestId)
+    try {
+      await request<components['schemas']['FileVersion'], FeishuFileImportRequest>('/integrations/feishu/files/import', 'POST', {request_id: requestId, file_token: input.file.token, doc_type: input.file.type})
+    } catch (failure) {
+      const error = failure as {status?: number; code?: string; message?: string}
+      if ([400, 401, 403, 404, 409, 413, 415, 422].includes(error.status || 0)) return {request_id: requestId, state: 'failed', file: null, reason: error.code === 'feishu_user_token_missing' ? '需要重新登录并授权飞书文件访问，也可以使用本地上传。' : error.message || '飞书文件未接收，请核对原文件。', retry_allowed: false}
+    }
+    try {return await readLocalUpload(requestId)}
+    catch {return {request_id: requestId, state: 'unknown', file: null, reason: '未读到飞书导入结果，请读取原请求，不要再次添加文件。', retry_allowed: false}}
   },
   readUpload: readLocalUpload,
 }
@@ -128,6 +135,13 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
   return {
     deepOffered: options.deepOffered,
     customers: options.customers.map(name => ({value: name, label: name})),
+    drive: {async list(pageToken) {
+      try {return await request(`/integrations/feishu/files?${new URLSearchParams(pageToken ? {page_token: pageToken} : {})}`)}
+      catch (failure) {
+        if (failure instanceof Error && 'code' in failure && failure.code === 'feishu_user_token_missing') failure.message = 'authorization_required'
+        throw failure
+      }
+    }},
     autoValidate: true,
     ...nativeUploads,
     async readValidation(file) {

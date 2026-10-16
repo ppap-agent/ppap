@@ -3152,6 +3152,41 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
             browser.close()
 
+    def test_drive_continuation_keeps_the_original_request_and_late_receipt_cannot_undo_removal(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for width in (390, 1280):
+                for removed in (False, True):
+                    with self.subTest(width=width, removed=removed):
+                        page = browser.new_page(viewport={"width": width, "height": 900})
+                        page.goto(PREVIEW + "/preview/audit.html?scene=upload-resume")
+                        page.get_by_role("button", name="从飞书选择", exact=True).click()
+                        picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
+                        picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True).check()
+                        picker.get_by_role("button", name="添加所选文件（1）", exact=True).click()
+                        expect(page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True)).to_have_count(0)
+                        page.get_by_role("button", name="读取传输 PFMEA.xlsx", exact=True).click()
+                        control = page.get_by_role("complementary", name="预览事件控制", exact=True)
+                        identity = control.get_by_text(re.compile("^读取传输回执 · PFMEA.xlsx · 请求 ")).inner_text()
+                        request_id, version_id = re.fullmatch(r"读取传输回执 · PFMEA.xlsx · 请求 ([a-f0-9-]+) · 版本 ([a-f0-9-]+) · 传输命令 1", identity).groups()
+                        assert request_id == version_id
+                        page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                        page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True).click()
+                        expect(control.get_by_text(f"继续传输回执 · PFMEA.xlsx · 请求 {request_id} · 版本 {version_id} · 传输命令 2", exact=True)).to_be_visible()
+                        if removed:
+                            page.get_by_role("button", name="排除传输 PFMEA.xlsx", exact=True).click()
+                        page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+                        if removed:
+                            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+                            expect(page.get_by_text("传输期间排除，不纳入识别", exact=True)).to_be_visible()
+                            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
+                        else:
+                            expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+                        expect(page.get_by_role("button", name="继续传输 PFMEA.xlsx", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(0)
+                        page.close()
+            browser.close()
+
     def test_resumable_upload_only_continues_its_original_request_after_an_explicit_action(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

@@ -554,12 +554,15 @@ class AuthStore:
                 )
         return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
 
-    def _create_requested_upload(self, principal, name, ctype, declared, file_id, request_id, expected_sha256) -> FileVersion:
+    def _create_requested_upload(self, principal, name, ctype, declared, file_id, request_id, expected_sha256, source=None) -> FileVersion:
         version_id = _as_uuid(request_id)
         fid = _as_uuid(file_id) if file_id else None
-        if not version_id or file_id and not fid or not isinstance(expected_sha256, str) or len(expected_sha256) != 64 or any(char not in "0123456789abcdef" for char in expected_sha256):
+        valid_digest = isinstance(expected_sha256, str) and len(expected_sha256) == 64 and all(char in "0123456789abcdef" for char in expected_sha256)
+        if not version_id or file_id and not fid or not source and not valid_digest:
             raise ValueError("invalid_upload_request")
         inputs = {"user_id": principal.user_id, "file_id": fid, "original_filename": name, "content_type": ctype, "byte_size": declared, "sha256": expected_sha256}
+        if source:
+            inputs["source"] = source
         with self._conn() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("upload:" + version_id,))
             row = conn.execute(
@@ -573,7 +576,7 @@ class AuthStore:
                 resource = self.resource(str(row[1]))
                 if resource is None or not can_read(principal, resource, self.grants(str(row[1]), principal.user_id)):
                     raise KeyError("missing")
-                if row[9] != inputs:
+                if source and row[9].get("source") != source or not source and row[9] != inputs:
                     raise ValueError("upload_request_conflict")
                 return self._version_from_row(row)
             if fid:
@@ -592,6 +595,66 @@ class AuthStore:
                 (version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING, Jsonb(inputs)),
             )
             return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
+
+    def receive_drive_upload(self, principal, request_id, file_token, doc_type, load) -> FileVersion:
+        version_id = _as_uuid(request_id) if isinstance(request_id, str) else None
+        if not version_id:
+            raise ValueError("invalid_upload_request")
+        source = {"provider": "feishu", "file_token": file_token, "doc_type": doc_type}
+        version = self._create_requested_upload(principal, "飞书文件导入中", "application/octet-stream", 0, None, version_id, None, source)
+        # This lock spans provider I/O, but no database transaction does. A second
+        # handler observes the original request instead of exporting again.
+        with self._conn() as guard:
+            key = "drive-import:" + version_id
+            lock_row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (key,)).fetchone()
+            locked = bool(lock_row and lock_row[0])
+            if not locked:
+                return self.get_version(version.file_id, version_id) or version
+            try:
+                version = self.get_version(version.file_id, version_id) or version
+                if version.status != STAGING:
+                    return version
+                inputs = self._upload_request(version)
+                if inputs and inputs.get("sha256"):
+                    try:
+                        return self.finalize_version(version)
+                    except ValueError as exc:
+                        if str(exc) != "missing_object":
+                            raise
+                imported = load()
+                if len(imported.data) > MAX_UPLOAD_BYTES:
+                    raise ValueError("too_large")
+                captured = {
+                    "original_filename": original_filename(imported.filename),
+                    "content_type": safe_content_type(imported.content_type),
+                    "byte_size": len(imported.data),
+                    "sha256": sha256_bytes(imported.data),
+                }
+                if imported.file_token != file_token or doc_type and imported.doc_type != doc_type:
+                    raise ValueError("upload_request_conflict")
+                if inputs and inputs.get("sha256") and any(inputs.get(key) != value for key, value in captured.items()):
+                    with self._conn() as conn:
+                        conn.execute("UPDATE product.file_versions SET status = %s WHERE id = %s AND status = %s", (FAILED, version_id, STAGING))
+                    raise ValueError("upload_content_conflict")
+                with self._conn() as conn, conn.transaction():
+                    inputs = {**(inputs or {}), **captured}
+                    conn.execute(
+                        """UPDATE product.file_versions SET original_filename = %s, content_type = %s, byte_size = %s, upload_request = %s
+                           WHERE id = %s AND status = %s""",
+                        (captured["original_filename"], captured["content_type"], captured["byte_size"], Jsonb(inputs), version_id, STAGING),
+                    )
+                    conn.execute("UPDATE product.files SET original_filename = %s WHERE id = %s", (captured["original_filename"], version.file_id))
+                    conn.execute(
+                        """INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref)
+                           VALUES (%s, 'feishu', %s, %s) ON CONFLICT DO NOTHING""",
+                        (version_id, imported.doc_type, file_token),
+                    )
+                current = self.get_version(version.file_id, version_id)
+                if current is None:
+                    raise KeyError("missing")
+                return self.put_blob(current, imported.data)
+            finally:
+                guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
 
     def _upload_request(self, version: FileVersion) -> dict | None:
         with self._conn() as conn:
@@ -624,6 +687,8 @@ class AuthStore:
         state = {STAGING: "uploading", READY: "ready", FAILED: "failed"}[version.status]
         reason = None if version.status == READY else "上传尚未完成，可沿用原请求继续传输。" if version.status == STAGING else "原上传已失败，不能继续写入该版本。"
         receipt.update(state=state, file=version.public(), resume_allowed=version.status == STAGING, reason=reason)
+        if row[9].get("source") and not row[9].get("sha256"):
+            receipt["file"] = None
         return receipt
 
     def get_version(self, file_id: str, version_id: str) -> FileVersion | None:

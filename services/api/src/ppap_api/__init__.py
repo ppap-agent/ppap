@@ -631,9 +631,14 @@ def create_app(
         if not file_token:
             return JSONResponse({"error": "invalid_file_token"}, status_code=400)
         try:
-            imported = import_drive_material(http, session.access_token, file_token, doc_type)
-            ready = persist_imported(session.principal, imported)
+            if "request_id" in body:
+                ready = store.receive_drive_upload(session.principal, body["request_id"], file_token, doc_type, lambda: import_drive_material(http, session.access_token, file_token, doc_type))
+            else:
+                imported = import_drive_material(http, session.access_token, file_token, doc_type)
+                ready = persist_imported(session.principal, imported)
         except Exception as exc:
+            if isinstance(exc, ValueError) and str(exc) in {"upload_request_conflict", "upload_content_conflict"}:
+                return JSONResponse({"error": str(exc)}, status_code=409)
             mapped = feishu_material_error(exc)
             if mapped:
                 return mapped
