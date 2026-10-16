@@ -9,7 +9,7 @@ const entry: HistoryEntry = {document_id: 'document-1', reference, sequence: 3, 
 test('archive addresses preserve the complete result identity and reject ambiguous reports', () => {
   const query = new URLSearchParams({archiveDoc: 'document-1', auditRef: resultKey(reference), archiveReport: '1'})
   assert.deepEqual(readArchiveAddress(query.toString()), {documentId: 'document-1', reference, report: true, invalid: false})
-  for (const raw of ['', 'null', '[]', '["t","r","v",0]', '["t","r","v",1.5]', '["","r","v",1]', '{"task_id":"task-1"}']) assert.equal(readArchiveAddress(new URLSearchParams({auditRef: raw}).toString()).invalid, true)
+  for (const raw of ['', 'null', '[]', '["t","r","v",0]', '["t","r","v",1.5]', '["","r","v",1]', '{"task_id":"task-1"}']) assert.equal(readArchiveAddress(new URLSearchParams({archiveDoc: 'document-1', auditRef: raw}).toString()).invalid, true)
   assert.equal(readArchiveAddress('archiveReport=1').invalid, true)
 })
 
