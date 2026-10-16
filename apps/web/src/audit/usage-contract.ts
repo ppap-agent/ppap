@@ -45,6 +45,6 @@ export function readUsageQuery(search: string): UsageQuery {
 export function writeUsageQuery(query: UsageQuery) {
   const url = new URL(location.href)
   url.searchParams.set('usageRange', query.range); url.searchParams.set('usageSearch', query.search); url.searchParams.set('usagePage', String(query.page))
-  history.replaceState(null, '', url)
+  history.replaceState(history.state, '', url)
   if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: 'usage', usageRange: query.range, usageSearch: query.search, usagePage: String(query.page), archiveDoc: url.searchParams.get('archiveDoc'), auditRef: url.searchParams.get('auditRef'), archiveReport: url.searchParams.get('archiveReport')}, location.origin)
 }

@@ -70,7 +70,7 @@ const adapter: AuditIntakeAdapter = {
   },
   samples: () => {
     const files = documents.map((_, index) => sample(index))
-    if (scene === 'checking') {
+    if (scene === 'checking' || scene === 'checking-loading') {
       files[1].validation = {state: 'checking', reasons: ['示例：等待预检查结果']}
       files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
     }
@@ -230,6 +230,10 @@ function Preview() {
     return () => window.removeEventListener('message', deliver)
   }, [reads])
   const controlled: AuditIntakeAdapter = {...adapter,
+    readValidation: async row => {
+      const result = await adapter.readValidation(row)
+      return scene === 'checking-loading' ? defer(`预检查结果 · ${row.file.original_filename}`, result) : result
+    },
     upload: async (input, requestId) => {
       const result = await adapter.upload(input, requestId)
       return scene === 'upload-loading' ? defer(`传输回执 · ${input.file.name}`, result) : result
@@ -319,7 +323,7 @@ function Preview() {
     const result = await supportAdapter.read()
     return scene === 'support-loading' ? defer('服务配置', result) : result
   }} : undefined, [defer])
-  return <>{(automaticObservation || ['matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+  return <>{(automaticObservation || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

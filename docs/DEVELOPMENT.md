@@ -152,6 +152,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 `matching-gaps` 在取消选择控制计划后，显示 PFMEA 已匹配规则但缺少跨文件比对资料；返回补选后再识别可清除提示。`restore-progress` 恢复固定样例的部分结果：有效 NG 与运行、排队项分开，刷新不推进样例，主动“读取审核结果”后才显示最终结果。`restore-task-conflict`、`restore-report-conflict` 分别演示文件未结束或首次报告仍生成时，任务汇总误报完成；有效逐文件依据和已就绪报告仍保留。带原请求回执的报告重生成不重开审核任务。这些场景不代表任意上传已保存或真实审核已经执行。
 
+开始识别前的上传草稿按每次“新建审核”分别保留在本页内存，浏览器历史仅记录草稿 ID。返回可恢复文件、选择、模式和传输回执；在途回执先读取原请求，不自动重传。草稿创建任务后，旧历史入口只恢复该任务，不再独立创建第二个任务。刷新与跨设备恢复仍依赖真实业务持久化，不能由本地草稿替代。`checking-loading` 可手动交付预检查迟到响应，验证离开并返回后旧响应失效。
+
 `observe-matching`、`restore-observe` 演示当前可见任务的自动读取；每次返回仍由事件控制条显式交付，不用计时器生成进度。界面默认每 3 秒读一次，隐藏或离开面板暂停，重新可见/聚焦补拉；失败按 6/12/24/30 秒退避，成功恢复基础间隔。未知的报告生成、ZIP 或分享请求保留专用核对入口，不由通用自动读取覆盖。`restore-observe-regression`、`restore-observe-missing-progress` 演示拒绝同轮较早或缺失的进度，`restore-observe-unresolved` 演示未知报告请求的暂停；`match-rule-missing` 演示缺少候选规则时禁止确认。其他手动场景显式关闭自动读取，以便单独控制原来的交互。
 
 `restore-estimate` 展示服务合同中的任务结束时间区间及观察时间；结束包含 D3 规定的首次报告处理。`restore-estimate-overdue`、`restore-estimate-invalid`、`restore-estimate-reversed` 分别演示上界已过、缺少时区和区间倒序；无可靠估计时明确说明，不用浏览器倒计时增加审核计数。过期说明随现有读取或界面操作更新，终态不再展示进行中的估计。固定样例仅验证显示，不代表真实服务已能预测耗时。P4/P5 与历史文件信息区分零件名称 `part` 和可选零件号 `part_number`；`confirm-metadata-conflict` 演示拒绝确认回执静默替换识别信息，历史详情使用所选轮次的信息，不取档案顶部的信息替代。

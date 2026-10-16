@@ -47,6 +47,7 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & UploadAdapter & {
 }
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: 'upload' | 'check' | 'match'}
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
 export function AuditIntake({adapter, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter}: {adapter: AuditIntakeAdapter; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter}) {
@@ -79,7 +80,10 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const input = useRef<HTMLInputElement>(null)
   const ruleTrigger = useRef<HTMLButtonElement | null>(null)
   const driveTrigger = useRef<HTMLButtonElement | null>(null)
-  const drafts = useRef(new Map<string, {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: typeof step}>())
+  const drafts = useRef(new Map<string, IntakeDraft>())
+  // History stores only an identity. File bytes and receipts remain in this page.
+  const uploadDrafts = useRef(new Map<string, IntakeDraft | {taskId: string}>())
+  const activeUploadDraftId = useRef<string | null>(null)
   const draftEpoch = useRef(0)
   const validationReads = useRef(new Set<string>())
   const activeTaskId = useRef<string | null>(null)
@@ -125,7 +129,12 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1); taskReads.current.delete(next.id)
     setReadStatus(rows => ({...rows, [next.id]: {busy: false, error: ''}})); saveTask(next)
   }
-  function retainDraft() {if (task && !workbench) drafts.current.set(task.id, {files: structuredClone(files), uploads: uploads.snapshot(), mode, customer, step})}
+  function retainDraft() {
+    if (workbench || recovery) return
+    const snapshot = {files: structuredClone(files), uploads: uploads.snapshot(), mode, customer, step}
+    if (task) drafts.current.set(task.id, snapshot)
+    else if (activeUploadDraftId.current) uploadDrafts.current.set(activeUploadDraftId.current, snapshot)
+  }
   function clearReads() {draftEpoch.current += 1; validationReads.current.clear(); setChecking([]); uploads.reset()}
   function taskAddress(id: string | null) {
     surfaceRef.current = 'audit'
@@ -136,15 +145,16 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     url.searchParams.delete('report')
     url.searchParams.delete('view')
     for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) url.searchParams.delete(key)
-    history.pushState(null, '', url)
+    history.pushState({...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}, '', url)
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
-  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
+  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
   function openTask(row: AuditTask) {
     if (!acceptance.restore(row)) {setError('任务回执与原请求不一致，未替换当前文件。'); return}
     restoreEpoch.current += 1; setRecovery(null)
     retainDraft()
     clearReads()
+    activeUploadDraftId.current = null
     activeTaskId.current = row.id
     const saved = row.round_id ? undefined : drafts.current.get(row.id)
     if (saved) uploads.restore(saved.uploads)
@@ -155,7 +165,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     const epoch = ++restoreEpoch.current
     acceptance.suspend(id)
     taskReadEpoch.current.set(id, (taskReadEpoch.current.get(id) || 0) + 1); taskReads.current.delete(id); setReadStatus(rows => ({...rows, [id]: {busy: false, error: ''}}))
-    retainDraft(); clearReads(); activeTaskId.current = null; setTask(null); setFiles([]); setRecovery({id, state: 'loading', message: ''})
+    retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = null; setTask(null); setFiles([]); setRecovery({id, state: 'loading', message: ''})
     try {
       if (login) await adapter.authenticate()
       const next = await adapter.readTask(id)
@@ -188,9 +198,24 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     setReportView(new URL(location.href).searchParams.has('report'))
     const id = new URL(location.href).searchParams.get('task')
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report')}, location.origin)
-    if (fromOtherSurface && id === activeTaskId.current) return
+    const localId = typeof history.state?.auditUploadDraft === 'string' ? history.state.auditUploadDraft : null
+    if (id ? fromOtherSurface && id === activeTaskId.current : localId && localId === activeUploadDraftId.current) return
     if (id) void recover(id)
-    else {retainDraft(); restoreEpoch.current += 1; clearReads(); setRecovery(null); activeTaskId.current = null; setTask(null); setFiles([]); setMode('standard'); setCustomer('auto'); setStep('upload')}
+    else {
+      const draftId = localId || crypto.randomUUID()
+      history.replaceState({...history.state, auditUploadDraft: draftId}, '')
+      const saved = uploadDrafts.current.get(draftId)
+      if (saved && 'taskId' in saved) {
+        const url = new URL(location.href); url.searchParams.set('task', saved.taskId)
+        history.replaceState({...history.state, auditUploadDraft: null}, '', url)
+        if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: saved.taskId, report: null}, location.origin)
+        void recover(saved.taskId)
+        return
+      }
+      retainDraft(); restoreEpoch.current += 1; clearReads(); setRecovery(null); activeTaskId.current = null; activeUploadDraftId.current = draftId
+      if (saved) uploads.restore(saved.uploads)
+      setTask(null); setFiles(structuredClone(saved?.files ?? [])); setMode(saved?.mode ?? 'standard'); setCustomer(saved?.customer ?? 'auto'); setStep(saved?.step ?? 'upload'); setError('')
+    }
   }
   const addressCurrent = useRef(restoreAddress)
   addressCurrent.current = restoreAddress
@@ -235,6 +260,8 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     if (blocked || confirmationLocked || workbench) return
     try {
       const next = adapter.match(files, mode, customer === 'auto' ? null : customer, task)
+      if (activeUploadDraftId.current) uploadDrafts.current.set(activeUploadDraftId.current, {taskId: next.id})
+      activeUploadDraftId.current = null
       taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1)
       taskReads.current.delete(next.id)
       setReadStatus(rows => ({...rows, [next.id]: {busy: false, error: ''}}))
@@ -271,20 +298,20 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
   const shownTasks = tasks.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: 'audit' | 'archive' | 'templates' | 'usage') {
-    surfaceRef.current = value
-    setSurface(value); setSheet(false)
+    setSheet(false)
     if (value === 'archive') setArchiveOpened(true)
     if (value === 'templates') setTemplatesOpened(true)
     if (value === 'usage') setUsageOpened(true)
     const url = new URL(location.href)
     for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) url.searchParams.delete(key)
     if (value !== 'audit') url.searchParams.set('view', value); else url.searchParams.delete('view')
-    history.pushState(null, '', url)
+    history.pushState(history.state, '', url)
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: value}, location.origin)
+    if (value === 'audit') {restoreAddress(); return}
+    surfaceRef.current = value
+    setSurface(value)
     // A repeated top-level entry leaves its detail without changing the active surface.
-    if (value === surface && value !== 'audit') window.dispatchEvent(new PopStateEvent('popstate'))
-    const id = url.searchParams.get('task')
-    if (value === 'audit' && id && activeTaskId.current !== id) void recover(id)
+    if (value === surface) window.dispatchEvent(new PopStateEvent('popstate'))
   }
   const navigation = <nav aria-label="产品导航" className="grid gap-1">
     <Button className="justify-start" variant={surface === 'audit' ? 'secondary' : 'ghost'} onClick={() => showSurface('audit')}><ClipboardCheck/>PPAP Audit</Button>

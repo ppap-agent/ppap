@@ -27,7 +27,7 @@ export function writeArchiveAddress(documentId: string | null, reference: Result
   for (const [key, value] of Object.entries({archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null})) {
     if (value) url.searchParams.set(key, value); else url.searchParams.delete(key)
   }
-  history[replace ? 'replaceState' : 'pushState'](null, '', url)
+  history[replace ? 'replaceState' : 'pushState'](history.state, '', url)
   if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null}, location.origin)
 }
 export function historyReportReference(entry: HistoryEntry): components['schemas']['AuditReportReference'] | null {
