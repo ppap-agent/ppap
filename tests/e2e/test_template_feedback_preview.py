@@ -11,6 +11,58 @@ if PREVIEW:
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplateFeedbackPreviewTests(unittest.TestCase):
+    def test_attachment_upload_can_continue_the_original_transfer_after_closing(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-upload-resume")
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "继续原附件.zip", "mimeType": "application/zip", "buffer": b"original bytes"})
+            expect(dialog.get_by_role("button", name="继续传输", exact=True)).to_be_enabled()
+            expect(dialog.get_by_role("button", name="重试上传", exact=True)).to_have_count(0)
+            dialog.get_by_role("button", name="读取上传结果", exact=True).click()
+            expect(dialog.get_by_role("button", name="继续传输", exact=True)).to_be_enabled()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog.get_by_role("button", name="继续传输", exact=True).click()
+            expect(dialog.get_by_text("已上传", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="继续传输", exact=True)).to_have_count(0)
+            with page.expect_download() as download:
+                dialog.get_by_role("button", name="下载 继续原附件.zip", exact=True).click()
+            self.assertEqual(download.value.path().read_bytes(), b"original bytes")
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            browser.close()
+
+    def test_attachment_only_feedback_keeps_uploaded_files_without_claiming_delivery(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-attachments")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "留待提交.zip", "mimeType": "application/zip", "buffer": b"kept bytes"})
+            expect(dialog.get_by_text("已上传", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            expect(dialog.get_by_text("运营提交暂不可用，附件尚未提交给运营。", exact=True)).to_be_visible()
+            with page.expect_download() as download:
+                dialog.get_by_role("button", name="下载 留待提交.zip", exact=True).click()
+            self.assertEqual(download.value.path().read_bytes(), b"kept bytes")
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            expect(dialog.get_by_text("留待提交.zip", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="查看 留待提交.zip", exact=True).click()
+            preview = page.get_by_role("dialog", name="附件查看", exact=True)
+            expect(preview.get_by_text("压缩包不在浏览器内解压。请关闭后下载原附件。", exact=True)).to_be_visible()
+            preview.get_by_role("button", name="关闭附件", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_have_count(0)
+            expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_disabled()
+            self.assertLessEqual(dialog.evaluate("element => element.scrollWidth"), 390)
+            browser.close()
+
     def test_nonretryable_feedback_failure_keeps_its_request_when_contacting_support(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

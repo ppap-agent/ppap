@@ -1,4 +1,4 @@
-import type {AuditFeedbackAdapter, FeedbackReceipt} from '../src/audit/feedback-contract'
+import {feedbackUploadError, type AuditFeedbackAdapter, type FeedbackReceipt} from '../src/audit/feedback-contract'
 import type {components} from '../src/generated/openapi'
 
 /** In-memory UI fixture only. Does not write Bitable, publish rules, or create tasks. */
@@ -8,10 +8,19 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
   const submissions = new Map<string, FeedbackReceipt>()
   const inputs = new Map<string, string>()
   const uploadAttempts = new WeakMap<File, number>()
-  return {
+  const adapter: AuditFeedbackAdapter = {
     upload: async (input, requestId) => {
       const existing = transfers.get(requestId)
-      if (existing) return structuredClone(existing)
+      if (existing) {
+        if (scene === 'feedback-upload-resume' && existing.state === 'uploading' && existing.file && input.kind === 'local') {
+          const file = {...existing.file, status: 'ready'}
+          blobs.set(file.id, new Blob([await input.file.arrayBuffer()], {type: file.content_type}))
+          const result = {...existing, file, state: 'ready' as const, resume_allowed: false}
+          transfers.set(requestId, result)
+          return structuredClone(result)
+        }
+        return structuredClone(existing)
+      }
       if (input.kind !== 'local') throw new Error('feedback_local_fixture_only')
       const source = input.file
       const attempt = (uploadAttempts.get(source) || 0) + 1
@@ -21,10 +30,16 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
         transfers.set(requestId, failed)
         return structuredClone(failed)
       }
-      const reason = !/\.(zip|xlsx|xls|xlsm|doc|docx|png|jpg|jpeg|webp|gif|bmp|tif|tiff)$/i.test(source.name) ? '不支持此附件格式。请使用 ZIP、Excel、Word 或图片。' : !source.size ? '附件为空，请移除后选择有内容的文件。' : source.size > 200 * 1024 * 1024 ? '附件超过 200 MB。请移除后重新选择。' : ''
+      const reason = feedbackUploadError(source)
       const file = reason ? null : {file_id: `preview-feedback-file-${crypto.randomUUID()}`, id: `preview-feedback-version-${crypto.randomUUID()}`, original_filename: source.name, content_type: source.type || 'application/octet-stream', byte_size: source.size, status: 'ready', sha256: null}
       if (file) blobs.set(file.id, new Blob([await source.arrayBuffer()], {type: file.content_type}))
       const receipt: components['schemas']['AuditUploadItem'] = {request_id: requestId, state: file ? 'ready' : 'failed', file, reason: reason || null, retry_allowed: false}
+      if (file && scene === 'feedback-upload-resume') {
+        blobs.delete(file.id)
+        receipt.file = {...file, status: 'staging'}
+        receipt.state = 'uploading'
+        receipt.resume_allowed = true
+      }
       transfers.set(requestId, receipt)
       if ((scene === 'feedback-upload-unknown' || scene === 'feedback-upload-failed' && attempt > 1) && file) throw new Error('preview_upload_response_lost')
       return structuredClone(receipt)
@@ -63,4 +78,5 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
       return {file_version_id: file.id, blob}
     },
   }
+  return ['feedback-attachments', 'feedback-upload-resume'].includes(scene) ? {...adapter, submit: undefined, read: undefined} : adapter
 }

@@ -5,6 +5,40 @@ import type {AuditReviewAdapter} from './review-editor'
 import type {AuditDisplayAdapter} from './display-info-editor'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSupportAdapter} from './template-contract'
+import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contract.ts'
+import type {UploadAdapter} from './uploads'
+
+const nativeUploads: UploadAdapter = {
+  upload(input, requestId) {
+    if (input.kind !== 'local') throw new Error('飞书文件接收暂不可用，请先下载文件并本地上传。')
+    return uploadLocalVersion(input.file, requestId)
+  },
+  readUpload: readLocalUpload,
+}
+
+export const nativeFeedbackAdapter: AuditFeedbackAdapter = {
+  ...nativeUploads,
+  upload(input, requestId) {
+    const reason = input.kind !== 'local' ? '请使用本地模板附件。' : feedbackUploadError(input.file)
+    return reason ? Promise.resolve({request_id: requestId, state: 'failed', file: null, reason, retry_allowed: false}) : nativeUploads.upload(input, requestId)
+  },
+  async readAttachment(file) {
+    if (file.status !== 'ready' || !file.file_id || !file.id || !file.sha256 || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error('附件版本尚未就绪，请读取原上传结果。')
+    const path = `/files/${encodeURIComponent(file.file_id)}/versions/${encodeURIComponent(file.id)}`
+    const stored = await request<components['schemas']['FileVersion']>(path)
+    if (stored.id !== file.id || stored.file_id !== file.file_id || stored.status !== 'ready' || stored.original_filename !== file.original_filename || stored.content_type !== file.content_type || stored.byte_size !== file.byte_size || stored.sha256 !== file.sha256) throw new Error('附件版本与上传回执不同，请重新读取。')
+    const response = await fetch(`${apiUrl}${path}/download`, {method: 'GET', credentials: 'include'})
+    if (!response.ok) {
+      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+      throw withResponseTrace(new Error('附件暂时无法读取，请重新读取。'), response)
+    }
+    const blob = await response.blob()
+    if (blob.size !== stored.byte_size || blob.type !== stored.content_type || response.headers.get('X-Content-SHA256') !== stored.sha256) throw new Error('附件内容与已上传版本不同，未打开或下载。')
+    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
+    if (sha256 !== stored.sha256) throw new Error('附件内容与已上传版本不同，未打开或下载。')
+    return {file_version_id: stored.id, blob}
+  },
+}
 
 export const nativeSupportAdapter: AuditSupportAdapter = {
   read: () => request('/support'),
@@ -91,11 +125,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
     deepOffered: options.deepOffered,
     customers: options.customers.map(name => ({value: name, label: name})),
     autoValidate: true,
-    upload: (input, requestId) => {
-      if (input.kind !== 'local') throw new Error('飞书文件接收暂不可用，请先下载文件并本地上传。')
-      return uploadLocalVersion(input.file, requestId)
-    },
-    readUpload: readLocalUpload,
+    ...nativeUploads,
     async readValidation(file) {
       const known = file.validation_id || validations.get(file.file.id)
       if (known) return validation(await request<ValidationJob>(`/file-validations/${encoded(known)}`), file, known)

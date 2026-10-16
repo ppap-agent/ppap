@@ -8,7 +8,7 @@ import {Button} from '../components/ui/button'
 import {ProductAccess} from '../journey/access'
 import {RemoteSourcePane} from '../journey/remote-source'
 import {AuditIntake, type AuditIntakeAdapter} from './intake'
-import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeReviewAdapter, nativeSupportAdapter} from './native-adapter'
+import {createNativeAuditAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeReviewAdapter, nativeSupportAdapter} from './native-adapter'
 import type {OriginalRenderer} from './review-content'
 import {AuditRoundReader, type ReadRound} from './round-reader'
 import {AuditReviewProvider} from './review-editor'
@@ -26,7 +26,7 @@ function NativeAudit() {
     }).catch(cause => {if (active) setError(cause instanceof Error ? cause.message : '无法读取审核规则。')})
     return () => {active = false}
   }, [revision])
-  if (adapter) return <AuditIntake adapter={adapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} supportAdapter={nativeSupportAdapter} renderOriginal={renderOriginal}/>
+  if (adapter) return <AuditIntake adapter={adapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} supportAdapter={nativeSupportAdapter} feedbackAdapter={nativeFeedbackAdapter} renderOriginal={renderOriginal}/>
   return <main className="mx-auto max-w-xl space-y-4 p-6">{error ? <><Alert variant="destructive"><AlertTitle>暂时无法打开审核</AlertTitle><AlertDescription>{error}</AlertDescription></Alert><Button onClick={() => setRevision(value => value + 1)}>重新读取</Button></> : <p role="status">正在读取审核规则…</p>}</main>
 }
 

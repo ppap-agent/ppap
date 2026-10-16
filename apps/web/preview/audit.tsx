@@ -423,15 +423,16 @@ function Preview() {
       return scene === 'templates-race' && args[0].customer_id === 'preview-customer-a' ? defer('模板清单 · 示例客户 A', result) : result
     },
   }), [defer])
+  const submitFeedback = feedbackAdapter.submit
   const controlledFeedback = useMemo(() => ({...feedbackAdapter,
     upload: async (...args: Parameters<typeof feedbackAdapter.upload>) => {
       const result = await feedbackAdapter.upload(...args)
       return scene === 'feedback-upload-loading' ? defer(`模板附件上传 · ${args[0].file.name}`, result) : result
     },
-    submit: async (...args: Parameters<typeof feedbackAdapter.submit>) => {
-      const result = await feedbackAdapter.submit(...args)
+    submit: submitFeedback ? async (...args: Parameters<NonNullable<typeof feedbackAdapter.submit>>) => {
+      const result = await submitFeedback(...args)
       return scene === 'feedback-submit-loading' ? defer('材料提报回执', result) : result
-    },
+    } : undefined,
   }), [defer])
   const controlledTemplateSharing = useMemo(() => ({...templateSharingAdapter,
     send: async (...args: Parameters<typeof templateSharingAdapter.send>) => {

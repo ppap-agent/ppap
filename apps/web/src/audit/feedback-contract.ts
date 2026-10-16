@@ -4,9 +4,13 @@ import type {UploadAdapter} from './uploads'
 export type FeedbackRequest = components['schemas']['AuditTemplateFeedbackRequest']
 export type FeedbackReceipt = components['schemas']['AuditTemplateFeedbackReceipt']
 export type FeedbackFile = components['schemas']['FileVersion']
+export const feedbackFileAccept = '.zip,.xlsx,.xls,.xlsm,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff'
+export function feedbackUploadError(file: Pick<File, 'name' | 'size'>) {
+  return !feedbackFileAccept.split(',').includes(file.name.slice(file.name.lastIndexOf('.')).toLowerCase()) ? '不支持此附件格式。请使用 ZIP、Excel、Word 或图片。' : !file.size ? '附件为空，请移除后选择有内容的文件。' : file.size > 200 * 1024 * 1024 ? '附件超过 200 MB。请移除后重新选择。' : ''
+}
 export type AuditFeedbackAdapter = UploadAdapter & {
-  submit: (request: FeedbackRequest, attemptId: string) => Promise<FeedbackReceipt>
-  read: (request: FeedbackRequest, attemptId: string) => Promise<FeedbackReceipt>
+  submit?: (request: FeedbackRequest, attemptId: string) => Promise<FeedbackReceipt>
+  read?: (request: FeedbackRequest, attemptId: string) => Promise<FeedbackReceipt>
   readAttachment: (file: FeedbackFile) => Promise<{file_version_id: string; blob: Blob}>
 }
 

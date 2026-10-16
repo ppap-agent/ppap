@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSupportAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 
@@ -12,6 +12,90 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native feedback keeps a local attachment request and does not claim an operator submission', async () => {
+  const adapter = nativeFeedbackAdapter
+  const id = 'ddb1466b-4a8d-422e-859f-25bf756697ae'
+  const source = new File(['abc'], 'template.zip', {type: 'application/zip'})
+  const version = {id, file_id: 'feedback-file', original_filename: source.name, content_type: source.type, byte_size: 3, status: 'staging', sha256: null}
+  const ready = {...version, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), 'http://example.test').pathname
+    calls.push(`${init?.method} ${path}`)
+    assert.equal(init?.credentials, 'include')
+    if (init?.method === 'POST') {assert.equal(JSON.parse(String(init.body)).request_id, id); return json(version)}
+    if (init?.method === 'PUT') {assert.equal(init.body, source); return json(ready)}
+    if (path.endsWith('/download')) return new Response('abc', {headers: {'Content-Type': 'application/zip', 'X-Content-SHA256': ready.sha256}})
+    if (path.startsWith('/files/')) return json(ready)
+    return json({request_id: id, state: 'ready', file: ready, reason: null, retry_allowed: false})
+  }
+  assert.equal((await adapter.upload({kind: 'local', file: source}, id)).state, 'ready')
+  const received = (await adapter.readUpload(id)).file!
+  assert.equal(received.id, id)
+  const attachment = await adapter.readAttachment(received)
+  assert.equal(attachment.file_version_id, id)
+  assert.equal(await attachment.blob.text(), 'abc')
+  assert.equal(adapter.submit, undefined)
+  assert.equal(adapter.read, undefined)
+  assert.deepEqual(calls, ['POST /files', `PUT /files/feedback-file/versions/${id}/blob`, `GET /file-uploads/${id}`, `GET /files/feedback-file/versions/${id}`, `GET /files/feedback-file/versions/${id}/download`])
+})
+
+test('native feedback refuses invalid local attachments before any possible server effect', async () => {
+  class Oversize extends File {override get size() {return 200 * 1024 * 1024 + 1}}
+  globalThis.fetch = async () => {throw new Error('must not send')}
+  for (const source of [new File(['exe'], 'run.exe'), new File([], 'empty.zip'), new Oversize(['one'], 'huge.zip')]) {
+    const receipt = await nativeFeedbackAdapter.upload({kind: 'local', file: source}, 'local-request')
+    assert.equal(receipt.state, 'failed')
+    assert.equal(receipt.request_id, 'local-request')
+    assert.equal(receipt.retry_allowed, false)
+    assert.equal(receipt.file, null)
+    assert.ok(receipt.reason)
+  }
+})
+
+test('native feedback resumes a lost create response with the original request, version and bytes', async () => {
+  const id = '5f5fe1ad-1ad2-44b9-bae7-5effbcaaea35', source = new File(['abc'], 'photo.png', {type: 'image/png'})
+  const version = {id, file_id: 'feedback-file', original_filename: source.name, content_type: source.type, byte_size: 3, status: 'staging', sha256: null}
+  let creates = 0
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    calls.push(`${init?.method} ${new URL(String(input), 'http://example.test').pathname}`)
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body))
+      assert.equal(body.request_id, id)
+      assert.equal(body.sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+      if (++creates === 1) throw new TypeError('create reply lost after registration')
+      return json(version)
+    }
+    if (init?.method === 'GET') return json({request_id: id, state: 'uploading', file: version, resume_allowed: true, retry_allowed: false, reason: null})
+    assert.equal(init?.body, source)
+    return json({...version, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'})
+  }
+  const staged = await nativeFeedbackAdapter.upload({kind: 'local', file: source}, id)
+  assert.equal(staged.state, 'uploading')
+  assert.equal(staged.resume_allowed, true)
+  const resumed = await nativeFeedbackAdapter.upload({kind: 'local', file: source}, staged.request_id)
+  assert.equal(resumed.state, 'ready')
+  assert.equal(resumed.file?.id, staged.file?.id)
+  assert.deepEqual(calls, ['POST /files', `GET /file-uploads/${id}`, 'POST /files', `PUT /files/feedback-file/versions/${id}/blob`])
+})
+
+test('native feedback rejects mismatched server identities and bytes without relabelling another attachment', async () => {
+  const file: components['schemas']['FileVersion'] = {id: 'version-feedback', file_id: 'file-feedback', original_filename: 'template.zip', content_type: 'application/zip', byte_size: 3, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'}
+  for (const change of [{id: 'other-version'}, {file_id: 'other-file'}, {status: 'staging'}, {original_filename: 'other.zip'}, {content_type: 'text/html'}, {byte_size: 4}, {sha256: '0'.repeat(64)}]) {
+    let reads = 0
+    globalThis.fetch = async () => {reads += 1; return json({...file, ...change})}
+    await assert.rejects(nativeFeedbackAdapter.readAttachment(file))
+    assert.equal(reads, 1, 'wrong metadata must not start a byte download')
+  }
+  for (const response of [new Response('abd', {headers: {'Content-Type': file.content_type, 'X-Content-SHA256': file.sha256!}}), new Response('abc', {headers: {'Content-Type': 'text/html', 'X-Content-SHA256': file.sha256!}}), new Response('ab', {headers: {'Content-Type': file.content_type, 'X-Content-SHA256': file.sha256!}}), new Response('abc', {headers: {'Content-Type': file.content_type, 'X-Content-SHA256': '0'.repeat(64)}})]) {
+    globalThis.fetch = async input => String(input).endsWith('/download') ? response : json(file)
+    await assert.rejects(nativeFeedbackAdapter.readAttachment(file))
+  }
+  globalThis.fetch = async input => String(input).endsWith('/download') ? new Response('denied', {status: 403, headers: {'X-Request-ID': 'feedback-download-denied'}}) : json(file)
+  await assert.rejects(nativeFeedbackAdapter.readAttachment(file), cause => requestTrace(cause) === 'feedback-download-denied')
+})
 
 test('native support reads authenticated configuration and only its displayed image version', async () => {
   const info: components['schemas']['AuditSupportInfo'] = {state: 'configured', config_version: 'config-a', phone: null, email: 'support@example.test', service_hours: '09:00–18:00', qr_available: true}
