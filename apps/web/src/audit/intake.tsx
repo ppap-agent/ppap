@@ -18,7 +18,7 @@ import {FileName} from '../journey/file-name'
 import {FeishuPicker, type DrivePickerSource} from './feishu-picker'
 import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
-import {AuditWorkspace} from './workspace'
+import {AuditExcludedFiles, AuditWorkspace} from './workspace'
 import type {OriginalRenderer} from './review-content'
 import {sameFrozenInputs, sameSnapshot, progressRegressed, taskProgressError} from './result-projection'
 import {canObserveTask, useTaskObservation} from './task-observation'
@@ -539,7 +539,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
         {step === 'match' && matched.length > 0 && <section className="space-y-3 border-t pt-5"><h2 className="font-semibold">匹配条款</h2><div className="flex flex-wrap gap-2">{matched.map(row => <Button key={row.file.id} variant="outline" className="max-w-full whitespace-normal text-left" onClick={event => {ruleTrigger.current = event.currentTarget; setRuleSource(row.match!.rule)}}>查看 {row.match!.rule!.title} 条款</Button>)}</div></section>}
         </fieldset>
         </>}
-        {files.some(row => row.selection === 'removed') && <section className="space-y-3 border-t pt-5"><h2 className="font-semibold">已移除文件</h2>{files.filter(row => row.selection === 'removed').map(row => <div key={row.file.id} className="space-y-1"><FileName name={row.file.original_filename}/><p className="text-xs text-muted-foreground">{row.removal_reason}</p></div>)}</section>}
+        {!workbench && <AuditExcludedFiles files={step === 'match' ? files : files.filter(row => row.selection === 'removed')}/>}
         </div>
       </main>
       {displayEditor.dialog}
