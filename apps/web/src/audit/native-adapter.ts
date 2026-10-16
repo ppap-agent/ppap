@@ -90,6 +90,16 @@ export const nativeReportAdapter: AuditReportAdapter = {
       return {package_id: null, reports, receipt: {request_id: requestId, state: 'rejected', reason}, state: 'failed', artifact: null, reason, retry_allowed: false}
     }
   },
+  async retryPackage(job, requestId) {
+    const rejected = (reason: string) => ({...job, receipt: {request_id: requestId, state: 'rejected' as const, reason}, retry_allowed: false, reason})
+    if (!job.package_id || !Number.isSafeInteger(job.attempt) || job.attempt! < 1) return rejected('请先读取失败 ZIP 的当前状态，再重试打包。')
+    try {return await request(`/audit-report-packages/${encodeURIComponent(job.receipt.request_id)}/retries`, 'POST', {request_id: requestId, package_id: job.package_id, expected_attempt: job.attempt})}
+    catch (failure) {
+      const error = failure as {status?: number; code?: string}
+      if (error.status !== 409 || !['report_package_recovery_unavailable', 'audit_report_charging_unavailable'].includes(error.code || '')) throw failure
+      return rejected(error.code === 'audit_report_charging_unavailable' ? '当前环境尚未开放 ZIP 恢复计费，本次未重新打包。' : 'ZIP 已有更新，本次未重新打包，请读取最新状态。')
+    }
+  },
   async readPackage(requestId) {
     const packageJob = await request<components['schemas']['AuditReportPackage'] | null>(`/audit-report-packages/${encodeURIComponent(requestId)}`)
     if (!packageJob) throw new Error('尚未读到原打包请求，请继续核对。')

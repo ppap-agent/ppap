@@ -277,6 +277,24 @@ test('native ZIP uses one request identity for submission, readback and the exac
   await assert.rejects(nativeReportAdapter.readPackage!('request-a'))
 })
 
+test('ZIP recovery binds the failed package attempt and reads its original request after a lost reply', async () => {
+  const reports = ['a', 'b'].map(id => ({task_id: 'task-a', round_id: 'round-a', file_version_id: `version-${id}`, result_attempt: 1, report_id: `report-${id}`}))
+  const failed: components['schemas']['AuditReportPackage'] = {package_id: 'package-a', reports, attempt: 1, receipt: {request_id: 'original-a', state: 'accepted', reason: null}, state: 'failed', artifact: null, reason: '打包失败', retry_allowed: true}
+  const pending = {...failed, receipt: {...failed.receipt, request_id: 'recovery-a'}, state: 'pending' as const, retry_allowed: false}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    calls.push(`${init?.method} ${input}`)
+    if (init?.method === 'POST') {
+      assert.deepEqual(JSON.parse(String(init.body)), {request_id: 'recovery-a', package_id: 'package-a', expected_attempt: 1})
+      throw new TypeError('reply lost')
+    }
+    return json(pending)
+  }
+  await assert.rejects(nativeReportAdapter.retryPackage!(failed, 'recovery-a'), /reply lost/)
+  assert.deepEqual(await nativeReportAdapter.readPackage!('recovery-a'), pending)
+  assert.deepEqual(calls, ['POST /audit-report-packages/original-a/retries', 'GET /audit-report-packages/recovery-a'])
+})
+
 test('an explicit pre-acceptance ZIP size refusal is rejected, not an unknown accepted work', async () => {
   const reports = ['a', 'b'].map(id => ({task_id: 'task-a', round_id: 'round-a', file_version_id: `version-${id}`, result_attempt: 1, report_id: `report-${id}`}))
   globalThis.fetch = async () => json({error: 'report_package_too_large'}, 409)

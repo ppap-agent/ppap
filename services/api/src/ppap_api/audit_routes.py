@@ -56,6 +56,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "report_package_too_large",
                 "report_recovery_unavailable",
                 "audit_report_charging_unavailable",
+                "report_package_recovery_unavailable",
             }
             else 400
         )
@@ -199,6 +200,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         try:
             return JSONResponse(store.accept_report_package(principal, body), status_code=202)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.post("/audit-report-packages/{source_request_id}/retries", response_model=wc.AuditReportPackage, status_code=202, openapi_extra=wc.openapi_body(wc.AuditReportPackageRetryRequest))
+    def audit_report_package_retry(source_request_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.retry_report_package(principal, source_request_id, body), status_code=202)
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

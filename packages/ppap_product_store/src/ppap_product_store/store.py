@@ -2369,11 +2369,65 @@ class AuthStore:
                 raise ValueError("idempotency_conflict")
             return self._report_package_public(conn, principal, task, request_id, request)
 
+    def retry_report_package(self, principal: Principal, source_request_id: str, body: dict) -> dict:
+        if (
+            set(body) != {"request_id", "package_id", "expected_attempt"}
+            or any(not isinstance(value, str) or _as_uuid(value) != value for value in (source_request_id, body.get("request_id"), body.get("package_id")))
+            or type(body.get("expected_attempt")) is not int
+            or body["expected_attempt"] < 1
+        ):
+            raise ValueError("invalid_report_package_recovery")
+        request_id = body["request_id"]
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("report-package:" + request_id,))
+            source = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (source_request_id,)).fetchone()
+            if not source or str(source[0]) != principal.tenant_id or source[1] != "report_zip_request" or source[2].get("created_by") != principal.user_id:
+                raise KeyError("missing")
+            original = source[2]
+            self._recognition_owner(conn, principal, original["task_id"], lock=True)
+            task = self._recognition_public(conn, principal, original["task_id"])
+            grants = conn.execute(
+                """SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[])
+                AND user_id = %s AND capability IN ('read', 'review') ORDER BY resource_id FOR SHARE""",
+                ([task["id"], task["round_id"]], principal.user_id),
+            ).fetchall()
+            if {str(row[0]) for row in grants} != {task["id"], task["round_id"]} or original["package_id"] != body["package_id"]:
+                raise KeyError("missing")
+            row = conn.execute(
+                "SELECT status, attempt FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip' FOR UPDATE",
+                (body["package_id"], principal.tenant_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("missing")
+            request = {**original, "retry_of_request_id": source_request_id, "expected_attempt": body["expected_attempt"]}
+            existing = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+            if existing:
+                if str(existing[0]) != principal.tenant_id or existing[1] != "report_zip_request" or existing[2].get("created_by") != principal.user_id:
+                    raise KeyError("missing")
+                if existing[2] != request:
+                    raise ValueError("idempotency_conflict")
+                return self._report_package_public(conn, principal, task, request_id, request)
+            self._report_package_public(conn, principal, task, source_request_id, original)
+            if self.settings.usage_charge_enabled:
+                raise ValueError("audit_report_charging_unavailable")
+            if row != ("failed", body["expected_attempt"]):
+                raise ValueError("report_package_recovery_unavailable")
+            conn.execute(
+                "UPDATE engine.jobs SET status = 'queued', result = NULL, lease_owner = NULL, lease_until = NULL, updated_at = now() WHERE id = %s",
+                (body["package_id"],),
+            )
+            conn.execute(
+                """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
+                VALUES (%s, %s, %s, 'report_zip_request', %s, 'succeeded')""",
+                (request_id, principal.tenant_id, task["round_id"], Jsonb(request)),
+            )
+            return self._report_package_public(conn, principal, task, request_id, request)
+
     def _report_package_public(self, conn, principal, task, request_id, request) -> dict:
-        row = conn.execute("SELECT payload, status, result FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip'", (request["package_id"], principal.tenant_id)).fetchone()
+        row = conn.execute("SELECT payload, status, result, attempt FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip'", (request["package_id"], principal.tenant_id)).fetchone()
         if not row or request["created_by"] != principal.user_id or row[0]["created_by"] != principal.user_id or row[0]["task_id"] != task["id"]:
             raise KeyError("missing")
-        frozen, status, result = row
+        frozen, status, result, attempt = row
         for source in frozen["sources"]:
             self._report_source(conn, principal, task, source["reference"], source["artifact"]["artifact_id"])
         if sorted(request["reports"], key=lambda reference: reference["file_version_id"]) != [source["reference"] for source in frozen["sources"]]:
@@ -2383,13 +2437,14 @@ class AuthStore:
         outcomes = result.get("outcomes") or [{"reference": reference, "state": "pending", "reason": None} for reference in request["reports"]]
         return {
             "package_id": request["package_id"],
+            "attempt": attempt,
             "reports": request["reports"],
             "receipt": {"request_id": request_id, "state": "accepted", "reason": None},
             "state": state,
             "outcomes": [next(item for item in outcomes if item["reference"] == reference) for reference in request["reports"]],
             "artifact": result.get("artifact") if state == "ready" else None,
-            "reason": "ZIP 打包失败；已就绪的 PDF 保留。重打包尚未开放。" if state == "failed" else None,
-            "retry_allowed": False,
+            "reason": ("ZIP 打包失败，已就绪的 PDF 不受影响。" + ("当前环境尚未开放 ZIP 恢复计费。" if self.settings.usage_charge_enabled else "")) if state == "failed" else None,
+            "retry_allowed": status == "failed" and not self.settings.usage_charge_enabled,
         }
 
     def get_report_package(self, principal: Principal, request_id: str) -> dict | None:

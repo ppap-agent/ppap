@@ -704,6 +704,12 @@ class AuditReportPackageRequest(TypedDict):
     reports: list[AuditReportReference]
 
 
+class AuditReportPackageRetryRequest(TypedDict):
+    request_id: str
+    package_id: str
+    expected_attempt: int
+
+
 class AuditReportRegenerationRequest(TypedDict):
     request_id: str
     reference: AuditReportReference
@@ -772,6 +778,7 @@ class AuditReportPackage(TypedDict):
     """One recoverable packaging job; report references are fixed at creation."""
 
     package_id: str | None
+    attempt: NotRequired[int]
     reports: list[AuditReportReference]
     outcomes: NotRequired[list[AuditReportPackageOutcome]]
     receipt: AuditAcceptance

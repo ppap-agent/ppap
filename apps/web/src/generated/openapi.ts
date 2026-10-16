@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-report-packages/{source_request_id}/retries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit Report Package Retry */
+        post: operations["audit_report_package_retry_audit_report_packages__source_request_id__retries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks": {
         parameters: {
             query?: never;
@@ -1676,6 +1693,8 @@ export interface components {
          */
         AuditReportPackage: {
             artifact: components["schemas"]["AuditReportArtifact"] | null;
+            /** Attempt */
+            attempt?: number;
             /** Outcomes */
             outcomes?: components["schemas"]["AuditReportPackageOutcome"][];
             /** Package Id */
@@ -3297,6 +3316,48 @@ export interface operations {
                 };
                 content: {
                     "application/zip": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_report_package_retry_audit_report_packages__source_request_id__retries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Expected Attempt */
+                    expected_attempt: number;
+                    /** Package Id */
+                    package_id: string;
+                    /** Request Id */
+                    request_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReportPackage"];
                 };
             };
             /** @description Validation Error */

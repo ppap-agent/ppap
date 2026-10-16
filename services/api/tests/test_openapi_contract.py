@@ -88,6 +88,9 @@ class OpenAPIContractTests(unittest.TestCase):
         paths = app.openapi()["paths"]
         create = paths["/audit-report-packages"]["post"]
         self.assertEqual(set(_request_schema(create)["required"]), {"request_id", "reports"})
+        retry = paths["/audit-report-packages/{source_request_id}/retries"]["post"]
+        self.assertEqual(set(_request_schema(retry)["required"]), {"request_id", "package_id", "expected_attempt"})
+        self.assertEqual(_request_schema(retry)["properties"]["expected_attempt"]["type"], "integer")
         self.assertEqual(_response_schema(paths["/audit-report-packages/{request_id}"]["get"])["anyOf"][0]["$ref"], "#/components/schemas/AuditReportPackage")
         download = paths["/audit-report-packages/{request_id}/zip"]["get"]
         self.assertEqual({item["name"] for item in download["parameters"] if item.get("required")}, {"request_id", "package_id", "artifact_id"})

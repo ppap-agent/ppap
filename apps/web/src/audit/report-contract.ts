@@ -9,6 +9,7 @@ export type AuditReportAdapter = {
   regenerate?: (reference: AuditReportReference, requestId: string) => Promise<components['schemas']['AuditReportUpdate']>
   readRegeneration?: (reference: AuditReportReference, requestId: string) => Promise<components['schemas']['AuditReportUpdate']>
   createPackage?: (reports: AuditReportReference[], requestId: string) => Promise<AuditReportPackage>
+  retryPackage?: (job: AuditReportPackage, requestId: string) => Promise<AuditReportPackage>
   readPackage?: (requestId: string) => Promise<AuditReportPackage>
   readPackageFile?: (job: AuditReportPackage) => Promise<Blob>
 }

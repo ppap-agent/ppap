@@ -6,6 +6,7 @@ import type {AuditReportAdapter, AuditReportReference, AuditReportPackage} from 
 type Task = components['schemas']['AuditTask']
 type Report = components['schemas']['AuditFileReport']
 type ReportItem = {reference: AuditReportReference; report: Report}
+const sameCollection = (left: AuditReportReference[], right: AuditReportReference[]) => left.length === right.length && left.every(reference => right.some(row => sameSnapshot(row, reference)))
 
 /** Report operations accept fixed references, not ownership of a private task. */
 export function useReportGeneration(items: ReportItem[], onChange: (reference: AuditReportReference, report: Report) => void, adapter?: AuditReportAdapter) {
@@ -54,19 +55,19 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
     const previous = current.current
     if (!previous) return true
     if (packageOutcomeError(previous) || previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state)) return false
-    const sameCollection = reports.length === previous.reports.length && reports.every(reference => previous.reports.some(row => sameSnapshot(row, reference)))
-    return !(sameCollection && previous.state === 'failed' && previous.receipt.state !== 'rejected' && !previous.retry_allowed)
+    return !(sameCollection(reports, previous.reports) && previous.state === 'failed' && previous.receipt.state !== 'rejected' && (!previous.retry_allowed || !adapter.retryPackage))
   }
   async function run(readOnly: boolean, reports?: AuditReportReference[]) {
     if (scopeError || !adapter || pending.current) return
     const previous = current.current
     if (readOnly ? !previous : !canCreatePackage(reports || [])) return
-    const references = structuredClone(readOnly ? previous!.reports : reports || [])
+    const recovery = !readOnly && previous?.state === 'failed' && previous.receipt.state === 'accepted' && sameCollection(reports || [], previous.reports) ? previous : null
+    const references = structuredClone(readOnly ? previous!.reports : recovery ? recovery.reports : reports || [])
     // Reading an existing job never depends on the current page or selection.
     if (!multipleDistinctReports(references)) return
     const requestId = readOnly ? previous!.receipt.request_id : crypto.randomUUID()
-    const read = adapter.readPackage, create = adapter.createPackage
-    const command = readOnly ? read && (() => read(requestId)) : create && (() => create(references, requestId))
+    const read = adapter.readPackage, create = adapter.createPackage, retry = adapter.retryPackage
+    const command = readOnly ? read && (() => read(requestId)) : recovery ? retry && (() => retry(structuredClone(recovery), requestId)) : create && (() => create(references, requestId))
     if (!command) return
     pending.current = true; setPackageBusy(true)
     const observation: AuditReportPackage = readOnly ? previous! : {package_id: null, reports: references, receipt: {request_id: requestId, state: 'pending', reason: null}, state: 'pending', artifact: null, reason: 'ZIP 受理结果未知；只读取原打包请求。', retry_allowed: false}
@@ -74,7 +75,10 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
     try {
       const next = await command()
       if (!alive.current || current.current !== observation) return
-      if (next.receipt.request_id !== requestId || !sameSnapshot(next.reports, references) || packageOutcomeError(next) || next.state === 'ready' && (!next.package_id || !next.artifact?.artifact_id || next.artifact.content_type !== 'application/zip' || next.artifact.byte_size <= 0)) throw new Error('package_receipt_mismatch')
+      if (next.receipt.request_id !== requestId || !sameSnapshot(next.reports, references)) throw new Error('package_receipt_mismatch')
+      if (recovery && next.receipt.state === 'rejected') {commit({...recovery, reason: next.receipt.reason || next.reason, retry_allowed: false}); return}
+      if (packageOutcomeError(next) || next.state === 'ready' && (!next.package_id || !next.artifact?.artifact_id || next.artifact.content_type !== 'application/zip' || next.artifact.byte_size <= 0)) throw new Error('package_receipt_mismatch')
+      if (recovery && next.receipt.state === 'accepted' && next.package_id !== recovery.package_id) throw new Error('package_recovery_mismatch')
       commit(next)
     } catch {if (current.current === observation) commit({...observation, reason: 'ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。'})}
     finally {pending.current = false; if (alive.current) setPackageBusy(false)}

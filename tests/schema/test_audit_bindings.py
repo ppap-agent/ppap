@@ -894,6 +894,151 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIsNone(worker.claim_job("zip-build"))
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
+    def test_failed_zip_recovers_the_same_frozen_pdfs_without_reopening_the_task(self):
+        import json
+        import threading
+        from io import BytesIO
+        from zipfile import ZipFile
+
+        from ppap_worker import process_claimed
+
+        task, worker, completed, command, package = self.prepared_report_package()
+        old = worker.claim_job("zip-recovery-old")
+        orphan = worker.build_report_package(old, "2026-10-17T01:00:00+00:00", threading.Event())
+        self.assertTrue(worker.complete_job(old, "zip-recovery-old", {"error": "reply_lost"}, "failed"))
+        request_id = str(uuid.uuid4())
+        path = f"/audit-report-packages/{command['request_id']}/retries"
+        retry = {"request_id": request_id, "package_id": package["package_id"], "expected_attempt": old.attempt}
+        accepted = self.display_client.post(path, json=retry)
+        self.assertEqual(accepted.status_code, 202, accepted.text)
+        recovering = accepted.json()
+        self.assertEqual((recovering["package_id"], recovering["state"], recovering["attempt"]), (package["package_id"], "pending", 1))
+        self.assertEqual(recovering["reports"], command["reports"])
+        self.assertEqual(self.display_client.post(path, json=retry).json(), recovering)
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{request_id}").json(), recovering)
+        current = worker.claim_job("zip-recovery-current")
+        self.assertEqual((current.kind, current.id, current.attempt), ("report_zip", old.id, 2))
+        self.assertEqual(current.payload, old.payload)
+        self.assertFalse(worker.complete_job(old, "zip-recovery-old", orphan))
+        process_claimed(worker, current, "zip-recovery-current")
+        ready = self.display_client.get(f"/audit-report-packages/{request_id}").json()
+        self.assertEqual((ready["state"], ready["attempt"]), ("ready", 2))
+        self.assertEqual(ready["artifact"]["artifact_id"], f"{old.id}:2")
+        self.assertFalse(worker.complete_job(old, "zip-recovery-old", orphan))
+        response = self.display_client.get(f"/audit-report-packages/{request_id}/zip", params={"package_id": package["package_id"], "artifact_id": ready["artifact"]["artifact_id"]})
+        self.assertEqual(response.status_code, 200)
+        with ZipFile(BytesIO(response.content)) as archive:
+            manifest = json.loads(archive.read("报告清单.txt"))["reports"]
+            self.assertEqual(len(manifest), 2)
+            for item in manifest:
+                source = next(source for source in old.payload["sources"] if source["reference"] == item["reference"])
+                self.assertEqual(archive.read(item["archive_name"]), worker.objects.get(source["object_key"]))
+                self.assertEqual(item["sha256"], source["sha256"])
+        observed = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        self.assertEqual((observed["state"], observed["round_id"], observed["files"]), ("completed", completed["round_id"], completed["files"]))
+        self.assertIsNone(worker.claim_job("no-extra-recovery"))
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_zip_alias_recoveries_compete_for_one_attempt_and_stale_failures_cannot_restart_it(self):
+        from ppap_worker import process_claimed
+
+        _task, worker, _completed, command, package = self.prepared_report_package()
+        alias_id = str(uuid.uuid4())
+        alias = self.display_client.post("/audit-report-packages", json={**command, "request_id": alias_id}).json()
+        self.assertEqual(alias["package_id"], package["package_id"])
+        old = worker.claim_job("zip-failed")
+        self.assertTrue(worker.complete_job(old, "zip-failed", {"error": "temporary_failure"}, "failed"))
+        paths = [f"/audit-report-packages/{key}/retries" for key in (command["request_id"], alias_id)]
+        commands = [{"request_id": str(uuid.uuid4()), "package_id": package["package_id"], "expected_attempt": 1} for _ in paths]
+        barrier = threading.Barrier(2)
+
+        def retry(index):
+            barrier.wait(timeout=5)
+            return self.display_client.post(paths[index], json=commands[index])
+
+        with ThreadPoolExecutor(2) as pool:
+            replies = list(pool.map(retry, range(2)))
+        self.assertEqual(sorted(reply.status_code for reply in replies), [202, 409])
+        winner = next(index for index, reply in enumerate(replies) if reply.status_code == 202)
+        loser = 1 - winner
+        current = worker.claim_job("zip-retry-failed")
+        self.assertEqual((current.id, current.attempt), (old.id, 2))
+        self.assertIsNone(worker.claim_job("no-parallel-retry"))
+        self.assertTrue(worker.complete_job(current, "zip-retry-failed", {"error": "temporary_failure"}, "failed"))
+        self.assertEqual(self.display_client.post(paths[loser], json=commands[loser]).status_code, 409)
+        self.assertEqual(self.display_client.post(paths[winner], json=commands[winner]).json()["state"], "failed")
+        self.assertEqual(self.display_client.post(paths[winner], json={**commands[winner], "expected_attempt": 2}).status_code, 409)
+        self.assertIsNone(worker.claim_job("stale-page-cannot-retry"))
+        fresh = {**commands[loser], "request_id": str(uuid.uuid4()), "expected_attempt": 2}
+        self.assertEqual(self.display_client.post(paths[loser], json=fresh).status_code, 202)
+        last = worker.claim_job("zip-fresh-retry")
+        self.assertEqual((last.id, last.attempt), (old.id, 3))
+        process_claimed(worker, last, "zip-fresh-retry")
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{fresh['request_id']}").json()["state"], "ready")
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_zip_recovery_rechecks_owner_permissions_and_blocks_only_new_charged_requests(self):
+        task, worker, _completed, command, package = self.prepared_report_package()
+        old = worker.claim_job("zip-denied-failed")
+        self.assertTrue(worker.complete_job(old, "zip-denied-failed", {"error": "temporary_failure"}, "failed"))
+        path = f"/audit-report-packages/{command['request_id']}/retries"
+        retry = {"request_id": str(uuid.uuid4()), "package_id": package["package_id"], "expected_attempt": 1}
+        for actor in ("bob", "carol", None):
+            self.display_principal = self.store.principal_for_fixture(actor) if actor else None
+            self.assertEqual(self.display_client.post(path, json=retry).status_code, 403 if actor else 401)
+        self.display_principal = self.alice
+        self.settings.usage_charge_enabled = True
+        denied = self.display_client.post(path, json=retry)
+        self.assertEqual((denied.status_code, denied.json()), (409, {"error": "audit_report_charging_unavailable"}))
+        self.assertFalse(self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()["retry_allowed"])
+        self.assertIsNone(self.display_client.get(f"/audit-report-packages/{retry['request_id']}").json())
+        self.assertIsNone(worker.claim_job("no-charged-retry"))
+        self.settings.usage_charge_enabled = False
+        self.assertEqual(self.display_client.post(path, json=retry).status_code, 202)
+        self.settings.usage_charge_enabled = True
+        self.assertEqual(self.display_client.post(path, json=retry).status_code, 202)
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{retry['request_id']}").json()["receipt"]["state"], "accepted")
+        self.schema.require(
+            self.schema.psql(
+                self.schema.migrator_user(),
+                self.schema.migrator_password(),
+                self.database,
+                "-c",
+                f"DELETE FROM product.resource_grants WHERE resource_id = '{task['round_id']}' AND user_id = '{self.alice.user_id}'",
+            ),
+            "revoke isolated round access",
+        )
+        self.assertEqual(self.display_client.post(path, json=retry).status_code, 403)
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{retry['request_id']}").status_code, 403)
+        self.assertIsNotNone(worker.claim_job("accepted-before-revocation"))
+        self.assertIsNone(worker.claim_job("no-replay-after-revocation"))
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_zip_recovery_cannot_rebind_the_package_or_silently_replace_a_frozen_pdf(self):
+        from ppap_core.files import ObjectMissing
+        from ppap_worker import process_claimed
+
+        _task, worker, _completed, command, package = self.prepared_report_package()
+        old = worker.claim_job("zip-original-failed")
+        self.assertTrue(worker.complete_job(old, "zip-original-failed", {"error": "temporary_failure"}, "failed"))
+        path = f"/audit-report-packages/{command['request_id']}/retries"
+        retry = {"request_id": str(uuid.uuid4()), "package_id": package["package_id"], "expected_attempt": 1}
+        self.assertEqual(self.display_client.post(path, json={**retry, "package_id": str(uuid.uuid4())}).status_code, 403)
+        self.assertEqual(self.display_client.post(path, json={**retry, "expected_attempt": True}).status_code, 400)
+        self.assertEqual(self.display_client.post(path, json={**retry, "reports": command["reports"]}).status_code, 400)
+        source = old.payload["sources"][0]
+        worker.objects.delete(source["object_key"])
+        self.assertEqual(self.display_client.post(path, json=retry).status_code, 202)
+        current = worker.claim_job("zip-missing-frozen-pdf")
+        self.assertEqual(current.payload, old.payload)
+        process_claimed(worker, current, "zip-missing-frozen-pdf")
+        failed = self.display_client.get(f"/audit-report-packages/{retry['request_id']}").json()
+        self.assertEqual((failed["state"], failed["artifact"]), ("failed", None))
+        self.assertEqual(next(row for row in failed["outcomes"] if row["reference"] == source["reference"])["state"], "failed")
+        with self.assertRaises(ObjectMissing):
+            worker.objects.get(source["object_key"])
+        self.assertIsNone(worker.claim_job("no-pdf-regeneration"))
+
     def test_lost_zip_write_reply_and_a_new_request_cannot_rebuild_the_failed_collection(self):
         from ppap_worker import process_claimed
 
@@ -915,7 +1060,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         process_claimed(worker, worker.claim_job("lost-zip"), "lost-zip")
         request_id = command["request_id"]
         failed = self.display_client.get(f"/audit-report-packages/{request_id}").json()
-        self.assertEqual((failed["state"], failed["artifact"], failed["retry_allowed"]), ("failed", None, False))
+        self.assertEqual((failed["state"], failed["artifact"], failed["retry_allowed"]), ("failed", None, True))
         self.assertEqual([item["state"] for item in failed["outcomes"]], ["prepared", "prepared"])
         self.assertEqual(len(written), 1)
         self.assertTrue(objects.get(written[0]).startswith(b"PK"))

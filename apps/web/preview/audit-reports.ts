@@ -86,12 +86,26 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
   },
   createPackage: async (reports, requestId) => {
     if (reports.length < 2 || reports.some(reference => target(reference).audit.report.state !== 'ready')) throw new Error('unready_preview_report')
-    const job: components['schemas']['AuditReportPackage'] = {package_id: `preview-zip-${requestId}`, reports: structuredClone(reports), outcomes: reports.map(reference => ({reference: structuredClone(reference), state: 'pending', reason: null})), receipt: {request_id: requestId, state: 'accepted', reason: null}, state: 'generating', artifact: null, reason: '正在打包报告。', retry_allowed: false}
+    const job: components['schemas']['AuditReportPackage'] = {package_id: `preview-zip-${requestId}`, attempt: 1, reports: structuredClone(reports), outcomes: reports.map(reference => ({reference: structuredClone(reference), state: 'pending', reason: null})), receipt: {request_id: requestId, state: 'accepted', reason: null}, state: 'generating', artifact: null, reason: '正在打包报告。', retry_allowed: false}
     if (scene === 'reports-zip-legacy') delete job.outcomes
     const sources = reports.map(reference => {const {audit} = target(reference); return {artifact: structuredClone(audit.report.artifact!), rule: audit.rule.id, generatedAt: audit.report.generated_at}})
     packages.set(requestId, {job, sources})
     savePackage(job)
     if (scene === 'reports-zip-unknown') throw new Error('preview_zip_response_lost')
+    return structuredClone(job)
+  },
+  retryPackage: async (previous, requestId) => {
+    const stored = packages.get(previous.receipt.request_id)
+    if (!stored || !sameSnapshot(stored.job, previous) || previous.state !== 'failed' || !previous.retry_allowed) throw new Error('preview_package_recovery_unavailable')
+    if (scene === 'reports-zip-retry-rejected') {
+      const reason = '当前环境尚未开放 ZIP 恢复计费，本次未重新打包。'
+      stored.job = {...stored.job, reason, retry_allowed: false}
+      savePackage(stored.job)
+      return {...structuredClone(stored.job), receipt: {request_id: requestId, state: 'rejected', reason}}
+    }
+    const job = {...structuredClone(previous), attempt: (previous.attempt || 1) + 1, receipt: {request_id: requestId, state: 'accepted' as const, reason: null}, state: 'generating' as const, outcomes: previous.reports.map(reference => ({reference: structuredClone(reference), state: 'pending' as const, reason: null})), reason: '正在重新打包原报告集合。', retry_allowed: false}
+    packages.set(requestId, {job, sources: structuredClone(stored.sources)})
+    savePackage(job)
     return structuredClone(job)
   },
   readPackage: async requestId => {
@@ -101,7 +115,7 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     if (stored.blob) return packageObservation(stored.job)
     if (stored.job.state === 'failed') return structuredClone(stored.job)
     const collection = JSON.stringify(stored.job.reports)
-    if (['reports-zip-failed', 'reports-zip-write-failed', 'reports-zip-pending-failed', 'reports-zip-no-retry'].includes(scene) && !failedPackages.has(collection)) {
+    if (['reports-zip-failed', 'reports-zip-write-failed', 'reports-zip-pending-failed', 'reports-zip-no-retry', 'reports-zip-retry-rejected'].includes(scene) && !failedPackages.has(collection)) {
       failedPackages.add(collection)
       const preparation = scene === 'reports-zip-write-failed' ? 'prepared' : scene === 'reports-zip-pending-failed' ? 'pending' : 'failed'
       stored.job = {...stored.job, state: 'failed', outcomes: stored.job.reports.map<components['schemas']['AuditReportPackageOutcome']>((reference, index) => ({reference: structuredClone(reference), state: index === 1 ? preparation : 'prepared', reason: index === 1 && preparation === 'failed' ? '控制计划 PDF 暂时无法读取。' : null})).reverse(), reason: scene === 'reports-zip-write-failed' ? 'ZIP 保存失败，各份 PDF 已准备完成。' : scene === 'reports-zip-no-retry' ? 'ZIP 打包失败，暂不能再次打包。' : 'ZIP 打包失败。', retry_allowed: scene !== 'reports-zip-no-retry'}

@@ -844,6 +844,29 @@ class AuditPreviewTests(unittest.TestCase):
             expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
             browser.close()
 
+    def test_zip_recovery_preserves_its_frozen_order_after_archive_selection_changes(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-zip-failed&view=archive")
+            first = page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True)
+            second = page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A002", exact=True)
+            first.check()
+            second.check()
+            create = page.get_by_role("button", name="打包所选 2 份历史报告", exact=True)
+            create.click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            package = page.get_by_role("region", name="ZIP 工作", exact=True)
+            expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+            original = package.get_by_text(re.compile("^冻结文件：")).all_text_contents()
+            first.uncheck()
+            first.check()
+            create.click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            self.assertEqual(package.get_by_text(re.compile("^冻结文件：")).all_text_contents(), original)
+            browser.close()
+
     def test_zip_incomplete_or_wrong_report_outcomes_are_read_back_without_repackaging(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -2798,6 +2821,25 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="重试同一报告集合打包", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            browser.close()
+
+    def test_rejected_zip_recovery_still_reads_the_original_failed_package(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-zip-retry-rejected")
+            page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+            page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            page.get_by_role("button", name="重试同一报告集合打包", exact=True).click()
+            refusal = page.get_by_text("当前环境尚未开放 ZIP 恢复计费，本次未重新打包。", exact=True)
+            expect(refusal).to_be_visible()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(refusal).to_be_visible()
+            expect(page.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="重试同一报告集合打包", exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             browser.close()
 
     def test_same_named_reports_have_distinct_entries_and_frozen_identity_mapping(self):
