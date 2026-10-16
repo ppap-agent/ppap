@@ -27,6 +27,23 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_an_observation_without_task_progress_cannot_erase_a_known_counter(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.clock.install()
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-observe-missing-progress&task=preview-recovery-task")
+            expect(page.get_by_role("status").filter(has_text="审核中 · 文件已结束 0/3")).to_be_visible()
+            page.clock.fast_forward(3000)
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_text("收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。", exact=False)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text="审核中 · 文件已结束 0/3")).to_be_visible()
+            expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+            page.clock.fast_forward(6000)
+            page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="审核已结束 · 文件已结束 3/3")).to_be_visible()
+            browser.close()
+
     def test_unknown_report_command_pauses_general_observation_and_keeps_its_original_receipt(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -103,7 +120,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.clock.fast_forward(3000)
             expect(page.get_by_text("任务观察 · preview-recovery-task · 读取 1", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            expect(page.get_by_text("收到较早的审核进度，已保留当前结果。请稍后重新读取。", exact=False)).to_be_visible()
+            expect(page.get_by_text("收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。", exact=False)).to_be_visible()
             expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
             expect(page.get_by_text("满足 0 · 不符合 1", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()

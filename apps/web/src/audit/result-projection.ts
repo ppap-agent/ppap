@@ -22,7 +22,7 @@ export function sameFrozenInputs(before: Task, after: Task): boolean {
 /** Reject a regressive snapshot rather than mixing old counters with new checks. */
 export function progressRegressed(before: Task, after: Task): boolean {
   if (!before.round_id || before.round_id !== after.round_id) return false
-  if (before.progress && after.progress && after.progress.completed < before.progress.completed) return true
+  if (before.progress && (!after.progress || after.progress.completed < before.progress.completed)) return true
   return before.files.some(row => {
     if (row.selection !== 'selected' || !row.audit) return false
     const next = after.files.find(file => file.file.id === row.file.id)?.audit

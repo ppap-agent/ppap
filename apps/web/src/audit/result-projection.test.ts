@@ -23,6 +23,11 @@ test('a read cannot erase ended work or reopen a terminal file in the same froze
   const before = projection(), after = structuredClone(before)
   before.progress = {completed: 1, total: 1}; after.progress = {completed: 1, total: 1}
   assert.equal(progressRegressed(before, after), false)
+  delete after.progress
+  assert.equal(progressRegressed(before, after), true)
+  after.progress = null
+  assert.equal(progressRegressed(before, after), true)
+  after.progress = {completed: 1, total: 1}
   after.progress.completed = 0
   assert.equal(progressRegressed(before, after), true)
   after.progress.completed = 1; after.files[0].audit!.progress.completed = 0

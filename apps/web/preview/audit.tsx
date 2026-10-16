@@ -99,6 +99,7 @@ const adapter: AuditIntakeAdapter = {
     const task = taskStore.get(id)
     if (!task) throw Object.assign(new Error('preview_not_found'), {status: 404})
     if (scene === 'restore-observe-regression' && recoveryRead === 2) return fixtureAcceptance(task, task.acceptance!.request_id)
+    if (scene === 'restore-observe-missing-progress' && recoveryRead === 2) {const next = structuredClone(task); delete next.progress; return next}
     if (scene.startsWith('restore-') && recoveryRead === (scene === 'restore-error' || scene === 'restore-auth' ? 2 : 1) || scene.startsWith('reports-') && id === 'preview-report-task' && recoveryRead === 1) {const next = await withReportBytes(task); taskStore.set(id, next); return structuredClone(next)}
     if ((scene.startsWith('reports-') || scene === 'restore-report-conflict') && task.round_id && task.files.every(file => file.selection !== 'selected' || ['completed', 'review_failed'].includes(file.audit?.execution || ''))) {
       const files = task.files.map(file => file.audit?.report.state === 'generating' ? {...file, audit: {...file.audit, report: {...fixtureReport(file.file.original_filename), report_id: file.audit.report.report_id, generation_request: file.audit.report.generation_request}}} : file)

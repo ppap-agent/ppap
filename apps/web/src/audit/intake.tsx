@@ -261,7 +261,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       return true
     } catch (failure) {
       if (taskReadEpoch.current.get(current.id) !== epoch) return null
-      setReadStatus(rows => ({...rows, [current.id]: {busy: false, error: failure instanceof Error && failure.message === 'regressive_progress' ? '收到较早的审核进度，已保留当前结果。请稍后重新读取。' : '任务结果读取失败，任务与文件仍保留。重新读取不会重新创建任务或开始审核。'}}))
+      setReadStatus(rows => ({...rows, [current.id]: {busy: false, error: failure instanceof Error && failure.message === 'regressive_progress' ? '收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。' : '任务结果读取失败，任务与文件仍保留。重新读取不会重新创建任务或开始审核。'}}))
       return false
     } finally {
       if (taskReadEpoch.current.get(current.id) === epoch) {taskReads.current.delete(current.id); setReadStatus(rows => ({...rows, [current.id]: {error: rows[current.id]?.error || '', busy: false}}))}
