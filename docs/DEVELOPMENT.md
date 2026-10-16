@@ -166,6 +166,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 文件档案及历次审核使用 `scene=archive-ready`。`archive-task-allowed` 单独演示有来源任务读取许可时，经完整 P5/报告页返回所选历史，不改开最新审核。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。
 
+历史链接带 `auditRef` 或 `archiveReport=1` 却缺少文档身份时，显示可返回的错误，不静默显示档案列表；只有文档身份的正常入口仍可打开默认历史。
+
 `reports-zip-failed` 在同一固定报告集合中显示逐报告准备状态与失败原因；改变当前勾选不改变旧包明细。`reports-zip-write-failed/pending-failed/legacy/no-retry` 分别区分最终 ZIP 写入失败、尚未确认、未提供逐项状态及服务未允许重试。`reports-zip-outcome-*` 故意返回缺项、重复、错误报告引用、空失败原因或矛盾就绪状态；只读原请求即可恢复，不重新打包。下载与文件分享使用同一明细校验；“打包准备完成”不表示有部分 ZIP 可下载，也不改变单 PDF 状态。这些仍是 UI-draft 合同与受控预览，不确定真实重试或收费政策。
 
 `reports-zip-foreign` 在读取报告状态时返回内部自洽但属于其他任务／轮次的 ZIP；任务页拒绝下载、读回该包或另行打包，重新读取任务可恢复正确范围。当前勾选不决定旧包范围，档案页仍可跨任务打包授权的固定历史报告。
@@ -175,6 +177,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 `templates-zip-recovery` 演示拒绝不完整模板包后，显式重读同一客户、搜索与页码，再下载新文件夹修订的完整包；重读不自动下载或重建审核任务。重选当前客户保留清单与筛选。确认审核结果未明时，可携带原确认请求、任务标识和说明进入同一支持浮层；关闭后仍只读回原请求，不重复确认。
 
 支持浮层使用 `support-ready`、`support-error`、`support-qr-error` 和 `support-loading`，分别走查复制/邮箱链接/图片放大、读取恢复、图片失败和返回后迟到读取。电话不可拨打，邮箱是保留的 `.invalid` 地址，图片明确不是服务二维码；不代表已取得真实客服配置或完成飞书连接。Browser Back 关闭旧浮层并保留当前文件，二维码放大关闭后回到触发按钮。
+
+`restore-usage-notice` 与 `restore-usage-completed` 分别演示审核中、已结束任务的用量提示。从提示联系支持可复制当前任务、轮次和原提示；关闭后保留文件、条款与筛选，不执行扣费或重审。
 
 模板提报、报告／模板分享和权限修改的未确认或失败操作可进入同一支持浮层，复制打开时的原请求、各自尝试及固定对象信息。原业务弹窗不关闭，迟到结果继续更新；支持快照只读，不自动重发、发送附件或创建工单。关闭后优先回原按钮，按钮消失时回原弹窗；普通全局支持不保留上一次操作信息。`feedback-no-retry` 演示服务未允许再提交时的支持出口。本页 `client-` 编号仍只是参考，不冒充服务端 trace。
 

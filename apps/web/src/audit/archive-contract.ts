@@ -13,7 +13,7 @@ export type AuditArchiveAdapter = {
 export const resultKey = (reference: ResultReference) => JSON.stringify([reference.task_id, reference.round_id, reference.file_version_id, reference.result_attempt])
 export function readArchiveAddress(search: string) {
   const params = new URLSearchParams(search), documentId = params.get('archiveDoc'), raw = params.get('auditRef')
-  let reference: ResultReference | null = null, invalid = params.has('auditRef') && !raw || params.get('archiveReport') === '1' && !raw
+  let reference: ResultReference | null = null, invalid = params.has('auditRef') && (!raw || !documentId) || params.get('archiveReport') === '1' && !raw
   if (raw) try {
     const values: unknown = JSON.parse(raw)
     if (!Array.isArray(values) || values.length !== 4 || !values.slice(0, 3).every(value => typeof value === 'string' && value.length > 0 && value.length <= 256) || values[3] !== null && (!Number.isInteger(values[3]) || values[3] < 1)) throw new Error('invalid_history_reference')

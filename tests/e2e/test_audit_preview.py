@@ -8,7 +8,7 @@ import os
 import re
 import unittest
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -29,6 +29,55 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_audit_usage_notice_opens_contextual_support_without_losing_the_current_review(self):
+        notice = "提示：飞书AI包额度不足，本次消耗将于充值后自动扣费，请联系管理员或联系我们获取免费额度"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for scene, width in (("restore-usage-notice", 390), ("restore-usage-completed", 1440)):
+                with self.subTest(scene=scene):
+                    page = browser.new_page(viewport={"width": width, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+                    page.goto(PREVIEW + f"/preview/audit.html?scene={scene}&task=preview-recovery-task")
+                    if width < 768:
+                        page.get_by_role("button", name="文件队列 · 3 份", exact=True).click()
+                        page.get_by_role("dialog").get_by_role("button", name=re.compile("控制计划.xlsx")).click()
+                    else:
+                        page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("控制计划.xlsx")).click()
+                    details = page.get_by_role("region", name="审核详情", exact=True)
+                    details.get_by_role("textbox", name="搜索审核项", exact=True).fill("记录")
+                    details.get_by_role("button", name="查看依据 2.2", exact=True).click()
+                    address = page.url
+                    selected = details.get_by_role("heading", name="2.2 · 记录完整性", exact=True)
+                    expect(selected).to_be_visible()
+                    alert = page.get_by_role("alert").filter(has_text=notice)
+                    trigger = alert.get_by_role("button", name="联系支持", exact=True)
+                    expect(trigger).to_be_visible()
+                    trigger.click()
+                    dialog = page.get_by_role("dialog", name="联系我们", exact=True)
+                    expect(dialog.get_by_role("region", name="操作信息", exact=True)).to_contain_text(notice)
+                    dialog.get_by_role("button", name="复制操作信息", exact=True).click()
+                    copied = page.evaluate("navigator.clipboard.readText()")
+                    for value in (notice, "审核用量提示", "preview-recovery-task", "PPAP-恢复示例", "preview-round-preview-recovery-request"):
+                        self.assertIn(value, copied)
+                    page.keyboard.press("Escape")
+                    expect(trigger).to_be_focused()
+                    self.assertEqual(page.url, address)
+                    expect(selected).to_be_visible()
+                    expect(details.get_by_role("textbox", name="搜索审核项", exact=True)).to_have_value("记录")
+                    expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+                    expect(alert).to_contain_text(notice)
+                    if scene == "restore-usage-notice":
+                        expect(page.get_by_role("status").filter(has_text="审核中 · 文件已结束 0/3")).to_be_visible()
+                        page.get_by_role("button", name="读取审核结果", exact=True).click()
+                    details.get_by_role("button", name="查看报告", exact=True).click()
+                    expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+                    page.get_by_role("button", name="返回审核结果", exact=True).click()
+                    if width >= 1024:
+                        page.get_by_role("button", name="联系我们", exact=True).click()
+                        expect(dialog.get_by_role("region", name="操作信息", exact=True)).to_have_count(0)
+                        page.keyboard.press("Escape")
+                    page.close()
+            browser.close()
+
     def test_collapsed_product_navigation_keeps_the_task_and_every_destination(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -1239,6 +1288,30 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("alert")).to_contain_text("未打开其他文档")
             expect(page.get_by_role("heading", name="历史报告", exact=True)).to_have_count(0)
             expect(page.get_by_text("原件修订：Rev C", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_incomplete_history_links_show_a_recoverable_error_instead_of_the_archive_list(self):
+        reference = '["preview-archive-task-A001-2","selected-round","selected-version",1]'
+        cases = [{"archiveReport": "1"}, {"auditRef": reference}, {"auditRef": "broken"}, {"auditRef": ""}, {"archiveDoc": "", "auditRef": reference}]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            for fields in cases:
+                with self.subTest(fields=fields):
+                    query = urlencode({"scene": "archive-ready", "view": "archive", **fields})
+                    page.goto(PREVIEW + "/preview/audit.html?" + query)
+                    expect(page.get_by_role("alert")).to_contain_text("无法打开这次审核")
+                    expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("heading", name="历史报告", exact=True)).to_have_count(0)
+                    page.reload()
+                    expect(page.get_by_role("alert")).to_contain_text("无法打开这次审核")
+                    self.assertEqual(parse_qs(urlparse(page.url).query, keep_blank_values=True), parse_qs(query, keep_blank_values=True))
+                    page.get_by_role("button", name="返回文件档案", exact=True).click()
+                    expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+                    for key in ("archiveDoc", "auditRef", "archiveReport"):
+                        self.assertNotIn(key, parse_qs(urlparse(page.url).query, keep_blank_values=True))
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
+            expect(page.get_by_role("heading", name="第 3 次审核", exact=True)).to_be_visible()
             browser.close()
 
     def test_archive_small_screen_keeps_filename_readable_and_history_in_sheet(self):

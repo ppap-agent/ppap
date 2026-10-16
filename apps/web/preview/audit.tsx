@@ -19,6 +19,7 @@ import type {RemoteOriginalSource} from '../src/journey/remote-source'
 import {fixtureSupport} from './audit-support'
 import {displayReadFixture, fixtureDisplay} from './audit-display'
 import {fileDisplayValues} from '../src/audit/display-info-contract'
+import {usageNotices} from '../src/audit/usage-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -189,7 +190,8 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   taskStore.delete(matched.id)
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  if (scene.startsWith('restore-usage-')) snapshot.usage_notice = usageNotices.paid_insufficient
   if (scene.startsWith('restore-display-')) snapshot.files = snapshot.files.map(file => ({...file, display_info: {revision: 0, values: fileDisplayValues(file)}, display_edit_access: {state: 'allowed', reason: null}}))
   if (scene.startsWith('restore-estimate')) {
     const now = Date.now(), time = (minutes: number) => new Date(now + minutes * 60000).toISOString()

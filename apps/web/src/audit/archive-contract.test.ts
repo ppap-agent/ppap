@@ -13,6 +13,17 @@ test('archive addresses preserve the complete result identity and reject ambiguo
   assert.equal(readArchiveAddress('archiveReport=1').invalid, true)
 })
 
+test('an explicit historical result requires its document identity', () => {
+  const cases: Record<string, string>[] = [{auditRef: resultKey(reference)}, {archiveDoc: '', auditRef: resultKey(reference)}, {auditRef: resultKey(reference), archiveReport: '1'}]
+  for (const fields of cases) {
+    const address = readArchiveAddress(new URLSearchParams(fields).toString())
+    assert.equal(address.invalid, true)
+    assert.deepEqual(address.reference, reference)
+  }
+  assert.deepEqual(readArchiveAddress(''), {documentId: null, reference: null, invalid: false, report: false})
+  assert.deepEqual(readArchiveAddress('archiveDoc=document-1'), {documentId: 'document-1', reference: null, invalid: false, report: false})
+})
+
 test('history report availability does not imply original or private-task access', () => {
   assert.equal(historyReportReady(entry), true)
   assert.equal(historyReportReady({...entry, execution: 'running'}), false)
