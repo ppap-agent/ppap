@@ -1,4 +1,0 @@
-# actionlint does not know this runner's custom label.
-self-hosted-runner:
-  labels:
-    - ppap
