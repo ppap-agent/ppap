@@ -6,6 +6,7 @@ import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
@@ -51,6 +52,154 @@ class MetadataAI:
         if request["operation"] == "document_classification":
             return "控制计划"
         return json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"}, ensure_ascii=False)
+
+
+@pytest.fixture
+def matched_task(task_system):
+    client, worker = task_system
+    worker.settings.usage_charge_enabled = False
+    file = checked_file(client, worker)
+    rule = publish_rule(client, file)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    task = client.post("/audit-tasks", json=body).json()
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    return client, worker, f"/audit-tasks/{task['id']}", body, rule
+
+
+def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):
+    client, worker, path, body, _rule = matched_task
+    commands = [{"request_id": str(uuid.uuid4()), "expected_revision": 0} for _ in range(2)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(pool.map(lambda command: client.post(path + "/confirm", json=command), commands))
+    assert sorted(reply.status_code for reply in replies) == [201, 409]
+    accepted = next(reply.json() for reply in replies if reply.status_code == 201)
+    winning = next(command for command in commands if command["request_id"] == accepted["acceptance"]["request_id"])
+    assert client.post(path + "/confirm", json=winning).json() == accepted
+    other = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())}).json()
+    # The existing audit job is claimed, but not completed, while the other Task matches.
+    audit = worker.claim_job("one-audit")
+    assert audit.round_id == accepted["round_id"]
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    other_path = f"/audit-tasks/{other['id']}"
+    assert client.post(other_path + "/confirm", json=winning).status_code == 409
+    assert client.get(other_path).json()["round_id"] is None
+    assert client.get(other_path, params={"request_id": winning["request_id"]}).json()["acceptance"]["state"] == "pending"
+    assert len(client.get("/rounds").json()["rounds"]) == 1
+    assert worker.claim_job("no-second-audit") is None
+
+
+def test_confirmation_requires_current_revision_and_explicit_no_charge_configuration(matched_task):
+    client, worker, path, body, _rule = matched_task
+    assert client.get(path, params={"request_id": str(uuid.uuid4())}).json()["acceptance"]["state"] == "pending"
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    stale = client.post(path + "/confirm", json=command)
+    assert stale.status_code == 409
+    assert stale.json() == {"error": "task_revision_conflict"}
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    worker.settings.usage_charge_enabled = True
+    denied = client.post(path + "/confirm", json={**command, "expected_revision": 1})
+    assert denied.status_code == 409
+    assert denied.json() == {"error": "audit_task_charging_unavailable"}
+    assert client.get(path).json()["state"] == "pending_confirm"
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+    assert worker.claim_job("no-audit") is None
+
+
+def test_confirmation_and_rematching_serialize_on_the_same_task_revision(matched_task):
+    client, _worker, path, body, _rule = matched_task
+    revision = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        confirmation = pool.submit(client.post, path + "/confirm", json=command)
+        recognition = pool.submit(client.post, "/audit-tasks", json=revision)
+        accepted, revised = confirmation.result(), recognition.result()
+    current = client.get(path).json()
+    if accepted.status_code == 201:
+        assert revised.status_code == 409
+        assert revised.json() == {"error": "task_input_locked"}
+        assert current["input_revision"] == 0
+        assert current["round_id"] == accepted.json()["round_id"]
+    else:
+        assert accepted.status_code == 409
+        assert accepted.json() == {"error": "task_revision_conflict"}
+        assert revised.status_code == 202
+        assert current["input_revision"] == 1
+        assert current["round_id"] is None
+
+
+def test_removed_file_needs_no_precheck_or_hidden_matching_work(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    excluded = client.post("/files", json={"original_filename": "已排除.xlsx", "byte_size": 3}).json()
+    source = f"/files/{excluded['file_id']}/versions/{excluded['id']}"
+    assert client.put(source + "/blob", content=b"bad").status_code == 200
+    assert client.post(source + "/finalize").status_code == 200
+    response = client.post(
+        "/audit-tasks",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "analysis_mode": "standard",
+            "customer_preference": None,
+            "files": [file, {"file_version_id": excluded["id"], "validation_id": None, "selection": "removed", "removal_reason": "上传后已排除"}],
+        },
+    )
+    assert response.status_code == 202, response.text
+    removed = response.json()["files"][1]
+    assert removed["selection"] == "removed"
+    assert removed["match"] is None
+    assert removed.get("validation_id") is None
+    assert worker.claim_job("only-selected").payload["source_file_version_id"] == file["file_version_id"]
+    assert worker.claim_job("no-excluded-work") is None
+
+
+def test_confirmation_excludes_unmatched_and_unselected_files_from_the_frozen_round(task_system):
+    client, worker = task_system
+    worker.settings.usage_charge_enabled = False
+    selected = checked_file(client, worker)
+    unmatched = checked_file(client, worker, "过程流程图.xlsx", "过程流程图")
+    unselected = {**checked_file(client, worker, "另一份控制计划.xlsx"), "selection": "unselected"}
+    rule = publish_rule(client, selected)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [selected, unmatched, unselected]}
+    task = client.post("/audit-tasks", json=body).json()
+    for _ in range(2):
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    response = client.post(f"/audit-tasks/{task['id']}/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert response.status_code == 201, response.text
+    accepted = response.json()
+    assert [row["selection"] for row in accepted["files"]] == ["selected", "removed", "unselected"]
+    assert accepted["files"][1]["removal_reason"]
+    assert all(row.get("audit") is None for row in accepted["files"][1:])
+    round = client.get(f"/rounds/{accepted['round_id']}").json()
+    assert [(row["file_version_id"], row["rule_version_id"], row["role"]) for row in round["inputs"]] == [(selected["file_version_id"], rule["id"], "target")]
+
+
+def test_queue_insert_failure_rolls_back_the_task_round_and_frozen_inputs(matched_task, auth_store_factory):
+    client, worker, path, _body, _rule = matched_task
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    with migrator._conn() as conn:
+        conn.execute(
+            """CREATE FUNCTION engine.reject_test_audit_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN IF NEW.kind = 'audit' THEN RAISE EXCEPTION 'test_queue_unavailable'; END IF; RETURN NEW; END $$"""
+        )
+        conn.execute("CREATE TRIGGER reject_test_audit_insert BEFORE INSERT ON engine.jobs FOR EACH ROW EXECUTE FUNCTION engine.reject_test_audit_insert()")
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    try:
+        with pytest.raises(psycopg.errors.RaiseException, match="test_queue_unavailable"):
+            client.post(path + "/confirm", json=command)
+        restored = client.get(path).json()
+        assert restored["round_id"] is None
+        assert restored["state"] == "pending_confirm"
+        assert client.get("/rounds").json()["rounds"] == []
+        assert client.get("/usage").json()["events"] == []
+        assert worker.claim_job("no-orphan-job") is None
+    finally:
+        with migrator._conn() as conn:
+            conn.execute("DROP TRIGGER reject_test_audit_insert ON engine.jobs")
+            conn.execute("DROP FUNCTION engine.reject_test_audit_insert()")
+    assert client.post(path + "/confirm", json=command).status_code == 201
 
 
 def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_system):
@@ -354,6 +503,80 @@ def test_three_document_types_match_their_own_rules_without_accepting_an_audit(t
     assert recovered["round_id"] is None
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
+
+
+def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_round(task_system):
+    client, worker = task_system
+    worker.settings.usage_charge_enabled = False
+    files, rules = [], []
+    for document_type in ("PFMEA", "控制计划", "过程流程图"):
+        file = checked_file(client, worker, document_type + ".xlsx", document_type)
+        files.append(file)
+        rules.append(publish_rule(client, file, title="客户" + document_type, document_type=document_type))
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files}).json()
+    for _ in files:
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    path = f"/audit-tasks/{task['id']}"
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    publish_rule(client, files[0], predecessor=rules[0]["id"], title="后发布的 PFMEA 规则", document_type="PFMEA")
+    response = client.post(path + "/confirm", json=command)
+    assert response.status_code == 201, response.text
+    accepted = response.json()
+    assert accepted["state"] == "reviewing"
+    assert accepted["acceptance"] == {"request_id": command["request_id"], "state": "accepted", "reason": None}
+    assert accepted["progress"] == {"completed": 0, "total": 3}
+    round = client.get(f"/rounds/{accepted['round_id']}").json()
+    assert round["source_draft_id"] == task["id"]
+    assert {row["file_version_id"]: row["rule_version_id"] for row in round["inputs"]} == {file["file_version_id"]: rule["id"] for file, rule in zip(files, rules)}
+    assert all(row["role"] == "target" for row in round["inputs"])
+    assert all(row["audit"]["round_id"] == accepted["round_id"] for row in accepted["files"])
+    assert client.post(path + "/confirm", json=command).json() == accepted
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    assert client.get(path, params={"request_id": command["request_id"]}).json() == accepted
+    assert client.get("/audit-tasks", params={"state": "reviewing"}).json()["tasks"] == [accepted]
+    assert len(client.get("/rounds").json()["rounds"]) == 1
+    assert client.get("/usage").json()["events"] == []
+    job = worker.claim_job("one-audit")
+    assert job.round_id == accepted["round_id"]
+    assert worker.claim_job("no-second-audit") is None
+    process_claimed(worker, job, "one-audit")
+    finished = client.get(path).json()
+    assert finished["state"] == "completed"
+    assert finished["completion_reason"] == "processed"
+    assert finished["progress"] == {"completed": 3, "total": 3}
+    assert all(row["audit"]["execution"] == "completed" for row in finished["files"])
+    assert all(row["audit"]["checks"][0]["coverage"] == "unsupported" for row in finished["files"])
+    assert all(row["audit"]["conclusion"] == "UNKNOWN" for row in finished["files"])
+    assert all(row["audit"]["report"]["state"] == "not_eligible" for row in finished["files"])
+    assert client.get("/audit-tasks", params={"state": "completed"}).json()["tasks"] == [finished]
+
+
+def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_peer(task_system):
+    client, worker = task_system
+    worker.settings.usage_charge_enabled = False
+    file = checked_file(client, worker)
+    publish_rule(client, file)
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    path = f"/audit-tasks/{task['id']}"
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    accepted = client.post(path + "/confirm", json=command).json()
+    version = accepted["files"][0]["file"]
+    round_path = f"/rounds/{accepted['round_id']}"
+    assert client.post(round_path + "/resubmit", json={"idempotency_key": str(uuid.uuid4())}).status_code == 409
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "bob"}).status_code == 200
+    assert client.get(path).status_code == 403
+    assert client.post(path + "/confirm", json=command).status_code == 403
+    assert client.get(round_path).status_code == 403
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get(round_path + "/bundle").status_code == 403
+    source = f"/files/{version['file_id']}/versions/{version['id']}"
+    assert client.get(round_path + source + "/download").status_code == 403
+    assert client.get(round_path + source + "/preview").status_code == 403
+    assert client.get(source + "/office", params={"round_id": accepted["round_id"]}).status_code == 403
+    assert client.put(round_path + "/reviews", json={"item_key": "1", "judgment": "confirm", "rationale": "peer", "next_step": "", "version": 0}).status_code == 403
 
 
 def test_task_creation_requires_the_exact_completed_precheck_receipt(task_system):

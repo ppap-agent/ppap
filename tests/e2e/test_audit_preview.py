@@ -2875,6 +2875,25 @@ class AuditPreviewTests(unittest.TestCase):
                     page.close()
             browser.close()
 
+    def test_failed_audit_does_not_promise_unverified_file_isolation(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-none&task=preview-report-task")
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            expect(page.get_by_text("本文件审核异常，未取得完整结果。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
+            browser.close()
+
+    def test_workbench_does_not_offer_notification_without_service_state(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-without-notification&task=preview-recovery-task")
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            expect(page.get_by_role("checkbox", name="完成后飞书通知", exact=True)).to_have_count(0)
+            browser.close()
+
     def test_a_result_read_preserves_a_notification_change_made_while_waiting(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -3051,7 +3070,7 @@ class AuditPreviewTests(unittest.TestCase):
             queue.get_by_role("button", name="控制计划.xlsx", exact=False).click()
             expect(page.get_by_text("满足 2 · 不符合 0", exact=True)).to_be_visible()
             queue.get_by_role("button", name="过程流程图.pdf", exact=False).click()
-            expect(page.get_by_text("本文件审核异常，其他文件结果不受影响。", exact=True)).to_be_visible()
+            expect(page.get_by_text("本文件审核异常，未取得完整结果。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="重审", exact=True)).to_have_count(0)
             expect(page.get_by_role("button", name="移除", exact=True)).to_have_count(0)
             browser.close()

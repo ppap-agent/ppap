@@ -8,6 +8,7 @@ const docker = process.env.PPAP_VITE_DOCKER === '1'
 const preview = process.env.PPAP_PREVIEW === '1'
 
 export default defineConfig({
+  cacheDir: preview ? 'node_modules/.vite-preview' : 'node_modules/.vite',
   plugins: [
     react(),
     tailwindcss(),
@@ -45,6 +46,13 @@ export default defineConfig({
       name: 'ppap-runtime-config',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
+          if (!preview && (req.url || '').split('?')[0] === '/__audit-native') {
+            res.setHeader('Content-Type', 'text/html; charset=utf-8')
+            res.setHeader('Cache-Control', 'no-store')
+            const html = readFileSync(path.resolve(__dirname, 'index.html'), 'utf8').replace('/src/main.tsx', '/src/audit/native-main.tsx')
+            void server.transformIndexHtml('/__audit-native', html).then(transformed => res.end(transformed)).catch(next)
+            return
+          }
           if ((req.url || '').split('?')[0] !== '/runtime-config.json') {
             next()
             return

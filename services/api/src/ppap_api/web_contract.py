@@ -653,6 +653,8 @@ class AuditClauseEvaluation(TypedDict):
     scope: SemanticScope | None
     scope_notice: str | None
     evidence: list[AuditEvidenceReference]
+    review_item_key: NotRequired[str]
+    review: NotRequired[Review | None]
 
 
 class AuditResultCounts(TypedDict):
@@ -884,15 +886,9 @@ class AuditTaskIdentity(TypedDict):
     recognition_request_id: NotRequired[str]
 
 
-class AuditRecognitionTask(AuditTaskIdentity):
-    """Persisted confirmation input; does not claim audit/report runtime support."""
-
-    files: list[AuditRecognitionFile]
-
-
 class AuditRecognitionInput(TypedDict):
     file_version_id: str
-    validation_id: str
+    validation_id: str | None
     selection: Literal["selected", "unselected", "removed"]
     removal_reason: str | None
 
@@ -911,12 +907,17 @@ class AuditRecognitionRead(TypedDict):
     task_id: str
     state: Literal["accepted", "unknown"]
     input_revision: int | None
-    task: AuditRecognitionTask | None
+    task: AuditTask | None
 
 
 class AuditTaskEndRequest(TypedDict):
     expected_revision: int
     removals: NotRequired[list[AuditTaskRemoval]]
+
+
+class AuditTaskConfirmRequest(TypedDict):
+    request_id: str
+    expected_revision: int
 
 
 class AuditTaskRemoval(TypedDict):
@@ -925,12 +926,12 @@ class AuditTaskRemoval(TypedDict):
 
 
 class AuditRecognitionTasks(TypedDict):
-    tasks: list[AuditRecognitionTask]
+    tasks: list[AuditTask]
     next_offset: int | None
 
 
 class AuditTask(AuditTaskIdentity):
-    """Full UI contract; audit/report operations remain UI-draft until implemented."""
+    """Persisted Task/Round view; optional delivery operations need their own API."""
 
     files: list[AuditTaskFile]
     acceptance: NotRequired[AuditAcceptance]

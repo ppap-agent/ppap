@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import unittest
 
 from ppap_api import app
@@ -28,6 +27,7 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/audit-tasks/{task_id}"): False,
     ("GET", "/audit-tasks/{task_id}/recognitions/{request_id}"): False,
     ("POST", "/audit-tasks/{task_id}/end"): True,
+    ("POST", "/audit-tasks/{task_id}/confirm"): True,
     ("POST", "/drafts"): True,
     ("GET", "/drafts"): False,
     ("POST", "/file-analyses"): True,
@@ -72,14 +72,17 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
-    def test_recognition_runtime_does_not_claim_audit_report_or_billing_operations(self):
-        schemas = app.openapi()["components"]["schemas"]
-        task = schemas["AuditRecognitionTask"]
+    def test_task_runtime_has_one_explicit_revision_bound_confirmation_contract(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
+        task = schemas["AuditTask"]
         self.assertNotIn("x-contract-stage", task)
-        self.assertEqual(task["properties"]["files"]["items"]["$ref"], "#/components/schemas/AuditRecognitionFile")
-        self.assertNotIn("audit", schemas["AuditRecognitionFile"]["properties"])
-        self.assertNotIn("acceptance", task["properties"])
-        self.assertEqual(schemas["AuditTask"]["x-contract-stage"], "ui-draft")
+        self.assertEqual(task["properties"]["files"]["items"]["$ref"], "#/components/schemas/AuditTaskFile")
+        self.assertIn("match", schemas["AuditTaskFile"]["properties"])
+        self.assertIn("acceptance", task["properties"])
+        confirmation = spec["paths"]["/audit-tasks/{task_id}/confirm"]["post"]
+        self.assertEqual(_response_schema(confirmation)["$ref"], "#/components/schemas/AuditTask")
+        self.assertEqual(set(_request_schema(confirmation)["required"]), {"request_id", "expected_revision"})
         request = _request_schema(app.openapi()["paths"]["/audit-tasks"]["post"])
         self.assertEqual(set(request["required"]), {"request_id", "analysis_mode", "customer_preference", "files"})
         self.assertEqual(set(request["properties"]["files"]["items"]["required"]), {"file_version_id", "validation_id", "selection", "removal_reason"})
@@ -90,7 +93,7 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(set(job["required"]), {"id", "source_file_id", "source_file_version_id", "status", "result"})
         self.assertIn({"$ref": "#/components/schemas/AuditFileValidation"}, job["properties"]["result"]["anyOf"])
         self.assertNotIn("x-contract-stage", schemas["AuditFileValidation"])
-        self.assertEqual(schemas["AuditTask"]["x-contract-stage"], "ui-draft")
+        self.assertNotIn("x-contract-stage", schemas["AuditTask"])
 
     def test_ui_zip_outcomes_bind_preparation_results_to_the_fixed_report_reference(self):
         schemas = app.openapi()["components"]["schemas"]
@@ -101,7 +104,6 @@ class OpenAPIContractTests(unittest.TestCase):
         package = schemas["AuditReportPackage"]
         self.assertIn("outcomes", package["properties"])
         self.assertNotIn("outcomes", package["required"])
-        self.assertEqual(item["x-contract-stage"], "ui-draft")
 
     def test_ui_display_corrections_are_separate_from_frozen_metadata_and_bind_the_original_request(self):
         spec = app.openapi()
@@ -246,7 +248,7 @@ class OpenAPIContractTests(unittest.TestCase):
         read = schemas["AuditShareReadRequest"]
         self.assertEqual(set(read["required"]), {"request_id", "attempts"})
         self.assertEqual(set(schemas["AuditShareAttemptReference"]["required"]), {"target", "attempt_id"})
-        self.assertEqual(schemas["AuditReportShare"]["x-contract-stage"], "ui-draft")
+        self.assertEqual(schemas["AuditReportShare"]["properties"]["receipt"]["$ref"], "#/components/schemas/AuditAcceptance")
 
     def test_ui_reports_bind_pdf_and_packages_to_frozen_results(self):
         schemas = app.openapi()["components"]["schemas"]
@@ -259,7 +261,6 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("regenerate_allowed", report)
         self.assertIn("generation_request", report)
         package = schemas["AuditReportPackage"]
-        self.assertEqual(package["x-contract-stage"], "ui-draft")
         self.assertIn("reports", package["required"])
         self.assertIn("receipt", package["required"])
 
@@ -273,10 +274,10 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(upload["properties"]["resume_allowed"]["type"], "boolean")
         self.assertIn({"type": "null"}, upload["properties"]["file"]["anyOf"])
 
-    def test_ui_review_keeps_execution_evidence_and_report_lifecycles_distinct(self):
+    def test_runtime_review_keeps_execution_evidence_and_report_lifecycles_distinct(self):
         schemas = app.openapi()["components"]["schemas"]
         for name in ("AuditFileReview", "AuditClauseEvaluation", "AuditEvidenceReference", "AuditFileReport", "AuditAcceptance"):
-            self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")
+            self.assertNotIn("x-contract-stage", schemas[name])
         self.assertEqual(schemas["AuditFileReview"]["properties"]["execution"]["enum"], ["queued", "running", "completed", "review_failed"])
         self.assertIn("result_attempt", schemas["AuditFileReview"]["properties"])
         self.assertIn({"type": "null"}, schemas["AuditEvidenceReference"]["properties"]["locator"]["anyOf"])
@@ -284,14 +285,14 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(schemas["AuditAcceptance"]["properties"]["state"]["enum"], ["pending", "accepted", "rejected"])
         self.assertIn("not_eligible", schemas["AuditFileReport"]["properties"]["state"]["enum"])
 
-    def test_ui_task_contract_is_explicit_without_inventing_a_runtime_endpoint(self):
+    def test_task_contract_is_shared_by_creation_readback_and_confirmation(self):
         spec = app.openapi()
         task = spec["components"]["schemas"]["AuditTask"]
-        self.assertEqual(task["x-contract-stage"], "ui-draft")
+        self.assertNotIn("x-contract-stage", task)
         self.assertEqual(task["properties"]["state"]["enum"], ["matching", "pending_confirm", "reviewing", "completed"])
         self.assertIn("completion_reason", task["properties"])
-        self.assertNotIn("/tasks", spec["paths"])
-        self.assertNotIn('"#/components/schemas/AuditTask"', json.dumps(spec["paths"]))
+        for path, method in (("/audit-tasks", "post"), ("/audit-tasks/{task_id}", "get"), ("/audit-tasks/{task_id}/confirm", "post")):
+            self.assertEqual(_response_schema(spec["paths"][path][method]), {"$ref": "#/components/schemas/AuditTask"})
         self.assertIs(app.openapi(), spec)
 
         def check_refs(value):

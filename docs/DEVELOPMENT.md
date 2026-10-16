@@ -146,7 +146,7 @@ That command serializes the real FastAPI `app.openapi()` schema and pipes it to 
 
 UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented. Preview adapters stay outside the production build entries.
 
-本地文件上传可在 `POST /files` 或新版本请求中提供成对的 `request_id` 与 `sha256`。该请求固定调用人、元信息和内容摘要，`FileVersion.id` 就是请求 ID；重放不创建第二版本。`GET /file-uploads/{request_id}` 只读原请求，未读到记录仍是 unknown，不许可新请求重传。服务明确返回 `resume_allowed` 时，用户可用原请求和相同内容继续；绑定上传的 `PUT /blob` 幂等并完成该版本，已就绪内容不能替换。旧无请求 ID 的三步上传仍保留。文件大小上限为 200 MiB；本地读取/散列与 API 仍使用整份文件，不承诺流式传输或跨设备恢复未传完的字节。飞书导入与完整 V3.1 Adapter 尚待接入。
+本地文件上传可在 `POST /files` 或新版本请求中提供成对的 `request_id` 与 `sha256`。该请求固定调用人、元信息和内容摘要，`FileVersion.id` 就是请求 ID；重放不创建第二版本。`GET /file-uploads/{request_id}` 只读原请求，未读到记录仍是 unknown，不许可新请求重传。服务明确返回 `resume_allowed` 时，用户可用原请求和相同内容继续；绑定上传的 `PUT /blob` 幂等并完成该版本，已就绪内容不能替换。旧无请求 ID 的三步上传仍保留。文件大小上限为 200 MiB；本地读取/散列与 API 仍使用整份文件，不承诺流式传输或跨设备恢复未传完的字节。飞书导入的可恢复回执仍待接入。
 
 文件内容预检查使用 `POST /file-validations`（同一 `request_id`、文件与版本幂等受理）及 `GET /file-validations/{validation_id}` 读回。`GET /files/{file_id}/versions/{version_id}/validation` 可恢复该版本最新的检查请求；每次读取仍检查当前文件权限。它复用现有 Worker 队列，不创建草稿、审核轮次或用量记录，也不调用模型或匹配规则。任务租约失效显示 `unknown`，不自动重新领取；原 Worker 的有效回执仍可收敛。
 
@@ -156,7 +156,11 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 返回修改后，仍用 `POST /audit-tasks`，同时提交原 `task_id`、当前 `expected_revision` 和新的 `request_id`。初始输入修订为 0；重新识别在同一事务增加修订、保存完整来源并替换逐文件 job 引用。旧 job 回执只归原 job；Worker 读到旧代次时跳过文件解析和模型调用，已开始的外部调用不承诺可取消。`GET /audit-tasks/{id}/recognitions/{request_id}` 读取原请求受理回执及当前任务；回执修订与当前输入修订可以不同。`unknown` 不证明请求未受理，不能据此自动重发或生成新请求。
 
-`POST /audit-tasks/{id}/end` 必须带 `expected_revision`，仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。该动作可同时保存未匹配文件的 `removals`（版本与原因），不要求再次识别，也不产生审核或消费。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。本阶段不提供正式受理或计费；完整 `AuditTask` 的审核/报告部分仍为 UI-draft，页面真实数据接入及模型质量另行验证。
+`POST /audit-tasks/{id}/end` 必须带 `expected_revision`，仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。该动作可同时保存未匹配文件的 `removals`（版本与原因），不要求再次识别，也不产生审核或消费。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。已移除来源可以没有预检查回执；这不允许选中文件跳过预检查。
+
+`POST /audit-tasks/{id}/confirm` 只接收 `request_id` 和 `expected_revision`，复用同一受理事务冻结当前修订中每份选中且已匹配的文件/规则，并创建唯一 Round 与原执行 job；未匹配来源在该事务中记为移除，不进入执行。`GET /audit-tasks/{id}?request_id=...` 只读原确认结果，未查到成功回执仍为待核对，不是重发许可。新 Task Round 使用显式对象授权，不通过旧同租户 Round 入口开放原件，也不允许旧 resubmit 绕过任务约束；旧 Round 的共享口径不变。收费政策未定期间，新的确认接口仅在 `PPAP_USAGE_CHARGE_ENABLED=false` 下开放，不能据此宣称逐文件收费已完成。
+
+普通 `pnpm dev` 的 `/__audit-native` 是 V3.1 真实联调入口，复用同一个 `AuditIntake`、登录、上传、预检查、Task/Round 读取和原件阅读器，不进入生产构建、不修改正式首页；4185 仍是独立 fixtures。真实 Round 投影保留机器观察、覆盖与独立人工记录，未验证证据不能成为正式 PASS/NG 或报告。当前执行异常边界仍是整个 Round；逐文件异常隔离、人工复核编辑、正式 PDF/ZIP、飞书与用量尚须接通和验收。
 
 ## UI-first 交互预览
 

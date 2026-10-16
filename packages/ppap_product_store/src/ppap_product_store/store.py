@@ -75,6 +75,8 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from ppap_product_store.task_view import task_round_view
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -348,12 +350,15 @@ class AuthStore:
             return None
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT id, tenant_id, kind FROM product.resources WHERE id = %s",
+                """SELECT r.id, r.tenant_id, r.kind, EXISTS (
+                    SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
+                    WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
+                FROM product.resources r WHERE r.id = %s""",
                 (parsed,),
             ).fetchone()
         if not row:
             return None
-        return Resource(str(row[0]), str(row[1]), row[2])
+        return Resource(str(row[0]), str(row[1]), row[2], row[3])
 
     def grants(self, resource_id: str, user_id: str) -> set[str]:
         with self._conn() as conn:
@@ -850,7 +855,12 @@ class AuthStore:
                 raise ValueError("invalid_task_request")
             vid, validation_id = _as_uuid(str(raw.get("file_version_id") or "")), _as_uuid(str(raw.get("validation_id") or ""))
             selection, reason = raw.get("selection"), raw.get("removal_reason")
-            if not vid or not validation_id or not isinstance(selection, str) or selection not in {"selected", "unselected", "removed"}:
+            if (
+                not vid
+                or not isinstance(selection, str)
+                or selection not in {"selected", "unselected", "removed"}
+                or (not validation_id and (selection != "removed" or raw.get("validation_id") is not None))
+            ):
                 raise ValueError("invalid_task_request")
             if selection == "removed":
                 if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
@@ -927,6 +937,8 @@ class AuthStore:
     def _recognition_inputs(self, conn, principal, task_id, files, customer, revision, request_id=None, fingerprint=None) -> None:
         prepared = self._prepared_items(conn, principal, [{"file_version_id": row["file_version_id"], "role": "reference"} for row in files])
         for row, source in zip(files, prepared):
+            if row["selection"] == "removed" and row["validation_id"] is None:
+                continue
             validation = self.get_file_validation(principal, row["validation_id"])
             if validation["source_file_version_id"] != row["file_version_id"] or validation["source_file_id"] != source["file_id"]:
                 raise ValueError("precheck_required")
@@ -976,10 +988,23 @@ class AuthStore:
             raise KeyError("missing")
         return draft
 
-    def get_audit_task(self, principal: Principal, task_id: str) -> dict:
+    def get_audit_task(self, principal: Principal, task_id: str, request_id: str | None = None) -> dict:
+        if request_id is not None and not _as_uuid(request_id):
+            raise ValueError("invalid_task_confirmation")
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            return self._recognition_public(conn, principal, task_id)
+            task = self._recognition_public(conn, principal, task_id)
+            if request_id and task.get("acceptance", {}).get("request_id") != _as_uuid(request_id):
+                task["acceptance"] = {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
+            return task
+
+    def confirm_audit_task(self, principal: Principal, task_id: str, request_id, expected_revision) -> dict:
+        parsed_task, key = _as_uuid(task_id), _as_uuid(request_id)
+        if not parsed_task or not key or type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("invalid_task_confirmation")
+        with self._conn() as conn, conn.transaction():
+            self._accept_locked(conn, principal, key, source_draft_id=parsed_task, predecessor_id=None, items=None, task_revision=expected_revision)
+            return self._recognition_public(conn, principal, parsed_task)
 
     def recognition_job_current(self, claimed: ClaimedJob) -> bool:
         """Skip obsolete queued work; running calls still cannot change Task refs."""
@@ -1036,7 +1061,7 @@ class AuthStore:
             vid = str(row["file_version_id"])
             source = conn.execute("SELECT id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status FROM product.file_versions WHERE id = %s", (vid,)).fetchone()
             version = self._version_from_row(source)
-            validation = self.get_file_validation(principal, str(row["validation_job_id"]))
+            validation = self.get_file_validation(principal, str(row["validation_job_id"])) if row["validation_job_id"] else {}
             checked = validation.get("result")
             if not isinstance(checked, dict) or checked.get("state") not in {"valid", "invalid", "error"}:
                 checked = {"state": "checking", "reasons": []}
@@ -1085,14 +1110,14 @@ class AuthStore:
                     "file": version.public(),
                     "selection": row["selection"],
                     "removal_reason": row["removal_reason"],
-                    "validation_id": str(row["validation_job_id"]),
+                    **({"validation_id": str(row["validation_job_id"])} if row["validation_job_id"] else {}),
                     "validation": checked,
                     "match": match,
                 }
             )
         selected = [row for row in files if row["selection"] == "selected"]
         matching = any(row["match"]["state"] in {"pending", "matching"} for row in selected)
-        return {
+        task = {
             "id": task_id,
             "number": f"PPAP-{draft['task_day']:%Y%m%d}-{draft['task_sequence']:03d}",
             "state": "completed" if draft["task_completion_reason"] else "matching" if matching else "pending_confirm",
@@ -1108,6 +1133,23 @@ class AuthStore:
             "completion_reason": draft["task_completion_reason"],
             "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else sum(row["match"]["state"] == "matched" for row in selected) * 500,
         }
+        accepted = conn.execute(
+            """SELECT a.id, a.idempotency_key, COALESCE(j.updated_at, a.created_at), EXISTS (
+                SELECT 1 FROM product.resource_grants g WHERE g.resource_id = a.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
+            FROM product.audit_rounds a LEFT JOIN engine.jobs j ON j.audit_round_id = a.id AND j.kind = 'audit'
+            WHERE a.source_draft_id = %s AND a.tenant_id = %s ORDER BY a.created_at LIMIT 1""",
+            (principal.user_id, task_id, principal.tenant_id),
+        ).fetchone()
+        if accepted:
+            if not accepted[3]:
+                raise KeyError("missing")
+            task["acceptance"] = {"request_id": accepted[1], "state": "accepted", "reason": None}
+            task["updated_at"] = max(updated, accepted[2]).isoformat()
+            round = self._round_public(conn, str(accepted[0]))
+            if round is None:
+                raise KeyError("missing")
+            return task_round_view(task, round)
+        return task
 
     def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:
         if state not in {"", "matching", "pending_confirm", "reviewing", "completed"}:
@@ -1116,10 +1158,13 @@ class AuthStore:
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = conn.execute(
-                """SELECT d.id FROM product.audit_drafts d WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
+                """SELECT d.id FROM product.audit_drafts d
+                LEFT JOIN product.audit_rounds r ON r.source_draft_id = d.id
+                WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
                 AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
                 AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
-                AND (%s = '' OR %s = CASE WHEN d.task_completion_reason IS NOT NULL THEN 'completed'
+                AND (%s = '' OR %s = CASE WHEN d.task_completion_reason IS NOT NULL OR r.execution IN ('completed', 'failed') THEN 'completed'
+                    WHEN r.id IS NOT NULL THEN 'reviewing'
                     WHEN EXISTS (SELECT 1 FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id AND j.status IN ('queued', 'leased')) THEN 'matching'
                     ELSE 'pending_confirm' END)
                 ORDER BY d.created_at DESC, d.id DESC LIMIT %s OFFSET %s""",
@@ -1427,6 +1472,10 @@ class AuthStore:
                 ).fetchone()
                 if not current or str(current[1]) != principal.tenant_id:
                     raise KeyError("missing")
+                if conn.execute(
+                    "SELECT 1 FROM product.audit_rounds r JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = %s AND d.task_fingerprint IS NOT NULL", (parsed,)
+                ).fetchone():
+                    raise ValueError("task_input_locked")
                 if items is None:
                     rows = conn.execute(
                         "SELECT file_version_id, role, rule_version_id FROM product.round_inputs WHERE round_id = %s",
@@ -1484,7 +1533,10 @@ class AuthStore:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT r.id FROM product.audit_rounds r
+                   LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id
                    WHERE r.tenant_id = %s
+                     AND (d.task_fingerprint IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g
+                         WHERE g.resource_id = r.id AND g.user_id = %s AND g.capability IN ('read', 'review')))
                      AND (%s = '' OR r.execution = %s)
                      AND (NOT %s OR EXISTS (
                          SELECT 1 FROM product.findings f WHERE f.round_id = r.id
@@ -1493,7 +1545,7 @@ class AuthStore:
                          SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
                    ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
+                (principal.tenant_id, principal.user_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
             ).fetchall()
             return [cast(dict, self._round_history(conn, row[0])) for row in rows]
 
@@ -1901,17 +1953,20 @@ class AuthStore:
         source_draft_id: str | None,
         predecessor_id: str | None,
         items: list[dict] | None,
+        task_revision: int | None = None,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
-            SELECT id, request_fingerprint, predecessor_id, analysis_mode FROM product.audit_rounds
+            SELECT id, request_fingerprint, predecessor_id, analysis_mode, source_draft_id, created_by FROM product.audit_rounds
             WHERE tenant_id = %s AND idempotency_key = %s
             """,
             (principal.tenant_id, key),
         ).fetchone()
+        if existing and str(existing[4]) != source_draft_id and conn.execute("SELECT 1 FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (existing[4],)).fetchone():
+            raise ValueError("idempotency_conflict")
         draft_status = None
         analysis_mode = ANALYSIS_STANDARD
         if source_draft_id:
@@ -1924,10 +1979,40 @@ class AuthStore:
             ).fetchone()
             if not draft or str(draft[1]) != principal.tenant_id:
                 raise KeyError("missing")
-            if draft[3] is not None:
+            if draft[3] is not None and task_revision is None:
                 raise ValueError("task_input_locked")
             draft_status = draft[2]
-            if items is None:
+            if task_revision is not None:
+                owned = self._recognition_owner(conn, principal, source_draft_id)
+                if existing and (str(existing[4]) != source_draft_id or str(existing[5]) != principal.user_id):
+                    raise ValueError("idempotency_conflict")
+                if owned["input_revision"] != task_revision:
+                    raise ValueError("task_revision_conflict")
+                if owned["task_completion_reason"]:
+                    raise ValueError("task_input_locked")
+                if draft_status == DRAFT_ACCEPTED and not existing:
+                    raise ValueError("draft_already_accepted")
+                task = self._recognition_public(conn, principal, source_draft_id)
+                selected = [row for row in task["files"] if row["selection"] == "selected"]
+                if not existing and (
+                    task["state"] != "pending_confirm" or any((row["match"] or {}).get("state") not in {"matched", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
+                ):
+                    raise ValueError("task_not_ready")
+                items = [
+                    {"file_version_id": row["file"]["id"], "role": "target", "rule_version_id": row["match"]["rule"]["id"]}
+                    for row in selected
+                    if (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
+                ]
+                if not existing:
+                    if self.settings.usage_charge_enabled:
+                        raise ValueError("audit_task_charging_unavailable")
+                    for row in selected:
+                        if row["match"]["state"] == "unmatched":
+                            conn.execute(
+                                "UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s",
+                                ("未匹配到生效规则，未纳入审核", source_draft_id, row["file"]["id"]),
+                            )
+            elif items is None:
                 rows = conn.execute(
                     "SELECT file_version_id, role, rule_version_id FROM product.draft_items WHERE draft_id = %s",
                     (source_draft_id,),

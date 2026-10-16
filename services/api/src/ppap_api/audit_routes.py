@@ -49,6 +49,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "task_revision_conflict",
                 "task_file_provenance_required",
                 "precheck_required",
+                "audit_task_charging_unavailable",
+                "task_not_ready",
             }
             else 400
         )
@@ -61,7 +63,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
 
-    @app.post("/audit-tasks", response_model=wc.AuditRecognitionTask, status_code=202, openapi_extra=wc.openapi_body(wc.AuditRecognitionRequest))
+    @app.post("/audit-tasks", response_model=wc.AuditTask, status_code=202, openapi_extra=wc.openapi_body(wc.AuditRecognitionRequest))
     def audit_tasks_create(body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
@@ -82,13 +84,25 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.get("/audit-tasks/{task_id}", response_model=wc.AuditRecognitionTask)
-    def audit_tasks_get(task_id: str, request: Request) -> JSONResponse:
+    @app.get("/audit-tasks/{task_id}", response_model=wc.AuditTask)
+    def audit_tasks_get(task_id: str, request: Request, request_id: str | None = None) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
         try:
-            return JSONResponse(store.get_audit_task(principal, task_id))
+            return JSONResponse(store.get_audit_task(principal, task_id, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.post("/audit-tasks/{task_id}/confirm", response_model=wc.AuditTask, status_code=201, openapi_extra=wc.openapi_body(wc.AuditTaskConfirmRequest))
+    def audit_tasks_confirm(task_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            if set(body) != {"request_id", "expected_revision"}:
+                raise ValueError("invalid_task_confirmation")
+            return JSONResponse(store.confirm_audit_task(principal, task_id, body.get("request_id"), body.get("expected_revision")), status_code=201)
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
@@ -102,7 +116,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.post("/audit-tasks/{task_id}/end", response_model=wc.AuditRecognitionTask, openapi_extra=wc.openapi_body(wc.AuditTaskEndRequest))
+    @app.post("/audit-tasks/{task_id}/end", response_model=wc.AuditTask, openapi_extra=wc.openapi_body(wc.AuditTaskEndRequest))
     def audit_tasks_end(task_id: str, body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:

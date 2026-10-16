@@ -39,6 +39,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit Tasks Confirm */
+        post: operations["audit_tasks_confirm_audit_tasks__task_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks/{task_id}/end": {
         parameters: {
             query?: never;
@@ -1201,6 +1218,9 @@ export interface components {
              */
             execution: "queued" | "running" | "completed" | "failed";
             finding: components["schemas"]["Finding"] | null;
+            review?: components["schemas"]["Review"] | null;
+            /** Review Item Key */
+            review_item_key?: string;
             rule_item: components["schemas"]["RuleItem"];
             scope: components["schemas"]["SemanticScope"] | null;
             /** Scope Notice */
@@ -1422,21 +1442,6 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** AuditRecognitionFile */
-        AuditRecognitionFile: {
-            file: components["schemas"]["FileVersion"];
-            match: components["schemas"]["AuditRuleMatch"] | null;
-            /** Removal Reason */
-            removal_reason: string | null;
-            /**
-             * Selection
-             * @enum {string}
-             */
-            selection: "selected" | "unselected" | "removed";
-            validation: components["schemas"]["AuditFileValidation"];
-            /** Validation Id */
-            validation_id?: string;
-        };
         /** AuditRecognitionRead */
         AuditRecognitionRead: {
             /** Input Revision */
@@ -1448,56 +1453,16 @@ export interface components {
              * @enum {string}
              */
             state: "accepted" | "unknown";
-            task: components["schemas"]["AuditRecognitionTask"] | null;
+            task: components["schemas"]["AuditTask"] | null;
             /** Task Id */
             task_id: string;
-        };
-        /**
-         * AuditRecognitionTask
-         * @description Persisted confirmation input; does not claim audit/report runtime support.
-         */
-        AuditRecognitionTask: {
-            /**
-             * Analysis Mode
-             * @enum {string}
-             */
-            analysis_mode: "standard" | "deep";
-            /** Completion Reason */
-            completion_reason: ("no_matching_rules" | "processed") | null;
-            /** Created At */
-            created_at: string;
-            /** Customer Preference */
-            customer_preference: string | null;
-            /** Estimated Points */
-            estimated_points: number | null;
-            /** Files */
-            files: components["schemas"]["AuditRecognitionFile"][];
-            /** Id */
-            id: string;
-            /** Input Revision */
-            input_revision?: number;
-            /** Number */
-            number: string;
-            /** Recognition Request Id */
-            recognition_request_id?: string;
-            /** Round Id */
-            round_id: string | null;
-            /** Source Draft Id */
-            source_draft_id: string | null;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "matching" | "pending_confirm" | "reviewing" | "completed";
-            /** Updated At */
-            updated_at: string;
         };
         /** AuditRecognitionTasks */
         AuditRecognitionTasks: {
             /** Next Offset */
             next_offset: number | null;
             /** Tasks */
-            tasks: components["schemas"]["AuditRecognitionTask"][];
+            tasks: components["schemas"]["AuditTask"][];
         };
         /** AuditReportArtifact */
         AuditReportArtifact: {
@@ -1741,7 +1706,7 @@ export interface components {
         };
         /**
          * AuditTask
-         * @description Full UI contract; audit/report operations remain UI-draft until implemented.
+         * @description Persisted Task/Round view; optional delivery operations need their own API.
          */
         AuditTask: {
             acceptance?: components["schemas"]["AuditAcceptance"];
@@ -3070,7 +3035,7 @@ export interface operations {
                          */
                         selection: "selected" | "unselected" | "removed";
                         /** Validation Id */
-                        validation_id: string;
+                        validation_id: string | null;
                     }[];
                     /** Request Id */
                     request_id: string;
@@ -3086,7 +3051,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuditRecognitionTask"];
+                    "application/json": components["schemas"]["AuditTask"];
                 };
             };
             /** @description Validation Error */
@@ -3102,7 +3067,9 @@ export interface operations {
     };
     audit_tasks_get_audit_tasks__task_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                request_id?: string | null;
+            };
             header?: never;
             path: {
                 task_id: string;
@@ -3117,7 +3084,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuditRecognitionTask"];
+                    "application/json": components["schemas"]["AuditTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_tasks_confirm_audit_tasks__task_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Expected Revision */
+                    expected_revision: number;
+                    /** Request Id */
+                    request_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTask"];
                 };
             };
             /** @description Validation Error */
@@ -3162,7 +3169,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuditRecognitionTask"];
+                    "application/json": components["schemas"]["AuditTask"];
                 };
             };
             /** @description Validation Error */

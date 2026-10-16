@@ -69,7 +69,8 @@ function sample(index: number): AuditTaskFile {
   const file: components['schemas']['FileVersion'] = {file_id: `preview-document-${index}`, id, original_filename: document.name, content_type: document.mime, byte_size: 240000 + index * 80000, status: 'ready', sha256: null}
   return {file: scene.startsWith('original-') ? fixtureOriginalFile(file) : file, selection: 'selected', removal_reason: null, validation_id: `preview-validation-${id}`, validation: {state: 'valid', reasons: []}, match: null}
 }
-const adapter: AuditIntakeAdapter = {
+const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' | 'drive'>> = {
+  customers: [{value: 'sample-customer', label: '示例客户'}],
   authenticate: async () => {authenticated = true},
   drive: {
     list: async () => {
@@ -266,6 +267,7 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
   const snapshot = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  if (scene === 'restore-without-notification') delete snapshot.notification_enabled
   if (scene.startsWith('restore-usage-')) snapshot.usage_notice = usageNotices.paid_insufficient
   if (scene.startsWith('restore-display-')) snapshot.files = snapshot.files.map(file => ({...file, display_info: {revision: 0, values: fileDisplayValues(file)}, display_edit_access: {state: 'allowed', reason: null}}))
   if (scene.startsWith('restore-estimate')) {
