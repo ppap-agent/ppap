@@ -114,24 +114,28 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
         audits_by_version: dict[str, AuditInput] = {}
         by_audit_id: dict[str, AuditInput] = {}
         by_doc_type: dict[str, list[AuditInput]] = {}
+        unavailable_files: dict[str, str | None] = {}
         reference_notes: list[str] = []
         for item in work.inputs:
-            data = blobs.get(item.file_version_id)
-            if data is None:
-                if item.role == TARGET:
-                    failures[item.file_version_id] = execution_error_result("无法读取本轮冻结原件。", target=item)
-                else:
-                    reference_notes.append(unused_reference_note(item.filename, "无法加载"))
-                continue
+            type_key = None
             try:
+                rule = rules_by_version.get(item.file_version_id)
+                rule_type = rule.type if rule is not None else (item.rule_body or {}).get("type")
+                type_key = _doc_type_key(_audit_input(item, ""), rule_type)
+                data = blobs.get(item.file_version_id)
+                if data is None:
+                    unavailable_files[item.file_version_id] = type_key
+                    if item.role == TARGET:
+                        failures[item.file_version_id] = execution_error_result("无法读取本轮冻结原件。", target=item)
+                    else:
+                        reference_notes.append(unused_reference_note(item.filename, "无法加载"))
+                    continue
                 path = _write_temp(item, data)
                 temps.append(path)
                 audit = _audit_input(item, path)
-                rule = rules_by_version.get(item.file_version_id)
-                rule_type = rule.type if rule is not None else (item.rule_body or {}).get("type")
-                type_key = _doc_type_key(audit, rule_type)
             except Exception as error:
                 emit("audit_file_error", file_version_id=item.file_version_id, stage="prepare", error_type=type(error).__name__)
+                unavailable_files[item.file_version_id] = type_key
                 if item.role == TARGET:
                     failures[item.file_version_id] = execution_error_result("无法准备本文件的审核原件。", target=item)
                 else:
@@ -152,6 +156,7 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
             by_audit_id=by_audit_id,
             by_doc_type=by_doc_type,
             rules_by_id={rule.rule_id: rule for rule in rules_by_version.values()},
+            unavailable_files=unavailable_files,
         )
         findings: list[dict] = []
         checked: list[str] = []

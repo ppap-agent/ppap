@@ -44,6 +44,50 @@ class EngineRunnerTests(unittest.TestCase):
     def _upload(self, name: str, body: bytes) -> dict:
         return self.store.upload(name, body)
 
+    def test_unreadable_frozen_context_is_an_execution_error_not_a_missing_document_ng(self):
+        from io import BytesIO
+
+        from openpyxl import Workbook
+        from ppap_worker import engine_runner
+
+        workbook = Workbook()
+        workbook.active.append(["工序号", "工序名称"])
+        workbook.active.append(["10", "成型"])
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        file = self._upload("控制计划.xlsx", output.getvalue())
+        target = RoundInput(
+            "target",
+            file["file_id"],
+            file["id"],
+            "控制计划.xlsx",
+            "ready",
+            rule_version_id="rule",
+            rule_body={
+                "kind": "engine",
+                "type": "控制计划",
+                "rule_profile": "v3",
+                "rules": [
+                    {"id": "cross", "category": "关联工序", "rule_to_check": "过程流程图与控制计划列项及一致性审核", "type_of_rule": "text"},
+                    {"id": "local", "category": "本文件列", "rule_to_check": "特殊特性分类与产品/过程列存在性审核", "type_of_rule": "text"},
+                ],
+            },
+        )
+        for filename in ("过程流程图.xlsx", "附件.xlsx"):
+            with self.subTest(filename=filename):
+                unavailable = RoundInput("reference", "missing-file", "missing-version", filename, "ready")
+                failed = engine_runner(RoundWork("round-unreadable-reference", "tenant", [target, unavailable]), self.store)
+                self.assertEqual([row["status"] for row in failed["findings"]], ["ERR", "NG"])
+                self.assertNotIn("缺少关联文档", failed["findings"][0]["suggestions"])
+        absent = engine_runner(RoundWork("round-no-reference", "tenant", [target]), self.store)
+        self.assertEqual([row["status"] for row in absent["findings"]], ["NG", "NG"])
+        self.assertIn("缺少关联文档", absent["findings"][0]["suggestions"])
+        reference = self._upload("过程流程图.xlsx", output.getvalue())
+        readable = RoundInput("reference", reference["file_id"], reference["id"], "过程流程图.xlsx", "ready")
+        complete = engine_runner(RoundWork("round-readable-reference", "tenant", [target, readable]), self.store)
+        self.assertEqual([row["status"] for row in complete["findings"]], ["PASS", "NG"])
+
     def test_all_unavailable_targets_keep_individual_errors_without_engine_execution(self):
         from ppap_excel_audit_engine import app_runtime
         from ppap_worker import engine_runner
@@ -122,6 +166,9 @@ class EngineRunnerTests(unittest.TestCase):
         def run(audit, rule, group_context=None):
             calls.append(audit.audit_id)
             self.assertNotIn(files[0]["id"], group_context.by_audit_id)
+            self.assertEqual(group_context.get_files_by_type("过程流程图"), [])
+            with self.assertRaises(OSError):
+                group_context.get_files_by_type("控制计划")
             return [AuditResultItem(status="PASS", classification="规则", item="健康文件检查", priority="P0", suggestions="")]
 
         with patch.object(self.store, "version_bytes", read), patch.object(app_runtime, "run_audit_engine", run):

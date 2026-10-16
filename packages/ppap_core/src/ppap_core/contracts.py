@@ -81,6 +81,8 @@ class GroupContextInput(BaseModel):
     by_doc_type: Dict[str, List[AuditInput]] = Field(default_factory=dict)
     by_audit_id: Dict[str, AuditInput] = Field(default_factory=dict)
     rules_by_id: Dict[str, RuleInput] = Field(default_factory=dict)
+    # Frozen input ID -> document type; None means the failed input type is unknown.
+    unavailable_files: Dict[str, Optional[str]] = Field(default_factory=dict)
 
     @staticmethod
     def _doc_type_key(doc_type: PpapDocumentType | str) -> str:
@@ -89,7 +91,10 @@ class GroupContextInput(BaseModel):
         return str(doc_type)
 
     def get_files_by_type(self, doc_type: PpapDocumentType | str) -> List[AuditInput]:
-        return self.by_doc_type.get(self._doc_type_key(doc_type), [])
+        key = self._doc_type_key(doc_type)
+        if any(kind is None or kind == key for kind in self.unavailable_files.values()):
+            raise OSError("本轮冻结关联资料无法读取，不能完成本项核对。")
+        return self.by_doc_type.get(key, [])
 
     def has_doc_type(self, doc_type: PpapDocumentType | str) -> bool:
         return bool(self.get_files_by_type(doc_type))
