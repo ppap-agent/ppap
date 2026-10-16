@@ -358,7 +358,7 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
-    def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True):
+    def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from ppap_api.audit_routes import register_audit_routes
@@ -367,7 +367,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.settings.usage_charge_enabled = False
         worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
         files = files or [self.upload(name) for name in ("first.xlsx", "second.xlsx")]
-        rule = self.store.publish_rule(self.alice, "显示更正规则", self.rule_body(), files[0].id)
+        if per_file_rules:
+            rules = {file.id: self.store.publish_rule(self.alice, file.original_filename + "要求", self.rule_body(), file.id) for file in files}
+        else:
+            rule = self.store.publish_rule(self.alice, "显示更正规则", self.rule_body(), files[0].id)
+            rules = {file.id: rule for file in files}
         inputs = []
         for file in files:
             key = str(uuid.uuid4())
@@ -386,7 +390,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 {
                     "source_file_version_id": job.payload["source_file_version_id"],
                     "matching_status": "matched",
-                    "matched_rule_id": rule["id"],
+                    "matched_rule_id": rules[job.payload["source_file_version_id"]]["id"],
                     "document_type": "控制计划",
                     "metadata": {"customer": "测试客户", "model": "M1", "part_number": "P-1", "part": "原零件"},
                     "notices": [],
@@ -578,7 +582,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(loaded["display_info"]["revision"], 0)
         self.assertEqual(loaded["display_edit_access"]["state"], "denied")
 
-    def test_validated_query_result_survives_commit_and_is_shared_by_task_and_round_readers(self):
+    def prepared_query_task(self, *, verified=True, documents=(("控制计划.xlsx", "P-1"),)):
         from io import BytesIO
         from pathlib import Path
         from tempfile import TemporaryDirectory
@@ -589,31 +593,39 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from ppap_deep.semantic.document_tools import snapshot
         from ppap_deep.semantic.protocol import ResultBundle
 
-        workbook = Workbook()
-        workbook.active.append(["零件号"])
-        workbook.active.append(["P-1"])
-        content = BytesIO()
-        workbook.save(content)
-        version = self.store.create_staging(self.alice, "控制计划.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
-        self.store.put_blob(version, content.getvalue())
-        version = self.store.finalize_version(version)
-        _files, task, worker = self.prepared_display_task([version], analysis_mode="deep", complete_audit=False)
+        versions, contents = [], {}
+        for filename, value in documents:
+            workbook = Workbook()
+            workbook.active.append(["零件号"])
+            workbook.active.append([value])
+            content = BytesIO()
+            workbook.save(content)
+            version = self.store.create_staging(self.alice, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
+            self.store.put_blob(version, content.getvalue())
+            version = self.store.finalize_version(version)
+            versions.append(version)
+            contents[version.id] = content.getvalue()
+        _files, task, worker = self.prepared_display_task(versions, analysis_mode="deep", complete_audit=False, per_file_rules=len(versions) > 1)
         job = worker.claim_job("verified-query")
         work = worker.round_work(task["round_id"])
         spec = spec_from_work(work, job.payload["executor"], job.payload["executor_revision"], job.payload["executor_revision"]).model_copy(update={"job_id": job.id, "attempt": job.attempt})
         submission, packets = semantic_inputs(spec, "a" * 64)
-        rule = submission.rules[0]
         with TemporaryDirectory() as directory:
-            target_path, rule_path = Path(directory) / "target.xlsx", Path(directory) / "rule.json"
-            target_path.write_bytes(content.getvalue())
-            rule_path.write_bytes(packets[rule.rule_id])
-            documents, rules = {version.id: snapshot(target_path)}, {rule.rule_id: snapshot(rule_path)}
+            sources, rule_sources = {}, {}
+            for version in versions:
+                target_path = Path(directory) / (version.id + ".xlsx")
+                target_path.write_bytes(contents[version.id])
+                sources[version.id] = snapshot(target_path)
+            for rule in submission.rules:
+                rule_path = Path(directory) / (rule.rule_id + ".json")
+                rule_path.write_bytes(packets[rule.rule_id])
+                rule_sources[rule.rule_id] = snapshot(rule_path)
         bundle = ResultBundle.model_validate(
             {
                 "execution_id": str(submission.execution_id),
                 "semantic_engine_revision": "a" * 64,
-                "documents": documents,
-                "rule_sources": rules,
+                "documents": sources,
+                "rule_sources": rule_sources,
                 "plans": {
                     rule.rule_id: {
                         "source_sha256": rule.sha256,
@@ -632,6 +644,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                             }
                         ],
                     }
+                    for rule in submission.rules
                 },
                 "report": {
                     "checks": [
@@ -639,18 +652,19 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                             "audit_id": version.id,
                             "rule_id": "1",
                             "status": "PASS",
-                            "reason": "正文零件号 P-1 已填写",
+                            "reason": f"正文零件号 {value} 已填写",
                             "total": 1,
                             "checked": 1,
                             "unknown": 0,
                             "evidence": [{"document_id": version.id, "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A2"}}],
                         }
+                        for version, (_filename, value) in zip(versions, documents, strict=True)
                     ]
                 },
                 "trace": {
                     "bindings": [
                         {
-                            "id": "body",
+                            "id": "body-" + version.id,
                             "document_id": version.id,
                             "source_sha256": version.sha256,
                             "table": "Sheet",
@@ -661,13 +675,20 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                             "mapping_basis": "首行零件号列",
                             "boundary_basis": "正文只有第二行",
                         }
+                        for version in versions
                     ],
-                    "proofs": [{"kind": "query", "audit_id": version.id, "rule_id": "1", "binding_id": "body"}],
+                    "proofs": [{"kind": "query", "audit_id": version.id, "rule_id": "1", "binding_id": "body-" + version.id} for version in versions],
                 },
             }
         )
         result = product_result(product_response(spec, bundle, submission), work)
+        if not verified:
+            result["coverage"].pop("verification")
         self.assertTrue(worker.complete_job(job, "verified-query", result))
+        return versions[0], task, worker, job, result
+
+    def test_validated_query_result_survives_commit_and_is_shared_by_task_and_round_readers(self):
+        version, task, worker, job, result = self.prepared_query_task()
         path = f"/audit-tasks/{task['id']}"
         current = self.display_client.get(path)
         self.assertEqual(current.status_code, 200)
@@ -675,14 +696,152 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
         self.assertTrue(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
+        self.assertEqual(audit["summary"]["text"], "已核验 1 项要求：满足 1 项，不符合 0 项，不适用 0 项。")
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
         self.assertEqual(historical["result_job_id"], job.id)
         self.assertEqual(historical["coverage"]["verification"], result["coverage"]["verification"])
-        self.assertEqual(historical["read_view"]["files"][0]["audit"], audit)
-        self.assertEqual(audit["report"]["state"], "not_eligible")
+        self.assertEqual({key: value for key, value in historical["read_view"]["files"][0]["audit"].items() if key != "report"}, {key: value for key, value in audit.items() if key != "report"})
+        self.assertEqual(audit["report"]["state"], "pending")
+        self.assertEqual(current.json()["state"], "reviewing")
+        self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.alice, state="reviewing")], [task["id"]])
+        self.assertEqual(self.store.list_audit_tasks(self.alice, state="completed"), [])
         self.assertFalse(worker.complete_job(job, "verified-query", {"findings": [], "coverage": {}}, "succeeded"))
         self.assertEqual(self.display_client.get(path).json()["files"][0]["audit"], audit)
         self.assertEqual(self.store.list_usage_events(self.alice), [])
+        pdf_job = worker.claim_job("pdf-render")
+        self.assertEqual(pdf_job.kind, "report_pdf")
+        self.assertEqual(self.display_client.get(path).json()["files"][0]["audit"]["report"]["state"], "generating")
+        from ppap_worker import process_claimed
+
+        process_claimed(worker, pdf_job, "pdf-render")
+        finished = self.display_client.get(path).json()
+        report = finished["files"][0]["audit"]["report"]
+        self.assertEqual((finished["state"], report["state"]), ("completed", "ready"))
+        self.assertGreater(finished["updated_at"], current.json()["updated_at"])
+        self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.alice, state="completed")], [task["id"]])
+        self.assertEqual(self.store.list_audit_tasks(self.alice, state="reviewing"), [])
+        unchanged = self.display_client.get(f"/rounds/{task['round_id']}").json()
+        self.assertEqual(
+            (unchanged["execution"], unchanged["result_attempt"], unchanged["findings"], unchanged["coverage"]),
+            (historical["execution"], historical["result_attempt"], historical["findings"], historical["coverage"]),
+        )
+        pdf_path = f"/audit-tasks/{task['id']}/reports/{report['report_id']}/pdf"
+        query = {"round_id": task["round_id"], "file_version_id": version.id, "result_attempt": 1, "artifact_id": report["artifact"]["artifact_id"]}
+        downloaded = self.display_client.get(pdf_path, params=query)
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.headers["content-type"], "application/pdf")
+        self.assertEqual(len(downloaded.content), report["artifact"]["byte_size"])
+        import pymupdf
+
+        with pymupdf.open(stream=downloaded.content, filetype="pdf") as pdf:
+            text = "".join(page.get_text() for page in pdf)
+            self.assertIn("必须填写零件号", text)
+            self.assertIn("P-1", text)
+            self.assertIn("审核总结", text)
+            self.assertIn("已核验1项要求：满足1项，不符合0项，不适用0项。", "".join(text.split()))
+        for field, value in (("round_id", str(uuid.uuid4())), ("file_version_id", str(uuid.uuid4())), ("result_attempt", 2), ("artifact_id", "other-artifact")):
+            self.assertEqual(self.display_client.get(pdf_path, params={**query, field: value}).status_code, 403)
+        self.display_principal = self.store.principal_for_fixture("bob")
+        self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 403)
+        self.display_principal = self.store.principal_for_fixture("carol")
+        self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 403)
+        self.display_principal = None
+        self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 401)
+
+    def test_unverified_machine_pass_does_not_enqueue_a_formal_pdf(self):
+        _version, task, worker, _job, _result = self.prepared_query_task(verified=False)
+        observed = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        self.assertEqual((observed["state"], observed["files"][0]["audit"]["conclusion"], observed["files"][0]["audit"]["report"]["state"]), ("completed", "UNKNOWN", "not_eligible"))
+        self.assertIsNone(worker.claim_job("no-pdf"))
+
+    def test_long_pdf_filename_preserves_the_pdf_suffix(self):
+        from ppap_worker import process_claimed
+
+        _version, task, worker, _job, _result = self.prepared_query_task(documents=(("A" * 250 + ".xlsx", "P-1"),))
+        pdf_job = worker.claim_job("long-pdf-name")
+        process_claimed(worker, pdf_job, "long-pdf-name")
+        report = self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"][0]["audit"]["report"]
+        self.assertEqual(report["state"], "ready")
+        self.assertEqual(report["artifact"]["filename"], "A" * 246 + "-审核报告.pdf")
+
+    def test_two_frozen_file_reports_keep_their_own_sources_rules_and_download_identity(self):
+        import pymupdf
+        from ppap_worker import process_claimed
+
+        _version, task, worker, _job, _result = self.prepared_query_task(documents=(("first.xlsx", "A_ONLY_017"), ("second.xlsx", "B_ONLY_029")))
+        path = f"/audit-tasks/{task['id']}"
+        initial = self.display_client.get(path).json()
+        self.assertEqual([row["audit"]["report"]["state"] for row in initial["files"]], ["pending", "pending"])
+        self.assertEqual(len({row["audit"]["rule"]["id"] for row in initial["files"]}), 2)
+        for state in ("reviewing", "completed"):
+            pdf_job = worker.claim_job("two-pdfs")
+            process_claimed(worker, pdf_job, "two-pdfs")
+            self.assertEqual(self.display_client.get(path).json()["state"], state)
+        files = self.display_client.get(path).json()["files"]
+        self.assertEqual(len({row["audit"]["report"]["report_id"] for row in files}), 2)
+        for row, value, other in ((files[0], "A_ONLY_017", "B_ONLY_029"), (files[1], "B_ONLY_029", "A_ONLY_017")):
+            audit, report = row["audit"], row["audit"]["report"]
+            pdf_path = f"{path}/reports/{report['report_id']}/pdf"
+            query = {"round_id": task["round_id"], "file_version_id": row["file"]["id"], "result_attempt": 1, "artifact_id": report["artifact"]["artifact_id"]}
+            response = self.display_client.get(pdf_path, params=query)
+            self.assertEqual(response.status_code, 200)
+            with pymupdf.open(stream=response.content, filetype="pdf") as pdf:
+                text = "".join(page.get_text() for page in pdf)
+                self.assertIn(value, text)
+                self.assertNotIn(other, text)
+                self.assertIn(f"file_version={row['file']['id']};result_attempt=1;rule_version={audit['rule']['id']}", pdf.metadata["subject"])
+            other_row = next(file for file in files if file["file"]["id"] != row["file"]["id"])
+            self.assertEqual(self.display_client.get(pdf_path, params={**query, "file_version_id": other_row["file"]["id"]}).status_code, 403)
+            other_report = other_row["audit"]["report"]
+            self.assertEqual(self.display_client.get(f"{path}/reports/{other_report['report_id']}/pdf", params={**query, "artifact_id": other_report["artifact"]["artifact_id"]}).status_code, 403)
+        self.assertIsNone(worker.claim_job("two-pdfs"))
+
+    def test_lost_object_write_reply_retains_a_private_object_but_never_publishes_a_report(self):
+        from unittest.mock import patch
+
+        from ppap_worker import process_claimed
+
+        _version, task, worker, _job, _result = self.prepared_query_task()
+        original = self.display_client.get(f"/rounds/{task['round_id']}").json()
+        claimed = worker.claim_job("pdf-lost-reply")
+        put = worker.objects.put_exclusive
+
+        def lost_reply(key, body, content_type):
+            put(key, body, content_type)
+            raise TimeoutError("object write reply lost")
+
+        with patch.object(worker.objects, "put_exclusive", side_effect=lost_reply):
+            process_claimed(worker, claimed, "pdf-lost-reply")
+        observed = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        report = observed["files"][0]["audit"]["report"]
+        self.assertEqual((observed["state"], report["state"], report["regenerate_allowed"], report["artifact"]), ("completed", "failed", False, None))
+        self.assertTrue(worker.objects.get(f"reports/{claimed.tenant_id}/{claimed.id}/{claimed.attempt}.pdf").startswith(b"%PDF-"))
+        self.assertEqual(self.display_client.get(f"/rounds/{task['round_id']}").json(), original)
+        self.assertIsNone(worker.claim_job("not-retried"))
+
+    def test_a_late_pdf_attempt_cannot_replace_the_published_artifact(self):
+        from ppap_core.db import connect
+        from ppap_docops.audit_pdf import render_audit_pdf
+        from ppap_worker import process_claimed
+
+        version, task, worker, _job, _result = self.prepared_query_task()
+        old = worker.claim_job("pdf-old")
+        with connect(self.settings, "worker") as conn:
+            conn.execute("UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s", (old.id,))
+        current = worker.claim_job("pdf-current")
+        self.assertEqual((current.id, current.attempt), (old.id, 2))
+        generated_at = "2026-10-17T01:00:00+00:00"
+        old_result = worker.write_audit_report(old, render_audit_pdf({**old.payload["report_input"], "generated_at": generated_at}), generated_at)
+        process_claimed(worker, current, "pdf-current")
+        before = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        self.assertEqual(before["files"][0]["audit"]["report"]["artifact"]["artifact_id"], f"{current.id}:2")
+        self.assertFalse(worker.complete_job(old, "pdf-old", old_result))
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json(), before)
+        denied = self.display_client.get(
+            f"/audit-tasks/{task['id']}/reports/{current.id}/pdf",
+            params={"round_id": task["round_id"], "file_version_id": version.id, "result_attempt": 1, "artifact_id": old_result["artifact"]["artifact_id"]},
+        )
+        self.assertEqual(denied.status_code, 403)
 
 
 class UsageAcceptanceTests(AuditDatabaseCase):

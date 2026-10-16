@@ -6,11 +6,11 @@ export type AuditReportArtifact = components['schemas']['AuditReportArtifact']
 export type AuditReportPackage = components['schemas']['AuditReportPackage']
 export type AuditReportAdapter = {
   readPdf: (reference: AuditReportReference, artifact: AuditReportArtifact) => Promise<Blob>
-  regenerate: (reference: AuditReportReference, requestId: string) => Promise<components['schemas']['AuditReportUpdate']>
-  readRegeneration: (reference: AuditReportReference, requestId: string) => Promise<components['schemas']['AuditReportUpdate']>
-  createPackage: (reports: AuditReportReference[], requestId: string) => Promise<AuditReportPackage>
-  readPackage: (requestId: string) => Promise<AuditReportPackage>
-  readPackageFile: (job: AuditReportPackage) => Promise<Blob>
+  regenerate?: (reference: AuditReportReference, requestId: string) => Promise<components['schemas']['AuditReportUpdate']>
+  readRegeneration?: (reference: AuditReportReference, requestId: string) => Promise<components['schemas']['AuditReportUpdate']>
+  createPackage?: (reports: AuditReportReference[], requestId: string) => Promise<AuditReportPackage>
+  readPackage?: (requestId: string) => Promise<AuditReportPackage>
+  readPackageFile?: (job: AuditReportPackage) => Promise<Blob>
 }
 
 export async function readReportPdf(adapter: Pick<AuditReportAdapter, 'readPdf'>, reference: AuditReportReference, artifact: AuditReportArtifact): Promise<Blob> {
@@ -20,6 +20,7 @@ export async function readReportPdf(adapter: Pick<AuditReportAdapter, 'readPdf'>
 }
 
 export async function readReportZip(adapter: Pick<AuditReportAdapter, 'readPackageFile'>, job: AuditReportPackage): Promise<Blob> {
+  if (!adapter.readPackageFile) throw new Error('zip_read_unavailable')
   const artifact = job.artifact
   if (packageOutcomeError(job) || job.receipt.state !== 'accepted' || job.state !== 'ready' || !job.package_id || !artifact?.artifact_id || artifact.content_type !== 'application/zip' || artifact.byte_size <= 0) throw new Error('invalid_zip_artifact')
   const blob = await adapter.readPackageFile(structuredClone(job))

@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ppap_application import analyze_file, build_product_store, parse_rule_file, run_standard_round, validate_file
@@ -118,6 +119,8 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
     )
     emit("job_claimed", kind=claimed.kind)
     try:
+        if claimed.kind == "report_pdf":
+            return process_report_job(store, claimed, ident)
         if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
@@ -162,6 +165,24 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
             return result
     finally:
         reset(tokens)
+
+
+def process_report_job(store, claimed, ident) -> dict:
+    from ppap_docops.audit_pdf import render_audit_pdf
+
+    try:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        with audit_lease(store, claimed, ident) as cancelled:
+            body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at})
+            if cancelled.is_set():
+                raise ValueError("report_lease_unknown")
+            result = store.write_audit_report(claimed, body, generated_at)
+        outcome = "succeeded"
+    except Exception:
+        result, outcome = {"error": "report_pdf_failed"}, "failed"
+    accepted = store.complete_job(claimed, ident, result, outcome)
+    emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note="report_pdf")
+    return result
 
 
 @contextmanager

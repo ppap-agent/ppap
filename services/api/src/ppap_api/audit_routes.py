@@ -51,6 +51,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "precheck_required",
                 "audit_task_charging_unavailable",
                 "task_not_ready",
+                "report_not_ready",
+                "report_artifact_conflict",
             }
             else 400
         )
@@ -143,6 +145,23 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         try:
             return JSONResponse(store.get_audit_display(principal, task_id, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-tasks/{task_id}/reports/{report_id}/pdf", response_class=Response, responses={200: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}})
+    def audit_report_pdf(
+        task_id: str, report_id: str, request: Request, round_id: str, file_version_id: str, result_attempt: int = Query(ge=1), artifact_id: str = Query(min_length=1, max_length=200)
+    ) -> Response:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            artifact, content = store.audit_report_pdf(
+                principal, {"task_id": task_id, "report_id": report_id, "round_id": round_id, "file_version_id": file_version_id, "result_attempt": result_attempt}, artifact_id
+            )
+            return Response(content, media_type="application/pdf", headers={"Content-Disposition": attachment_content_disposition(artifact["filename"]), "Cache-Control": "private, no-store"})
+        except ObjectMissing:
+            return JSONResponse({"error": "report_artifact_unavailable"}, status_code=409)
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

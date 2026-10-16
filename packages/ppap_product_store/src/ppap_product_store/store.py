@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -75,7 +76,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from ppap_product_store.task_view import round_read_view, task_round_view
+from ppap_product_store.task_view import file_round_audit, report_eligible, round_read_view, task_round_view
 
 
 def _now() -> datetime:
@@ -1262,7 +1263,10 @@ class AuthStore:
             round = self._round_public(conn, str(accepted[0]))
             if round is None:
                 raise KeyError("missing")
-            return self._display_projection(conn, principal, task_round_view(task, round))
+            reports, report_updated = self._task_file_reports(conn, principal.tenant_id, task_id, round["id"], round["result_attempt"])
+            if report_updated:
+                task["updated_at"] = max(datetime.fromisoformat(task["updated_at"]), report_updated).isoformat()
+            return self._display_projection(conn, principal, task_round_view(task, round, reports))
         return task
 
     def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:
@@ -1277,7 +1281,8 @@ class AuthStore:
                 WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
                 AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
                 AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
-                AND (%s = '' OR %s = CASE WHEN d.task_completion_reason IS NOT NULL OR r.execution IN ('completed', 'failed') THEN 'completed'
+                AND (%s = '' OR %s = CASE WHEN d.task_completion_reason IS NOT NULL OR (r.execution IN ('completed', 'failed') AND NOT EXISTS (
+                    SELECT 1 FROM engine.jobs p WHERE p.audit_round_id = r.id AND p.kind = 'report_pdf' AND p.status IN ('queued', 'leased'))) THEN 'completed'
                     WHEN r.id IS NOT NULL THEN 'reviewing'
                     WHEN EXISTS (SELECT 1 FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id AND j.status IN ('queued', 'leased')) THEN 'matching'
                     ELSE 'pending_confirm' END)
@@ -1871,7 +1876,7 @@ class AuthStore:
                 payload = updated[1] or {}
                 round_id = payload.get("round_id") if isinstance(payload, dict) else None
                 tenant_id = row[3]
-                if round_id:
+                if round_id and row[1] == "audit":
                     conn.execute(
                         """
                         UPDATE product.audit_rounds
@@ -1931,8 +1936,8 @@ class AuthStore:
                     """,
                     (
                         "succeeded" if outcome == "succeeded" else "failed",
-                        list(FILE_PREPARATION_KINDS),
-                        Jsonb(result) if claimed.kind in FILE_PREPARATION_KINDS else None,
+                        [*FILE_PREPARATION_KINDS, "report_pdf"],
+                        Jsonb(result) if claimed.kind in {*FILE_PREPARATION_KINDS, "report_pdf"} else None,
                         claimed.id,
                         claimed.attempt,
                         worker_ident,
@@ -1953,7 +1958,7 @@ class AuthStore:
                         claimed.attempt,
                     ),
                 )
-                if not claimed.round_id:
+                if claimed.kind != "audit" or not claimed.round_id:
                     return True
                 updated = conn.execute(
                     """
@@ -1992,7 +1997,136 @@ class AuthStore:
                             Jsonb(row.get("locator")) if row.get("locator") is not None else None,
                         ),
                     )
+                if outcome == "succeeded":
+                    self._queue_file_reports(conn, claimed, result)
                 return True
+
+    def _queue_file_reports(self, conn, claimed: ClaimedJob, result: dict) -> None:
+        head = conn.execute("SELECT source_draft_id, analysis_mode FROM product.audit_rounds WHERE id = %s AND tenant_id = %s", (claimed.round_id, claimed.tenant_id)).fetchone()
+        if not head or not head[0] or not conn.execute("SELECT id FROM product.audit_drafts WHERE id = %s AND task_fingerprint IS NOT NULL", (head[0],)).fetchone():
+            return
+        rows = conn.execute(
+            """SELECT i.file_version_id, i.role, i.rule_version_id, i.rule_title, i.rule_body, v.original_filename
+            FROM product.round_inputs i JOIN product.file_versions v ON v.id = i.file_version_id WHERE i.round_id = %s""",
+            (claimed.round_id,),
+        ).fetchall()
+        inputs = [{"file_version_id": str(row[0]), "role": row[1], "rule": {"id": str(row[2]), "title": row[3], "body": row[4]} if row[2] else None} for row in rows]
+        round = {
+            "id": claimed.round_id,
+            "analysis_mode": head[1],
+            "execution": "completed",
+            "result_attempt": claimed.attempt,
+            "result_job_id": claimed.id,
+            "inputs": inputs,
+            "coverage": result.get("coverage") or {},
+            "findings": result.get("findings") or [],
+            **_executor_public(claimed.payload),
+        }
+        originals = {str(row[0]): row[5] for row in rows}
+        for frozen in inputs:
+            if frozen["role"] != "target" or not frozen["rule"]:
+                continue
+            audit = file_round_audit(round, frozen)
+            if not report_eligible(audit["checks"], audit["execution"] != "completed", audit["unmapped_findings"]):
+                continue
+            audit = deepcopy(audit)
+            audit.pop("report")
+            for check in audit["checks"]:
+                check.pop("review", None)
+                check.pop("review_item_key", None)
+                check["finding"].pop("review", None)
+            payload = {
+                "task_id": str(head[0]),
+                "source_round_id": claimed.round_id,
+                "source_file_version_id": frozen["file_version_id"],
+                "result_attempt": claimed.attempt,
+                "report_input": {"filename": originals[frozen["file_version_id"]], "originals": originals, "audit": audit},
+            }
+            conn.execute(
+                """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
+                VALUES (%s, %s, %s, 'report_pdf', %s, 'queued') ON CONFLICT DO NOTHING""",
+                (uuid.uuid4(), claimed.tenant_id, claimed.round_id, Jsonb(payload)),
+            )
+
+    def _task_file_reports(self, conn, tenant_id, task_id, round_id, result_attempt) -> tuple[dict, datetime | None]:
+        rows = conn.execute(
+            """SELECT id, payload, status, result, updated_at FROM engine.jobs
+            WHERE tenant_id = %s AND audit_round_id = %s AND kind = 'report_pdf' AND payload->>'task_id' = %s
+              AND payload->>'result_attempt' = %s""",
+            (tenant_id, round_id, task_id, str(result_attempt)),
+        ).fetchall()
+        reports = {}
+        for row in rows:
+            state = {"queued": "pending", "leased": "generating", "succeeded": "ready"}.get(row[2], "failed")
+            result = row[3] or {}
+            if state == "ready" and not result.get("artifact"):
+                state = "failed"
+            reports[row[1]["source_file_version_id"]] = {
+                "state": state,
+                "report_id": str(row[0]),
+                "reason": "报告生成失败。审核结果已保存。" if state == "failed" else None,
+                "artifact": result.get("artifact") if state == "ready" else None,
+                "generated_at": result.get("generated_at") if state == "ready" else None,
+                "regenerate_allowed": False,
+                "regenerate_reason": "报告重新生成尚未开放。",
+            }
+        return reports, max((row[4] for row in rows), default=None)
+
+    def write_audit_report(self, claimed: ClaimedJob, body: bytes, generated_at: str) -> dict:
+        if claimed.kind != "report_pdf" or not claimed.tenant_id or not body.startswith(b"%PDF-") or not 0 < len(body) <= 64 * 1024 * 1024:
+            raise ValueError("invalid_report_pdf")
+        key = f"reports/{claimed.tenant_id}/{claimed.id}/{claimed.attempt}.pdf"
+        digest = sha256_bytes(body)
+        try:
+            self.objects.put_exclusive(key, body, "application/pdf")
+        except ObjectExists:
+            pass
+        observed = self.objects.get(key)
+        if len(observed) != len(body) or sha256_bytes(observed) != digest:
+            raise ValueError("report_artifact_conflict")
+        suffix = "-审核报告.pdf"
+        return {
+            "artifact": {
+                "artifact_id": f"{claimed.id}:{claimed.attempt}",
+                "filename": original_filename(claimed.payload["report_input"]["filename"])[: 255 - len(suffix)] + suffix,
+                "content_type": "application/pdf",
+                "byte_size": len(body),
+            },
+            "object_key": key,
+            "sha256": digest,
+            "generated_at": generated_at,
+        }
+
+    def audit_report_pdf(self, principal: Principal, reference: dict, artifact_id: str) -> tuple[dict, bytes]:
+        report_id = _as_uuid(reference["report_id"])
+        if report_id is None:
+            raise KeyError("missing")
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            task = self._recognition_public(conn, principal, reference["task_id"])
+            row = conn.execute("SELECT payload, result, status FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf'", (report_id, principal.tenant_id)).fetchone()
+            if not row:
+                raise KeyError("missing")
+            payload, result, state = row
+            expected = {
+                "report_id": report_id,
+                "task_id": payload["task_id"],
+                "round_id": payload["source_round_id"],
+                "file_version_id": payload["source_file_version_id"],
+                "result_attempt": payload["result_attempt"],
+            }
+            file = next((file for file in task["files"] if file["file"]["id"] == expected["file_version_id"] and file.get("audit")), None)
+            if reference != expected or task["round_id"] != expected["round_id"] or file is None or file["audit"]["result_attempt"] != expected["result_attempt"]:
+                raise KeyError("missing")
+            artifact = (result or {}).get("artifact")
+            if artifact and artifact["artifact_id"] != artifact_id:
+                raise KeyError("missing")
+            if state != "succeeded" or not artifact:
+                raise ValueError("report_not_ready")
+        body = self.objects.get(result["object_key"])
+        if not body.startswith(b"%PDF-") or len(body) != artifact["byte_size"] or sha256_bytes(body) != result["sha256"]:
+            raise ValueError("report_artifact_conflict")
+        return artifact, body
 
     def _rule_for_tenant(self, conn, rule_id: str, tenant_id: str):
         return conn.execute(

@@ -69,6 +69,19 @@ def verified_round(status="NG"):
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_complete_verified_results_have_a_shared_summary_without_invented_recommendations(self):
+        round = verified_round()
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual(
+            audit["summary"],
+            {"conclusion": "NG", "text": "已核验 1 项要求：满足 0 项，不符合 1 项，不适用 0 项。", "corrective_actions": [], "extended_suggestions": []},
+        )
+        self.assertEqual(round_read_view(round, {"version-a": {"id": "version-a"}})["files"][0]["audit"]["summary"], audit["summary"])
+        round["findings"][0]["locator"]["semantic"]["scope"]["unknown"] = 1
+        incomplete = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual(incomplete["conclusion"], "NG")
+        self.assertIsNone(incomplete["summary"])
+
     def test_host_validated_source_and_trace_reach_task_and_historical_results(self):
         round = verified_round()
         before = deepcopy(round)

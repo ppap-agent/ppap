@@ -1,6 +1,6 @@
 import type {components} from '../src/generated/openapi'
 import type {AuditReportAdapter} from '../src/audit/report-contract'
-import {sameSnapshot} from '../src/audit/result-projection'
+import {auditReportFilename, sameSnapshot} from '../src/audit/result-projection'
 import {zipSync, strToU8} from 'fflate'
 import controlPlan from './reports/control-plan.pdf?url'
 import pfmea from './reports/pfmea.pdf?url'
@@ -31,9 +31,9 @@ export async function withReportBytes(task: components['schemas']['AuditTask']):
 export function fixtureReport(name: string): components['schemas']['AuditFileReport'] {
   if (!['PFMEA.xlsx', '控制计划.xlsx'].includes(name)) return {state: 'failed', report_id: '', reason: '此文件的 PDF 暂不可用。', regenerate_allowed: false, regenerate_reason: '暂不能重新生成报告。'}
   const document = samples.documents.find(row => row.name === name)!
-  return {state: 'ready', report_id: '', reason: null, generated_at: samples.generated_at, artifact: {artifact_id: `preview-pdf-${document.asset}`, filename: `${name}-审核报告.pdf`, content_type: 'application/pdf', byte_size: 0}, regenerate_allowed: false, regenerate_reason: '暂不能重新生成报告。', generation_request: null}
+  return {state: 'ready', report_id: '', reason: null, generated_at: samples.generated_at, artifact: {artifact_id: `preview-pdf-${document.asset}`, filename: auditReportFilename(name), content_type: 'application/pdf', byte_size: 0}, regenerate_allowed: false, regenerate_reason: '暂不能重新生成报告。', generation_request: null}
 }
-export function fixtureReports(tasks: Map<string, components['schemas']['AuditTask']>, scene: string): AuditReportAdapter {
+export function fixtureReports(tasks: Map<string, components['schemas']['AuditTask']>, scene: string): Required<AuditReportAdapter> {
   const operations = new Map<string, components['schemas']['AuditReportUpdate']>()
   const packages = new Map<string, {job: components['schemas']['AuditReportPackage']; sources: {artifact: components['schemas']['AuditReportArtifact']; rule: string; generatedAt: string | null | undefined}[]; blob?: Blob}>()
   const failedPackages = new Set<string>()

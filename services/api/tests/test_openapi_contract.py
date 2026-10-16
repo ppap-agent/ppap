@@ -72,6 +72,12 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_file_report_download_binds_the_frozen_reference_and_returns_pdf_bytes(self):
+        operation = app.openapi()["paths"]["/audit-tasks/{task_id}/reports/{report_id}/pdf"]["get"]
+        required = {parameter["name"] for parameter in operation["parameters"] if parameter.get("required")}
+        self.assertEqual(required, {"task_id", "report_id", "round_id", "file_version_id", "result_attempt", "artifact_id"})
+        self.assertEqual(operation["responses"]["200"]["content"]["application/pdf"]["schema"], {"type": "string", "format": "binary"})
+
     def test_task_runtime_has_one_explicit_revision_bound_confirmation_contract(self):
         spec = app.openapi()
         schemas = spec["components"]["schemas"]

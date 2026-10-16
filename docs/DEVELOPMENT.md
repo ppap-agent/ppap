@@ -166,7 +166,9 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews`，保存原始记录键、已读版本、判断、理由、建议及本轮冻结引用。响应丢失先读回；未知请求在当前页面内跨弹窗／文件切换保留，只允许核对后显式重试相同内容。版本冲突需明确采用服务器版本再编辑；刷新后以服务器记录为准，不承诺恢复未提交输入。保存成功使旧任务读取失效，再读取当前 Task／Round；人工记录不改写机器结果或报告资格。
 
-Deep 已通过主机来源／trace 校验的新结果以 `host_source_trace_v1` 随 coverage 保存；共享文件投影核对 Round、job、attempt、executor revision、规则正文与条款结果关联后，才显示已验证依据及对应 PASS/NG。旧结果、Standard 位置文字、人工判断和不匹配的验证记录仍不被提升。有效 NG 不掩盖剩余未知范围；正式 PDF 尚未接入时不声称报告已生成。Schema 测试用实际 XLSX 解析和受控 query proof 经过既有完成事务验证读回，不调用模型、不证明客户审核质量。
+Deep 已通过主机来源／trace 校验的新结果以 `host_source_trace_v1` 随 coverage 保存；共享文件投影核对 Round、job、attempt、executor revision、规则正文与条款结果关联后，才显示已验证依据及对应 PASS/NG。旧结果、Standard 位置文字、人工判断和不匹配的验证记录仍不被提升。有效 NG 不掩盖剩余未知范围。Schema 测试用实际 XLSX 解析和受控 query proof 经过既有完成事务验证读回，不调用模型、不证明客户审核质量。
+
+新 Task 的完整验证结果自动进入现有 `report_pdf` 队列，Worker 用 PyMuPDF 生成带中文与冻结来源位置的逐文件 PDF，再以当前 attempt 发布对象元信息。P5 与 PDF 共用已验证条款的计数总结，不另调用模型生成结论或编造整改建议。下载文件名按 Unicode 字符限制为 255 字符，缩短来源名称时保留 `-审核报告.pdf` 后缀；名称不是报告身份。`/__audit-native` 的现有 P6 通过完整 Task/Round/FileVersion/result-attempt/report/artifact 引用下载；仍按当前 Task 与原件权限鉴权，不代表组织报告分享政策已获批。显式重生成、ZIP、飞书及独立档案仍未接通；不把旧整轮飞书报告当成此 PDF。`FileAuditReports.tla` 是三份输入、两次生成尝试的有限 Safety 模型，四个故障配置分别检查迟到发布、输入错绑、未验证输入与过早完成；不保证对象存储响应、最终完成或自动清理。
 
 ## UI-first 交互预览
 

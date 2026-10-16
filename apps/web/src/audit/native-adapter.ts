@@ -1,10 +1,22 @@
-import {readLocalUpload, request, uploadLocalVersion} from '../api.ts'
+import {apiUrl, readLocalUpload, request, uploadLocalVersion} from '../api.ts'
 import type {components} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
 import type {AuditDisplayAdapter} from './display-info-editor'
+import type {AuditReportAdapter} from './report-contract'
 
 type ValidationJob = components['schemas']['FileValidationJob']
+export const nativeReportAdapter: AuditReportAdapter = {
+  async readPdf(reference, artifact) {
+    const params = new URLSearchParams({round_id: reference.round_id, file_version_id: reference.file_version_id, result_attempt: String(reference.result_attempt), artifact_id: artifact.artifact_id})
+    const response = await fetch(`${apiUrl}/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/pdf?${params}`, {method: 'GET', credentials: 'include'})
+    if (!response.ok) {
+      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+      throw new Error('审核报告暂时无法读取。')
+    }
+    return response.blob()
+  },
+}
 export const nativeReviewAdapter: AuditReviewAdapter = {
   read: id => request(`/rounds/${encodeURIComponent(id)}`),
   save: (id, payload) => request(`/rounds/${encodeURIComponent(id)}/reviews`, 'PUT', payload),

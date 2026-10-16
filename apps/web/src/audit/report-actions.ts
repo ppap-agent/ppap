@@ -21,14 +21,15 @@ export function useReportGeneration(items: ReportItem[], onChange: (reference: A
   }
   async function run(reference: AuditReportReference, readOnly: boolean) {
     const previous = locate(reference)
-    if (!adapter || !previous || pending.current.has(reference.report_id)) return
+    const command = readOnly ? adapter?.readRegeneration : adapter?.regenerate
+    if (!command || !previous || pending.current.has(reference.report_id)) return
     if (readOnly ? previous.generation_request?.state !== 'pending' : previous.state !== 'failed' || !previous.regenerate_allowed || previous.generation_request?.state === 'pending') return
     const requestId = readOnly ? previous.generation_request!.request_id : crypto.randomUUID()
     pending.current.add(reference.report_id); setBusy([...pending.current])
     const observation = {...previous, generation_request: {request_id: requestId, state: 'pending' as const, reason: '未取得报告生成回执，只读取原请求，不重复生成。'}}
     commit(reference, observation)
     try {
-      const update = await (readOnly ? adapter.readRegeneration(structuredClone(reference), requestId) : adapter.regenerate(structuredClone(reference), requestId))
+      const update = await command(structuredClone(reference), requestId)
       const latest = locate(reference)
       if (!alive.current || latest !== observation) return
       if (!sameSnapshot(update.reference, reference) || update.receipt.request_id !== requestId || update.report && update.report.report_id !== reference.report_id) throw new Error('report_receipt_mismatch')
@@ -49,7 +50,7 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
   function commit(next: AuditReportPackage) {if (alive.current) {current.current = next; onChange(next)}}
   function canCreatePackage(reports: AuditReportReference[]) {
-    if (scopeError || !adapter || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
+    if (scopeError || !adapter?.createPackage || !adapter.readPackage || !adapter.readPackageFile || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
     const previous = current.current
     if (!previous) return true
     if (packageOutcomeError(previous) || previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state)) return false
@@ -64,11 +65,14 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
     // Reading an existing job never depends on the current page or selection.
     if (!multipleDistinctReports(references)) return
     const requestId = readOnly ? previous!.receipt.request_id : crypto.randomUUID()
+    const read = adapter.readPackage, create = adapter.createPackage
+    const command = readOnly ? read && (() => read(requestId)) : create && (() => create(references, requestId))
+    if (!command) return
     pending.current = true; setPackageBusy(true)
     const observation: AuditReportPackage = readOnly ? previous! : {package_id: null, reports: references, receipt: {request_id: requestId, state: 'pending', reason: null}, state: 'pending', artifact: null, reason: 'ZIP 受理结果未知；只读取原打包请求。', retry_allowed: false}
     if (!readOnly) commit(observation)
     try {
-      const next = await (readOnly ? adapter.readPackage(requestId) : adapter.createPackage(references, requestId))
+      const next = await command()
       if (!alive.current || current.current !== observation) return
       if (next.receipt.request_id !== requestId || !sameSnapshot(next.reports, references) || packageOutcomeError(next) || next.state === 'ready' && (!next.package_id || !next.artifact?.artifact_id || next.artifact.content_type !== 'application/zip' || next.artifact.byte_size <= 0)) throw new Error('package_receipt_mismatch')
       commit(next)

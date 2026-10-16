@@ -856,6 +856,7 @@ dependencies = [
     { name = "ppap-application" },
     { name = "ppap-core" },
     { name = "ppap-deep" },
+    { name = "ppap-docops" },
     { name = "ppap-excel-audit-engine" },
     { name = "ppap-product-store" },
 ]
@@ -865,6 +866,7 @@ requires-dist = [
     { name = "ppap-application", editable = "packages/ppap_application" },
     { name = "ppap-core", editable = "packages/ppap_core" },
     { name = "ppap-deep", editable = "packages/ppap_deep" },
+    { name = "ppap-docops", editable = "packages/ppap_docops" },
     { name = "ppap-excel-audit-engine", editable = "packages/ppap_excel_audit_engine" },
     { name = "ppap-product-store", editable = "packages/ppap_product_store" },
 ]

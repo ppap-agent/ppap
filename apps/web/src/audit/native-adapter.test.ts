@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeDisplayAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter} from './native-adapter.ts'
+import {readReportPdf} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
@@ -10,6 +11,22 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native PDF reads carry the full frozen reference and never create another audit or report', async () => {
+  const reference = {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a', result_attempt: 2, report_id: 'report-a'}
+  const artifact = {artifact_id: 'artifact-a', filename: 'a.xlsx-审核报告.pdf', content_type: 'application/pdf' as const, byte_size: 8}
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), 'http://example.test')
+    assert.equal(url.pathname, '/audit-tasks/task-a/reports/report-a/pdf')
+    assert.deepEqual(Object.fromEntries(url.searchParams), {round_id: 'round-a', file_version_id: 'version-a', result_attempt: '2', artifact_id: 'artifact-a'})
+    assert.equal(init?.method, 'GET')
+    assert.equal(init?.credentials, 'include')
+    return new Response('%PDF-1.7', {headers: {'Content-Type': 'application/pdf'}})
+  }
+  assert.equal(await (await readReportPdf(nativeReportAdapter, reference, artifact)).text(), '%PDF-1.7')
+  globalThis.fetch = async () => json({error: 'access_denied'}, 403)
+  await assert.rejects(readReportPdf(nativeReportAdapter, reference, artifact))
+})
 
 test('a lost display-save reply reads only its original request and absence remains unknown', async () => {
   const command: components['schemas']['AuditFileDisplayRequest'] = {request_id: 'display-a', reference: {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a'}, expected_revision: 2, values: {customer: 'A', model: null, part_number: 'P-1', part: '零件'}}

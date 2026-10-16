@@ -8,6 +8,7 @@ dependencies = [
     "ppap-core",
     "ppap-product-store",
     "ppap-deep",
+    "ppap-docops",
     "ppap-excel-audit-engine",
 ]
 
@@ -16,6 +17,7 @@ ppap-application = { workspace = true }
 ppap-core = { workspace = true }
 ppap-product-store = { workspace = true }
 ppap-deep = { workspace = true }
+ppap-docops = { workspace = true }
 ppap-excel-audit-engine = { workspace = true }
 
 [build-system]

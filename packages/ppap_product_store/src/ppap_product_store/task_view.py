@@ -165,6 +165,23 @@ def _counts(checks: list[dict]) -> dict:
     return counts
 
 
+def report_eligible(checks: list[dict], failed: bool, unmapped: list[dict]) -> bool:
+    return (
+        bool(checks)
+        and not failed
+        and not unmapped
+        and all(
+            check["execution"] == "completed"
+            and check["evidence_verified"]
+            and check["finding"]["status"] in {"PASS", "NG", "NA"}
+            and check["scope"]["checked"] == check["scope"]["total"]
+            and check["scope"]["unknown"] == 0
+            and (check["scope"]["total"] > 0 or check["finding"]["status"] == "NA")
+            for check in checks
+        )
+    )
+
+
 def file_round_audit(round: dict, frozen: dict) -> dict:
     version_id, rule = frozen["file_version_id"], frozen["rule"]
     finished = round["execution"] in {"completed", "failed"}
@@ -190,20 +207,17 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
             unmapped.append(deepcopy(finding))
     file_has_error = finished and (file_failed or any(check["execution"] == "failed" for check in checks) or any(finding["status"] == "ERR" for finding in unmapped))
     counts = _counts(checks)
-    complete = (
-        bool(checks)
-        and not file_has_error
-        and not unmapped
-        and all(
-            check["execution"] == "completed"
-            and check["evidence_verified"]
-            and check["finding"]["status"] in {"PASS", "NG", "NA"}
-            and check["scope"]["checked"] == check["scope"]["total"]
-            and check["scope"]["unknown"] == 0
-            and (check["scope"]["total"] > 0 or check["finding"]["status"] == "NA")
-            for check in checks
-        )
-    )
+    complete = report_eligible(checks, file_has_error, unmapped)
+    conclusion = ("NG" if counts["ng_count"] else "PASS" if complete else "UNKNOWN") if finished else None
+    summary: dict | None = None
+    if complete:
+        not_applicable = sum(check["finding"]["status"] == "NA" for check in checks)
+        summary = {
+            "conclusion": conclusion,
+            "text": f"已核验 {len(checks)} 项要求：满足 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {not_applicable} 项。",
+            "corrective_actions": [],
+            "extended_suggestions": [],
+        }
     return {
         "round_id": round["id"],
         "file_version_id": version_id,
@@ -214,11 +228,11 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         "failure": {"code": "file_execution_error", "message": "本文件审核执行失败，未取得完整结果。", "retryable": False}
         if file_has_error and round["execution"] != "failed"
         else round.get("failure"),
-        "conclusion": ("NG" if counts["ng_count"] else "PASS" if complete else "UNKNOWN") if finished else None,
+        "conclusion": conclusion,
         "counts": counts,
         "checks": checks,
         "unmapped_findings": unmapped,
-        "summary": None,
+        "summary": summary,
         "report": {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用" if complete else "审核依据尚未完整核验" if finished else "审核尚未完成"},
     }
 
@@ -237,7 +251,7 @@ def round_read_view(round: dict, versions: dict[str, dict]) -> dict:
     return {"files": files, "unassigned_findings": [deepcopy(finding) for finding in round.get("findings", []) if finding["item_key"] not in assigned]}
 
 
-def task_round_view(task: dict, round: dict) -> dict:
+def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = None) -> dict:
     finished = round["execution"] in {"completed", "failed"}
     files = []
     for row in task["files"]:
@@ -245,10 +259,13 @@ def task_round_view(task: dict, round: dict) -> dict:
         if not frozen or row["selection"] != "selected":
             files.append({**row, "audit": None})
             continue
-        files.append({**row, "audit": file_round_audit(round, frozen)})
+        audit = file_round_audit(round, frozen)
+        if reports and row["file"]["id"] in reports:
+            audit["report"] = reports[row["file"]["id"]]
+        files.append({**row, "audit": audit})
     selected = [row for row in files if row["selection"] == "selected"]
     ended = sum(bool(row.get("audit") and row["audit"]["execution"] in {"completed", "review_failed"}) for row in selected)
-    task_finished = finished and ended == len(selected)
+    task_finished = finished and ended == len(selected) and all(row["audit"]["report"]["state"] not in {"pending", "generating"} for row in selected)
     return {
         **task,
         "round_id": round["id"],

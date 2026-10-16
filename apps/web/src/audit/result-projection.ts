@@ -49,7 +49,11 @@ export function reportReference(task: Task, row: TaskFile): components['schemas'
 }
 export function reportReady(task: Task, row: TaskFile): boolean {
   const report = row.audit?.report
-  return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === `${row.file.original_filename}-审核报告.pdf`)
+  return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === auditReportFilename(row.file.original_filename))
+}
+export function auditReportFilename(source: string): string {
+  const suffix = '-审核报告.pdf'
+  return Array.from(source).slice(0, 255 - suffix.length).join('') + suffix
 }
 export function multipleDistinctReports(reports: components['schemas']['AuditReportReference'][]): boolean {
   return reports.length >= 2 && reports.every((reference, index) => reports.findIndex(row => sameSnapshot(row, reference)) === index)

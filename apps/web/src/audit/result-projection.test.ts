@@ -205,6 +205,16 @@ test('ready download requires PDF metadata for that file, not just a ready label
   report.artifact.filename = '不同文件-审核报告.pdf'
   assert.equal(reportReady(task, row), false)
 })
+test('long source filenames retain a bounded PDF suffix and stay downloadable', () => {
+  const task = projection(), row = task.files[0], report = row.audit!.report
+  row.file.original_filename = 'A'.repeat(250) + '.xlsx'
+  report.generated_at = '2026-10-17T02:00:00Z'
+  report.artifact = {artifact_id: 'pdf-1', filename: 'A'.repeat(246) + '-审核报告.pdf', content_type: 'application/pdf', byte_size: 9}
+  assert.equal(reportReady(task, row), true)
+  row.file.original_filename = '🧾'.repeat(247) + '.xlsx'
+  report.artifact.filename = '🧾'.repeat(246) + '-审核报告.pdf'
+  assert.equal(reportReady(task, row), true)
+})
 test('PDF reads reject HTML, mismatched sizes and wrong media types', async () => {
   const reference = {task_id: 'task-1', round_id: 'round-1', file_version_id: 'file-v1', result_attempt: 1, report_id: 'report-1'}
   const artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf' as const, byte_size: 9}
