@@ -44,6 +44,16 @@ export function resultConsistencyError(task: Task, row: TaskFile): string {
   return frozenResultError(task.round_id, row, task.files.filter(file => file.selection === 'selected').map(file => file.file.id))
 }
 
+/** Task totals do not decide the validity of another file's evidence or report. */
+export function taskProgressError(task: Task): string {
+  if (!task.round_id) return ''
+  const selected = task.files.filter(row => row.selection === 'selected')
+  const ended = selected.filter(row => row.audit?.execution === 'review_failed' || row.audit?.execution === 'completed' && row.audit.checks.every(item => ['completed', 'failed'].includes(item.execution))).length
+  if (task.state === 'completed' && ended !== selected.length) return '任务声称审核结束，但仍有未结束的文件。'
+  if (task.progress && (task.progress.total !== selected.length || task.progress.completed !== ended)) return '任务进度与已选文件状态不一致。'
+  return ''
+}
+
 /** Validate a single authorized historical result without inventing a whole task. */
 export function frozenResultError(roundId: string | null, row: TaskFile, frozenFileVersionIds: string[]): string {
   const audit = row.audit
@@ -51,6 +61,7 @@ export function frozenResultError(roundId: string | null, row: TaskFile, frozenF
   if (audit.file_version_id !== row.file.id || audit.round_id !== roundId || !sameSnapshot(audit.rule, row.match?.rule)) return '审核结果与冻结文件或规则不一致。'
   const rules = audit.rule.body.kind === 'engine' ? audit.rule.body.rules : []
   if (!rules.length || new Set(audit.checks.map(item => item.rule_item.id)).size !== audit.checks.length || audit.checks.length !== rules.length || audit.checks.some(item => !rules.some(rule => sameSnapshot(rule, item.rule_item)) || item.finding && item.finding.item_key !== item.rule_item.id) || audit.progress.total !== rules.length) return '审核项与冻结规则不一致。'
+  if (audit.execution === 'completed' && audit.checks.some(item => ['queued', 'running'].includes(item.execution))) return '文件声称审核结束，但仍有未结束的审核项。'
   const frozen = new Set(frozenFileVersionIds)
   if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮冻结文件范围内。'
   const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.evidence_verified && item.finding)

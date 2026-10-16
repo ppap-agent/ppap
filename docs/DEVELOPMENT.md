@@ -150,6 +150,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview?page=audit`。场景切换会重置页面；宽度与主题切换保留当前交互。识别中和飞书读取中场景用预览台的“返回一次示例读取／令一次示例读取失败”控制响应，包括弹窗内的读取，不用定时器假装真实进度。
 
+`matching-gaps` 在取消选择控制计划后，显示 PFMEA 已匹配规则但缺少跨文件比对资料；返回补选后再识别可清除提示。`restore-progress` 恢复固定样例的部分结果：有效 NG 与运行、排队项分开，刷新不推进样例，主动“读取审核结果”后才显示最终结果。`restore-task-conflict` 演示任务汇总误报完成时保留逐文件有效依据并提示核对。这些场景不代表任意上传已保存或真实审核已经执行。
+
 原件读取使用 `scene=original-error`、`original-loading` 或 `original-unavailable`，选择三类文件示例后进入审核并核对 Excel 原件。它们复用产品原件阅读器，演示读取失败、重读和乱序返回；下载仅返回该冻结版本的明确示例 XLSX，不是客户原件，也不验证真实 Office、排版或定位。任意上传不生成替代原件，不向产品 API 发送示例身份。
 
 文件档案及历次审核使用 `scene=archive-ready`。`archive-task-allowed` 单独演示有来源任务读取许可时，经完整 P5/报告页返回所选历史，不改开最新审核。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。

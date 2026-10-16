@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, sameFrozenInputs, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
+import {resultConsistencyError, taskProgressError, sameFrozenInputs, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -19,6 +19,57 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('completed execution cannot hide running checks, while whole-file failure can retain unexecuted checks', () => {
+  const task = projection(), audit = task.files[0].audit!
+  audit.checks[0] = {...audit.checks[0], execution: 'running', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, evidence: []}
+  audit.progress.completed = 0; audit.conclusion = null; audit.summary = null
+  audit.counts.pass_count = 0; audit.report = {state: 'not_eligible', report_id: null, reason: null}
+  assert.match(error(task), /文件声称审核结束，但仍有未结束的审核项/)
+  audit.execution = 'running'
+  assert.equal(error(task), '')
+  audit.execution = 'review_failed'
+  audit.checks[0].execution = 'queued'
+  audit.failure = {code: 'read_failed', message: '读取服务失败', retryable: false}
+  assert.equal(error(task), '')
+})
+test('task progress checks selected file endings without invalidating another file report', () => {
+  const task = projection()
+  assert.equal(taskProgressError(task), '')
+  task.progress = {completed: 1, total: 1}
+  const removed = structuredClone(task.files[0]); removed.file.id = 'file-removed'; removed.selection = 'removed'; removed.removal_reason = '未纳入本轮'; delete removed.audit; task.files.push(removed)
+  assert.equal(taskProgressError(task), '')
+  for (const execution of [undefined, 'queued', 'running', 'completed'] as const) {
+    const pending = structuredClone(task.files[0])
+    pending.file.id = 'file-pending'
+    if (execution === undefined) delete pending.audit
+    else {
+      const audit = pending.audit!
+      audit.file_version_id = pending.file.id; audit.execution = execution
+      audit.checks[0] = {...audit.checks[0], execution: 'running', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, evidence: []}
+      audit.progress.completed = 0; audit.conclusion = null; audit.summary = null
+      audit.counts.pass_count = 0; audit.report = {state: 'not_eligible', report_id: null, reason: null}
+    }
+    task.files[1] = pending
+    assert.match(taskProgressError(task), /仍有未结束的文件/)
+    assert.equal(resultConsistencyError(task, task.files[0]), '')
+    assert.ok(reportReference(task, task.files[0]))
+  }
+  task.state = 'reviewing'; task.completion_reason = null
+  task.progress = {completed: 1, total: 2}
+  assert.equal(taskProgressError(task), '')
+  task.progress.completed = 2
+  assert.match(taskProgressError(task), /任务进度与已选文件状态不一致/)
+  task.progress = {completed: 1, total: 3}
+  assert.match(taskProgressError(task), /任务进度与已选文件状态不一致/)
+  delete task.progress
+  assert.equal(taskProgressError(task), '')
+  task.files[1].audit!.execution = 'review_failed'
+  task.state = 'completed'; task.completion_reason = 'processed'; task.progress = {completed: 2, total: 2}
+  task.files[0].audit!.report.state = 'generating'
+  assert.equal(taskProgressError(task), '')
+  task.round_id = null; task.completion_reason = 'no_matching_rules'
+  assert.equal(taskProgressError(task), '')
+})
 test('a finding cannot impersonate another frozen rule item', () => {
   const task = projection()
   task.files[0].audit!.checks[0].finding!.item_key = 'other-rule'

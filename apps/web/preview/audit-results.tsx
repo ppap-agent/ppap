@@ -23,6 +23,17 @@ export function fixtureAcceptance(task: AuditTask, requestId: string): AuditTask
   return {...task, state: 'reviewing', round_id: round, acceptance: {request_id: requestId, state: 'accepted', reason: null}, progress: {completed: 0, total: files.filter(file => file.selection === 'selected').length}, notification_enabled: true, files}
 }
 
+/** A fixed intermediate read: unfinished checks have neither findings nor evidence. */
+export function fixtureProgress(task: AuditTask): AuditTask {
+  const completed = fixtureResults(task, 'populated')
+  return {...task, files: task.files.map(file => {
+    if (!file.audit || file.selection !== 'selected') return file
+    const pfmea = file.match?.document_type === 'PFMEA', running = pfmea || file.match?.document_type === '控制计划'
+    const checks = file.audit.checks.map((check, index) => pfmea && index === 0 ? completed.files.find(row => row.file.id === file.file.id)!.audit!.checks[0] : {...check, execution: running && (pfmea || index === 0) ? 'running' as const : 'queued' as const})
+    return {...file, audit: {...file.audit, execution: running ? 'running' as const : 'queued' as const, result_attempt: running ? 1 : null, progress: {completed: pfmea ? 1 : 0, total: checks.length}, conclusion: pfmea ? 'NG' as const : null, counts: {...file.audit.counts, ng_count: pfmea ? 1 : 0}, checks}}
+  })}
+}
+
 export function fixtureResults(task: AuditTask, scene: string): AuditTask {
   const selected = task.files.filter(file => file.selection === 'selected')
   const crossFile = selected.find(file => file.match?.document_type === '控制计划')

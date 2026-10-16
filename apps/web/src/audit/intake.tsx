@@ -18,7 +18,7 @@ import {FeishuPicker, type DrivePickerSource} from './feishu-picker'
 import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {AuditWorkspace} from './workspace'
 import type {OriginalRenderer} from './review-content'
-import {sameFrozenInputs} from './result-projection'
+import {sameFrozenInputs, taskProgressError} from './result-projection'
 import {useUploads, type UploadAdapter, type UploadRow} from './uploads'
 import {TransferList} from './transfer-list'
 import type {AuditReportAdapter} from './report-contract'
@@ -288,7 +288,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
     <Button variant="outline" onClick={newTask}><Plus/>新建审核任务</Button>
     <label className="flex items-center gap-2"><span className="sr-only">搜索任务文件</span><Search className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索文件名" value={query} onChange={event => setQuery(event.target.value)}/></label>
     <Select value={filter} onValueChange={setFilter}><SelectTrigger className="w-full" aria-label="任务状态"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(taskLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-    <nav className="grid gap-2" aria-label="任务列表">{shownTasks.length ? shownTasks.map(row => <Button key={row.id} variant={task?.id === row.id ? 'secondary' : 'ghost'} className="h-auto min-w-0 justify-start whitespace-normal text-left" onClick={() => openTask(row)}><span className="grid min-w-0 gap-1"><span>{row.number}</span><span className="text-xs">{taskLabels[row.state]} · {row.files.filter(file => file.selection === 'selected').length} 份文件</span></span></Button>) : <p className="text-sm text-muted-foreground">{tasks.length ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}</nav>
+    <nav className="grid gap-2" aria-label="任务列表">{shownTasks.length ? shownTasks.map(row => <Button key={row.id} variant={task?.id === row.id ? 'secondary' : 'ghost'} className="h-auto min-w-0 justify-start whitespace-normal text-left" onClick={() => openTask(row)}><span className="grid min-w-0 gap-1"><span>{row.number}</span><span className="text-xs">{taskProgressError(row) ? '任务进度待核对' : taskLabels[row.state]} · {row.files.filter(file => file.selection === 'selected').length} 份文件</span></span></Button>) : <p className="text-sm text-muted-foreground">{tasks.length ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}</nav>
     <p className="mt-auto text-xs text-muted-foreground">此预览的任务仅存于页面内存，刷新会清空；不代表服务端已保存。</p>
   </div>
   const table = (rows: AuditTaskFile[], selectable: boolean) => <Table className="table-fixed">

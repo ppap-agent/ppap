@@ -4,7 +4,7 @@ import '../src/index.css'
 import {AuditIntake, type AuditIntakeAdapter, type AuditTask, type AuditTaskFile} from '../src/audit/intake'
 import type {components} from '../src/generated/openapi'
 import {Button} from '../src/components/ui/button'
-import {fixtureAcceptance, fixtureResults, FixtureOriginal} from './audit-results'
+import {fixtureAcceptance, fixtureProgress, fixtureResults, FixtureOriginal} from './audit-results'
 import {fixtureReports, fixtureReport, withReportBytes} from './audit-reports'
 import reportSamples from './report-samples.json'
 import {fixtureSharing} from './audit-sharing'
@@ -141,6 +141,7 @@ const adapter: AuditIntakeAdapter = {
     return scene === 'upload-partial' && reads === 1 ? {...receipt, state: 'unknown', file: null, retry_allowed: false, reason: '示例：仍在处理中，不能确认未接收。'} : receipt
   },
   match: (files, mode, customer, previous) => {
+    const hasControlPlan = files.some(row => row.selection === 'selected' && driveCatalog.some(fixture => fixture.source.token === row.file.file_id && fixture.index === 1))
     const matchedFiles = structuredClone(files).map(row => {
       if (row.selection !== 'selected') return {...row, match: null}
       // Map fixture identities, never infer real audit answers from filenames.
@@ -150,7 +151,8 @@ const adapter: AuditIntakeAdapter = {
       const matched = known && scene !== 'unmatched' && !(scene === 'partial' && index === 2)
       const sampleChecks = reportSamples.documents[index]?.checks
       const rules = sampleChecks ? sampleChecks.map(check => ({id: check.id, category: check.category, priority: null, rule_to_check: check.requirement, type_of_rule: 'table'})) : [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]
-      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps: []}}
+      const gaps = scene === 'matching-gaps' && matched && index === 0 && !hasControlPlan ? ['示例：未选择控制计划，频次一致性缺少跨文件比对资料。'] : []
+      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps}}
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates remain Product API-owned.
@@ -176,7 +178,8 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   taskStore.delete(matched.id)
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : scene === 'restore-completed' || scene.startsWith('reports-') ? fixtureResults(frozen, scene) : frozen
+  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : scene === 'restore-progress' || scene === 'restore-task-conflict' ? fixtureProgress(frozen) : scene === 'restore-completed' || scene.startsWith('reports-') ? fixtureResults(frozen, scene) : frozen
+  if (scene === 'restore-task-conflict') {snapshot.state = 'completed'; snapshot.completion_reason = 'processed'; snapshot.progress = {completed: 3, total: 3}}
   taskStore.set(seed.id, snapshot)
   if (scene === 'restore-unknown') accepted.set(seed.id, frozen)
 }
