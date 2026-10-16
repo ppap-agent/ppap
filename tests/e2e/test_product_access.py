@@ -4,7 +4,13 @@ import os
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from playwright.sync_api import expect, sync_playwright
+
+try:
+    from playwright.sync_api import expect, sync_playwright
+except ImportError:
+    expect = sync_playwright = None
+
+pytestmark = pytest.mark.skipif(sync_playwright is None, reason="requires the e2e dependency group")
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 PRINCIPAL = {
