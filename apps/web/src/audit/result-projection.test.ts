@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError} from './result-projection.ts'
+import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError} from './result-projection.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -223,6 +223,21 @@ test('package outcomes identify each fixed report once and cannot invent a faile
   for (const state of ['pending', 'rejected'] as const) assert.notEqual(packageOutcomeError({...job, receipt: {...job.receipt, state}}), '')
   assert.notEqual(packageOutcomeError({...job, outcomes: null as never}), '')
   assert.notEqual(packageOutcomeError({...job, state: 'ready', outcomes: [{...outcomes[0], state: 'pending'}, outcomes[1]]}), '')
+})
+test('task ZIP scope requires distinct reports from its complete frozen result identity', () => {
+  const task = projection(), second = structuredClone(task.files[0])
+  second.file.id = 'file-v2'; second.audit!.file_version_id = 'file-v2'; second.audit!.report.report_id = 'report-2'
+  task.files.push(second)
+  const reports = task.files.map(row => reportReference(task, row)!)
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'zip-1', reports: [...reports].reverse(), receipt: {request_id: 'pack-1', state: 'accepted', reason: null}, state: 'ready', artifact: {artifact_id: 'zip-bytes', filename: '审核报告.zip', content_type: 'application/zip', byte_size: 7}, reason: null, retry_allowed: false}
+  task.report_package = job
+  assert.equal(taskPackageScopeError(task), '')
+  for (const field of ['task_id', 'round_id', 'file_version_id', 'result_attempt', 'report_id'] as const) {
+    const other = {...reports[0], [field]: field === 'result_attempt' ? 99 : 'other'}
+    assert.notEqual(taskPackageScopeError({...task, report_package: {...job, reports: [other, reports[1]]}}), '')
+  }
+  for (const invalid of [[], [reports[0]], [reports[0], reports[0]]]) assert.notEqual(taskPackageScopeError({...task, report_package: {...job, reports: invalid}}), '')
+  assert.equal(taskPackageScopeError({...task, report_package: null}), '')
 })
 test('readback preserves the accepted round, file versions, rules and input selection', () => {
   const before = projection(), after = structuredClone(before)

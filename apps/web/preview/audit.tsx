@@ -51,6 +51,7 @@ const sharingAdapter = fixtureSharing(taskStore, scene)
 const templateSharingAdapter = fixtureTemplateSharing(templateAdapter, sharingAdapter, scene)
 const templatePermissionAdapter = fixtureTemplatePermissions(scene)
 let recoveryRead = 0
+const foreignPackageReads = new Set<string>()
 let authenticated = false
 const acceptanceReads = new Map<string, number>()
 const uploadReceipts = new Map<string, components['schemas']['AuditUploadItem']>()
@@ -260,6 +261,12 @@ function Preview() {
     readTask: async (id, requestId) => {
       const task = taskStore.get(id)
       const result = await adapter.readTask(id, requestId)
+      const job = result.report_package
+      if (scene === 'reports-zip-foreign' && job?.state === 'ready' && !foreignPackageReads.has(job.receipt.request_id)) {
+        foreignPackageReads.add(job.receipt.request_id)
+        const reports = job.reports.map(reference => ({...reference, task_id: 'preview-other-task', round_id: 'preview-other-round'}))
+        return {...result, report_package: {...job, reports, outcomes: reports.map(reference => ({reference, state: 'prepared' as const, reason: null}))}}
+      }
       if (automaticObservation && (recoveryRead > 1 || scene === 'observe-matching')) return defer(`任务观察 · ${id} · 读取 ${scene === 'observe-matching' ? recoveryRead : recoveryRead - 1}`, result)
       if (scene === 'restore-race' && recoveryRead === 2 && task) return defer(`旧结果 · ${id}`, task)
       return scene === 'matching' && !task?.round_id && !requestId ? defer(`识别结果 · ${task?.number}`, result) : scene === 'audit-loading' && (task?.round_id || result.round_id) ? defer(`审核结果 · ${task?.number}`, result) : scene === 'restore-loading' && recoveryRead === 1 ? defer(`恢复任务 · ${id}`, result) : displayReadFixture(result, scene)

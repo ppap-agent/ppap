@@ -28,6 +28,28 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_restored_task_rejects_a_self_consistent_zip_from_another_frozen_result(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            open_reports(page, "reports-zip-foreign")
+            page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+            create = page.get_by_role("button", name="打包所选 2 份报告", exact=True)
+            create.click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_text("ZIP 不属于当前任务", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+            expect(create).to_be_disabled()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="重新读取报告状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            expect(page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True)).to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True)).to_be_checked()
+            browser.close()
+
     def test_zip_retry_denial_cannot_be_bypassed_by_reordering_archive_selections(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

@@ -7,7 +7,7 @@ import {Checkbox} from '../components/ui/checkbox'
 import {Item, ItemContent, ItemGroup} from '../components/ui/item'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {FileName} from '../journey/file-name'
-import {resultConsistencyError, reportReady, reportReference, shareContentFor, sameSnapshot} from './result-projection'
+import {resultConsistencyError, reportReady, reportReference, shareContentFor, sameSnapshot, taskPackageScopeError} from './result-projection'
 import {readReportPdf, readReportZip, type AuditReportAdapter} from './report-contract'
 import {useReportActions} from './report-actions'
 import {ReportPackage} from './report-package'
@@ -32,6 +32,7 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
   const issue = file ? resultConsistencyError(task, file) : ''
   const ready = Boolean(file && reportReady(task, file))
   const reference = file ? reportReference(task, file) : null
+  const packageScopeIssue = taskPackageScopeError(task)
   const actions = useReportActions(task, onChange, adapter)
   const currentTask = useRef(task); currentTask.current = task
   const contentFor = (reports: components['schemas']['AuditReportReference'][], mode: 'link' | 'file') => shareContentFor(currentTask.current, reports, mode)
@@ -59,7 +60,7 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
   }
   async function downloadZip() {
     const job = task.report_package, artifact = job?.artifact
-    if (!adapter || !job || !artifact || job.state !== 'ready' || downloading) return
+    if (packageScopeIssue || !adapter || !job || !artifact || job.state !== 'ready' || downloading) return
     setDownloading(true); setZipDownloadError('')
     try {
       const blob = await readReportZip(adapter, job)
@@ -83,7 +84,7 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
     {readError && <Alert variant="destructive"><AlertTitle>报告状态暂时无法读取</AlertTitle><AlertDescription>{readError}</AlertDescription></Alert>}
     <div className="flex flex-wrap items-center gap-2"><Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button className="@3xl:hidden" variant="outline">文件报告 · {rows.length} 份</Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>文件报告</SheetTitle><SheetDescription>当前预览与批量勾选分别保存；只有就绪报告可勾选。</SheetDescription></SheetHeader><div className="overflow-y-auto p-4">{list}</div></SheetContent></Sheet>{selectedReports.length > 1 ? <Button disabled={!actions.canCreatePackage(selectedReferences)} onClick={() => void actions.createPackage(selectedReferences)}>打包所选 {selectedReports.length} 份报告</Button> : selectedReports.length === 1 && <Button disabled={!adapter || downloading} onClick={() => void downloadSelected()}>下载所选 1 份报告</Button>}<Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取报告状态…' : '读取报告状态'}</Button><Button variant="outline" disabled={!sharingAdapter || !selectedReports.length && !ready && !task.report_share} onClick={event => {shareTrigger.current = event.currentTarget; setShareScope(selectedReports.length ? selectedReferences : ready && reference ? [reference] : [])}}>分享</Button>{!sharingAdapter && <span className="text-xs text-muted-foreground">分享接口尚未接入。</span>}</div>
     {pdfDownloadError && <Alert variant="destructive"><AlertTitle>PDF 下载未完成</AlertTitle><AlertDescription>{pdfDownloadError}</AlertDescription></Alert>}
-    <ReportPackage job={task.report_package} nameFor={reference => describe(reference).name} busy={actions.packageBusy || downloading} onRead={() => void actions.readPackage()} onDownload={() => void downloadZip()} onRetry={() => {if (task.report_package?.state === 'failed' && task.report_package.retry_allowed) void actions.createPackage(task.report_package.reports)}} downloadError={zipDownloadError}/>
+    {packageScopeIssue ? <Alert variant="destructive"><AlertTitle>ZIP 不属于当前任务</AlertTitle><AlertDescription>{packageScopeIssue} 未读取或下载该包，已有 PDF 不受影响。<Button variant="outline" disabled={busy} onClick={onRead}>重新读取报告状态</Button></AlertDescription></Alert> : <ReportPackage job={task.report_package} nameFor={reference => describe(reference).name} busy={actions.packageBusy || downloading} onRead={() => void actions.readPackage()} onDownload={() => void downloadZip()} onRetry={() => {if (task.report_package?.state === 'failed' && task.report_package.retry_allowed) void actions.createPackage(task.report_package.reports)}} downloadError={zipDownloadError}/>}
     <div className="grid min-w-0 gap-6 @3xl:grid-cols-[16rem_minmax(0,1fr)]"><aside className="hidden min-w-0 border-r pr-4 @3xl:block">{list}</aside>{file ? <ReportPreview name={file.file.original_filename} rule={file.audit?.rule.title || '—'} reference={reference} report={report} ready={ready} issue={issue} adapter={adapter}>{reference && report && <div className="space-y-2">{report.generation_request?.state === 'pending' ? <><p role="status">{report.generation_request.reason}</p><p className="break-all text-xs text-muted-foreground">生成请求：{report.generation_request.request_id}</p><Button variant="outline" disabled={actions.busy.includes(reference.report_id)} onClick={() => void actions.read(reference)}>读取生成结果</Button></> : report.state === 'failed' && <><Button variant="outline" disabled={!adapter || !report.regenerate_allowed || actions.busy.includes(reference.report_id)} onClick={() => void actions.regenerate(reference)}>重生成同一结果</Button><p className="text-xs text-muted-foreground">{report.regenerate_reason || '服务未提供重生成许可；未推定收费政策。'}</p></>}</div>}</ReportPreview> : <p>{rows.length ? '所选报告不在当前任务的冻结范围内。请从文件报告清单选择，不自动打开另一份报告。' : '没有进入审核的文件，未开始审核，也没有报告。'}</p>}</div>
     {shareScope !== null && sharingAdapter && <ReportShareDialog share={task.report_share} contentFor={contentFor} describe={describe} reports={shareScope} adapter={sharingAdapter} actions={sharing} trigger={shareTrigger.current} onClose={() => setShareScope(null)}/>}
   </section>

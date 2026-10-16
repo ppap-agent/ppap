@@ -43,12 +43,21 @@ export function reportReady(task: Task, row: TaskFile): boolean {
   const report = row.audit?.report
   return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === `${row.file.original_filename}-审核报告.pdf`)
 }
+export function multipleDistinctReports(reports: components['schemas']['AuditReportReference'][]): boolean {
+  return reports.length >= 2 && reports.every((reference, index) => reports.findIndex(row => sameSnapshot(row, reference)) === index)
+}
 export function packageOutcomeError(job: components['schemas']['AuditReportPackage']): string {
   const outcomes = job.outcomes
   if (outcomes === undefined) return ''
   if (!Array.isArray(outcomes) || outcomes.length !== job.reports.length || job.receipt.state !== 'accepted' || outcomes.some(row => !row || !['pending', 'prepared', 'failed'].includes(row.state) || row.reason !== null && typeof row.reason !== 'string' || row.state === 'failed' && !row.reason?.trim())) return '逐报告状态不完整或缺少有效失败原因。'
   if (outcomes.some(row => job.reports.filter(reference => sameSnapshot(reference, row.reference)).length !== 1) || job.reports.some(reference => outcomes.filter(row => sameSnapshot(reference, row.reference)).length !== 1)) return '逐报告状态与本次固定报告集合不一致。'
   return job.state === 'ready' && outcomes.some(row => row.state !== 'prepared') ? 'ZIP 声称已就绪，但仍有未准备完成的报告。' : ''
+}
+
+/** A task package may use an earlier selection, never another frozen result. */
+export function taskPackageScopeError(task: Task): string {
+  const job = task.report_package
+  return job && (!multipleDistinctReports(job.reports) || job.reports.some(reference => !task.files.some(row => sameSnapshot(reportReference(task, row), reference)))) ? 'ZIP 引用与当前任务的冻结审核结果不一致。' : ''
 }
 
 /** Build a send payload only for the selected frozen, ready artifacts. */

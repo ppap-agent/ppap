@@ -1,12 +1,11 @@
 import {useEffect, useRef, useState} from 'react'
 import type {components} from '../generated/openapi'
-import {sameSnapshot, reportReference, packageOutcomeError} from './result-projection'
+import {sameSnapshot, reportReference, packageOutcomeError, taskPackageScopeError, multipleDistinctReports} from './result-projection'
 import type {AuditReportAdapter, AuditReportReference, AuditReportPackage} from './report-contract'
 
 type Task = components['schemas']['AuditTask']
 type Report = components['schemas']['AuditFileReport']
 type ReportItem = {reference: AuditReportReference; report: Report}
-const multipleDistinctReports = (reports: AuditReportReference[]) => reports.length >= 2 && reports.every((reference, index) => reports.findIndex(row => sameSnapshot(row, reference)) === index)
 
 /** Report operations accept fixed references, not ownership of a private task. */
 export function useReportGeneration(items: ReportItem[], onChange: (reference: AuditReportReference, report: Report) => void, adapter?: AuditReportAdapter) {
@@ -43,14 +42,14 @@ export function useReportGeneration(items: ReportItem[], onChange: (reference: A
   return {busy, regenerate: (reference: AuditReportReference) => run(reference, false), read: (reference: AuditReportReference) => run(reference, true)}
 }
 
-export function useReportPackage(job: AuditReportPackage | null | undefined, onChange: (job: AuditReportPackage) => void, eligible: (reference: AuditReportReference) => boolean, adapter?: AuditReportAdapter) {
+export function useReportPackage(job: AuditReportPackage | null | undefined, onChange: (job: AuditReportPackage) => void, eligible: (reference: AuditReportReference) => boolean, adapter?: AuditReportAdapter, scopeError = '') {
   const current = useRef(job), alive = useRef(true), pending = useRef(false)
   current.current = job
   const [packageBusy, setPackageBusy] = useState(false)
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
   function commit(next: AuditReportPackage) {if (alive.current) {current.current = next; onChange(next)}}
   function canCreatePackage(reports: AuditReportReference[]) {
-    if (!adapter || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
+    if (scopeError || !adapter || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
     const previous = current.current
     if (!previous) return true
     if (packageOutcomeError(previous) || previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state)) return false
@@ -58,7 +57,7 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
     return !(sameCollection && previous.state === 'failed' && previous.receipt.state !== 'rejected' && !previous.retry_allowed)
   }
   async function run(readOnly: boolean, reports?: AuditReportReference[]) {
-    if (!adapter || pending.current) return
+    if (scopeError || !adapter || pending.current) return
     const previous = current.current
     if (readOnly ? !previous : !canCreatePackage(reports || [])) return
     const references = structuredClone(readOnly ? previous!.reports : reports || [])
@@ -88,6 +87,6 @@ export function useReportActions(task: Task, onChange: (task: Task) => void, ada
     const next = {...latest, files: latest.files.map(row => sameSnapshot(reportReference(latest, row), reference) && row.audit ? {...row, audit: {...row.audit, report}} : row)}
     current.current = next; onChange(next)
   }, adapter)
-  const packaging = useReportPackage(task.report_package, job => {const next = {...current.current, report_package: job}; current.current = next; onChange(next)}, reference => current.current.files.some(row => sameSnapshot(reportReference(current.current, row), reference)), adapter)
+  const packaging = useReportPackage(task.report_package, job => {const next = {...current.current, report_package: job}; current.current = next; onChange(next)}, reference => current.current.files.some(row => sameSnapshot(reportReference(current.current, row), reference)), adapter, taskPackageScopeError(task))
   return {...generation, ...packaging}
 }
