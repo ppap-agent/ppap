@@ -30,20 +30,20 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
       if (scopeEpoch.current !== run) return
       if (!validTemplateShareScope(next, folder)) throw new Error('template_share_scope_mismatch')
       setScope(next)
-    }).catch(() => {if (scopeEpoch.current === run) setError('无法核对完整客户模板集合。未使用当前搜索页或其他客户文件替代。')}).finally(() => {if (scopeEpoch.current === run) setLoading(false)})
+    }).catch(() => {if (scopeEpoch.current === run) setError('暂时无法读取完整模板清单，请重试。')}).finally(() => {if (scopeEpoch.current === run) setLoading(false)})
     return () => {scopeEpoch.current += 1}
   }, [open, reload])
   useEffect(() => {
     const run = ++zipEpoch.current
     if (!open || !scope || mode !== 'zip' || zip || job) {setPreparing(false); return}
-    if (scope.zip_access.state !== 'allowed' || scope.templates.some(row => row.share_access.state !== 'allowed' || row.download_access.state !== 'allowed')) {setZipError('服务未允许分享完整模板副本，不缩小为部分文件。'); return}
+    if (scope.zip_access.state !== 'allowed' || scope.templates.some(row => row.share_access.state !== 'allowed' || row.download_access.state !== 'allowed')) {setZipError('暂时不能分享全部模板的文件副本。'); return}
     setPreparing(true); setZipError('')
     const fixedFolder = {customer_id: scope.customer_id, folder_id: scope.folder_id, folder_revision: scope.folder_revision, folder_template_count: scope.templates.length}
     void readTemplateZip(templates, fixedFolder).then(({snapshot}) => {
       if (zipEpoch.current !== run) return
       if (!templateShareContent(scope, 'zip', snapshot)) throw new Error('template_share_zip_mismatch')
       setZip(snapshot)
-    }).catch(() => {if (zipEpoch.current === run) setZipError('完整模板包暂不可用。未发送不完整或身份不符的 ZIP。')}).finally(() => {if (zipEpoch.current === run) setPreparing(false)})
+    }).catch(() => {if (zipEpoch.current === run) setZipError('完整模板包暂时无法读取，请重试。')}).finally(() => {if (zipEpoch.current === run) setPreparing(false)})
     return () => {zipEpoch.current += 1}
   }, [open, scope, mode, retryZip])
   const content = scope ? templateShareContent(scope, mode, zip) : null
@@ -52,8 +52,8 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
   return <Dialog open={open} onOpenChange={value => {if (!value) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-2xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected && trigger.getClientRects().length ? trigger : document.getElementById('audit-main'))?.focus()}}>
     <DialogHeader><DialogTitle>分享客户模板</DialogTitle><DialogDescription>分享此客户的全部模板。</DialogDescription></DialogHeader>
     <div className="min-h-0 space-y-4 overflow-y-auto">{loading ? <p role="status">正在核对完整模板集合…</p> : error ? <Alert variant="destructive"><AlertTitle>分享范围未确认</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => setReload(value => value + 1)}>重新读取分享范围</Button></AlertDescription></Alert> : scope && <>
-      <section className="space-y-2" aria-label="固定模板分享范围"><h3 className="font-medium">{scope.customer_name} · 全部 {scope.templates.length} 份模板</h3><p className="break-all text-xs text-muted-foreground">文件夹修订：{job?.request.scope.folder_revision || scope.folder_revision}</p><ItemGroup aria-label="本次分享的模板">{scope.templates.map(row => <Item role="listitem" size="xs" key={row.reference.template_id}><ItemContent className="min-w-0"><FileName name={row.file.original_filename}/>{row.share_access.state !== 'allowed' && <p className="text-xs text-muted-foreground">{row.share_access.reason || '分享权限未确认。'}</p>}</ItemContent></Item>)}</ItemGroup></section>
-      {!job && <Tabs value={mode} onValueChange={value => setMode(value as typeof mode)}><TabsList aria-label="模板交付方式"><TabsTrigger value="link">链接</TabsTrigger><TabsTrigger value="zip">文件副本</TabsTrigger></TabsList><TabsContent value="link"><p>发送链接不自动授予模板或文件夹权限。</p><p className="text-xs text-muted-foreground">接收人打开时仍需组织与对象授权，读取本次固定模板版本，不自动改为最新版。</p></TabsContent><TabsContent value="zip"><p>发送完整 ZIP 副本。后续修改权限不能收回已发送的副本。</p>{preparing ? <p role="status">正在准备完整模板包…</p> : zipError ? <Alert><AlertTitle>模板包未就绪</AlertTitle><AlertDescription>{zipError}<Button variant="outline" onClick={() => setRetryZip(value => value + 1)}>重新准备完整模板包</Button></AlertDescription></Alert> : zip && <p className="break-all text-sm">附件：{zip.filename} · {zip.templates.length} 份模板</p>}</TabsContent></Tabs>}
+      <section className="space-y-2" aria-label="固定模板分享范围"><h3 className="font-medium">{scope.customer_name} · 全部 {scope.templates.length} 份模板</h3><ItemGroup aria-label="本次分享的模板">{scope.templates.map(row => <Item role="listitem" size="xs" key={row.reference.template_id}><ItemContent className="min-w-0"><FileName name={row.file.original_filename}/>{row.share_access.state !== 'allowed' && <p className="text-xs text-muted-foreground">{row.share_access.reason || '分享权限未确认。'}</p>}</ItemContent></Item>)}</ItemGroup></section>
+      {!job && <Tabs value={mode} onValueChange={value => setMode(value as typeof mode)}><TabsList aria-label="模板交付方式"><TabsTrigger value="link">链接</TabsTrigger><TabsTrigger value="zip">文件副本</TabsTrigger></TabsList><TabsContent value="link"><p>发送链接不自动授予模板或文件夹权限。</p><p className="text-xs text-muted-foreground">链接指向本次分享的版本，不自动更新。</p></TabsContent><TabsContent value="zip"><p>发送完整 ZIP 副本。后续修改权限不能收回已发送的副本。</p>{preparing ? <p role="status">正在准备完整模板包…</p> : zipError ? <Alert><AlertTitle>模板包未就绪</AlertTitle><AlertDescription>{zipError}<Button variant="outline" onClick={() => setRetryZip(value => value + 1)}>重新准备完整模板包</Button></AlertDescription></Alert> : zip && <p className="break-all text-sm">附件：{zip.filename} · {zip.templates.length} 份模板</p>}</TabsContent></Tabs>}
       {job && <p className="text-sm">本次发送：{job.request.content.kind === 'link' ? '固定模板链接；不自动授权' : '完整 ZIP 副本；后续撤权不能收回副本'}</p>}
       {actions.error && <Alert variant="destructive"><AlertTitle>发送回执待核对</AlertTitle><AlertDescription>{actions.error}</AlertDescription></Alert>}
       {job ? <ShareResults job={job} actions={actions} support={{scenario: '客户模板分享', facts: [
