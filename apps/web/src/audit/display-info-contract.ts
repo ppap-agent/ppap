@@ -12,6 +12,9 @@ export const displayFields = [['customer', '客户'], ['model', '车型'], ['par
 export function validDisplayInfo(info: DisplayInfo | null | undefined): info is DisplayInfo {
   return Boolean(info && Number.isSafeInteger(info.revision) && info.revision >= 0 && info.values && Object.keys(info.values).length === 4 && displayFields.every(([key]) => info.values[key] === null || typeof info.values[key] === 'string'))
 }
+export function unconfirmedDisplayAccess(access: File['display_edit_access'], reason: string): NonNullable<File['display_edit_access']> {
+  return access?.state === 'denied' || access?.state === 'deleted' ? access : {state: 'unknown', reason}
+}
 
 /** Display values do not regress; retained values cannot retain old authority. */
 export function reconcileTaskDisplay(previous: Task | null | undefined, next: Task): Task {
@@ -22,8 +25,7 @@ export function reconcileTaskDisplay(previous: Task | null | undefined, next: Ta
     const incoming = file.display_info
     const conflict = validDisplayInfo(incoming) && incoming.revision === known.revision && !sameSnapshot(incoming.values, known.values)
     if (validDisplayInfo(incoming) && incoming.revision >= known.revision && !conflict) return file
-    const access = file.display_edit_access
-    return {...file, display_info: known, display_edit_access: access?.state === 'denied' || access?.state === 'deleted' ? access : {state: 'unknown' as const, reason: conflict ? '同一显示版本的数据不一致，请重新读取后再更正。' : '已保留最近确认的显示信息，编辑许可待重新读取。'}}
+    return {...file, display_info: known, display_edit_access: unconfirmedDisplayAccess(file.display_edit_access, conflict ? '同一显示版本的数据不一致，请重新读取后再更正。' : '已保留最近确认的显示信息，编辑许可待重新读取。')}
   })}
 }
 

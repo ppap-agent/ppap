@@ -35,7 +35,7 @@ import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
 import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
 import {AuditUsage} from './usage'
 import type {AuditUsageAdapter} from './usage-contract'
-import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './display-info-contract'
+import {reconcileTaskDisplay, unconfirmedDisplayAccess, type DisplayInfo, type DisplayReference} from './display-info-contract'
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 
 export type AuditTask = components['schemas']['AuditTask']
@@ -128,7 +128,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   }
   const displayEditor = useDisplayEditor(displayAdapter, task ? [task, ...tasks.filter(row => row.id !== task.id)] : tasks, `${surface}:${task?.id || ''}:${reportView}`, changeDisplay)
   function invalidateDisplayAccess(id: string) {
-    const update = (current: AuditTask): AuditTask => current.id !== id ? current : {...current, files: current.files.map(file => ({...file, display_edit_access: file.display_edit_access?.state === 'denied' || file.display_edit_access?.state === 'deleted' ? file.display_edit_access : {state: 'unknown', reason: '任务读取未完成，编辑许可待重新确认。'}}))}
+    const update = (current: AuditTask): AuditTask => current.id !== id ? current : {...current, files: current.files.map(file => ({...file, display_edit_access: unconfirmedDisplayAccess(file.display_edit_access, '任务读取未完成，编辑许可待重新确认。')}))}
     setTask(current => current ? update(current) : current)
     setTasks(rows => rows.map(update))
   }
