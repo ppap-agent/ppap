@@ -108,6 +108,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     accepted.set(task.id, result)
     taskStore.set(task.id, result)
     if (scene === 'confirm-unknown') throw new Error('preview_response_lost')
+    if (scene === 'confirm-traced') throw Object.assign(new Error('preview_service_unavailable'), {traceId: 'preview-confirm-service-170'})
     return result
   },
   readTask: async (id, requestId) => {
@@ -115,6 +116,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     if (scene === 'restore-auth' && !authenticated) throw Object.assign(new Error('preview_auth_required'), {status: 401})
     if (scene === 'restore-denied') throw Object.assign(new Error('preview_forbidden'), {status: 403})
     if (scene === 'restore-error' && recoveryRead === 1) throw new Error('preview_offline')
+    if (scene === 'restore-traced' && [1, 3].includes(recoveryRead)) throw Object.assign(new Error('preview_task_read_unavailable'), {traceId: `preview-task-read-${recoveryRead}`})
     if (scene === 'restore-display-read-failed' && recoveryRead === 2) throw new Error('preview_display_offline')
     const task = taskStore.get(id)
     if (!task) throw Object.assign(new Error('preview_not_found'), {status: 404})
@@ -203,13 +205,14 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       throw new Error('preview_recognition_reply_lost')
     }
     if (scene === 'recognition-unknown') throw new Error('preview_recognition_reply_lost')
+    if (scene === 'recognition-traced') throw Object.assign(new Error('preview_recognition_unavailable'), {traceId: 'preview-recognition-service-170'})
     return task
   },
   readRecognition: async (taskId, requestId) => {
     const reads = (recognitionReads.get(requestId) || 0) + 1
     recognitionReads.set(requestId, reads)
     const task = recognitionReceipts.get(requestId)
-    return !task || task.id !== taskId || scene === 'recognition-unknown' && reads === 1 ? {task_id: taskId, request_id: requestId, state: 'unknown', input_revision: null, task: null} : {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: task.input_revision!, task: structuredClone(scene === 'recognition-superseded' ? taskStore.get(taskId)! : task)}
+    return !task || task.id !== taskId || ['recognition-unknown', 'recognition-traced'].includes(scene) && reads === 1 ? {task_id: taskId, request_id: requestId, state: 'unknown', input_revision: null, task: null} : {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: task.input_revision!, task: structuredClone(scene === 'recognition-superseded' ? taskStore.get(taskId)! : task)}
   },
   endTask: async task => {
     const current = taskStore.get(task.id)
@@ -369,6 +372,7 @@ function Preview() {
     readTask: async (id, requestId) => {
       const task = taskStore.get(id)
       const result = await adapter.readTask(id, requestId)
+      if (scene === 'confirm-traced' && requestId) return defer('原确认请求回执', result)
       if (scene === 'restore-review-edit-race' && recoveryRead === 2) return defer('保存前的旧复核读取', result)
       if (scene === 'recognition-recovery-current' && recoveryRead === 1) return defer('旧任务恢复读取', result)
       if (scene === 'recognition-progress-removal' && !task?.round_id && !requestId) return defer('其余文件识别结果', result)

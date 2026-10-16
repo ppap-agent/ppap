@@ -103,19 +103,27 @@ const messages: Record<string,string> = {
   deep_not_available: '当前环境不提供深度审核。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
 }
+const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
+export const requestTrace = (cause: unknown) => safeRequestTrace(cause instanceof Error && 'traceId' in cause ? cause.traceId : undefined)
+export function withResponseTrace<T extends Error>(error: T, response: Response): T {
+  const traceId = safeRequestTrace(response.headers.get('X-Request-ID'))
+  if (traceId) Object.assign(error, {traceId})
+  return error
+}
 export async function request<T, B = unknown>(path: string, method = 'GET', body?: B, signal?: AbortSignal): Promise<T> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('当前处于离线状态，请联网后重试。')
   const response = await fetch(apiUrl + path, {method, signal, credentials: 'include', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)})
   const result = await response.json().catch(error => {
     if (signal?.aborted) throw error
-    if (response.ok) throw new TypeError('服务器响应读取失败，请稍后重试。')
+    if (response.ok) throw withResponseTrace(new TypeError('服务器响应读取失败，请稍后重试。'), response)
     return {}
   })
   if (!response.ok) {
-    if (response.status === 401 && result.error === 'unauthenticated' && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-    const error = new Error(messages[result.error] || `请求失败（${response.status}）：${result.error || '请稍后重试'}`)
-    Object.assign(error, {code: result.error, status: response.status})
-    throw error
+    const code = result && typeof result.error === 'string' ? result.error : undefined
+    if (response.status === 401 && code === 'unauthenticated' && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+    const error = new Error(code && messages[code] || `请求失败（${response.status}）：${code || '请稍后重试'}`)
+    Object.assign(error, {code, status: response.status})
+    throw withResponseTrace(error, response)
   }
   return result as T
 }

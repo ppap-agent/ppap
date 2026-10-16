@@ -3,6 +3,7 @@ import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
 import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSupportAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
+import {requestTrace} from '../api.ts'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
@@ -30,6 +31,21 @@ test('native support reads authenticated configuration and only its displayed im
   assert.equal(await image.text(), 'qr-image')
   globalThis.fetch = async () => json({error: 'support_configuration_changed'}, 409)
   await assert.rejects(nativeSupportAdapter.readQr(observed.config_version!))
+})
+
+test('native binary failures carry their own response trace without changing their frozen requests', async () => {
+  const reference = {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a', result_attempt: 2, report_id: 'report-a'}
+  const artifact = {artifact_id: 'artifact-a', filename: 'a.pdf', content_type: 'application/pdf' as const, byte_size: 8}
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'package-a', reports: [reference], receipt: {request_id: 'business-package', state: 'accepted', reason: null}, state: 'ready', artifact: {...artifact, content_type: 'application/zip', filename: 'a.zip'}, reason: null, retry_allowed: false}
+  const reads = [() => nativeSupportAdapter.readQr('config-a'), () => nativeReportAdapter.readPdf!(reference, artifact), () => nativeReportAdapter.readPackageFile!(job)]
+  for (const [index, read] of reads.entries()) {
+    globalThis.fetch = async (_input, init) => {
+      assert.equal(init?.method, 'GET')
+      assert.equal(init?.credentials, 'include')
+      return new Response('unavailable', {status: 503, headers: {'X-Request-ID': `binary-request-${index}`}})
+    }
+    await assert.rejects(read(), cause => requestTrace(cause) === `binary-request-${index}`)
+  }
 })
 
 test('native PDF reads carry the full frozen reference and never create another audit or report', async () => {

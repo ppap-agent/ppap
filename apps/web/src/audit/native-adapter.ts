@@ -1,4 +1,4 @@
-import {apiUrl, readLocalUpload, request, uploadLocalVersion} from '../api.ts'
+import {apiUrl, readLocalUpload, request, uploadLocalVersion, withResponseTrace} from '../api.ts'
 import type {components} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
@@ -12,7 +12,7 @@ export const nativeSupportAdapter: AuditSupportAdapter = {
     const response = await fetch(`${apiUrl}/support/qr?${new URLSearchParams({config_version: configVersion})}`, {method: 'GET', credentials: 'include'})
     if (!response.ok) {
       if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-      throw new Error('服务二维码暂时无法读取，请重新读取服务信息。')
+      throw withResponseTrace(new Error('服务二维码暂时无法读取，请重新读取服务信息。'), response)
     }
     return response.blob()
   },
@@ -40,7 +40,7 @@ export const nativeReportAdapter: AuditReportAdapter = {
     const response = await fetch(`${apiUrl}/audit-report-packages/${encodeURIComponent(job.receipt.request_id)}/zip?${params}`, {method: 'GET', credentials: 'include'})
     if (!response.ok) {
       if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-      throw new Error('ZIP 暂时无法读取。')
+      throw withResponseTrace(new Error('ZIP 暂时无法读取。'), response)
     }
     return response.blob()
   },
@@ -49,7 +49,7 @@ export const nativeReportAdapter: AuditReportAdapter = {
     const response = await fetch(`${apiUrl}/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/pdf?${params}`, {method: 'GET', credentials: 'include'})
     if (!response.ok) {
       if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-      throw new Error('审核报告暂时无法读取。')
+      throw withResponseTrace(new Error('审核报告暂时无法读取。'), response)
     }
     return response.blob()
   },

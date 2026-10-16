@@ -1,4 +1,5 @@
 import {useRef, useState} from 'react'
+import {requestTrace} from '../api'
 import type {components} from '../generated/openapi'
 import {sameFrozenFileInfo, sameSnapshot} from './result-projection'
 
@@ -7,7 +8,7 @@ export type AuditAcceptanceAdapter = {
   confirm: (task: Task, requestId: string) => Promise<Task>
   readTask: (taskId: string, requestId?: string) => Promise<Task>
 }
-type Observation = {requestId: string; phase: 'sending' | 'unknown' | 'reading' | 'accepted' | 'rejected'; message: string}
+type Observation = {requestId: string; phase: 'sending' | 'unknown' | 'reading' | 'accepted' | 'rejected'; message: string; traceId?: string}
 
 function acceptedSnapshot(before: Task, after: Task, requestId: string) {
   if (after.id !== before.id || after.acceptance?.request_id !== requestId || after.acceptance.state !== 'accepted' || !after.round_id || !['reviewing', 'completed'].includes(after.state) || after.analysis_mode !== before.analysis_mode) return false
@@ -30,9 +31,10 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
     const current = operations.current.get(task.id)
     if (readOnly ? current?.phase !== 'unknown' : Boolean(current && current.phase !== 'rejected')) return
     const requestId = readOnly ? current!.requestId : crypto.randomUUID()
+    const trace = readOnly && current!.traceId ? {traceId: current!.traceId} : {}
     if (!readOnly) inputs.current.set(requestId, structuredClone(task))
     const input = inputs.current.get(requestId)!
-    const observation: Observation = {requestId, phase: readOnly ? 'reading' : 'sending', message: ''}
+    const observation: Observation = {requestId, ...trace, phase: readOnly ? 'reading' : 'sending', message: readOnly ? current!.message : ''}
     remember(task.id, observation)
     try {
       const next = await (readOnly ? adapter.readTask(input.id, requestId) : adapter.confirm(structuredClone(input), requestId))
@@ -42,10 +44,11 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
       } else if (next.id === task.id && next.state === 'pending_confirm' && !next.round_id && next.acceptance?.request_id === requestId && next.acceptance.state === 'rejected') {
         remember(task.id, {requestId, phase: 'rejected', message: next.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
       } else {
-        remember(task.id, {requestId, phase: 'unknown', message: '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
+        remember(task.id, {requestId, ...trace, phase: 'unknown', message: '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
       }
-    } catch {
-      if (operations.current.get(task.id) === observation) remember(task.id, {requestId, phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
+    } catch (failure) {
+      const traceId = requestTrace(failure) || trace.traceId
+      if (operations.current.get(task.id) === observation) remember(task.id, {requestId, ...(traceId ? {traceId} : {}), phase: 'unknown', message: '未取得受理回执。审核可能已经开始；请读取受理结果，不要重复确认。'})
     }
   }
   function suspend(taskId: string) {

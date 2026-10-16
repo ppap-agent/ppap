@@ -31,6 +31,28 @@ test('a lost recognition reply retains its input and can only read the original 
   assert.equal(recognition.get('draft-a')!.phase, 'accepted')
 })
 
+test('recognition keeps a service trace with its own unresolved request and clears it after recovery', async () => {
+  let reads = 0
+  const recognition = createTaskRecognition({
+    match: async (_files, _mode, customer) => {throw customer === 'A' ? Object.assign(new Error('unavailable'), {traceId: 'recognition-service-a'}) : new TypeError('offline')},
+    readRecognition: async (taskId, requestId) => ++reads === 1 ? {task_id: taskId, request_id: requestId, state: 'unknown', input_revision: null, task: null} : {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: {...task(requestId), customer_preference: 'A'}},
+  }, () => {})
+  await recognition.start('draft-a', {...input(), customer: 'A'})
+  const failed = recognition.get('draft-a')!
+  assert.equal(failed.phase, 'unknown')
+  assert.equal(failed.traceId, 'recognition-service-a')
+  assert.notEqual(failed.requestId, 'recognition-service-a')
+  await recognition.start('draft-b', input())
+  assert.equal('traceId' in recognition.get('draft-b')!, false)
+  await recognition.read('draft-a')
+  assert.equal(recognition.get('draft-a')!.traceId, 'recognition-service-a')
+  assert.equal(recognition.get('draft-a')!.requestId, failed.requestId)
+  await recognition.read('draft-a')
+  assert.equal(recognition.get('draft-a')!.phase, 'accepted')
+  assert.equal('traceId' in recognition.get('draft-a')!, false)
+  assert.equal(recognition.get('draft-b')!.phase, 'unknown')
+})
+
 test('an accepted receipt cannot replace the submitted file snapshot', async () => {
   const accepted: Task[] = []
   const recognition = createTaskRecognition({

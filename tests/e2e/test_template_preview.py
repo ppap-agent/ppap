@@ -383,7 +383,7 @@ class TemplatePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="联系我们", exact=True).click()
             dialog = page.get_by_role("dialog", name="联系我们", exact=True)
             expect(dialog.get_by_text("服务信息暂不可用", exact=True)).to_be_visible()
-            expect(dialog.get_by_role("textbox", name="参考编号", exact=True)).to_have_value(re.compile(r"^[a-zA-Z0-9-]+$"))
+            expect(dialog.get_by_role("textbox", name="页面参考编号", exact=True)).to_have_value(re.compile(r"^client-[a-zA-Z0-9-]+$"))
             dialog.get_by_role("button", name="关闭", exact=True).click()
             expect(page.get_by_text("保留草稿.xlsx", exact=True).first).to_be_visible()
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
-import {apiUrl, connect, deepOffered, feishuAppId, profile, readLocalUpload, request, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
+import {apiUrl, connect, deepOffered, feishuAppId, profile, readLocalUpload, request, requestTrace, upload, uploadLocalVersion, UploadResultUnknown, type Material} from './api.ts'
 
 const originalFetch = globalThis.fetch
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
@@ -73,6 +73,56 @@ test('product requests send cookies and no custom token header', async () => {
   assert.equal(me.display_name, 'alice')
   assert.equal(calls.length, 1)
   assert.equal(calls[0]?.init?.method, 'GET')
+})
+
+test('a failed product request preserves the server request identifier separately from its business request', async () => {
+  installFetch(() => new Response(JSON.stringify({error: 'access_denied'}), {status: 403, headers: {'Content-Type': 'application/json', 'X-Request-ID': 'server-request.2026-170'}}))
+  await assert.rejects(request('/audit-tasks/task/confirm', 'POST', {request_id: 'business-request'}), error => {
+    assert.ok(error instanceof Error)
+    assert.equal(error.message, '没有访问这份资料的权限。')
+    assert.equal((error as Error & {traceId?: string}).traceId, 'server-request.2026-170')
+    assert.equal('requestId' in error, false)
+    return true
+  })
+})
+
+test('an unreadable successful response retains its request identifier without pretending the operation failed', async () => {
+  installFetch(() => new Response('not-json', {status: 200, headers: {'X-Request-ID': 'server-unreadable-170'}}))
+  await assert.rejects(request('/audit-tasks/task/confirm', 'POST', {request_id: 'business-request'}), error => {
+    assert.ok(error instanceof TypeError)
+    assert.equal((error as Error & {traceId?: string}).traceId, 'server-unreadable-170')
+    assert.equal('status' in error, false)
+    return true
+  })
+})
+
+test('a failure without a JSON error object still carries the response trace', async () => {
+  installFetch(() => new Response('null', {status: 503, headers: {'Content-Type': 'application/json', 'X-Request-ID': 'server-no-error-object'}}))
+  await assert.rejects(request('/audit-tasks/task'), error => requestTrace(error) === 'server-no-error-object')
+})
+
+test('non-JSON failures retain only a bounded server identifier and later requests do not inherit it', async () => {
+  installFetch(() => new Response('gateway error', {status: 503, headers: {'X-Request-ID': 'server-gateway-170'}}))
+  await assert.rejects(request('/audit-tasks/task'), error => requestTrace(error) === 'server-gateway-170')
+  for (const traceId of ['', 'short', 'contains secret/value', 'x'.repeat(129)]) {
+    installFetch(() => new Response('gateway error', {status: 503, headers: traceId ? {'X-Request-ID': traceId} : {}}))
+    await assert.rejects(request('/audit-tasks/task'), error => {
+      assert.ok(error instanceof Error)
+      assert.equal('traceId' in error, false)
+      return true
+    })
+  }
+  installFetch(() => {throw new TypeError('network unavailable')})
+  await assert.rejects(request('/audit-tasks/task'), error => requestTrace(error) === undefined)
+})
+
+test('offline requests have no service trace and do not send a request', async () => {
+  const calls = installFetch(() => {throw new Error('must not send')})
+  Object.defineProperty(globalThis, 'navigator', {value: {onLine: false}, configurable: true})
+  try {
+    await assert.rejects(request('/audit-tasks/task'), error => error instanceof Error && error.message.includes('离线') && requestTrace(error) === undefined)
+    assert.deepEqual(calls, [])
+  } finally {Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})}
 })
 
 test('local upload fixes the request and file hash before sending bytes', async () => {
