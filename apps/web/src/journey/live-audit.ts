@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState, type SetStateAction} from 'react'
-import {deepOffered, request, type Draft, type DraftSaveRequest, type Material, type Round, type QuotaEstimate} from '../api'
+import {deepOffered, request, type Draft, type Material, type Round, type QuotaEstimate} from '../api'
+import {submitFrozenRound} from '../audit/frozen-round'
 import {useAccess} from './access'
 import {acceptanceKey, draftPlan, message, readAcceptance, sameAcceptedPlan, useRemote} from './remote'
 import type {CheckPlan, CheckPreparationState, CheckRequest} from './check-preparation-state'
@@ -53,10 +54,13 @@ export function useLiveAudit({id, registration, items, state, plan, onChange, re
       localStorage.setItem(key, JSON.stringify({key: idempotency, plan: requestedPlan}))
       const checking = {...current.state, request: record}
       onChange(checking)
-      const body: DraftSaveRequest = {analysis_mode: current.state.mode, items: selected.map(item => ({file_version_id: item.file_version_id, role: item.role, rule_version_id: item.role === 'target' ? item.rule_version_id : null})), case_context: {registration: JSON.stringify({...current.registration, check: checking})}}
-      await request<Draft>(`/drafts/${id}`, 'PUT', body)
-      const round = await request<Round>(`/drafts/${id}/accept`, 'POST', {idempotency_key: idempotency})
-      if (!sameAcceptedPlan(round, id, requestedPlan)) throw new Error('受理回执与本次方案不同，请核对原请求。')
+      const round = await submitFrozenRound({
+        draftId: id, items: selected, analysisMode: current.state.mode, idempotencyKey: idempotency,
+        caseContext: {registration: JSON.stringify({...current.registration, check: checking})},
+      }, {
+        saveDraft: (draftId, body) => request<Draft>(`/drafts/${draftId}`, 'PUT', body),
+        acceptDraft: (draftId, key) => request<Round>(`/drafts/${draftId}/accept`, 'POST', {idempotency_key: key}),
+      })
       accepted(round, record)
     } catch (cause) {
       setError(message(cause))
