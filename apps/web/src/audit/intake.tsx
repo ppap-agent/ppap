@@ -173,6 +173,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
   }
   function restoreAddress() {
     setFeedbackOpen(false)
+    setSupportOpen(false)
     const params = new URL(location.href).searchParams, view = params.get('view')
     if (view === 'archive' || view === 'templates' || view === 'usage') {
       surfaceRef.current = view; setSurface(view)

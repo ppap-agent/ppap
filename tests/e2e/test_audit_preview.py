@@ -365,6 +365,40 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("审核异常，没有通过总结。", exact=True)).to_be_visible()
             browser.close()
 
+    def test_allowed_history_source_task_returns_to_the_same_selected_history(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-task-allowed&view=archive")
+            row = page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001"))
+            row.get_by_role("button", name="查看审核记录", exact=True).click()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            history_url = page.url
+            expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="打开来源任务", exact=True).click()
+            expect(page).to_have_url(re.compile("task=preview-archive-task-A001-2"))
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="控制计划.xlsx PASS 2/2 项 · 报告已就绪", exact=True).click()
+            expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
+            page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).first.click()
+            original = page.get_by_role("region", name="原件预览", exact=True)
+            expect(original.get_by_text("冻结版本：preview-archive-task-A001-2-version-1", exact=True)).to_be_visible()
+            page.get_by_role("button", name="报告中心", exact=True).click()
+            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
+            report = page.get_by_role("region", name="当前报告", exact=True)
+            expect(report.get_by_text("冻结文件：preview-archive-task-A001-2-version-1", exact=False)).to_be_visible()
+            expect(report.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.go_back()
+            expect(page).to_have_url(history_url)
+            expect(page.get_by_role("heading", name="历史审核", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="选择第 2 次审核", exact=True)).to_have_attribute("aria-pressed", "true")
+            expect(page.get_by_text("原件修订：Rev B", exact=True)).to_be_visible()
+            page.get_by_role("button", name="核对 控制计划.xlsx", exact=True).first.click()
+            expect(original.get_by_text("冻结版本：preview-archive-task-A001-2-version-1", exact=True)).to_be_visible()
+            expect(original.get_by_text("冻结版本：preview-archive-task-A001-3-version-1", exact=True)).to_have_count(0)
+            browser.close()
+
     def test_archive_history_uses_selected_round_original_without_opening_private_task(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
