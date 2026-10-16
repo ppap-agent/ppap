@@ -726,6 +726,49 @@ class AuditReportPackage(TypedDict):
     retry_allowed: bool
 
 
+class AuditFileDisplayValues(TypedDict):
+    """Complete display snapshot; null clears a value, part is the part name."""
+
+    customer: str | None
+    model: str | None
+    part_number: str | None
+    part: str | None
+
+
+class AuditFileDisplayInfo(TypedDict):
+    """Revisioned display correction, never a replacement for frozen metadata."""
+
+    revision: int
+    values: AuditFileDisplayValues
+
+
+class AuditFileDisplayReference(TypedDict):
+    task_id: str
+    round_id: str
+    file_version_id: str
+
+
+class AuditFileDisplayRequest(TypedDict):
+    request_id: str
+    reference: AuditFileDisplayReference
+    expected_revision: int
+    values: AuditFileDisplayValues
+
+
+class AuditFileDisplayReceipt(TypedDict):
+    """Only rejected/conflict prove no write; unknown retains the request.
+
+    A saved receipt contains that request's next revision, not the latest Task.
+    A conflict contains the current display snapshot for explicit reconciliation.
+    No receipt grants current editing permission.
+    """
+
+    request: AuditFileDisplayRequest
+    state: Literal["pending", "saved", "rejected", "conflict", "unknown"]
+    info: AuditFileDisplayInfo | None
+    reason: str | None
+
+
 class AuditTaskFile(TypedDict):
     file: FileVersion
     selection: Literal["selected", "unselected", "removed"]
@@ -733,6 +776,8 @@ class AuditTaskFile(TypedDict):
     validation: AuditFileValidation
     match: AuditRuleMatch | None
     audit: NotRequired[AuditFileReview | None]
+    display_info: NotRequired[AuditFileDisplayInfo | None]
+    display_edit_access: NotRequired[AuditArchiveAccess]
 
 
 class AuditShareTargetReference(TypedDict):
@@ -1207,6 +1252,7 @@ def add_ui_contract(app: FastAPI) -> None:
         definitions = {}
         for contract in (
             AuditTask,
+            AuditFileDisplayReceipt,
             AuditUploadItem,
             AuditReportUpdate,
             AuditShareTargetsPage,

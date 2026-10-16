@@ -1102,6 +1102,66 @@ export interface components {
              */
             rendition: "original" | "derived";
         };
+        /**
+         * AuditFileDisplayInfo
+         * @description Revisioned display correction, never a replacement for frozen metadata.
+         */
+        AuditFileDisplayInfo: {
+            /** Revision */
+            revision: number;
+            values: components["schemas"]["AuditFileDisplayValues"];
+        };
+        /**
+         * AuditFileDisplayReceipt
+         * @description Only rejected/conflict prove no write; unknown retains the request.
+         *
+         *     A saved receipt contains that request's next revision, not the latest Task.
+         *     A conflict contains the current display snapshot for explicit reconciliation.
+         *     No receipt grants current editing permission.
+         */
+        AuditFileDisplayReceipt: {
+            info: components["schemas"]["AuditFileDisplayInfo"] | null;
+            /** Reason */
+            reason: string | null;
+            request: components["schemas"]["AuditFileDisplayRequest"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "saved" | "rejected" | "conflict" | "unknown";
+        };
+        /** AuditFileDisplayReference */
+        AuditFileDisplayReference: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Round Id */
+            round_id: string;
+            /** Task Id */
+            task_id: string;
+        };
+        /** AuditFileDisplayRequest */
+        AuditFileDisplayRequest: {
+            /** Expected Revision */
+            expected_revision: number;
+            reference: components["schemas"]["AuditFileDisplayReference"];
+            /** Request Id */
+            request_id: string;
+            values: components["schemas"]["AuditFileDisplayValues"];
+        };
+        /**
+         * AuditFileDisplayValues
+         * @description Complete display snapshot; null clears a value, part is the part name.
+         */
+        AuditFileDisplayValues: {
+            /** Customer */
+            customer: string | null;
+            /** Model */
+            model: string | null;
+            /** Part */
+            part: string | null;
+            /** Part Number */
+            part_number: string | null;
+        };
         /** AuditFileReport */
         AuditFileReport: {
             artifact?: components["schemas"]["AuditReportArtifact"] | null;
@@ -1497,6 +1557,8 @@ export interface components {
         /** AuditTaskFile */
         AuditTaskFile: {
             audit?: components["schemas"]["AuditFileReview"] | null;
+            display_edit_access?: components["schemas"]["AuditArchiveAccess"];
+            display_info?: components["schemas"]["AuditFileDisplayInfo"] | null;
             file: components["schemas"]["FileVersion"];
             match: components["schemas"]["AuditRuleMatch"] | null;
             /** Removal Reason */

@@ -17,6 +17,8 @@ import {fixtureUsage} from './audit-usage'
 import {FixtureRemoteOriginal, fixtureOriginalFile} from './audit-original'
 import type {RemoteOriginalSource} from '../src/journey/remote-source'
 import {fixtureSupport} from './audit-support'
+import {displayReadFixture, fixtureDisplay} from './audit-display'
+import {fileDisplayValues} from '../src/audit/display-info-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -42,6 +44,7 @@ let driveReads = 0
 const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
+const displayAdapter = fixtureDisplay(taskStore, scene)
 const reportAdapter = fixtureReports(taskStore, scene)
 const sharingAdapter = fixtureSharing(taskStore, scene)
 const templateSharingAdapter = fixtureTemplateSharing(templateAdapter, sharingAdapter, scene)
@@ -97,6 +100,7 @@ const adapter: AuditIntakeAdapter = {
     if (scene === 'restore-auth' && !authenticated) throw Object.assign(new Error('preview_auth_required'), {status: 401})
     if (scene === 'restore-denied') throw Object.assign(new Error('preview_forbidden'), {status: 403})
     if (scene === 'restore-error' && recoveryRead === 1) throw new Error('preview_offline')
+    if (scene === 'restore-display-read-failed' && recoveryRead === 2) throw new Error('preview_display_offline')
     const task = taskStore.get(id)
     if (!task) throw Object.assign(new Error('preview_not_found'), {status: 404})
     if (scene === 'restore-observe-regression' && recoveryRead === 2) return fixtureAcceptance(task, task.acceptance!.request_id)
@@ -171,6 +175,7 @@ const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, p
   taskStore.delete(matched.id)
   const seed = {...matched, id, number: `PPAP-历史示例-${sequence}`, files: matched.files.map((row, index) => ({...row, file: {...row.file, file_id: `${id}-file-${index}`, id: `${id}-version-${index}`}, match: row.match ? {...row.match, metadata: {...row.match.metadata, model: `第 ${sequence} 次车型`, part_number: `P-204-${sequence}`, part: sequence === 2 ? '旧版尾门导流板' : '尾门导流板'}} : null}))}
   const accepted = fixtureAcceptance(seed, `${id}-accept`)
+  if (scene === 'archive-display') accepted.files = accepted.files.map(file => ({...file, display_info: {revision: 1, values: {...fileDisplayValues(file), customer: `第 ${sequence} 次显示客户`}}}))
   return pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
 }, sharingAdapter.forReport)
 const usageAdapter = fixtureUsage(archiveAdapter, scene)
@@ -182,7 +187,8 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   taskStore.delete(matched.id)
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene.startsWith('reports-') ? fixtureResults(frozen, scene) : frozen
+  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  if (scene.startsWith('restore-display-')) snapshot.files = snapshot.files.map(file => ({...file, display_info: {revision: 0, values: fileDisplayValues(file)}, display_edit_access: {state: 'allowed', reason: null}}))
   if (scene.startsWith('restore-estimate')) {
     const now = Date.now(), time = (minutes: number) => new Date(now + minutes * 60000).toISOString()
     snapshot.completion_estimate = {observed_at: time(0), earliest_at: time(10), latest_at: time(20)}
@@ -255,7 +261,7 @@ function Preview() {
       const result = await adapter.readTask(id, requestId)
       if (automaticObservation && (recoveryRead > 1 || scene === 'observe-matching')) return defer(`任务观察 · ${id} · 读取 ${scene === 'observe-matching' ? recoveryRead : recoveryRead - 1}`, result)
       if (scene === 'restore-race' && recoveryRead === 2 && task) return defer(`旧结果 · ${id}`, task)
-      return scene === 'matching' && !task?.round_id && !requestId ? defer(`识别结果 · ${task?.number}`, result) : scene === 'audit-loading' && (task?.round_id || result.round_id) ? defer(`审核结果 · ${task?.number}`, result) : scene === 'restore-loading' && recoveryRead === 1 ? defer(`恢复任务 · ${id}`, result) : result
+      return scene === 'matching' && !task?.round_id && !requestId ? defer(`识别结果 · ${task?.number}`, result) : scene === 'audit-loading' && (task?.round_id || result.round_id) ? defer(`审核结果 · ${task?.number}`, result) : scene === 'restore-loading' && recoveryRead === 1 ? defer(`恢复任务 · ${id}`, result) : displayReadFixture(result, scene)
     },
   }
   const controlledReports = useMemo(() => ({...reportAdapter,
@@ -268,6 +274,10 @@ function Preview() {
       return scene === 'reports-generate-race' ? defer(`报告生成回执 · ${args[0].file_version_id}`, result) : result
     },
   }), [defer])
+  const controlledDisplay = useMemo(() => ({...displayAdapter, save: async (...args: Parameters<typeof displayAdapter.save>) => {
+    const result = await displayAdapter.save(...args)
+    return scene === 'restore-display-loading' || scene === 'restore-display-denied' ? defer(`显示保存回执 · ${args[0].reference.file_version_id}`, structuredClone(result)) : result
+  }}), [defer])
   const controlledArchive = useMemo(() => ({...archiveAdapter,
     readHistory: async (...args: Parameters<typeof archiveAdapter.readHistory>) => {
       const result = await archiveAdapter.readHistory(...args)
@@ -324,6 +334,6 @@ function Preview() {
     return scene === 'support-loading' ? defer('服务配置', result) : result
   }} : undefined, [defer])
   return <>{(automaticObservation || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
-    <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
+    <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

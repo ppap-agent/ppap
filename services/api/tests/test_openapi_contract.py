@@ -61,6 +61,27 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_display_corrections_are_separate_from_frozen_metadata_and_bind_the_original_request(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
+        values = schemas["AuditFileDisplayValues"]
+        self.assertEqual(set(values["required"]), {"customer", "model", "part_number", "part"})
+        self.assertEqual(set(values["properties"]), set(values["required"]))
+        reference = schemas["AuditFileDisplayReference"]
+        self.assertEqual(set(reference["required"]), {"task_id", "round_id", "file_version_id"})
+        request = schemas["AuditFileDisplayRequest"]
+        self.assertEqual(set(request["required"]), {"request_id", "reference", "expected_revision", "values"})
+        receipt = schemas["AuditFileDisplayReceipt"]
+        self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "saved", "rejected", "conflict", "unknown"])
+        self.assertEqual(set(receipt["required"]), {"request", "state", "info", "reason"})
+        self.assertEqual(receipt["x-contract-stage"], "ui-draft")
+        file = schemas["AuditTaskFile"]
+        self.assertIn("display_info", file["properties"])
+        self.assertNotIn("display_info", file["required"])
+        self.assertIn("display_edit_access", file["properties"])
+        self.assertNotIn("display_info", schemas["AuditRuleMatch"]["properties"])
+        self.assertNotIn("AuditFileDisplayRequest", str(spec["paths"]))
+
     def test_ui_completion_estimate_is_an_optional_service_interval_separate_from_counts(self):
         schemas = app.openapi()["components"]["schemas"]
         estimate = schemas["AuditCompletionEstimate"]

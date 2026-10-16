@@ -35,6 +35,8 @@ import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
 import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
 import {AuditUsage} from './usage'
 import type {AuditUsageAdapter} from './usage-contract'
+import {reconcileTaskDisplay, type DisplayInfo, type DisplayReference} from './display-info-contract'
+import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -50,7 +52,7 @@ const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 
 type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: 'upload' | 'check' | 'match'}
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
-export function AuditIntake({adapter, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter}: {adapter: AuditIntakeAdapter; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter}) {
+export function AuditIntake({adapter, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter, displayAdapter}: {adapter: AuditIntakeAdapter; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter; displayAdapter?: AuditDisplayAdapter}) {
   const [surface, setSurface] = useState<'audit' | 'archive' | 'templates' | 'usage'>(() => {const view = new URL(location.href).searchParams.get('view'); return view === 'archive' || view === 'templates' || view === 'usage' ? view : 'audit'})
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
@@ -69,6 +71,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const [customer, setCustomer] = useState('auto')
   const [task, setTask] = useState<AuditTask | null>(null)
   const [tasks, setTasks] = useState<AuditTask[]>([])
+  const latestTasks = useRef(tasks); latestTasks.current = tasks
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const [sheet, setSheet] = useState(false)
   const [reportView, setReportView] = useState(() => new URL(location.href).searchParams.has('report'))
@@ -107,10 +110,27 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const noMatches = Boolean(task?.state === 'pending_confirm' && !matched.length && task.files.every(row => row.selection !== 'selected' || row.match?.state === 'unmatched'))
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
   function saveTask(next: AuditTask, {activate = false, preserveNotification = false} = {}) {
-    const merge = (current?: AuditTask | null) => preserveNotification && current?.id === next.id && current.notification_enabled !== undefined ? {...next, notification_enabled: current.notification_enabled} : next
+    const merge = (current?: AuditTask | null) => {
+      const combined = reconcileTaskDisplay(current?.id === next.id ? current : latestTasks.current.find(row => row.id === next.id), next)
+      return preserveNotification && current?.id === next.id && current.notification_enabled !== undefined ? {...combined, notification_enabled: current.notification_enabled} : combined
+    }
     if (activate) activeTaskId.current = next.id
     setTask(current => activate || current?.id === next.id ? merge(current) : current)
     setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? merge(row) : row) : [...rows, next])
+  }
+  function changeDisplay(reference: DisplayReference, info: DisplayInfo) {
+    const update = (current: AuditTask): AuditTask => current.id !== reference.task_id || current.round_id !== reference.round_id ? current : reconcileTaskDisplay(current, {...current, files: current.files.map(file => file.file.id === reference.file_version_id ? {...file, display_info: info} : file)})
+    taskReadEpoch.current.set(reference.task_id, (taskReadEpoch.current.get(reference.task_id) || 0) + 1)
+    taskReads.current.delete(reference.task_id)
+    setReadStatus(rows => ({...rows, [reference.task_id]: {busy: false, error: ''}}))
+    setTask(current => current ? update(current) : current)
+    setTasks(rows => rows.map(update))
+  }
+  const displayEditor = useDisplayEditor(displayAdapter, task ? [task, ...tasks.filter(row => row.id !== task.id)] : tasks, `${surface}:${task?.id || ''}:${reportView}`, changeDisplay)
+  function invalidateDisplayAccess(id: string) {
+    const update = (current: AuditTask): AuditTask => current.id !== id ? current : {...current, files: current.files.map(file => ({...file, display_edit_access: file.display_edit_access?.state === 'denied' || file.display_edit_access?.state === 'deleted' ? file.display_edit_access : {state: 'unknown', reason: '任务读取未完成，编辑许可待重新确认。'}}))}
+    setTask(current => current ? update(current) : current)
+    setTasks(rows => rows.map(update))
   }
   const acceptance = useTaskAcceptance(adapter, next => {
     drafts.current.delete(next.id)
@@ -158,7 +178,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     activeTaskId.current = row.id
     const saved = row.round_id ? undefined : drafts.current.get(row.id)
     if (saved) uploads.restore(saved.uploads)
-    setTask(row); setFiles(structuredClone(saved?.files ?? row.files)); setMode(saved?.mode ?? row.analysis_mode); setCustomer(saved?.customer ?? row.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
+    saveTask(row, {activate: true}); setFiles(structuredClone(saved?.files ?? row.files)); setMode(saved?.mode ?? row.analysis_mode); setCustomer(saved?.customer ?? row.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
     taskAddress(row.id)
   }
   async function recover(id: string, login = false) {
@@ -177,6 +197,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       saveTask(next, {activate: true}); setFiles(structuredClone(saved?.files ?? next.files)); setMode(saved?.mode ?? next.analysis_mode); setCustomer(saved?.customer ?? next.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
     } catch (failure) {
       if (restoreEpoch.current !== epoch) return
+      invalidateDisplayAccess(id)
       const status = failure instanceof Error && 'status' in failure ? failure.status : null
       const state = status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden' : status === 404 ? 'not_found' : 'error'
       setRecovery({id, state, message: state === 'unauthenticated' ? '登录已失效。恢复登录后，只读取原任务，不会再次受理。' : state === 'forbidden' ? '当前账号无权访问此任务。未扩大文件或任务权限。' : state === 'not_found' ? '未找到此任务。此预览不会持久化临时任务；请使用固定恢复样例。' : '暂时不能恢复任务。未创建新任务，也未重发审核确认。'})
@@ -288,6 +309,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       return true
     } catch (failure) {
       if (taskReadEpoch.current.get(current.id) !== epoch) return null
+      invalidateDisplayAccess(current.id)
       setReadStatus(rows => ({...rows, [current.id]: {busy: false, error: failure instanceof Error && failure.message === 'regressive_progress' ? '收到较早或不完整的审核进度，已保留当前结果。请稍后重新读取。' : '任务结果读取失败，任务与文件仍保留。重新读取不会重新创建任务或开始审核。'}}))
       return false
     } finally {
@@ -344,7 +366,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
         <div hidden={surface !== 'audit'} className="space-y-6">
         {!reportView && <ol aria-label="审核步骤" className="flex flex-wrap gap-4 border-b pb-4">{['上传与检查', '确认规则', 'AI审核'].map((label, index) => <li key={label} aria-current={(workbench ? 2 : step === 'match' ? 1 : 0) === index ? 'step' : undefined} className="flex items-center gap-2"><span className="text-muted-foreground">{index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight className="size-3 text-muted-foreground"/>}</li>)}</ol>}
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取原任务，不创建任务或启动审核。' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
+        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取原任务，不创建任务或启动审核。' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={displayAdapter ? file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file) : undefined}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
         <header className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">{step === 'upload' ? '上传 PPAP 文件' : step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1><p className="text-muted-foreground">{step === 'match' ? '分别核对每份文件匹配的规则。未匹配文件不会进入审核。' : '先选择收到的文件，再核对可审核范围。不需要填写额外的事项表单。'}</p></header>
         {step !== 'match' && <div className="flex flex-wrap items-end justify-between gap-4"><div className="flex flex-wrap items-end gap-2"><div className="grid gap-2"><Label htmlFor="audit-customer">客户（可选）</Label><Select value={customer} onValueChange={setCustomer}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别客户</SelectItem><SelectItem value="sample-customer">示例客户</SelectItem></SelectContent></Select></div><Button variant="ghost" onClick={() => showSurface('templates')}>查看客户模板</Button><Button variant="ghost" onClick={openFeedback}>补充模板</Button></div>{step === 'check' && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}</div>}
         <input ref={input} type="file" className="sr-only" aria-label="选择审核文件" multiple accept=".xlsx,.xls,.xlsm,.doc,.docx,.pdf" onChange={event => {receive(Array.from(event.target.files || [])); event.target.value = ''}}/>
@@ -372,6 +394,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
         {files.some(row => row.selection === 'removed') && <section className="space-y-3 border-t pt-5"><h2 className="font-semibold">已移除文件</h2>{files.filter(row => row.selection === 'removed').map(row => <div key={row.file.id} className="space-y-1"><FileName name={row.file.original_filename}/><p className="text-xs text-muted-foreground">{row.removal_reason}</p></div>)}</section>}
         </div>
       </main>
+      {displayEditor.dialog}
     </div>
     {driveOpen && <FeishuPicker source={adapter.drive} onAdd={receiveDrive} onClose={() => setDriveOpen(false)} trigger={driveTrigger.current}/>}
     <TemplateFeedback open={feedbackOpen} onClose={() => setFeedbackOpen(false)} adapter={feedbackAdapter} trigger={feedbackTrigger.current}/>
