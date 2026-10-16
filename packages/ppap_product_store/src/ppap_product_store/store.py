@@ -1266,7 +1266,18 @@ class AuthStore:
             reports, report_updated = self._task_file_reports(conn, principal.tenant_id, task_id, round["id"], round["result_attempt"])
             if report_updated:
                 task["updated_at"] = max(datetime.fromisoformat(task["updated_at"]), report_updated).isoformat()
-            return self._display_projection(conn, principal, task_round_view(task, round, reports))
+            task = self._display_projection(conn, principal, task_round_view(task, round, reports))
+            package = conn.execute(
+                """SELECT r.id, r.payload, GREATEST(r.updated_at, p.updated_at) FROM engine.jobs r
+                JOIN engine.jobs p ON p.id = (r.payload->>'package_id')::uuid
+                WHERE r.kind = 'report_zip_request' AND r.tenant_id = %s AND r.payload->>'task_id' = %s
+                  AND r.payload->>'created_by' = %s ORDER BY r.created_at DESC, r.id DESC LIMIT 1""",
+                (principal.tenant_id, task_id, principal.user_id),
+            ).fetchone()
+            if package:
+                task["report_package"] = self._report_package_public(conn, principal, task, str(package[0]), package[1])
+                task["updated_at"] = max(datetime.fromisoformat(task["updated_at"]), package[2]).isoformat()
+            return task
         return task
 
     def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:
@@ -1936,8 +1947,8 @@ class AuthStore:
                     """,
                     (
                         "succeeded" if outcome == "succeeded" else "failed",
-                        [*FILE_PREPARATION_KINDS, "report_pdf"],
-                        Jsonb(result) if claimed.kind in {*FILE_PREPARATION_KINDS, "report_pdf"} else None,
+                        [*FILE_PREPARATION_KINDS, "report_pdf", "report_zip"],
+                        Jsonb(result) if claimed.kind in {*FILE_PREPARATION_KINDS, "report_pdf", "report_zip"} else None,
                         claimed.id,
                         claimed.attempt,
                         worker_ident,
@@ -2075,21 +2086,26 @@ class AuthStore:
     def write_audit_report(self, claimed: ClaimedJob, body: bytes, generated_at: str) -> dict:
         if claimed.kind != "report_pdf" or not claimed.tenant_id or not body.startswith(b"%PDF-") or not 0 < len(body) <= 64 * 1024 * 1024:
             raise ValueError("invalid_report_pdf")
-        key = f"reports/{claimed.tenant_id}/{claimed.id}/{claimed.attempt}.pdf"
+        suffix = "-审核报告.pdf"
+        filename = original_filename(claimed.payload["report_input"]["filename"])[: 255 - len(suffix)] + suffix
+        return self._write_report_artifact(claimed, body, generated_at, filename, "application/pdf")
+
+    def _write_report_artifact(self, claimed: ClaimedJob, body: bytes, generated_at: str, filename: str, content_type: str) -> dict:
+        extension = "pdf" if content_type == "application/pdf" else "zip"
+        key = f"reports/{claimed.tenant_id}/{claimed.id}/{claimed.attempt}.{extension}"
         digest = sha256_bytes(body)
         try:
-            self.objects.put_exclusive(key, body, "application/pdf")
+            self.objects.put_exclusive(key, body, content_type)
         except ObjectExists:
             pass
         observed = self.objects.get(key)
         if len(observed) != len(body) or sha256_bytes(observed) != digest:
             raise ValueError("report_artifact_conflict")
-        suffix = "-审核报告.pdf"
         return {
             "artifact": {
                 "artifact_id": f"{claimed.id}:{claimed.attempt}",
-                "filename": original_filename(claimed.payload["report_input"]["filename"])[: 255 - len(suffix)] + suffix,
-                "content_type": "application/pdf",
+                "filename": filename,
+                "content_type": content_type,
                 "byte_size": len(body),
             },
             "object_key": key,
@@ -2097,36 +2113,195 @@ class AuthStore:
             "generated_at": generated_at,
         }
 
+    def _report_source(self, conn, principal: Principal, task: dict, reference: dict, artifact_id: str | None = None) -> dict:
+        row = conn.execute("SELECT payload, result, status FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf'", (reference["report_id"], principal.tenant_id)).fetchone()
+        if not row:
+            raise KeyError("missing")
+        payload, result, state = row
+        expected = {
+            "report_id": reference["report_id"],
+            "task_id": payload["task_id"],
+            "round_id": payload["source_round_id"],
+            "file_version_id": payload["source_file_version_id"],
+            "result_attempt": payload["result_attempt"],
+        }
+        file = next((file for file in task["files"] if file["file"]["id"] == expected["file_version_id"] and file.get("audit")), None)
+        if reference != expected or task["id"] != expected["task_id"] or task["round_id"] != expected["round_id"] or file is None or file["audit"]["result_attempt"] != expected["result_attempt"]:
+            raise KeyError("missing")
+        artifact = (result or {}).get("artifact")
+        if artifact and artifact_id is not None and artifact["artifact_id"] != artifact_id:
+            raise KeyError("missing")
+        if state != "succeeded" or not artifact:
+            raise ValueError("report_not_ready")
+        return {
+            "reference": reference,
+            "artifact": artifact,
+            "object_key": result["object_key"],
+            "sha256": result["sha256"],
+            "rule": {key: file["audit"]["rule"][key] for key in ("id", "title")},
+            "generated_at": result["generated_at"],
+        }
+
+    def accept_report_package(self, principal: Principal, body: dict) -> dict:
+        request_id, reports = body.get("request_id"), body.get("reports")
+        if (
+            set(body) != {"request_id", "reports"}
+            or not isinstance(request_id, str)
+            or _as_uuid(request_id) != request_id
+            or not isinstance(reports, list)
+            or not 2 <= len(reports) <= 100
+            or any(
+                not isinstance(reference, dict)
+                or set(reference) != {"task_id", "round_id", "file_version_id", "result_attempt", "report_id"}
+                or any(not isinstance(reference.get(key), str) or _as_uuid(reference[key]) != reference[key] for key in ("task_id", "round_id", "file_version_id", "report_id"))
+                or type(reference.get("result_attempt")) is not int
+                or reference["result_attempt"] < 1
+                for reference in reports
+            )
+            or len({reference["task_id"] for reference in reports}) != 1
+            or len({reference["file_version_id"] for reference in reports}) != len(reports)
+        ):
+            raise ValueError("invalid_report_package")
+        task_id = reports[0]["task_id"]
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("report-package:" + request_id,))
+            task = self._recognition_public(conn, principal, task_id)
+            request = {"created_by": principal.user_id, "task_id": task_id, "reports": reports}
+            existing = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+            if existing:
+                if str(existing[0]) != principal.tenant_id or existing[1] != "report_zip_request" or existing[2].get("created_by") != principal.user_id:
+                    raise KeyError("missing")
+                if {key: existing[2][key] for key in request} != request:
+                    raise ValueError("idempotency_conflict")
+                return self._report_package_public(conn, principal, task, request_id, existing[2])
+            sources = [self._report_source(conn, principal, task, reference) for reference in sorted(reports, key=lambda reference: reference["file_version_id"])]
+            if sum(source["artifact"]["byte_size"] for source in sources) > MAX_UPLOAD_BYTES:
+                raise ValueError("report_package_too_large")
+            frozen = {"created_by": principal.user_id, "task_id": task_id, "sources": sources}
+            fingerprint = sha256_bytes(json.dumps(frozen, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode())
+            package_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-report-zip:{principal.tenant_id}:{fingerprint}"))
+            if request_id == package_id:
+                raise ValueError("idempotency_conflict")
+            conn.execute(
+                """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
+                VALUES (%s, %s, %s, 'report_zip', %s, 'queued') ON CONFLICT (id) DO NOTHING""",
+                (package_id, principal.tenant_id, task["round_id"], Jsonb(frozen)),
+            )
+            canonical = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (package_id,)).fetchone()
+            if not canonical or str(canonical[0]) != principal.tenant_id or canonical[1] != "report_zip" or canonical[2] != frozen:
+                raise ValueError("idempotency_conflict")
+            request["package_id"] = package_id
+            conn.execute(
+                """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
+                VALUES (%s, %s, %s, 'report_zip_request', %s, 'succeeded') ON CONFLICT (id) DO NOTHING""",
+                (request_id, principal.tenant_id, task["round_id"], Jsonb(request)),
+            )
+            receipt = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+            if not receipt or str(receipt[0]) != principal.tenant_id or receipt[1] != "report_zip_request" or receipt[2] != request:
+                raise ValueError("idempotency_conflict")
+            return self._report_package_public(conn, principal, task, request_id, request)
+
+    def _report_package_public(self, conn, principal, task, request_id, request) -> dict:
+        row = conn.execute("SELECT payload, status, result FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip'", (request["package_id"], principal.tenant_id)).fetchone()
+        if not row or request["created_by"] != principal.user_id or row[0]["created_by"] != principal.user_id or row[0]["task_id"] != task["id"]:
+            raise KeyError("missing")
+        frozen, status, result = row
+        for source in frozen["sources"]:
+            self._report_source(conn, principal, task, source["reference"], source["artifact"]["artifact_id"])
+        if sorted(request["reports"], key=lambda reference: reference["file_version_id"]) != [source["reference"] for source in frozen["sources"]]:
+            raise ValueError("report_artifact_conflict")
+        result = result or {}
+        state = {"queued": "pending", "leased": "generating", "succeeded": "ready"}.get(status, "failed")
+        outcomes = result.get("outcomes") or [{"reference": reference, "state": "pending", "reason": None} for reference in request["reports"]]
+        return {
+            "package_id": request["package_id"],
+            "reports": request["reports"],
+            "receipt": {"request_id": request_id, "state": "accepted", "reason": None},
+            "state": state,
+            "outcomes": [next(item for item in outcomes if item["reference"] == reference) for reference in request["reports"]],
+            "artifact": result.get("artifact") if state == "ready" else None,
+            "reason": "ZIP 打包失败；已就绪的 PDF 保留。重打包尚未开放。" if state == "failed" else None,
+            "retry_allowed": False,
+        }
+
+    def get_report_package(self, principal: Principal, request_id: str) -> dict | None:
+        if _as_uuid(request_id) != request_id:
+            raise KeyError("missing")
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            row = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+            if not row:
+                return None
+            if str(row[0]) != principal.tenant_id or row[1] != "report_zip_request" or row[2]["created_by"] != principal.user_id:
+                raise KeyError("missing")
+            task = self._recognition_public(conn, principal, row[2]["task_id"])
+            return self._report_package_public(conn, principal, task, request_id, row[2])
+
+    def build_report_package(self, claimed: ClaimedJob, generated_at: str, cancelled) -> dict:
+        import tempfile
+        from zipfile import ZIP_STORED, ZipFile
+
+        if claimed.kind != "report_zip" or not claimed.tenant_id:
+            raise ValueError("invalid_report_package")
+        outcomes = [{"reference": source["reference"], "state": "pending", "reason": None} for source in claimed.payload["sources"]]
+        manifest: list[dict] = []
+        try:
+            with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as target:
+                with ZipFile(target, "w", compression=ZIP_STORED) as archive:
+                    for index, source in enumerate(claimed.payload["sources"], 1):
+                        if cancelled.is_set():
+                            raise ValueError("report_lease_unknown")
+                        try:
+                            body = self.objects.get(source["object_key"])
+                            if not body.startswith(b"%PDF-") or len(body) != source["artifact"]["byte_size"] or sha256_bytes(body) != source["sha256"]:
+                                raise ValueError("report_artifact_conflict")
+                        except Exception:
+                            outcomes[index - 1] = {"reference": source["reference"], "state": "failed", "reason": "PDF 未能读取或校验，未打入 ZIP。"}
+                            continue
+                        outcomes[index - 1] = {"reference": source["reference"], "state": "prepared", "reason": None}
+                        prefix = f"{index:03d}-"
+                        stem = source["artifact"]["filename"][:-4].encode()[: 255 - len(prefix) - 4].decode("utf-8", "ignore")
+                        name = prefix + stem + ".pdf"
+                        archive.writestr(name, body)
+                        manifest.append({"archive_name": name, "filename": source["artifact"]["filename"], **{key: source[key] for key in ("reference", "rule", "generated_at", "sha256")}})
+                    archive.writestr("报告清单.txt", json.dumps({"reports": manifest}, ensure_ascii=False, indent=2).encode())
+                if any(item["state"] == "failed" for item in outcomes):
+                    return {"outcomes": outcomes, "error": "report_package_source_failed"}
+                target.seek(0)
+                body = target.read(MAX_UPLOAD_BYTES + 1)
+                if len(body) > MAX_UPLOAD_BYTES or cancelled.is_set():
+                    raise ValueError("report_package_unavailable")
+                return {**self._write_report_artifact(claimed, body, generated_at, "审核报告.zip", "application/zip"), "outcomes": outcomes}
+        except Exception:
+            return {"outcomes": outcomes, "error": "report_package_artifact_failed"}
+
+    def report_package_zip(self, principal: Principal, request_id: str, package_id: str, artifact_id: str) -> tuple[dict, bytes]:
+        package = self.get_report_package(principal, request_id)
+        if not package or package["package_id"] != package_id or package["artifact"] and package["artifact"]["artifact_id"] != artifact_id:
+            raise KeyError("missing")
+        if package["state"] != "ready" or not package["artifact"]:
+            raise ValueError("report_not_ready")
+        with self._conn() as conn:
+            row = conn.execute("SELECT result FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip'", (package_id, principal.tenant_id)).fetchone()
+        if not row or row[0]["artifact"] != package["artifact"]:
+            raise ValueError("report_artifact_conflict")
+        body = self.objects.get(row[0]["object_key"])
+        if not body.startswith(b"PK") or len(body) != package["artifact"]["byte_size"] or sha256_bytes(body) != row[0]["sha256"]:
+            raise ValueError("report_artifact_conflict")
+        return package["artifact"], body
+
     def audit_report_pdf(self, principal: Principal, reference: dict, artifact_id: str) -> tuple[dict, bytes]:
         report_id = _as_uuid(reference["report_id"])
-        if report_id is None:
+        if report_id is None or report_id != reference["report_id"]:
             raise KeyError("missing")
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             task = self._recognition_public(conn, principal, reference["task_id"])
-            row = conn.execute("SELECT payload, result, status FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf'", (report_id, principal.tenant_id)).fetchone()
-            if not row:
-                raise KeyError("missing")
-            payload, result, state = row
-            expected = {
-                "report_id": report_id,
-                "task_id": payload["task_id"],
-                "round_id": payload["source_round_id"],
-                "file_version_id": payload["source_file_version_id"],
-                "result_attempt": payload["result_attempt"],
-            }
-            file = next((file for file in task["files"] if file["file"]["id"] == expected["file_version_id"] and file.get("audit")), None)
-            if reference != expected or task["round_id"] != expected["round_id"] or file is None or file["audit"]["result_attempt"] != expected["result_attempt"]:
-                raise KeyError("missing")
-            artifact = (result or {}).get("artifact")
-            if artifact and artifact["artifact_id"] != artifact_id:
-                raise KeyError("missing")
-            if state != "succeeded" or not artifact:
-                raise ValueError("report_not_ready")
-        body = self.objects.get(result["object_key"])
-        if not body.startswith(b"%PDF-") or len(body) != artifact["byte_size"] or sha256_bytes(body) != result["sha256"]:
+            source = self._report_source(conn, principal, task, reference, artifact_id)
+        body = self.objects.get(source["object_key"])
+        if not body.startswith(b"%PDF-") or len(body) != source["artifact"]["byte_size"] or sha256_bytes(body) != source["sha256"]:
             raise ValueError("report_artifact_conflict")
-        return artifact, body
+        return source["artifact"], body
 
     def _rule_for_tenant(self, conn, rule_id: str, tenant_id: str):
         return conn.execute(

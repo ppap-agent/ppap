@@ -168,7 +168,9 @@ P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews
 
 Deep 已通过主机来源／trace 校验的新结果以 `host_source_trace_v1` 随 coverage 保存；共享文件投影核对 Round、job、attempt、executor revision、规则正文与条款结果关联后，才显示已验证依据及对应 PASS/NG。旧结果、Standard 位置文字、人工判断和不匹配的验证记录仍不被提升。有效 NG 不掩盖剩余未知范围。Schema 测试用实际 XLSX 解析和受控 query proof 经过既有完成事务验证读回，不调用模型、不证明客户审核质量。
 
-新 Task 的完整验证结果自动进入现有 `report_pdf` 队列，Worker 用 PyMuPDF 生成带中文与冻结来源位置的逐文件 PDF，再以当前 attempt 发布对象元信息。P5 与 PDF 共用已验证条款的计数总结，不另调用模型生成结论或编造整改建议。下载文件名按 Unicode 字符限制为 255 字符，缩短来源名称时保留 `-审核报告.pdf` 后缀；名称不是报告身份。`/__audit-native` 的现有 P6 通过完整 Task/Round/FileVersion/result-attempt/report/artifact 引用下载；仍按当前 Task 与原件权限鉴权，不代表组织报告分享政策已获批。显式重生成、ZIP、飞书及独立档案仍未接通；不把旧整轮飞书报告当成此 PDF。`FileAuditReports.tla` 是三份输入、两次生成尝试的有限 Safety 模型，四个故障配置分别检查迟到发布、输入错绑、未验证输入与过早完成；不保证对象存储响应、最终完成或自动清理。
+新 Task 的完整验证结果自动进入现有 `report_pdf` 队列，Worker 用 PyMuPDF 生成带中文与冻结来源位置的逐文件 PDF，再以当前 attempt 发布对象元信息。P5 与 PDF 共用已验证条款的计数总结，不另调用模型生成结论或编造整改建议。下载文件名按 Unicode 字符限制为 255 字符，缩短来源名称时保留 `-审核报告.pdf` 后缀；名称不是报告身份。`/__audit-native` 的现有 P6 通过完整 Task/Round/FileVersion/result-attempt/report/artifact 引用下载；仍按当前 Task 与原件权限鉴权，不代表组织报告分享政策已获批。显式重生成、飞书及独立档案仍未接通；不把旧整轮飞书报告当成此 PDF。`FileAuditReports.tla` 是三份输入、两次生成尝试的有限 Safety 模型，四个故障配置分别检查迟到发布、输入错绑、未验证输入与过早完成；不保证对象存储响应、最终完成或自动清理。
+
+P6 的首次 ZIP 使用 `POST /audit-report-packages`，以请求 ID 读取状态并下载指定 package/artifact。工作复用已就绪 PDF，不重新审核或调用计费接口；Task 完成状态不因打包而重开。相同规范化报告集合只建一次工作；每个请求单独保存回执，响应丢失只读取原请求，失败集合不能换请求 ID 重建。当前仅允许同一私有 Task 的创建人，读取和下载重新检查全部原件与报告权限，不开放组织分享。最多 100 份且总量不超过 200 MiB，逐份校验后写临时 ZIP；任一来源失败只报告该项，绝不发布部分 ZIP。包内名称有唯一序号且限 255 个 UTF-8 字节，`报告清单.txt` 保存实际名称与冻结引用。显式重生成/重打包、飞书通知与分享、独立档案仍待接通；`ReportPackageAcceptance.tla` 只检查两个请求、两个规范化集合的绑定不变和单次入队，不是完整 ZIP 生命周期或外部 I/O 证明。
 
 ## UI-first 交互预览
 

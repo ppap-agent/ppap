@@ -119,7 +119,7 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
     )
     emit("job_claimed", kind=claimed.kind)
     try:
-        if claimed.kind == "report_pdf":
+        if claimed.kind in {"report_pdf", "report_zip"}:
             return process_report_job(store, claimed, ident)
         if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
@@ -173,15 +173,20 @@ def process_report_job(store, claimed, ident) -> dict:
     try:
         generated_at = datetime.now(timezone.utc).isoformat()
         with audit_lease(store, claimed, ident) as cancelled:
-            body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at})
-            if cancelled.is_set():
-                raise ValueError("report_lease_unknown")
-            result = store.write_audit_report(claimed, body, generated_at)
-        outcome = "succeeded"
+            if claimed.kind == "report_zip":
+                result = store.build_report_package(claimed, generated_at, cancelled)
+            else:
+                body = render_audit_pdf({**claimed.payload["report_input"], "generated_at": generated_at})
+                if cancelled.is_set():
+                    raise ValueError("report_lease_unknown")
+                result = store.write_audit_report(claimed, body, generated_at)
+        outcome = "failed" if result.get("error") else "succeeded"
     except Exception:
-        result, outcome = {"error": "report_pdf_failed"}, "failed"
+        result, outcome = {"error": claimed.kind + "_failed"}, "failed"
+        if claimed.kind == "report_zip":
+            result["outcomes"] = [{"reference": source["reference"], "state": "failed", "reason": "ZIP 工作失败；原报告保留。"} for source in claimed.payload["sources"]]
     accepted = store.complete_job(claimed, ident, result, outcome)
-    emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note="report_pdf")
+    emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note=claimed.kind)
     return result
 
 

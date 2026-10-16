@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
 import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter} from './native-adapter.ts'
-import {readReportPdf} from './report-contract.ts'
+import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
@@ -26,6 +26,40 @@ test('native PDF reads carry the full frozen reference and never create another 
   assert.equal(await (await readReportPdf(nativeReportAdapter, reference, artifact)).text(), '%PDF-1.7')
   globalThis.fetch = async () => json({error: 'access_denied'}, 403)
   await assert.rejects(readReportPdf(nativeReportAdapter, reference, artifact))
+})
+
+test('native ZIP uses one request identity for submission, readback and the exact artifact download', async () => {
+  const reports = ['a', 'b'].map(id => ({task_id: 'task-a', round_id: 'round-a', file_version_id: `version-${id}`, result_attempt: 1, report_id: `report-${id}`}))
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'package-a', reports, receipt: {request_id: 'request-a', state: 'accepted', reason: null}, state: 'ready', artifact: {artifact_id: 'artifact-a', filename: '审核报告.zip', content_type: 'application/zip', byte_size: 7}, reason: null, retry_allowed: false}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), 'http://example.test')
+    calls.push(`${init?.method} ${url.pathname}`)
+    if (url.pathname.endsWith('/zip')) {
+      assert.deepEqual(Object.fromEntries(url.searchParams), {package_id: 'package-a', artifact_id: 'artifact-a'})
+      assert.equal(init?.credentials, 'include')
+      return new Response('PKbytes', {headers: {'Content-Type': 'application/zip'}})
+    }
+    if (init?.method === 'POST') {assert.deepEqual(JSON.parse(String(init.body)), {request_id: 'request-a', reports}); throw new TypeError('reply lost')}
+    return json(job)
+  }
+  await assert.rejects(nativeReportAdapter.createPackage!(reports, 'request-a'), /reply lost/)
+  assert.deepEqual(await nativeReportAdapter.readPackage!('request-a'), job)
+  assert.equal(await (await readReportZip(nativeReportAdapter, job)).text(), 'PKbytes')
+  assert.deepEqual(calls, ['POST /audit-report-packages', 'GET /audit-report-packages/request-a', 'GET /audit-report-packages/request-a/zip'])
+  globalThis.fetch = async () => json(null)
+  await assert.rejects(nativeReportAdapter.readPackage!('request-a'))
+})
+
+test('an explicit pre-acceptance ZIP size refusal is rejected, not an unknown accepted work', async () => {
+  const reports = ['a', 'b'].map(id => ({task_id: 'task-a', round_id: 'round-a', file_version_id: `version-${id}`, result_attempt: 1, report_id: `report-${id}`}))
+  globalThis.fetch = async () => json({error: 'report_package_too_large'}, 409)
+  const rejected = await nativeReportAdapter.createPackage!(reports, 'request-a')
+  assert.equal(rejected.receipt.state, 'rejected')
+  assert.equal(rejected.receipt.request_id, 'request-a')
+  assert.deepEqual(rejected.reports, reports)
+  assert.equal(rejected.package_id, null)
+  assert.match(rejected.reason!, /过大/)
 })
 
 test('a lost display-save reply reads only its original request and absence remains unknown', async () => {

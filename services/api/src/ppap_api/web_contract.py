@@ -698,6 +698,11 @@ class AuditReportArtifact(TypedDict):
     byte_size: int
 
 
+class AuditReportPackageRequest(TypedDict):
+    request_id: str
+    reports: list[AuditReportReference]
+
+
 class AuditFileReport(TypedDict):
     state: Literal["not_eligible", "pending", "generating", "ready", "failed"]
     report_id: str | None

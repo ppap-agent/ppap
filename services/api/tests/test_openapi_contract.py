@@ -72,6 +72,15 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_report_package_has_one_request_bound_submission_read_and_binary_download(self):
+        paths = app.openapi()["paths"]
+        create = paths["/audit-report-packages"]["post"]
+        self.assertEqual(set(_request_schema(create)["required"]), {"request_id", "reports"})
+        self.assertEqual(_response_schema(paths["/audit-report-packages/{request_id}"]["get"])["anyOf"][0]["$ref"], "#/components/schemas/AuditReportPackage")
+        download = paths["/audit-report-packages/{request_id}/zip"]["get"]
+        self.assertEqual({item["name"] for item in download["parameters"] if item.get("required")}, {"request_id", "package_id", "artifact_id"})
+        self.assertEqual(download["responses"]["200"]["content"]["application/zip"]["schema"], {"type": "string", "format": "binary"})
+
     def test_file_report_download_binds_the_frozen_reference_and_returns_pdf_bytes(self):
         operation = app.openapi()["paths"]["/audit-tasks/{task_id}/reports/{report_id}/pdf"]["get"]
         required = {parameter["name"] for parameter in operation["parameters"] if parameter.get("required")}

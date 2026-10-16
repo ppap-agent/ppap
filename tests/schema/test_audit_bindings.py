@@ -796,6 +796,201 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(self.display_client.get(f"{path}/reports/{other_report['report_id']}/pdf", params={**query, "artifact_id": other_report["artifact"]["artifact_id"]}).status_code, 403)
         self.assertIsNone(worker.claim_job("two-pdfs"))
 
+    def prepared_report_package(self, *, accept=True):
+        from ppap_worker import process_claimed
+
+        _version, task, worker, _job, _result = self.prepared_query_task(documents=(("same.xlsx", "A_ONLY_017"), ("same.xlsx", "B_ONLY_029")))
+        for _ in range(2):
+            process_claimed(worker, worker.claim_job("zip-pdfs"), "zip-pdfs")
+        task_path = f"/audit-tasks/{task['id']}"
+        completed = self.display_client.get(task_path).json()
+        reports = [
+            {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": row["file"]["id"], "result_attempt": 1, "report_id": row["audit"]["report"]["report_id"]}
+            for row in completed["files"]
+        ]
+        request_id = str(uuid.uuid4())
+        command = {"request_id": request_id, "reports": reports}
+        if not accept:
+            return task, worker, completed, command, None
+        accepted = self.display_client.post("/audit-report-packages", json=command)
+        self.assertEqual(accepted.status_code, 202)
+        return task, worker, completed, command, accepted.json()
+
+    def test_report_zip_is_persistent_and_contains_the_exact_ready_pdfs_without_another_audit(self):
+        from io import BytesIO
+        from zipfile import ZipFile
+
+        from ppap_worker import process_claimed
+
+        task, worker, completed, command, package = self.prepared_report_package()
+        task_path, reports, request_id = f"/audit-tasks/{task['id']}", command["reports"], command["request_id"]
+        self.assertEqual((package["state"], package["receipt"]["state"]), ("pending", "accepted"))
+        self.assertEqual(self.display_client.post("/audit-report-packages", json=command).json(), package)
+        self.assertEqual(self.display_client.get(task_path).json()["report_package"], package)
+        claimed = worker.claim_job("zip-build")
+        self.assertEqual(claimed.kind, "report_zip")
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{request_id}").json()["state"], "generating")
+        process_claimed(worker, claimed, "zip-build")
+        ready = self.display_client.get(f"/audit-report-packages/{request_id}").json()
+        self.assertEqual((ready["state"], ready["retry_allowed"]), ("ready", False))
+        self.assertEqual([item["state"] for item in ready["outcomes"]], ["prepared", "prepared"])
+        loaded = self.display_client.get(task_path).json()
+        self.assertEqual((loaded["state"], loaded["files"]), ("completed", completed["files"]))
+        self.assertEqual(loaded["report_package"], ready)
+        response = self.display_client.get(f"/audit-report-packages/{request_id}/zip", params={"package_id": ready["package_id"], "artifact_id": ready["artifact"]["artifact_id"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/zip")
+        import json
+
+        with ZipFile(BytesIO(response.content)) as archive:
+            self.assertEqual(len(archive.namelist()), 3)
+            manifest = json.loads(archive.read("报告清单.txt"))
+            self.assertEqual({item["reference"]["file_version_id"] for item in manifest["reports"]}, {row["file"]["id"] for row in completed["files"]})
+            for item in manifest["reports"]:
+                row = next(row for row in completed["files"] if row["file"]["id"] == item["reference"]["file_version_id"])
+                report = row["audit"]["report"]
+                pdf = self.display_client.get(
+                    f"{task_path}/reports/{report['report_id']}/pdf",
+                    params={"round_id": task["round_id"], "file_version_id": row["file"]["id"], "result_attempt": 1, "artifact_id": report["artifact"]["artifact_id"]},
+                )
+                self.assertEqual(archive.read(item["archive_name"]), pdf.content)
+                self.assertEqual(item["rule"]["id"], row["audit"]["rule"]["id"])
+        alias_id = str(uuid.uuid4())
+        alias = self.display_client.post("/audit-report-packages", json={"request_id": alias_id, "reports": list(reversed(reports))}).json()
+        self.assertEqual((alias["package_id"], alias["artifact"]), (ready["package_id"], ready["artifact"]))
+        self.assertEqual(alias["reports"], list(reversed(reports)))
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{alias_id}").json(), alias)
+        self.assertEqual(self.display_client.post("/audit-report-packages", json={**command, "reports": list(reversed(reports))}).status_code, 409)
+        self.assertIsNone(self.display_client.get(f"/audit-report-packages/{uuid.uuid4()}").json())
+        download_path = f"/audit-report-packages/{request_id}/zip"
+        for params in ({"package_id": str(uuid.uuid4()), "artifact_id": ready["artifact"]["artifact_id"]}, {"package_id": ready["package_id"], "artifact_id": "wrong"}):
+            self.assertEqual(self.display_client.get(download_path, params=params).status_code, 403)
+        for fixture in ("bob", "carol"):
+            self.display_principal = self.store.principal_for_fixture(fixture)
+            self.assertEqual(self.display_client.get(f"/audit-report-packages/{request_id}").status_code, 403)
+            self.assertEqual(self.display_client.post("/audit-report-packages", json=command).status_code, 403)
+            self.assertEqual(self.display_client.get(download_path, params={"package_id": ready["package_id"], "artifact_id": ready["artifact"]["artifact_id"]}).status_code, 403)
+        self.display_principal = None
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{request_id}").status_code, 401)
+        self.assertIsNone(worker.claim_job("zip-build"))
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_lost_zip_write_reply_and_a_new_request_cannot_rebuild_the_failed_collection(self):
+        from ppap_worker import process_claimed
+
+        task, worker, completed, command, package = self.prepared_report_package()
+        objects = worker.objects
+        written = []
+
+        class LostReply:
+            def get(self, key):
+                return objects.get(key)
+
+            def put_exclusive(self, key, body, content_type):
+                objects.put_exclusive(key, body, content_type)
+                if content_type == "application/zip":
+                    written.append(key)
+                    raise TimeoutError("write succeeded; reply lost")
+
+        worker.objects = LostReply()
+        process_claimed(worker, worker.claim_job("lost-zip"), "lost-zip")
+        request_id = command["request_id"]
+        failed = self.display_client.get(f"/audit-report-packages/{request_id}").json()
+        self.assertEqual((failed["state"], failed["artifact"], failed["retry_allowed"]), ("failed", None, False))
+        self.assertEqual([item["state"] for item in failed["outcomes"]], ["prepared", "prepared"])
+        self.assertEqual(len(written), 1)
+        self.assertTrue(objects.get(written[0]).startswith(b"PK"))
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"], completed["files"])
+        alias = self.display_client.post("/audit-report-packages", json={**command, "request_id": str(uuid.uuid4()), "reports": list(reversed(command["reports"]))}).json()
+        self.assertEqual((alias["package_id"], alias["state"], alias["artifact"]), (package["package_id"], "failed", None))
+        self.assertIsNone(worker.claim_job("no-rebuild"))
+        self.assertEqual(self.display_client.get(f"/audit-report-packages/{request_id}/zip", params={"package_id": package["package_id"], "artifact_id": "unpublished"}).status_code, 409)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_one_unreadable_pdf_fails_only_its_package_preparation_and_does_not_publish_a_partial_zip(self):
+        from ppap_core.files import ObjectMissing
+        from ppap_worker import process_claimed
+
+        task, worker, completed, command, _package = self.prepared_report_package()
+        objects = worker.objects
+
+        class MissingFirstPdf:
+            missing = True
+
+            def get(self, key):
+                if self.missing and key.endswith(".pdf"):
+                    self.missing = False
+                    raise ObjectMissing()
+                return objects.get(key)
+
+            def put_exclusive(self, key, body, content_type):
+                objects.put_exclusive(key, body, content_type)
+
+        worker.objects = MissingFirstPdf()
+        process_claimed(worker, worker.claim_job("zip-source-error"), "zip-source-error")
+        package = self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()
+        self.assertEqual((package["state"], package["artifact"]), ("failed", None))
+        self.assertEqual(sorted(item["state"] for item in package["outcomes"]), ["failed", "prepared"])
+        self.assertTrue(next(item for item in package["outcomes"] if item["state"] == "failed")["reason"])
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"], completed["files"])
+
+    def test_temporary_zip_write_failure_does_not_claim_that_valid_pdfs_are_unreadable(self):
+        from io import BytesIO
+        from unittest.mock import patch
+
+        from ppap_worker import process_claimed
+
+        task, worker, completed, command, _package = self.prepared_report_package()
+
+        class FailedTemporaryFile(BytesIO):
+            failed = False
+
+            def write(self, data):
+                if not self.failed:
+                    self.failed = True
+                    raise OSError("temporary disk full")
+                return super().write(data)
+
+        with patch("tempfile.SpooledTemporaryFile", return_value=FailedTemporaryFile()):
+            process_claimed(worker, worker.claim_job("zip-disk-error"), "zip-disk-error")
+        package = self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()
+        self.assertEqual((package["state"], package["artifact"]), ("failed", None))
+        self.assertTrue(all(item["state"] != "failed" for item in package["outcomes"]))
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"], completed["files"])
+
+    def test_concurrent_zip_requests_share_one_frozen_work_and_old_generation_cannot_publish(self):
+        import threading
+
+        from ppap_core.db import connect
+        from ppap_worker import process_claimed
+
+        task, worker, _completed, command, _package = self.prepared_report_package(accept=False)
+        barrier = threading.Barrier(2)
+
+        def accept_alias(_number):
+            barrier.wait(timeout=5)
+            return self.store.accept_report_package(self.alice, {**command, "request_id": str(uuid.uuid4())})
+
+        with ThreadPoolExecutor(2) as pool:
+            aliases = list(pool.map(accept_alias, range(2)))
+        package = aliases[0]
+        command["request_id"] = package["receipt"]["request_id"]
+        self.assertEqual({row["package_id"] for row in aliases}, {package["package_id"]})
+        old = worker.claim_job("zip-old")
+        with connect(self.settings, "worker") as conn:
+            conn.execute("UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s", (old.id,))
+        current = worker.claim_job("zip-current")
+        self.assertEqual((current.id, current.attempt), (old.id, 2))
+        old_result = worker.build_report_package(old, "2026-10-17T01:00:00+00:00", threading.Event())
+        process_claimed(worker, current, "zip-current")
+        before = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        self.assertEqual(before["report_package"]["artifact"]["artifact_id"], f"{current.id}:2")
+        self.assertFalse(worker.complete_job(old, "zip-old", old_result))
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json(), before)
+        denied = self.display_client.get(f"/audit-report-packages/{command['request_id']}/zip", params={"package_id": package["package_id"], "artifact_id": old_result["artifact"]["artifact_id"]})
+        self.assertEqual(denied.status_code, 403)
+        self.assertIsNone(worker.claim_job("no-duplicate-zip"))
+
     def test_lost_object_write_reply_retains_a_private_object_but_never_publishes_a_report(self):
         from unittest.mock import patch
 

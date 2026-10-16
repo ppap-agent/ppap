@@ -7,6 +7,30 @@ import type {AuditReportAdapter} from './report-contract'
 
 type ValidationJob = components['schemas']['FileValidationJob']
 export const nativeReportAdapter: AuditReportAdapter = {
+  async createPackage(reports, requestId) {
+    try {return await request('/audit-report-packages', 'POST', {request_id: requestId, reports})}
+    catch (failure) {
+      const error = failure as {status?: number; code?: string}
+      if (error.status !== 409 || error.code !== 'report_package_too_large') throw failure
+      const reason = '所选报告总量过大，请减少本次打包的报告数量。'
+      return {package_id: null, reports, receipt: {request_id: requestId, state: 'rejected', reason}, state: 'failed', artifact: null, reason, retry_allowed: false}
+    }
+  },
+  async readPackage(requestId) {
+    const packageJob = await request<components['schemas']['AuditReportPackage'] | null>(`/audit-report-packages/${encodeURIComponent(requestId)}`)
+    if (!packageJob) throw new Error('尚未读到原打包请求，请继续核对。')
+    return packageJob
+  },
+  async readPackageFile(job) {
+    if (!job.package_id || !job.artifact) throw new Error('ZIP 尚未就绪。')
+    const params = new URLSearchParams({package_id: job.package_id, artifact_id: job.artifact.artifact_id})
+    const response = await fetch(`${apiUrl}/audit-report-packages/${encodeURIComponent(job.receipt.request_id)}/zip?${params}`, {method: 'GET', credentials: 'include'})
+    if (!response.ok) {
+      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+      throw new Error('ZIP 暂时无法读取。')
+    }
+    return response.blob()
+  },
   async readPdf(reference, artifact) {
     const params = new URLSearchParams({round_id: reference.round_id, file_version_id: reference.file_version_id, result_attempt: String(reference.result_attempt), artifact_id: artifact.artifact_id})
     const response = await fetch(`${apiUrl}/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/pdf?${params}`, {method: 'GET', credentials: 'include'})

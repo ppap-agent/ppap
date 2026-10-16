@@ -53,6 +53,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "task_not_ready",
                 "report_not_ready",
                 "report_artifact_conflict",
+                "report_package_too_large",
             }
             else 400
         )
@@ -160,6 +161,39 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 principal, {"task_id": task_id, "report_id": report_id, "round_id": round_id, "file_version_id": file_version_id, "result_attempt": result_attempt}, artifact_id
             )
             return Response(content, media_type="application/pdf", headers={"Content-Disposition": attachment_content_disposition(artifact["filename"]), "Cache-Control": "private, no-store"})
+        except ObjectMissing:
+            return JSONResponse({"error": "report_artifact_unavailable"}, status_code=409)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.post("/audit-report-packages", response_model=wc.AuditReportPackage, status_code=202, openapi_extra=wc.openapi_body(wc.AuditReportPackageRequest))
+    def audit_report_package_create(body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.accept_report_package(principal, body), status_code=202)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-report-packages/{request_id}", response_model=wc.AuditReportPackage | None)
+    def audit_report_package_read(request_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.get_report_package(principal, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-report-packages/{request_id}/zip", response_class=Response, responses={200: {"content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}}}})
+    def audit_report_package_download(request_id: str, request: Request, package_id: str, artifact_id: str = Query(min_length=1, max_length=200)) -> Response:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            artifact, content = store.report_package_zip(principal, request_id, package_id, artifact_id)
+            return Response(content, media_type="application/zip", headers={"Content-Disposition": attachment_content_disposition(artifact["filename"]), "Cache-Control": "private, no-store"})
         except ObjectMissing:
             return JSONResponse({"error": "report_artifact_unavailable"}, status_code=409)
         except (KeyError, ValueError) as exc:
