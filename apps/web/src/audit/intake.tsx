@@ -1,6 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/5bc532c5a9a142a8a378434ddfe73fd5
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft, ArrowRight, BookOpen, Check, ClipboardCheck, Files, HelpCircle, Menu, Plus, Search, UploadCloud, X} from 'lucide-react'
+import {ArrowLeft, ArrowRight, BookOpen, Check, ClipboardCheck, Files, HelpCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, ReceiptText, Search, UploadCloud, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -13,6 +13,7 @@ import {Label} from '../components/ui/label'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
+import {Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '../components/ui/tooltip'
 import {FileName} from '../journey/file-name'
 import {FeishuPicker, type DrivePickerSource} from './feishu-picker'
 import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
@@ -48,6 +49,12 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & UploadAdapter & {
   authenticate: () => Promise<void>
 }
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
+const productLinks = [
+  {view: 'audit', label: 'PPAP Audit', icon: ClipboardCheck},
+  {view: 'archive', label: '审核文件', icon: Files},
+  {view: 'templates', label: '模板库', icon: BookOpen},
+  {view: 'usage', label: '用量记录', icon: ReceiptText},
+] as const
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: 'upload' | 'check' | 'match'}
 
@@ -57,6 +64,8 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
+  const [navigationCollapsed, setNavigationCollapsed] = useState(false)
+  const [navigationTooltip, setNavigationTooltip] = useState<string | null>(null)
   const [supportSnapshot, setSupportSnapshot] = useState<SupportSnapshot | null>(null)
   const supportReturnTargets = useRef<(HTMLElement | null)[]>([])
   function openSupport(snapshot: SupportSnapshot) {
@@ -341,11 +350,16 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     // A repeated top-level entry leaves its detail without changing the active surface.
     if (value === surface) window.dispatchEvent(new PopStateEvent('popstate'))
   }
-  const navigation = <nav aria-label="产品导航" className="grid gap-1">
-    <Button className="justify-start" variant={surface === 'audit' ? 'secondary' : 'ghost'} onClick={() => showSurface('audit')}><ClipboardCheck/>PPAP Audit</Button>
-    <Button className="justify-start" variant={surface === 'archive' ? 'secondary' : 'ghost'} onClick={() => showSurface('archive')}><Files/>审核文件</Button>
-    <Button className="justify-start" variant={surface === 'templates' ? 'secondary' : 'ghost'} onClick={() => showSurface('templates')}><BookOpen/>模板库</Button>
-    <Button className="justify-start" variant={surface === 'usage' ? 'secondary' : 'ghost'} onClick={() => showSurface('usage')}>用量记录</Button>
+  // Text navigation must not open invisible layers that capture Escape in Sheet.
+  const navigationTooltipProps = (id: string, compact = navigationCollapsed) => ({
+    open: compact && navigationTooltip === id,
+    onOpenChange: (open: boolean) => {
+      if (!compact) return
+      setNavigationTooltip(current => open ? id : current === id ? null : current)
+    },
+  })
+  const navigation = (compact = false) => <nav aria-label="产品导航" className="grid gap-1">
+    {productLinks.map(({view, label, icon: Icon}) => <Tooltip key={view} {...navigationTooltipProps(view, compact)}><TooltipTrigger asChild><Button className={compact ? 'justify-center' : 'justify-start'} aria-label={label} aria-current={surface === view ? 'page' : undefined} variant={surface === view ? 'secondary' : 'ghost'} onClick={() => showSurface(view)}><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span></Button></TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>)}
   </nav>
   const taskRail = <div className="flex h-full min-w-0 flex-col gap-4">
     <Button variant="outline" onClick={newTask}><Plus/>新建审核任务</Button>
@@ -359,12 +373,19 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     <TableBody>{rows.map(row => <TableRow key={row.file.id}>{selectable && <TableCell><Checkbox aria-label={`选择 ${row.file.original_filename}`} checked={row.selection === 'selected'} onCheckedChange={value => toggle(row.file.id, value === true)}/></TableCell>}<TableCell className="whitespace-normal"><FileName name={row.file.original_filename}/>{!selectable && <p className="mt-2 text-sm text-muted-foreground">{row.validation.reasons.join('；') || '暂未完成检查'}</p>}<span className="mt-1 block text-xs text-muted-foreground md:hidden">{sizeLabel(row.file.byte_size)} · {row.validation.state === 'valid' ? '示例：可审核' : '待处理'}</span></TableCell><TableCell className="max-md:hidden"><span className="text-muted-foreground">{sizeLabel(row.file.byte_size)}</span></TableCell><TableCell className="max-md:hidden"><Badge variant="outline">{{valid: '可审核', pending: '待预检查', checking: '检查中', invalid: '文件异常', error: '读取失败'}[row.validation.state]}</Badge></TableCell><TableCell><div className="flex flex-wrap items-center justify-end gap-1">{!selectable && row.validation.state !== 'invalid' && <Button variant="outline" size="sm" disabled={checking.includes(row.file.id)} aria-label={`${row.validation.state === 'error' ? '重新读取' : '读取'} ${row.file.original_filename} 检查结果`} onClick={() => void readValidation(row)}>{checking.includes(row.file.id) ? '读取中…' : row.validation.state === 'error' ? '重新读取' : '读取结果'}</Button>}<Button variant="ghost" size="icon" aria-label={`移除 ${row.file.original_filename}`} onClick={() => remove(row.file.id)}><X/></Button></div></TableCell></TableRow>)}</TableBody>
   </Table>
   const supportScenario = surface === 'templates' ? '客户模板库' : surface === 'archive' ? '文件档案' : surface === 'usage' ? '用量记录' : workbench ? '审核结果' : '上传与文件核对'
-  return <SupportEntryContext.Provider value={openSupport}><div className="flex min-h-dvh bg-background text-sm text-foreground">
+  return <TooltipProvider><SupportEntryContext.Provider value={openSupport}><div className="flex min-h-dvh bg-background text-sm text-foreground">
     <a href="#audit-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3">跳到主要内容</a>
-    <aside className="sticky top-0 flex h-dvh w-44 shrink-0 flex-col gap-8 border-r p-4 max-lg:hidden"><div className="flex items-center gap-2 text-lg font-semibold"><ClipboardCheck/>PPAP</div>{navigation}<Button className="mt-auto justify-start" variant="ghost" onClick={() => openSupport({scenario: supportScenario})}><HelpCircle/>联系我们</Button></aside>
+    <aside aria-label="产品侧栏" className={`sticky top-0 flex h-dvh shrink-0 flex-col gap-8 border-r max-lg:hidden ${navigationCollapsed ? 'w-16 p-2' : 'w-44 p-4'}`}>
+      <div className={`flex items-center gap-2 text-lg font-semibold ${navigationCollapsed ? 'justify-center py-2' : ''}`}><ClipboardCheck aria-hidden="true"/><span className={navigationCollapsed ? 'sr-only' : ''}>PPAP</span></div>
+      {navigation(navigationCollapsed)}
+      <div className="mt-auto grid gap-1">
+        <Tooltip {...navigationTooltipProps('support')}><TooltipTrigger asChild><Button className={navigationCollapsed ? 'justify-center' : 'justify-start'} variant="ghost" aria-label="联系我们" onClick={() => openSupport({scenario: supportScenario})}><HelpCircle aria-hidden="true"/><span className={navigationCollapsed ? 'sr-only' : ''}>联系我们</span></Button></TooltipTrigger><TooltipContent side="right">联系我们</TooltipContent></Tooltip>
+        <Tooltip {...navigationTooltipProps('toggle')}><TooltipTrigger asChild><Button className={navigationCollapsed ? 'justify-center' : 'justify-start'} variant="ghost" aria-label={navigationCollapsed ? '展开产品导航' : '折叠产品导航'} onClick={() => {setNavigationTooltip(null); setNavigationCollapsed(value => !value)}}>{navigationCollapsed ? <PanelLeftOpen aria-hidden="true"/> : <PanelLeftClose aria-hidden="true"/>}<span className={navigationCollapsed ? 'sr-only' : ''}>{navigationCollapsed ? '展开导航' : '折叠导航'}</span></Button></TooltipTrigger><TooltipContent side="right">展开产品导航</TooltipContent></Tooltip>
+      </div>
+    </aside>
     {surface === 'audit' && !reportView && <aside aria-label="审核任务" className="sticky top-0 h-dvh w-56 shrink-0 border-r p-4 max-xl:hidden">{taskRail}</aside>}
     <div className="min-w-0 flex-1">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className={surface !== 'audit' ? 'lg:hidden' : reportView ? '' : 'xl:hidden'} aria-label={surface !== 'audit' ? '打开产品导航' : '打开审核任务'}><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>{surface !== 'audit' ? '产品导航' : '审核任务'}</SheetTitle><SheetDescription>查看与切换本页示例，不启动真实审核。</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation}<Button variant="ghost" className="w-full justify-start" onClick={() => {setSheet(false); openSupport({scenario: supportScenario})}}><HelpCircle/>联系我们</Button></div>{surface === 'audit' && taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit{surface === 'archive' ? ' / 审核文件' : surface === 'templates' ? ' / 模板库' : surface === 'usage' ? ' / 用量记录' : task ? ` / ${task.number}` : ' / 新建审核'}</span></div><Badge variant="outline">交互预览</Badge></header>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className={surface !== 'audit' ? 'lg:hidden' : reportView ? '' : 'xl:hidden'} aria-label={surface !== 'audit' ? '打开产品导航' : '打开审核任务'}><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>{surface !== 'audit' ? '产品导航' : '审核任务'}</SheetTitle><SheetDescription>查看与切换本页示例，不启动真实审核。</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation()}<Button variant="ghost" className="w-full justify-start" onClick={() => {setSheet(false); openSupport({scenario: supportScenario})}}><HelpCircle/>联系我们</Button></div>{surface === 'audit' && taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit{surface === 'archive' ? ' / 审核文件' : surface === 'templates' ? ' / 模板库' : surface === 'usage' ? ' / 用量记录' : task ? ` / ${task.number}` : ' / 新建审核'}</span></div><Badge variant="outline">交互预览</Badge></header>
       <main id="audit-main" tabIndex={-1} className={`mx-auto w-full space-y-6 p-6 max-sm:p-4 ${workbench || surface !== 'audit' ? '' : 'max-w-5xl'}`}>
         <p role="note" className="text-xs text-muted-foreground">{surface === 'templates' ? '交互预览：示例模板，不会启动审核或收费。' : '示例数据，不会启动真实审核或收费。实际上传、格式检查、规则匹配与持久化尚未接入。'}</p>
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>档案读取接口尚未接入</AlertTitle><AlertDescription>不能把当前任务文件名当作已归档的来源文档。</AlertDescription></Alert>}</div>}
@@ -407,5 +428,5 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     <TemplateFeedback open={feedbackOpen} onClose={() => setFeedbackOpen(false)} adapter={feedbackAdapter} trigger={feedbackTrigger.current}/>
     {supportSnapshot && <AuditSupport adapter={supportAdapter} snapshot={supportSnapshot} traceId={supportTrace} returnTargets={supportReturnTargets.current} onClose={() => setSupportSnapshot(null)}/>}
     <Dialog open={Boolean(ruleSource)} onOpenChange={open => {if (!open) setRuleSource(null)}}><DialogContent onCloseAutoFocus={event => {event.preventDefault(); ruleTrigger.current?.focus()}}><DialogHeader><DialogTitle>{ruleSource?.title}</DialogTitle><DialogDescription>当前匹配的只读候选条款。预览不发布规则，也不开始审核。</DialogDescription></DialogHeader><div className="max-h-80 space-y-4 overflow-y-auto">{ruleSource?.body.kind === 'engine' ? ruleSource.body.rules.map(rule => <article key={rule.id} className="space-y-2 border-t pt-3"><h3 className="text-sm font-semibold">{rule.id} · {rule.category}</h3><p className="whitespace-pre-wrap text-sm">{rule.rule_to_check}</p></article>) : <p className="text-sm">文件存在性检查。</p>}</div></DialogContent></Dialog>
-  </div></SupportEntryContext.Provider>
+  </div></SupportEntryContext.Provider></TooltipProvider>
 }
