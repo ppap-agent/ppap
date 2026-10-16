@@ -126,6 +126,26 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
+    @app.post("/audit-tasks/{task_id}/display-info", response_model=wc.AuditFileDisplayReceipt, openapi_extra=wc.openapi_body(wc.AuditFileDisplayRequest))
+    def audit_display_save(task_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.save_audit_display(principal, task_id, body))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-tasks/{task_id}/display-info/{request_id}", response_model=wc.AuditFileDisplayReceipt | None)
+    def audit_display_read(task_id: str, request_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.get_audit_display(principal, task_id, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.post("/drafts", response_model=wc.Draft, status_code=201, openapi_extra=wc.openapi_body(wc.DraftCreateRequest, required=False))
     def drafts_create(request: Request, body: dict | None = None) -> JSONResponse:
         principal, denied = require_principal(request)

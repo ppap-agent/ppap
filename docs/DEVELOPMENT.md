@@ -182,7 +182,9 @@ P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews
 
 原件读取使用 `scene=original-error`、`original-loading` 或 `original-unavailable`，选择三类文件示例后进入审核并核对 Excel 原件。它们复用产品原件阅读器，演示读取失败、重读和乱序返回；下载仅返回该冻结版本的明确示例 XLSX，不是客户原件，也不验证真实 Office、排版或定位。任意上传不生成替代原件，不向产品 API 发送示例身份。
 
-`restore-display-ready` 演示 D8 的四字段显示更正；原始识别信息仍可展开核对，冻结文件、规则、结果与既有报告不变。`restore-display-rejected/unknown/conflict/loading/denied/stale/read-failed` 分别演示明确拒绝、未知结果、版本冲突、迟到回执、撤权、旧投影和读取失败。未决保存关闭后保留原请求，只读回、不自动重发；此恢复限于当前页面生命周期。`archive-display` 按所选历史轮次显示更正，不能编辑。预览使用 `task=preview-recovery-task`，或在预览台选择对应场景；真实保存、CAS、权限和持久化仍待 APP-2 接入。
+`restore-display-ready` 演示 D8 的四字段显示更正；原始识别信息仍可展开核对，冻结文件、规则、结果与既有报告不变。`restore-display-rejected/unknown/conflict/loading/denied/stale/read-failed` 分别演示明确拒绝、未知结果、版本冲突、迟到回执、撤权、旧投影和读取失败。未决保存关闭后保留原请求，只读回、不自动重发；此恢复限于当前页面生命周期。`archive-display` 按所选历史轮次显示更正，不能编辑。预览使用 `task=preview-recovery-task`，或在预览台选择对应场景。
+
+真实联调入口的同一编辑器使用 `POST /audit-tasks/{id}/display-info` 保存、`GET /audit-tasks/{id}/display-info/{request_id}` 读回原请求。请求使用规范 UUID 和完整四字段快照；`null` 清空字段。服务在同一事务核对私有任务所有权、Task/Round 当前 review 许可和显示修订，保存不创建审核、用量或报告。撤销 review 后可按保留的 read 许可核对旧回执，但不能新保存；读权限也失效时拒绝读回。读取不到原请求仍是 unknown，不许可自动重发。Task 重新读取及 API 重启后使用数据库中的显示更正；历史 Round 原始信息不改写，文件档案的真实更正投影仍待接入。
 
 文件档案及历次审核使用 `scene=archive-ready`。`archive-task-allowed` 单独演示有来源任务读取许可时，经完整 P5/报告页返回所选历史，不改开最新审核。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。
 

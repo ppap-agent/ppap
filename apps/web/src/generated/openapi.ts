@@ -56,6 +56,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/display-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit Display Save */
+        post: operations["audit_display_save_audit_tasks__task_id__display_info_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/display-info/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Display Read */
+        get: operations["audit_display_read_audit_tasks__task_id__display_info__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks/{task_id}/end": {
         parameters: {
             query?: never;
@@ -1296,7 +1330,10 @@ export interface components {
             /** Task Id */
             task_id: string;
         };
-        /** AuditFileDisplayRequest */
+        /**
+         * AuditFileDisplayRequest
+         * @description Canonical UUID identities keep the original request and receipt identical.
+         */
         AuditFileDisplayRequest: {
             /** Expected Revision */
             expected_revision: number;
@@ -3146,6 +3183,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_display_save_audit_tasks__task_id__display_info_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Expected Revision */
+                    expected_revision: number;
+                    /** AuditFileDisplayReference */
+                    reference: {
+                        /** File Version Id */
+                        file_version_id: string;
+                        /** Round Id */
+                        round_id: string;
+                        /** Task Id */
+                        task_id: string;
+                    };
+                    /** Request Id */
+                    request_id: string;
+                    /**
+                     * AuditFileDisplayValues
+                     * @description Complete display snapshot; null clears a value, part is the part name.
+                     */
+                    values: {
+                        /** Customer */
+                        customer: string | null;
+                        /** Model */
+                        model: string | null;
+                        /** Part */
+                        part: string | null;
+                        /** Part Number */
+                        part_number: string | null;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditFileDisplayReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_display_read_audit_tasks__task_id__display_info__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditFileDisplayReceipt"] | null;
                 };
             };
             /** @description Validation Error */

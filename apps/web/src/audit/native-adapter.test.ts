@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeDisplayAdapter} from './native-adapter.ts'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
@@ -10,6 +10,22 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('a lost display-save reply reads only its original request and absence remains unknown', async () => {
+  const command: components['schemas']['AuditFileDisplayRequest'] = {request_id: 'display-a', reference: {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a'}, expected_revision: 2, values: {customer: 'A', model: null, part_number: 'P-1', part: '零件'}}
+  const calls: string[] = []
+  let written = false
+  globalThis.fetch = async (url, init) => {
+    calls.push(`${init?.method} ${url}`)
+    if (init?.method === 'POST') {assert.deepEqual(JSON.parse(String(init.body)), command); throw new TypeError('reply lost')}
+    return json(written ? {request: command, state: 'saved', info: {revision: 3, values: command.values}, reason: null} : null)
+  }
+  await assert.rejects(nativeDisplayAdapter.save(command), /reply lost/)
+  assert.equal((await nativeDisplayAdapter.read(command)).state, 'unknown')
+  written = true
+  assert.deepEqual(await nativeDisplayAdapter.read(command), {request: command, state: 'saved', info: {revision: 3, values: command.values}, reason: null})
+  assert.deepEqual(calls, ['POST /audit-tasks/task-a/display-info', 'GET /audit-tasks/task-a/display-info/display-a', 'GET /audit-tasks/task-a/display-info/display-a'])
+})
 
 test('native precheck reads the original validation after a lost submit reply without resubmitting', async () => {
   const calls: {url: string; method: string}[] = []

@@ -105,7 +105,7 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("outcomes", package["properties"])
         self.assertNotIn("outcomes", package["required"])
 
-    def test_ui_display_corrections_are_separate_from_frozen_metadata_and_bind_the_original_request(self):
+    def test_display_corrections_are_separate_from_frozen_metadata_and_bind_the_original_request(self):
         spec = app.openapi()
         schemas = spec["components"]["schemas"]
         values = schemas["AuditFileDisplayValues"]
@@ -118,13 +118,14 @@ class OpenAPIContractTests(unittest.TestCase):
         receipt = schemas["AuditFileDisplayReceipt"]
         self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "saved", "rejected", "conflict", "unknown"])
         self.assertEqual(set(receipt["required"]), {"request", "state", "info", "reason"})
-        self.assertEqual(receipt["x-contract-stage"], "ui-draft")
+        self.assertNotIn("x-contract-stage", receipt)
         file = schemas["AuditTaskFile"]
         self.assertIn("display_info", file["properties"])
         self.assertNotIn("display_info", file["required"])
         self.assertIn("display_edit_access", file["properties"])
         self.assertNotIn("display_info", schemas["AuditRuleMatch"]["properties"])
-        self.assertNotIn("AuditFileDisplayRequest", str(spec["paths"]))
+        self.assertIn("/audit-tasks/{task_id}/display-info", spec["paths"])
+        self.assertIn("/audit-tasks/{task_id}/display-info/{request_id}", spec["paths"])
 
     def test_ui_completion_estimate_is_an_optional_service_interval_separate_from_counts(self):
         schemas = app.openapi()["components"]["schemas"]

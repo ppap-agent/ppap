@@ -2,11 +2,19 @@ import {readLocalUpload, request, uploadLocalVersion} from '../api.ts'
 import type {components} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
+import type {AuditDisplayAdapter} from './display-info-editor'
 
 type ValidationJob = components['schemas']['FileValidationJob']
 export const nativeReviewAdapter: AuditReviewAdapter = {
   read: id => request(`/rounds/${encodeURIComponent(id)}`),
   save: (id, payload) => request(`/rounds/${encodeURIComponent(id)}/reviews`, 'PUT', payload),
+}
+export const nativeDisplayAdapter: AuditDisplayAdapter = {
+  save: command => request(`/audit-tasks/${encodeURIComponent(command.reference.task_id)}/display-info`, 'POST', command),
+  async read(command) {
+    const receipt = await request<components['schemas']['AuditFileDisplayReceipt'] | null>(`/audit-tasks/${encodeURIComponent(command.reference.task_id)}/display-info/${encodeURIComponent(command.request_id)}`)
+    return receipt ?? {request: command, state: 'unknown', info: null, reason: '尚未读到原保存请求的结果，请继续核对。'}
+  },
 }
 const encoded = encodeURIComponent
 const taskPath = (id: string) => `/audit-tasks/${encoded(id)}`

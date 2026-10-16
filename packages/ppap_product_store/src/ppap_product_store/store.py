@@ -1006,6 +1006,120 @@ class AuthStore:
             self._accept_locked(conn, principal, key, source_draft_id=parsed_task, predecessor_id=None, items=None, task_revision=expected_revision)
             return self._recognition_public(conn, principal, parsed_task)
 
+    @staticmethod
+    def _display_receipt(row: dict) -> dict:
+        request = {
+            "request_id": str(row["request_id"]),
+            "reference": {key: str(row[key]) for key in ("task_id", "round_id", "file_version_id")},
+            "expected_revision": row["expected_revision"],
+            "values": row["display_values"],
+        }
+        return {
+            "request": request,
+            "state": row["state"],
+            "info": {"revision": row["expected_revision"] + 1, "values": row["display_values"]} if row["state"] == "saved" else row["conflict_info"],
+            "reason": None if row["state"] == "saved" else "显示信息已有更新，请核对最新版本。" if row["state"] == "conflict" else "显示版本无效，请重新读取任务。",
+        }
+
+    def _display_projection(self, conn, principal: Principal, task: dict) -> dict:
+        reference = {"task_id": task["id"], "round_id": task["round_id"]}
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """SELECT DISTINCT ON (file_version_id) file_version_id, expected_revision, display_values
+                FROM product.audit_display_requests WHERE task_id = %s AND round_id = %s AND state = 'saved'
+                ORDER BY file_version_id, expected_revision DESC""",
+                (reference["task_id"], reference["round_id"]),
+            )
+            saved = {str(row["file_version_id"]): {"revision": row["expected_revision"] + 1, "values": row["display_values"]} for row in cur.fetchall()}
+        editable = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[]) AND user_id = %s AND capability = 'review'", ([task["id"], task["round_id"]], principal.user_id)
+            ).fetchall()
+        } == {task["id"], task["round_id"]}
+        for file in task["files"]:
+            if file["selection"] != "selected" or not file.get("audit"):
+                continue
+            metadata = (file.get("match") or {}).get("metadata") or {}
+            file["display_info"] = saved.get(file["file"]["id"], {"revision": 0, "values": {key: metadata.get(key) for key in ("customer", "model", "part_number", "part")}})
+            file["display_edit_access"] = {"state": "allowed" if editable else "denied", "reason": None if editable else "你目前没有更正显示信息的权限。"}
+        return task
+
+    def save_audit_display(self, principal: Principal, task_id: str, body: dict) -> dict:
+        reference, values = body.get("reference"), body.get("values")
+        request_id = body.get("request_id")
+        if (
+            set(body) != {"request_id", "reference", "expected_revision", "values"}
+            or not isinstance(request_id, str)
+            or _as_uuid(request_id) != request_id
+            or not isinstance(reference, dict)
+            or set(reference) != {"task_id", "round_id", "file_version_id"}
+            or any(not isinstance(value, str) or _as_uuid(value) != value for value in reference.values())
+            or reference["task_id"] != task_id
+            or type(body.get("expected_revision")) is not int
+            or not 0 <= body["expected_revision"] < 9007199254740991
+            or not isinstance(values, dict)
+            or set(values) != {"customer", "model", "part_number", "part"}
+            or any(value is not None and not isinstance(value, str) for value in values.values())
+            or len(json.dumps(body, ensure_ascii=False).encode()) > 262144
+        ):
+            raise ValueError("invalid_display_request")
+        with self._conn() as conn, conn.transaction():
+            self._recognition_owner(conn, principal, task_id, lock=True)
+            task = self._recognition_public(conn, principal, task_id)
+            file = next((file for file in task["files"] if file["file"]["id"] == reference["file_version_id"] and file["selection"] == "selected" and file.get("audit")), None)
+            if task["round_id"] != reference["round_id"] or file is None:
+                raise KeyError("missing")
+            grants = conn.execute(
+                "SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[]) AND user_id = %s AND capability = 'review' FOR SHARE",
+                ([task_id, task["round_id"]], principal.user_id),
+            ).fetchall()
+            if {str(row[0]) for row in grants} != {task_id, task["round_id"]}:
+                raise KeyError("missing")
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT * FROM product.audit_display_requests WHERE request_id = %s", (body["request_id"],))
+                existing = cur.fetchone()
+                if existing is None:
+                    current = file["display_info"]
+                    state = "saved" if current["revision"] == body["expected_revision"] else "conflict" if current["revision"] > body["expected_revision"] else "rejected"
+                    cur.execute(
+                        """INSERT INTO product.audit_display_requests
+                        (request_id, task_id, round_id, file_version_id, created_by, expected_revision, display_values, state, conflict_info)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (request_id) DO NOTHING RETURNING *""",
+                        (
+                            body["request_id"],
+                            task_id,
+                            task["round_id"],
+                            reference["file_version_id"],
+                            principal.user_id,
+                            body["expected_revision"],
+                            Jsonb(values),
+                            state,
+                            Jsonb(current) if state == "conflict" else None,
+                        ),
+                    )
+                    existing = cur.fetchone()
+                    if existing is None:
+                        cur.execute("SELECT * FROM product.audit_display_requests WHERE request_id = %s", (body["request_id"],))
+                        existing = cur.fetchone()
+                if existing is None:
+                    raise RuntimeError("display_receipt_unavailable")
+                receipt = self._display_receipt(existing)
+                if receipt["request"] != body or str(existing["created_by"]) != principal.user_id:
+                    raise ValueError("idempotency_conflict")
+                return receipt
+
+    def get_audit_display(self, principal: Principal, task_id: str, request_id: str) -> dict | None:
+        if not _as_uuid(request_id):
+            raise ValueError("invalid_display_request")
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            self._recognition_public(conn, principal, task_id)
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT * FROM product.audit_display_requests WHERE request_id = %s AND task_id = %s AND created_by = %s", (request_id, task_id, principal.user_id))
+                row = cur.fetchone()
+                return self._display_receipt(row) if row else None
+
     def recognition_job_current(self, claimed: ClaimedJob) -> bool:
         """Skip obsolete queued work; running calls still cannot change Task refs."""
         with self._conn() as conn:
@@ -1148,7 +1262,7 @@ class AuthStore:
             round = self._round_public(conn, str(accepted[0]))
             if round is None:
                 raise KeyError("missing")
-            return task_round_view(task, round)
+            return self._display_projection(conn, principal, task_round_view(task, round))
         return task
 
     def list_audit_tasks(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "", state: str = "") -> list[dict]:

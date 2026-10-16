@@ -357,6 +357,227 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
         self.assertEqual(fingerprint, request_fingerprint([{"file_version_id": target, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference, "role": "reference"}]))
 
 
+class AuditDisplayDatabaseTests(AuditDatabaseCase):
+    def prepared_display_task(self, files=None):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_application import build_product_store
+
+        self.settings.usage_charge_enabled = False
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        files = files or [self.upload(name) for name in ("first.xlsx", "second.xlsx")]
+        rule = self.store.publish_rule(self.alice, "显示更正规则", self.rule_body(), files[0].id)
+        inputs = []
+        for file in files:
+            key = str(uuid.uuid4())
+            self.store.accept_file_validation(self.alice, key, file.file_id, file.id)
+            job = worker.claim_job("display-test")
+            self.assertEqual(job.kind, "file_validation")
+            self.assertTrue(worker.complete_job(job, "display-test", {"state": "valid", "reasons": []}, "succeeded"))
+            inputs.append({"file_version_id": file.id, "validation_id": key, "selection": "selected", "removal_reason": None})
+        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": inputs})
+        for _ in files:
+            job = worker.claim_job("display-test")
+            self.assertEqual(job.kind, "file_analysis")
+            worker.complete_job(
+                job,
+                "display-test",
+                {
+                    "source_file_version_id": job.payload["source_file_version_id"],
+                    "matching_status": "matched",
+                    "matched_rule_id": rule["id"],
+                    "document_type": "控制计划",
+                    "metadata": {"customer": "测试客户", "model": "M1", "part_number": "P-1", "part": "原零件"},
+                    "notices": [],
+                },
+                "succeeded",
+            )
+        task = self.store.confirm_audit_task(self.alice, task["id"], str(uuid.uuid4()), 0)
+        job = worker.claim_job("display-test")
+        worker.complete_job(job, "display-test", {"findings": [], "coverage": {"rule_items": [{"file_version_id": file.id, "id": "1", "coverage": "unsupported"} for file in files]}}, "succeeded")
+        self.display_principal = self.alice
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: self.display_principal)
+        self.display_client = TestClient(app)
+        self.addCleanup(self.display_client.close)
+        return files, task, worker
+
+    def test_display_save_and_original_request_readback_do_not_change_audit_facts(self):
+        files, task, worker = self.prepared_display_task()
+        path = f"/audit-tasks/{task['id']}"
+        before = self.store.get_round(task["round_id"])
+        values = {"customer": "更正客户", "model": None, "part_number": "P-2", "part": "更正零件"}
+        command = {"request_id": str(uuid.uuid4()), "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id}, "expected_revision": 0, "values": values}
+        response = self.display_client.post(path + "/display-info", json=command)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"request": command, "state": "saved", "info": {"revision": 1, "values": values}, "reason": None})
+        self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).json(), response.json())
+        loaded = self.display_client.get(path).json()
+        self.assertEqual(loaded["files"][0]["display_info"], response.json()["info"])
+        self.assertEqual(loaded["files"][0]["match"]["metadata"]["part"], "原零件")
+        self.assertEqual(loaded["files"][1]["display_info"]["revision"], 0)
+        self.assertEqual(self.store.get_round(task["round_id"]), before)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+        self.assertIsNone(worker.claim_job("no-display-job"))
+
+    def test_display_cas_replay_and_conflicts_keep_the_original_receipt(self):
+        files, task, _worker = self.prepared_display_task()
+        path = f"/audit-tasks/{task['id']}/display-info"
+        command = {
+            "request_id": str(uuid.uuid4()),
+            "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id},
+            "expected_revision": 0,
+            "values": {"customer": "A", "model": None, "part_number": None, "part": "A"},
+        }
+        competing = {**command, "request_id": str(uuid.uuid4()), "values": {**command["values"], "part": "B"}}
+        with ThreadPoolExecutor(2) as pool:
+            replies = list(pool.map(lambda body: self.display_client.post(path, json=body), [command, competing]))
+        self.assertTrue(all(reply.status_code == 200 for reply in replies))
+        self.assertEqual(sorted(reply.json()["state"] for reply in replies), ["conflict", "saved"])
+        saved = next(reply.json() for reply in replies if reply.json()["state"] == "saved")
+        conflict = next(reply.json() for reply in replies if reply.json()["state"] == "conflict")
+        self.assertEqual(conflict["info"], saved["info"])
+        self.assertEqual(self.display_client.post(path, json=saved["request"]).json(), saved)
+        self.assertEqual(self.display_client.post(path, json={**saved["request"], "values": {**command["values"], "part": "不同请求"}}).status_code, 409)
+        newer = {**command, "request_id": str(uuid.uuid4()), "expected_revision": 1, "values": {**command["values"], "part": "第二版本"}}
+        self.assertEqual(self.display_client.post(path, json=newer).json()["info"]["revision"], 2)
+        self.assertEqual(self.display_client.get(path + "/" + saved["request"]["request_id"]).json(), saved)
+        self.assertEqual(self.display_client.get(path + "/" + conflict["request"]["request_id"]).json(), conflict)
+        self.assertIsNone(self.display_client.get(path + "/" + str(uuid.uuid4())).json())
+
+    def test_display_cannot_treat_a_future_revision_as_a_conflict_with_an_older_snapshot(self):
+        files, task, _worker = self.prepared_display_task()
+        command = {
+            "request_id": str(uuid.uuid4()),
+            "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id},
+            "expected_revision": 10,
+            "values": {"customer": None, "model": None, "part_number": None, "part": None},
+        }
+        path = f"/audit-tasks/{task['id']}/display-info"
+        receipt = self.display_client.post(path, json=command).json()
+        self.assertEqual(receipt["state"], "rejected")
+        self.assertIsNone(receipt["info"])
+        self.assertEqual(self.display_client.get(path + "/" + command["request_id"]).json(), receipt)
+        self.assertEqual(self.store.get_audit_task(self.alice, task["id"])["files"][0]["display_info"]["revision"], 0)
+
+    def test_display_requires_current_review_access_but_saved_receipt_remains_readable(self):
+        from ppap_core.db import connect
+
+        files, task, _worker = self.prepared_display_task()
+        path = f"/audit-tasks/{task['id']}"
+        command = {
+            "request_id": str(uuid.uuid4()),
+            "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id},
+            "expected_revision": 0,
+            "values": {"customer": "更正客户", "model": None, "part_number": None, "part": None},
+        }
+        receipt = self.display_client.post(path + "/display-info", json=command).json()
+        self.assertEqual(receipt["state"], "saved")
+        for resource_id in (task["id"], task["round_id"]):
+            with self.subTest(resource_id=resource_id), connect(self.settings, "migrator") as conn:
+                conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s AND capability = 'review'", (resource_id, self.alice.user_id))
+                loaded = self.display_client.get(path)
+                self.assertEqual(loaded.status_code, 200)
+                self.assertEqual(loaded.json()["files"][0]["display_edit_access"]["state"], "denied")
+                self.assertEqual(self.display_client.post(path + "/display-info", json={**command, "request_id": str(uuid.uuid4()), "expected_revision": 1}).status_code, 403)
+                self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).json(), receipt)
+                conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'review')", (resource_id, self.alice.user_id))
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (task["round_id"], self.alice.user_id))
+        self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).status_code, 403)
+
+    def test_display_does_not_expand_private_task_ownership_or_accept_other_frozen_inputs(self):
+        from ppap_core.db import connect
+
+        files, task, _worker = self.prepared_display_task()
+        path = f"/audit-tasks/{task['id']}"
+        command = {
+            "request_id": str(uuid.uuid4()),
+            "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id},
+            "expected_revision": 0,
+            "values": {"customer": None, "model": None, "part_number": None, "part": None},
+        }
+        for actor in ("bob", "carol"):
+            self.display_principal = self.store.principal_for_fixture(actor)
+            with connect(self.settings, "migrator") as conn:
+                for resource_id in (task["id"], task["round_id"]):
+                    for capability in ("read", "review"):
+                        conn.execute(
+                            "INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                            (resource_id, self.display_principal.user_id, capability),
+                        )
+            self.assertEqual(self.display_client.post(path + "/display-info", json=command).status_code, 403)
+            self.assertEqual(self.display_client.get(path + "/display-info/" + command["request_id"]).status_code, 403)
+        self.display_principal = self.alice
+        for key in ("round_id", "file_version_id"):
+            invalid = {**command, "reference": {**command["reference"], key: str(uuid.uuid4())}}
+            self.assertEqual(self.display_client.post(path + "/display-info", json=invalid).status_code, 403)
+        for invalid in (
+            {**command, "reference": {**command["reference"], "task_id": str(uuid.uuid4())}},
+            {**command, "expected_revision": True},
+            {**command, "values": {**command["values"], "part": []}},
+            {**command, "values": {**command["values"], "rule": "不可更正"}},
+            {**command, "audit": {"verdict": "PASS"}},
+            {**command, "request_id": command["request_id"].upper()},
+            {**command, "reference": {**command["reference"], "file_version_id": files[0].id.upper()}},
+        ):
+            self.assertEqual(self.display_client.post(path + "/display-info", json=invalid).status_code, 400)
+        self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())
+        self.assertEqual(self.display_client.get(path).json()["files"][0]["display_info"]["revision"], 0)
+
+    def test_display_corrections_and_original_requests_are_scoped_to_the_task_round_and_version(self):
+        files, first, _worker = self.prepared_display_task()
+        command = {
+            "request_id": str(uuid.uuid4()),
+            "reference": {"task_id": first["id"], "round_id": first["round_id"], "file_version_id": files[0].id},
+            "expected_revision": 0,
+            "values": {"customer": "A", "model": None, "part_number": None, "part": "第一轮名称"},
+        }
+        receipt = self.display_client.post(f"/audit-tasks/{first['id']}/display-info", json=command).json()
+        self.assertEqual(receipt["state"], "saved")
+        _files, second, _worker = self.prepared_display_task(files)
+        path = f"/audit-tasks/{second['id']}"
+        loaded = self.display_client.get(path).json()
+        self.assertEqual(loaded["files"][0]["display_info"], {"revision": 0, "values": {"customer": "测试客户", "model": "M1", "part_number": "P-1", "part": "原零件"}})
+        second_command = {**command, "reference": {**command["reference"], "task_id": second["id"], "round_id": second["round_id"]}, "values": {**command["values"], "part": "第二轮名称"}}
+        self.assertEqual(self.display_client.post(path + "/display-info", json=second_command).status_code, 409)
+        self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())
+        self.assertEqual(self.display_client.post(path + "/display-info", json={**second_command, "request_id": str(uuid.uuid4())}).json()["info"]["revision"], 1)
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{first['id']}").json()["files"][0]["display_info"], receipt["info"])
+
+    def test_display_save_waiting_on_revoked_review_permission_cannot_commit(self):
+        from ppap_core.db import connect
+
+        files, task, _worker = self.prepared_display_task()
+        path = f"/audit-tasks/{task['id']}"
+        command = {
+            "request_id": str(uuid.uuid4()),
+            "reference": {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": files[0].id},
+            "expected_revision": 0,
+            "values": {"customer": None, "model": None, "part_number": None, "part": "撤权后不可写"},
+        }
+        with ThreadPoolExecutor(1) as pool, connect(self.settings, "migrator") as revoker:
+            with revoker.transaction():
+                revoker_pid = revoker.execute("SELECT pg_backend_pid()").fetchone()[0]
+                revoker.execute("SELECT 1 FROM product.resource_grants WHERE resource_id = %s AND user_id = %s AND capability = 'review' FOR UPDATE", (task["round_id"], self.alice.user_id)).fetchone()
+                pending = pool.submit(self.display_client.post, path + "/display-info", json=command)
+                with connect(self.settings, "migrator") as observer:
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if observer.execute("SELECT 1 FROM pg_stat_activity WHERE datname = %s AND %s = ANY(pg_blocking_pids(pid))", (self.database, revoker_pid)).fetchone():
+                            break
+                        time.sleep(0.01)
+                    else:
+                        self.fail("display save did not reach the locked review permission")
+                revoker.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s AND capability = 'review'", (task["round_id"], self.alice.user_id))
+            self.assertEqual(pending.result(timeout=5).status_code, 403)
+        self.assertIsNone(self.display_client.get(path + "/display-info/" + command["request_id"]).json())
+        loaded = self.display_client.get(path).json()["files"][0]
+        self.assertEqual(loaded["display_info"]["revision"], 0)
+        self.assertEqual(loaded["display_edit_access"]["state"], "denied")
+
+
 class UsageAcceptanceTests(AuditDatabaseCase):
     def setUp(self):
         super().setUp()

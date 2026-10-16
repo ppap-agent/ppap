@@ -788,6 +788,8 @@ class AuditFileDisplayReference(TypedDict):
 
 
 class AuditFileDisplayRequest(TypedDict):
+    """Canonical UUID identities keep the original request and receipt identical."""
+
     request_id: str
     reference: AuditFileDisplayReference
     expected_revision: int
