@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from ppap_api import create_app
+from ppap_core.db import connect
 from ppap_core.feishu import UserTokens
 from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_core.identity import SESSION_COOKIE
@@ -55,7 +56,10 @@ def test_drive_import_can_read_back_one_frozen_version_after_a_lost_reply(auth_s
         assert client.post("/integrations/feishu/files/import", json={**command, "file_token": "another-source"}).status_code == 409
         assert len(downloads) == 1
         local_id = str(uuid.uuid4())
-        local = client.post("/files", json={"request_id": local_id, "original_filename": "local.txt", "content_type": "text/plain", "byte_size": 3, "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}).json()
+        local = client.post(
+            "/files",
+            json={"request_id": local_id, "original_filename": "local.txt", "content_type": "text/plain", "byte_size": 3, "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+        ).json()
         assert client.put(f"/files/{local['file_id']}/versions/{local_id}/blob", content=b"abc").json()["status"] == "ready"
         assert client.get(f"/file-uploads/{local_id}").json()["state"] == "ready"
         assert client.post("/integrations/feishu/files/import", json={**command, "request_id": local_id}).status_code == 409
@@ -171,3 +175,74 @@ def test_import_resume_cannot_replace_bytes_captured_before_an_object_failure(au
             assert len(downloads) == 2
         assert client.get("/audit-tasks").json()["tasks"] == []
         assert client.get("/rounds").json()["rounds"] == []
+
+
+def test_lost_lock_session_cannot_publish_after_another_handler_captures_bytes(auth_store_factory):
+    old_read, release_old, new_write, release_new = Event(), Event(), Event(), Event()
+
+    class PausedObjects:
+        def __init__(self):
+            self.data = {}
+
+        def put_exclusive(self, key, body, content_type):
+            if body == b"new handler bytes":
+                new_write.set()
+                assert release_new.wait(10)
+            if key in self.data:
+                raise ObjectExists()
+            self.data[key] = body
+
+        def get(self, key):
+            if key not in self.data:
+                raise ObjectMissing()
+            return self.data[key]
+
+    store = auth_store_factory(Settings(feishu_app_id="drive-receipt-test"), objects=PausedObjects(), reset=False, role="api")
+    principal = store.upsert_feishu_identity("drive-lock-loss-" + uuid.uuid4().hex, "owner")
+    now = datetime.now(timezone.utc)
+    tokens = UserTokens("test-user-access", "test-refresh", now + timedelta(hours=1), now + timedelta(days=1))
+    downloads = []
+
+    def provider(request):
+        if request.url.path.endswith("/metas/batch_query"):
+            return httpx.Response(200, json={"code": 0, "data": {"metas": [{"doc_token": "source-token", "doc_type": "file", "title": "source.xlsx"}]}})
+        downloads.append(str(request.url))
+        if len(downloads) == 1:
+            old_read.set()
+            assert release_old.wait(10)
+            body = b"old handler bytes"
+        else:
+            body = b"new handler bytes"
+        return httpx.Response(200, content=body, headers={"Content-Type": "application/octet-stream"})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(store.settings, auth_store=store, http=http), raise_server_exceptions=False) as client:
+        client.cookies.set(SESSION_COOKIE, store.create_session(principal, tokens))
+        request_id = str(uuid.uuid4())
+        command = {"request_id": request_id, "file_token": "source-token", "doc_type": "file"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            old = pool.submit(client.post, "/integrations/feishu/files/import", json=command)
+            try:
+                assert old_read.wait(10)
+                # Inject one external DB-session fault, scoped to this test's UUID.
+                # Product outcome assertions still use the public HTTP interface.
+                with connect(store.settings, "api") as fault:
+                    row = fault.execute(
+                        """SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1
+                           AND classid = ((hashtextextended(%s, 0) >> 32) & 4294967295)::oid
+                           AND objid = (hashtextextended(%s, 0) & 4294967295)::oid""",
+                        ("drive-import:" + request_id, "drive-import:" + request_id),
+                    ).fetchall()
+                    assert len(row) == 1
+                    assert fault.execute("SELECT pg_terminate_backend(%s)", (row[0][0],)).fetchone() == (True,)
+                new = pool.submit(client.post, "/integrations/feishu/files/import", json=command)
+                assert new_write.wait(10)
+                release_old.set()
+                assert old.result(timeout=10).status_code == 500
+            finally:
+                release_old.set()
+                release_new.set()
+            assert new.result(timeout=10).status_code == 201
+        receipt = client.get(f"/file-uploads/{request_id}").json()
+        assert receipt["state"] == "ready"
+        file = receipt["file"]
+        assert client.get(f"/files/{file['file_id']}/versions/{request_id}/download").content == b"new handler bytes"

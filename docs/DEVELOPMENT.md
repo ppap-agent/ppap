@@ -146,7 +146,7 @@ That command serializes the real FastAPI `app.openapi()` schema and pipes it to 
 
 UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented. Preview adapters stay outside the production build entries.
 
-本地文件上传可在 `POST /files` 或新版本请求中提供成对的 `request_id` 与 `sha256`。该请求固定调用人、元信息和内容摘要，`FileVersion.id` 就是请求 ID；重放不创建第二版本。`GET /file-uploads/{request_id}` 只读原请求，未读到记录仍是 unknown，不许可新请求重传。服务明确返回 `resume_allowed` 时，用户可用原请求和相同内容继续；绑定上传的 `PUT /blob` 幂等并完成该版本，已就绪内容不能替换。旧无请求 ID 的三步上传仍保留。文件大小上限为 200 MiB；本地读取/散列与 API 仍使用整份文件，不承诺流式传输或跨设备恢复未传完的字节。飞书导入的可恢复回执仍待接入。
+本地文件上传可在 `POST /files` 或新版本请求中提供成对的 `request_id` 与 `sha256`。该请求固定调用人、元信息和内容摘要，`FileVersion.id` 就是请求 ID；重放不创建第二版本。`GET /file-uploads/{request_id}` 只读原请求，未读到记录仍是 unknown，不许可新请求重传。服务明确返回 `resume_allowed` 时，用户可用原请求和相同内容继续；绑定上传的 `PUT /blob` 幂等并完成该版本，已就绪内容不能替换。旧无请求 ID 的三步上传仍保留。文件大小上限为 200 MiB；本地读取/散列与 API 仍使用整份文件，不承诺流式传输或跨设备恢复未传完的字节。
 
 文件内容预检查使用 `POST /file-validations`（同一 `request_id`、文件与版本幂等受理）及 `GET /file-validations/{validation_id}` 读回。`GET /files/{file_id}/versions/{version_id}/validation` 可恢复该版本最新的检查请求；每次读取仍检查当前文件权限。它复用现有 Worker 队列，不创建草稿、审核轮次或用量记录，也不调用模型或匹配规则。任务租约失效显示 `unknown`，不自动重新领取；原 Worker 的有效回执仍可收敛。
 
@@ -180,7 +180,7 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 `GET /audit-template-catalog` 只读当前租户的最新发布规则链，按 engine 规则的明确客户及规范文件类型聚合；客户键与匹配器同用去空白、casefold，不是飞书身份或文件夹权限。P1 客户选项与 P0 规则覆盖共用该目录，不将历史规则的客户继续列为生效；17 类覆盖按既有字典去重，额外 DFMEA 规则仍保留客户并单独显示，不扩大分母或限制审核器。真实模板清单、权限和字节来源未配置时，P0 明确文件不可用，不伪造空文件夹或把规则原件当模板；`templates-catalog-only` 验证此交互及返回原审核选择，不证明模板下载或运营落表。
 
-真实联调的飞书选择复用当前用户的云文件列表与导入接口。导入携带 `request_id` 时，现有文件版本上传记录先绑定发起人、源 token/type；同请求并发读取同一版本，不再次导出。首次捕获的文件名、类型、长度和摘要在写对象前固定；响应丢失读取 `/file-uploads/{request_id}`，仅服务允许时显式继续同一请求。已保存字节优先完成原版本；原字节未保存且远端内容已变化时失败，不替换为新内容。导入后仍需预检查，不自动创建审核或用量；这不决定跨任务档案身份或组织分享政策。`FeishuImportReceipts.tla` 只检查两个处理器、两个源、两个摘要下的源绑定和字节不变 Safety，含处理器退出后的迟到对象写入；不证明实际 OAuth、SQL 锁、飞书导出、存储耐久性或最终完成。
+真实联调的飞书选择复用当前用户的云文件列表与导入接口。导入携带 `request_id` 时，现有文件版本上传记录先绑定发起人、源 token/type；同请求并发读取同一版本，不再次导出。首次捕获的文件名、类型、长度和摘要在持锁会话的事务中核对并固定，再写对象；失去锁会话的旧处理器不能另连写回。响应丢失读取 `/file-uploads/{request_id}`，仅服务允许时显式继续同一请求。已保存字节优先完成原版本；原字节未保存且远端内容已变化时失败，不替换为新内容。导入后仍需预检查，不自动创建审核或用量；这不决定跨任务档案身份或组织分享政策。`FeishuImportReceipts.tla` 只检查两个处理器、两个源、两个摘要下的源绑定和字节不变 Safety，含失锁后的迟到 provider 回应及对象写入；不证明实际 OAuth、SQL 锁、飞书导出、存储耐久性或最终完成。
 
 ## UI-first 交互预览
 

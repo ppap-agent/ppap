@@ -6,8 +6,9 @@ EXTENDS Naturals, FiniteSets
 \* digests. A source is bound before provider I/O. The first captured bytes bind
 \* the immutable version; a changed remote document cannot replace them.
 \* Reserve/capture, provider completion, object effect and READY are distinct.
-\* A handler can stop at any cut point. An already submitted object effect may
-\* still finish after it stops. Explicit same-request continuation acquires the
+\* A handler can stop or lose its DB session at any cut point. Its provider reply
+\* and an already submitted object effect may still finish after lock loss.
+\* Capture requires the original session. Explicit continuation acquires the
 \* same session lock; a missing response alone does not create another request.
 \* Digests abstract collision-free byte strings. SQL/session lock correctness,
 \* ACL enforcement, provider identity/exports, streaming, cleanup, UI epochs and
@@ -16,7 +17,7 @@ EXTENDS Naturals, FiniteSets
 \* No constraints, symmetry or operator overrides are used.
 
 CONSTANT Fault
-ASSUME Fault \in {"none", "source_rebind", "content_rebind"}
+ASSUME Fault \in {"none", "source_rebind", "content_rebind", "lost_lock"}
 Handlers == {1, 2}
 Sources == {1, 2}
 Digests == {1, 2}
@@ -57,20 +58,21 @@ Fetch(h) ==
                    failed, holder, writes>>
 
 Deliver(h, d) ==
-    /\ holder = h /\ handlers[h].phase = "fetching"
+    /\ handlers[h].phase = "fetching"
     /\ handlers' = [handlers EXCEPT ![h].phase = "loaded", ![h].digest = d]
     /\ UNCHANGED <<source, firstSource, digest, firstDigest, blob, ready,
                    failed, holder, writes>>
 
 Capture(h) ==
-    /\ holder = h /\ handlers[h].phase = "loaded"
+    /\ handlers[h].phase = "loaded" /\ ~ready /\ ~failed
+    /\ holder = h \/ (Fault = "lost_lock" /\ holder # h /\ firstDigest # 0)
     /\ LET d == handlers[h].digest
-           allowed == digest = 0 \/ digest = d \/ Fault = "content_rebind"
+           allowed == digest = 0 \/ digest = d \/ Fault = "content_rebind" \/ Fault = "lost_lock"
        IN /\ digest' = IF allowed THEN d ELSE digest
           /\ firstDigest' = IF firstDigest = 0 THEN d ELSE firstDigest
           /\ failed' = ~allowed
           /\ handlers' = [handlers EXCEPT ![h].phase = IF allowed THEN "captured" ELSE "done"]
-          /\ holder' = IF allowed THEN h ELSE 0
+          /\ holder' = IF allowed THEN holder ELSE 0
     /\ UNCHANGED <<source, firstSource, blob, ready, writes>>
 
 SubmitWrite(h) ==
@@ -102,9 +104,15 @@ Stop(h) ==
     /\ UNCHANGED <<source, firstSource, digest, firstDigest, blob,
                    ready, failed, writes>>
 
+LoseSession(h) ==
+    /\ holder = h
+    /\ holder' = 0
+    /\ UNCHANGED <<source, firstSource, digest, firstDigest, blob,
+                   ready, failed, writes, handlers>>
+
 Next == (\E h \in Handlers, s \in Sources: Start(h, s))
         \/ (\E h \in Handlers: Acquire(h) \/ Fetch(h) \/ Capture(h) \/ SubmitWrite(h)
-                                    \/ ObjectEffect(h) \/ Publish(h) \/ Stop(h))
+                                    \/ ObjectEffect(h) \/ Publish(h) \/ Stop(h) \/ LoseSession(h))
         \/ (\E h \in Handlers, d \in Digests: Deliver(h, d))
 Spec == Init /\ [][Next]_vars
 

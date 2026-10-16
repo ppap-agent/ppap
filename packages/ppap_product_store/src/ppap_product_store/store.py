@@ -632,29 +632,42 @@ class AuthStore:
                 }
                 if imported.file_token != file_token or doc_type and imported.doc_type != doc_type:
                     raise ValueError("upload_request_conflict")
-                if inputs and inputs.get("sha256") and any(inputs.get(key) != value for key, value in captured.items()):
-                    with self._conn() as conn:
-                        conn.execute("UPDATE product.file_versions SET status = %s WHERE id = %s AND status = %s", (FAILED, version_id, STAGING))
-                    raise ValueError("upload_content_conflict")
-                with self._conn() as conn, conn.transaction():
-                    inputs = {**(inputs or {}), **captured}
-                    conn.execute(
-                        """UPDATE product.file_versions SET original_filename = %s, content_type = %s, byte_size = %s, upload_request = %s
-                           WHERE id = %s AND status = %s""",
-                        (captured["original_filename"], captured["content_type"], captured["byte_size"], Jsonb(inputs), version_id, STAGING),
-                    )
-                    conn.execute("UPDATE product.files SET original_filename = %s WHERE id = %s", (captured["original_filename"], version.file_id))
-                    conn.execute(
-                        """INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref)
+                conflict = False
+                # A dead lock session cannot continue this transaction on a new
+                # connection. Re-read under a row lock; never trust pre-I/O input.
+                with guard.transaction():
+                    row = guard.execute("SELECT upload_request, status FROM product.file_versions WHERE id = %s FOR UPDATE", (version_id,)).fetchone()
+                    if not row or row[0].get("source") != source:
+                        raise ValueError("upload_request_conflict")
+                    if row[1] != STAGING:
+                        return self.get_version(version.file_id, version_id) or version
+                    inputs = row[0]
+                    conflict = bool(inputs.get("sha256") and any(inputs.get(key) != value for key, value in captured.items()))
+                    if conflict:
+                        guard.execute("UPDATE product.file_versions SET status = %s WHERE id = %s AND status = %s", (FAILED, version_id, STAGING))
+                    else:
+                        updated = guard.execute(
+                            """UPDATE product.file_versions SET original_filename = %s, content_type = %s, byte_size = %s, upload_request = %s
+                           WHERE id = %s AND status = %s AND upload_request = %s""",
+                            (captured["original_filename"], captured["content_type"], captured["byte_size"], Jsonb({**inputs, **captured}), version_id, STAGING, Jsonb(inputs)),
+                        )
+                        if updated.rowcount != 1:
+                            raise ValueError("upload_request_conflict")
+                        guard.execute("UPDATE product.files SET original_filename = %s WHERE id = %s", (captured["original_filename"], version.file_id))
+                        guard.execute(
+                            """INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref)
                            VALUES (%s, 'feishu', %s, %s) ON CONFLICT DO NOTHING""",
-                        (version_id, imported.doc_type, file_token),
-                    )
+                            (version_id, imported.doc_type, file_token),
+                        )
+                if conflict:
+                    raise ValueError("upload_content_conflict")
                 current = self.get_version(version.file_id, version_id)
                 if current is None:
                     raise KeyError("missing")
                 return self.put_blob(current, imported.data)
             finally:
-                guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+                if not guard.closed:
+                    guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
 
     def _upload_request(self, version: FileVersion) -> dict | None:
         with self._conn() as conn:
