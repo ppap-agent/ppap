@@ -1069,6 +1069,21 @@ export interface components {
             /** Scope Notice */
             scope_notice: string | null;
         };
+        /**
+         * AuditCompletionEstimate
+         * @description Service estimate of task completion, including initial reports under D3.
+         *
+         *     Times are timezone-qualified RFC 3339; observed_at <= earliest_at <= latest_at.
+         *     This interval is not a progress counter or a client-side countdown.
+         */
+        AuditCompletionEstimate: {
+            /** Earliest At */
+            earliest_at: string;
+            /** Latest At */
+            latest_at: string;
+            /** Observed At */
+            observed_at: string;
+        };
         /** AuditEvidenceReference */
         AuditEvidenceReference: {
             /** Derived File Version Id */
@@ -1445,6 +1460,7 @@ export interface components {
              * @enum {string}
              */
             analysis_mode: "standard" | "deep";
+            completion_estimate?: components["schemas"]["AuditCompletionEstimate"] | null;
             /** Completion Reason */
             completion_reason: ("no_matching_rules" | "processed") | null;
             /** Created At */
@@ -2145,7 +2161,10 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** Metadata */
+        /**
+         * Metadata
+         * @description Recognized file information: part is the part name, not its number.
+         */
         Metadata: {
             /** Customer */
             customer: string | null;
@@ -2153,6 +2172,8 @@ export interface components {
             model: string | null;
             /** Part */
             part: string | null;
+            /** Part Number */
+            part_number?: string | null;
         };
         /** OfficePreviewResponse */
         OfficePreviewResponse: {

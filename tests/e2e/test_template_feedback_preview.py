@@ -10,6 +10,35 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplateFeedbackPreviewTests(unittest.TestCase):
+    def test_empty_customer_catalog_can_collect_materials_and_return_to_the_unchanged_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=templates-empty-customers")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            address = page.url
+            page.get_by_role("navigation", name="产品导航").get_by_role("button", name="模板库", exact=True).click()
+            expect(page.get_by_text("暂无具有生效规则的客户。", exact=True)).to_be_visible()
+            page.get_by_role("button", name="更多模板请补充", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "说明.zip", "mimeType": "application/zip", "buffer": b"opaque"})
+            expect(dialog.get_by_text("说明.zip", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            expect(page.get_by_text("暂无具有生效规则的客户。", exact=True)).to_be_visible()
+            page.get_by_role("button", name="更多模板请补充", exact=True).click()
+            expect(dialog.get_by_text("说明.zip", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="返回审核", exact=True).click()
+            self.assertEqual(page.url, address)
+            expect(page.get_by_text("预计点数（示例）：1000", exact=True)).to_be_visible()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True)).to_be_checked()
+            browser.close()
+
     def test_incomplete_received_receipt_stays_unknown_until_the_original_attempt_is_read(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

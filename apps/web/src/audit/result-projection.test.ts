@@ -210,6 +210,17 @@ test('readback preserves the accepted round, file versions, rules and input sele
   after.files[0].selection = 'selected'; after.round_id = 'new-round'
   assert.equal(sameFrozenInputs(before, after), false)
 })
+test('the same frozen file cannot silently acquire another identified customer, part or document type', () => {
+  const before = projection()
+  for (const field of ['customer', 'model', 'part', 'part_number'] as const) {
+    const after = structuredClone(before)
+    after.files[0].match!.metadata[field] = 'different-identity'
+    assert.equal(sameFrozenInputs(before, after), false, field)
+  }
+  const after = structuredClone(before)
+  after.files[0].match!.document_type = 'PFMEA'
+  assert.equal(sameFrozenInputs(before, after), false)
+})
 test('changed rule snapshots and item bodies cannot masquerade under the same IDs', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.rule.title = '不同版本内容'

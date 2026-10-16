@@ -61,6 +61,18 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_completion_estimate_is_an_optional_service_interval_separate_from_counts(self):
+        schemas = app.openapi()["components"]["schemas"]
+        estimate = schemas["AuditCompletionEstimate"]
+        self.assertEqual(set(estimate["required"]), {"observed_at", "earliest_at", "latest_at"})
+        task = schemas["AuditTask"]
+        self.assertNotIn("completion_estimate", task["required"])
+        self.assertIn("completion_estimate", task["properties"])
+        self.assertEqual(set(schemas["AuditProgress"]["properties"]), {"completed", "total"})
+        metadata = schemas["Metadata"]
+        self.assertNotIn("part_number", metadata["required"])
+        self.assertIn("part_number", metadata["properties"])
+
     def test_ui_usage_is_a_read_projection_per_file_audit_not_a_pool_allocation(self):
         schemas = app.openapi()["components"]["schemas"]
         page = schemas["AuditUsagePage"]

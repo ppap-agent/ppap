@@ -101,9 +101,12 @@ class FileFinalizeRequest(TypedDict, total=False):
 
 
 class Metadata(TypedDict):
+    """Recognized file information: part is the part name, not its number."""
+
     customer: str | None
     model: str | None
     part: str | None
+    part_number: NotRequired[str | None]
 
 
 class Analysis(TypedDict):
@@ -606,6 +609,18 @@ class AuditProgress(TypedDict):
     total: int
 
 
+class AuditCompletionEstimate(TypedDict):
+    """Service estimate of task completion, including initial reports under D3.
+
+    Times are timezone-qualified RFC 3339; observed_at <= earliest_at <= latest_at.
+    This interval is not a progress counter or a client-side countdown.
+    """
+
+    observed_at: str
+    earliest_at: str
+    latest_at: str
+
+
 class AuditEvidenceReference(TypedDict):
     file_version_id: str
     locator: SemanticLocator | None
@@ -798,6 +813,7 @@ class AuditTask(TypedDict):
     estimated_points: int | None
     acceptance: NotRequired[AuditAcceptance]
     progress: NotRequired[AuditProgress]
+    completion_estimate: NotRequired[AuditCompletionEstimate | None]
     notification_enabled: NotRequired[bool]
     usage_notice: NotRequired[str | None]
     report_package: NotRequired[AuditReportPackage | None]

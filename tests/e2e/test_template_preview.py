@@ -191,13 +191,19 @@ class TemplatePreviewTests(unittest.TestCase):
     def test_mobile_catalog_shows_files_without_horizontal_page_overflow(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 390, "height": 844})
-            page.goto(PREVIEW + "/preview/audit.html?view=templates")
-            row = page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))
-            expect(row).to_be_visible()
-            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
-            box = row.bounding_box()
-            self.assertLess(box["y"] + box["height"], 844)
+            for width in (390, 1024, 1280):
+                with self.subTest(width=width):
+                    page = browser.new_page(viewport={"width": width, "height": 844})
+                    page.goto(PREVIEW + "/preview/audit.html?view=templates")
+                    row = page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))
+                    expect(row).to_be_visible()
+                    expect(row.get_by_text("更新于 2026-10-16 08:00" if width < 1280 else "2026-10-16 08:00", exact=True)).to_be_visible()
+                    expect(row.get_by_role("button", name="预览", exact=True)).to_be_visible()
+                    expect(row.get_by_role("button", name="下载", exact=True)).to_be_visible()
+                    self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
+                    box = row.bounding_box()
+                    self.assertLess(box["y"] + box["height"], 844)
+                    page.close()
             browser.close()
 
     def test_preview_error_keeps_the_requested_template_version_and_a_download_exit(self):

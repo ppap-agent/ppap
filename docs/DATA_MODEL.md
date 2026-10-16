@@ -19,6 +19,8 @@ V3.1 的用户任务连接识别、待确认和已受理的轮次，不取代文
 
 Web JSON 类型继续由 Product API 的 OpenAPI 生成；预览与真实界面共用同一合同，不另建前端 DTO 注册表。展示状态可以是前端投影，任务、审核结果、报告和费用事实不能由浏览器缓存或 fixture 充当服务端记录。最小新增字段与稳定映射由 [#164](https://github.com/ppap-agent/ppap/issues/164) 定义；费用与对象权限仍按下文现行边界执行，政策变更须先由 [#163](https://github.com/ppap-agent/ppap/issues/163) 明确确认。
 
+文件识别信息随当次审核依据保留；`Metadata.part` 继续表示零件名称，零件号使用独立的可选 `part_number`。按 #163 已确认的 D8 文件信息更正边界，显示更正必须与原始识别信息分开保存，不改冻结文件、规则、机器结果或既有报告，不重匹配、不重跑审核。此决定不替其他未决政策作选择。
+
 ## 文件版本
 
 每次明确上传或导入创建一个新的 `file_version_id`，关联一个存储对象或 provider version。历史轮次引用 `file_version_id`，而不是文件名、当前 URL 或内容 hash。

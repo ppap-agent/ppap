@@ -7,6 +7,7 @@ The production browser suite remains separate and unchanged.
 import os
 import re
 import unittest
+from datetime import datetime, timezone
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -27,6 +28,103 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_historical_file_information_comes_from_the_selected_round_not_current_archive_metadata(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            info = page.get_by_role("region", name="本次审核文件信息", exact=True)
+            expect(info.get_by_text("P-204-3", exact=True)).to_be_visible()
+            expect(info.get_by_text("第 3 次车型", exact=True)).to_be_visible()
+            page.get_by_role("button", name="选择第 2 次审核", exact=True).click()
+            expect(info.get_by_text("P-204-2", exact=True)).to_be_visible()
+            expect(info.get_by_text("旧版尾门导流板", exact=True)).to_be_visible()
+            expect(info.get_by_text("第 2 次车型", exact=True)).to_be_visible()
+            expect(info.get_by_text("P-204-3", exact=True)).to_have_count(0)
+            page.reload()
+            expect(info.get_by_text("P-204-2", exact=True)).to_be_visible()
+            page.get_by_role("button", name="选择第 3 次审核", exact=True).click()
+            expect(info.get_by_text("P-204-3", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_acceptance_cannot_silently_replace_the_confirmed_file_information(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=confirm-metadata-conflict")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_text("受理结果待核对", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+            expect(page.get_by_text("被静默替换的客户", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_narrow_file_information_keeps_part_name_distinct_from_part_number(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-progress&task=preview-recovery-task")
+            info = page.get_by_role("region", name="本次审核文件信息", exact=True)
+            expect(info.get_by_text("客户", exact=True).locator("..").get_by_text("示例客户", exact=True)).to_be_visible()
+            expect(info.get_by_text("车型", exact=True).locator("..").get_by_text("示例车型", exact=True)).to_be_visible()
+            expect(info.get_by_text("零件号", exact=True).locator("..").get_by_text("P-204", exact=True)).to_be_visible()
+            expect(info.get_by_text("零件名称", exact=True).locator("..").get_by_text("尾门导流板", exact=True)).to_be_visible()
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.get_by_text("零件号", exact=True)).to_have_count(3)
+            expect(page.get_by_text("P-204", exact=True)).to_have_count(3)
+            expect(page.get_by_text("零件名称", exact=True)).to_have_count(3)
+            expect(page.get_by_text("尾门导流板", exact=True)).to_have_count(3)
+            browser.close()
+
+    def test_missing_invalid_and_overdue_estimates_do_not_hide_valid_file_evidence(self):
+        cases = [
+            ("restore-progress", "服务暂未提供可靠的结束时间估计。"),
+            ("restore-estimate-invalid", "服务暂未提供可靠的结束时间估计。"),
+            ("restore-estimate-reversed", "服务暂未提供可靠的结束时间估计。"),
+            ("restore-estimate-overdue", "上次估计区间已过，等待服务更新。"),
+        ]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for scene, message in cases:
+                with self.subTest(scene=scene):
+                    page = browser.new_page(viewport={"width": 390, "height": 844})
+                    page.goto(PREVIEW + "/preview/audit.html?scene=" + scene + "&task=preview-recovery-task")
+                    expect(page.get_by_role("region", name="任务时间估计", exact=True).get_by_text(message, exact=True)).to_be_visible()
+                    expect(page.get_by_text("已结束 1/2 项", exact=True)).to_be_visible()
+                    expect(page.get_by_text("满足 0 · 不符合 1", exact=True)).to_be_visible()
+                    expect(page.get_by_role("button", name="核对 控制计划.xlsx", exact=True)).to_be_enabled()
+                    page.close()
+            browser.close()
+
+    def test_service_completion_interval_does_not_advance_real_progress_and_ends_with_the_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000}, timezone_id="Asia/Shanghai")
+            page.clock.install(time=datetime(2026, 10, 16, 2, tzinfo=timezone.utc))
+            page.clock.pause_at(datetime(2026, 10, 16, 2, 1, tzinfo=timezone.utc))
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-estimate&task=preview-recovery-task")
+            estimate = page.get_by_role("region", name="任务时间估计", exact=True)
+            expect(estimate.get_by_text("预计任务结束", exact=False)).to_be_visible()
+            expect(estimate.get_by_label("预计最早结束时间", exact=True)).to_have_attribute("datetime", "2026-10-16T02:11:00.000Z")
+            expect(estimate.get_by_label("预计最晚结束时间", exact=True)).to_have_attribute("datetime", "2026-10-16T02:21:00.000Z")
+            expect(estimate.get_by_label("估计观察时间", exact=True)).to_have_attribute("datetime", "2026-10-16T02:01:00.000Z")
+            page.clock.fast_forward(60000)
+            expect(page.get_by_role("status").filter(has_text="文件已结束 0/3")).to_be_visible()
+            page.clock.fast_forward(1200000)
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("控制计划.xlsx")).click()
+            expect(estimate.get_by_text("上次估计区间已过，等待服务更新。", exact=True)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text="文件已结束 0/3")).to_be_visible()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="文件已结束 3/3")).to_be_visible()
+            expect(estimate).to_have_count(0)
+            browser.close()
+
     def test_an_observation_without_task_progress_cannot_erase_a_known_counter(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

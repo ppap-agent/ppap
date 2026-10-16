@@ -15,8 +15,12 @@ export function sameSnapshot(left: unknown, right: unknown): boolean {
   return a.length === b.length && a.every(([key, value]) => Object.hasOwn(right, key) && sameSnapshot(value, (right as Record<string, unknown>)[key]))
 }
 
+export function sameFrozenFileInfo(before: TaskFile, after: TaskFile): boolean {
+  return sameSnapshot(before.file, after.file) && sameSnapshot(before.match?.metadata, after.match?.metadata) && before.match?.document_type === after.match?.document_type
+}
+
 export function sameFrozenInputs(before: Task, after: Task): boolean {
-  return before.id === after.id && before.round_id === after.round_id && before.analysis_mode === after.analysis_mode && before.files.length === after.files.length && before.files.every(file => after.files.some(next => sameSnapshot(file.file, next.file) && file.selection === next.selection && file.removal_reason === next.removal_reason && sameSnapshot(file.match?.rule, next.match?.rule)))
+  return before.id === after.id && before.round_id === after.round_id && before.analysis_mode === after.analysis_mode && before.files.length === after.files.length && before.files.every(file => after.files.some(next => sameFrozenFileInfo(file, next) && file.selection === next.selection && file.removal_reason === next.removal_reason && sameSnapshot(file.match?.rule, next.match?.rule)))
 }
 
 /** Reject a regressive snapshot rather than mixing old counters with new checks. */

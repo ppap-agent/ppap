@@ -154,6 +154,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 `observe-matching`、`restore-observe` 演示当前可见任务的自动读取；每次返回仍由事件控制条显式交付，不用计时器生成进度。界面默认每 3 秒读一次，隐藏或离开面板暂停，重新可见/聚焦补拉；失败按 6/12/24/30 秒退避，成功恢复基础间隔。未知的报告生成、ZIP 或分享请求保留专用核对入口，不由通用自动读取覆盖。`restore-observe-regression`、`restore-observe-missing-progress` 演示拒绝同轮较早或缺失的进度，`restore-observe-unresolved` 演示未知报告请求的暂停；`match-rule-missing` 演示缺少候选规则时禁止确认。其他手动场景显式关闭自动读取，以便单独控制原来的交互。
 
+`restore-estimate` 展示服务合同中的任务结束时间区间及观察时间；结束包含 D3 规定的首次报告处理。`restore-estimate-overdue`、`restore-estimate-invalid`、`restore-estimate-reversed` 分别演示上界已过、缺少时区和区间倒序；无可靠估计时明确说明，不用浏览器倒计时增加审核计数。过期说明随现有读取或界面操作更新，终态不再展示进行中的估计。固定样例仅验证显示，不代表真实服务已能预测耗时。P4/P5 与历史文件信息区分零件名称 `part` 和可选零件号 `part_number`；`confirm-metadata-conflict` 演示拒绝确认回执静默替换识别信息，历史详情使用所选轮次的信息，不取档案顶部的信息替代。
+
 原件读取使用 `scene=original-error`、`original-loading` 或 `original-unavailable`，选择三类文件示例后进入审核并核对 Excel 原件。它们复用产品原件阅读器，演示读取失败、重读和乱序返回；下载仅返回该冻结版本的明确示例 XLSX，不是客户原件，也不验证真实 Office、排版或定位。任意上传不生成替代原件，不向产品 API 发送示例身份。
 
 文件档案及历次审核使用 `scene=archive-ready`。`archive-task-allowed` 单独演示有来源任务读取许可时，经完整 P5/报告页返回所选历史，不改开最新审核。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。

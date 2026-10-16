@@ -86,6 +86,7 @@ const adapter: AuditIntakeAdapter = {
       const rule = result.files[0].match?.rule
       if (rule?.body.kind === 'engine') rule.body.rules[0].rule_to_check = '同一规则 ID 的错误改写'
     }
+    if (scene === 'confirm-metadata-conflict' && result.files[0].match) result.files[0].match.metadata.customer = '被静默替换的客户'
     accepted.set(task.id, result)
     taskStore.set(task.id, result)
     if (scene === 'confirm-unknown') throw new Error('preview_response_lost')
@@ -155,7 +156,7 @@ const adapter: AuditIntakeAdapter = {
       const sampleChecks = reportSamples.documents[index]?.checks
       const rules = sampleChecks ? sampleChecks.map(check => ({id: check.id, category: check.category, priority: null, rule_to_check: check.requirement, type_of_rule: 'table'})) : [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]
       const gaps = scene === 'matching-gaps' && matched && index === 0 && !hasControlPlan ? ['示例：未选择控制计划，频次一致性缺少跨文件比对资料。'] : []
-      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' && !(scene === 'match-rule-missing' && index === 1) ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps}}
+      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: '尾门导流板', part_number: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' && !(scene === 'match-rule-missing' && index === 1) ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps}}
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates remain Product API-owned.
@@ -168,7 +169,7 @@ const adapter: AuditIntakeAdapter = {
 const archiveAdapter = fixtureArchive(taskStore, scene, (id, sequence, failed, pending) => {
   const matched = adapter.match(adapter.samples(), 'standard', null, null)
   taskStore.delete(matched.id)
-  const seed = {...matched, id, number: `PPAP-历史示例-${sequence}`, files: matched.files.map((row, index) => ({...row, file: {...row.file, file_id: `${id}-file-${index}`, id: `${id}-version-${index}`}}))}
+  const seed = {...matched, id, number: `PPAP-历史示例-${sequence}`, files: matched.files.map((row, index) => ({...row, file: {...row.file, file_id: `${id}-file-${index}`, id: `${id}-version-${index}`}, match: row.match ? {...row.match, metadata: {...row.match.metadata, model: `第 ${sequence} 次车型`, part_number: `P-204-${sequence}`, part: sequence === 2 ? '旧版尾门导流板' : '尾门导流板'}} : null}))}
   const accepted = fixtureAcceptance(seed, `${id}-accept`)
   return pending ? accepted : fixtureResults(accepted, failed ? 'reports-none' : 'reports-ready')
 }, sharingAdapter.forReport)
@@ -181,7 +182,14 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   taskStore.delete(matched.id)
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict'].includes(scene) || automaticObservation) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene.startsWith('reports-') ? fixtureResults(frozen, scene) : frozen
+  const snapshot = scene === 'restore-pending' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene.startsWith('reports-') ? fixtureResults(frozen, scene) : frozen
+  if (scene.startsWith('restore-estimate')) {
+    const now = Date.now(), time = (minutes: number) => new Date(now + minutes * 60000).toISOString()
+    snapshot.completion_estimate = {observed_at: time(0), earliest_at: time(10), latest_at: time(20)}
+    if (scene === 'restore-estimate-overdue') snapshot.completion_estimate = {observed_at: time(-30), earliest_at: time(-20), latest_at: time(-10)}
+    if (scene === 'restore-estimate-invalid') snapshot.completion_estimate.earliest_at = '2026-10-16T02:10:00'
+    if (scene === 'restore-estimate-reversed') snapshot.completion_estimate.latest_at = time(5)
+  }
   if (scene === 'restore-task-conflict' || scene === 'restore-report-conflict') {snapshot.state = 'completed'; snapshot.completion_reason = 'processed'; snapshot.progress = {completed: 3, total: 3}}
   if (scene === 'restore-observe-unresolved') {
     const control = fixtureResults(frozen, 'reports-generating').files.find(row => row.match?.document_type === '控制计划')!
