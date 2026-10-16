@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Use runner-local Corepack cache
+        run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack" >> "$GITHUB_ENV"
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -57,6 +59,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Use runner-local Corepack cache
+        run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack" >> "$GITHUB_ENV"
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
