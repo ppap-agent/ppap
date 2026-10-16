@@ -144,10 +144,12 @@ def _user_tokens(http, payload_body: dict) -> UserTokens:
             timeout=20,
         )
         payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("invalid_token_response")
     except (httpx.HTTPError, ValueError) as error:
+        if payload_body.get("grant_type") != "authorization_code":
+            raise
         raise FeishuError("token_exchange_failed") from error
-    if not isinstance(payload, dict):
-        raise FeishuError("token_exchange_failed")
     token = payload.get("access_token")
     if response.status_code >= 400 or payload.get("code") not in (0, None) or not token:
         raise FeishuError("token_exchange_failed")

@@ -1,12 +1,14 @@
 """OAuth return paths use real state persistence and controlled provider HTTP."""
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from ppap_api import create_app
+from ppap_core.feishu import UserTokens
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 
@@ -113,3 +115,37 @@ def test_success_keeps_the_deep_link_and_untrusted_states_never_supply_a_return_
         foreign_state = parse_qs(urlsplit(foreign.headers["location"]).query)["state"][0]
         refused = client.get("/login/feishu/callback", params={"state": foreign_state, "error": "access_denied"}, follow_redirects=False)
         assert refused.headers["location"] == "http://127.0.0.1:4173/?auth_error=cancelled"
+
+
+@pytest.mark.parametrize("failure", ["timeout", "invalid_json", "non_object", "invalid_credentials"])
+def test_temporary_refresh_failure_does_not_permanently_revoke_the_existing_session(auth_store_factory, failure):
+    settings = Settings(feishu_app_id="login-recovery-" + uuid.uuid4().hex, feishu_app_secret="test-secret")
+    store = auth_store_factory(settings, reset=False, role="api")
+    principal = store.upsert_feishu_identity("login-recovery-tenant-" + uuid.uuid4().hex, "test-user")
+    now = datetime.now(timezone.utc)
+    raw = store.create_session(principal, UserTokens("test-expired-access", "test-refresh", now - timedelta(seconds=2), now + timedelta(days=1)))
+    recovered = False
+
+    def provider(request):
+        assert request.method == "POST"
+        if not recovered:
+            if failure == "timeout":
+                raise httpx.ReadTimeout("controlled provider timeout", request=request)
+            if failure == "invalid_json":
+                return httpx.Response(502, content=b"not JSON")
+            if failure == "non_object":
+                return httpx.Response(200, json=[])
+            return httpx.Response(400, json={"code": 1, "msg": "invalid refresh credentials"})
+        return httpx.Response(200, json={"code": 0, "access_token": "test-refreshed", "expires_in": 3600, "refresh_token": "test-next-refresh", "refresh_token_expires_in": 86400})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(settings, auth_store=store, http=http), raise_server_exceptions=False) as client:
+        client.cookies.set(SESSION_COOKIE, raw)
+        first = client.get("/me")
+        assert first.status_code == (401 if failure == "invalid_credentials" else 500)
+        recovered = True
+        second = client.get("/me")
+        if failure == "invalid_credentials":
+            assert second.status_code == 401
+        else:
+            assert second.status_code == 200
+            assert second.json()["user_id"] == principal.user_id
