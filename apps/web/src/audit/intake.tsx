@@ -61,6 +61,25 @@ const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 
 type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: 'upload' | 'check' | 'match'}
 const sameSelections = (before: AuditTaskFile[], after: AuditTaskFile[]) => before.length === after.length && before.every(file => after.some(row => sameSnapshot(row.file, file.file) && row.selection === file.selection && row.removal_reason === file.removal_reason && row.validation_id === file.validation_id))
 const onlyUnmatchedRemovals = (before: AuditTaskFile[], after: AuditTaskFile[]) => before.length === after.length && before.every(file => after.some(row => sameSnapshot(row.file, file.file) && row.validation_id === file.validation_id && (row.selection === file.selection && row.removal_reason === file.removal_reason || file.selection === 'selected' && file.match?.state === 'unmatched' && row.selection === 'removed' && Boolean(row.removal_reason?.trim()))))
+function mergeFileIntent(local: AuditTaskFile[], current: AuditTaskFile[]): AuditTaskFile[] {
+  const kept = local.map(file => {
+    const next = current.find(row => row.file.id === file.file.id)
+    return next ? {...next, selection: file.selection, removal_reason: file.removal_reason} : file
+  })
+  const added = current.filter(file => !local.some(row => row.file.id === file.file.id)).map(file => file.selection === 'removed' ? file : {...file, selection: 'unselected' as const, removal_reason: null})
+  return [...kept, ...added]
+}
+function taskRegressed(previous: AuditTask | null | undefined, next: AuditTask): boolean {
+  if (!previous || previous.id !== next.id) return false
+  if ((previous.input_revision ?? 0) > (next.input_revision ?? 0)) return true
+  if ((previous.input_revision ?? 0) === (next.input_revision ?? 0) && Object.keys(taskLabels).indexOf(next.state) < Object.keys(taskLabels).indexOf(previous.state)) return true
+  return Boolean(previous.round_id && (!sameFrozenInputs(previous, next) || progressRegressed(previous, next)))
+}
+function mergeTaskSnapshot(previous: AuditTask | null | undefined, next: AuditTask, preserveNotification = false): AuditTask {
+  if (taskRegressed(previous, next)) return previous!
+  const combined = reconcileTaskDisplay(previous?.id === next.id ? previous : undefined, next)
+  return preserveNotification && previous?.id === next.id && previous.notification_enabled !== undefined ? {...combined, notification_enabled: previous.notification_enabled} : combined
+}
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
 export function AuditIntake({adapter, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter, displayAdapter}: {adapter: AuditIntakeAdapter; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter; displayAdapter?: AuditDisplayAdapter}) {
@@ -140,20 +159,15 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const matchingFiles = task ? files.filter(row => row.selection === 'selected') : []
   const matched = matchingFiles.filter(row => row.match?.state === 'matched' && row.match.rule)
   const noMatches = Boolean(task?.state === 'pending_confirm' && !matched.length && files.every(row => row.selection !== 'selected' || row.match?.state === 'unmatched'))
-  const inputChanged = Boolean(task && !task.round_id && (!sameSelections(task.files, files) || task.analysis_mode !== mode || task.customer_preference !== (customer === 'auto' ? null : customer)))
   const recognitionDirty = Boolean(task && !task.round_id && (task.analysis_mode !== mode || task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyUnmatchedRemovals(task.files, files)))
-  const inputDirty = useRef(inputChanged); inputDirty.current = inputChanged
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
   function saveTask(next: AuditTask, {activate = false, preserveNotification = false, updateActive = true} = {}) {
-    const merge = (current?: AuditTask | null) => {
-      const previous = current?.id === next.id ? current : latestTasks.current.find(row => row.id === next.id)
-      if ((previous?.input_revision ?? 0) > (next.input_revision ?? 0)) return previous!
-      const combined = reconcileTaskDisplay(previous, next)
-      return preserveNotification && current?.id === next.id && current.notification_enabled !== undefined ? {...combined, notification_enabled: current.notification_enabled} : combined
-    }
+    const listed = mergeTaskSnapshot(latestTasks.current.find(row => row.id === next.id), next, preserveNotification)
+    const combined = mergeTaskSnapshot(task?.id === next.id ? task : undefined, listed, preserveNotification)
+    latestTasks.current = latestTasks.current.some(row => row.id === next.id) ? latestTasks.current.map(row => row.id === next.id ? combined : row) : [...latestTasks.current, combined]
     if (activate) activeTaskId.current = next.id
-    setTask(current => activate || updateActive && current?.id === next.id ? merge(current) : current)
-    setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? merge(row) : row) : [...rows, next])
+    setTask(current => activate || updateActive && current?.id === next.id ? mergeTaskSnapshot(current?.id === next.id ? current : undefined, combined, preserveNotification) : current)
+    setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? mergeTaskSnapshot(row, combined, preserveNotification) : row) : [...rows, combined])
   }
   function changeDisplay(reference: DisplayReference, info: DisplayInfo) {
     const update = (current: AuditTask): AuditTask => current.id !== reference.task_id || current.round_id !== reference.round_id ? current : reconcileTaskDisplay(current, {...current, files: current.files.map(file => file.file.id === reference.file_version_id ? {...file, display_info: info} : file)})
@@ -177,7 +191,8 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const recognition = useTaskRecognition(adapter, (next, key) => {
     const target = recognitionTargets.current.get(key)
     if (target?.uploadId) uploadDrafts.current.set(target.uploadId, {taskId: next.id})
-    const activate = Boolean(target && target.epoch === draftEpoch.current && (activeTaskId.current === key || activeUploadDraftId.current === key) && (next.input_revision ?? 0) >= (latestTasks.current.find(row => row.id === next.id)?.input_revision ?? 0))
+    if (taskRegressed(task, next) || taskRegressed(latestTasks.current.find(row => row.id === next.id), next)) return
+    const activate = Boolean(target && target.epoch === draftEpoch.current && (activeTaskId.current === key || activeUploadDraftId.current === key))
     taskReadEpoch.current.set(next.id, (taskReadEpoch.current.get(next.id) || 0) + 1); taskReads.current.delete(next.id)
     setReadStatus(rows => ({...rows, [next.id]: {busy: false, error: ''}}))
     saveTask(next, {activate, updateActive: activate})
@@ -247,7 +262,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     if (recognition.get(row.id)) recognitionTargets.current.set(row.id, {epoch: draftEpoch.current, uploadId: null})
     const saved = row.round_id ? undefined : drafts.current.get(row.id)
     if (saved) uploads.restore(saved.uploads)
-    saveTask(row, {activate: true}); setFiles(structuredClone(saved?.files ?? row.files)); setMode(saved?.mode ?? row.analysis_mode); setCustomer(saved?.customer ?? row.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
+    saveTask(row, {activate: true}); setFiles(structuredClone(saved ? mergeFileIntent(saved.files, row.files) : row.files)); setMode(saved?.mode ?? row.analysis_mode); setCustomer(saved?.customer ?? row.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
     taskAddress(row.id)
   }
   async function recover(id: string, login = false) {
@@ -265,7 +280,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       setEndStatus(rows => {if (rows[id] !== 'rejected') return rows; const nextRows = {...rows}; delete nextRows[id]; return nextRows})
       const saved = !next.round_id && next.acceptance?.state !== 'pending' ? drafts.current.get(next.id) : undefined
       if (saved) uploads.restore(saved.uploads)
-      saveTask(next, {activate: true}); setFiles(structuredClone(saved?.files ?? next.files)); setMode(saved?.mode ?? next.analysis_mode); setCustomer(saved?.customer ?? next.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
+      saveTask(next, {activate: true}); setFiles(structuredClone(saved ? mergeFileIntent(saved.files, next.files) : next.files)); setMode(saved?.mode ?? next.analysis_mode); setCustomer(saved?.customer ?? next.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setRecovery(null)
     } catch (failure) {
       if (restoreEpoch.current !== epoch) return
       invalidateDisplayAccess(id)
@@ -385,8 +400,8 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (progressRegressed(current, next)) throw new Error('regressive_progress')
       saveTask(next, {preserveNotification: true})
       const saved = drafts.current.get(next.id)
-      if (saved?.step === 'match' && sameSelections(current.files, saved.files)) saved.files = structuredClone(next.files)
-      if (activeTaskId.current === next.id && stepRef.current === 'match' && (!inputDirty.current || current.round_id)) setFiles(structuredClone(next.files))
+      if (saved?.step === 'match') saved.files = mergeFileIntent(saved.files, structuredClone(next.files))
+      if (activeTaskId.current === next.id && stepRef.current === 'match') setFiles(rows => mergeFileIntent(rows, structuredClone(next.files)))
       setReadStatus(rows => ({...rows, [current.id]: {busy: true, error: ''}}))
       return true
     } catch (failure) {
@@ -408,11 +423,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (listEpoch.current !== epoch) return
       setTasks(rows => [...rows.map(row => {
         const next = page.tasks.find(candidate => candidate.id === row.id)
-        if (!next || (next.input_revision ?? 0) < (row.input_revision ?? 0)) return row
-        if ((next.input_revision ?? 0) === (row.input_revision ?? 0) && Object.keys(taskLabels).indexOf(next.state) < Object.keys(taskLabels).indexOf(row.state)) return row
-        if (row.round_id && (!sameFrozenInputs(row, next) || progressRegressed(row, next))) return row
-        const combined = reconcileTaskDisplay(row, next)
-        return row.notification_enabled !== undefined ? {...combined, notification_enabled: row.notification_enabled} : combined
+        return next ? mergeTaskSnapshot(row, next, true) : row
       }), ...page.tasks.filter(next => !rows.some(row => row.id === next.id))])
       setTaskList({next: page.next_offset, busy: false, error: ''})
     } catch {if (listEpoch.current === epoch) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}

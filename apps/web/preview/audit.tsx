@@ -80,6 +80,7 @@ const adapter: AuditIntakeAdapter = {
   },
   samples: () => {
     const files = documents.map((_, index) => sample(index))
+    if (scene === 'recognition-provenance-union') return [files[0]]
     if (scene === 'checking' || scene === 'checking-loading') {
       files[1].validation = {state: 'checking', reasons: ['示例：等待预检查结果']}
       files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
@@ -168,6 +169,15 @@ const adapter: AuditIntakeAdapter = {
   match: async (files, mode, customer, previous, requestId) => {
     recognitionCommands += 1
     if (scene === 'recognition-conflict' && recognitionCommands === 1) throw Object.assign(new Error('preview_input_revision_conflict'), {status: 409})
+    if (scene === 'recognition-provenance-union' && previous) {
+      if (recognitionCommands === 2) {
+        const excluded = sample(0)
+        taskStore.set(previous.id, {...previous, input_revision: previous.input_revision! + 1, recognition_request_id: 'preview-other-recognition', files: [...previous.files, sample(2), {...excluded, file: {...excluded.file, file_id: 'preview-removed-source', original_filename: '已排除来源.xlsx'}, selection: 'removed', removal_reason: '其他页面已排除'}]})
+        throw Object.assign(new Error('preview_input_revision_conflict'), {status: 409})
+      }
+      const current = taskStore.get(previous.id)!
+      if (current.input_revision !== previous.input_revision || current.files.some(row => !files.some(file => file.file.id === row.file.id))) throw Object.assign(new Error('preview_provenance_missing'), {status: 409})
+    }
     const task = {...fixtureMatch(files, mode, customer, previous, requestId, previous?.number || `PPAP-示例-${String(nextTask++).padStart(3, '0')}`), input_revision: previous ? (previous.input_revision ?? 0) + 1 : 0}
     taskStore.set(task.id, task); recognitionReceipts.set(requestId, structuredClone(task))
     if (scene === 'recognition-superseded' && recognitionCommands === 1) {
@@ -206,7 +216,7 @@ function fixtureMatch(files: AuditTaskFile[], mode: AuditTask['analysis_mode'], 
       const index = row.file.file_id === 'preview-duplicate-document' && scene === 'reports-duplicate' ? 1 : driveCatalog.find(fixture => fixture.source.token === row.file.file_id)?.index ?? -1
       const document = documents[index]
       const known = Number.isInteger(index) && index >= 0 && Boolean(document)
-      const matched = known && !scene.startsWith('unmatched') && !(scene === 'partial' && index === 2)
+      const matched = known && !scene.startsWith('unmatched') && !scene.endsWith('-unmatched') && !(scene === 'partial' && index === 2) && !(scene === 'recognition-progress-removal' && index === 0)
       const sampleChecks = reportSamples.documents[index]?.checks
       const rules = sampleChecks ? sampleChecks.map(check => ({id: check.id, category: check.category, priority: null, rule_to_check: check.requirement, type_of_rule: 'table'})) : [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]
       const gaps = scene === 'matching-gaps' && matched && index === 0 && !hasControlPlan ? ['示例：未选择控制计划，频次一致性缺少跨文件比对资料。'] : []
@@ -300,7 +310,12 @@ function Preview() {
     }},
     match: async (...args) => {
       const result = await adapter.match(...args)
-      if (['recognition-loading', 'recognition-late'].includes(scene)) return defer(`识别请求回执 · ${result.number}`, result)
+      if (['recognition-loading', 'recognition-late', 'recognition-late-unmatched'].includes(scene)) return defer(`识别请求回执 · ${result.number}`, result)
+      if (scene === 'recognition-rematch-late-accepted' && args[3]) {
+        taskStore.set(result.id, fixtureAcceptance(result, 'preview-other-confirmation'))
+        return defer(`旧识别请求回执 · ${result.number}`, result)
+      }
+      if (scene === 'recognition-progress-removal') return {...result, state: 'matching', files: result.files.map((file, index) => index === 1 && file.selection === 'selected' ? {...file, match: null} : file)}
       return ['matching', 'observe-matching'].includes(scene) ? {...result, state: 'matching', estimated_points: null, files: result.files.map((file, index) => file.selection === 'selected' ? {...file, match: {state: index === 0 ? 'matching' : 'pending', metadata: {customer: null, model: null, part: null}, document_type: null, rule: null, gaps: []}} : file)} : result
     },
     confirm: async (task, requestId) => {
@@ -310,6 +325,7 @@ function Preview() {
     readTask: async (id, requestId) => {
       const task = taskStore.get(id)
       const result = await adapter.readTask(id, requestId)
+      if (scene === 'recognition-progress-removal' && !task?.round_id && !requestId) return defer('其余文件识别结果', result)
       const job = result.report_package
       if (scene === 'reports-zip-foreign' && job?.state === 'ready' && !foreignPackageReads.has(job.receipt.request_id)) {
         foreignPackageReads.add(job.receipt.request_id)

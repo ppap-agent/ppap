@@ -808,6 +808,12 @@ class AuthStore:
                 return self._recognition_public(conn, principal, task_id)
             if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
                 raise KeyError("missing")
+            # Initial creation and rematching share the endpoint's request identity.
+            prior_job = conn.execute("SELECT tenant_id FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+            if prior_job:
+                if str(prior_job[0]) != principal.tenant_id:
+                    raise KeyError("missing")
+                raise ValueError("idempotency_conflict")
             day = cast(tuple, conn.execute("SELECT (now() AT TIME ZONE 'UTC')::date").fetchone())[0]
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"task-number:{principal.tenant_id}:{day}",))
             sequence = cast(tuple, conn.execute("SELECT COALESCE(MAX(task_sequence), 0) + 1 FROM product.audit_drafts WHERE tenant_id = %s AND task_day = %s", (principal.tenant_id, day)).fetchone())[

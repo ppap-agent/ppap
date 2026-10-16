@@ -29,6 +29,123 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_unmatched_removal_keeps_later_match_results_for_the_remaining_file(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-progress-removal")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True).uncheck()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="移除", exact=True).click()
+            page.get_by_role("button", name="读取识别结果", exact=True).click()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_text("示例控制计划规则 · v2", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            expect(page.get_by_text("未匹配到规则", exact=True)).to_be_visible()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="审核中 · 文件已结束 0/1")).to_be_visible()
+            browser.close()
+
+    def test_reading_current_task_unions_server_provenance_without_selecting_new_work(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-provenance-union")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            page.get_by_role("button", name="从飞书选择", exact=True).click()
+            picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
+            picker.get_by_role("checkbox", name="选择飞书文件 控制计划.xlsx", exact=True).check()
+            picker.get_by_role("button", name="添加所选文件（1）", exact=True).click()
+            page.get_by_role("button", name="读取 控制计划.xlsx 检查结果", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="本次识别未受理")).to_be_visible()
+            page.get_by_role("button", name="读取当前任务", exact=True).click()
+            expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True)).not_to_be_checked()
+            expect(page.get_by_text("已排除来源.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("其他页面已排除", exact=True)).to_be_visible()
+            page.get_by_role("button", name="重新开始识别", exact=True).click()
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_text("预计点数：1000", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="过程流程图.pdf", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_late_initial_recognition_cannot_regress_a_task_confirmed_from_its_server_list(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for completed in (False, True):
+                with self.subTest(completed=completed):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late")
+                    page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                    page.get_by_role("button", name="开始识别", exact=True).click()
+                    page.get_by_role("textbox", name="搜索任务文件", exact=True).fill("PFMEA")
+                    row = page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")
+                    row.click()
+                    page.get_by_role("button", name="开始审核", exact=True).click()
+                    if completed:
+                        page.get_by_role("button", name="读取审核结果", exact=True).click()
+                    status = "审核已结束 · 文件已结束 3/3" if completed else "审核中 · 文件已结束 0/3"
+                    expect(page.get_by_role("status").filter(has_text=status)).to_be_visible()
+                    page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                    expect(row).to_contain_text("已完成" if completed else "审核中")
+                    row.click()
+                    expect(page.get_by_role("status").filter(has_text=status)).to_be_visible()
+                    expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+                    page.close()
+            browser.close()
+
+    def test_late_initial_recognition_cannot_reopen_a_task_ended_from_its_server_list(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late-unmatched")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("textbox", name="搜索任务文件", exact=True).fill("PFMEA")
+            row = page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")
+            row.click()
+            page.get_by_role("button", name="移除", exact=True).first.click()
+            page.get_by_role("button", name="结束任务", exact=True).click()
+            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(row).to_contain_text("已完成")
+            row.click()
+            expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="结束任务", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_late_rematch_receipt_cannot_replace_an_active_frozen_task_from_another_entry(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-rematch-late-accepted")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True).uncheck()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("textbox", name="搜索任务文件", exact=True).fill("PFMEA")
+            row = page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")
+            row.click()
+            status = page.get_by_role("status").filter(has_text="审核中 · 文件已结束 0/2")
+            expect(status).to_be_visible()
+            queue = page.get_by_role("navigation", name="文件队列", exact=True)
+            queue.get_by_role("button", name=re.compile("控制计划.xlsx")).click()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(status).to_be_visible()
+            expect(row).to_contain_text("审核中")
+            expect(queue.get_by_role("button", name=re.compile("控制计划.xlsx"))).to_have_attribute("aria-pressed", "true")
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            browser.close()
+
     def test_lost_recognition_reply_keeps_its_request_and_only_reads_its_receipt(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

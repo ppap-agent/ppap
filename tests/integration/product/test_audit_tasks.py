@@ -186,6 +186,10 @@ def test_recognition_receipts_survive_lost_responses_and_keep_their_original_rev
     conflict = client.post("/audit-tasks", json={**revised, "customer_preference": "修改同一个请求"})
     assert conflict.status_code == 409
     assert conflict.json() == {"error": "idempotency_conflict"}
+    recreated = client.post("/audit-tasks", json={**body, "request_id": request_id})
+    assert recreated.status_code == 409
+    assert recreated.json() == {"error": "idempotency_conflict"}
+    assert len(client.get("/audit-tasks").json()["tasks"]) == 1
 
 
 def test_competing_revisions_and_stale_zero_match_end_cannot_replace_current_input(task_system):
