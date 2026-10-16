@@ -20,6 +20,10 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/integrations/feishu/usage/quota"): False,
     ("POST", "/integrations/feishu/rounds/{round_id}/writeback"): False,
     ("GET", "/rules"): False,
+    ("POST", "/audit-tasks"): True,
+    ("GET", "/audit-tasks"): False,
+    ("GET", "/audit-tasks/{task_id}"): False,
+    ("POST", "/audit-tasks/{task_id}/end"): False,
     ("POST", "/drafts"): True,
     ("GET", "/drafts"): False,
     ("POST", "/file-analyses"): True,
@@ -64,6 +68,18 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_recognition_runtime_does_not_claim_audit_report_or_billing_operations(self):
+        schemas = app.openapi()["components"]["schemas"]
+        task = schemas["AuditRecognitionTask"]
+        self.assertNotIn("x-contract-stage", task)
+        self.assertEqual(task["properties"]["files"]["items"]["$ref"], "#/components/schemas/AuditRecognitionFile")
+        self.assertNotIn("audit", schemas["AuditRecognitionFile"]["properties"])
+        self.assertNotIn("acceptance", task["properties"])
+        self.assertEqual(schemas["AuditTask"]["x-contract-stage"], "ui-draft")
+        request = _request_schema(app.openapi()["paths"]["/audit-tasks"]["post"])
+        self.assertEqual(set(request["required"]), {"request_id", "analysis_mode", "customer_preference", "files"})
+        self.assertEqual(set(request["properties"]["files"]["items"]["required"]), {"file_version_id", "validation_id", "selection", "removal_reason"})
+
     def test_file_validation_is_a_runtime_contract_separate_from_matching_and_audit(self):
         schemas = app.openapi()["components"]["schemas"]
         job = schemas["FileValidationJob"]

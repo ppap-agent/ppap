@@ -4,30 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
+from ppap_core.rules import document_types, latest_rule_versions
 from ppap_core.types import PpapDocumentType
 
 
-def latest_rule_versions(rules: list[dict]) -> list[dict]:
-    """One newest published version per explicit predecessor chain, not per type."""
-    by_id = {rule["id"]: rule for rule in rules}
-    newest: dict[Any, dict[Any, Any]] = {}
-    for rule in rules:
-        root = rule["id"]
-        seen = {root}
-        while by_id[root].get("predecessor_id") in by_id:
-            root = by_id[root]["predecessor_id"]
-            if root in seen:
-                raise ValueError("invalid_rule_versions")
-            seen.add(root)
-        previous = newest.get(root)
-        if previous is None or (rule.get("created_at") or "", rule["id"]) > (previous.get("created_at") or "", previous["id"]):
-            newest[root] = rule
-    return sorted(newest.values(), key=lambda rule: (rule.get("type") or "", rule["title"], rule["id"]))
-
-
-def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None) -> dict:
+def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, customer_preference: str | None = None, scoped: bool = False) -> dict:
+    """Recognize a file; scoped tasks supply their already-frozen current candidates."""
     from ppap_core.rule_matching import RuleMatchingAIService
     from ppap_docops.extractors import get_extractor
     from ppap_excel_audit_engine.checkers.client import AIClient
@@ -52,13 +35,13 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None) -
     if len(text) > 20000:
         notices.append("metadata_uses_excerpt")
     excerpt = text[:20000]
-    metadata: dict[str, str | None] = {"customer": None, "model": None, "part": None}
+    metadata: dict[str, str | None] = {"customer": None, "model": None, "part": None, "part_number": None}
     ai = ai if ai is not None else AIClient()
     if excerpt.strip():
         try:
             response = ai.structured_completion(
                 system_prompt=PromptManager.get_system_prompt("document_analyst"),
-                user_prompt=PromptManager.get_document_metadata_prompt(excerpt, filename),
+                user_prompt=PromptManager.get_document_metadata_prompt(excerpt, filename) + "\n同时返回 part_number（零件号）；part 仅表示零件名称，无法确定时返回 null。",
                 max_tokens=1000,
                 temperature=0.1,
                 json_format=True,
@@ -78,10 +61,53 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None) -
         except Exception:
             notices.append("metadata_extraction_failed")
 
-    candidates = [rule for rule in latest_rule_versions(rules) if rule.get("kind") == "engine"]
+    candidates = [rule for rule in (rules if scoped else latest_rule_versions(rules)) if rule.get("kind") == "engine"]
+    inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000], min_margin=1 if scoped else 0)
+    if scoped and excerpt.strip() and "metadata_extraction_failed" not in notices:
+        evidence = PpapDocumentType.rank_from_signals(filename=filename, content=excerpt[:2000])
+        if inferred == PpapDocumentType.UNKNOWN or not evidence[0].alias_hits:
+            inferred = PpapDocumentType.UNKNOWN
+            try:
+                classified = ai.structured_completion(
+                    system_prompt=PromptManager.get_system_prompt("ppap_expert"),
+                    user_prompt=PromptManager.get_document_classification_prompt(excerpt, "\n".join(document_types())),
+                    max_tokens=100,
+                    temperature=0.0,
+                    operation="document_classification",
+                    request_timeout=120,
+                    retry_limit=0,
+                )
+                if not isinstance(classified, str) or not classified.strip():
+                    raise ValueError("invalid_document_classification")
+                inferred = PpapDocumentType.from_string(classified)
+                if inferred == PpapDocumentType.UNKNOWN and classified.strip().casefold() not in {"未知", "unknown"}:
+                    raise ValueError("invalid_document_classification")
+            except Exception:
+                notices.append("document_classification_failed")
     matched_id = None
     matching = "unmatched"
-    if candidates:
+    if scoped and any(notice in notices for notice in ("document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
+        matching = "failed"
+    elif scoped:
+        ambiguous = False
+        for customer in dict.fromkeys(value.strip().casefold() for value in (customer_preference, metadata["customer"]) if value and value.strip()):
+            applicable = [
+                rule
+                for rule in candidates
+                if inferred != PpapDocumentType.UNKNOWN
+                and PpapDocumentType.from_string(rule.get("type") or "") == inferred
+                and isinstance(rule.get("customers"), list)
+                and customer in {value.strip().casefold() for value in rule["customers"] if isinstance(value, str)}
+            ]
+            if len(applicable) == 1:
+                matched_id = applicable[0]["id"]
+                matching = "matched"
+                break
+            ambiguous = ambiguous or len(applicable) > 1
+        if not matched_id:
+            matching = "failed" if ambiguous else "unmatched"
+            notices.append("ambiguous_available_rules" if ambiguous else "no_available_rules")
+    elif candidates:
         try:
             matched_id = RuleMatchingAIService(ai, PromptManager()).get_matched_rule_id(
                 filename,
@@ -94,7 +120,6 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None) -
             notices.append("rule_matching_failed")
     else:
         notices.append("no_available_rules")
-    inferred = PpapDocumentType.infer_from_signals(filename=filename, content=excerpt[:2000])
     selected = next((rule for rule in candidates if rule["id"] == matched_id), None)
     return {
         "metadata": metadata,

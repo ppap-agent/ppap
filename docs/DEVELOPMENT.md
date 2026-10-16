@@ -150,6 +150,10 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 `FileVersion.ready` 只表示原件已保存；预检查 job 的 `succeeded` 只表示检查已完成。只有其 `result.state=valid` 才表示可进入后续识别。损坏、加密、无内容与检查基础设施错误分开表达，安全预算超限为 `error`，不是文件审核 NG。OOXML 检查有展开量、条目及 XML 访问预算；旧 DOC 保留既有 25 MiB 受限转换上限。该接口不表示 200 MB 上传链路、新版任务持久化或后续审核已经全部接通。
 
+确认前的任务使用 `POST /audit-tasks`、`GET /audit-tasks` 和 `GET /audit-tasks/{id}`。创建请求固定文件版本、每份预检查回执、选中/未选/已移除来源、模式和客户倾向；同一请求 ID 不允许替换输入。它复用私有 `audit_drafts` 和逐文件识别 job，在同一事务分配 UTC 日编号并入队，不创建审核轮次或消费。Worker 只消费创建时冻结的生效候选；按客户×文件类型匹配，不用无客户规则兜底。读取固定 job，不取该文件最新识别；提取/模型失败与未匹配分开。
+
+`POST /audit-tasks/{id}/end` 仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。本阶段只提供识别和零匹配终结，不提供既有任务输入修改、正式受理或计费；完整 `AuditTask` 的审核/报告部分仍为 UI-draft，页面数据接入及真实模型质量另行验证。
+
 ## UI-first 交互预览
 
 在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview?page=audit`。场景切换会重置页面；宽度与主题切换保留当前交互。识别中和飞书读取中场景用预览台的“返回一次示例读取／令一次示例读取失败”控制响应，包括弹窗内的读取，不用定时器假装真实进度。

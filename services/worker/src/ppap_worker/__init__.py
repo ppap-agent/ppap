@@ -77,7 +77,16 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
             if claimed.kind == "file_validation":
                 result = validate_file(version.original_filename, store.version_bytes(version))
             elif claimed.kind == "file_analysis":
-                result = analyze_file(version.original_filename, store.version_bytes(version), store.list_rules(claimed.tenant_id), ai=ai)
+                scoped = payload.get("matching_scope") == "customer_document_type"
+                candidates = payload["candidate_rules"] if scoped else store.list_rules(claimed.tenant_id)
+                result = analyze_file(
+                    version.original_filename,
+                    store.version_bytes(version),
+                    candidates,
+                    ai=ai,
+                    customer_preference=payload.get("customer_preference"),
+                    scoped=scoped,
+                )
                 result["source_file_version_id"] = version.id
             else:
                 parsed = parse_rule_file(version.original_filename, store.version_bytes(version), document_type=payload["document_type"], ai=ai)

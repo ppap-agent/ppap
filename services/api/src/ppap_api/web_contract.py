@@ -790,12 +790,15 @@ class AuditFileDisplayReceipt(TypedDict):
     reason: str | None
 
 
-class AuditTaskFile(TypedDict):
+class AuditRecognitionFile(TypedDict):
     file: FileVersion
     selection: Literal["selected", "unselected", "removed"]
     removal_reason: str | None
     validation: AuditFileValidation
     match: AuditRuleMatch | None
+
+
+class AuditTaskFile(AuditRecognitionFile):
     audit: NotRequired[AuditFileReview | None]
     display_info: NotRequired[AuditFileDisplayInfo | None]
     display_edit_access: NotRequired[AuditArchiveAccess]
@@ -862,9 +865,7 @@ class AuditReportShare(TypedDict):
     deliveries: list[AuditShareDelivery]
 
 
-class AuditTask(TypedDict):
-    """UI-0 contract; not a claim that a task runtime operation exists."""
-
+class AuditTaskIdentity(TypedDict):
     id: str
     number: str
     state: Literal["matching", "pending_confirm", "reviewing", "completed"]
@@ -874,9 +875,39 @@ class AuditTask(TypedDict):
     source_draft_id: str | None
     round_id: str | None
     customer_preference: str | None
-    files: list[AuditTaskFile]
     completion_reason: Literal["no_matching_rules", "processed"] | None
     estimated_points: int | None
+
+
+class AuditRecognitionTask(AuditTaskIdentity):
+    """Persisted confirmation input; does not claim audit/report runtime support."""
+
+    files: list[AuditRecognitionFile]
+
+
+class AuditRecognitionInput(TypedDict):
+    file_version_id: str
+    validation_id: str
+    selection: Literal["selected", "unselected", "removed"]
+    removal_reason: str | None
+
+
+class AuditRecognitionRequest(TypedDict):
+    request_id: str
+    analysis_mode: AnalysisMode
+    customer_preference: str | None
+    files: list[AuditRecognitionInput]
+
+
+class AuditRecognitionTasks(TypedDict):
+    tasks: list[AuditRecognitionTask]
+    next_offset: int | None
+
+
+class AuditTask(AuditTaskIdentity):
+    """Full UI contract; audit/report operations remain UI-draft until implemented."""
+
+    files: list[AuditTaskFile]
     acceptance: NotRequired[AuditAcceptance]
     progress: NotRequired[AuditProgress]
     completion_estimate: NotRequired[AuditCompletionEstimate | None]

@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+    "/audit-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Tasks List */
+        get: operations["audit_tasks_list_audit_tasks_get"];
+        put?: never;
+        /** Audit Tasks Create */
+        post: operations["audit_tasks_create_audit_tasks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Tasks Get */
+        get: operations["audit_tasks_get_audit_tasks__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit Tasks End */
+        post: operations["audit_tasks_end_audit_tasks__task_id__end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capabilities": {
         parameters: {
             query?: never;
@@ -1336,6 +1388,62 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** AuditRecognitionFile */
+        AuditRecognitionFile: {
+            file: components["schemas"]["FileVersion"];
+            match: components["schemas"]["AuditRuleMatch"] | null;
+            /** Removal Reason */
+            removal_reason: string | null;
+            /**
+             * Selection
+             * @enum {string}
+             */
+            selection: "selected" | "unselected" | "removed";
+            validation: components["schemas"]["AuditFileValidation"];
+        };
+        /**
+         * AuditRecognitionTask
+         * @description Persisted confirmation input; does not claim audit/report runtime support.
+         */
+        AuditRecognitionTask: {
+            /**
+             * Analysis Mode
+             * @enum {string}
+             */
+            analysis_mode: "standard" | "deep";
+            /** Completion Reason */
+            completion_reason: ("no_matching_rules" | "processed") | null;
+            /** Created At */
+            created_at: string;
+            /** Customer Preference */
+            customer_preference: string | null;
+            /** Estimated Points */
+            estimated_points: number | null;
+            /** Files */
+            files: components["schemas"]["AuditRecognitionFile"][];
+            /** Id */
+            id: string;
+            /** Number */
+            number: string;
+            /** Round Id */
+            round_id: string | null;
+            /** Source Draft Id */
+            source_draft_id: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "matching" | "pending_confirm" | "reviewing" | "completed";
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AuditRecognitionTasks */
+        AuditRecognitionTasks: {
+            /** Next Offset */
+            next_offset: number | null;
+            /** Tasks */
+            tasks: components["schemas"]["AuditRecognitionTask"][];
+        };
         /** AuditReportArtifact */
         AuditReportArtifact: {
             /** Artifact Id */
@@ -1578,7 +1686,7 @@ export interface components {
         };
         /**
          * AuditTask
-         * @description UI-0 contract; not a claim that a task runtime operation exists.
+         * @description Full UI contract; audit/report operations remain UI-draft until implemented.
          */
         AuditTask: {
             acceptance?: components["schemas"]["AuditAcceptance"];
@@ -2834,6 +2942,159 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    audit_tasks_list_audit_tasks_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                q?: string;
+                state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRecognitionTasks"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_tasks_create_audit_tasks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Analysis Mode
+                     * @enum {string}
+                     */
+                    analysis_mode: "standard" | "deep";
+                    /** Customer Preference */
+                    customer_preference: string | null;
+                    /** Files */
+                    files: {
+                        /** File Version Id */
+                        file_version_id: string;
+                        /** Removal Reason */
+                        removal_reason: string | null;
+                        /**
+                         * Selection
+                         * @enum {string}
+                         */
+                        selection: "selected" | "unselected" | "removed";
+                        /** Validation Id */
+                        validation_id: string;
+                    }[];
+                    /** Request Id */
+                    request_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRecognitionTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_tasks_get_audit_tasks__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRecognitionTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_tasks_end_audit_tasks__task_id__end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRecognitionTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     capabilities_capabilities_get: {
         parameters: {
             query?: never;

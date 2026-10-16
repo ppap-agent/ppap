@@ -44,6 +44,9 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "file_not_ready",
                 "review_conflict",
                 "deep_not_available",
+                "task_input_locked",
+                "task_not_zero_match",
+                "precheck_required",
             }
             else 400
         )
@@ -55,6 +58,47 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
+
+    @app.post("/audit-tasks", response_model=wc.AuditRecognitionTask, status_code=202, openapi_extra=wc.openapi_body(wc.AuditRecognitionRequest))
+    def audit_tasks_create(body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.create_audit_task(principal, body), status_code=202)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-tasks", response_model=wc.AuditRecognitionTasks)
+    def audit_tasks_list(request: Request, limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0), q: str = Query("", max_length=200), state: str = "") -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            rows = store.list_audit_tasks(principal, limit + 1, offset, q, state)
+            return JSONResponse({"tasks": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-tasks/{task_id}", response_model=wc.AuditRecognitionTask)
+    def audit_tasks_get(task_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.get_audit_task(principal, task_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.post("/audit-tasks/{task_id}/end", response_model=wc.AuditRecognitionTask)
+    def audit_tasks_end(task_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.end_unmatched_task(principal, task_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
 
     @app.post("/drafts", response_model=wc.Draft, status_code=201, openapi_extra=wc.openapi_body(wc.DraftCreateRequest, required=False))
     def drafts_create(request: Request, body: dict | None = None) -> JSONResponse:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from ppap_core.contracts import RuleItem
 from ppap_core.rule_profile import normalize_rule_profile
@@ -33,6 +34,24 @@ def rule_parse_view(job_id: str, payload: dict, status: str, result, expired: bo
 
 def document_types() -> list[str]:
     return [item.get_type_name() for item in PpapDocumentType if item != PpapDocumentType.UNKNOWN]
+
+
+def latest_rule_versions(rules: list[dict]) -> list[dict]:
+    """One newest published version per explicit predecessor chain, not per type."""
+    by_id = {rule["id"]: rule for rule in rules}
+    newest: dict[Any, dict[Any, Any]] = {}
+    for rule in rules:
+        root = rule["id"]
+        seen = {root}
+        while by_id[root].get("predecessor_id") in by_id:
+            root = by_id[root]["predecessor_id"]
+            if root in seen:
+                raise ValueError("invalid_rule_versions")
+            seen.add(root)
+        previous = newest.get(root)
+        if previous is None or (rule.get("created_at") or "", rule["id"]) > (previous.get("created_at") or "", previous["id"]):
+            newest[root] = rule
+    return sorted(newest.values(), key=lambda rule: (rule.get("type") or "", rule["title"], rule["id"]))
 
 
 def normalize_rule_body(value: dict) -> dict:
