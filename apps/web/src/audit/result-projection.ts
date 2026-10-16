@@ -19,6 +19,17 @@ export function sameFrozenInputs(before: Task, after: Task): boolean {
   return before.id === after.id && before.round_id === after.round_id && before.analysis_mode === after.analysis_mode && before.files.length === after.files.length && before.files.every(file => after.files.some(next => sameSnapshot(file.file, next.file) && file.selection === next.selection && file.removal_reason === next.removal_reason && sameSnapshot(file.match?.rule, next.match?.rule)))
 }
 
+/** Reject a regressive snapshot rather than mixing old counters with new checks. */
+export function progressRegressed(before: Task, after: Task): boolean {
+  if (!before.round_id || before.round_id !== after.round_id) return false
+  if (before.progress && after.progress && after.progress.completed < before.progress.completed) return true
+  return before.files.some(row => {
+    if (row.selection !== 'selected' || !row.audit) return false
+    const next = after.files.find(file => file.file.id === row.file.id)?.audit
+    return !next || next.progress.completed < row.audit.progress.completed || ['completed', 'review_failed'].includes(row.audit.execution) && next.execution !== row.audit.execution || row.audit.checks.some(check => ['completed', 'failed'].includes(check.execution) && !next.checks.some(item => item.rule_item.id === check.rule_item.id && ['completed', 'failed'].includes(item.execution)))
+  })
+}
+
 export function reportReference(task: Task, row: TaskFile): components['schemas']['AuditReportReference'] | null {
   if (!task.files.some(file => sameSnapshot(file, row))) return null
   const audit = row.audit

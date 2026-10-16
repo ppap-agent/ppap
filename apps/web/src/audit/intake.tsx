@@ -18,7 +18,8 @@ import {FeishuPicker, type DrivePickerSource} from './feishu-picker'
 import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {AuditWorkspace} from './workspace'
 import type {OriginalRenderer} from './review-content'
-import {sameFrozenInputs, taskProgressError} from './result-projection'
+import {sameFrozenInputs, progressRegressed, taskProgressError} from './result-projection'
+import {canObserveTask, useTaskObservation} from './task-observation'
 import {useUploads, type UploadAdapter, type UploadRow} from './uploads'
 import {TransferList} from './transfer-list'
 import type {AuditReportAdapter} from './report-contract'
@@ -48,7 +49,7 @@ const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewi
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
-export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter}: {adapter: AuditIntakeAdapter; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter}) {
+export function AuditIntake({adapter, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter}: {adapter: AuditIntakeAdapter; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter}) {
   const [surface, setSurface] = useState<'audit' | 'archive' | 'templates' | 'usage'>(() => {const view = new URL(location.href).searchParams.get('view'); return view === 'archive' || view === 'templates' || view === 'usage' ? view : 'audit'})
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
@@ -114,7 +115,7 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
   })
   const confirmation = task ? acceptance.observations[task.id] : undefined
   const confirmationLocked = Boolean(confirmation && confirmation.phase !== 'rejected' || task?.acceptance?.state === 'pending' && confirmation?.phase !== 'rejected')
-  const canConfirm = task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'matched' || row.match?.state === 'unmatched') && !confirmationLocked
+  const canConfirm = task?.state === 'pending_confirm' && matched.length > 0 && matchingFiles.every(row => row.match?.state === 'unmatched' || row.match?.state === 'matched' && row.match.rule) && !confirmationLocked
   function confirm(current: AuditTask) {
     taskReadEpoch.current.set(current.id, (taskReadEpoch.current.get(current.id) || 0) + 1)
     taskReads.current.delete(current.id)
@@ -242,25 +243,32 @@ export function AuditIntake({adapter, renderOriginal, reportAdapter, sharingAdap
     catch {setError('读取匹配结果失败，文件与选择已保留。请返回检查后再读取。')}
   }
   async function readMatching(current: AuditTask) {
-    if (taskReads.current.has(current.id)) return
+    if (taskReads.current.has(current.id)) return null
     const epoch = taskReadEpoch.current.get(current.id)
     taskReads.current.add(current.id)
-    setReadStatus(rows => ({...rows, [current.id]: {busy: true, error: ''}}))
+    setReadStatus(rows => ({...rows, [current.id]: {busy: true, error: rows[current.id]?.error || ''}}))
     try {
       const next = await adapter.readTask(current.id)
-      if (taskReadEpoch.current.get(current.id) !== epoch) return
+      if (taskReadEpoch.current.get(current.id) !== epoch) return null
       if (next.id !== current.id) throw new Error('task_identity_mismatch')
       if (current.round_id && !sameFrozenInputs(current, next)) throw new Error('frozen_input_mismatch')
+      if (progressRegressed(current, next)) throw new Error('regressive_progress')
       saveTask(next, {preserveNotification: true})
       const saved = drafts.current.get(next.id)
       if (saved?.step === 'match') saved.files = structuredClone(next.files)
       if (activeTaskId.current === next.id && stepRef.current === 'match') setFiles(structuredClone(next.files))
-    } catch {
-      if (taskReadEpoch.current.get(current.id) === epoch) setReadStatus(rows => ({...rows, [current.id]: {busy: false, error: '任务结果读取失败，任务与文件仍保留。重新读取不会重新创建任务或开始审核。'}}))
+      setReadStatus(rows => ({...rows, [current.id]: {busy: true, error: ''}}))
+      return true
+    } catch (failure) {
+      if (taskReadEpoch.current.get(current.id) !== epoch) return null
+      setReadStatus(rows => ({...rows, [current.id]: {busy: false, error: failure instanceof Error && failure.message === 'regressive_progress' ? '收到较早的审核进度，已保留当前结果。请稍后重新读取。' : '任务结果读取失败，任务与文件仍保留。重新读取不会重新创建任务或开始审核。'}}))
+      return false
     } finally {
       if (taskReadEpoch.current.get(current.id) === epoch) {taskReads.current.delete(current.id); setReadStatus(rows => ({...rows, [current.id]: {error: rows[current.id]?.error || '', busy: false}}))}
     }
   }
+  const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
+  useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
   const shownTasks = tasks.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: 'audit' | 'archive' | 'templates' | 'usage') {
     surfaceRef.current = value

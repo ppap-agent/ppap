@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, taskProgressError, sameFrozenInputs, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
+import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -19,6 +19,23 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('a read cannot erase ended work or reopen a terminal file in the same frozen round', () => {
+  const before = projection(), after = structuredClone(before)
+  before.progress = {completed: 1, total: 1}; after.progress = {completed: 1, total: 1}
+  assert.equal(progressRegressed(before, after), false)
+  after.progress.completed = 0
+  assert.equal(progressRegressed(before, after), true)
+  after.progress.completed = 1; after.files[0].audit!.progress.completed = 0
+  assert.equal(progressRegressed(before, after), true)
+  after.files[0].audit!.progress.completed = 1; after.files[0].audit!.checks[0].execution = 'running'
+  assert.equal(progressRegressed(before, after), true)
+  after.files[0].audit!.checks[0].execution = 'completed'; after.files[0].audit!.execution = 'running'
+  assert.equal(progressRegressed(before, after), true)
+  after.files[0].audit!.execution = 'completed'; before.files[0].audit!.execution = 'review_failed'
+  assert.equal(progressRegressed(before, after), true)
+  after.round_id = 'new-explicit-round'
+  assert.equal(progressRegressed(before, after), false)
+})
 test('completed execution cannot hide running checks, while whole-file failure can retain unexecuted checks', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0] = {...audit.checks[0], execution: 'running', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, evidence: []}
