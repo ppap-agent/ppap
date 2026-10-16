@@ -87,8 +87,11 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="审核任务", exact=True).get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
             page.keyboard.press("Escape")
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
+            sidebar.get_by_role("button", name="模板库", exact=True).hover()
+            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
             page.set_viewport_size({"width": 390, "height": 844})
             expect(sidebar).to_have_count(0)
+            expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_have_count(0)
             page.get_by_role("button", name="打开审核任务", exact=True).click()
             sheet = page.get_by_role("dialog", name="审核任务", exact=True)
             for label in ("PPAP Audit", "审核文件", "模板库", "用量记录"):

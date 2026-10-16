@@ -66,6 +66,13 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
   const [navigationCollapsed, setNavigationCollapsed] = useState(false)
   const [navigationTooltip, setNavigationTooltip] = useState<string | null>(null)
+  const [desktopNavigation, setDesktopNavigation] = useState(() => window.matchMedia('(min-width: 64rem)').matches)
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 64rem)')
+    const update = () => {setDesktopNavigation(media.matches); setNavigationTooltip(null)}
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   const [supportSnapshot, setSupportSnapshot] = useState<SupportSnapshot | null>(null)
   const supportReturnTargets = useRef<(HTMLElement | null)[]>([])
   function openSupport(snapshot: SupportSnapshot) {
@@ -352,9 +359,9 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   }
   // Text navigation must not open invisible layers that capture Escape in Sheet.
   const navigationTooltipProps = (id: string, compact = navigationCollapsed) => ({
-    open: compact && navigationTooltip === id,
+    open: desktopNavigation && compact && navigationTooltip === id,
     onOpenChange: (open: boolean) => {
-      if (!compact) return
+      if (!desktopNavigation || !compact) return
       setNavigationTooltip(current => open ? id : current === id ? null : current)
     },
   })
