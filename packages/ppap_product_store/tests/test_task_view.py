@@ -26,7 +26,137 @@ def task_input():
     return {"id": "task-1", "files": [{"file": {"id": "version-a"}, "selection": "selected"}]}
 
 
+def verified_round(status="NG"):
+    round = frozen_round()
+    round.update(analysis_mode="deep", executor="ppap-deep", executor_revision="deep-v1", result_job_id="job-1")
+    round["coverage"]["verification"] = {
+        "method": "host_source_trace_v1",
+        "round_id": "round-1",
+        "job_id": "job-1",
+        "attempt": 1,
+        "executor_revision": "deep-v1",
+        "semantic_engine_revision": "a" * 64,
+    }
+    round["coverage"]["rule_items"][0].update(
+        coverage="executed",
+        rule_version_id="rule-a",
+        rule_item_id="clause-a",
+        item_key="version-a:rule:clause-a",
+        status=status,
+        rule_to_check="核对检验频次",
+        proof_kind="semantic",
+    )
+    round["findings"] = [
+        {
+            "item_key": "version-a:rule:clause-a",
+            "item": "核对检验频次",
+            "status": status,
+            "review": None,
+            "locator": {
+                "file_version_id": "version-a",
+                "rule_item_id": "clause-a",
+                "semantic": {
+                    "rule_version_id": "rule-a",
+                    "clause_id": "clause-a",
+                    "rule_text": "核对检验频次",
+                    "scope": {"total": 2, "checked": 2, "unknown": 0},
+                    "sources": [{"file_version_id": "version-a", "locator": {"kind": "xlsx_cell", "sheet": "参数", "cell": "B2"}, "excerpt": "每小时"}],
+                },
+            },
+        }
+    ]
+    return round
+
+
 class TaskRoundViewTests(unittest.TestCase):
+    def test_host_validated_source_and_trace_reach_task_and_historical_results(self):
+        round = verified_round()
+        before = deepcopy(round)
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertTrue(audit["checks"][0]["evidence_verified"])
+        self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "每小时")
+        self.assertEqual(audit["counts"], {"pass_count": 0, "ng_count": 1, "unknown_count": 0, "not_covered_count": 0, "error_count": 0})
+        self.assertEqual(audit["conclusion"], "NG")
+        self.assertEqual(round_read_view(round, {"version-a": {"id": "version-a"}})["files"][0]["audit"], audit)
+        self.assertEqual(round, before)
+
+    def test_verification_cannot_be_borrowed_from_another_attempt_rule_or_execution(self):
+        paths = [
+            (("coverage", "verification"), None),
+            (("coverage", "verification", "method"), "another_validator"),
+            (("coverage", "verification", "round_id"), "another-round"),
+            (("coverage", "verification", "job_id"), "another-job"),
+            (("coverage", "verification", "attempt"), 2),
+            (("coverage", "verification", "attempt"), True),
+            (("coverage", "verification", "executor_revision"), "another-revision"),
+            (("coverage", "verification", "semantic_engine_revision"), "not-a-revision"),
+            (("analysis_mode",), "standard"),
+            (("coverage", "rule_items", 0, "rule_version_id"), "another-rule"),
+            (("coverage", "rule_items", 0, "rule_item_id"), "another-clause"),
+            (("coverage", "rule_items", 0, "item_key"), "another-result"),
+            (("coverage", "rule_items", 0, "status"), "PASS"),
+            (("coverage", "rule_items", 0, "rule_to_check"), "another rule text"),
+            (("coverage", "rule_items", 0, "proof_kind"), "model_says_verified"),
+            (("findings", 0, "item"), "another rule text"),
+            (("findings", 0, "locator", "file_version_id"), None),
+            (("findings", 0, "locator", "rule_item_id"), None),
+            (("findings", 0, "locator", "semantic", "rule_text"), "another rule text"),
+            (("findings", 0, "locator", "semantic", "scope", "unknown"), True),
+            (("findings", 0, "locator", "semantic", "sources", 0, "file_version_id"), "outside-round"),
+            (("findings", 0, "locator", "semantic", "sources", 0, "locator"), None),
+        ]
+        for path, value in paths:
+            with self.subTest(path=path, value=value):
+                round = verified_round()
+                container = round
+                for key in path[:-1]:
+                    container = container[key]
+                container[path[-1]] = value
+                audit = task_round_view(task_input(), round)["files"][0]["audit"]
+                self.assertFalse(audit["checks"][0]["evidence_verified"])
+                self.assertEqual((audit["conclusion"], audit["report"]["state"]), ("UNKNOWN", "not_eligible"))
+
+    def test_valid_ng_does_not_hide_unknown_scope_or_make_an_incomplete_file_reportable(self):
+        round = verified_round()
+        round["findings"][0]["locator"]["semantic"]["scope"] = {"total": 3, "checked": 2, "unknown": 1}
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual((audit["conclusion"], audit["counts"]["ng_count"]), ("NG", 1))
+        self.assertTrue(audit["checks"][0]["evidence_verified"])
+        self.assertEqual(audit["report"]["state"], "not_eligible")
+        self.assertEqual(audit["report"]["reason"], "审核依据尚未完整核验")
+        round["inputs"][0]["rule"]["body"]["rules"].append({"id": "clause-b", "category": "其他", "rule_to_check": "另一项要求"})
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual((audit["conclusion"], audit["counts"]["not_covered_count"]), ("NG", 1))
+        self.assertEqual(audit["report"]["state"], "not_eligible")
+
+    def test_only_complete_verified_pass_is_pass_and_a_human_review_does_not_fill_the_gap(self):
+        round = verified_round("PASS")
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
+        self.assertEqual(audit["report"]["reason"], "正式报告暂不可用")
+        round["findings"][0]["locator"]["semantic"]["scope"]["unknown"] = 1
+        round["findings"][0]["review"] = {"judgment": "manual-satisfied", "rationale": "人工意见", "next_step": "", "version": 1, "citations": []}
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual((audit["conclusion"], audit["counts"]["unknown_count"]), ("UNKNOWN", 1))
+        self.assertFalse(audit["checks"][0]["evidence_verified"])
+        self.assertEqual(audit["report"]["state"], "not_eligible")
+
+    def test_duplicate_validation_coverage_or_findings_are_not_verified(self):
+        for field in ("coverage", "findings"):
+            round = verified_round()
+            rows = round["coverage"]["rule_items"] if field == "coverage" else round["findings"]
+            rows.append(deepcopy(rows[0]))
+            audit = task_round_view(task_input(), round)["files"][0]["audit"]
+            self.assertFalse(audit["checks"][0]["evidence_verified"])
+            self.assertEqual((audit["conclusion"], audit["report"]["state"]), ("UNKNOWN", "not_eligible"))
+
+    def test_a_known_empty_cell_can_be_validated_ng_evidence(self):
+        round = verified_round()
+        round["findings"][0]["locator"]["semantic"]["sources"][0]["excerpt"] = ""
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertTrue(audit["checks"][0]["evidence_verified"])
+        self.assertEqual(audit["conclusion"], "NG")
+
     def test_a_global_execution_error_fails_targets_without_assigning_an_unrelated_error(self):
         round = frozen_round()
         round["inputs"].append({**round["inputs"][0], "file_version_id": "version-b"})

@@ -51,6 +51,7 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
     if (scene === 'summary-conflict' && mixed && audit.summary) audit.summary.conclusion = 'PASS'
     if (scene === 'scope-conflict' && mixed) {audit.checks[1].finding!.status = 'PASS'; audit.checks[1].evidence_verified = true; audit.counts = {...audit.counts, pass_count: 1, unknown_count: 0}}
     if (scene === 'evidence-outside' && mixed) audit.checks[0].evidence[0].file_version_id = 'preview-not-in-this-round'
+    if (scene === 'evidence-empty' && mixed) audit.checks[0].evidence[0].excerpt = ''
     if (scene === 'rule-conflict' && mixed) audit.checks[0].rule_item = {...audit.checks[0].rule_item, rule_to_check: '被错误改写的要求'}
     if (scene === 'failed-report-ready' && failed) audit.report = {state: 'ready', report_id: 'invalid-preview-report', reason: null}
     if (!failed && (!mixed || scene.startsWith('reports-'))) {

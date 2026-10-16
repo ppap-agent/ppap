@@ -358,7 +358,7 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
-    def prepared_display_task(self, files=None):
+    def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from ppap_api.audit_routes import register_audit_routes
@@ -376,7 +376,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(job.kind, "file_validation")
             self.assertTrue(worker.complete_job(job, "display-test", {"state": "valid", "reasons": []}, "succeeded"))
             inputs.append({"file_version_id": file.id, "validation_id": key, "selection": "selected", "removal_reason": None})
-        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": inputs})
+        task = self.store.create_audit_task(self.alice, {"request_id": str(uuid.uuid4()), "analysis_mode": analysis_mode, "customer_preference": None, "files": inputs})
         for _ in files:
             job = worker.claim_job("display-test")
             self.assertEqual(job.kind, "file_analysis")
@@ -394,8 +394,9 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 "succeeded",
             )
         task = self.store.confirm_audit_task(self.alice, task["id"], str(uuid.uuid4()), 0)
-        job = worker.claim_job("display-test")
-        worker.complete_job(job, "display-test", {"findings": [], "coverage": {"rule_items": [{"file_version_id": file.id, "id": "1", "coverage": "unsupported"} for file in files]}}, "succeeded")
+        if complete_audit:
+            job = worker.claim_job("display-test")
+            worker.complete_job(job, "display-test", {"findings": [], "coverage": {"rule_items": [{"file_version_id": file.id, "id": "1", "coverage": "unsupported"} for file in files]}}, "succeeded")
         self.display_principal = self.alice
         app = FastAPI()
         register_audit_routes(app, self.store, lambda request: self.display_principal)
@@ -576,6 +577,112 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         loaded = self.display_client.get(path).json()["files"][0]
         self.assertEqual(loaded["display_info"]["revision"], 0)
         self.assertEqual(loaded["display_edit_access"]["state"], "denied")
+
+    def test_validated_query_result_survives_commit_and_is_shared_by_task_and_round_readers(self):
+        from io import BytesIO
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from openpyxl import Workbook
+        from ppap_deep.auditor import product_response, semantic_inputs
+        from ppap_deep.mapping import product_result, spec_from_work
+        from ppap_deep.semantic.document_tools import snapshot
+        from ppap_deep.semantic.protocol import ResultBundle
+
+        workbook = Workbook()
+        workbook.active.append(["零件号"])
+        workbook.active.append(["P-1"])
+        content = BytesIO()
+        workbook.save(content)
+        version = self.store.create_staging(self.alice, "控制计划.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
+        self.store.put_blob(version, content.getvalue())
+        version = self.store.finalize_version(version)
+        _files, task, worker = self.prepared_display_task([version], analysis_mode="deep", complete_audit=False)
+        job = worker.claim_job("verified-query")
+        work = worker.round_work(task["round_id"])
+        spec = spec_from_work(work, job.payload["executor"], job.payload["executor_revision"], job.payload["executor_revision"]).model_copy(update={"job_id": job.id, "attempt": job.attempt})
+        submission, packets = semantic_inputs(spec, "a" * 64)
+        rule = submission.rules[0]
+        with TemporaryDirectory() as directory:
+            target_path, rule_path = Path(directory) / "target.xlsx", Path(directory) / "rule.json"
+            target_path.write_bytes(content.getvalue())
+            rule_path.write_bytes(packets[rule.rule_id])
+            documents, rules = {version.id: snapshot(target_path)}, {rule.rule_id: snapshot(rule_path)}
+        bundle = ResultBundle.model_validate(
+            {
+                "execution_id": str(submission.execution_id),
+                "semantic_engine_revision": "a" * 64,
+                "documents": documents,
+                "rule_sources": rules,
+                "plans": {
+                    rule.rule_id: {
+                        "source_sha256": rule.sha256,
+                        "plan_revision": rule.plan_revision,
+                        "rules": [
+                            {
+                                "id": "1",
+                                "description": "必须填写零件号",
+                                "source_locator": {"kind": "published_clause", "clause_id": "1"},
+                                "scope": "第二行的零件号",
+                                "predicate": {"kind": "query", "quantifier": "forall", "predicates": [{"field": "part_number", "op": "not_empty"}]},
+                                "missing_evidence": "UNABLE",
+                                "ambiguities": [],
+                                "empty_scope_status": "UNABLE",
+                                "empty_scope_basis": "无正文不认定通过",
+                            }
+                        ],
+                    }
+                },
+                "report": {
+                    "checks": [
+                        {
+                            "audit_id": version.id,
+                            "rule_id": "1",
+                            "status": "PASS",
+                            "reason": "正文零件号 P-1 已填写",
+                            "total": 1,
+                            "checked": 1,
+                            "unknown": 0,
+                            "evidence": [{"document_id": version.id, "locator": {"kind": "xlsx_cell", "sheet": "Sheet", "cell": "A2"}}],
+                        }
+                    ]
+                },
+                "trace": {
+                    "bindings": [
+                        {
+                            "id": "body",
+                            "document_id": version.id,
+                            "source_sha256": version.sha256,
+                            "table": "Sheet",
+                            "header_rows": [1],
+                            "first_row": 2,
+                            "last_row": 2,
+                            "columns": {"part_number": "A"},
+                            "mapping_basis": "首行零件号列",
+                            "boundary_basis": "正文只有第二行",
+                        }
+                    ],
+                    "proofs": [{"kind": "query", "audit_id": version.id, "rule_id": "1", "binding_id": "body"}],
+                },
+            }
+        )
+        result = product_result(product_response(spec, bundle, submission), work)
+        self.assertTrue(worker.complete_job(job, "verified-query", result))
+        path = f"/audit-tasks/{task['id']}"
+        current = self.display_client.get(path)
+        self.assertEqual(current.status_code, 200)
+        audit = current.json()["files"][0]["audit"]
+        self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
+        self.assertTrue(audit["checks"][0]["evidence_verified"])
+        self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
+        historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
+        self.assertEqual(historical["result_job_id"], job.id)
+        self.assertEqual(historical["coverage"]["verification"], result["coverage"]["verification"])
+        self.assertEqual(historical["read_view"]["files"][0]["audit"], audit)
+        self.assertEqual(audit["report"]["state"], "not_eligible")
+        self.assertFalse(worker.complete_job(job, "verified-query", {"findings": [], "coverage": {}}, "succeeded"))
+        self.assertEqual(self.display_client.get(path).json()["files"][0]["audit"], audit)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
 
 
 class UsageAcceptanceTests(AuditDatabaseCase):

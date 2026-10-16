@@ -23,6 +23,8 @@ Web JSON 类型继续由 Product API 的 OpenAPI 生成；预览与真实界面�
 
 显示更正以 Task、Round、FileVersion 三者共同确定范围，同一文件用于另一任务时不继承更正。保存按已读显示修订作比较并交换；原请求和 saved/conflict/rejected 回执追加保存，后续更正不改写旧回执。当前 Task 返回最新显示值与当前编辑许可；原请求读回只证明该次保存结果，不授予编辑权限，也不能替代当前 Task 读取。
 
+Deep 主机完成来源与执行记录校验后，在既有 coverage 中记录验证方法、执行身份与逐条 proof 类型；它与 Findings、结果 attempt 在同一完成事务保存。Task 和历史 Round 只认可与冻结文件、规则正文、结果键及当前结果执行身份一致的记录；没有该记录的旧结果不补标。Query proof 重放已绑定数据上的谓词，semantic proof 核对来源、记录和聚合一致性；二者都不证明自然语言解释、适用范围或模型业务判断必然正确，也不代替客户质量验收。人工复核不提高机器验证状态。
+
 ## 文件版本
 
 每次明确上传或导入创建一个新的 `file_version_id`，关联一个存储对象或 provider version。历史轮次引用 `file_version_id`，而不是文件名、当前 URL 或内容 hash。

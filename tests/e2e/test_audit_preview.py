@@ -29,6 +29,21 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_verified_empty_source_is_not_described_as_missing_evidence(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=evidence-empty")
+            page.get_by_role("button", name="使用三类文件示例").click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            details = page.get_by_role("region", name="审核详情", exact=True)
+            expect(details.get_by_text("该位置内容为空。", exact=True)).to_be_visible()
+            expect(details.get_by_text("未提供摘录。", exact=True)).to_have_count(0)
+            expect(details.get_by_text("不符合 1 · 无法判断 1", exact=True)).to_be_visible()
+            browser.close()
+
     def test_late_review_save_cannot_close_or_replace_another_files_editor(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

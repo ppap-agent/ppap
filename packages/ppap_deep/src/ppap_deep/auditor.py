@@ -15,7 +15,7 @@ from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_deep.client import DeepError
 from ppap_deep.controller import ExecutionContext
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
-from ppap_deep.protocol import DeepCoverage, DeepFinding, ExecuteRequest, ExecuteResponse
+from ppap_deep.protocol import DeepCoverage, DeepFinding, DeepVerification, ExecuteRequest, ExecuteResponse
 from ppap_deep.semantic.evidence import EvidenceBudget, resolve
 from ppap_deep.semantic.guest import Manifest
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, ResultBundle, RuleRef, SubmissionSpec
@@ -96,8 +96,12 @@ def semantic_inputs(spec: ExecuteRequest, engine_revision: str) -> tuple[Submiss
 
 
 def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: SubmissionSpec) -> ExecuteResponse:
+    expected, _packets = semantic_inputs(spec, bundle.semantic_engine_revision)
+    if submission != expected:
+        raise ValueError("Validated bundle does not belong to the frozen request")
     validate_bundle(bundle, submission)
     files = {item.file_version_id: item for item in spec.files}
+    proofs = {(proof.audit_id, proof.rule_id): proof.kind for proof in bundle.trace.proofs}
     findings, rule_items = [], []
     evidence_budget = EvidenceBudget()
     for check in bundle.report.checks:
@@ -154,6 +158,7 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
                 "item_key": item_key,
                 "coverage": "executed",
                 "status": check.status,
+                "proof_kind": proofs[check.audit_id, check.rule_id],
             }
         )
     return ExecuteResponse(
@@ -174,6 +179,14 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
             unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"],
             locator_gap=any(not (row.locator or {})["semantic"]["sources"] for row in findings),
             rule_items=rule_items,
+            verification=DeepVerification(
+                method="host_source_trace_v1",
+                round_id=spec.round_id,
+                job_id=spec.job_id,
+                attempt=spec.attempt,
+                executor_revision=spec.executor_revision,
+                semantic_engine_revision=bundle.semantic_engine_revision,
+            ),
         ),
     )
 

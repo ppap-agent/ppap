@@ -166,6 +166,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews`，保存原始记录键、已读版本、判断、理由、建议及本轮冻结引用。响应丢失先读回；未知请求在当前页面内跨弹窗／文件切换保留，只允许核对后显式重试相同内容。版本冲突需明确采用服务器版本再编辑；刷新后以服务器记录为准，不承诺恢复未提交输入。保存成功使旧任务读取失效，再读取当前 Task／Round；人工记录不改写机器结果或报告资格。
 
+Deep 已通过主机来源／trace 校验的新结果以 `host_source_trace_v1` 随 coverage 保存；共享文件投影核对 Round、job、attempt、executor revision、规则正文与条款结果关联后，才显示已验证依据及对应 PASS/NG。旧结果、Standard 位置文字、人工判断和不匹配的验证记录仍不被提升。有效 NG 不掩盖剩余未知范围；正式 PDF 尚未接入时不声称报告已生成。Schema 测试用实际 XLSX 解析和受控 query proof 经过既有完成事务验证读回，不调用模型、不证明客户审核质量。
+
 ## UI-first 交互预览
 
 在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview?page=audit`。场景切换会重置页面；宽度与主题切换保留当前交互。识别中和飞书读取中场景用预览台的“返回一次示例读取／令一次示例读取失败”控制响应，包括弹窗内的读取，不用定时器假装真实进度。

@@ -2434,7 +2434,7 @@ class AuthStore:
         )
         job = conn.execute(
             """
-            SELECT j.payload, a.diagnostic, j.updated_at FROM engine.jobs j
+            SELECT j.payload, a.diagnostic, j.updated_at, j.id FROM engine.jobs j
             LEFT JOIN engine.attempts a ON a.job_id = j.id AND a.attempt = j.attempt
             WHERE j.audit_round_id = %s AND j.kind = 'audit'
             ORDER BY j.created_at
@@ -2463,6 +2463,7 @@ class AuthStore:
             "predecessor_id": str(row[3]) if row[3] else None,
             "source_draft_id": str(row[4]) if row[4] else None,
             "result_attempt": row[5],
+            "result_job_id": str(job[3]) if job else None,
             "created_at": row[6].isoformat() if row[6] is not None else None,
             "analysis_mode": normalize_analysis_mode(row[7]),
             "case_context": row[8] or {},

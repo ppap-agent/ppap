@@ -2268,6 +2268,10 @@ export interface components {
             rule_items?: components["schemas"]["RuleCoverageItem"][];
             /** Unchecked */
             unchecked?: string[];
+            /** Verification */
+            verification?: {
+                [key: string]: string | number;
+            } | null;
         };
         /** DocLink */
         DocLink: {
@@ -2700,6 +2704,8 @@ export interface components {
             read_view?: components["schemas"]["AuditRoundReadView"];
             /** Result Attempt */
             result_attempt: number | null;
+            /** Result Job Id */
+            result_job_id?: string | null;
             /** Source Draft Id */
             source_draft_id: string | null;
             writeback: components["schemas"]["WritebackTarget"];
@@ -2832,11 +2838,20 @@ export interface components {
             item_key?: string;
             /** Priority */
             priority?: string | null;
+            /**
+             * Proof Kind
+             * @enum {string}
+             */
+            proof_kind?: "query" | "semantic";
             /** Reason */
             reason?: string;
             review?: components["schemas"]["Review"] | null;
+            /** Rule Item Id */
+            rule_item_id?: string;
             /** Rule To Check */
             rule_to_check: string;
+            /** Rule Version Id */
+            rule_version_id?: string;
             /**
              * Status
              * @enum {string}

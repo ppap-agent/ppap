@@ -187,6 +187,11 @@ class SemanticProductContractTests(unittest.TestCase):
         response = product_response(spec, _bundle(spec, submission), submission)
         self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
         self.assertEqual([row["rule_item_id"] for row in response.coverage.rule_items], ["R1", "R2", "R3", "R4"])
+        self.assertEqual(
+            response.coverage.verification.model_dump(),
+            {"method": "host_source_trace_v1", "round_id": ROUND, "job_id": "job-one", "attempt": 1, "executor_revision": DEEP_PROTOCOL_REVISION, "semantic_engine_revision": ENGINE},
+        )
+        self.assertEqual([row["proof_kind"] for row in response.coverage.rule_items], ["semantic"] * 4)
         self.assertEqual(response.usage, {"input_tokens": 120, "output_tokens": 30, "tool_calls": 0, "completed_tool_calls": 0, "compactions": 0})
         semantic = response.findings[1].locator["semantic"]
         self.assertEqual(semantic["rule_text"], "频次与流程一致")
@@ -216,6 +221,14 @@ class SemanticProductContractTests(unittest.TestCase):
         bad_reference.report.checks[1].evidence[1].document_id = "another-version"
         with self.assertRaisesRegex(ValueError, "证据来源"):
             product_response(spec, bad_reference, submission)
+
+    def test_a_valid_bundle_for_another_effective_rule_cannot_gain_a_host_validation_record(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        changed = spec.model_copy(deep=True)
+        changed.files[0].rule_body["rules"][0]["rule_to_check"] = "已改变的有效客户要求"
+        with self.assertRaisesRegex(ValueError, "frozen request"):
+            product_response(changed, _bundle(spec, submission), submission)
 
     def test_renamed_rule_flows_through_semantic_adapter_without_fixed_checker(self) -> None:
         spec = _spec(title="标题不同但要求未变")

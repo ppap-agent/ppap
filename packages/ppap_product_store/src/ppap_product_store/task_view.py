@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 
 
@@ -89,6 +90,40 @@ def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, 
     return evidence, deepcopy(scope), notice
 
 
+def _verified(round: dict, coverage: dict | None, finding: dict | None, rule_id: str, rule: dict, evidence: list[dict], scope: dict | None, notice: str | None) -> bool:
+    validation = (round.get("coverage") or {}).get("verification")
+    if not isinstance(validation, dict) or not coverage or not finding or not scope or notice or not evidence:
+        return False
+    locator = finding.get("locator") or {}
+    semantic = locator.get("semantic") or {}
+    return (
+        round.get("analysis_mode") == "deep"
+        and round.get("executor") == "ppap-deep"
+        and validation.get("method") == "host_source_trace_v1"
+        and validation.get("round_id") == round["id"]
+        and bool(round.get("result_job_id"))
+        and validation.get("job_id") == round["result_job_id"]
+        and type(validation.get("attempt")) is int
+        and validation["attempt"] == round["result_attempt"]
+        and isinstance(round.get("executor_revision"), str)
+        and bool(round["executor_revision"])
+        and validation.get("executor_revision") == round["executor_revision"]
+        and isinstance(validation.get("semantic_engine_revision"), str)
+        and re.fullmatch(r"[a-f0-9]{64}", validation["semantic_engine_revision"]) is not None
+        and coverage.get("coverage") == "executed"
+        and coverage.get("rule_version_id") == rule_id
+        and locator.get("file_version_id") == coverage.get("file_version_id")
+        and str(locator.get("rule_item_id")) == str(rule["id"])
+        and str(coverage.get("rule_item_id")) == str(rule["id"])
+        and coverage.get("item_key") == finding["item_key"] == f"{coverage.get('file_version_id')}:rule:{rule['id']}"
+        and coverage.get("status") == finding["status"]
+        and coverage.get("rule_to_check") == rule["rule_to_check"] == finding.get("item") == semantic.get("rule_text")
+        and coverage.get("proof_kind") in {"query", "semantic"}
+        and all(source["locator"] is not None for source in evidence)
+        and (finding["status"] != "PASS" or scope["total"] > 0 and scope["checked"] == scope["total"] and scope["unknown"] == 0)
+    )
+
+
 def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: bool = False) -> dict:
     finished = round["execution"] == "completed"
     coverage, original, notice = _clause_result(round, version_id, str(rule["id"])) if finished else (None, None, None)
@@ -96,14 +131,15 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
     if finding:
         finding["item_key"] = rule["id"]
     evidence, scope, evidence_notice = _evidence(round, finding, version_id, rule_id, str(rule["id"]))
+    verified = _verified(round, coverage, original, rule_id, rule, evidence, scope, notice or evidence_notice)
     return {
         "rule_item": rule,
         "execution": "failed" if file_failed and not finding or round["execution"] == "failed" or finding and finding["status"] == "ERR" else "completed" if finished else round["execution"],
         "coverage": "executed" if finding and (coverage or {}).get("coverage") != "unsupported" else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
         "finding": finding,
-        "evidence_verified": False,
+        "evidence_verified": verified,
         "scope": scope,
-        "scope_notice": notice or evidence_notice or (coverage or {}).get("reason") or ("请核对原件中的证据和检查范围。" if finding else None),
+        "scope_notice": notice or evidence_notice or (coverage or {}).get("reason") or ("请核对原件中的证据和检查范围。" if finding and not verified else None),
         "evidence": evidence,
         **({"review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}"} if original or coverage and coverage.get("coverage") != "executed" else {}),
         "review": deepcopy((original or coverage or {}).get("review")),
@@ -120,6 +156,9 @@ def _counts(checks: list[dict]) -> dict:
             counts["error_count"] += 1
         elif check["coverage"] != "executed":
             counts["not_covered_count"] += 1
+        elif check["evidence_verified"] and finding and finding["status"] in {"PASS", "NG", "NA"}:
+            if finding["status"] != "NA":
+                counts["pass_count" if finding["status"] == "PASS" else "ng_count"] += 1
         else:
             # Persisted legacy positions are not verified semantic evidence.
             counts["unknown_count"] += 1
@@ -150,6 +189,21 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         if key not in mapped and not conflict and (source == version_id or source is None and key_versions == {version_id}):
             unmapped.append(deepcopy(finding))
     file_has_error = finished and (file_failed or any(check["execution"] == "failed" for check in checks) or any(finding["status"] == "ERR" for finding in unmapped))
+    counts = _counts(checks)
+    complete = (
+        bool(checks)
+        and not file_has_error
+        and not unmapped
+        and all(
+            check["execution"] == "completed"
+            and check["evidence_verified"]
+            and check["finding"]["status"] in {"PASS", "NG", "NA"}
+            and check["scope"]["checked"] == check["scope"]["total"]
+            and check["scope"]["unknown"] == 0
+            and (check["scope"]["total"] > 0 or check["finding"]["status"] == "NA")
+            for check in checks
+        )
+    )
     return {
         "round_id": round["id"],
         "file_version_id": version_id,
@@ -160,12 +214,12 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         "failure": {"code": "file_execution_error", "message": "本文件审核执行失败，未取得完整结果。", "retryable": False}
         if file_has_error and round["execution"] != "failed"
         else round.get("failure"),
-        "conclusion": "UNKNOWN" if finished else None,
-        "counts": _counts(checks),
+        "conclusion": ("NG" if counts["ng_count"] else "PASS" if complete else "UNKNOWN") if finished else None,
+        "counts": counts,
         "checks": checks,
         "unmapped_findings": unmapped,
         "summary": None,
-        "report": {"state": "not_eligible", "report_id": None, "reason": "审核依据尚未完整核验" if finished else "审核尚未完成"},
+        "report": {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用" if complete else "审核依据尚未完整核验" if finished else "审核尚未完成"},
     }
 
 

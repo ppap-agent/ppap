@@ -48,6 +48,19 @@ class DeepFinding(BaseModel):
     locator: dict[str, Any] | None = None
 
 
+class DeepVerification(BaseModel):
+    """Host source/trace validation, not proof of business interpretation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["host_source_trace_v1"]
+    round_id: str = Field(min_length=1)
+    job_id: str = Field(min_length=1)
+    attempt: int = Field(ge=1, strict=True)
+    executor_revision: str = Field(min_length=1)
+    semantic_engine_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class DeepCoverage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -55,6 +68,7 @@ class DeepCoverage(BaseModel):
     unchecked: list[str]
     locator_gap: bool
     rule_items: list[dict[str, Any]] = Field(default_factory=list)
+    verification: DeepVerification | None = None
 
 
 class ExecuteResponse(BaseModel):

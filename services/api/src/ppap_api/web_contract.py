@@ -396,6 +396,9 @@ class RuleCoverageItem(TypedDict):
     rule_to_check: str
     coverage: CoverageState
     file_version_id: NotRequired[str]
+    rule_version_id: NotRequired[str]
+    rule_item_id: NotRequired[str]
+    proof_kind: NotRequired[Literal["query", "semantic"]]
     category: NotRequired[str]
     priority: NotRequired[str | None]
     reason: NotRequired[str]
@@ -409,6 +412,7 @@ class Coverage(TypedDict, total=False):
     unchecked: list[str]
     locator_gap: bool
     rule_items: NotRequired[list[RuleCoverageItem]]
+    verification: NotRequired[dict[str, str | int] | None]
 
 
 class RoundProgress(TypedDict):
@@ -431,6 +435,7 @@ class Round(TypedDict):
     predecessor_id: str | None
     source_draft_id: str | None
     result_attempt: int | None
+    result_job_id: NotRequired[str | None]
     created_at: str | None
     analysis_mode: AnalysisMode
     writeback: WritebackTarget
