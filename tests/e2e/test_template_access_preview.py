@@ -1,6 +1,7 @@
 """#170 UI-only template sharing and permission interactions, not real Feishu effects."""
 
 import os
+import re
 import unittest
 
 from playwright.sync_api import expect, sync_playwright
@@ -143,6 +144,7 @@ class TemplateAccessPreviewTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
+            page.context.grant_permissions(["clipboard-read", "clipboard-write"])
             page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-share-partial")
             page.get_by_role("button", name="分享客户模板", exact=True).click()
             dialog = page.get_by_role("dialog", name="分享客户模板", exact=True)
@@ -154,6 +156,23 @@ class TemplateAccessPreviewTests(unittest.TestCase):
             dialog.get_by_role("button", name="仅重试 示例王工", exact=True).click()
             expect(dialog.get_by_role("listitem", name="发送到 示例王工", exact=True)).to_contain_text("已发送")
             expect(dialog.get_by_role("button", name="新的模板分享", exact=True)).to_have_count(0)
+            support_trigger = dialog.get_by_role("button", name="联系支持", exact=True)
+            support_trigger.click()
+            support = page.get_by_role("dialog", name="联系我们", exact=True)
+            support.get_by_role("button", name="复制操作信息", exact=True).click()
+            copied = page.evaluate("navigator.clipboard.readText()")
+            self.assertIn("客户模板分享", copied)
+            self.assertIn("文件夹修订：", copied)
+            self.assertIn("示例李工 · 已发送", copied)
+            self.assertIn("示例王工 · 已发送", copied)
+            self.assertIn("示例李同事 · 结果未知", copied)
+            attempts = re.findall(r"本次尝试：([^\n]+)", copied)
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(attempts[0], attempts[2])
+            self.assertNotEqual(attempts[0], attempts[1])
+            self.assertEqual(copied.count("文件版本："), 12)
+            support.get_by_role("button", name="关闭", exact=True).click()
+            expect(support_trigger).to_be_focused()
             dialog.get_by_role("button", name="读取发送结果", exact=True).click()
             expect(dialog.get_by_role("listitem", name="发送到 示例李同事", exact=True)).to_contain_text("已发送")
             browser.close()
@@ -175,6 +194,7 @@ class TemplateAccessPreviewTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
+            page.context.grant_permissions(["clipboard-read", "clipboard-write"])
             page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-permissions-unknown")
             page.get_by_role("button", name="管理文件夹权限", exact=True).click()
             dialog = page.get_by_role("dialog", name="文件夹权限", exact=True)
@@ -182,6 +202,16 @@ class TemplateAccessPreviewTests(unittest.TestCase):
             row.get_by_role("combobox").click()
             page.get_by_role("option", name="改为可查看", exact=True).click()
             page.get_by_role("dialog", name="确认权限修改", exact=True).get_by_role("button", name="确认这项修改", exact=True).click()
+            expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
+            support_trigger = dialog.get_by_role("button", name="联系支持", exact=True)
+            support_trigger.click()
+            support = page.get_by_role("dialog", name="联系我们", exact=True)
+            support.get_by_role("button", name="复制操作信息", exact=True).click()
+            copied = page.evaluate("navigator.clipboard.readText()")
+            for value in ("模板文件夹权限修改", "原请求：", "文件夹：", "原权限修订：", "示例王工", "可编辑 → 可查看", "未取得可靠修改回执"):
+                self.assertIn(value, copied)
+            page.keyboard.press("Escape")
+            expect(support_trigger).to_be_focused()
             expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
             dialog.get_by_role("button", name="重新读取当前权限", exact=True).click()
             expect(row).to_contain_text("可查看")

@@ -40,8 +40,8 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
       const original = inputs.get(request.request_id), files = JSON.stringify(request.file_version_ids)
       if (original && original !== files) throw new Error('feedback_fixture_input_changed')
       inputs.set(request.request_id, files)
-      if (scene === 'feedback-failed' && !original) {
-        const failed: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: 'failed', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: true, reason: '示例：服务已明确终结本次写入，没有未决运营记录，允许重试原材料。'}
+      if (scene === 'feedback-no-retry' || scene === 'feedback-failed' && !original) {
+        const failed: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: 'failed', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: scene === 'feedback-failed', reason: scene === 'feedback-no-retry' ? '示例：服务未允许再次提交。保留原材料与请求，请联系运营核对。' : '示例：服务已明确终结本次写入，没有未决运营记录，允许重试原材料。'}
         submissions.set(key, failed)
         return structuredClone(failed)
       }

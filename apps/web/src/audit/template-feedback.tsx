@@ -1,5 +1,5 @@
 // Stitch: projects/13261964020862199279/screens/3976a221e25c4216a89f46d42d69e065
-import {useEffect, useRef, useState} from 'react'
+import {useContext, useEffect, useRef, useState} from 'react'
 import {Check, Download, Eye, Plus, X} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
@@ -9,13 +9,16 @@ import {FileName} from '../journey/file-name'
 import {readFeedbackAttachment, validFeedbackReceipt, type AuditFeedbackAdapter, type FeedbackFile, type FeedbackReceipt} from './feedback-contract'
 import {canRetryUpload, uploadName, useUploads, type UploadRow} from './uploads'
 import {FeedbackPreview} from './feedback-preview'
+import {SupportEntryContext} from './support'
 
 type Submission = {receipt: FeedbackReceipt; files: FeedbackFile[]; busy: boolean}
 const ready = (row: UploadRow) => row.receipt.state === 'ready' && row.receipt.file?.status === 'ready' && row.receipt.file.byte_size > 0
 const statusLabel = {uploading: '上传中', ready: '已上传', failed: '上传失败', unknown: '上传结果未知'}
+const feedbackLabels = {pending: '正在核对提交回执', unknown: '提交结果未知', failed: '提报未完成', rejected: '材料未受理', received: '材料已收到'}
 
 /** Mounted by the page, not by the portal: closing keeps uploads and the original attempt. */
 export function TemplateFeedback({open, onClose, adapter, trigger}: {open: boolean; onClose: () => void; adapter?: AuditFeedbackAdapter; trigger: HTMLElement | null}) {
+  const openSupport = useContext(SupportEntryContext)
   const input = useRef<HTMLInputElement>(null), alive = useRef(true), current = useRef<Submission | null>(null), transfer = useRef(0)
   const [job, setJob] = useState<Submission | null>(null), [discard, setDiscard] = useState(false)
   const [notice, setNotice] = useState(''), [downloading, setDownloading] = useState('')
@@ -76,6 +79,15 @@ export function TemplateFeedback({open, onClose, adapter, trigger}: {open: boole
     finally {if (alive.current && transfer.current === run) setDownloading('')}
   }
   const receipt = job?.receipt
+  function contactSupport() {
+    if (!receipt || !job || !openSupport) return
+    openSupport({scenario: '补充模板提报', facts: [
+      {label: '状态', value: feedbackLabels[receipt.state]},
+      {label: '原请求', value: receipt.request.request_id}, {label: '本次尝试', value: receipt.attempt_id},
+      {label: '原因', value: receipt.reason || '服务未提供原因。'},
+      {label: '固定附件', value: job.files.map(file => `${file.original_filename}\n文件版本：${file.id}`).join('\n\n')},
+    ]})
+  }
   return <Dialog open={open} onOpenChange={value => {if (!value) onClose()}}><DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-2xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected && trigger.getClientRects().length ? trigger : document.getElementById('audit-main'))?.focus()}}>
     <DialogHeader><DialogTitle>补充模板</DialogTitle><DialogDescription>提交模板或说明材料，交由运营核对。关闭后保留本页材料与回执；刷新页面尚不能恢复。</DialogDescription></DialogHeader>
     <p role="note" className="text-xs text-muted-foreground">交互预览：附件字节仅保留在本页内存，不会写入飞书多维表格。</p>
@@ -83,7 +95,7 @@ export function TemplateFeedback({open, onClose, adapter, trigger}: {open: boole
       <input ref={input} className="sr-only" type="file" multiple accept=".zip,.xlsx,.xls,.xlsm,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" aria-label="选择模板附件" disabled={locked || !adapter} onChange={event => {if (!locked) uploads.add(Array.from(event.target.files || []).map(file => ({kind: 'local', file}))); event.target.value = ''}}/>
       <div className="space-y-2"><Button variant="outline" disabled={locked || !adapter} onClick={() => input.current?.click()}><Plus/>{rows.length ? '继续添加附件' : '选择附件'}</Button><p className="text-xs text-muted-foreground">ZIP、Excel、Word、图片 · 单份最大 200 MB。压缩包仅作附件，不解压执行。不要提交密码或敏感凭据。</p></div>
       <ItemGroup aria-label="模板附件">{rows.map(row => <Item role="listitem" size="sm" key={row.id}><ItemContent className="min-w-0"><FileName name={uploadName(row.input)}/><p className="text-xs text-muted-foreground">{statusLabel[row.receipt.state]}{row.receipt.state === 'ready' && !ready(row) ? ' · 附件状态不完整，不能提交' : ''}</p>{row.receipt.reason && <p className="text-xs text-muted-foreground">{row.receipt.reason}</p>}</ItemContent><div className="flex flex-wrap gap-1 max-sm:w-full max-sm:justify-end">{ready(row) && <Button variant="ghost" size="icon" aria-label={`查看 ${uploadName(row.input)}`} onClick={event => {previewTrigger.current = event.currentTarget; setPreview(structuredClone(row.receipt.file!))}}><Eye/></Button>}{ready(row) && <Button variant="ghost" size="icon" aria-label={`下载 ${uploadName(row.input)}`} disabled={Boolean(downloading)} onClick={() => void download(row.receipt.file!)}><Download/></Button>}{!row.busy && ['uploading', 'unknown'].includes(row.receipt.state) && <Button variant="outline" size="sm" disabled={locked} onClick={() => uploads.read(row.id)}>读取上传结果</Button>}{canRetryUpload(row) && <Button variant="outline" size="sm" disabled={locked} onClick={() => uploads.retry(row.id)}>重试上传</Button>}<Button variant="ghost" size="icon" aria-label={`移除 ${uploadName(row.input)}`} disabled={locked} onClick={() => uploads.remove(row.id)}><X/></Button></div></Item>)}</ItemGroup>
-      {receipt && <Alert><AlertTitle>{{pending: '正在核对提交回执', unknown: '提交结果未知', failed: '提报未完成', rejected: '材料未受理'}[receipt.state]}</AlertTitle><AlertDescription><p>{receipt.reason || (receipt.state === 'pending' ? '请等待原提交回执，不要重复提交。' : '附件仍保留在本页。')}</p><p className="break-all text-xs">请求：{receipt.request.request_id}<br/>尝试：{receipt.attempt_id}</p>{['pending', 'unknown'].includes(receipt.state) && <Button variant="outline" disabled={job?.busy} onClick={read}>{job?.busy ? '正在等待回执…' : '读取原提交结果'}</Button>}{receipt.state === 'failed' && receipt.retry_allowed && <Button variant="outline" disabled={job?.busy} onClick={retry}>安全重试提交</Button>}{receipt.state === 'failed' && !receipt.retry_allowed && <p>服务未允许重试。保留原请求，请联系运营核对。</p>}</AlertDescription></Alert>}
+      {receipt && <Alert><AlertTitle>{feedbackLabels[receipt.state]}</AlertTitle><AlertDescription><p>{receipt.reason || (receipt.state === 'pending' ? '请等待原提交回执，不要重复提交。' : '附件仍保留在本页。')}</p><p className="break-all text-xs">请求：{receipt.request.request_id}<br/>尝试：{receipt.attempt_id}</p>{['pending', 'unknown'].includes(receipt.state) && <Button variant="outline" disabled={job?.busy} onClick={read}>{job?.busy ? '正在等待回执…' : '读取原提交结果'}</Button>}{receipt.state === 'failed' && receipt.retry_allowed && <Button variant="outline" disabled={job?.busy} onClick={retry}>安全重试提交</Button>}{receipt.state === 'failed' && !receipt.retry_allowed && <p>服务未允许重试。保留原请求，请联系运营核对。</p>}{openSupport && <Button variant="outline" onClick={contactSupport}>联系支持</Button>}</AlertDescription></Alert>}
       {!locked && <div className="space-y-2"><p role="status" className="text-sm">{blocker || `待提交 ${files.length} 份附件`}</p><p className="text-xs text-muted-foreground">无需填写联系方式。由服务读取已授权的飞书资料；缺失信息不阻止提报，客户归属由运营核对。</p><div className="flex flex-wrap gap-2"><Button disabled={Boolean(blocker)} onClick={submit}>提交材料</Button>{rows.length > 0 && <Button variant="ghost" onClick={() => setDiscard(true)}>放弃材料</Button>}</div></div>}
     </>}
     {notice && <p role="status" className="text-sm">{notice}</p>}

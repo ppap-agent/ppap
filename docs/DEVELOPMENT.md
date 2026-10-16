@@ -172,6 +172,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 支持浮层使用 `support-ready`、`support-error`、`support-qr-error` 和 `support-loading`，分别走查复制/邮箱链接/图片放大、读取恢复、图片失败和返回后迟到读取。电话不可拨打，邮箱是保留的 `.invalid` 地址，图片明确不是服务二维码；不代表已取得真实客服配置或完成飞书连接。Browser Back 关闭旧浮层并保留当前文件，二维码放大关闭后回到触发按钮。
 
+模板提报、报告／模板分享和权限修改的未确认或失败操作可进入同一支持浮层，复制打开时的原请求、各自尝试及固定对象信息。原业务弹窗不关闭，迟到结果继续更新；支持快照只读，不自动重发、发送附件或创建工单。关闭后优先回原按钮，按钮消失时回原弹窗；普通全局支持不保留上一次操作信息。`feedback-no-retry` 演示服务未允许再提交时的支持出口。本页 `client-` 编号仍只是参考，不冒充服务端 trace。
+
 模板分享固定完整客户集合，不受搜索和分页影响；链接不自动授权，撤权不能收回已发送的 ZIP 副本。`scene=templates-share-partial` 演示逐目标失败，未知目标只读回，明确失败且服务允许时才单独重试。文件夹权限使用独立的 `permission_revision` 和服务提供的单项动作；`templates-permissions-unknown` 演示读取当前权限不能代替原修改回执。关闭、切客户或撤权后保留原请求的读取入口；`templates-share-race` 和 `templates-permissions-race` 可手动返回迟到回执。这些预览不发送飞书消息，也不写入 Drive 权限。
 
 补充模板的三个入口共用本页附件与提报状态。`scene=feedback-unknown` 演示提交后丢失回执；`feedback-submit-loading` 和 `feedback-upload-loading` 可手动返回迟到结果。关闭后允许读取原请求，只有明确终结且允许重试才建立新尝试。此预览只保留本页内存中的附件字节，不写入飞书运营表，也不自动改变审核规则。
