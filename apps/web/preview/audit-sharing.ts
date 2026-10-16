@@ -21,9 +21,10 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
   const reads = new Map<string, number>()
   const deniedAttempts = new Map<string, string>()
   const partial = scene.startsWith('reports-share-partial')
+  const unknown = ['reports-share-unknown', 'archive-share-unknown', 'reports-share-external'].includes(scene)
   let directoryReads = 0
   function observed(job: ReportShare): ReportShare {
-    if (['reports-share-unknown', 'archive-share-unknown'].includes(scene) && (reads.get(job.request.request_id) || 0) < 2) return {...structuredClone(job), receipt: {...job.receipt, state: 'pending'}, deliveries: job.deliveries.map(row => ({...row, state: 'unknown', retry_allowed: false, reason: '发送结果待确认。'}))}
+    if (unknown && (reads.get(job.request.request_id) || 0) < 2) return {...structuredClone(job), receipt: {...job.receipt, state: 'pending'}, deliveries: job.deliveries.map(row => ({...row, state: 'unknown', retry_allowed: false, reason: '发送结果待确认。'}))}
     return structuredClone(job)
   }
   function save(job: ReportShare) {
@@ -40,6 +41,7 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
     listTargets: async (query, kind, pageToken) => {
       directoryReads += 1
       if (scene === 'reports-share-directory-denied' || scene === 'reports-share-directory-error' && directoryReads === 1) throw new Error('preview_directory_unavailable')
+      if (scene === 'reports-share-directory-org-changed' && directoryReads > 1) return {organization_id: 'preview-other-org', organization_name: '另一示例组织', targets: catalog.filter(row => row.kind === kind && row.display_name.includes(query)).map(row => ({...row, organization_id: 'preview-other-org'})), next_page_token: null}
       const targets = catalog.filter(row => row.kind === kind && row.display_name.includes(query)).map(row => scene === 'reports-share-directory-change' && directoryReads > 1 && row.id === 'preview-member-li' ? {...row, eligibility: 'blocked' as const, reason: '此人员已失去分享资格。'} : row)
       if (scene === 'reports-share-directory-foreign') targets.push({id: 'preview-foreign-member', kind: 'user', display_name: '其他组织人员（示例）', organization_id: 'preview-other-org', eligibility: 'eligible', reason: null})
       if (scene.endsWith('share-directory-paging')) {
@@ -67,7 +69,7 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
         return structuredClone(job)
       }
       save(job)
-      if (scene === 'reports-share-unknown' || scene === 'archive-share-unknown') throw new Error('preview_share_receipt_lost')
+      if (unknown) throw new Error('preview_share_receipt_lost')
       return {...structuredClone(job), deliveries: job.deliveries.map(row => ({...row, state: 'pending', reason: '等待发送结果。'}))}
     },
     read: async ({request_id: requestId, attempts}) => {
@@ -83,7 +85,7 @@ export function fixtureSharing(tasks: Map<string, Task>, scene: string): AuditSh
           save(job)
         }
       }
-      if (['reports-share-unknown', 'archive-share-unknown'].includes(scene) && count === 1) return observed(job)
+      if (unknown && count === 1) return observed(job)
       if (count > 1) {job.deliveries = job.deliveries.map(row => row.state === 'unknown' ? {...row, state: 'sent', reason: null} : row); save(job)}
       return structuredClone(job)
     },

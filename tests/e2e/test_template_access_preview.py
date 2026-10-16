@@ -25,6 +25,10 @@ class TemplateAccessPreviewTests(unittest.TestCase):
                     dialog.get_by_role("tab", name="文件副本", exact=True).click()
                     expect(dialog.get_by_text("发送完整 ZIP 副本。后续修改权限不能收回已发送的副本。", exact=True)).to_be_visible()
                     dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True).check()
+                    dialog.get_by_role("button", name="关闭", exact=True).click()
+                    page.get_by_role("button", name="分享客户模板", exact=True).click()
+                    expect(dialog.get_by_role("tab", name="文件副本", exact=True)).to_have_attribute("aria-selected", "true")
+                    expect(dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True)).to_be_checked()
                     send = dialog.get_by_role("button", name="发送给 1 个目标", exact=True)
                     if complete:
                         expect(send).to_be_enabled()

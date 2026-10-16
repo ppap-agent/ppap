@@ -18,6 +18,7 @@ import {templateShareContent, templateShareReference, validTemplateShareScope, t
 export function TemplateShareSession({open, folder, adapter, templates, onClose, trigger}: {open: boolean; folder: TemplateFolder; adapter: AuditTemplateSharingAdapter; templates: AuditTemplateAdapter; onClose: () => void; trigger: HTMLButtonElement | null}) {
   const [scope, setScope] = useState<TemplateShareScope | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
   const [job, setJob] = useState<TemplateShare | null>(null), [targets, setTargets] = useState<ShareTarget[]>([]), [mode, setMode] = useState<'link' | 'zip'>('link')
+  const [targetsReady, setTargetsReady] = useState(false)
   const [zip, setZip] = useState<TemplateZip | null>(null), [preparing, setPreparing] = useState(false), [zipError, setZipError] = useState(''), [retryZip, setRetryZip] = useState(0)
   const scopeEpoch = useRef(0), zipEpoch = useRef(0)
   const actions = useShareActions(job, setJob, input => Boolean(scope && sameSnapshot(input.scope, templateShareReference(scope)) && sameSnapshot(input.content, templateShareContent(scope, input.content.kind, zip))), adapter)
@@ -47,7 +48,7 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
     return () => {zipEpoch.current += 1}
   }, [open, scope, mode, retryZip])
   const content = scope ? templateShareContent(scope, mode, zip) : null
-  const validTargets = targets.length > 0 && targets.every(target => target.eligibility === 'eligible' && target.organization_id === targets[0].organization_id)
+  const validTargets = open && targetsReady && targets.length > 0 && targets.every(target => target.eligibility === 'eligible' && target.organization_id === targets[0].organization_id)
   function fresh() {actions.suspend(); setJob(null); setScope(null); setZip(null); setTargets([]); setMode('link'); setError(''); setZipError(''); setReload(value => value + 1)}
   return <Dialog open={open} onOpenChange={value => {if (!value) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-2xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected && trigger.getClientRects().length ? trigger : document.getElementById('audit-main'))?.focus()}}>
     <DialogHeader><DialogTitle>分享客户模板</DialogTitle><DialogDescription>分享此客户的全部模板。</DialogDescription></DialogHeader>
@@ -60,7 +61,7 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
         {label: '客户', value: scope.customer_name}, {label: '文件夹', value: job.request.scope.folder_id},
         {label: '文件夹修订', value: job.request.scope.folder_revision}, {label: '交付方式', value: job.request.content.kind === 'link' ? '固定模板链接' : '完整 ZIP 副本'},
         {label: '固定模板', value: job.request.scope.templates.map(reference => `${scope.templates.find(row => sameSnapshot(row.reference, reference))?.file.original_filename || '原分享模板'}\n模板编号：${reference.template_id}\n文件版本：${reference.file_version_id}`).join('\n\n')},
-      ]}}/> : <ShareTargets adapter={adapter} value={targets} onChange={setTargets}/>}
+      ]}}/> : open && <ShareTargets adapter={adapter} value={targets} onChange={setTargets} onReadyChange={setTargetsReady}/>}
       {!job && !content && !preparing && <p role="status" className="text-sm">{scope.link_access.reason || scope.zip_access.reason || '完整模板集合或本方式的分享权限尚未确认，不能发送。'}</p>}
     </>}</div>
     <DialogFooter className="shrink-0 flex-row flex-wrap"><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && <Button variant="outline" onClick={fresh}>新的模板分享</Button>}{!job && <Button disabled={!validTargets || !content || loading || preparing} onClick={() => {if (scope && content) void actions.send({organization_id: targets[0].organization_id, scope: templateShareReference(scope), targets: targets.map(({kind, id}) => ({kind, id})), content}, targets)}}>发送给 {targets.length} 个目标</Button>}</DialogFooter>

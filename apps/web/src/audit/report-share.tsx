@@ -17,15 +17,16 @@ import {ShareResults} from './share-results'
 export type ShareDescription = (reference: Reference) => {name: string; conclusion: string; context?: string}
 type Reference = components['schemas']['AuditReportReference']
 
-export function ReportShareDialog({share, describe, contentFor, reports, adapter, actions, onClose, trigger}: {share?: ReportShare | null; describe: ShareDescription; contentFor: ShareContentFor; reports: Reference[]; adapter: AuditSharingAdapter; actions: ReturnType<typeof useShareActions<ShareRequest>>; onClose: () => void; trigger: HTMLButtonElement | null}) {
-  const [compose, setCompose] = useState(!share)
-  const job = compose ? null : share
+export function ReportShareDialog({open, share, describe, contentFor, reports, adapter, actions, onClose, trigger}: {open: boolean; share?: ReportShare | null; describe: ShareDescription; contentFor: ShareContentFor; reports: Reference[]; adapter: AuditSharingAdapter; actions: ReturnType<typeof useShareActions<ShareRequest>>; onClose: () => void; trigger: HTMLButtonElement | null}) {
+  const [composingAfter, setComposingAfter] = useState<string | null>(null)
+  const job = share && (shareUnresolved(share) || composingAfter !== share.request.request_id) ? share : null
   const [targets, setTargets] = useState<ShareTarget[]>([])
+  const [targetsReady, setTargetsReady] = useState(false)
   const [mode, setMode] = useState<'link' | 'file'>('link')
   const scope = job?.request.reports || reports
   const content = job?.request.content || contentFor(reports, mode)
-  const validTargets = targets.length > 0 && targets.every(target => target.eligibility === 'eligible' && target.organization_id === targets[0].organization_id)
-  return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-xl" onCloseAutoFocus={event => {event.preventDefault(); trigger?.focus()}}>
+  const validTargets = open && targetsReady && targets.length > 0 && targets.every(target => target.eligibility === 'eligible' && target.organization_id === targets[0].organization_id)
+  return <Dialog open={open} onOpenChange={open => {if (!open) onClose()}}><DialogContent className="flex max-h-[88dvh] flex-col overflow-hidden sm:max-w-xl" onCloseAutoFocus={event => {event.preventDefault(); trigger?.focus()}}>
     <DialogHeader><DialogTitle>分享审核报告</DialogTitle><DialogDescription>仅限当前组织内人员或已核对成员范围的群组。</DialogDescription></DialogHeader>
     <div className="min-h-0 space-y-4 overflow-y-auto">
       <section className="space-y-2" aria-label="固定分享范围"><h3 className="font-medium">本次分享 {scope.length} 份已就绪报告</h3><ItemGroup>{scope.map(reference => {
@@ -38,8 +39,8 @@ export function ReportShareDialog({share, describe, contentFor, reports, adapter
       {job ? <ShareResults job={job} actions={actions} support={{scenario: '审核报告分享', facts: [
         {label: '交付方式', value: {link: '链接', pdf: 'PDF 文件', zip: 'ZIP 文件'}[job.request.content.kind]},
         {label: '固定报告', value: job.request.reports.map(reference => `${describe(reference).name}-审核报告\n任务：${reference.task_id}\n审核轮次：${reference.round_id}\n文件版本：${reference.file_version_id}\n结果尝试：${reference.result_attempt}\n报告编号：${reference.report_id}`).join('\n\n')},
-      ]}}/> : <ShareTargets adapter={adapter} value={targets} onChange={setTargets}/>}
+      ]}}/> : open && <ShareTargets adapter={adapter} value={targets} onChange={setTargets} onReadyChange={setTargetsReady}/>}
     </div>
-    <DialogFooter className="shrink-0 flex-row flex-wrap items-center"><p className="mr-auto text-xs text-muted-foreground max-sm:w-full">关闭不会撤回已发送的报告。</p><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && contentFor(reports, 'link') && <Button variant="outline" onClick={() => {setTargets([]); setMode('link'); setCompose(true)}}>新的分享</Button>}{!job && <Button disabled={!validTargets || !content} onClick={() => {if (content) {void actions.send({organization_id: targets[0].organization_id, reports, targets: targets.map(({kind, id}) => ({kind, id})), content}, targets); setCompose(false)}}}>发送给 {targets.length} 个目标</Button>}</DialogFooter>
+    <DialogFooter className="shrink-0 flex-row flex-wrap items-center"><p className="mr-auto text-xs text-muted-foreground max-sm:w-full">关闭不会撤回已发送的报告。</p><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && contentFor(reports, 'link') && <Button variant="outline" onClick={() => {setTargets([]); setMode('link'); setComposingAfter(job.request.request_id)}}>新的分享</Button>}{!job && <Button disabled={!validTargets || !content} onClick={() => {if (content) void actions.send({organization_id: targets[0].organization_id, reports, targets: targets.map(({kind, id}) => ({kind, id})), content}, targets)}}>发送给 {targets.length} 个目标</Button>}</DialogFooter>
   </DialogContent></Dialog>
 }

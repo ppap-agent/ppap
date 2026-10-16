@@ -20,6 +20,7 @@ import {fixtureSupport} from './audit-support'
 import {displayReadFixture, fixtureDisplay} from './audit-display'
 import {fileDisplayValues} from '../src/audit/display-info-contract'
 import {usageNotices} from '../src/audit/usage-contract'
+import {reportReference} from '../src/audit/result-projection'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -106,6 +107,13 @@ const adapter: AuditIntakeAdapter = {
     if (scene === 'restore-display-read-failed' && recoveryRead === 2) throw new Error('preview_display_offline')
     const task = taskStore.get(id)
     if (!task) throw Object.assign(new Error('preview_not_found'), {status: 404})
+    if (scene === 'reports-share-external' && recoveryRead === 2) {
+      const reference = reportReference(task, task.files[0])
+      if (!reference) throw new Error('preview_external_report_missing')
+      try {await sharingAdapter.send({request_id: 'preview-external-share', organization_id: 'preview-org', reports: [reference], targets: [{kind: 'user', id: 'preview-member-li'}], content: {kind: 'link', artifact: null, package_id: null}})}
+      catch (error) {if (!(error instanceof Error) || error.message !== 'preview_share_receipt_lost') throw error}
+      return structuredClone(taskStore.get(id)!)
+    }
     if (scene === 'restore-observe-regression' && recoveryRead === 2) return fixtureAcceptance(task, task.acceptance!.request_id)
     if (scene === 'restore-observe-missing-progress' && recoveryRead === 2) {const next = structuredClone(task); delete next.progress; return next}
     if (scene.startsWith('restore-') && recoveryRead === (scene === 'restore-error' || scene === 'restore-auth' ? 2 : 1) || scene.startsWith('reports-') && id === 'preview-report-task' && recoveryRead === 1) {const next = await withReportBytes(task); taskStore.set(id, next); return structuredClone(next)}
