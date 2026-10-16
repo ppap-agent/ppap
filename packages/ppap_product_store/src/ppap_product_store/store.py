@@ -66,7 +66,7 @@ from ppap_core.identity import (
     new_token,
     token_hash,
 )
-from ppap_core.rules import normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
+from ppap_core.rules import FILE_PREPARATION_KINDS, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
 from ppap_core.writeback_targets import normalize_external_ref, public_target
@@ -1237,12 +1237,13 @@ class AuthStore:
                     SELECT id, kind, payload, tenant_id FROM engine.jobs
                     WHERE (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
-                        OR (status = 'leased' AND kind NOT IN ('rule_parse', 'file_analysis', 'file_validation') AND lease_until IS NOT NULL AND lease_until < now())
+                        OR (status = 'leased' AND kind <> ALL(%s) AND lease_until IS NOT NULL AND lease_until < now())
                     )
                     ORDER BY created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
-                    """
+                    """,
+                    (list(FILE_PREPARATION_KINDS),),
                 ).fetchone()
                 if not row:
                     return None
@@ -1325,14 +1326,15 @@ class AuthStore:
                     """
                     UPDATE engine.jobs
                     SET status = %s, lease_until = NULL, updated_at = now(),
-                        result = CASE WHEN kind IN ('rule_parse', 'file_analysis', 'file_validation') THEN %s ELSE result END
+                        result = CASE WHEN kind = ANY(%s) THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
                     RETURNING id
                     """,
                     (
                         "succeeded" if outcome == "succeeded" else "failed",
-                        Jsonb(result) if claimed.kind in {"rule_parse", "file_analysis", "file_validation"} else None,
+                        list(FILE_PREPARATION_KINDS),
+                        Jsonb(result) if claimed.kind in FILE_PREPARATION_KINDS else None,
                         claimed.id,
                         claimed.attempt,
                         worker_ident,

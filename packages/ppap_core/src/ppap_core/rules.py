@@ -9,6 +9,7 @@ from ppap_core.rule_profile import normalize_rule_profile
 from ppap_core.types import PpapDocumentType
 
 RULE_FILE_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".doc", ".docx", ".md", ".pdf", ".json"}
+FILE_PREPARATION_KINDS = ("rule_parse", "file_analysis", "file_validation")
 MAX_RULE_TEXT = 20000  # The migrated extraction prompt accepts this much source text.
 
 

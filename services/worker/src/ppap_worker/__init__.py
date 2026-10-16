@@ -16,6 +16,7 @@ from ppap_core.audits import (
 from ppap_core.db import connect
 from ppap_core.logs import bind, emit, reset
 from ppap_core.logs import configure as configure_logs
+from ppap_core.rules import FILE_PREPARATION_KINDS
 from ppap_core.settings import load_settings
 from ppap_product_store import AuthStore
 
@@ -103,7 +104,7 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
     )
     emit("job_claimed", kind=claimed.kind)
     try:
-        if claimed.kind in {"rule_parse", "file_analysis", "file_validation"}:
+        if claimed.kind in FILE_PREPARATION_KINDS:
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
             diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
