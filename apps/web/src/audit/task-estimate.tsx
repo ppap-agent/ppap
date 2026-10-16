@@ -14,9 +14,9 @@ export function AuditTaskEstimate({task, progressIssue}: {task: components['sche
   const valid = !progressIssue && times.length === 3 && times.every(Number.isFinite) && times[0] <= times[1] && times[1] <= times[2]
   const format = new Intl.DateTimeFormat('zh-CN', {dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23'})
   return <section aria-label="任务时间估计" className="space-y-1 text-sm text-muted-foreground">
-    {!valid || !estimate ? <p>服务暂未提供可靠的结束时间估计。</p> : <>
-      <p>{times[2] <= Date.now() ? '上次估计区间已过，等待服务更新。' : <>预计任务结束：<time aria-label="预计最早结束时间" dateTime={estimate.earliest_at}>{format.format(times[1])}</time> – <time aria-label="预计最晚结束时间" dateTime={estimate.latest_at}>{format.format(times[2])}</time>（本地时间）</>}</p>
-      <p className="text-xs">服务估计于 <time aria-label="估计观察时间" dateTime={estimate.observed_at}>{format.format(times[0])}</time>（本地时间）；包含首次报告处理，不代表审核完成。</p>
+    {!valid || !estimate ? <p>暂无法估计结束时间。</p> : <>
+      <p>{times[2] <= Date.now() ? '预计时间已过，等待更新。' : <>预计任务结束：<time aria-label="预计最早结束时间" dateTime={estimate.earliest_at}>{format.format(times[1])}</time> – <time aria-label="预计最晚结束时间" dateTime={estimate.latest_at}>{format.format(times[2])}</time>（本地时间）</>}</p>
+      <p className="text-xs">更新于 <time aria-label="估计观察时间" dateTime={estimate.observed_at}>{format.format(times[0])}</time>（本地时间）</p>
     </>}
   </section>
 }

@@ -73,6 +73,6 @@ export function PdfSource({url, name}: {url: string; name: string}) {
       {error ? <p role="alert" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>{error}</p> : rendering && <p role="status" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>正在排版第 {page} 页…</p>}
       <div className={"w-max min-w-full p-3 [&_canvas]:block [&_canvas]:m-auto [&_canvas]:bg-background"} ref={paper}/>
     </div>
-    {pdf && !rendering && !error && <Collapsible className={"max-h-40 overflow-auto"}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">当前页文字</Button></CollapsibleTrigger><CollapsibleContent><pre>{text.trim() || '此页没有可提取的文字，请查看页面图像。此阅读器不执行 OCR。'}</pre></CollapsibleContent></Collapsible>}
+    {pdf && !rendering && !error && <Collapsible className={"max-h-40 overflow-auto"}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">当前页文字</Button></CollapsibleTrigger><CollapsibleContent><pre>{text.trim() || '此页没有可提取的文字，请查看页面图像。'}</pre></CollapsibleContent></Collapsible>}
   </div>
 }

@@ -47,8 +47,7 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
   const shown = files.filter(file => file.name.toLowerCase().includes(query.toLowerCase()))
   const picked = files.filter(file => selected.includes(file.token) && supported(file))
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl" onCloseAutoFocus={event => {event.preventDefault(); (trigger?.isConnected ? trigger : document.getElementById('audit-main'))?.focus()}}>
-    <DialogHeader><DialogTitle>从飞书选择文件</DialogTitle><DialogDescription>选择现有云文件。添加后仍需预检查，不会直接开始审核。</DialogDescription></DialogHeader>
-    <p className="text-xs text-muted-foreground">交互预览 · 示例文件。不连接真实飞书，不读取或下载云端原件。</p>
+    <DialogHeader><DialogTitle>从飞书选择文件</DialogTitle><DialogDescription>选择要审核的文件。</DialogDescription></DialogHeader>
     <Label htmlFor="drive-search" className="sr-only">搜索飞书文件名</Label><Input id="drive-search" placeholder="搜索已加载的文件名" value={query} onChange={event => setQuery(event.target.value)}/>
     {error && <Alert variant="destructive"><AlertTitle>暂时无法读取</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {loading && <p role="status" className="text-sm text-muted-foreground">正在读取飞书文件…</p>}

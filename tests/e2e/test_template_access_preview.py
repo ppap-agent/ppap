@@ -41,7 +41,7 @@ class TemplateAccessPreviewTests(unittest.TestCase):
     def test_permission_conflict_or_revocation_never_optimistically_changes_the_member(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for scene, result in [("templates-permissions-conflict", "权限已变化"), ("templates-permissions-revoked", "服务已拒绝")]:
+            for scene, result in [("templates-permissions-conflict", "权限已变化"), ("templates-permissions-revoked", "本次修改已被拒绝")]:
                 with self.subTest(scene=scene):
                     page = browser.new_page()
                     page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=" + scene)

@@ -134,7 +134,7 @@ const adapter: AuditIntakeAdapter = {
       receipt = {request_id: requestId, state: 'ready', file: {...file, file_id: fixture.source.token, original_filename: fixture.filename, content_type: fixture.mime}, reason: null, retry_allowed: false}
     } else {
       const file = input.file
-      const reason = file.size > 200 * 1024 * 1024 ? '文件超过 200 MB 设计上限，传输未开始。' : !/\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name) ? '非审核支持格式，传输未开始。' : ''
+      const reason = file.size > 200 * 1024 * 1024 ? '文件超过 200 MB，未开始上传。' : !/\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name) ? '非审核支持格式，传输未开始。' : ''
       const knownFailure = scene === 'upload-partial' && file.name === '明确失败.xlsx' && !transferAttempts.has(file)
       transferAttempts.add(file)
       receipt = reason || knownFailure ? {request_id: requestId, state: 'failed', file: null, reason: reason || '示例：服务已明确终结请求，没有创建文件，也没有在途写入。可安全重试此文件。', retry_allowed: knownFailure && !reason} : {request_id: requestId, state: 'ready', file: {file_id: `preview-local-${crypto.randomUUID()}`, id: `preview-local-version-${crypto.randomUUID()}`, original_filename: file.name, content_type: file.type, byte_size: file.size, status: 'local_preview', sha256: null}, reason: null, retry_allowed: false}
@@ -223,7 +223,7 @@ function Preview() {
     const read = (originalReads.current.get(file.file_version_id) || 0) + 1
     originalReads.current.set(file.file_version_id, read)
     if (scene === 'original-error' && read === 1) throw new Error('preview_original_unavailable')
-    const result = {available: false, notice: `示例：已读取这次冻结版本。此环境不提供 Office 内嵌预览，请下载核对。本次返回版本：${file.file_version_id} · 读取观察 ${read}`}
+    const result = {available: false, notice: read === 1 ? '此文件暂不支持在线预览，请下载查看。' : '在线预览暂不可用，请下载查看。'}
     return scene === 'original-loading' ? defer(`原件配置 · ${file.original_filename} · 读取 ${read}`, result) : result
   }, [defer])
   useEffect(() => {
@@ -341,7 +341,7 @@ function Preview() {
     const result = await supportAdapter.read()
     return scene === 'support-loading' ? defer('服务配置', result) : result
   }} : undefined, [defer])
-  return <>{(automaticObservation || delayedDisplay || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>模拟事件控制：手动返回结果，不使用定时器伪造进度。</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+  return <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
 createRoot(document.getElementById('app')!).render(<Preview/>)

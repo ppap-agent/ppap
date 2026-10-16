@@ -9,7 +9,7 @@ export function fixtureSupport(scene: string): AuditSupportAdapter | undefined {
     read: async () => {
       reads += 1
       if (scene === 'support-error' && reads === 1) throw new Error('preview_support_read_failed')
-      return {state: 'configured', config_version: version, phone: scene === 'support-empty' ? null : '示例电话（不可拨打）', email: scene === 'support-empty' ? null : 'support@example.invalid', service_hours: scene === 'support-empty' ? null : '仅交互预览 · 非真实客服服务时间', qr_available: scene !== 'support-empty'}
+      return {state: 'configured', config_version: version, phone: scene === 'support-empty' ? null : '示例电话（不可拨打）', email: scene === 'support-empty' ? null : 'support@example.invalid', service_hours: scene === 'support-empty' ? null : '服务时间待确认', qr_available: scene !== 'support-empty'}
     },
     readQr: async configVersion => {
       if (configVersion !== version || scene === 'support-empty') throw new Error('preview_support_config_mismatch')

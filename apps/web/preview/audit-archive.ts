@@ -7,7 +7,7 @@ import {fixtureReport, withReportBytes} from './audit-reports'
 
 type Task = components['schemas']['AuditTask']
 const allowed = {state: 'allowed' as const, reason: null}
-const denied = {state: 'denied' as const, reason: '示例：档案访问不授予私有来源任务权限。'}
+const denied = {state: 'denied' as const, reason: '无权查看来源任务。'}
 
 /** Provider-confirmed sample identities only. Arbitrary uploads are not archived. */
 export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (id: string, sequence: number, failed: boolean, pending: boolean) => Task, readShare: (reference: AuditReportReference) => ReportShare | null): AuditArchiveAdapter {
@@ -26,7 +26,7 @@ export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (i
           const failed = index === 3 || index === 0 && sequence === 1, pending = index === 0 && sequence === 4
           // Two files in one sample task/round retain distinct document identities.
           let task = index === 2 ? tasks.get('preview-archive-task-A001-3')! : await withReportBytes(seed(`preview-archive-task-${short}-${sequence}`, sequence, failed, pending))
-          if (scene === 'archive-report-failed' && index === 0 && sequence === 2) task = {...task, files: task.files.map(row => row.audit && row.file.original_filename === '控制计划.xlsx' ? {...row, audit: {...row.audit, report: {...row.audit.report, state: 'failed', artifact: null, generated_at: null, reason: '示例 PDF 生成失败，审核结果保留。', regenerate_allowed: true, regenerate_reason: '示例服务明确允许重生成同一结果；不代表生产收费政策。'}}} : row)}
+          if (scene === 'archive-report-failed' && index === 0 && sequence === 2) task = {...task, files: task.files.map(row => row.audit && row.file.original_filename === '控制计划.xlsx' ? {...row, audit: {...row.audit, report: {...row.audit.report, state: 'failed', artifact: null, generated_at: null, reason: 'PDF 生成失败。', regenerate_allowed: true, regenerate_reason: null}}} : row)}
           tasks.set(task.id, task)
           const file = task.files[index === 2 ? 0 : index === 3 ? 2 : 1], audit = file.audit!
           const entry: HistoryEntry = {document_id: documentId, reference: {task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id, result_attempt: audit.result_attempt}, sequence, audited_at: `2026-10-${String(sequence === 4 ? 16 : sequence === 3 ? 15 : sequence === 2 ? 11 : 1).padStart(2, '0')}T09:00:00+08:00`, initiator: index === 1 ? '示例王工' : '示例李工', execution: audit.execution, conclusion: audit.conclusion, source_revision: sequence === 2 ? 'Rev B' : sequence === 3 ? 'Rev C' : null, report: structuredClone(audit.report), report_access: allowed}
@@ -67,13 +67,13 @@ export function fixtureArchive(tasks: Map<string, Task>, scene: string, seed: (i
       if (file?.audit) {result.file = structuredClone(file); result.entry.report = structuredClone(file.audit.report)}
       const reportReference = historyReportReference(result.entry)
       result.report_share = reportReference ? readShare(reportReference) : null
-      if (scene === 'archive-original-denied') result.originals = result.originals.map(row => ({...row, file: null, access: {state: 'denied', reason: '示例：当前账号可读报告，但不可读原件。'}}))
+      if (scene === 'archive-original-denied') result.originals = result.originals.map(row => ({...row, file: null, access: {state: 'denied', reason: '当前账号无权查看原件。'}}))
       if (['archive-report-deleted', 'archive-report-denied'].includes(scene) && result.entry.sequence === 2) {
-        const access = {state: scene === 'archive-report-deleted' ? 'deleted' as const : 'denied' as const, reason: '示例：所选历史报告已删除或权限已变更；不会改开最新报告。'}
+        const access = {state: scene === 'archive-report-deleted' ? 'deleted' as const : 'denied' as const, reason: '所选历史报告已删除或访问权限已变更。'}
         result.report_access = access; result.entry.report_access = access
       }
       if (scene === 'archive-history-conflict') result.entry.conclusion = result.file.audit?.conclusion === 'PASS' ? 'NG' : 'PASS'
-      if (scene === 'archive-share-scope-conflict') result.report_share = {request: {request_id: 'preview-wrong-share', organization_id: 'preview-org', reports: [{...reference, result_attempt: reference.result_attempt!, report_id: result.entry.report.report_id!, file_version_id: 'preview-other-file'}], targets: [], content: {kind: 'link', artifact: null, package_id: null}}, receipt: {request_id: 'preview-wrong-share', state: 'pending', reason: '示例：其他文件的旧分享。'}, deliveries: []}
+      if (scene === 'archive-share-scope-conflict') result.report_share = {request: {request_id: 'preview-wrong-share', organization_id: 'preview-org', reports: [{...reference, result_attempt: reference.result_attempt!, report_id: result.entry.report.report_id!, file_version_id: 'preview-other-file'}], targets: [], content: {kind: 'link', artifact: null, package_id: null}}, receipt: {request_id: 'preview-wrong-share', state: 'pending', reason: '分享记录与当前文件不匹配。'}, deliveries: []}
       return result
     },
   }

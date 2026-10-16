@@ -19,7 +19,7 @@ function openFiles(): Promise<IDBDatabase> {
     let blocked = false
     request.onupgradeneeded = () => request.result.createObjectStore('files', {keyPath: 'id'})
     request.onerror = () => reject(request.error)
-    request.onblocked = () => {blocked = true; reject(new Error('请关闭其他原型标签页后重试。'))}
+    request.onblocked = () => {blocked = true; reject(new Error('请关闭其他 PPAP 页面后重试。'))}
     request.onsuccess = () => {
       if (blocked) {request.result.close(); return}
       request.result.onversionchange = () => request.result.close()

@@ -17,7 +17,7 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
       const attempt = (uploadAttempts.get(source) || 0) + 1
       uploadAttempts.set(source, attempt)
       if (scene === 'feedback-upload-failed' && source.name === '需要重试.xlsx' && attempt === 1) {
-        const failed: components['schemas']['AuditUploadItem'] = {request_id: requestId, state: 'failed', file: null, reason: '示例：上传已明确终结，没有在途写入，允许重试。', retry_allowed: true}
+        const failed: components['schemas']['AuditUploadItem'] = {request_id: requestId, state: 'failed', file: null, reason: '上传失败，请重试。', retry_allowed: true}
         transfers.set(requestId, failed)
         return structuredClone(failed)
       }
@@ -41,12 +41,12 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
       if (original && original !== files) throw new Error('feedback_fixture_input_changed')
       inputs.set(request.request_id, files)
       if (scene === 'feedback-no-retry' || scene === 'feedback-failed' && !original) {
-        const failed: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: 'failed', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: scene === 'feedback-failed', reason: scene === 'feedback-no-retry' ? '示例：服务未允许再次提交。保留原材料与请求，请联系运营核对。' : '示例：服务已明确终结本次写入，没有未决运营记录，允许重试原材料。'}
+        const failed: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: 'failed', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: scene === 'feedback-failed', reason: scene === 'feedback-no-retry' ? '暂不能再次提交，请联系支持。' : '提交失败，请重试。'}
         submissions.set(key, failed)
         return structuredClone(failed)
       }
       const received = request.file_version_ids.length > 0 && new Set(request.file_version_ids).size === request.file_version_ids.length && request.file_version_ids.every(id => blobs.has(id))
-      const receipt: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: received ? 'received' : 'rejected', submission_id: received ? `preview-feedback-${crypto.randomUUID()}` : null, received_file_version_ids: received ? [...request.file_version_ids] : [], received_at: received ? new Date().toISOString() : null, retry_allowed: false, reason: received ? null : '示例：附件版本不完整，本次未受理。'}
+      const receipt: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: received ? 'received' : 'rejected', submission_id: received ? `preview-feedback-${crypto.randomUUID()}` : null, received_file_version_ids: received ? [...request.file_version_ids] : [], received_at: received ? new Date().toISOString() : null, retry_allowed: false, reason: received ? null : '附件版本不完整，本次未受理。'}
       submissions.set(key, receipt)
       if (scene === 'feedback-unknown' || scene === 'feedback-failed') throw new Error('preview_feedback_response_lost')
       if (scene === 'feedback-incomplete-receipt') return {...receipt, received_file_version_ids: receipt.received_file_version_ids.slice(0, 1)}

@@ -16,9 +16,9 @@ export function ReportPackage({job, nameFor, busy, onRead, onDownload, onRetry, 
   const itemLabels = {pending: '尚未确认', prepared: '打包准备完成', failed: '打包准备失败'}
   return <section aria-label="ZIP 工作" className="space-y-3 border-y py-4">
     <h2 className="font-semibold">{issue ? 'ZIP 状态待核对' : known ? labels[job.state] : 'ZIP 受理结果未知'}</h2>
-    <p className="text-xs text-muted-foreground">固定 {job.reports.length} 份报告。改变勾选不会修改此包；单份下载不受影响。</p>
+    <p className="text-xs text-muted-foreground">共 {job.reports.length} 份报告</p>
     {job.reason && <p role="status">{job.reason}</p>}
-    {issue && <Alert variant="destructive"><AlertTitle>ZIP 明细需要核对</AlertTitle><AlertDescription>{issue} 请读取原打包请求；已有 PDF 不受影响。</AlertDescription></Alert>}
+    {issue && <Alert variant="destructive"><AlertTitle>ZIP 明细需要核对</AlertTitle><AlertDescription>{issue} 请读取原打包请求的状态。</AlertDescription></Alert>}
     <ItemGroup>{job.reports.map(reference => {
       const outcome = issue ? undefined : job.outcomes?.find(row => sameSnapshot(row.reference, reference))
       return <Item role="listitem" key={JSON.stringify(reference)} size="xs"><ItemContent><div className="flex flex-wrap items-center gap-2"><FileName name={`${nameFor(reference)}-审核报告`} format="pdf"/>{outcome ? <Badge variant={outcome.state === 'failed' ? 'destructive' : 'outline'}>{itemLabels[outcome.state]}</Badge> : <span className="text-xs text-muted-foreground">{issue ? '逐项状态待核对' : '未提供逐项状态'}</span>}</div>{outcome?.reason && <p className="text-sm">{outcome.reason}</p>}<p className="break-all text-xs text-muted-foreground">冻结文件：{reference.file_version_id} · 结果尝试：{reference.result_attempt}</p></ItemContent></Item>

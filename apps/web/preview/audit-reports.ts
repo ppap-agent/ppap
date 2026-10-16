@@ -29,9 +29,9 @@ export async function withReportBytes(task: components['schemas']['AuditTask']):
 
 /** Fixed PDFs repeat only the explicit sample facts, never arbitrary uploaded data. */
 export function fixtureReport(name: string): components['schemas']['AuditFileReport'] {
-  if (!['PFMEA.xlsx', '控制计划.xlsx'].includes(name)) return {state: 'failed', report_id: '', reason: '此文件名没有对应的示例 PDF；不会用另一文件的报告冒充。', regenerate_allowed: false, regenerate_reason: '没有该文件的固定 PDF 样例。'}
+  if (!['PFMEA.xlsx', '控制计划.xlsx'].includes(name)) return {state: 'failed', report_id: '', reason: '此文件的 PDF 暂不可用。', regenerate_allowed: false, regenerate_reason: '暂不能重新生成报告。'}
   const document = samples.documents.find(row => row.name === name)!
-  return {state: 'ready', report_id: '', reason: '交互预览：PDF 为明确标识的示例，不是真实审核结果。', generated_at: samples.generated_at, artifact: {artifact_id: `preview-pdf-${document.asset}`, filename: `${name}-审核报告.pdf`, content_type: 'application/pdf', byte_size: 0}, regenerate_allowed: false, regenerate_reason: '重生成能力尚未接入，收费政策未定。', generation_request: null}
+  return {state: 'ready', report_id: '', reason: null, generated_at: samples.generated_at, artifact: {artifact_id: `preview-pdf-${document.asset}`, filename: `${name}-审核报告.pdf`, content_type: 'application/pdf', byte_size: 0}, regenerate_allowed: false, regenerate_reason: '暂不能重新生成报告。', generation_request: null}
 }
 export function fixtureReports(tasks: Map<string, components['schemas']['AuditTask']>, scene: string): AuditReportAdapter {
   const operations = new Map<string, components['schemas']['AuditReportUpdate']>()
@@ -48,7 +48,7 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     if (scene === 'reports-zip-outcome-duplicate') next.outcomes = [outcomes[0], outcomes[0]]
     if (scene === 'reports-zip-outcome-reference') outcomes[0].reference.report_id = 'preview-other-report'
     if (scene === 'reports-zip-outcome-blank') outcomes[0] = {...outcomes[0], state: 'failed', reason: '  '}
-    if (scene === 'reports-zip-outcome-ready') {outcomes[0] = {...outcomes[0], state: 'failed', reason: '示例：矛盾的就绪 ZIP，不可交付。'}; savePackage(next)}
+    if (scene === 'reports-zip-outcome-ready') {outcomes[0] = {...outcomes[0], state: 'failed', reason: '报告未准备完成，无法下载 ZIP。'}; savePackage(next)}
     return next
   }
   function target(reference: components['schemas']['AuditReportReference']) {
@@ -69,9 +69,9 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
   },
   regenerate: async (reference, requestId) => {
     const {task, row, audit} = target(reference)
-    if (!audit.report.regenerate_allowed) return {reference, receipt: {request_id: requestId, state: 'rejected', reason: audit.report.regenerate_reason || '示例服务未允许重生成。'}, report: null}
+    if (!audit.report.regenerate_allowed) return {reference, receipt: {request_id: requestId, state: 'rejected', reason: audit.report.regenerate_reason || '暂不能重新生成报告。'}, report: null}
     const receipt = {request_id: requestId, state: 'accepted' as const, reason: null}
-    const report = {...audit.report, state: 'generating' as const, artifact: null, generated_at: null, regenerate_allowed: false, reason: '示例：正在重生成相同结果的 PDF，不重跑审核。', generation_request: receipt}
+    const report = {...audit.report, state: 'generating' as const, artifact: null, generated_at: null, regenerate_allowed: false, reason: '正在重新生成 PDF。', generation_request: receipt}
     const update = {reference: structuredClone(reference), receipt, report}
     operations.set(requestId, update)
     tasks.set(task.id, {...task, files: task.files.map(file => file.file.id === row.file.id ? {...file, audit: {...audit, report}} : file)})
@@ -81,12 +81,12 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
   readRegeneration: async (reference, requestId) => {
     const update = operations.get(requestId)
     if (!update || !sameSnapshot(reference, update.reference)) throw new Error('unknown_preview_report_request')
-    if (scene === 'reports-unknown' && !reads.has(requestId)) {reads.add(requestId); return {reference, receipt: {request_id: requestId, state: 'pending', reason: '示例：尚未取得受理回执。'}, report: null}}
+    if (scene === 'reports-unknown' && !reads.has(requestId)) {reads.add(requestId); return {reference, receipt: {request_id: requestId, state: 'pending', reason: '受理结果待确认。'}, report: null}}
     return {...structuredClone(update), report: structuredClone(target(reference).audit.report)}
   },
   createPackage: async (reports, requestId) => {
     if (reports.length < 2 || reports.some(reference => target(reference).audit.report.state !== 'ready')) throw new Error('unready_preview_report')
-    const job: components['schemas']['AuditReportPackage'] = {package_id: `preview-zip-${requestId}`, reports: structuredClone(reports), outcomes: reports.map(reference => ({reference: structuredClone(reference), state: 'pending', reason: null})), receipt: {request_id: requestId, state: 'accepted', reason: null}, state: 'generating', artifact: null, reason: '示例：打包工作已受理，单份 PDF 下载仍可使用。', retry_allowed: false}
+    const job: components['schemas']['AuditReportPackage'] = {package_id: `preview-zip-${requestId}`, reports: structuredClone(reports), outcomes: reports.map(reference => ({reference: structuredClone(reference), state: 'pending', reason: null})), receipt: {request_id: requestId, state: 'accepted', reason: null}, state: 'generating', artifact: null, reason: '正在打包报告。', retry_allowed: false}
     if (scene === 'reports-zip-legacy') delete job.outcomes
     const sources = reports.map(reference => {const {audit} = target(reference); return {artifact: structuredClone(audit.report.artifact!), rule: audit.rule.id, generatedAt: audit.report.generated_at}})
     packages.set(requestId, {job, sources})
@@ -97,18 +97,18 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
   readPackage: async requestId => {
     const stored = packages.get(requestId)
     if (!stored) throw new Error('unknown_preview_package')
-    if (scene === 'reports-zip-unknown' && !reads.has(requestId)) {reads.add(requestId); return {...structuredClone(stored.job), receipt: {request_id: requestId, state: 'pending', reason: '受理结果尚未知。'}, state: 'pending'}}
+    if (scene === 'reports-zip-unknown' && !reads.has(requestId)) {reads.add(requestId); return {...structuredClone(stored.job), receipt: {request_id: requestId, state: 'pending', reason: '受理结果待确认。'}, state: 'pending'}}
     if (stored.blob) return packageObservation(stored.job)
     if (stored.job.state === 'failed') return structuredClone(stored.job)
     const collection = JSON.stringify(stored.job.reports)
     if (['reports-zip-failed', 'reports-zip-write-failed', 'reports-zip-pending-failed', 'reports-zip-no-retry'].includes(scene) && !failedPackages.has(collection)) {
       failedPackages.add(collection)
       const preparation = scene === 'reports-zip-write-failed' ? 'prepared' : scene === 'reports-zip-pending-failed' ? 'pending' : 'failed'
-      stored.job = {...stored.job, state: 'failed', outcomes: stored.job.reports.map<components['schemas']['AuditReportPackageOutcome']>((reference, index) => ({reference: structuredClone(reference), state: index === 1 ? preparation : 'prepared', reason: index === 1 && preparation === 'failed' ? '示例：控制计划 PDF 暂时无法读取。' : null})).reverse(), reason: scene === 'reports-zip-write-failed' ? '示例：ZIP 写入失败，各份 PDF 已准备完成。' : scene === 'reports-zip-no-retry' ? '示例：ZIP 准备失败，服务未允许再次打包。' : '示例：打包已明确失败，已有 PDF 完整保留。', retry_allowed: scene !== 'reports-zip-no-retry'}
+      stored.job = {...stored.job, state: 'failed', outcomes: stored.job.reports.map<components['schemas']['AuditReportPackageOutcome']>((reference, index) => ({reference: structuredClone(reference), state: index === 1 ? preparation : 'prepared', reason: index === 1 && preparation === 'failed' ? '控制计划 PDF 暂时无法读取。' : null})).reverse(), reason: scene === 'reports-zip-write-failed' ? 'ZIP 保存失败，各份 PDF 已准备完成。' : scene === 'reports-zip-no-retry' ? 'ZIP 打包失败，暂不能再次打包。' : 'ZIP 打包失败。', retry_allowed: scene !== 'reports-zip-no-retry'}
       savePackage(stored.job); return structuredClone(stored.job)
     }
     const entries: Record<string, Uint8Array> = {}
-    const index = ['交互预览 - 示例报告，不是真实审核结果。', '以下文件名对应创建 ZIP 时固定的审核结果，不表示最新版本。', '']
+    const index = ['预览报告', '报告版本以本清单为准。', '']
     for (const [position, reference] of stored.job.reports.entries()) {
       const {artifact, rule, generatedAt} = stored.sources[position]
       const blob = await readArtifact(artifact.artifact_id)

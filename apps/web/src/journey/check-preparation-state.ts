@@ -24,7 +24,7 @@ export function checkPlan(basis: RequirementBasis, files: CheckFile[], receipt: 
   const rows: CoverageRow[] = basis.clauses.map(clause => {
     const row = {id: clause.id, title: clause.title, sources: [] as string[]}
     if (clause.applicability === 'exclude') return {...row, state: 'excluded', detail: clause.reason}
-    if (!knownInput || !isKnownDemoClause(clause)) return {...row, sources: files.map(file => file.name), state: mode === 'deep' ? 'investigate' : 'unsupported', detail: mode === 'deep' ? '先调查条款与原件的对应关系；无法取得可靠证据时仍保留未覆盖。本原型没有此组合的预设结论。' : '条款含义或模板适配尚未确认；不会凭标题相似套用检查。'}
+    if (!knownInput || !isKnownDemoClause(clause)) return {...row, sources: files.map(file => file.name), state: mode === 'deep' ? 'investigate' : 'unsupported', detail: mode === 'deep' ? '需核对条款与原件；无可靠证据的项目保留为未覆盖。' : '条款含义或模板适配尚未确认；不会凭标题相似套用检查。'}
     const kinds = clause.id === 'R1' ? ['过程流程图', '控制计划'] : clause.id === 'R2' ? ['过程流程图'] : ['尺寸报告']
     const sources = files.filter(file => kinds.includes(file.kind))
     const needed = kinds.filter(kind => !sources.some(file => file.kind === kind))

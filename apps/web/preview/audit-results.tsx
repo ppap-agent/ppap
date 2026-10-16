@@ -1,7 +1,6 @@
 import type {components} from '../src/generated/openapi'
 import type {AuditTask} from '../src/audit/intake'
 import type {AuditEvidence} from '../src/audit/review-content'
-import {Alert, AlertDescription, AlertTitle} from '../src/components/ui/alert'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../src/components/ui/table'
 import {fixtureReport} from './audit-reports'
 import reportSamples from './report-samples.json'
@@ -17,7 +16,7 @@ export function fixtureAcceptance(task: AuditTask, requestId: string): AuditTask
     if (file.match?.state !== 'matched' || !file.match.rule) return {...file, selection: 'removed' as const, removal_reason: '未匹配到规则，不进入本轮审核'}
     const rule = file.match.rule
     const checks: Check[] = rule.body.kind === 'engine' ? rule.body.rules.map(rule_item => ({rule_item, execution: 'queued', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, scope_notice: null, evidence: []})) : []
-    const audit: Review = {round_id: round, file_version_id: file.file.id, result_attempt: null, rule, execution: 'queued', progress: {completed: 0, total: checks.length}, failure: null, conclusion: null, counts: {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, checks, summary: null, report: {state: 'not_eligible', report_id: null, reason: '尚未完成审核，不能生成正式报告。'}}
+    const audit: Review = {round_id: round, file_version_id: file.file.id, result_attempt: null, rule, execution: 'queued', progress: {completed: 0, total: checks.length}, failure: null, conclusion: null, counts: {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, checks, summary: null, report: {state: 'not_eligible', report_id: null, reason: '审核尚未完成。'}}
     return {...file, audit}
   })
   return {...task, state: 'reviewing', round_id: round, acceptance: {request_id: requestId, state: 'accepted', reason: null}, progress: {completed: 0, total: files.filter(file => file.selection === 'selected').length}, notification_enabled: true, files}
@@ -44,10 +43,10 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
     const checks: Check[] = file.audit.checks.map((check, index) => {
       const status = failed ? 'ERR' : mixed ? index === 0 ? 'NG' : 'UNABLE' : 'PASS'
       const evidenceFile = mixed && index === 0 && crossFile ? crossFile : file
-      const evidence: AuditEvidence = {file_version_id: evidenceFile.file.id, locator: mixed && index === 1 ? null : {kind: 'xlsx_cell', sheet: '审核示例', cell: index === 0 ? 'C12' : 'D18'}, excerpt: mixed ? index === 0 ? '示例：控制计划与 PFMEA 的频次不同。' : '示例：扫描内容不清晰，不能可靠确认。' : '示例：已核对指定要求。', location_gap: mixed && index === 1 ? '示例：文字不清晰，没有可靠的原件定位。' : null, rendition: 'original', derived_file_version_id: null}
-      return {...check, execution: failed ? 'failed' : 'completed', coverage: failed ? 'unsupported' : 'executed', finding: {item_key: check.rule_item.id, status, item: check.rule_item.category, classification: failed ? '示例：文件读取服务返回异常。' : evidence.excerpt, suggestions: '', priority: null, locator: null, review: null}, evidence_verified: !failed && status !== 'UNABLE', scope: {total: 1, checked: status === 'UNABLE' || failed ? 0 : 1, unknown: status === 'UNABLE' || failed ? 1 : 0}, scope_notice: status === 'UNABLE' ? '检查范围未完整覆盖，不能用“未发现”代替通过。' : null, evidence: failed ? [] : [evidence]}
+      const evidence: AuditEvidence = {file_version_id: evidenceFile.file.id, locator: mixed && index === 1 ? null : {kind: 'xlsx_cell', sheet: '审核示例', cell: index === 0 ? 'C12' : 'D18'}, excerpt: mixed ? index === 0 ? '控制计划与 PFMEA 的频次不同。' : '扫描内容不清晰，无法判断。' : '已核对指定要求。', location_gap: mixed && index === 1 ? '文字不清晰，无法定位原件。' : null, rendition: 'original', derived_file_version_id: null}
+      return {...check, execution: failed ? 'failed' : 'completed', coverage: failed ? 'unsupported' : 'executed', finding: {item_key: check.rule_item.id, status, item: check.rule_item.category, classification: failed ? '文件读取失败。' : evidence.excerpt, suggestions: '', priority: null, locator: null, review: null}, evidence_verified: !failed && status !== 'UNABLE', scope: {total: 1, checked: status === 'UNABLE' || failed ? 0 : 1, unknown: status === 'UNABLE' || failed ? 1 : 0}, scope_notice: status === 'UNABLE' ? '检查范围未完整覆盖。' : null, evidence: failed ? [] : [evidence]}
     })
-    const audit: Review = {...file.audit, result_attempt: 1, execution: failed ? 'review_failed' : 'completed', progress: {completed: checks.length, total: checks.length}, failure: failed ? {code: 'preview_reader_failure', message: '示例：过程流程图读取失败，未形成审核结论。', retryable: false} : null, conclusion: failed ? 'UNKNOWN' : mixed ? 'NG' : 'PASS', counts: {pass_count: mixed || failed ? 0 : checks.length, ng_count: mixed ? 1 : 0, unknown_count: mixed ? 1 : 0, not_covered_count: 0, error_count: failed ? checks.length : 0}, checks, summary: failed ? null : {conclusion: mixed ? 'NG' : 'PASS', text: mixed ? '发现一项有效不符合；另有一项无法判断。本文件未完成完整验证。' : '本示例中的两项要求均已完成验证。', corrective_actions: mixed ? ['核对并统一控制计划与 PFMEA 的频次；提供清晰原件。'] : [], extended_suggestions: []}, report: failed || mixed ? {state: 'not_eligible', report_id: null, reason: failed ? '审核异常，没有正式审核报告。' : '仍有无法判断项，只保留审核记录。'} : {state: 'ready', report_id: `preview-report-${file.file.id}`, reason: '示例报告状态；本切片不提供真实 PDF 下载。'}}
+    const audit: Review = {...file.audit, result_attempt: 1, execution: failed ? 'review_failed' : 'completed', progress: {completed: checks.length, total: checks.length}, failure: failed ? {code: 'preview_reader_failure', message: '过程流程图读取失败。', retryable: false} : null, conclusion: failed ? 'UNKNOWN' : mixed ? 'NG' : 'PASS', counts: {pass_count: mixed || failed ? 0 : checks.length, ng_count: mixed ? 1 : 0, unknown_count: mixed ? 1 : 0, not_covered_count: 0, error_count: failed ? checks.length : 0}, checks, summary: failed ? null : {conclusion: mixed ? 'NG' : 'PASS', text: mixed ? '1 项不符合，1 项无法判断。' : '2 项要求均已完成验证。', corrective_actions: mixed ? ['核对并统一控制计划与 PFMEA 的频次；提供清晰原件。'] : [], extended_suggestions: []}, report: failed || mixed ? {state: 'not_eligible', report_id: null, reason: failed ? '审核异常，无法生成报告。' : '仍有无法判断项，暂不能生成报告。'} : {state: 'ready', report_id: `preview-report-${file.file.id}`, reason: null}}
     if (scene === 'counts-conflict' && mixed) audit.counts = {pass_count: 2, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
     if (scene === 'summary-conflict' && mixed && audit.summary) audit.summary.conclusion = 'PASS'
     if (scene === 'scope-conflict' && mixed) {audit.checks[1].finding!.status = 'PASS'; audit.checks[1].evidence_verified = true; audit.counts = {...audit.counts, pass_count: 1, unknown_count: 0}}
@@ -64,8 +63,8 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
       audit.summary = {conclusion: mixed ? 'NG' : 'PASS', text: facts.summary, corrective_actions: facts.corrective_actions, extended_suggestions: []}
       audit.report = {...fixtureReport(file.file.original_filename), report_id: `preview-report-${file.file.id}`}
     }
-    if (['reports-failed', 'reports-unknown', 'reports-policy', 'reports-generate-race'].includes(scene) && !mixed && !failed) audit.report = {...audit.report, state: 'failed', artifact: null, generated_at: null, reason: '示例：PDF 生成服务终态失败，审核结果保留。', regenerate_allowed: scene !== 'reports-policy', regenerate_reason: scene === 'reports-policy' ? '重生成政策未批准，服务未开放此操作。已有报告下载不受影响。' : '仅示例服务允许恢复报告；不代表真实收费政策已定。'}
-    if (scene === 'reports-generating' && !mixed && !failed) audit.report = {...audit.report, state: 'generating', artifact: null, generated_at: null, reason: '示例：PDF 正在生成，审核不重跑。'}
+    if (['reports-failed', 'reports-unknown', 'reports-policy', 'reports-generate-race'].includes(scene) && !mixed && !failed) audit.report = {...audit.report, state: 'failed', artifact: null, generated_at: null, reason: 'PDF 生成失败。', regenerate_allowed: scene !== 'reports-policy', regenerate_reason: scene === 'reports-policy' ? '暂不能重新生成报告。' : null}
+    if (scene === 'reports-generating' && !mixed && !failed) audit.report = {...audit.report, state: 'generating', artifact: null, generated_at: null, reason: '正在生成 PDF。'}
     return {...file, audit}
   })
   if (scene === 'audit-input-conflict') {
@@ -78,5 +77,5 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
 }
 
 export function FixtureOriginal({file, evidence}: {file: components['schemas']['FileVersion']; evidence: AuditEvidence | null}) {
-  return <div className="space-y-4"><Alert><AlertTitle>示例原件 · 非真实 Office 连接</AlertTitle><AlertDescription>此区域只演示冻结文件和证据的切换，不证明真实排版或定位能力。</AlertDescription></Alert><Table><TableHeader><TableRow><TableHead>文件</TableHead><TableHead>示例摘录</TableHead></TableRow></TableHeader><TableBody><TableRow><TableCell className="whitespace-normal">{file.original_filename}</TableCell><TableCell className="whitespace-normal">{evidence?.excerpt || '选择判定依据后，在这里核对对应的文件。'}</TableCell></TableRow></TableBody></Table></div>
+  return <div className="space-y-4"><Table><TableHeader><TableRow><TableHead>文件</TableHead><TableHead>原件摘录</TableHead></TableRow></TableHeader><TableBody><TableRow><TableCell className="whitespace-normal">{file.original_filename}</TableCell><TableCell className="whitespace-normal">{evidence?.excerpt || '请选择判定依据。'}</TableCell></TableRow></TableBody></Table></div>
 }

@@ -32,7 +32,7 @@ export function ShareTargets({adapter, value, onChange}: {adapter: Pick<AuditSha
       setTargets(previous => [...new Map([...(pageToken ? previous : []), ...safe].map(target => [targetKey(target), target])).values()])
       onChange(selected.current.map(target => safe.find(next => targetKey(next) === targetKey(target)) || target))
       setNextPage(page.next_page_token || '')
-    } catch {if (epoch.current === run) setError('无法读取当前组织的人员或群组。未扩大权限，可以重新读取。')}
+    } catch {if (epoch.current === run) setError('无法读取人员或群组，请重试。')}
     finally {if (epoch.current === run) setLoading(false)}
   }
   useEffect(() => {void load(); return () => {epoch.current += 1}}, [kind]) // Adapter is fixed for this picker lifetime.
@@ -53,6 +53,6 @@ export function ShareTargets({adapter, value, onChange}: {adapter: Pick<AuditSha
     {!loading && !targets.length && !error && <p>没有符合条件的组织内目标。</p>}
     {nextPage && <Button variant="outline" disabled={loading} onClick={() => void load(nextPage)}>加载更多目标</Button>}
     </div></TabsContent></Tabs>
-    <p className="text-xs text-muted-foreground">已选 {value.length} 个目标。未知或未通过组织核对的群组不可选择。</p>
+    <p className="text-xs text-muted-foreground">已选 {value.length} 个目标</p>
   </section>
 }

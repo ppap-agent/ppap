@@ -265,7 +265,7 @@ export function DecisionWorkspace({id, caseId = id, input: initialInput, onBack,
       </div>
       <p className="break-words text-muted-foreground">{snapshot.scope}</p>
     </header>
-    {step !== 0 && <div className="mb-3"><Button variant="ghost" size="sm" onClick={() => openTask(0)}><ArrowLeft/>返回人工复核</Button>{input.roundId && <p className="mt-2 text-sm text-muted-foreground">此后续流程仅保存本机原型记录，未接入正式批准或交付。</p>}</div>}
+    {step !== 0 && <div className="mb-3"><Button variant="ghost" size="sm" onClick={() => openTask(0)}><ArrowLeft/>返回人工复核</Button>{input.roundId && <p className="mt-2 text-sm text-muted-foreground">原型流程，仅保存本机记录。</p>}</div>}
     {latestReceiptId && latestReceiptId !== initialInput.receiptId && <p role="status" className={""}>正在查看历史批次 {snapshot.receiptId}。本页决定不适用于后续轮次。</p>}
     {saveError && <p role="alert">{saveError}</p>}{changed && <p role="alert">资料快照已变化。这里只保留原复核和决定，不能将旧结论用于新版本。</p>}
     <div className="mb-3 flex flex-wrap items-center gap-x-4 border-b pb-2"><BasisSummary basis={snapshot.basis} compact/><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">资料与澄清 · {snapshot.files.length} 份<ChevronDown/></Button></CollapsibleTrigger><CollapsibleContent><div className="space-y-3 py-3">{snapshot.files.map(file => <p key={sourceKey(file)}>{file.name}{file.material ? ' · 本轮固定版本' : ` · Rev ${file.revision} · 原件 v${file.sourceVersion}`}</p>)}<SourceReaderButton input={snapshot} documents={documents} label="阅读本次资料"/>{snapshot.clarification && <p>收到的说明：{snapshot.clarification}</p>}</div></CollapsibleContent></Collapsible>

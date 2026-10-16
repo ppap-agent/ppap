@@ -40,9 +40,9 @@ export function fixtureTemplateSharing(templates: AuditTemplateAdapter, director
       }
       const targets = request.targets.map(ref => all.find(row => targetKey(ref) === targetKey(row)))
       if (!targets.length || targets.some(target => !target || target.organization_id !== request.organization_id || target.eligibility !== 'eligible')) throw new Error('invalid_template_share_targets')
-      const job: TemplateShare = {request: structuredClone(request), receipt: {request_id: request.request_id, state: 'accepted', reason: null}, deliveries: targets.map(target => ({target: structuredClone(target!), attempt_id: request.request_id, state: 'sent', reason: '示例：发送已确认，不代表已阅读或已获得模板权限。', retry_allowed: false}))}
-      if (scene === 'templates-share-partial') job.deliveries = job.deliveries.map((row, index) => index === 1 ? {...row, state: 'failed', retry_allowed: true, reason: '示例：此目标明确未投递，可以单独重试。'} : index === 2 ? {...row, state: 'unknown', reason: '示例：此目标回执未知，不能重新发送。'} : row)
-      if (scene === 'templates-share-revoked') {job.receipt = {...job.receipt, state: 'rejected', reason: '示例：服务重新检查后拒绝分享，未发送。'}; job.deliveries = job.deliveries.map(row => ({...row, state: 'failed', retry_allowed: false, reason: job.receipt.reason}))}
+      const job: TemplateShare = {request: structuredClone(request), receipt: {request_id: request.request_id, state: 'accepted', reason: null}, deliveries: targets.map(target => ({target: structuredClone(target!), attempt_id: request.request_id, state: 'sent', reason: null, retry_allowed: false}))}
+      if (scene === 'templates-share-partial') job.deliveries = job.deliveries.map((row, index) => index === 1 ? {...row, state: 'failed', retry_allowed: true, reason: '投递失败，可重试。'} : index === 2 ? {...row, state: 'unknown', reason: '发送结果待确认。'} : row)
+      if (scene === 'templates-share-revoked') {job.receipt = {...job.receipt, state: 'rejected', reason: '分享权限已撤销，未发送。'}; job.deliveries = job.deliveries.map(row => ({...row, state: 'failed', retry_allowed: false, reason: job.receipt.reason}))}
       jobs.set(request.request_id, job)
       if (scene === 'templates-share-contradictory') return {...structuredClone(job), receipt: {...job.receipt, state: 'rejected'}}
       if (scene === 'templates-share-unknown') throw new Error('preview_template_share_response_lost')
@@ -52,14 +52,14 @@ export function fixtureTemplateSharing(templates: AuditTemplateAdapter, director
       const job = jobs.get(input.request_id)
       if (!job || input.attempts.length !== job.deliveries.length || input.attempts.some(attempt => !job.deliveries.some(row => targetKey(row.target) === targetKey(attempt.target) && row.attempt_id === attempt.attempt_id))) throw new Error('unknown_template_share_attempt')
       const count = (reads.get(input.request_id) || 0) + 1; reads.set(input.request_id, count)
-      if (scene === 'templates-share-unknown' && count === 1) return {...structuredClone(job), receipt: {...job.receipt, state: 'pending'}, deliveries: job.deliveries.map(row => ({...row, state: 'unknown', retry_allowed: false, reason: '原发送仍未知，只读取结果。'}))}
-      if (scene === 'templates-share-partial') job.deliveries = job.deliveries.map(row => row.state === 'unknown' ? {...row, state: 'sent', reason: '示例：读回原发送成功，没有重发。'} : row)
+      if (scene === 'templates-share-unknown' && count === 1) return {...structuredClone(job), receipt: {...job.receipt, state: 'pending'}, deliveries: job.deliveries.map(row => ({...row, state: 'unknown', retry_allowed: false, reason: '发送结果待确认。'}))}
+      if (scene === 'templates-share-partial') job.deliveries = job.deliveries.map(row => row.state === 'unknown' ? {...row, state: 'sent', reason: null} : row)
       return structuredClone(job)
     },
     retryFailed: async (requestId, target, attemptId) => {
       const job = jobs.get(requestId), delivery = job?.deliveries.find(row => targetKey(row.target) === targetKey(target))
       if (!job || !delivery || !shareRetryAllowed(job, delivery)) throw new Error('no_retryable_preview_delivery')
-      const next: TemplateShare = {...job, deliveries: job.deliveries.map(row => row === delivery ? {...row, attempt_id: attemptId, state: 'sent', retry_allowed: false, reason: '示例：只重试本目标，其他发送尝试不变。'} : row)}
+      const next: TemplateShare = {...job, deliveries: job.deliveries.map(row => row === delivery ? {...row, attempt_id: attemptId, state: 'sent', retry_allowed: false, reason: null} : row)}
       jobs.set(requestId, next); return structuredClone(next)
     },
   }

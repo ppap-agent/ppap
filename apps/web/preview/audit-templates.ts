@@ -4,7 +4,7 @@ import type {AuditTemplateAdapter, TemplateItem} from '../src/audit/template-con
 
 const excel = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const allowed = {state: 'allowed' as const, reason: null}
-const denied = {state: 'denied' as const, reason: '示例：当前账号无权读取此模板。'}
+const denied = {state: 'denied' as const, reason: '当前账号无权读取此模板。'}
 // Explicit UI dictionary. The real /rule-types has 18 entries, not this #170 denominator.
 const universe = ['全功能检验报告', '零部件设计验证计划和报告', '材料产品及分供清单', '检具验收报告', '模具验收报告', '测量系统分析评价', '过程能力研究', '过程流程图', '潜在过程失效模式及后果分析', '控制计划', '过程特殊特性清单', '设备清单', '生产系统产能评估报告', '项目问题清单', '零部件年度试验要求', '零件提交保证书', 'DV报告_PV报告_试验报告']
 
@@ -17,7 +17,7 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
   const rows = (['a', 'b'] as const).flatMap(customer => Array.from({length: customer === 'a' ? 12 : 1}, (_, position): TemplateItem => {
     const index = position + 1, id = `preview-template-${customer}-${index}-v1`, name = customer === 'b' ? '示例客户B模板.xlsx' : index === 1 ? '示例控制计划模板.xlsx' : index === 2 ? '示例尺寸检验报告模板.xlsx' : `示例归档模板 ${index}.xlsx`
     const book = utils.book_new()
-    utils.book_append_sheet(book, utils.aoa_to_sheet([['示例模板，仅用于交互预览'], ['客户', `示例客户 ${customer.toUpperCase()}`], ['模板版本', id], ['项目', '填写值'], ['零件号', ''], ['检查项目', ''], ['判定标准', '']]), '模板')
+    utils.book_append_sheet(book, utils.aoa_to_sheet([['预览模板'], ['客户', `示例客户 ${customer.toUpperCase()}`], ['模板版本', id], ['项目', '填写值'], ['零件号', ''], ['检查项目', ''], ['判定标准', '']]), '模板')
     const blob = new Blob([write(book, {bookType: 'xlsx', type: 'array'})], {type: excel})
     bytes.set(id, blob)
     return {reference: {customer_id: `preview-customer-${customer}`, template_id: `preview-template-${customer}-${index}`, file_version_id: id}, file: {id, file_id: `preview-template-${customer}-${index}`, original_filename: name, content_type: excel, byte_size: blob.size, status: 'ready', sha256: null}, document_type: index === 2 ? '尺寸检验报告' : '控制计划', updated_at: `2026-10-${String(16 - position).padStart(2, '0')}T08:00:00Z`, preview_access: scene === 'templates-denied' && index === 1 ? denied : allowed, download_access: scene === 'templates-denied' && index === 1 ? denied : allowed, share_access: allowed}
@@ -28,7 +28,7 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
       listReads.set(query.customer_id, (listReads.get(query.customer_id) || 0) + 1)
       const all = scene === 'templates-empty' ? [] : rows.filter(row => row.reference.customer_id === query.customer_id), filtered = all.filter(row => `${row.file.original_filename} ${row.document_type}`.includes(query.search))
       const manage = scene.startsWith('templates-permissions-') && !(scene === 'templates-permissions-restore-denied' && listReads.get(query.customer_id)! > 1)
-      return {query: structuredClone(query), folder_id: `preview-folder-${query.customer_id}`, folder_revision: folderRevision(query.customer_id), folder_template_count: all.length, creator_name: '示例创建人', manage_access: manage ? allowed : {state: 'denied', reason: '只有服务确认的文件夹管理者可修改权限。'}, zip_access: scene === 'templates-denied' ? denied : allowed, items: structuredClone(filtered.slice((query.page - 1) * 10, query.page * 10)), total: filtered.length}
+      return {query: structuredClone(query), folder_id: `preview-folder-${query.customer_id}`, folder_revision: folderRevision(query.customer_id), folder_template_count: all.length, creator_name: '示例创建人', manage_access: manage ? allowed : {state: 'denied', reason: '仅文件夹管理者可修改权限。'}, zip_access: scene === 'templates-denied' ? denied : allowed, items: structuredClone(filtered.slice((query.page - 1) * 10, query.page * 10)), total: filtered.length}
     },
     readFile: async (item, purpose) => {
       const row = rows.find(row => row.reference.file_version_id === item.reference.file_version_id && row.reference.customer_id === item.reference.customer_id && row.reference.template_id === item.reference.template_id)
@@ -38,7 +38,7 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
     readZip: async folder => {
       const files = rows.filter(row => row.reference.customer_id === folder.customer_id)
       if (scene === 'templates-denied' || folder.folder_id !== `preview-folder-${folder.customer_id}` || folder.folder_revision !== folderRevision(folder.customer_id)) throw new Error('template_folder_unavailable')
-      const entries: Record<string, Uint8Array> = {}, index = ['示例模板，不是真实客户文件。']
+      const entries: Record<string, Uint8Array> = {}, index = ['预览模板']
       if (scene === 'templates-zip-recovery') {index.push(`文件夹修订：${folder.folder_revision}`); zipFailedFolders.add(folder.customer_id)}
       for (const item of files) {entries[item.file.original_filename] = new Uint8Array(await bytes.get(item.file.id)!.arrayBuffer()); index.push(`${item.file.original_filename}\n${item.file.id}`)}
       entries['模板清单.txt'] = strToU8(index.join('\n'))
