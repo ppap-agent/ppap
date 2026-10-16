@@ -602,6 +602,7 @@ source = { editable = "services/api" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "pillow" },
     { name = "ppap-application" },
     { name = "ppap-core" },
     { name = "ppap-product-store" },
@@ -615,6 +616,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.8" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pillow", specifier = ">=10.1.0" },
     { name = "ppap-application", editable = "packages/ppap_application" },
     { name = "ppap-core", editable = "packages/ppap_core" },
     { name = "ppap-product-store", editable = "packages/ppap_product_store" },

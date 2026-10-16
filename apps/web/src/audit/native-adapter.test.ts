@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSupportAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -11,6 +11,26 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native support reads authenticated configuration and only its displayed image version', async () => {
+  const info: components['schemas']['AuditSupportInfo'] = {state: 'configured', config_version: 'config-a', phone: null, email: 'support@example.test', service_hours: '09:00–18:00', qr_available: true}
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), 'http://example.test')
+    assert.equal(init?.method, 'GET')
+    assert.equal(init?.credentials, 'include')
+    if (url.pathname === '/support') return json(info)
+    assert.equal(url.pathname, '/support/qr')
+    assert.deepEqual(Object.fromEntries(url.searchParams), {config_version: 'config-a'})
+    return new Response('qr-image', {headers: {'Content-Type': 'image/png'}})
+  }
+  const observed = await nativeSupportAdapter.read()
+  assert.deepEqual(observed, info)
+  const image = await nativeSupportAdapter.readQr(observed.config_version!)
+  assert.equal(image.type, 'image/png')
+  assert.equal(await image.text(), 'qr-image')
+  globalThis.fetch = async () => json({error: 'support_configuration_changed'}, 409)
+  await assert.rejects(nativeSupportAdapter.readQr(observed.config_version!))
+})
 
 test('native PDF reads carry the full frozen reference and never create another audit or report', async () => {
   const reference = {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a', result_attempt: 2, report_id: 'report-a'}

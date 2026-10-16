@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     deep_customer_enabled: bool = Field(default=False, alias="PPAP_DEEP_CUSTOMER_ENABLED")
     current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
     usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
+    support_phone: str = Field(default="", alias="PPAP_SUPPORT_PHONE", max_length=200)
+    support_email: str = Field(default="", alias="PPAP_SUPPORT_EMAIL", max_length=320)
+    support_service_hours: str = Field(default="", alias="PPAP_SUPPORT_SERVICE_HOURS", max_length=200)
+    support_qr_file: str = Field(default="", alias="PPAP_SUPPORT_QR_FILE")
 
     # Checker/OCR names kept from the migrated engine. Product code still reads llm_*.
     DEFAULT_OCR_OPENAI_BASE_URL: ClassVar[str] = "https://gateway.ai.cloudflare.com/v1/b1a6ed92ee3fad00dcbb1e3e57327c02/openrouter/openrouter/v1"

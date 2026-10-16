@@ -64,6 +64,25 @@ class AuditDatabaseCase(unittest.TestCase):
 
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
+    def test_support_reads_current_session_and_does_not_create_audit_or_usage_records(self):
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_core.identity import SESSION_COOKIE
+
+        self.settings.support_phone = "+00 000 000"
+        client = TestClient(create_app(settings=self.settings, auth_store=self.store))
+        self.assertEqual(client.get("/support").status_code, 401)
+        token = self.store.create_session(self.alice)
+        client.cookies.set(SESSION_COOKIE, token)
+        before = [client.get(path).json() for path in ("/rounds", "/usage", "/drafts")]
+        info = client.get("/support")
+        self.assertEqual(info.status_code, 200)
+        self.assertEqual(info.json()["phone"], "+00 000 000")
+        self.assertEqual(info.json()["state"], "configured")
+        self.assertEqual([client.get(path).json() for path in ("/rounds", "/usage", "/drafts")], before)
+        self.store.revoke_session(token)
+        self.assertEqual(client.get("/support").status_code, 401)
+
     def test_worker_persists_one_unreadable_file_error_without_losing_other_frozen_file_results(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient

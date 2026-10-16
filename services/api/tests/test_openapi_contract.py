@@ -228,9 +228,20 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("complete", schemas["AuditTemplateZip"]["required"])
         self.assertEqual(set(schemas["AuditTemplateZipEntry"]["required"]), {"reference", "filename", "byte_size"})
         self.assertEqual(schemas["AuditSupportInfo"]["properties"]["state"]["enum"], ["configured", "unavailable"])
-        for name in ("AuditTemplateCatalog", "AuditTemplatePage", "AuditTemplateZip", "AuditSupportInfo"):
+        for name in ("AuditTemplateCatalog", "AuditTemplatePage", "AuditTemplateZip"):
             self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")
         self.assertNotIn("/templates", spec["paths"])
+
+    def test_support_has_a_real_read_only_api_and_version_bound_image(self):
+        from fastapi.testclient import TestClient
+
+        spec = app.openapi()
+        self.assertEqual(spec["paths"]["/support"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditSupportInfo")
+        self.assertNotIn("x-contract-stage", spec["components"]["schemas"]["AuditSupportInfo"])
+        image = spec["paths"]["/support/qr"]["get"]
+        self.assertTrue(next(parameter for parameter in image["parameters"] if parameter["name"] == "config_version")["required"])
+        self.assertEqual(set(image["responses"]["200"]["content"]), {"image/png", "image/jpeg", "image/webp"})
+        self.assertEqual(TestClient(app).get("/support").status_code, 401)
 
     def test_ui_archive_separates_provider_document_history_and_access_boundaries(self):
         schemas = app.openapi()["components"]["schemas"]

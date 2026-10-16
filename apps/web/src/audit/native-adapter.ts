@@ -4,6 +4,19 @@ import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
 import type {AuditDisplayAdapter} from './display-info-editor'
 import type {AuditReportAdapter} from './report-contract'
+import type {AuditSupportAdapter} from './template-contract'
+
+export const nativeSupportAdapter: AuditSupportAdapter = {
+  read: () => request('/support'),
+  async readQr(configVersion) {
+    const response = await fetch(`${apiUrl}/support/qr?${new URLSearchParams({config_version: configVersion})}`, {method: 'GET', credentials: 'include'})
+    if (!response.ok) {
+      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+      throw new Error('服务二维码暂时无法读取，请重新读取服务信息。')
+    }
+    return response.blob()
+  },
+}
 
 type ValidationJob = components['schemas']['FileValidationJob']
 export const nativeReportAdapter: AuditReportAdapter = {
