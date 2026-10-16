@@ -50,6 +50,10 @@ export function taskProgressError(task: Task): string {
   const selected = task.files.filter(row => row.selection === 'selected')
   const ended = selected.filter(row => row.audit?.execution === 'review_failed' || row.audit?.execution === 'completed' && row.audit.checks.every(item => ['completed', 'failed'].includes(item.execution))).length
   if (task.state === 'completed' && ended !== selected.length) return '任务声称审核结束，但仍有未结束的文件。'
+  if (task.state === 'completed' && selected.some(row => {
+    const report = row.audit?.report, request = report?.generation_request
+    return report && ['pending', 'generating'].includes(report.state) && !(request?.request_id && ['pending', 'accepted'].includes(request.state))
+  })) return '任务声称审核结束，但仍有首次生成中的报告。'
   if (task.progress && (task.progress.total !== selected.length || task.progress.completed !== ended)) return '任务进度与已选文件状态不一致。'
   return ''
 }

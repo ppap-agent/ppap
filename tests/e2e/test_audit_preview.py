@@ -27,6 +27,27 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_initial_report_generation_conflict_does_not_hide_another_ready_report(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-report-conflict&task=preview-recovery-task")
+            expect(page.get_by_role("status").filter(has_text="任务进度待核对")).to_be_visible()
+            expect(page.get_by_role("alert").filter(has_text="仍有首次生成中的报告")).to_be_visible()
+            detail = page.get_by_role("region", name="审核详情", exact=True)
+            expect(detail.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("控制计划.xlsx")).click()
+            expect(detail.get_by_text("报告生成中", exact=True)).to_be_visible()
+            expect(detail.get_by_text("结果数据需要核对", exact=True)).to_have_count(0)
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("PFMEA.xlsx")).click()
+            detail.get_by_role("button", name="查看报告", exact=True).click()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="审核已结束 · 文件已结束 3/3")).to_be_visible()
+            expect(page.get_by_role("alert").filter(has_text="仍有首次生成中的报告")).to_have_count(0)
+            browser.close()
+
     def test_contradictory_task_completion_keeps_valid_file_evidence_and_can_be_reread(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

@@ -66,9 +66,24 @@ test('task progress checks selected file endings without invalidating another fi
   task.files[1].audit!.execution = 'review_failed'
   task.state = 'completed'; task.completion_reason = 'processed'; task.progress = {completed: 2, total: 2}
   task.files[0].audit!.report.state = 'generating'
+  task.files[0].audit!.report.generation_request = {request_id: 'regenerate-1', state: 'accepted', reason: null}
   assert.equal(taskProgressError(task), '')
   task.round_id = null; task.completion_reason = 'no_matching_rules'
   assert.equal(taskProgressError(task), '')
+})
+test('task completion waits for initial reports but not an identified report regeneration', () => {
+  const task = projection(), report = task.files[0].audit!.report
+  for (const state of ['pending', 'generating'] as const) {
+    report.state = state
+    for (const receipt of [null, {request_id: '', state: 'accepted' as const, reason: null}, {request_id: 'rejected-1', state: 'rejected' as const, reason: null}]) {
+      report.generation_request = receipt
+      assert.match(taskProgressError(task), /仍有首次生成中的报告/)
+    }
+    for (const receiptState of ['pending', 'accepted'] as const) {
+      report.generation_request = {request_id: 'regenerate-1', state: receiptState, reason: null}
+      assert.equal(taskProgressError(task), '')
+    }
+  }
 })
 test('a finding cannot impersonate another frozen rule item', () => {
   const task = projection()
