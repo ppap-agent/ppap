@@ -1,7 +1,7 @@
 import unittest
 from copy import deepcopy
 
-from ppap_product_store.task_view import task_round_view
+from ppap_product_store.task_view import round_read_view, task_round_view
 
 
 def frozen_round(execution="completed"):
@@ -27,6 +27,44 @@ def task_input():
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_conflicting_historical_file_identities_remain_unassigned(self):
+        round = frozen_round()
+        round["inputs"].append({**round["inputs"][0], "file_version_id": "version-b"})
+        finding = {"item_key": "version-a:engine:1", "status": "NG", "locator": {"file_version_id": "version-b"}, "review": None}
+        round["findings"] = [finding]
+        view = round_read_view(round, {key: {"id": key} for key in ("version-a", "version-b")})
+        self.assertEqual(view["unassigned_findings"], [finding])
+        self.assertTrue(all(not row["audit"]["unmapped_findings"] for row in view["files"]))
+
+    def test_task_and_round_readers_share_the_same_frozen_file_projection(self):
+        round = frozen_round()
+        direct = round_read_view(round, {"version-a": {"id": "version-a"}})
+        task = task_round_view(task_input(), round)
+        self.assertEqual(direct["files"][0]["audit"], task["files"][0]["audit"])
+
+    def test_round_reader_preserves_unmapped_engine_presence_and_unassigned_records_without_creating_rule_items(self):
+        round = frozen_round()
+        presence = {"id": "presence-rule", "title": "文件存在", "body": {"kind": "presence"}}
+        round["inputs"].append({"role": "target", "file_version_id": "version-b", "rule": presence})
+        review = {"judgment": "disagree", "rationale": "旧记录人工意见", "next_step": "", "version": 1, "citations": []}
+        round["findings"] = [
+            {"item_key": "version-a:engine:1", "status": "PASS", "locator": {"file_version_id": "version-a"}, "review": review},
+            {"item_key": "target:version-b", "status": "NG", "locator": {"file_version_id": "version-b"}, "review": None},
+            {"item_key": "execution", "status": "ERR", "locator": None, "review": None},
+        ]
+        versions = {key: {"id": key, "original_filename": key + ".xlsx"} for key in ("version-a", "version-b")}
+        before = deepcopy(round)
+        view = round_read_view(round, versions)
+        self.assertEqual([row["file"]["id"] for row in view["files"]], ["version-a", "version-b"])
+        first, second = view["files"]
+        self.assertEqual(first["audit"]["unmapped_findings"], [round["findings"][0]])
+        self.assertEqual(second["audit"]["unmapped_findings"], [round["findings"][1]])
+        self.assertEqual(view["unassigned_findings"], [round["findings"][2]])
+        self.assertEqual(first["audit"]["checks"][0]["review"], None)
+        self.assertEqual((first["audit"]["conclusion"], first["audit"]["report"]["state"]), ("UNKNOWN", "not_eligible"))
+        self.assertEqual(second["audit"]["checks"], [])
+        self.assertEqual(round, before)
+
     def test_finished_unsupported_check_ends_task_without_fabricating_pass_or_report(self):
         view = task_round_view(task_input(), frozen_round())
         self.assertEqual((view["state"], view["completion_reason"], view["progress"]), ("completed", "processed", {"completed": 1, "total": 1}))

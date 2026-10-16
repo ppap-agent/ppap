@@ -10,6 +10,7 @@ import {RemoteSourcePane} from '../journey/remote-source'
 import {AuditIntake, type AuditIntakeAdapter} from './intake'
 import {createNativeAuditAdapter} from './native-adapter'
 import type {OriginalRenderer} from './review-content'
+import {AuditRoundReader, type ReadRound} from './round-reader'
 
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
 
@@ -28,4 +29,6 @@ function NativeAudit() {
   return <main className="mx-auto max-w-xl space-y-4 p-6">{error ? <><Alert variant="destructive"><AlertTitle>暂时无法打开审核</AlertTitle><AlertDescription>{error}</AlertDescription></Alert><Button onClick={() => setRevision(value => value + 1)}>重新读取</Button></> : <p role="status">正在读取审核规则…</p>}</main>
 }
 
-createRoot(document.getElementById('app')!).render(<ProductAccess><NativeAudit/></ProductAccess>)
+const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURIComponent(id)}?read_view=true`, 'GET', undefined, signal)
+const roundId = new URL(location.href).searchParams.get('round')
+createRoot(document.getElementById('app')!).render(<ProductAccess>{roundId ? <AuditRoundReader key={roundId} roundId={roundId} readRound={readRound} renderOriginal={renderOriginal}/> : <NativeAudit/>}</ProductAccess>)

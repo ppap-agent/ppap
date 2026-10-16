@@ -64,6 +64,43 @@ class AuditDatabaseCase(unittest.TestCase):
 
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
+    def test_round_reader_uses_frozen_versions_without_creating_a_task_or_changing_the_round(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_api.web_contract import Round
+        from ppap_core.fixtures import RULE_A
+        from pydantic import TypeAdapter
+
+        target, reference = self.upload("historical.txt"), self.upload("reference.txt")
+        draft = self.draft([{"file_version_id": target.id, "role": "target", "rule_version_id": RULE_A}, {"file_version_id": reference.id, "role": "reference"}])
+        round = self.store.accept_draft(self.alice, draft, "historical-reader")
+        principal = [self.alice]
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: principal[0])
+        client = TestClient(app)
+        path = f"/rounds/{round['id']}"
+        before = client.get(path).json()
+        tasks_before = self.store.list_audit_tasks(self.alice)
+        response = client.get(path + "?read_view=true")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        TypeAdapter(Round).validate_python(body)
+        view = body.pop("read_view")
+        self.assertEqual(body, before)
+        self.assertEqual({row["file"]["id"] for row in view["files"]}, {target.id, reference.id})
+        self.assertEqual(next(row["file"] for row in view["files"] if row["role"] == "target"), target.public())
+        self.assertIsNone(next(row["audit"] for row in view["files"] if row["role"] == "reference"))
+        replacement = self.store.create_staging(self.alice, "historical.txt", "application/octet-stream", 1, file_id=target.file_id)
+        self.store.put_blob(replacement, b"y")
+        self.store.finalize_version(replacement)
+        self.assertEqual(client.get(path + "?read_view=true").json()["read_view"], view)
+        self.assertEqual(self.store.list_audit_tasks(self.alice), tasks_before)
+        principal[0] = self.store.principal_for_fixture("bob")
+        self.assertEqual(client.get(path + "?read_view=true").status_code, 200)
+        principal[0] = self.store.principal_for_fixture("carol")
+        self.assertEqual(client.get(path + "?read_view=true").status_code, 403)
+
     def test_resumable_drafts_keep_origin_and_respect_grants(self):
         from ppap_core.fixtures import RULE_A
 

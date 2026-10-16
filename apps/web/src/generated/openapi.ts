@@ -1362,6 +1362,8 @@ export interface components {
             round_id: string;
             rule: components["schemas"]["BoundRule"];
             summary: components["schemas"]["AuditFileSummary"] | null;
+            /** Unmapped Findings */
+            unmapped_findings?: components["schemas"]["Finding"][];
         };
         /** AuditFileSummary */
         AuditFileSummary: {
@@ -1584,6 +1586,24 @@ export interface components {
             round_id: string;
             /** Task Id */
             task_id: string;
+        };
+        /** AuditRoundReadFile */
+        AuditRoundReadFile: {
+            audit: components["schemas"]["AuditFileReview"] | null;
+            file: components["schemas"]["FileVersion"];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "target" | "reference";
+            rule: components["schemas"]["BoundRule"] | null;
+        };
+        /** AuditRoundReadView */
+        AuditRoundReadView: {
+            /** Files */
+            files: components["schemas"]["AuditRoundReadFile"][];
+            /** Unassigned Findings */
+            unassigned_findings: components["schemas"]["Finding"][];
         };
         /** AuditRuleMatch */
         AuditRuleMatch: {
@@ -2199,7 +2219,7 @@ export interface components {
         /** CaseContext */
         CaseContext: {
             /** Registration */
-            registration: string;
+            registration?: string;
         };
         /** Coverage */
         Coverage: {
@@ -2640,6 +2660,7 @@ export interface components {
             /** Predecessor Id */
             predecessor_id: string | null;
             progress: components["schemas"]["RoundProgress"] | null;
+            read_view?: components["schemas"]["AuditRoundReadView"];
             /** Result Attempt */
             result_attempt: number | null;
             /** Source Draft Id */
@@ -3359,7 +3380,7 @@ export interface operations {
                     /** CaseContext */
                     case_context?: {
                         /** Registration */
-                        registration: string;
+                        registration?: string;
                     };
                     /** Items */
                     items?: {
@@ -4743,7 +4764,9 @@ export interface operations {
     };
     rounds_get_rounds__round_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                read_view?: boolean;
+            };
             header?: never;
             path: {
                 round_id: string;
@@ -5031,7 +5054,7 @@ export interface operations {
                     /** CaseContext */
                     case_context?: {
                         /** Registration */
-                        registration: string;
+                        registration?: string;
                     };
                     /** Predecessor Id */
                     predecessor_id?: string | null;

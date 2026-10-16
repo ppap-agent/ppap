@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError} from './result-projection.ts'
+import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError} from './result-projection.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -19,6 +19,17 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('a historical presence result needs no invented clause and cannot earn a formal PASS', () => {
+  const file = projection().files[0], audit = file.audit!
+  audit.rule = {id: 'presence-rule', title: '文件存在', body: {kind: 'presence'}}
+  audit.checks = []; audit.progress = {completed: 0, total: 0}; audit.counts.pass_count = 0
+  audit.conclusion = 'UNKNOWN'; audit.summary = null; audit.report = {state: 'not_eligible', report_id: null, reason: null}
+  const historical = {file: file.file, audit}
+  assert.equal(frozenResultError('round-1', historical, ['file-v1'], audit.rule), '')
+  audit.conclusion = 'PASS'
+  assert.match(frozenResultError('round-1', historical, ['file-v1'], audit.rule), /PASS 结论缺少完整/)
+  assert.match(frozenResultError('another-round', historical, ['file-v1'], audit.rule), /冻结文件或规则不一致/)
+})
 test('a read cannot erase ended work or reopen a terminal file in the same frozen round', () => {
   const before = projection(), after = structuredClone(before)
   before.progress = {completed: 1, total: 1}; after.progress = {completed: 1, total: 1}

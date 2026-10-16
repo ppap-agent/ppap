@@ -126,6 +126,50 @@ def _counts(checks: list[dict]) -> dict:
     return counts
 
 
+def file_round_audit(round: dict, frozen: dict) -> dict:
+    version_id, rule = frozen["file_version_id"], frozen["rule"]
+    finished = round["execution"] in {"completed", "failed"}
+    checks = [_check(round, version_id, rule["id"], item) for item in rule["body"].get("rules", [])]
+    mapped = {check["review_item_key"] for check in checks if check["finding"]}
+    unmapped = []
+    for finding in round.get("findings", []):
+        source = (finding.get("locator") or {}).get("file_version_id")
+        key = finding["item_key"]
+        key_versions = {item["file_version_id"] for item in round["inputs"] if key.startswith(f"{item['file_version_id']}:") or key == f"target:{item['file_version_id']}"}
+        conflict = source is not None and key_versions and source not in key_versions
+        if key not in mapped and not conflict and (source == version_id or source is None and key_versions == {version_id}):
+            unmapped.append(deepcopy(finding))
+    return {
+        "round_id": round["id"],
+        "file_version_id": version_id,
+        "result_attempt": round["result_attempt"],
+        "rule": rule,
+        "execution": "review_failed" if round["execution"] == "failed" else round["execution"],
+        "progress": {"completed": len(checks) if finished else 0, "total": len(checks)},
+        "failure": round.get("failure"),
+        "conclusion": "UNKNOWN" if finished else None,
+        "counts": _counts(checks),
+        "checks": checks,
+        "unmapped_findings": unmapped,
+        "summary": None,
+        "report": {"state": "not_eligible", "report_id": None, "reason": "审核依据尚未完整核验" if finished else "审核尚未完成"},
+    }
+
+
+def round_read_view(round: dict, versions: dict[str, dict]) -> dict:
+    files = [
+        {"file": versions[item["file_version_id"]], "role": item["role"], "rule": item["rule"], "audit": file_round_audit(round, item) if item["role"] == "target" and item["rule"] else None}
+        for item in round["inputs"]
+    ]
+    assigned = {
+        key
+        for row in files
+        if row["audit"]
+        for key in [*[check["review_item_key"] for check in row["audit"]["checks"] if check["finding"]], *[finding["item_key"] for finding in row["audit"]["unmapped_findings"]]]
+    }
+    return {"files": files, "unassigned_findings": [deepcopy(finding) for finding in round.get("findings", []) if finding["item_key"] not in assigned]}
+
+
 def task_round_view(task: dict, round: dict) -> dict:
     finished = round["execution"] in {"completed", "failed"}
     files = []
@@ -134,27 +178,7 @@ def task_round_view(task: dict, round: dict) -> dict:
         if not frozen or row["selection"] != "selected":
             files.append({**row, "audit": None})
             continue
-        rules = frozen["rule"]["body"].get("rules", [])
-        checks = [_check(round, row["file"]["id"], frozen["rule"]["id"], rule) for rule in rules]
-        files.append(
-            {
-                **row,
-                "audit": {
-                    "round_id": round["id"],
-                    "file_version_id": row["file"]["id"],
-                    "result_attempt": round["result_attempt"],
-                    "rule": frozen["rule"],
-                    "execution": "review_failed" if round["execution"] == "failed" else round["execution"],
-                    "progress": {"completed": len(checks) if finished else 0, "total": len(checks)},
-                    "failure": round.get("failure"),
-                    "conclusion": "UNKNOWN" if finished else None,
-                    "counts": _counts(checks),
-                    "checks": checks,
-                    "summary": None,
-                    "report": {"state": "not_eligible", "report_id": None, "reason": "审核依据尚未完整核验" if finished else "审核尚未完成"},
-                },
-            }
-        )
+        files.append({**row, "audit": file_round_audit(round, frozen)})
     selected = [row for row in files if row["selection"] == "selected"]
     ended = sum(bool(row.get("audit") and row["audit"]["execution"] in {"completed", "review_failed"}) for row in selected)
     task_finished = finished and ended == len(selected)

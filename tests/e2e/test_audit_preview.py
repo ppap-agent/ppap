@@ -29,6 +29,60 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_round_reader_rejects_old_responses_after_an_a_b_a_switch(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=round-history-race")
+            page.get_by_role("button", name="切换历史审核", exact=True).click()
+            page.get_by_role("button", name="切换历史审核", exact=True).click()
+            page.get_by_role("button", name="返回历史读取 3", exact=True).click()
+            expect(page.get_by_text("历史记录 3", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回历史读取 1", exact=True).click()
+            page.get_by_role("button", name="返回历史读取 2", exact=True).click()
+            expect(page.get_by_text("历史记录 3", exact=True)).to_be_visible()
+            expect(page.get_by_text("历史记录 1", exact=True)).to_have_count(0)
+            expect(page.get_by_text("历史记录 2", exact=True)).to_have_count(0)
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            browser.close()
+
+    def test_round_reader_rejects_wrong_round_identity_and_outside_review_citations(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=round-history-wrong")
+            expect(page.get_by_text("历史读取与本轮冻结文件不一致。", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="历史机器记录", exact=True)).to_have_count(0)
+            page.goto(PREVIEW + "/preview/audit.html?scene=round-history-outside")
+            record = page.get_by_role("region", name="历史机器记录", exact=True)
+            expect(record.get_by_role("button", name="核对复核原件 不在本轮的原件", exact=True)).to_be_disabled()
+            expect(page.get_by_role("dialog", name="历史原件对照", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_old_round_keeps_engine_presence_reviews_and_frozen_originals_without_a_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=round-history")
+            expect(page.get_by_role("heading", name="历史审核", exact=True)).to_be_visible()
+            records = page.get_by_role("region", name="历史机器记录", exact=True)
+            expect(records.get_by_text("旧引擎频次检查", exact=True)).to_be_visible()
+            expect(records.get_by_text("历史人工答复：频次已经核对。", exact=True)).to_be_visible()
+            records.get_by_role("button", name="核对复核原件 过程流程图.pdf", exact=True).click()
+            original = page.get_by_role("dialog", name="历史原件对照", exact=True)
+            expect(original).to_have_attribute("data-file-version", "history-version-reference")
+            expect(original.get_by_text("旧流程图第 2 页", exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            page.get_by_role("navigation", name="本轮文件", exact=True).get_by_role("button", name="控制计划.xlsx", exact=False).click()
+            expect(records.get_by_text("待审文件版本已就绪", exact=True)).to_be_visible()
+            expect(page.get_by_text("审核项与冻结规则不一致。", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+            page.reload()
+            expect(page.get_by_role("heading", name="历史审核", exact=True)).to_be_visible()
+            expect(records.get_by_text("旧引擎频次检查", exact=True)).to_be_visible()
+            browser.close()
+
     def test_saved_human_review_is_read_only_and_keeps_the_machine_result(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

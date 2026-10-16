@@ -11,11 +11,12 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {FileName} from '../journey/file-name'
-import {judgmentLabels} from '../journey/judgment-state'
-import {checkScopeComplete, frozenResultError, sameSnapshot} from './result-projection'
+import {checkScopeComplete, frozenResultError, sameSnapshot, type ReviewFile} from './result-projection'
 import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info-contract'
+import {RecordedReview, frozenOriginal} from './recorded-review'
+import {HistoricalFindings} from './historical-findings'
 
-type File = components['schemas']['AuditTaskFile']
+type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
 type ReviewCitation = components['schemas']['ReviewCitation']
 type SelectedSource = {kind: 'machine'; reference: AuditEvidence} | {kind: 'review'; reference: ReviewCitation}
@@ -37,6 +38,7 @@ function checkLabel(check: Evaluation) {
 function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
   const values = fileDisplayValues(file)
   const corrected = validDisplayInfo(file.display_info) && file.display_info.revision > 0
+  if (file.match === undefined && file.display_info === undefined) return null
   return <section aria-label="本次审核文件信息" className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">页面显示信息{corrected ? ' · 已更正' : ''}</p>{onEdit && <Button variant="outline" size="sm" disabled={!validDisplayInfo(file.display_info)} onClick={onEdit}>更正显示信息</Button>}</div>
     <dl className="grid grid-cols-2 gap-3 text-sm xl:grid-cols-4">{displayFields.map(([field, label]) => <div className="min-w-0" key={field}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 break-words">{values[field] || '—'}</dd></div>)}</dl>
@@ -45,26 +47,25 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 }
 
 /** P5 and P10 share result and original content, not private task chrome. */
-export function AuditReviewContent({file, roundId, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay}: {file: File; roundId: string; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport: () => void; onEditDisplay?: () => void}) {
+export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay}: {file: File; roundId: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void}) {
   const [clause, setClause] = useState(''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
   const [pane, setPane] = useState('details'), [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const container = useRef<HTMLDivElement>(null), [wide, setWide] = useState(false)
   useEffect(() => {const observer = new ResizeObserver(entries => setWide(entries[0].contentRect.width >= 960)); if (container.current) observer.observe(container.current); return () => observer.disconnect()}, [])
   const audit = file.audit, check = audit?.checks.find(row => row.rule_item.id === clause) ?? audit?.checks[0]
-  const issue = frozenResultError(roundId, file, frozenFileVersionIds)
+  const issue = frozenResultError(roundId, file, frozenFileVersionIds, frozenRule)
   const review = check?.review !== undefined ? check.review : check?.finding?.review
   const chosen = chosenSource && (chosenSource.kind === 'machine' ? check?.evidence : review?.citations)?.some(row => sameSnapshot(row, chosenSource.reference)) ? chosenSource : null
   const source = chosen?.kind === 'machine' ? chosen.reference : null
   const citation = chosen?.kind === 'review' ? chosen.reference : null
   function authorizedOriginal(id: string) {
-    const matches = originals.filter(row => row.file_version_id === id)
-    return frozenFileVersionIds.includes(id) && matches.length === 1 && (!matches[0].file || matches[0].file.id === id) ? matches[0] : undefined
+    return frozenOriginal(originals, frozenFileVersionIds, id)
   }
   const original = authorizedOriginal(chosen?.reference.file_version_id || file.file.id)
   const filtered = audit?.checks.filter(row => `${row.rule_item.id} ${row.rule_item.category} ${row.rule_item.rule_to_check}`.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || filter === 'attention' && !['满足', '不适用'].includes(checkLabel(row)))) ?? []
   const originalPanel = <section aria-label="原件预览" data-file-version={original?.file_version_id} className="min-w-0 space-y-4"><h2 className="font-semibold">原件对照</h2><p className="text-sm text-muted-foreground">当前条款：{check?.rule_item.id || '—'} · {check?.rule_item.category || '尚未取得审核项'}</p>{original ? <><FileName name={original.file?.original_filename || '该次证据原件'}/>{source && <><p className="text-sm">{source.locator ? `证据位置：${sourceLocation({locator: source.locator})}` : '未提供具体位置，请按摘录查找。'}</p>{source.location_gap && <p className="text-sm text-muted-foreground">{source.location_gap}</p>}<p className="text-xs text-muted-foreground">{source.rendition === 'derived' ? '派生内容引用，不等于原件定位已验证。' : '冻结原件引用'}</p></>}{citation && <section aria-label="人工复核引用" className="space-y-2 text-sm"><h3 className="font-medium">人工记录位置</h3><p className="whitespace-pre-wrap">{citation.location}</p><p className="whitespace-pre-wrap text-muted-foreground">{citation.excerpt}</p></section>}{original.access.state !== 'allowed' || !original.file ? <Alert><AlertTitle>本次原件不可访问</AlertTitle><AlertDescription>{original.access.reason || '暂时无法读取此原件。'}</AlertDescription></Alert> : renderOriginal ? renderOriginal(original.file, source, roundId) : <Alert><AlertTitle>原件暂不可预览</AlertTitle><AlertDescription>请下载原件查看。</AlertDescription></Alert>}</> : <Alert variant="destructive"><AlertTitle>不能读取此证据原件</AlertTitle><AlertDescription>此证据不在本次审核的文件中。</AlertDescription></Alert>}</section>
   const details = <section aria-label="审核详情" className="min-w-0 space-y-5">
-    <header className="space-y-3"><h2 className="text-lg font-semibold"><FileName name={file.file.original_filename}/></h2><DisplayInformation file={file} onEdit={onEditDisplay}/><p className="text-xs text-muted-foreground">{file.match?.document_type || '—'} · 审核规则：{audit?.rule.title || file.match?.rule?.title || '—'}</p></header>
+    <header className="space-y-3"><h2 className="text-lg font-semibold"><FileName name={file.file.original_filename}/></h2><DisplayInformation file={file} onEdit={onEditDisplay}/><p className="text-xs text-muted-foreground">{file.match?.document_type || (audit?.rule.body.kind === 'engine' ? audit.rule.body.type : audit?.rule.body.kind === 'presence' ? '文件存在性' : '—')} · 审核规则：{audit?.rule.title || file.match?.rule?.title || '—'}</p></header>
     {issue && <Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert>}
     {!audit ? <p role="status">审核结果尚未取得，请读取当前记录。</p> : <>
       <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{issue ? '结果待核对' : executionLabel[audit.execution]}</Badge>{audit.conclusion && !issue && <Badge variant="secondary">{audit.conclusion}</Badge>}{!issue && <span className="text-muted-foreground">已结束 {audit.progress.completed}/{audit.progress.total} 项</span>}</div>
@@ -76,14 +77,12 @@ export function AuditReviewContent({file, roundId, frozenFileVersionIds, origina
         const target = authorizedOriginal(evidence.file_version_id)
         return <div key={`${evidence.file_version_id}-${index}`} data-file-version={evidence.file_version_id} className="space-y-2 border-l pl-3"><p className="whitespace-pre-wrap text-sm">{evidence.excerpt || '未提供摘录。'}</p><Button variant="outline" size="sm" disabled={!target} aria-label={`核对 ${target?.file?.original_filename || '不在本轮的原件'}`} onClick={() => {setClause(check.rule_item.id); setSource({kind: 'machine', reference: evidence}); setPane('original')}}>{target ? <FileName name={target.file?.original_filename || '该次证据原件'}/> : '原件不在冻结范围'}</Button></div>
       }) : <p className="text-muted-foreground">未提供来源证据，请核对原件。</p>}</div>
-        {review && <section aria-label="已有人工复核" className="space-y-3 border-t pt-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">已有人工复核</h4><span className="text-xs text-muted-foreground">复核记录 v{review.version}</span></div><Badge variant="outline">{Object.hasOwn(judgmentLabels, review.judgment) ? judgmentLabels[review.judgment as keyof typeof judgmentLabels] : review.judgment}</Badge><p className="whitespace-pre-wrap text-sm">{review.rationale}</p>{review.next_step && <div className="space-y-1 text-sm"><p className="font-medium">后续建议</p><p className="whitespace-pre-wrap">{review.next_step}</p></div>}{review.citations?.map((cite, index) => {
-          const target = authorizedOriginal(cite.file_version_id)
-          return <div key={`${cite.file_version_id}-${index}`} className="space-y-2 text-sm"><p className="whitespace-pre-wrap">{cite.location}</p><p className="whitespace-pre-wrap text-muted-foreground">{cite.excerpt}</p><Button variant="outline" size="sm" disabled={!target} aria-label={`核对复核原件 ${target?.file?.original_filename || '不在本轮的原件'}`} onClick={() => {setSource({kind: 'review', reference: cite}); setPane('original')}}>{target ? <FileName name={target.file?.original_filename || '该次复核原件'}/> : '引用不在本轮冻结范围'}</Button></div>
-        })}</section>}
+        {review && <RecordedReview review={review} originalFor={authorizedOriginal} onCitation={cite => {setSource({kind: 'review', reference: cite}); setPane('original')}}/>}
       </article>}
       <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">审核总结</h3>{issue ? <p role="alert">{issue}</p> : audit.summary ? <><p>{audit.summary.text}</p>{audit.summary.corrective_actions.length > 0 && <div className="space-y-2"><h4 className="font-medium">核心整改建议</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.corrective_actions.map(text => <li key={text}>{text}</li>)}</ul></div>}{audit.summary.extended_suggestions.length > 0 && <div className="space-y-2"><h4 className="font-medium">AI 延伸建议（不是客户要求）</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.extended_suggestions.map(text => <li key={text}>{text}</li>)}</ul></div>}</> : <p className="text-muted-foreground">{audit.execution === 'review_failed' ? '审核异常，没有通过总结。' : '总结尚未生成。'}</p>}</section>
-      <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
+      <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !onReport || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
     </>}
+    <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
   </section>
   return <div ref={container} className="min-w-0">{wide ? <ResizablePanelGroup orientation="horizontal"><ResizablePanel defaultSize="40%" minSize="320px"><div className="pr-5">{details}</div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="60%" minSize="480px"><div className="pl-5">{originalPanel}</div></ResizablePanel></ResizablePanelGroup> : <Tabs value={pane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger><TabsTrigger value="original">核对原件</TabsTrigger></TabsList><TabsContent value="details">{details}</TabsContent><TabsContent value="original">{originalPanel}</TabsContent></Tabs>}</div>
 }

@@ -75,7 +75,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from ppap_product_store.task_view import task_round_view
+from ppap_product_store.task_view import round_read_view, task_round_view
 
 
 def _now() -> datetime:
@@ -1521,12 +1521,12 @@ class AuthStore:
                 (status, document_id, error_code, ident, principal.tenant_id, principal.user_id),
             )
 
-    def get_round(self, round_id: str) -> dict | None:
+    def get_round(self, round_id: str, *, read_view: bool = False) -> dict | None:
         parsed = _as_uuid(round_id)
         if not parsed:
             return None
         with self._conn() as conn:
-            return self._round_public(conn, parsed)
+            return self._round_public(conn, parsed, read_view=read_view)
 
     def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -2271,7 +2271,7 @@ class AuthStore:
             "case_scope": " · ".join(filter(None, (labels.get("customer"), labels.get("supplier"), f"图纸 Rev {labels['revision']}" if labels.get("revision") else "", labels.get("plant")))),
         }
 
-    def _round_public(self, conn, round_id: str) -> dict | None:
+    def _round_public(self, conn, round_id: str, *, read_view: bool = False) -> dict | None:
         row = conn.execute(
             """
             SELECT id, execution, coverage, predecessor_id,
@@ -2284,7 +2284,8 @@ class AuthStore:
             return None
         inputs = conn.execute(
             """
-            SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status, i.rule_version_id, i.rule_title, i.rule_body
+            SELECT i.role, fv.id, fv.file_id, fv.original_filename, fv.status, i.rule_version_id, i.rule_title, i.rule_body,
+                   fv.content_type, fv.byte_size, fv.sha256
             FROM product.round_inputs i
             JOIN product.file_versions fv ON fv.id = i.file_version_id
             WHERE i.round_id = %s
@@ -2341,7 +2342,7 @@ class AuthStore:
         }
         if coverage.get("rule_items"):
             coverage["rule_items"] = [{**item, "review": reviews.get(f"coverage:{item.get('file_version_id')}:{item.get('id')}")} for item in coverage["rule_items"]]
-        return {
+        body = {
             "id": str(row[0]),
             "execution": row[1],
             "coverage": coverage,
@@ -2389,6 +2390,13 @@ class AuthStore:
                 for item in findings
             ],
         }
+        if read_view:
+            versions = {
+                str(item[1]): {"id": str(item[1]), "file_id": str(item[2]), "original_filename": item[3], "status": item[4], "content_type": item[8], "byte_size": int(item[9]), "sha256": item[10]}
+                for item in inputs
+            }
+            body["read_view"] = round_read_view(body, versions)
+        return body
 
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
         with self._conn() as conn:

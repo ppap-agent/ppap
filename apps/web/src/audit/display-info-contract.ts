@@ -29,7 +29,7 @@ export function reconcileTaskDisplay(previous: Task | null | undefined, next: Ta
   })}
 }
 
-export function fileDisplayValues(file: File): DisplayValues {
+export function fileDisplayValues(file: Partial<Pick<File, 'display_info' | 'match'>>): DisplayValues {
   if (validDisplayInfo(file.display_info)) return file.display_info.values
   const metadata = file.match?.metadata
   return {customer: metadata?.customer ?? null, model: metadata?.model ?? null, part_number: metadata?.part_number ?? null, part: metadata?.part ?? null}

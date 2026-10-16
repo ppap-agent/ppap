@@ -21,11 +21,14 @@ import {displayReadFixture, fixtureDisplay} from './audit-display'
 import {fileDisplayValues} from '../src/audit/display-info-contract'
 import {usageNotices} from '../src/audit/usage-contract'
 import {reportReference} from '../src/audit/result-projection'
+import {AuditRoundReader} from '../src/audit/round-reader'
+import {fixtureRound} from './audit-rounds'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
 const scene = query.get('scene') || 'populated'
 const automaticObservation = scene.startsWith('restore-observe') || scene === 'observe-matching'
+const readHistoricalRound = async (id: string) => fixtureRound(fixtureResults(fixtureAcceptance(fixtureMatch(adapter.samples(), 'standard', null, null, 'history-input'), 'history-accept'), 'reports-none'), id)
 const delayedDisplay = scene === 'restore-display-loading' || scene === 'restore-display-denied'
 const templateAdapter = fixtureTemplates(scene)
 const feedbackAdapter = fixtureFeedback(scene)
@@ -448,4 +451,18 @@ function Preview() {
   return <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
 }
-createRoot(document.getElementById('app')!).render(<Preview/>)
+function HistoricalPreview() {
+  const [roundId, setRoundId] = useState('history-round'), [reads, setReads] = useState<{id: number; finish: () => void}[]>([])
+  const sequence = useRef(0)
+  const read = useCallback(async (id: string) => {
+    const number = ++sequence.current, value = await readHistoricalRound(id)
+    if (scene === 'round-history-wrong') value.id = 'another-round'
+    const finding = value.read_view!.files[0].audit!.unmapped_findings![0]
+    if (scene === 'round-history-outside') finding.review!.citations![0].file_version_id = 'outside-this-round'
+    if (scene !== 'round-history-race') return value
+    finding.item = `历史记录 ${number}`
+    return new Promise<typeof value>(resolve => setReads(rows => [...rows, {id: number, finish: () => resolve(value)}]))
+  }, [])
+  return <>{scene === 'round-history-race' && <aside aria-label="预览事件控制" className="flex flex-wrap gap-2 p-3"><Button onClick={() => setRoundId(value => value === 'history-round' ? 'another-round' : 'history-round')}>切换历史审核</Button>{reads.map(row => <Button key={row.id} onClick={() => {row.finish(); setReads(rows => rows.filter(item => item.id !== row.id))}}>返回历史读取 {row.id}</Button>)}</aside>}<AuditRoundReader roundId={roundId} readRound={read} returnHref="/preview/audit.html" renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+}
+createRoot(document.getElementById('app')!).render(scene.startsWith('round-history') ? <HistoricalPreview/> : <Preview/>)

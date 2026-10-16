@@ -242,7 +242,7 @@ class MaterialWire(TypedDict):
 
 
 class CaseContext(TypedDict):
-    registration: str
+    registration: NotRequired[str]
 
 
 class Draft(TypedDict):
@@ -439,6 +439,7 @@ class Round(TypedDict):
     failure: RoundFailure | None
     inputs: list[MaterialWire]
     findings: list[Finding]
+    read_view: NotRequired[AuditRoundReadView]
     executor: NotRequired[str]
     executor_revision: NotRequired[str]
 
@@ -714,8 +715,21 @@ class AuditFileReview(TypedDict):
     conclusion: Literal["PASS", "NG", "UNKNOWN"] | None
     counts: AuditResultCounts
     checks: list[AuditClauseEvaluation]
+    unmapped_findings: NotRequired[list[Finding]]
     summary: AuditFileSummary | None
     report: AuditFileReport
+
+
+class AuditRoundReadFile(TypedDict):
+    file: FileVersion
+    role: MaterialRole
+    rule: BoundRule | None
+    audit: AuditFileReview | None
+
+
+class AuditRoundReadView(TypedDict):
+    files: list[AuditRoundReadFile]
+    unassigned_findings: list[Finding]
 
 
 class AuditAcceptance(TypedDict):
