@@ -18,6 +18,8 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* Task-number allocation, formal confirmation or paid-review claim here.
 \* Unselected and precheck-removed versions are provenance, never job inputs.
 \* The model fixes the first Task input; rematching/revision is outside scope.
+\* TaskRecognitionRevisions models that extension for one existing Task;
+\* InputsStayFrozen here remains a one-shot, initial-request obligation.
 \* No constraints or symmetry remove interleavings. Stuttering permits a
 \* queued/leased/unknown job or an unconfirmed Task to remain so indefinitely.
 

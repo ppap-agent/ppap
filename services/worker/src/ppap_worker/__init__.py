@@ -71,6 +71,11 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
     try:
         try:
             payload = claimed.payload
+            if claimed.kind == "file_analysis" and payload.get("task_id") and not store.recognition_job_current(claimed):
+                obsolete = {"error": "recognition_superseded"}
+                accepted = store.complete_job(claimed, ident, obsolete, "failed")
+                emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="recognition_superseded")
+                return obsolete
             version = store.get_version(payload["source_file_id"], payload["source_file_version_id"])
             if version is None or version.tenant_id != claimed.tenant_id or version.status != READY:
                 raise RuleParseError("file_not_ready")

@@ -152,7 +152,9 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 确认前的任务使用 `POST /audit-tasks`、`GET /audit-tasks` 和 `GET /audit-tasks/{id}`。创建请求固定文件版本、每份预检查回执、选中/未选/已移除来源、模式和客户倾向；同一请求 ID 不允许替换输入。它复用私有 `audit_drafts` 和逐文件识别 job，在同一事务分配 UTC 日编号并入队，不创建审核轮次或消费。Worker 只消费创建时冻结的生效候选；按客户×文件类型匹配，不用无客户规则兜底。读取固定 job，不取该文件最新识别；提取/模型失败与未匹配分开。
 
-`POST /audit-tasks/{id}/end` 仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。本阶段只提供识别和零匹配终结，不提供既有任务输入修改、正式受理或计费；完整 `AuditTask` 的审核/报告部分仍为 UI-draft，页面数据接入及真实模型质量另行验证。
+返回修改后，仍用 `POST /audit-tasks`，同时提交原 `task_id`、当前 `expected_revision` 和新的 `request_id`。初始输入修订为 0；重新识别在同一事务增加修订、保存完整来源并替换逐文件 job 引用。旧 job 回执只归原 job；Worker 读到旧代次时跳过文件解析和模型调用，已开始的外部调用不承诺可取消。`GET /audit-tasks/{id}/recognitions/{request_id}` 读取原请求受理回执及当前任务；回执修订与当前输入修订可以不同。`unknown` 不证明请求未受理，不能据此自动重发或生成新请求。
+
+`POST /audit-tasks/{id}/end` 必须带 `expected_revision`，仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。该动作可同时保存未匹配文件的 `removals`（版本与原因），不要求再次识别，也不产生审核或消费。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。本阶段不提供正式受理或计费；完整 `AuditTask` 的审核/报告部分仍为 UI-draft，页面真实数据接入及模型质量另行验证。
 
 ## UI-first 交互预览
 

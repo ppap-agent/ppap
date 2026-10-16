@@ -46,6 +46,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "deep_not_available",
                 "task_input_locked",
                 "task_not_zero_match",
+                "task_revision_conflict",
+                "task_file_provenance_required",
                 "precheck_required",
             }
             else 400
@@ -90,13 +92,23 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
-    @app.post("/audit-tasks/{task_id}/end", response_model=wc.AuditRecognitionTask)
-    def audit_tasks_end(task_id: str, request: Request) -> JSONResponse:
+    @app.get("/audit-tasks/{task_id}/recognitions/{request_id}", response_model=wc.AuditRecognitionRead)
+    def audit_tasks_recognition_get(task_id: str, request_id: str, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)
         if denied:
             return denied
         try:
-            return JSONResponse(store.end_unmatched_task(principal, task_id))
+            return JSONResponse(store.get_audit_task_recognition(principal, task_id, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.post("/audit-tasks/{task_id}/end", response_model=wc.AuditRecognitionTask, openapi_extra=wc.openapi_body(wc.AuditTaskEndRequest))
+    def audit_tasks_end(task_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.end_unmatched_task(principal, task_id, cast(int, body.get("expected_revision")), body.get("removals", [])))
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

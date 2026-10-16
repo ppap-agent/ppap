@@ -795,6 +795,7 @@ class AuditRecognitionFile(TypedDict):
     selection: Literal["selected", "unselected", "removed"]
     removal_reason: str | None
     validation: AuditFileValidation
+    validation_id: NotRequired[str]
     match: AuditRuleMatch | None
 
 
@@ -877,6 +878,8 @@ class AuditTaskIdentity(TypedDict):
     customer_preference: str | None
     completion_reason: Literal["no_matching_rules", "processed"] | None
     estimated_points: int | None
+    input_revision: NotRequired[int]
+    recognition_request_id: NotRequired[str]
 
 
 class AuditRecognitionTask(AuditTaskIdentity):
@@ -897,6 +900,26 @@ class AuditRecognitionRequest(TypedDict):
     analysis_mode: AnalysisMode
     customer_preference: str | None
     files: list[AuditRecognitionInput]
+    task_id: NotRequired[str]
+    expected_revision: NotRequired[int]
+
+
+class AuditRecognitionRead(TypedDict):
+    request_id: str
+    task_id: str
+    state: Literal["accepted", "unknown"]
+    input_revision: int | None
+    task: AuditRecognitionTask | None
+
+
+class AuditTaskEndRequest(TypedDict):
+    expected_revision: int
+    removals: NotRequired[list[AuditTaskRemoval]]
+
+
+class AuditTaskRemoval(TypedDict):
+    file_version_id: str
+    removal_reason: str
 
 
 class AuditRecognitionTasks(TypedDict):

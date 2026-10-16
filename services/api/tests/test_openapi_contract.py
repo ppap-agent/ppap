@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from ppap_api import app
@@ -23,7 +24,8 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("POST", "/audit-tasks"): True,
     ("GET", "/audit-tasks"): False,
     ("GET", "/audit-tasks/{task_id}"): False,
-    ("POST", "/audit-tasks/{task_id}/end"): False,
+    ("GET", "/audit-tasks/{task_id}/recognitions/{request_id}"): False,
+    ("POST", "/audit-tasks/{task_id}/end"): True,
     ("POST", "/drafts"): True,
     ("GET", "/drafts"): False,
     ("POST", "/file-analyses"): True,
@@ -285,7 +287,7 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(task["properties"]["state"]["enum"], ["matching", "pending_confirm", "reviewing", "completed"])
         self.assertIn("completion_reason", task["properties"])
         self.assertNotIn("/tasks", spec["paths"])
-        self.assertNotIn("AuditTask", str(spec["paths"]))
+        self.assertNotIn('"#/components/schemas/AuditTask"', json.dumps(spec["paths"]))
         self.assertIs(app.openapi(), spec)
 
         def check_refs(value):

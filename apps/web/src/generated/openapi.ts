@@ -56,6 +56,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/recognitions/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Tasks Recognition Get */
+        get: operations["audit_tasks_recognition_get_audit_tasks__task_id__recognitions__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capabilities": {
         parameters: {
             query?: never;
@@ -1400,6 +1417,23 @@ export interface components {
              */
             selection: "selected" | "unselected" | "removed";
             validation: components["schemas"]["AuditFileValidation"];
+            /** Validation Id */
+            validation_id?: string;
+        };
+        /** AuditRecognitionRead */
+        AuditRecognitionRead: {
+            /** Input Revision */
+            input_revision: number | null;
+            /** Request Id */
+            request_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "accepted" | "unknown";
+            task: components["schemas"]["AuditRecognitionTask"] | null;
+            /** Task Id */
+            task_id: string;
         };
         /**
          * AuditRecognitionTask
@@ -1423,8 +1457,12 @@ export interface components {
             files: components["schemas"]["AuditRecognitionFile"][];
             /** Id */
             id: string;
+            /** Input Revision */
+            input_revision?: number;
             /** Number */
             number: string;
+            /** Recognition Request Id */
+            recognition_request_id?: string;
             /** Round Id */
             round_id: string | null;
             /** Source Draft Id */
@@ -1708,11 +1746,15 @@ export interface components {
             files: components["schemas"]["AuditTaskFile"][];
             /** Id */
             id: string;
+            /** Input Revision */
+            input_revision?: number;
             /** Notification Enabled */
             notification_enabled?: boolean;
             /** Number */
             number: string;
             progress?: components["schemas"]["AuditProgress"];
+            /** Recognition Request Id */
+            recognition_request_id?: string;
             report_package?: components["schemas"]["AuditReportPackage"] | null;
             report_share?: components["schemas"]["AuditReportShare"] | null;
             /** Round Id */
@@ -1744,6 +1786,8 @@ export interface components {
              */
             selection: "selected" | "unselected" | "removed";
             validation: components["schemas"]["AuditFileValidation"];
+            /** Validation Id */
+            validation_id?: string;
         };
         /**
          * AuditTemplateCatalog
@@ -2993,6 +3037,8 @@ export interface operations {
                     analysis_mode: "standard" | "deep";
                     /** Customer Preference */
                     customer_preference: string | null;
+                    /** Expected Revision */
+                    expected_revision?: number;
                     /** Files */
                     files: {
                         /** File Version Id */
@@ -3009,6 +3055,8 @@ export interface operations {
                     }[];
                     /** Request Id */
                     request_id: string;
+                    /** Task Id */
+                    task_id?: string;
                 };
             };
         };
@@ -3073,7 +3121,21 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Expected Revision */
+                    expected_revision: number;
+                    /** Removals */
+                    removals?: {
+                        /** File Version Id */
+                        file_version_id: string;
+                        /** Removal Reason */
+                        removal_reason: string;
+                    }[];
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3082,6 +3144,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditRecognitionTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_tasks_recognition_get_audit_tasks__task_id__recognitions__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRecognitionRead"];
                 };
             };
             /** @description Validation Error */

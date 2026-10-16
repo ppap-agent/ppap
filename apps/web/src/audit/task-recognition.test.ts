@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import type {components} from '../generated/openapi.ts'
+import {createTaskRecognition, type AuditRecognitionAdapter} from './task-recognition.ts'
+
+type Task = components['schemas']['AuditTask']
+const files: Task['files'] = [{file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 10, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: null}]
+const input = () => ({files: structuredClone(files), mode: 'standard' as const, customer: null, previous: null})
+function task(requestId: string): Task {
+  return {id: requestId, number: 'PPAP-20261016-001', state: 'matching', analysis_mode: 'standard', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
+}
+
+test('a lost recognition reply retains its input and can only read the original request', async () => {
+  const requests: string[] = [], receipts: string[] = [], accepted: Task[] = []
+  const adapter: AuditRecognitionAdapter = {
+    match: async (_files, _mode, _customer, _previous, requestId) => {requests.push(requestId); throw new Error('reply lost')},
+    readRecognition: async (taskId, requestId) => {receipts.push(requestId); return {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: task(requestId)}},
+  }
+  const recognition = createTaskRecognition(adapter, next => accepted.push(next))
+  const draft = input()
+  await recognition.start('draft-a', draft)
+  const unknown = recognition.get('draft-a')!
+  assert.equal(unknown.phase, 'unknown')
+  draft.files[0].selection = 'unselected'
+  await recognition.start('draft-a', draft)
+  await recognition.read('draft-a')
+  assert.deepEqual(receipts, requests)
+  assert.equal(requests.length, 1)
+  assert.equal(accepted[0].files[0].selection, 'selected')
+  assert.equal(accepted[0].input_revision, 0)
+  assert.equal(recognition.get('draft-a')!.phase, 'accepted')
+})
+
+test('an accepted receipt cannot replace the submitted file snapshot', async () => {
+  const accepted: Task[] = []
+  const recognition = createTaskRecognition({
+    match: async (_files, _mode, _customer, _previous, requestId) => {
+      const next = task(requestId)
+      next.files[0].file.original_filename = 'different.xlsx'
+      return next
+    },
+    readRecognition: async () => {throw new Error('not read')},
+  }, next => accepted.push(next))
+  await recognition.start('draft-a', input())
+  assert.equal(recognition.get('draft-a')!.phase, 'unknown')
+  assert.deepEqual(accepted, [])
+})
+
+test('recognition accepts the server-normalized removal reason without losing the excluded file', async () => {
+  const draft = input()
+  draft.files.push({...structuredClone(files[0]), file: {...files[0].file, id: 'version-b', file_id: 'file-b'}, selection: 'removed', removal_reason: '  文件加密  '})
+  const accepted: Task[] = []
+  const recognition = createTaskRecognition({
+    match: async (submitted, _mode, _customer, _previous, requestId) => ({...task(requestId), files: submitted.map(row => ({...row, removal_reason: row.removal_reason?.trim() || null}))}),
+    readRecognition: async () => {throw new Error('not read')},
+  }, next => accepted.push(next))
+  await recognition.start('draft-a', draft)
+  assert.equal(recognition.get('draft-a')!.phase, 'accepted')
+  assert.equal(accepted[0].files[1].selection, 'removed')
+  assert.equal(accepted[0].files[1].removal_reason, '文件加密')
+})
+
+test('an accepted request superseded by another input revision has an explicit conflict', async () => {
+  const accepted: Task[] = []
+  const recognition = createTaskRecognition({
+    match: async () => {throw new Error('reply lost')},
+    readRecognition: async (taskId, requestId) => ({task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: {...task(requestId), input_revision: 1, recognition_request_id: 'another-request'}}),
+  }, next => accepted.push(next))
+  await recognition.start('draft-a', input())
+  await recognition.read('draft-a')
+  assert.equal(recognition.get('draft-a')!.phase, 'conflict')
+  assert.equal(recognition.get('draft-a')!.currentRevision, 1)
+  assert.deepEqual(accepted, [])
+})
+
+test('an accepted recognition receipt for an ended task has a current-task conflict exit', async () => {
+  const recognition = createTaskRecognition({
+    match: async () => {throw new Error('reply lost')},
+    readRecognition: async (taskId, requestId) => ({task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: {...task(requestId), state: 'completed', completion_reason: 'no_matching_rules'}}),
+  }, () => {throw new Error('must retain the draft until the current task is read')})
+  await recognition.start('draft-a', input())
+  await recognition.read('draft-a')
+  assert.equal(recognition.get('draft-a')!.phase, 'conflict')
+  assert.equal(recognition.get('draft-a')!.currentRevision, 0)
+})

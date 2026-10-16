@@ -738,11 +738,16 @@ class AuthStore:
             return rule_parse_view(parsed, row[0], row[1], row[2], bool(row[3]))
 
     def create_audit_task(self, principal: Principal, body: dict) -> dict:
-        task_id = _as_uuid(str(body.get("request_id") or ""))
+        request_id = _as_uuid(str(body.get("request_id") or ""))
+        revising = "task_id" in body or "expected_revision" in body
+        task_id = _as_uuid(str(body.get("task_id") or "")) if revising else request_id
+        expected = body.get("expected_revision")
         files = body.get("files")
         customer = body.get("customer_preference")
-        if not task_id or not isinstance(files, list) or not files or (customer is not None and (not isinstance(customer, str) or not customer.strip() or len(customer) > 500)):
+        if not request_id or not task_id or not isinstance(files, list) or not files or (customer is not None and (not isinstance(customer, str) or not customer.strip() or len(customer) > 500)):
             raise ValueError("invalid_task_request")
+        if revising and (type(expected) is not int or expected < 0):
+            raise ValueError("invalid_task_revision")
         mode = self._offered_analysis_mode(body.get("analysis_mode"))
         normalized: list[dict[str, Any]] = []
         for raw in files:
@@ -761,9 +766,40 @@ class AuthStore:
             normalized.append({"file_version_id": vid, "validation_id": validation_id, "selection": selection, "removal_reason": reason})
         if not any(row["selection"] == "selected" for row in normalized):
             raise ValueError("selected_file_required")
-        fingerprint = hashlib.sha256(json.dumps({"files": normalized, "analysis_mode": mode, "customer_preference": customer}, sort_keys=True).encode()).hexdigest()
+        inputs = {"files": normalized, "analysis_mode": mode, "customer_preference": customer}
+        if revising:
+            inputs.update(task_id=task_id, expected_revision=expected)
+        fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
         with self._conn() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition-request:" + request_id,))
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition:" + task_id,))
+            if revising:
+                draft = self._recognition_owner(conn, principal, task_id, lock=True)
+                receipt = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+                if receipt:
+                    if str(receipt[0]) != principal.tenant_id:
+                        raise KeyError("missing")
+                    accepted = receipt[2].get("recognition_request") or {}
+                    if receipt[1] != "file_analysis" or receipt[2].get("task_id") != task_id or accepted.get("fingerprint") != fingerprint:
+                        raise ValueError("idempotency_conflict")
+                    return self._recognition_public(conn, principal, task_id)
+                if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (request_id,)).fetchone():
+                    raise ValueError("idempotency_conflict")
+                if draft["input_revision"] != expected:
+                    raise ValueError("task_revision_conflict")
+                if draft["status"] != "open" or draft["task_completion_reason"]:
+                    raise ValueError("task_input_locked")
+                previous = {str(row[0]) for row in conn.execute("SELECT file_version_id FROM product.draft_items WHERE draft_id = %s", (task_id,)).fetchall()}
+                if not previous.issubset({row["file_version_id"] for row in normalized}):
+                    raise ValueError("task_file_provenance_required")
+                revision = expected + 1
+                self._recognition_inputs(conn, principal, task_id, normalized, customer, revision, request_id, fingerprint)
+                conn.execute(
+                    """UPDATE product.audit_drafts SET input_revision = %s, recognition_request_id = %s,
+                    analysis_mode = %s, customer_preference = %s, updated_at = now() WHERE id = %s""",
+                    (revision, request_id, mode, customer, task_id),
+                )
+                return self._recognition_public(conn, principal, task_id)
             existing = conn.execute("SELECT task_fingerprint FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
             if existing:
                 self._recognition_owner(conn, principal, task_id)
@@ -772,15 +808,6 @@ class AuthStore:
                 return self._recognition_public(conn, principal, task_id)
             if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
                 raise KeyError("missing")
-            prepared = self._prepared_items(conn, principal, [{"file_version_id": row["file_version_id"], "role": "reference"} for row in normalized])
-            for row, source in zip(normalized, prepared):
-                validation = self.get_file_validation(principal, row["validation_id"])
-                if validation["source_file_version_id"] != row["file_version_id"] or validation["source_file_id"] != source["file_id"]:
-                    raise ValueError("precheck_required")
-                if row["selection"] != "removed" and (validation["status"] != "succeeded" or (validation.get("result") or {}).get("state") != "valid"):
-                    raise ValueError("precheck_required")
-            # One statement's published version set, then one frozen candidate list.
-            candidates = latest_rule_versions(self.list_rules(principal.tenant_id))
             day = cast(tuple, conn.execute("SELECT (now() AT TIME ZONE 'UTC')::date").fetchone())[0]
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"task-number:{principal.tenant_id}:{day}",))
             sequence = cast(tuple, conn.execute("SELECT COALESCE(MAX(task_sequence), 0) + 1 FROM product.audit_drafts WHERE tenant_id = %s AND task_day = %s", (principal.tenant_id, day)).fetchone())[
@@ -793,25 +820,42 @@ class AuthStore:
                 (task_id, principal.tenant_id, principal.user_id, mode, fingerprint, day, sequence, customer),
             )
             conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read'), (%s, %s, 'review')", (task_id, principal.user_id, task_id, principal.user_id))
-            for position, (row, source) in enumerate(zip(normalized, prepared)):
-                analysis_id = str(uuid.uuid4()) if row["selection"] == "selected" else None
-                if analysis_id:
-                    payload = {
-                        "task_id": task_id,
-                        "source_file_id": source["file_id"],
-                        "source_file_version_id": row["file_version_id"],
-                        "document_type": "",
-                        "candidate_rules": candidates,
-                        "customer_preference": customer,
-                        "matching_scope": "customer_document_type",
-                    }
-                    conn.execute("INSERT INTO engine.jobs (id, tenant_id, kind, payload, status) VALUES (%s, %s, 'file_analysis', %s, 'queued')", (analysis_id, principal.tenant_id, Jsonb(payload)))
-                conn.execute(
-                    """INSERT INTO product.draft_items (draft_id, file_version_id, role, selection, removal_reason, validation_job_id, analysis_job_id, position)
-                    VALUES (%s, %s, 'reference', %s, %s, %s, %s, %s)""",
-                    (task_id, row["file_version_id"], row["selection"], row["removal_reason"], row["validation_id"], analysis_id, position),
-                )
+            self._recognition_inputs(conn, principal, task_id, normalized, customer, 0)
             return self._recognition_public(conn, principal, task_id)
+
+    def _recognition_inputs(self, conn, principal, task_id, files, customer, revision, request_id=None, fingerprint=None) -> None:
+        prepared = self._prepared_items(conn, principal, [{"file_version_id": row["file_version_id"], "role": "reference"} for row in files])
+        for row, source in zip(files, prepared):
+            validation = self.get_file_validation(principal, row["validation_id"])
+            if validation["source_file_version_id"] != row["file_version_id"] or validation["source_file_id"] != source["file_id"]:
+                raise ValueError("precheck_required")
+            if row["selection"] != "removed" and (validation["status"] != "succeeded" or (validation.get("result") or {}).get("state") != "valid"):
+                raise ValueError("precheck_required")
+        candidates = latest_rule_versions(self.list_rules(principal.tenant_id))
+        conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (task_id,))
+        receipt_id = request_id
+        for position, (row, source) in enumerate(zip(files, prepared)):
+            analysis_id = (receipt_id or str(uuid.uuid4())) if row["selection"] == "selected" else None
+            if analysis_id:
+                payload = {
+                    "task_id": task_id,
+                    "task_revision": revision,
+                    "source_file_id": source["file_id"],
+                    "source_file_version_id": row["file_version_id"],
+                    "document_type": "",
+                    "candidate_rules": candidates,
+                    "customer_preference": customer,
+                    "matching_scope": "customer_document_type",
+                }
+                if receipt_id:
+                    payload["recognition_request"] = {"request_id": receipt_id, "input_revision": revision, "fingerprint": fingerprint}
+                    receipt_id = None
+                conn.execute("INSERT INTO engine.jobs (id, tenant_id, kind, payload, status) VALUES (%s, %s, 'file_analysis', %s, 'queued')", (analysis_id, principal.tenant_id, Jsonb(payload)))
+            conn.execute(
+                """INSERT INTO product.draft_items (draft_id, file_version_id, role, selection, removal_reason, validation_job_id, analysis_job_id, position)
+                VALUES (%s, %s, 'reference', %s, %s, %s, %s, %s)""",
+                (task_id, row["file_version_id"], row["selection"], row["removal_reason"], row["validation_id"], analysis_id, position),
+            )
 
     def _recognition_owner(self, conn, principal: Principal, task_id: str, *, lock: bool = False) -> dict:
         parsed = _as_uuid(task_id)
@@ -832,8 +876,45 @@ class AuthStore:
         return draft
 
     def get_audit_task(self, principal: Principal, task_id: str) -> dict:
-        with self._conn() as conn:
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             return self._recognition_public(conn, principal, task_id)
+
+    def recognition_job_current(self, claimed: ClaimedJob) -> bool:
+        """Skip obsolete queued work; running calls still cannot change Task refs."""
+        with self._conn() as conn:
+            return (
+                conn.execute(
+                    """SELECT 1 FROM product.audit_drafts d JOIN product.draft_items i ON i.draft_id = d.id
+                WHERE d.id = %s AND d.tenant_id = %s AND d.status = 'open'
+                AND d.task_completion_reason IS NULL AND d.input_revision = %s
+                AND i.analysis_job_id = %s AND i.selection = 'selected'""",
+                    (claimed.payload["task_id"], claimed.tenant_id, claimed.payload.get("task_revision", 0), claimed.id),
+                ).fetchone()
+                is not None
+            )
+
+    def get_audit_task_recognition(self, principal: Principal, task_id: str, request_id: str) -> dict:
+        parsed_task, parsed_request = _as_uuid(task_id), _as_uuid(request_id)
+        if not parsed_task or not parsed_request:
+            raise ValueError("invalid_task_request")
+        task_id, request_id = parsed_task, parsed_request
+        read: dict[str, Any] = {"request_id": request_id, "task_id": task_id, "state": "unknown", "input_revision": None, "task": None}
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            if task_id == request_id and not conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
+                return read
+            self._recognition_owner(conn, principal, task_id)
+            revision = 0 if task_id == request_id else None
+            if revision is None:
+                job = conn.execute("SELECT payload FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'file_analysis'", (request_id, principal.tenant_id)).fetchone()
+                if job and job[0].get("task_id") == task_id:
+                    receipt = job[0].get("recognition_request") or {}
+                    if receipt.get("request_id") == request_id:
+                        revision = receipt.get("input_revision")
+            if revision is not None:
+                read.update(state="accepted", input_revision=revision, task=self._recognition_public(conn, principal, task_id))
+            return read
 
     def _recognition_public(self, conn, principal: Principal, task_id: str) -> dict:
         draft = self._recognition_owner(conn, principal, task_id)
@@ -871,7 +952,12 @@ class AuthStore:
                     "gaps": [],
                 }
                 if status in {"succeeded", "failed", "cancelled"}:
-                    bound = payload.get("task_id") == task_id and payload.get("source_file_version_id") == vid and result.get("source_file_version_id") == vid
+                    bound = (
+                        payload.get("task_id") == task_id
+                        and payload.get("task_revision", 0) == draft["input_revision"]
+                        and payload.get("source_file_version_id") == vid
+                        and result.get("source_file_version_id") == vid
+                    )
                     state = result.get("matching_status") if status == "succeeded" and bound else "failed"
                     if not bound:
                         result = {"notices": ["matching_snapshot_invalid"]}
@@ -893,7 +979,16 @@ class AuthStore:
                     match["gaps"] = ["matching_result_unknown"]
                 if row["analysis_updated_at"]:
                     updated = max(updated, row["analysis_updated_at"])
-            files.append({"file": version.public(), "selection": row["selection"], "removal_reason": row["removal_reason"], "validation": checked, "match": match})
+            files.append(
+                {
+                    "file": version.public(),
+                    "selection": row["selection"],
+                    "removal_reason": row["removal_reason"],
+                    "validation_id": str(row["validation_job_id"]),
+                    "validation": checked,
+                    "match": match,
+                }
+            )
         selected = [row for row in files if row["selection"] == "selected"]
         matching = any(row["match"]["state"] in {"pending", "matching"} for row in selected)
         return {
@@ -904,6 +999,8 @@ class AuthStore:
             "created_at": draft["created_at"].isoformat(),
             "updated_at": updated.isoformat(),
             "source_draft_id": task_id,
+            "input_revision": draft["input_revision"],
+            "recognition_request_id": str(draft["recognition_request_id"] or draft["id"]),
             "round_id": None,
             "customer_preference": draft["customer_preference"],
             "files": files,
@@ -915,7 +1012,8 @@ class AuthStore:
         if state not in {"", "matching", "pending_confirm", "reviewing", "completed"}:
             raise ValueError("invalid_task_state")
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        with self._conn() as conn:
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = conn.execute(
                 """SELECT d.id FROM product.audit_drafts d WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
                 AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
@@ -928,15 +1026,34 @@ class AuthStore:
             ).fetchall()
             return [self._recognition_public(conn, principal, str(row[0])) for row in rows]
 
-    def end_unmatched_task(self, principal: Principal, task_id: str) -> dict:
+    def end_unmatched_task(self, principal: Principal, task_id: str, expected_revision: int, removals: list) -> dict:
         with self._conn() as conn, conn.transaction():
-            self._recognition_owner(conn, principal, task_id, lock=True)
+            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            if type(expected_revision) is not int or expected_revision < 0:
+                raise ValueError("invalid_task_revision")
+            if draft["input_revision"] != expected_revision:
+                raise ValueError("task_revision_conflict")
             task = self._recognition_public(conn, principal, task_id)
+            if not isinstance(removals, list):
+                raise ValueError("invalid_removal_reason")
+            removed: dict[str, str] = {}
+            for raw in removals:
+                if not isinstance(raw, dict):
+                    raise ValueError("invalid_removal_reason")
+                vid, reason = _as_uuid(str(raw.get("file_version_id") or "")), raw.get("removal_reason")
+                if not vid or vid in removed or not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+                    raise ValueError("invalid_removal_reason")
+                row = next((row for row in task["files"] if row["file"]["id"] == vid), None)
+                if not row or not (row["selection"] == "selected" and (row["match"] or {}).get("state") == "unmatched" or row["selection"] == "removed" and row["removal_reason"] == reason.strip()):
+                    raise ValueError("task_not_zero_match")
+                removed[vid] = reason.strip()
             if task["completion_reason"] == "no_matching_rules":
                 return task
             selected = [row for row in task["files"] if row["selection"] == "selected"]
             if task["state"] != "pending_confirm" or not selected or any(row["match"]["state"] != "unmatched" for row in selected):
                 raise ValueError("task_not_zero_match")
+            for vid, reason in removed.items():
+                conn.execute("UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s", (reason, task_id, vid))
             conn.execute("UPDATE product.audit_drafts SET task_completion_reason = 'no_matching_rules', updated_at = now() WHERE id = %s", (task_id,))
             return self._recognition_public(conn, principal, task_id)
 

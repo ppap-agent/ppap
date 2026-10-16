@@ -66,7 +66,7 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert task["round_id"] is None
     assert task["files"][0]["match"]["state"] == "pending"
     assert client.post("/audit-tasks", json=body).json() == task
-    assert client.post(f"/audit-tasks/{task['id']}/end").status_code == 409
+    assert client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0}).status_code == 409
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     # New HTTP session reads server facts, not the original browser's memory.
     client.cookies.clear()
@@ -78,11 +78,11 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert recovered["estimated_points"] == 0
     assert client.get("/audit-tasks").json()["tasks"] == [recovered]
     assert client.get("/drafts").json()["drafts"] == []
-    ended = client.post(f"/audit-tasks/{task['id']}/end")
+    ended = client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0})
     assert ended.status_code == 200
     assert ended.json()["state"] == "completed"
     assert ended.json()["completion_reason"] == "no_matching_rules"
-    assert client.post(f"/audit-tasks/{task['id']}/end").json() == ended.json()
+    assert client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0}).json() == ended.json()
     assert client.get(f"/audit-tasks/{task['id']}").json() == ended.json()
     assert client.get("/audit-tasks", params={"state": "completed", "q": "控制计划"}).json()["tasks"] == [ended.json()]
     assert client.get("/audit-tasks", params={"state": "matching"}).json()["tasks"] == []
@@ -135,6 +135,138 @@ def test_concurrent_creation_coalesces_and_changed_inputs_cannot_replace_it(task
     assert len(client.get("/audit-tasks", params={"offset": page["next_offset"]}).json()["tasks"]) == 2
 
 
+def test_rematching_keeps_the_task_and_ignores_a_previous_revision_result(task_system):
+    client, worker = task_system
+    first = checked_file(client, worker)
+    replacement = checked_file(client, worker, "新版控制计划.xlsx")
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [first, replacement]}
+    task = client.post("/audit-tasks", json=body).json()
+    old_jobs = [worker.claim_job("old") for _ in range(2)]
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0, "files": [{**first, "selection": "removed", "removal_reason": "由新版替换"}, replacement]}
+    response = client.post("/audit-tasks", json=revised)
+    assert response.status_code == 202
+    current = response.json()
+    assert current["id"] == task["id"]
+    assert current["number"] == task["number"]
+    assert current["input_revision"] == 1
+    assert current["recognition_request_id"] == revised["request_id"]
+    assert current["files"][0]["match"] is None
+    assert current["files"][1]["validation_id"] == replacement["validation_id"]
+    for job in old_jobs:
+        assert worker.complete_job(job, "old", {"source_file_version_id": job.payload["source_file_version_id"], "matching_status": "unmatched"})
+    path = f"/audit-tasks/{task['id']}"
+    assert client.get(path).json() == current
+    process_claimed(worker, worker.claim_job("new"), "new", rule_ai=MetadataAI())
+    recovered = client.get(path).json()
+    assert recovered["state"] == "pending_confirm"
+    assert recovered["files"][1]["match"]["state"] == "unmatched"
+    assert client.post("/audit-tasks", json=revised).json() == recovered
+    assert client.post("/audit-tasks", json=body).json() == recovered
+    assert len(client.get("/audit-tasks").json()["tasks"]) == 1
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+
+
+def test_recognition_receipts_survive_lost_responses_and_keep_their_original_revision(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    task = client.post("/audit-tasks", json=body).json()
+    request_id = str(uuid.uuid4())
+    path = f"/audit-tasks/{task['id']}/recognitions/"
+    assert client.get(path + request_id).json() == {"request_id": request_id, "task_id": task["id"], "state": "unknown", "input_revision": None, "task": None}
+    revised = {**body, "request_id": request_id, "task_id": task["id"], "expected_revision": 0, "customer_preference": "测试客户"}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(pool.map(lambda _: client.post("/audit-tasks", json=revised), range(2)))
+    assert [reply.status_code for reply in replies] == [202, 202]
+    current = replies[0].json()
+    assert replies[1].json() == current
+    assert client.get(path + request_id).json() == {"request_id": request_id, "task_id": task["id"], "state": "accepted", "input_revision": 1, "task": current}
+    assert client.get(path + body["request_id"]).json() == {"request_id": body["request_id"], "task_id": task["id"], "state": "accepted", "input_revision": 0, "task": current}
+    conflict = client.post("/audit-tasks", json={**revised, "customer_preference": "修改同一个请求"})
+    assert conflict.status_code == 409
+    assert conflict.json() == {"error": "idempotency_conflict"}
+
+
+def test_competing_revisions_and_stale_zero_match_end_cannot_replace_current_input(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    task = client.post("/audit-tasks", json=body).json()
+    process_claimed(worker, worker.claim_job("initial"), "initial", rule_ai=MetadataAI())
+    revisions = [{**body, "task_id": task["id"], "expected_revision": 0, "request_id": str(uuid.uuid4()), "customer_preference": customer} for customer in ("客户A", "客户B")]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(pool.map(lambda item: client.post("/audit-tasks", json=item), revisions))
+    assert sorted(reply.status_code for reply in replies) == [202, 409]
+    loser = next(reply for reply in replies if reply.status_code == 409)
+    assert loser.json() == {"error": "task_revision_conflict"}
+    process_claimed(worker, worker.claim_job("current"), "current", rule_ai=MetadataAI())
+    path = f"/audit-tasks/{task['id']}"
+    current = client.get(path).json()
+    assert current["input_revision"] == 1
+    assert current["files"][0]["match"]["state"] == "unmatched"
+    stale = client.post(path + "/end", json={"expected_revision": 0})
+    assert stale.status_code == 409
+    assert stale.json() == {"error": "task_revision_conflict"}
+    assert client.get(path).json() == current
+    ended = client.post(path + "/end", json={"expected_revision": 1, "removals": [{"file_version_id": file["file_version_id"], "removal_reason": "无可用规则"}]})
+    assert ended.status_code == 200
+    assert ended.json()["state"] == "completed"
+    assert ended.json()["files"][0]["selection"] == "removed"
+    assert ended.json()["files"][0]["removal_reason"] == "无可用规则"
+    assert client.post(path + "/end", json={"expected_revision": 1, "removals": [{"file_version_id": file["file_version_id"], "removal_reason": "无可用规则"}]}).json() == ended.json()
+
+
+def test_superseded_queued_recognition_does_not_read_the_file_or_call_the_model(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    task = client.post("/audit-tasks", json=body).json()
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    old = worker.claim_job("superseded")
+
+    class MustNotCallAI:
+        def structured_completion(self, **_request):
+            pytest.fail("superseded recognition must not start model work")
+
+    assert process_claimed(worker, old, "superseded", rule_ai=MustNotCallAI()) == {"error": "recognition_superseded"}
+    current = worker.claim_job("current")
+    process_claimed(worker, current, "current", rule_ai=MetadataAI())
+    assert client.get(f"/audit-tasks/{task['id']}").json()["state"] == "pending_confirm"
+
+
+def test_rematching_requires_retained_file_provenance_and_exact_prechecks(task_system):
+    client, worker = task_system
+    first, second = checked_file(client, worker), checked_file(client, worker, "另一份.xlsx")
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [first, second]}
+    task = client.post("/audit-tasks", json=body).json()
+    revise = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0}
+    assert client.post("/audit-tasks", json={**revise, "files": [second]}).json() == {"error": "task_file_provenance_required"}
+    wrong_receipt = [{**first, "validation_id": second["validation_id"]}, second]
+    assert client.post("/audit-tasks", json={**revise, "files": wrong_receipt}).json() == {"error": "precheck_required"}
+    assert client.get(f"/audit-tasks/{task['id']}").json() == task
+    unknown_id = str(uuid.uuid4())
+    assert client.get(f"/audit-tasks/{unknown_id}/recognitions/{unknown_id}").json()["state"] == "unknown"
+
+
+def test_recognition_request_collision_does_not_expose_another_tenants_job(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    task = client.post("/audit-tasks", json=body).json()
+    assert worker.claim_job("held-original") is not None
+    task = client.get(f"/audit-tasks/{task['id']}").json()
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
+    foreign = checked_file(client, worker)
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    revise = {**body, "task_id": task["id"], "expected_revision": 0, "request_id": foreign["validation_id"]}
+    assert client.post("/audit-tasks", json=revise).status_code == 403
+    assert client.get(f"/audit-tasks/{task['id']}").json() == task
+
+
 def test_unselected_and_removed_files_keep_provenance_without_recognition(task_system):
     client, worker = task_system
     files = [checked_file(client, worker, name) for name in ("控制计划.xlsx", "未选择.xlsx", "已移除.xlsx")]
@@ -152,7 +284,7 @@ def test_unselected_and_removed_files_keep_provenance_without_recognition(task_s
     process_claimed(worker, job, "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     assert client.get(path).json()["estimated_points"] == 0
-    assert client.post(path + "/end").status_code == 200
+    assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 200
 
 
 def publish_rule(client, file, *, predecessor=None, title="客户控制计划", document_type="控制计划"):
@@ -191,7 +323,7 @@ def test_two_tasks_bind_their_own_jobs_and_candidate_versions(task_system):
     assert first_result["files"][0]["match"]["metadata"]["part_number"] == "P-1"
     assert first_result["estimated_points"] == 500
     assert client.get(second_path).json() == second_result
-    assert client.post(first_path + "/end").status_code == 409
+    assert client.post(first_path + "/end", json={"expected_revision": 0}).status_code == 409
     assert client.get(first_path).json() == first_result
     assert client.get(first_path.upper().replace("/AUDIT-TASKS/", "/audit-tasks/")).json() == first_result
 
@@ -246,7 +378,7 @@ def test_ambiguous_rules_are_not_reported_as_definitive_zero_match(task_system):
     assert recovered["files"][0]["match"]["state"] == "failed"
     assert recovered["files"][0]["match"]["gaps"] == ["ambiguous_available_rules"]
     assert recovered["estimated_points"] is None
-    assert client.post(path + "/end").status_code == 409
+    assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
     assert client.get("/rounds").json()["rounds"] == []
 
 
@@ -274,7 +406,8 @@ def test_task_reads_and_job_reads_require_the_private_draft_owner(task_system, a
             assert latest.json()["analysis"]["id"] == standalone["id"]
         assert client.get("/audit-tasks").json()["tasks"] == []
         assert client.get(f"/audit-tasks/{task['id']}").status_code == 403
-        assert client.post(f"/audit-tasks/{task['id']}/end").status_code == 403
+        assert client.get(f"/audit-tasks/{task['id']}/recognitions/{task['id']}").status_code == 403
+        assert client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0}).status_code == 403
         assert client.post("/audit-tasks", json=body).status_code == 403
         assert client.get(f"/file-analyses/{job.id}").status_code == 403
     client.cookies.clear()
@@ -293,7 +426,7 @@ def test_failed_and_unknown_recognition_are_not_definitive_zero_matches(task_sys
     unknown = client.get(path).json()
     assert unknown["state"] == "matching"
     assert unknown["files"][0]["match"]["gaps"] == ["matching_result_unknown"]
-    assert client.post(path + "/end").status_code == 409
+    assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
     assert worker.claim_job("replacement") is None
     assert not worker.complete_job(job, "replacement", {"matching_status": "unmatched"})
 
@@ -307,5 +440,5 @@ def test_failed_and_unknown_recognition_are_not_definitive_zero_matches(task_sys
     assert failed["files"][0]["match"]["state"] == "failed"
     assert failed["estimated_points"] is None
     assert "private provider" not in json.dumps(failed)
-    assert client.post(path + "/end").status_code == 409
+    assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
     assert client.get("/rounds").json()["rounds"] == []
