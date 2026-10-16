@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react'
+import {useContext, useEffect, useState} from 'react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
@@ -7,15 +7,17 @@ import {message} from '../journey/remote'
 import {AuditReviewContent, type OriginalRenderer} from './review-content'
 import {HistoricalFindings} from './historical-findings'
 import {sameSnapshot} from './result-projection'
+import {ReviewEditorContext} from './review-editor'
 
 type Round = components['schemas']['Round']
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<Round>
 
 export function AuditRoundReader({roundId, readRound, renderOriginal, returnHref = `/?round=${encodeURIComponent(roundId)}`}: {roundId: string; readRound: ReadRound; renderOriginal?: OriginalRenderer; returnHref?: string}) {
+  const reviewEditor = useContext(ReviewEditorContext)
   const [round, setRound] = useState<Round | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0), [selected, setSelected] = useState('')
   useEffect(() => {
     const controller = new AbortController()
-    setRound(null); setError(''); setSelected('')
+    setRound(null); setError('')
     void readRound(roundId, controller.signal).then(value => {
       if (controller.signal.aborted) return
       const files = value.read_view?.files
@@ -23,7 +25,8 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, returnHref
       setRound(value)
     }).catch(cause => {if (!controller.signal.aborted) setError(message(cause))})
     return () => controller.abort()
-  }, [roundId, readRound, revision])
+  }, [roundId, readRound, revision, reviewEditor?.revision])
+  useEffect(() => {setSelected('')}, [roundId])
   const view = round?.id === roundId ? round.read_view : null
   const file = view?.files.find(row => row.file.id === selected) ?? view?.files.find(row => row.role === 'target') ?? view?.files[0]
   const versions = view?.files.map(row => row.file.id) || []
@@ -36,7 +39,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, returnHref
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <p role="status">正在读取本轮审核…</p> : <>
       <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => setSelected(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>
       {file ? file.role === 'target' ? <AuditReviewContent key={`${roundId}:${file.file.id}`} file={file} roundId={roundId} frozenRule={file.rule} frozenFileVersionIds={versions} originals={originals} renderOriginal={renderOriginal}/> : <section aria-label="本轮比对原件" className="space-y-4"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal ? renderOriginal(file.file, null, roundId) : <p>原件暂不可预览。</p>}</section> : <p>本轮没有可读取的文件。</p>}
-      <HistoricalFindings findings={view.unassigned_findings} roundId={roundId} versions={versions} originals={originals} renderOriginal={renderOriginal} title="未归属文件的历史记录"/>
+      <HistoricalFindings findings={view.unassigned_findings} roundId={roundId} resultAttempt={round?.result_attempt ?? null} versions={versions} originals={originals} renderOriginal={renderOriginal} title="未归属文件的历史记录"/>
     </>}
   </main>
 }

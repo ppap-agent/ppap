@@ -31,8 +31,15 @@ export function progressRegressed(before: Task, after: Task): boolean {
   return before.files.some(row => {
     if (row.selection !== 'selected' || !row.audit) return false
     const next = after.files.find(file => file.file.id === row.file.id)?.audit
-    return !next || next.progress.completed < row.audit.progress.completed || ['completed', 'review_failed'].includes(row.audit.execution) && next.execution !== row.audit.execution || row.audit.checks.some(check => ['completed', 'failed'].includes(check.execution) && !next.checks.some(item => item.rule_item.id === check.rule_item.id && ['completed', 'failed'].includes(item.execution)))
+    if (!next || next.progress.completed < row.audit.progress.completed || ['completed', 'review_failed'].includes(row.audit.execution) && next.execution !== row.audit.execution) return true
+    return row.audit.checks.some(check => {
+      const item = next.checks.find(item => item.rule_item.id === check.rule_item.id)
+      return ['completed', 'failed'].includes(check.execution) && (!item || !['completed', 'failed'].includes(item.execution)) || reviewRegressed(check.review ?? check.finding?.review, item?.review ?? item?.finding?.review)
+    }) || row.audit.unmapped_findings?.some(finding => reviewRegressed(finding.review, next.unmapped_findings?.find(item => item.item_key === finding.item_key)?.review)) || false
   })
+}
+function reviewRegressed(before: components['schemas']['Review'] | null | undefined, after: components['schemas']['Review'] | null | undefined) {
+  return Boolean(before && (!after || after.version < before.version || after.version === before.version && !sameSnapshot(before, after)))
 }
 
 export function reportReference(task: Task, row: TaskFile): components['schemas']['AuditReportReference'] | null {

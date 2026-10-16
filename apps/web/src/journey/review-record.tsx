@@ -5,10 +5,7 @@ import type {DecisionEvidence, DecisionInput} from './decision'
 import {decisionInputKey, judgmentKey, manualReady, isManual, type Judgment} from './judgment-state'
 import {sourceKey} from './source-documents'
 import {message, useRemote} from './remote'
-
-function reviewOf(round: Round, key: string) {
-  return round.findings.find(row => row.item_key === key)?.review ?? round.coverage.rule_items?.find(row => `coverage:${row.file_version_id}:${row.id}` === key)?.review ?? null
-}
+import {reviewOf, reviewMatches} from '../review-contract'
 export function serverJudgments(round: Round, input: DecisionInput): Record<string, Judgment> {
   if (round.id !== input.roundId) return {}
   return Object.fromEntries(input.evidence.flatMap(row => {
@@ -57,7 +54,7 @@ export function ReviewRecord({input, row, judgment, onChange, frozen, afterSave}
       if (session) session.onChange(round)
       else remote.setValue(round)
       const observed = reviewOf(round, row.id)
-      const matches = observed?.version === payload.version + 1 && observed.judgment === payload.judgment && observed.rationale === payload.rationale && (observed.citations || []).length === (payload.citations || []).length && (observed.citations || []).every((cite, index) => ['file_version_id', 'location', 'excerpt'].every(key => cite[key as keyof typeof cite] === payload.citations?.[index]?.[key as keyof typeof cite]))
+      const matches = reviewMatches(round, payload)
       if (matches) {
         const unchanged = latest.current.value === payload.judgment && latest.current.reason.trim() === payload.rationale && JSON.stringify(citationWire(latest.current)) === JSON.stringify(payload.citations || [])
         if (unchanged) onChange(serverJudgments(round, input)[row.id])

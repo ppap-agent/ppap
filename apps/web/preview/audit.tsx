@@ -22,7 +22,9 @@ import {fileDisplayValues} from '../src/audit/display-info-contract'
 import {usageNotices} from '../src/audit/usage-contract'
 import {reportReference} from '../src/audit/result-projection'
 import {AuditRoundReader} from '../src/audit/round-reader'
-import {fixtureRound} from './audit-rounds'
+import {fixtureRound, fixtureReviewRound} from './audit-rounds'
+import {AuditReviewProvider, type AuditReviewAdapter} from '../src/audit/review-editor'
+import {reviewOf} from '../src/review-contract'
 
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
@@ -279,6 +281,7 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
     audit.counts = {...audit.counts, unknown_count: 0, not_covered_count: 1}
     if (audit.summary) audit.summary.text = '1 项不符合，1 项未覆盖。'
   }
+  if (scene.startsWith('restore-review-edit')) for (const file of snapshot.files) for (const check of file.audit?.checks || []) check.review_item_key = check.finding ? `${file.file.id}:rule:${check.rule_item.id}` : `coverage:${file.file.id}:${check.rule_item.id}`
   if (scene.startsWith('restore-usage-')) snapshot.usage_notice = usageNotices.paid_insufficient
   if (scene.startsWith('restore-display-')) snapshot.files = snapshot.files.map(file => ({...file, display_info: {revision: 0, values: fileDisplayValues(file)}, display_edit_access: {state: 'allowed', reason: null}}))
   if (scene.startsWith('restore-estimate')) {
@@ -366,6 +369,7 @@ function Preview() {
     readTask: async (id, requestId) => {
       const task = taskStore.get(id)
       const result = await adapter.readTask(id, requestId)
+      if (scene === 'restore-review-edit-race' && recoveryRead === 2) return defer('保存前的旧复核读取', result)
       if (scene === 'recognition-recovery-current' && recoveryRead === 1) return defer('旧任务恢复读取', result)
       if (scene === 'recognition-progress-removal' && !task?.round_id && !requestId) return defer('其余文件识别结果', result)
       const job = result.report_package
@@ -448,14 +452,39 @@ function Preview() {
     const result = await supportAdapter.read()
     return scene === 'support-loading' ? defer('服务配置', result) : result
   }} : undefined, [defer])
-  return <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+  const reviewAdapter = useMemo<AuditReviewAdapter>(() => ({
+    read: async id => fixtureReviewRound([...taskStore.values()].find(task => task.round_id === id)!),
+    save: async (id, request) => {
+      const task = structuredClone([...taskStore.values()].find(task => task.round_id === id)!)
+      if ((reviewOf(fixtureReviewRound(task), request.item_key)?.version || 0) !== request.version) throw Object.assign(new Error('review_conflict'), {status: 409})
+      for (const file of task.files) for (const check of file.audit?.checks || []) if (check.review_item_key === request.item_key) check.review = {...request, version: request.version + 1}
+      taskStore.set(task.id, task)
+      return fixtureReviewRound(task)
+    },
+  }), [])
+  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
 function HistoricalPreview() {
   const [roundId, setRoundId] = useState('history-round'), [reads, setReads] = useState<{id: number; finish: () => void}[]>([])
+  const rounds = useRef(new Map<string, components['schemas']['Round']>())
+  const conflicted = useRef(new Set<string>())
+  const [reviewReplies, setReviewReplies] = useState<{id: number; finish: () => void}[]>([])
+  const saves = useRef(0)
+  useEffect(() => {
+    const deliver = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== 'ppap-preview-read') return
+      const reply = reviewReplies[0]
+      if (reply) {reply.finish(); setReviewReplies(rows => rows.filter(row => row.id !== reply.id))}
+    }
+    window.addEventListener('message', deliver)
+    return () => window.removeEventListener('message', deliver)
+  }, [reviewReplies])
   const sequence = useRef(0)
   const read = useCallback(async (id: string) => {
-    const number = ++sequence.current, value = await readHistoricalRound(id)
+    if (!rounds.current.has(id)) rounds.current.set(id, await readHistoricalRound(id))
+    const number = ++sequence.current, value = structuredClone(rounds.current.get(id)!)
     if (scene === 'round-history-wrong') value.id = 'another-round'
     const finding = value.read_view!.files[0].audit!.unmapped_findings![0]
     if (scene === 'round-history-outside') finding.review!.citations![0].file_version_id = 'outside-this-round'
@@ -463,6 +492,26 @@ function HistoricalPreview() {
     finding.item = `历史记录 ${number}`
     return new Promise<typeof value>(resolve => setReads(rows => [...rows, {id: number, finish: () => resolve(value)}]))
   }, [])
-  return <>{scene === 'round-history-race' && <aside aria-label="预览事件控制" className="flex flex-wrap gap-2 p-3"><Button onClick={() => setRoundId(value => value === 'history-round' ? 'another-round' : 'history-round')}>切换历史审核</Button>{reads.map(row => <Button key={row.id} onClick={() => {row.finish(); setReads(rows => rows.filter(item => item.id !== row.id))}}>返回历史读取 {row.id}</Button>)}</aside>}<AuditRoundReader roundId={roundId} readRound={read} returnHref="/preview/audit.html" renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  const reviewAdapter = useMemo<AuditReviewAdapter>(() => ({
+    read,
+    save: async (id, request) => {
+      if (scene === 'round-history-review-denied') throw Object.assign(new Error('access_denied'), {status: 403})
+      const value = rounds.current.get(id)!, existing = reviewOf(value, request.item_key)
+      if ((existing?.version || 0) !== request.version) throw Object.assign(new Error('review_conflict'), {status: 409})
+      const conflict = scene === 'round-history-review-conflict' && !conflicted.current.has(request.item_key)
+      const review = {...request, version: request.version + 1, ...(conflict ? {rationale: '另一位工程师已核对。'} : {})}
+      for (const finding of value.findings) if (finding.item_key === request.item_key) finding.review = review
+      for (const file of value.read_view!.files) {
+        for (const finding of file.audit?.unmapped_findings || []) if (finding.item_key === request.item_key) finding.review = review
+        for (const check of file.audit?.checks || []) if (check.review_item_key === request.item_key) check.review = review
+      }
+      if (conflict) {conflicted.current.add(request.item_key); throw Object.assign(new Error('review_conflict'), {status: 409})}
+      if (scene === 'round-history-review-unknown') throw new Error('preview_reply_lost')
+      if (scene === 'round-history-review-race') {const number = ++saves.current; return new Promise<typeof value>(resolve => setReviewReplies(rows => [...rows, {id: number, finish: () => resolve(structuredClone(value))}]))}
+      return structuredClone(value)
+    },
+  }), [read])
+  const content = <>{scene === 'round-history-race' && <aside aria-label="预览事件控制" className="flex flex-wrap gap-2 p-3"><Button onClick={() => setRoundId(value => value === 'history-round' ? 'another-round' : 'history-round')}>切换历史审核</Button>{reads.map(row => <Button key={row.id} onClick={() => {row.finish(); setReads(rows => rows.filter(item => item.id !== row.id))}}>返回历史读取 {row.id}</Button>)}</aside>}{scene === 'round-history-review-race' && <aside aria-label="预览事件控制">{reviewReplies.map(reply => <Button key={reply.id} onClick={() => {reply.finish(); setReviewReplies(rows => rows.filter(row => row.id !== reply.id))}}>返回复核保存 {reply.id}</Button>)}</aside>}<AuditRoundReader roundId={roundId} readRound={read} returnHref="/preview/audit.html" renderOriginal={(file, evidence) => <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  return scene.startsWith('round-history-review') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
 createRoot(document.getElementById('app')!).render(scene.startsWith('round-history') ? <HistoricalPreview/> : <Preview/>)

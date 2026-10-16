@@ -27,6 +27,17 @@ def task_input():
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_review_key_requires_an_existing_finding_or_nonexecuted_coverage_record(self):
+        round = frozen_round()
+        round["coverage"] = {}
+        check = task_round_view(task_input(), round)["files"][0]["audit"]["checks"][0]
+        self.assertNotIn("review_item_key", check)
+        round["coverage"] = {"rule_items": [{"file_version_id": "version-a", "id": "clause-a", "coverage": "executed"}]}
+        self.assertNotIn("review_item_key", task_round_view(task_input(), round)["files"][0]["audit"]["checks"][0])
+        round["coverage"]["rule_items"][0]["coverage"] = "unsupported"
+        self.assertEqual(task_round_view(task_input(), round)["files"][0]["audit"]["checks"][0]["review_item_key"], "coverage:version-a:clause-a")
+        self.assertNotIn("review_item_key", task_round_view(task_input(), frozen_round("running"))["files"][0]["audit"]["checks"][0])
+
     def test_conflicting_historical_file_identities_remain_unassigned(self):
         round = frozen_round()
         round["inputs"].append({**round["inputs"][0], "file_version_id": "version-b"})

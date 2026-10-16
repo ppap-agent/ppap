@@ -1,8 +1,13 @@
 import {readLocalUpload, request, uploadLocalVersion} from '../api.ts'
 import type {components} from '../generated/openapi.ts'
 import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
+import type {AuditReviewAdapter} from './review-editor'
 
 type ValidationJob = components['schemas']['FileValidationJob']
+export const nativeReviewAdapter: AuditReviewAdapter = {
+  read: id => request(`/rounds/${encodeURIComponent(id)}`),
+  save: (id, payload) => request(`/rounds/${encodeURIComponent(id)}/reviews`, 'PUT', payload),
+}
 const encoded = encodeURIComponent
 const taskPath = (id: string) => `/audit-tasks/${encoded(id)}`
 const removals = (task: AuditTask) => task.files.filter(row => row.selection === 'removed').map(row => ({file_version_id: row.file.id, removal_reason: row.removal_reason || ''}))

@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type ReactNode} from 'react'
+import {useContext, useEffect, useRef, useState, type ReactNode} from 'react'
 import type {components} from '../generated/openapi'
 import {sourceLocation} from '../helpers'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -15,6 +15,7 @@ import {checkScopeComplete, frozenResultError, sameSnapshot, type ReviewFile} fr
 import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info-contract'
 import {RecordedReview, frozenOriginal} from './recorded-review'
 import {HistoricalFindings} from './historical-findings'
+import {ReviewEditorContext} from './review-editor'
 
 type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
@@ -48,6 +49,7 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 
 /** P5 and P10 share result and original content, not private task chrome. */
 export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay}: {file: File; roundId: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void}) {
+  const reviewEditor = useContext(ReviewEditorContext)
   const [clause, setClause] = useState(''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
   const [pane, setPane] = useState('details'), [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const container = useRef<HTMLDivElement>(null), [wide, setWide] = useState(false)
@@ -78,11 +80,12 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
         return <div key={`${evidence.file_version_id}-${index}`} data-file-version={evidence.file_version_id} className="space-y-2 border-l pl-3"><p className="whitespace-pre-wrap text-sm">{evidence.excerpt || '未提供摘录。'}</p><Button variant="outline" size="sm" disabled={!target} aria-label={`核对 ${target?.file?.original_filename || '不在本轮的原件'}`} onClick={() => {setClause(check.rule_item.id); setSource({kind: 'machine', reference: evidence}); setPane('original')}}>{target ? <FileName name={target.file?.original_filename || '该次证据原件'}/> : '原件不在冻结范围'}</Button></div>
       }) : <p className="text-muted-foreground">未提供来源证据，请核对原件。</p>}</div>
         {review && <RecordedReview review={review} originalFor={authorizedOriginal} onCitation={cite => {setSource({kind: 'review', reference: cite}); setPane('original')}}/>}
+        {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <Button variant="outline" size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: `${check.rule_item.id} · ${check.rule_item.category}`, attempt: audit.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮冻结原件'}))})}>记录人工复核</Button>}
       </article>}
       <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">审核总结</h3>{issue ? <p role="alert">{issue}</p> : audit.summary ? <><p>{audit.summary.text}</p>{audit.summary.corrective_actions.length > 0 && <div className="space-y-2"><h4 className="font-medium">核心整改建议</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.corrective_actions.map(text => <li key={text}>{text}</li>)}</ul></div>}{audit.summary.extended_suggestions.length > 0 && <div className="space-y-2"><h4 className="font-medium">AI 延伸建议（不是客户要求）</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.extended_suggestions.map(text => <li key={text}>{text}</li>)}</ul></div>}</> : <p className="text-muted-foreground">{audit.execution === 'review_failed' ? '审核异常，没有通过总结。' : '总结尚未生成。'}</p>}</section>
       <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !onReport || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
     </>}
-    <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
+    <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} resultAttempt={audit?.result_attempt ?? null} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
   </section>
   return <div ref={container} className="min-w-0">{wide ? <ResizablePanelGroup orientation="horizontal"><ResizablePanel defaultSize="40%" minSize="320px"><div className="pr-5">{details}</div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="60%" minSize="480px"><div className="pl-5">{originalPanel}</div></ResizablePanel></ResizablePanelGroup> : <Tabs value={pane} onValueChange={setPane}><TabsList variant="line"><TabsTrigger value="details">审核详情</TabsTrigger><TabsTrigger value="original">核对原件</TabsTrigger></TabsList><TabsContent value="details">{details}</TabsContent><TabsContent value="original">{originalPanel}</TabsContent></Tabs>}</div>
 }

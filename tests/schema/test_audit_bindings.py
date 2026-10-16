@@ -64,6 +64,48 @@ class AuditDatabaseCase(unittest.TestCase):
 
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
+    def test_manual_coverage_review_round_trip_preserves_machine_facts_and_rejects_stale_or_outside_input(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_application import build_product_store
+
+        target, reference = self.upload("review.xlsx"), self.upload("context.pdf")
+        rule = self.store.publish_rule(self.alice, "人工核对要求", self.rule_body(), reference.id)
+        draft = self.draft([{"file_version_id": target.id, "role": "target", "rule_version_id": rule["id"]}, {"file_version_id": reference.id, "role": "reference"}])
+        round = self.store.accept_draft(self.alice, draft, "manual-review")
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        claimed = worker.claim_job("review-test")
+        self.assertIsNotNone(claimed)
+        coverage = {"rule_items": [{"file_version_id": target.id, "id": "1", "coverage": "unsupported", "reason": "没有标准检查器"}]}
+        self.assertTrue(worker.complete_job(claimed, "review-test", {"findings": [], "coverage": coverage}))
+        principal = [self.alice]
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: principal[0])
+        client = TestClient(app)
+        path = f"/rounds/{round['id']}"
+        before = client.get(path).json()
+        body = {
+            "item_key": f"coverage:{target.id}:1",
+            "judgment": "manual-satisfied",
+            "rationale": "人工核对原件",
+            "next_step": "保留机器观察",
+            "version": 0,
+            "citations": [{"file_version_id": reference.id, "location": "第 2 页", "excerpt": "每班一次"}],
+        }
+        for invalid in ({**body, "citations": []}, {**body, "rationale": ""}, {**body, "citations": [{**body["citations"][0], "file_version_id": str(uuid.uuid4())}]}):
+            self.assertEqual(client.put(path + "/reviews", json=invalid).status_code, 400)
+        saved = client.put(path + "/reviews", json=body)
+        self.assertEqual(saved.status_code, 200)
+        observed = client.get(path).json()
+        review = observed["coverage"]["rule_items"][0]["review"]
+        observed["coverage"]["rule_items"][0]["review"] = None
+        self.assertEqual(review, {key: value for key, value in {**body, "version": 1}.items() if key != "item_key"})
+        self.assertEqual(observed, before)
+        self.assertEqual(client.put(path + "/reviews", json=body).status_code, 409)
+        principal[0] = self.store.principal_for_fixture("carol")
+        self.assertEqual(client.put(path + "/reviews", json={**body, "version": 1}).status_code, 403)
+
     def test_round_reader_uses_frozen_versions_without_creating_a_task_or_changing_the_round(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient

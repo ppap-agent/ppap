@@ -1,5 +1,5 @@
 // Stitch: projects/13261964020862199279/screens/5bc532c5a9a142a8a378434ddfe73fd5
-import {useEffect, useRef, useState} from 'react'
+import {useContext, useEffect, useRef, useState} from 'react'
 import {ArrowLeft, ArrowRight, BookOpen, Check, ClipboardCheck, Files, HelpCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, ReceiptText, Search, UploadCloud, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -39,6 +39,7 @@ import {AuditUsage} from './usage'
 import type {AuditUsageAdapter} from './usage-contract'
 import {reconcileTaskDisplay, unconfirmedDisplayAccess, type DisplayInfo, type DisplayReference} from './display-info-contract'
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
+import {ReviewEditorContext} from './review-editor'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -86,6 +87,7 @@ function mergeTaskSnapshot(previous: AuditTask | null | undefined, next: AuditTa
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
 export function AuditIntake({adapter, autoObserve = true, renderOriginal, reportAdapter, sharingAdapter, archiveAdapter, templateAdapter, supportAdapter, feedbackAdapter, templateSharingAdapter, templatePermissionAdapter, usageAdapter, displayAdapter}: {adapter: AuditIntakeAdapter; autoObserve?: boolean; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; archiveAdapter?: AuditArchiveAdapter; templateAdapter?: AuditTemplateAdapter; supportAdapter?: AuditSupportAdapter; feedbackAdapter?: AuditFeedbackAdapter; templateSharingAdapter?: AuditTemplateSharingAdapter; templatePermissionAdapter?: AuditTemplatePermissionAdapter; usageAdapter?: AuditUsageAdapter; displayAdapter?: AuditDisplayAdapter}) {
+  const reviewEditor = useContext(ReviewEditorContext), reviewRevision = useRef(reviewEditor?.revision)
   const [surface, setSurface] = useState<'audit' | 'archive' | 'templates' | 'usage'>(() => {const view = new URL(location.href).searchParams.get('view'); return view === 'archive' || view === 'templates' || view === 'usage' ? view : 'audit'})
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
@@ -428,6 +430,15 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (taskReadEpoch.current.get(current.id) === epoch) {taskReads.current.delete(current.id); setReadStatus(rows => ({...rows, [current.id]: {error: rows[current.id]?.error || '', busy: false}}))}
     }
   }
+  useEffect(() => {
+    if (reviewRevision.current === reviewEditor?.revision) return
+    reviewRevision.current = reviewEditor?.revision
+    if (task?.round_id) {
+      taskReadEpoch.current.set(task.id, (taskReadEpoch.current.get(task.id) || 0) + 1)
+      taskReads.current.delete(task.id)
+      void readMatching(task)
+    }
+  }, [reviewEditor?.revision])
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
   useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
   async function loadTasks(offset = 0) {

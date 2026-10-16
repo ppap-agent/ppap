@@ -12,6 +12,19 @@ function projection(): Task {
 }
 const error = (task: Task) => resultConsistencyError(task, task.files[0])
 
+test('a late snapshot cannot erase or replace a newer human review in the same frozen round', () => {
+  const current = projection(), old = structuredClone(current)
+  const review = {judgment: 'disagree', rationale: '人工记录', next_step: '', version: 2, citations: []}
+  current.files[0].audit!.checks[0].review = review
+  assert.equal(progressRegressed(current, old), true)
+  old.files[0].audit!.checks[0].review = {...review, version: 1}
+  assert.equal(progressRegressed(current, old), true)
+  old.files[0].audit!.checks[0].review = review
+  assert.equal(progressRegressed(current, old), false)
+  current.files[0].audit!.unmapped_findings = [{...current.files[0].audit!.checks[0].finding!, item_key: 'raw', review}]
+  assert.equal(progressRegressed(current, old), true)
+})
+
 test('snapshot equality ignores property order, not values or array order', () => {
   assert.equal(sameSnapshot({a: 1, b: [{c: null}]}, {b: [{c: null}], a: 1}), true)
   assert.equal(sameSnapshot({a: 1}, {a: 2}), false)

@@ -12,6 +12,7 @@ def client_for(*, tenant="tenant", authenticated=True, private=False, grants=())
     store.resource.return_value = Resource("round", "tenant", "audit_round", grant_required=private)
     store.grants.return_value = set(grants)
     store.get_round.side_effect = lambda identity, *, read_view=False: {"id": identity, **({"read_view": {"files": [], "unassigned_findings": []}} if read_view else {})}
+    store.save_review.side_effect = lambda principal, identity, *args: {"id": identity}
     principal = SimpleNamespace(user_id="reader", tenant_id=tenant) if authenticated else None
     app = FastAPI()
     register_audit_routes(app, store, lambda request: principal)
@@ -32,3 +33,16 @@ def test_round_reader_keeps_tenant_and_private_task_grant_boundaries():
         assert response.status_code == expected
         if expected != 200:
             assert "read_view" not in response.json()
+
+
+def test_review_write_keeps_its_own_authority_and_never_inherits_read_access():
+    body = {"item_key": "coverage:version:1", "judgment": "unknown", "rationale": "需核对原件", "next_step": "", "version": 0}
+    for client, expected in (
+        (client_for(authenticated=False), 401),
+        (client_for(tenant="other"), 403),
+        (client_for(private=True, grants=("read",)), 403),
+        (client_for(private=True, grants=("read", "review")), 200),
+        (client_for(), 200),
+    ):
+        response = client.put("/rounds/round/reviews", json=body)
+        assert response.status_code == expected

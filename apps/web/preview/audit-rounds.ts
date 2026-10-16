@@ -1,6 +1,15 @@
 import type {components} from '../src/generated/openapi'
 import type {AuditTask} from '../src/audit/intake'
 
+export function fixtureReviewRound(task: AuditTask): components['schemas']['Round'] {
+  const files = task.files.filter(row => row.selection === 'selected')
+  return {id: task.round_id!, execution: 'completed', result_attempt: 1, created_at: task.created_at, predecessor_id: null, source_draft_id: task.source_draft_id, analysis_mode: task.analysis_mode, writeback: {available: false}, progress: null, failure: null,
+    inputs: files.map(row => ({file_id: row.file.file_id, file_version_id: row.file.id, original_filename: row.file.original_filename, status: row.file.status, role: 'target', rule_version_id: row.match!.rule!.id, rule: row.match!.rule})),
+    findings: files.flatMap(row => row.audit!.checks.filter(check => check.finding).map(check => ({...check.finding!, item_key: check.review_item_key!, review: check.review ?? check.finding!.review}))),
+    coverage: {rule_items: files.flatMap(row => row.audit!.checks.filter(check => !check.finding).map(check => ({...check.rule_item, file_version_id: row.file.id, coverage: check.coverage, review: check.review})))},
+  }
+}
+
 /** Fixed historical records for the public reader, never a live Round. */
 export function fixtureRound(task: AuditTask, id: string): components['schemas']['Round'] {
   const files: components['schemas']['AuditRoundReadFile'][] = task.files.map((row, index) => {

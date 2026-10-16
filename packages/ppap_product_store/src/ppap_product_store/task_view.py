@@ -105,7 +105,7 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict) -> dict:
         "scope": scope,
         "scope_notice": notice or evidence_notice or (coverage or {}).get("reason") or ("请核对原件中的证据和检查范围。" if finding else None),
         "evidence": evidence,
-        "review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}",
+        **({"review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}"} if original or coverage and coverage.get("coverage") != "executed" else {}),
         "review": deepcopy((original or coverage or {}).get("review")),
     }
 
