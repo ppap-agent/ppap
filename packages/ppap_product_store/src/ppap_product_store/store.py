@@ -661,6 +661,9 @@ class AuthStore:
     def accept_file_analysis(self, principal, request_id, source_file_id, source_file_version_id) -> dict:
         return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_analysis")
 
+    def accept_file_validation(self, principal, request_id, source_file_id, source_file_version_id) -> dict:
+        return self._accept_file_job(principal, request_id, source_file_id, source_file_version_id, "file_validation")
+
     def _accept_file_job(self, principal, request_id, source_file_id, source_file_version_id, kind, document_type="") -> dict:
         job_id, payload = rule_parse_request(request_id, source_file_id, source_file_version_id, document_type)
         with self._conn() as conn:
@@ -683,7 +686,7 @@ class AuthStore:
                 if str(row[0]) != principal.tenant_id or row[1] != kind:
                     raise KeyError("missing")
                 if row[2] != payload:
-                    raise ValueError("rule_parse_conflict")
+                    raise ValueError("idempotency_conflict" if kind == "file_validation" else "rule_parse_conflict")
                 return rule_parse_view(job_id, row[2], row[3], row[4], bool(row[5]))
 
     def get_rule_parse(self, principal, job_id: str) -> dict:
@@ -692,17 +695,26 @@ class AuthStore:
     def get_file_analysis(self, principal, job_id: str) -> dict:
         return self._get_file_job(principal, job_id, "file_analysis")
 
+    def get_file_validation(self, principal, job_id: str) -> dict:
+        return self._get_file_job(principal, job_id, "file_validation")
+
     def latest_file_analysis(self, principal, file_id: str, version_id: str) -> dict | None:
+        return self._latest_file_job(principal, file_id, version_id, "file_analysis")
+
+    def latest_file_validation(self, principal, file_id: str, version_id: str) -> dict | None:
+        return self._latest_file_job(principal, file_id, version_id, "file_validation")
+
+    def _latest_file_job(self, principal, file_id: str, version_id: str, kind: str) -> dict | None:
         with self._conn() as conn:
             prepared = self._prepared_items(conn, principal, [{"file_version_id": version_id, "role": "reference"}])
             if prepared[0]["file_id"] != file_id:
                 raise KeyError("missing")
             row = conn.execute(
-                """SELECT id FROM engine.jobs WHERE tenant_id = %s AND kind = 'file_analysis'
+                """SELECT id FROM engine.jobs WHERE tenant_id = %s AND kind = %s
                 AND payload->>'source_file_version_id' = %s ORDER BY created_at DESC, id DESC LIMIT 1""",
-                (principal.tenant_id, version_id),
+                (principal.tenant_id, kind, version_id),
             ).fetchone()
-        return self.get_file_analysis(principal, str(row[0])) if row else None
+        return self._get_file_job(principal, str(row[0]), kind) if row else None
 
     def _get_file_job(self, principal, job_id: str, kind: str) -> dict:
         parsed = _as_uuid(job_id)
@@ -1225,7 +1237,7 @@ class AuthStore:
                     SELECT id, kind, payload, tenant_id FROM engine.jobs
                     WHERE (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
-                        OR (status = 'leased' AND kind NOT IN ('rule_parse', 'file_analysis') AND lease_until IS NOT NULL AND lease_until < now())
+                        OR (status = 'leased' AND kind NOT IN ('rule_parse', 'file_analysis', 'file_validation') AND lease_until IS NOT NULL AND lease_until < now())
                     )
                     ORDER BY created_at
                     FOR UPDATE SKIP LOCKED
@@ -1313,12 +1325,18 @@ class AuthStore:
                     """
                     UPDATE engine.jobs
                     SET status = %s, lease_until = NULL, updated_at = now(),
-                        result = CASE WHEN kind IN ('rule_parse', 'file_analysis') THEN %s ELSE result END
+                        result = CASE WHEN kind IN ('rule_parse', 'file_analysis', 'file_validation') THEN %s ELSE result END
                     WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased'
                       AND (kind <> 'audit' OR COALESCE(payload->>'analysis_mode', 'standard') <> 'deep' OR lease_until > now())
                     RETURNING id
                     """,
-                    ("succeeded" if outcome == "succeeded" else "failed", Jsonb(result) if claimed.kind in {"rule_parse", "file_analysis"} else None, claimed.id, claimed.attempt, worker_ident),
+                    (
+                        "succeeded" if outcome == "succeeded" else "failed",
+                        Jsonb(result) if claimed.kind in {"rule_parse", "file_analysis", "file_validation"} else None,
+                        claimed.id,
+                        claimed.attempt,
+                        worker_ident,
+                    ),
                 ).fetchone()
                 if not won:
                     return False

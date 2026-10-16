@@ -159,6 +159,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/file-validations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Files Validate */
+        post: operations["files_validate_file_validations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/file-validations/{validation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Files Validation Get */
+        get: operations["files_validation_get_file_validations__validation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files": {
         parameters: {
             query?: never;
@@ -304,6 +338,23 @@ export interface paths {
         };
         /** Files Preview */
         get: operations["files_preview_files__file_id__versions__version_id__preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/{file_id}/versions/{version_id}/validation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Files Latest Validation */
+        get: operations["files_latest_validation_files__file_id__versions__version_id__validation_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2142,6 +2193,19 @@ export interface components {
             /** Locator */
             locator: string;
         };
+        /** FileValidationJob */
+        FileValidationJob: {
+            /** Id */
+            id: string;
+            /** Result */
+            result: components["schemas"]["AuditFileValidation"] | components["schemas"]["JobError"] | null;
+            /** Source File Id */
+            source_file_id: string;
+            /** Source File Version Id */
+            source_file_version_id: string;
+            /** Status */
+            status: string;
+        };
         /** FileVersion */
         FileVersion: {
             /** Byte Size */
@@ -2219,6 +2283,10 @@ export interface components {
         /** LatestAnalysis */
         LatestAnalysis: {
             analysis: components["schemas"]["AnalysisJob"] | null;
+        };
+        /** LatestFileValidation */
+        LatestFileValidation: {
+            validation: components["schemas"]["FileValidationJob"] | null;
         };
         /** MaterialWire */
         MaterialWire: {
@@ -3141,6 +3209,77 @@ export interface operations {
             };
         };
     };
+    files_validate_file_validations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Request Id */
+                    request_id: string;
+                    /** Source File Id */
+                    source_file_id: string;
+                    /** Source File Version Id */
+                    source_file_version_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileValidationJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    files_validation_get_file_validations__validation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                validation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileValidationJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     files_create_files_post: {
         parameters: {
             query?: never;
@@ -3446,6 +3585,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    files_latest_validation_files__file_id__versions__version_id__validation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                file_id: string;
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LatestFileValidation"];
                 };
             };
             /** @description Validation Error */

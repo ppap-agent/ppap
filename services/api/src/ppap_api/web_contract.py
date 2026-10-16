@@ -596,6 +596,18 @@ class AuditFileValidation(TypedDict):
     reasons: list[str]
 
 
+class FileValidationJob(TypedDict):
+    id: str
+    source_file_id: str
+    source_file_version_id: str
+    status: str
+    result: AuditFileValidation | JobError | None
+
+
+class LatestFileValidation(TypedDict):
+    validation: FileValidationJob | None
+
+
 class AuditRuleMatch(TypedDict):
     state: Literal["pending", "matching", "matched", "unmatched", "failed"]
     metadata: Metadata
@@ -1258,6 +1270,7 @@ def add_ui_contract(app: FastAPI) -> None:
     def openapi() -> dict[str, Any]:
         spec = native_openapi()
         schemas = spec.setdefault("components", {}).setdefault("schemas", {})
+        runtime_schemas = set(schemas)
         definitions = {}
         for contract in (
             AuditTask,
@@ -1291,7 +1304,7 @@ def add_ui_contract(app: FastAPI) -> None:
             else:
                 schemas[name] = definition
         for name in definitions:
-            if name.startswith("Audit"):
+            if name.startswith("Audit") and name not in runtime_schemas:
                 schemas[name]["x-contract-stage"] = "ui-draft"
         return spec
 

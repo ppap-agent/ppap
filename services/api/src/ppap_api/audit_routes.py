@@ -85,6 +85,37 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return fail(exc)
         return JSONResponse(result, status_code=202)
 
+    @app.post("/file-validations", response_model=wc.FileValidationJob, status_code=202, openapi_extra=wc.openapi_body(wc.FileAnalysisRequest))
+    def files_validate(body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            result = store.accept_file_validation(principal, body.get("request_id"), body.get("source_file_id"), body.get("source_file_version_id"))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+        return JSONResponse(result, status_code=202)
+
+    @app.get("/file-validations/{validation_id}", response_model=wc.FileValidationJob)
+    def files_validation_get(validation_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.get_file_validation(principal, validation_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/files/{file_id}/versions/{version_id}/validation", response_model=wc.LatestFileValidation)
+    def files_latest_validation(file_id: str, version_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse({"validation": store.latest_file_validation(principal, file_id, version_id)})
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.get("/file-analyses/{analysis_id}", response_model=wc.AnalysisJob)
     def files_analysis_get(analysis_id: str, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)

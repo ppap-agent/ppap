@@ -146,6 +146,10 @@ That command serializes the real FastAPI `app.openapi()` schema and pipes it to 
 
 UI-first contracts without a runtime operation are explicit OpenAPI components marked `x-contract-stage: ui-draft`. They share the same generation path, but do not document fake endpoints or imply persistence, matching, billing, or authorization has been implemented. Preview adapters stay outside the production build entries.
 
+文件内容预检查使用 `POST /file-validations`（同一 `request_id`、文件与版本幂等受理）及 `GET /file-validations/{validation_id}` 读回。`GET /files/{file_id}/versions/{version_id}/validation` 可恢复该版本最新的检查请求；每次读取仍检查当前文件权限。它复用现有 Worker 队列，不创建草稿、审核轮次或用量记录，也不调用模型或匹配规则。任务租约失效显示 `unknown`，不自动重新领取；原 Worker 的有效回执仍可收敛。
+
+`FileVersion.ready` 只表示原件已保存；预检查 job 的 `succeeded` 只表示检查已完成。只有其 `result.state=valid` 才表示可进入后续识别。损坏、加密、无内容与检查基础设施错误分开表达，安全预算超限为 `error`，不是文件审核 NG。OOXML 检查有展开量、条目及 XML 访问预算；旧 DOC 保留既有 25 MiB 受限转换上限。该接口不表示 200 MB 上传链路、新版任务持久化或后续审核已经全部接通。
+
 ## UI-first 交互预览
 
 在 `apps/web` 运行 `pnpm preview:workbench`，打开 `http://127.0.0.1:4185/__preview?page=audit`。场景切换会重置页面；宽度与主题切换保留当前交互。识别中和飞书读取中场景用预览台的“返回一次示例读取／令一次示例读取失败”控制响应，包括弹窗内的读取，不用定时器假装真实进度。

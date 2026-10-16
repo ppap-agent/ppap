@@ -86,7 +86,20 @@ class ProductExperienceTests(unittest.TestCase):
         clauses = [{"id": str(number)} for number in (1, 2, 6, 10, 11)]
         inputs = [("target", "file-version", "file", "report.xlsx", "ready", "rule-version", "客户规则", {"rules": clauses})]
         findings = [
-            (f"file-version:rule:{number}", "检查", "正文", "P1", "NG", "依据", {"file_version_id": "file-version", "rule_item_id": str(number)}, "认可" if number == 6 else None, "保留复核", "", 2)
+            (
+                f"file-version:rule:{number}",
+                "检查",
+                "正文",
+                "P1",
+                "NG",
+                "依据",
+                {"file_version_id": "file-version", "rule_item_id": str(number)},
+                "认可" if number == 6 else None,
+                "保留复核",
+                "",
+                2,
+                [],
+            )
             for number in (1, 10, 11, 2, 6)
         ]
 
@@ -95,7 +108,7 @@ class ProductExperienceTests(unittest.TestCase):
             result.fetchone.return_value = None
             result.fetchall.return_value = []
             if "FROM product.audit_rounds" in sql:
-                result.fetchone.return_value = ("round", "completed", {}, None, None, 1, None, "deep")
+                result.fetchone.return_value = ("round", "completed", {}, None, None, 1, None, "deep", {})
             elif "FROM product.round_inputs" in sql:
                 result.fetchall.return_value = inputs
             elif "FROM product.findings" in sql:

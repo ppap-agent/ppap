@@ -23,6 +23,9 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("POST", "/drafts"): True,
     ("GET", "/drafts"): False,
     ("POST", "/file-analyses"): True,
+    ("POST", "/file-validations"): True,
+    ("GET", "/file-validations/{validation_id}"): False,
+    ("GET", "/files/{file_id}/versions/{version_id}/validation"): False,
     ("GET", "/file-analyses/{analysis_id}"): False,
     ("GET", "/files/{file_id}/versions/{version_id}/analysis"): False,
     ("GET", "/drafts/{draft_id}"): False,
@@ -61,6 +64,14 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_file_validation_is_a_runtime_contract_separate_from_matching_and_audit(self):
+        schemas = app.openapi()["components"]["schemas"]
+        job = schemas["FileValidationJob"]
+        self.assertEqual(set(job["required"]), {"id", "source_file_id", "source_file_version_id", "status", "result"})
+        self.assertIn({"$ref": "#/components/schemas/AuditFileValidation"}, job["properties"]["result"]["anyOf"])
+        self.assertNotIn("x-contract-stage", schemas["AuditFileValidation"])
+        self.assertEqual(schemas["AuditTask"]["x-contract-stage"], "ui-draft")
+
     def test_ui_zip_outcomes_bind_preparation_results_to_the_fixed_report_reference(self):
         schemas = app.openapi()["components"]["schemas"]
         item = schemas["AuditReportPackageOutcome"]
