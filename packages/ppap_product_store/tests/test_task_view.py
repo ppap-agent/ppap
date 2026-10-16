@@ -27,6 +27,54 @@ def task_input():
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_a_global_execution_error_fails_targets_without_assigning_an_unrelated_error(self):
+        round = frozen_round()
+        round["inputs"].append({**round["inputs"][0], "file_version_id": "version-b"})
+        task = task_input()
+        task["files"].append({"file": {"id": "version-b"}, "selection": "selected"})
+        round["findings"] = [{"item_key": "unassigned", "status": "ERR", "locator": None, "review": None}]
+        self.assertTrue(all(row["audit"]["execution"] == "completed" for row in task_round_view(task, round)["files"]))
+        round["findings"][0]["item_key"] = "execution"
+        before = deepcopy(round)
+        view = task_round_view(task, round)
+        self.assertEqual([row["audit"]["execution"] for row in view["files"]], ["review_failed", "review_failed"])
+        self.assertTrue(all(row["audit"]["checks"][0]["execution"] == "failed" for row in view["files"]))
+        self.assertEqual(view["progress"], {"completed": 2, "total": 2})
+        self.assertEqual(round, before)
+
+    def test_a_clause_error_marks_only_its_file_abnormal_and_preserves_completed_checks(self):
+        round = frozen_round()
+        round["inputs"][0]["rule"]["body"]["rules"].append({"id": "clause-b", "category": "基本信息", "rule_to_check": "核对零件号"})
+        round["findings"] = [
+            {"item_key": "version-a:rule:clause-a", "status": "ERR", "locator": {"file_version_id": "version-a", "rule_item_id": "clause-a"}, "review": None},
+            {"item_key": "version-a:rule:clause-b", "status": "PASS", "locator": {"file_version_id": "version-a", "rule_item_id": "clause-b"}, "review": None},
+        ]
+        before = deepcopy(round)
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual(audit["execution"], "review_failed")
+        self.assertEqual([check["execution"] for check in audit["checks"]], ["failed", "completed"])
+        self.assertEqual([check["finding"]["status"] for check in audit["checks"]], ["ERR", "PASS"])
+        self.assertEqual((audit["counts"]["error_count"], audit["counts"]["unknown_count"]), (1, 1))
+        self.assertEqual(round, before)
+
+    def test_a_file_execution_failure_does_not_mark_the_other_frozen_file_failed_or_finished_without_results(self):
+        round = frozen_round()
+        round["inputs"].append({**round["inputs"][0], "file_version_id": "version-b"})
+        round["findings"] = [
+            {"item_key": "version-a:execution", "status": "ERR", "suggestions": "无法读取本轮冻结原件。", "locator": {"file_version_id": "version-a"}, "review": None},
+            {"item_key": "healthy", "status": "NG", "locator": {"file_version_id": "version-b", "rule_item_id": "clause-a"}, "review": None},
+        ]
+        task = task_input()
+        task["files"].append({"file": {"id": "version-b"}, "selection": "selected"})
+        view = task_round_view(task, round)
+        broken, healthy = [row["audit"] for row in view["files"]]
+        self.assertEqual(broken["execution"], "review_failed")
+        self.assertEqual(broken["checks"][0]["execution"], "failed")
+        self.assertEqual((broken["counts"]["error_count"], broken["failure"]["retryable"]), (1, False))
+        self.assertEqual((healthy["execution"], healthy["checks"][0]["finding"]["status"]), ("completed", "NG"))
+        self.assertEqual(view["progress"], {"completed": 2, "total": 2})
+        self.assertEqual((broken["report"]["state"], healthy["report"]["state"]), ("not_eligible", "not_eligible"))
+
     def test_review_key_requires_an_existing_finding_or_nonexecuted_coverage_record(self):
         round = frozen_round()
         round["coverage"] = {}
@@ -41,11 +89,25 @@ class TaskRoundViewTests(unittest.TestCase):
     def test_conflicting_historical_file_identities_remain_unassigned(self):
         round = frozen_round()
         round["inputs"].append({**round["inputs"][0], "file_version_id": "version-b"})
-        finding = {"item_key": "version-a:engine:1", "status": "NG", "locator": {"file_version_id": "version-b"}, "review": None}
+        finding = {"item_key": "version-a:engine:1", "status": "ERR", "locator": {"file_version_id": "version-b"}, "review": None}
         round["findings"] = [finding]
         view = round_read_view(round, {key: {"id": key} for key in ("version-a", "version-b")})
         self.assertEqual(view["unassigned_findings"], [finding])
         self.assertTrue(all(not row["audit"]["unmapped_findings"] for row in view["files"]))
+        self.assertTrue(all(row["audit"]["execution"] == "completed" for row in view["files"]))
+
+    def test_unmapped_engine_errors_mark_the_file_abnormal_without_inventing_clause_results(self):
+        round = frozen_round()
+        finding = {"item_key": "version-a:engine:1", "status": "ERR", "locator": {"file_version_id": "version-a"}, "review": None}
+        round["findings"] = [finding]
+        before = deepcopy(round)
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        self.assertEqual(audit["execution"], "review_failed")
+        self.assertEqual(audit["unmapped_findings"], [finding])
+        self.assertIsNone(audit["checks"][0]["finding"])
+        self.assertEqual(audit["counts"]["not_covered_count"], 1)
+        self.assertEqual(audit["report"]["state"], "not_eligible")
+        self.assertEqual(round, before)
 
     def test_task_and_round_readers_share_the_same_frozen_file_projection(self):
         round = frozen_round()

@@ -17,6 +17,7 @@ from ppap_core.audits import (
     unused_reference_note,
 )
 from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
+from ppap_core.logs import emit
 from ppap_core.rule_coverage import COVERAGE_MAPPED, MODE_RULE_ITEMS
 from ppap_core.types import cross_file_doc_type_name
 
@@ -80,10 +81,12 @@ def _write_temp(item: RoundInput, data: bytes) -> str:
     suffix = Path(item.filename).suffix or ".bin"
     handle = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
-        handle.write(data)
+        with handle:
+            handle.write(data)
         return handle.name
-    finally:
-        handle.close()
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
 
 
 def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
@@ -93,13 +96,18 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
     if not targets:
         raise ValueError("target_required")
     rules_by_version = {}
+    failures = {}
     for item in targets:
-        execution = _rule_execution(item)
-        needs_engine = item.rule_kind() != KIND_PRESENCE and (
-            not execution or execution.get("mode") != MODE_RULE_ITEMS or any(row.get("coverage") == COVERAGE_MAPPED for row in execution.get("items") or [])
-        )
-        if needs_engine:
-            rules_by_version[item.file_version_id] = builtin_rule_input(item)
+        try:
+            execution = _rule_execution(item)
+            needs_engine = item.rule_kind() != KIND_PRESENCE and (
+                not execution or execution.get("mode") != MODE_RULE_ITEMS or any(row.get("coverage") == COVERAGE_MAPPED for row in execution.get("items") or [])
+            )
+            if needs_engine:
+                rules_by_version[item.file_version_id] = builtin_rule_input(item)
+        except Exception as error:
+            emit("audit_file_error", file_version_id=item.file_version_id, stage="rules", error_type=type(error).__name__)
+            failures[item.file_version_id] = execution_error_result("无法准备本文件的冻结审核规则。", target=item)
 
     temps: list[str] = []
     try:
@@ -111,17 +119,26 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
             data = blobs.get(item.file_version_id)
             if data is None:
                 if item.role == TARGET:
-                    raise ValueError("missing_file")
-                reference_notes.append(unused_reference_note(item.filename, "无法加载"))
+                    failures[item.file_version_id] = execution_error_result("无法读取本轮冻结原件。", target=item)
+                else:
+                    reference_notes.append(unused_reference_note(item.filename, "无法加载"))
                 continue
-            path = _write_temp(item, data)
-            temps.append(path)
-            audit = _audit_input(item, path)
+            try:
+                path = _write_temp(item, data)
+                temps.append(path)
+                audit = _audit_input(item, path)
+                rule = rules_by_version.get(item.file_version_id)
+                rule_type = rule.type if rule is not None else (item.rule_body or {}).get("type")
+                type_key = _doc_type_key(audit, rule_type)
+            except Exception as error:
+                emit("audit_file_error", file_version_id=item.file_version_id, stage="prepare", error_type=type(error).__name__)
+                if item.role == TARGET:
+                    failures[item.file_version_id] = execution_error_result("无法准备本文件的审核原件。", target=item)
+                else:
+                    reference_notes.append(unused_reference_note(item.filename, "无法加载"))
+                continue
             audits_by_version[item.file_version_id] = audit
             by_audit_id[item.file_version_id] = audit
-            rule = rules_by_version.get(item.file_version_id)
-            rule_type = rule.type if rule is not None else (item.rule_body or {}).get("type")
-            type_key = _doc_type_key(audit, rule_type)
             if type_key:
                 by_doc_type.setdefault(type_key, []).append(audit)
             if item.role != TARGET:
@@ -142,19 +159,32 @@ def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
         rule_items: list[dict] = []
         item_notes: list[str] = []
         for target in targets:
+            if target.file_version_id in failures:
+                failed = failures[target.file_version_id]
+                findings.extend(failed["findings"])
+                item_notes.append(f"{target.filename}：审核执行未完成")
+                locator_gap = True
+                continue
             if target.rule_kind() == KIND_PRESENCE:
                 findings.append(presence_finding(target))
                 checked.append(target.filename)
                 continue
-            execution = _rule_execution(target)
-            audit = audits_by_version[target.file_version_id]
-            if execution and execution.get("mode") == MODE_RULE_ITEMS:
-                mapped_items = [row for row in execution.get("items") or [] if row.get("coverage") == COVERAGE_MAPPED]
-                results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context) if mapped_items else []
-                projected = findings_from_rule_execution(results, target=target, execution=execution)
-            else:
-                results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
-                projected = findings_from_engine_results(results, target=target)
+            try:
+                execution = _rule_execution(target)
+                audit = audits_by_version[target.file_version_id]
+                if execution and execution.get("mode") == MODE_RULE_ITEMS:
+                    mapped_items = [row for row in execution.get("items") or [] if row.get("coverage") == COVERAGE_MAPPED]
+                    results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context) if mapped_items else []
+                    projected = findings_from_rule_execution(results, target=target, execution=execution)
+                else:
+                    results = run_audit_engine(audit, rules_by_version[target.file_version_id], group_context=group_context)
+                    projected = findings_from_engine_results(results, target=target)
+            except Exception as error:
+                emit("audit_file_error", file_version_id=target.file_version_id, stage="execute", error_type=type(error).__name__)
+                findings.extend(execution_error_result("本文件审核执行失败，未取得完整结果。", target=target)["findings"])
+                item_notes.append(f"{target.filename}：审核执行未完成")
+                locator_gap = True
+                continue
             findings.extend(projected["findings"])
             coverage = projected.get("coverage") or {}
             if projected["findings"] or (execution and execution.get("mode") == MODE_RULE_ITEMS):
@@ -183,10 +213,12 @@ def run_standard_round(store, work: RoundWork) -> dict:
     """Load persisted inputs, then execute the Standard engine outside process adapters."""
     blobs: dict[str, bytes] = {}
     for item in work.inputs:
-        version = store.get_version(item.file_id, item.file_version_id)
-        if version is None:
-            if item.role == TARGET:
-                raise ValueError("missing_file")
+        try:
+            version = store.get_version(item.file_id, item.file_version_id)
+            if version is not None:
+                blobs[item.file_version_id] = store.version_bytes(version)
+        except Exception as error:
+            emit("audit_file_error", file_version_id=item.file_version_id, stage="read", error_type=type(error).__name__)
+            # Missing bytes remain unavailable; they never enter shared context.
             continue
-        blobs[item.file_version_id] = store.version_bytes(version)
     return run_round_from_bytes(work, blobs)

@@ -64,6 +64,44 @@ class AuditDatabaseCase(unittest.TestCase):
 
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
+    def test_worker_persists_one_unreadable_file_error_without_losing_other_frozen_file_results(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_api.web_contract import Round
+        from ppap_application import build_product_store
+        from ppap_worker import process_claimed
+        from pydantic import TypeAdapter
+
+        files = [self.upload(name) for name in ("missing.xlsx", "healthy.xlsx", "last.xlsx")]
+        rule = self.store.publish_rule(self.alice, "客户自定义要求", self.rule_body(), files[-1].id)
+        draft = self.draft([{"file_version_id": file.id, "role": "target", "rule_version_id": rule["id"]} for file in files])
+        accepted = self.store.accept_draft(self.alice, draft, "file-isolation")
+        self.store.objects.delete(files[0].object_key)
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        claimed = worker.claim_job("file-isolation-test")
+        self.assertIsNotNone(claimed)
+        process_claimed(worker, claimed, "file-isolation-test")
+
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: self.alice)
+        client = TestClient(app)
+        response = client.get(f"/rounds/{accepted['id']}?read_view=true")
+        self.assertEqual(response.status_code, 200)
+        observed = response.json()
+        TypeAdapter(Round).validate_python(observed)
+        self.assertEqual(observed["inputs"], accepted["inputs"])
+        self.assertEqual((observed["execution"], observed["result_attempt"]), ("completed", 1))
+        audits = {row["file"]["id"]: row["audit"] for row in observed["read_view"]["files"]}
+        self.assertEqual([audits[file.id]["execution"] for file in files], ["review_failed", "completed", "completed"])
+        self.assertEqual(audits[files[0].id]["counts"]["error_count"], 1)
+        self.assertEqual([audits[file.id]["counts"]["not_covered_count"] for file in files[1:]], [1, 1])
+        self.assertEqual([row["status"] for row in observed["findings"]], ["ERR"])
+        self.assertTrue(all(audit["report"]["state"] == "not_eligible" for audit in audits.values()))
+        self.assertEqual(client.get(f"/rounds/{accepted['id']}?read_view=true").json(), observed)
+        self.assertFalse(worker.complete_job(claimed, "file-isolation-test", {"findings": [], "coverage": {}}, "succeeded"))
+        self.assertEqual(client.get(f"/rounds/{accepted['id']}?read_view=true").json(), observed)
+
     def test_manual_coverage_review_round_trip_preserves_machine_facts_and_rejects_stale_or_outside_input(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient

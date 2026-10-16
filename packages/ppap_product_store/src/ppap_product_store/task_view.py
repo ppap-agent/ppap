@@ -89,7 +89,7 @@ def _evidence(round: dict, finding: dict | None, version_id: str, rule_id: str, 
     return evidence, deepcopy(scope), notice
 
 
-def _check(round: dict, version_id: str, rule_id: str, rule: dict) -> dict:
+def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: bool = False) -> dict:
     finished = round["execution"] == "completed"
     coverage, original, notice = _clause_result(round, version_id, str(rule["id"])) if finished else (None, None, None)
     finding = deepcopy(original)
@@ -98,7 +98,7 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict) -> dict:
     evidence, scope, evidence_notice = _evidence(round, finding, version_id, rule_id, str(rule["id"]))
     return {
         "rule_item": rule,
-        "execution": "failed" if round["execution"] == "failed" or finding and finding["status"] == "ERR" else "completed" if finished else round["execution"],
+        "execution": "failed" if file_failed and not finding or round["execution"] == "failed" or finding and finding["status"] == "ERR" else "completed" if finished else round["execution"],
         "coverage": "executed" if finding and (coverage or {}).get("coverage") != "unsupported" else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
         "finding": finding,
         "evidence_verified": False,
@@ -129,7 +129,17 @@ def _counts(checks: list[dict]) -> dict:
 def file_round_audit(round: dict, frozen: dict) -> dict:
     version_id, rule = frozen["file_version_id"], frozen["rule"]
     finished = round["execution"] in {"completed", "failed"}
-    checks = [_check(round, version_id, rule["id"], item) for item in rule["body"].get("rules", [])]
+    file_failed = finished and any(
+        finding["status"] == "ERR"
+        and (
+            finding["item_key"] == "execution"
+            and not (finding.get("locator") or {}).get("file_version_id")
+            or finding["item_key"] == f"{version_id}:execution"
+            and (finding.get("locator") or {}).get("file_version_id") == version_id
+        )
+        for finding in round.get("findings", [])
+    )
+    checks = [_check(round, version_id, rule["id"], item, file_failed) for item in rule["body"].get("rules", [])]
     mapped = {check["review_item_key"] for check in checks if check["finding"]}
     unmapped = []
     for finding in round.get("findings", []):
@@ -139,14 +149,17 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         conflict = source is not None and key_versions and source not in key_versions
         if key not in mapped and not conflict and (source == version_id or source is None and key_versions == {version_id}):
             unmapped.append(deepcopy(finding))
+    file_has_error = finished and (file_failed or any(check["execution"] == "failed" for check in checks) or any(finding["status"] == "ERR" for finding in unmapped))
     return {
         "round_id": round["id"],
         "file_version_id": version_id,
         "result_attempt": round["result_attempt"],
         "rule": rule,
-        "execution": "review_failed" if round["execution"] == "failed" else round["execution"],
+        "execution": "review_failed" if file_has_error or round["execution"] == "failed" else round["execution"],
         "progress": {"completed": len(checks) if finished else 0, "total": len(checks)},
-        "failure": round.get("failure"),
+        "failure": {"code": "file_execution_error", "message": "本文件审核执行失败，未取得完整结果。", "retryable": False}
+        if file_has_error and round["execution"] != "failed"
+        else round.get("failure"),
         "conclusion": "UNKNOWN" if finished else None,
         "counts": _counts(checks),
         "checks": checks,

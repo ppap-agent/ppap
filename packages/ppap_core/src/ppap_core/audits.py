@@ -159,17 +159,17 @@ def evaluate_presence(work: RoundWork) -> dict[str, Any]:
     }
 
 
-def execution_error_result(code: str) -> dict[str, Any]:
+def execution_error_result(code: str, *, target: RoundInput | None = None) -> dict[str, Any]:
     return {
         "findings": [
             {
-                "item_key": "execution",
+                "item_key": f"{target.file_version_id}:execution" if target else "execution",
                 "classification": "执行",
                 "item": "审核执行",
                 "priority": "P0",
                 "status": ERR,
                 "suggestions": code,
-                "locator": None,
+                "locator": {"kind": "file_version", "file_id": target.file_id, "file_version_id": target.file_version_id, "filename": target.filename} if target else None,
             }
         ],
         "coverage": {"checked": [], "unchecked": ["执行未完成"], "locator_gap": True},
@@ -211,11 +211,7 @@ def findings_from_engine_results(results: list[Any], *, target: RoundInput) -> d
             }
         )
     if not findings:
-        empty = execution_error_result("empty_engine_result")
-        for row in empty["findings"]:
-            row["item_key"] = f"{prefix}{row['item_key']}"
-            row["locator"] = file_locator
-        return empty
+        return execution_error_result("empty_engine_result", target=target)
     return {
         "findings": findings,
         "coverage": {"checked": checked, "unchecked": [], "locator_gap": locator_gap},

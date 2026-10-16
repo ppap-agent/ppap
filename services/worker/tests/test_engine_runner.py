@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -41,6 +43,130 @@ class EngineRunnerTests(unittest.TestCase):
 
     def _upload(self, name: str, body: bytes) -> dict:
         return self.store.upload(name, body)
+
+    def test_all_unavailable_targets_keep_individual_errors_without_engine_execution(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_worker import engine_runner
+
+        work = RoundWork(
+            "round-missing",
+            "tenant",
+            [RoundInput("target", f"file-{index}", f"version-{index}", f"missing-{index}.xlsx", "ready", rule_version_id="rule", rule_body={"kind": "engine", "type": "控制计划"}) for index in (1, 2)],
+        )
+        with patch.object(app_runtime, "run_audit_engine", side_effect=AssertionError("missing files must not execute")):
+            result = engine_runner(work, self.store)
+        self.assertEqual([(row["item_key"], row["status"]) for row in result["findings"]], [("version-1:execution", "ERR"), ("version-2:execution", "ERR")])
+        self.assertEqual(result["coverage"]["checked"], [])
+        self.assertTrue(result["coverage"]["locator_gap"])
+
+    def test_failed_temporary_write_is_removed_and_other_targets_continue(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_worker import engine_runner
+
+        files = [self._upload(name, b"test") for name in ("broken.xlsx", "healthy.xlsx")]
+        work = RoundWork(
+            "round-write",
+            "tenant",
+            [
+                RoundInput("target", file["file_id"], file["id"], name, "ready", rule_version_id="rule", rule_body={"kind": "engine", "type": "控制计划"})
+                for file, name in zip(files, ("broken.xlsx", "healthy.xlsx"))
+            ],
+        )
+        created = []
+        create_file = tempfile.NamedTemporaryFile
+
+        def create(*args, **kwargs):
+            handle = create_file(*args, **kwargs)
+            created.append(Path(handle.name))
+            if len(created) == 1:
+
+                def fail_write(data):
+                    raise OSError("test write failure")
+
+                handle.write = fail_write
+            return handle
+
+        try:
+            with (
+                patch.object(tempfile, "NamedTemporaryFile", create),
+                patch.object(app_runtime, "run_audit_engine", return_value=[AuditResultItem(status="PASS", classification="规则", item="完成", priority="P0", suggestions="")]),
+            ):
+                result = engine_runner(work, self.store)
+            self.assertEqual([row["status"] for row in result["findings"]], ["ERR", "PASS"])
+            self.assertTrue(all(not path.exists() for path in created))
+        finally:
+            for path in created:
+                path.unlink(missing_ok=True)
+
+    def test_one_unreadable_target_does_not_discard_other_frozen_file_results(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_worker import engine_runner
+
+        files = [self._upload(name, name.encode()) for name in ("broken.xlsx", "healthy.xlsx", "last.xlsx")]
+        work = RoundWork(
+            "round-files",
+            "tenant",
+            [
+                RoundInput("target", file["file_id"], file["id"], name, "ready", rule_version_id="rule-1", rule_body={"kind": "engine", "type": "控制计划", "rule_profile": "v3"})
+                for file, name in zip(files, ("broken.xlsx", "healthy.xlsx", "last.xlsx"))
+            ],
+        )
+        calls = []
+        original_read = self.store.version_bytes
+
+        def read(version):
+            if version.id == files[0]["id"]:
+                raise OSError("private storage failure must not reach the product")
+            return original_read(version)
+
+        def run(audit, rule, group_context=None):
+            calls.append(audit.audit_id)
+            self.assertNotIn(files[0]["id"], group_context.by_audit_id)
+            return [AuditResultItem(status="PASS", classification="规则", item="健康文件检查", priority="P0", suggestions="")]
+
+        with patch.object(self.store, "version_bytes", read), patch.object(app_runtime, "run_audit_engine", run):
+            result = engine_runner(work, self.store)
+        self.assertEqual(calls, [files[1]["id"], files[2]["id"]])
+        failures = [row for row in result["findings"] if row["status"] == "ERR"]
+        self.assertEqual([row["locator"]["file_version_id"] for row in failures], [files[0]["id"]])
+        self.assertEqual(len([row for row in result["findings"] if row["status"] == "PASS"]), 2)
+        self.assertNotIn("private storage failure", str(result))
+
+    def test_rule_and_engine_failures_keep_prior_and_later_file_results_in_one_worker_commit(self):
+        from ppap_excel_audit_engine import app_runtime
+        from ppap_worker import process_claimed
+
+        names = ("first.xlsx", "unknown.xlsx", "engine-broken.xlsx", "last.xlsx")
+        files = [self._upload(name, name.encode()) for name in names]
+        inputs = [
+            RoundInput(
+                "target",
+                file["file_id"],
+                file["id"],
+                name,
+                "ready",
+                rule_version_id=f"rule-{index}",
+                rule_body={"kind": "engine", "type": "unknown" if index == 1 else "控制计划", "rule_profile": "v3"},
+            )
+            for index, (file, name) in enumerate(zip(files, names))
+        ]
+        work = RoundWork("round-partial", "tenant", inputs)
+        completed = []
+        self.store.round_work = lambda identity: work
+        self.store.complete_job = lambda claimed, ident, result, outcome: completed.append((claimed.id, result, outcome)) or True
+
+        def run(audit, rule, group_context=None):
+            if audit.audit_id == files[2]["id"]:
+                raise RuntimeError("private engine details")
+            return [AuditResultItem(status="PASS", classification="规则", item="健康文件检查", priority="P0", suggestions="")]
+
+        claimed = SimpleNamespace(id="job-partial", kind="audit", round_id=work.round_id, tenant_id=work.tenant_id, payload={}, attempt=1)
+        with patch.object(app_runtime, "run_audit_engine", run):
+            result = process_claimed(self.store, claimed, "test-worker")
+        by_file = {row["locator"]["file_version_id"]: row["status"] for row in result["findings"]}
+        self.assertEqual(by_file, {files[0]["id"]: "PASS", files[1]["id"]: "ERR", files[2]["id"]: "ERR", files[3]["id"]: "PASS"})
+        self.assertEqual(completed, [(claimed.id, result, "succeeded")])
+        self.assertNotIn("private engine details", str(result))
 
     def test_runs_each_target_with_its_bound_rule_and_keeps_references_in_context_only(self):
         from ppap_excel_audit_engine import app_runtime
