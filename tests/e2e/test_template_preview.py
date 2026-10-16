@@ -333,7 +333,7 @@ class TemplatePreviewTests(unittest.TestCase):
             page.on("download", lambda download: downloads.append(download))
             page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-zip-incomplete")
             page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
-            expect(page.get_by_role("alert")).to_contain_text("模板包不完整或版本不一致，未下载")
+            expect(page.get_by_role("alert")).to_contain_text("模板包暂时无法下载")
             self.assertEqual(downloads, [])
             browser.close()
 
@@ -353,7 +353,7 @@ class TemplatePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="下一页模板", exact=True).click()
             expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
             page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
-            expect(page.get_by_role("alert")).to_contain_text("模板包不完整或版本不一致，未下载")
+            expect(page.get_by_role("alert")).to_contain_text("模板包暂时无法下载")
             self.assertEqual(downloads, [])
             page.get_by_role("button", name="重新读取模板清单", exact=True).click()
             expect(page.get_by_role("button", name="下载客户模板 ZIP", exact=True)).to_be_enabled()

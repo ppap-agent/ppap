@@ -84,7 +84,7 @@ export function AuditTemplates({active, adapter, sharingAdapter, permissionAdapt
         const result = await readTemplateZip(adapter, {customer_id: id, folder_id: shown.folder_id, folder_revision: shown.folder_revision, folder_template_count: shown.folder_template_count})
         if (alive.current) download(result.blob, result.snapshot.filename)
       }
-    } catch {if (alive.current && currentCustomer.current === id) setDownloadError(item ? '未能读取这个模板版本，请重新下载。' : '模板包不完整或版本不一致，未下载。请重新读取清单后重试。')}
+    } catch {if (alive.current && currentCustomer.current === id) setDownloadError(item ? '未能读取这个模板版本，请重新下载。' : '模板包暂时无法下载。请重新读取清单后重试。')}
     finally {transferring.current = false; if (alive.current) setDownloadBusy('')}
   }
   return <section className="space-y-6" aria-label="客户模板库">
