@@ -11,6 +11,7 @@ export function fixtureTemplateSharing(templates: AuditTemplateAdapter, director
   return {
     listTargets: directory.listTargets,
     readScope: async folder => {
+      if (!templates.listTemplates) throw new Error('preview_template_files_unavailable')
       const catalog = await templates.readCatalog(), items: TemplateShareScope['templates'] = []
       for (let page = 1; page <= Math.ceil(folder.folder_template_count / 10); page += 1) {
         const result = await templates.listTemplates({customer_id: folder.customer_id, search: '', page, page_size: 10})

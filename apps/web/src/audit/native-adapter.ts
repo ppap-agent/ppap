@@ -4,7 +4,7 @@ import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
 import type {AuditDisplayAdapter} from './display-info-editor'
 import type {AuditReportAdapter} from './report-contract'
-import type {AuditSupportAdapter} from './template-contract'
+import type {AuditSupportAdapter, AuditTemplateAdapter} from './template-contract'
 import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contract.ts'
 import type {UploadAdapter} from './uploads'
 
@@ -14,6 +14,10 @@ const nativeUploads: UploadAdapter = {
     return uploadLocalVersion(input.file, requestId)
   },
   readUpload: readLocalUpload,
+}
+
+export const nativeTemplateAdapter: AuditTemplateAdapter = {
+  readCatalog: () => request('/audit-template-catalog'),
 }
 
 export const nativeFeedbackAdapter: AuditFeedbackAdapter = {

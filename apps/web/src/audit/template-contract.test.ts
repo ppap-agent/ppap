@@ -19,6 +19,9 @@ test('template coverage counts a union within an explicit 17-type universe, neve
   assert.equal(validCatalog({...catalog, coverage_universe: [...catalog.coverage_universe, 'type-18']}), false)
   assert.equal(validCatalog({...catalog, customers: [{...catalog.customers[0], effective_rule_types: []}]}), false)
   assert.equal(validCatalog({...catalog, customers: [...catalog.customers, catalog.customers[0]]}), false)
+  const extra = {...catalog, customers: [{...catalog.customers[0], effective_rule_types: ['设计失效模式及后果分析']}]}
+  assert.equal(validCatalog(extra), true)
+  assert.deepEqual(coveredTypes(extra, extra.customers[0].effective_rule_types), [])
 })
 
 test('template pages bind query, customer, fixed versions and date order', () => {
@@ -36,6 +39,9 @@ test('template reads reject unknown permissions and bytes for another version', 
   await assert.rejects(readTemplateFile({...adapter, readFile: async () => ({reference, blob: new Blob(['abc'], {type: 'text/html'})})}, item, 'download'))
   await assert.rejects(readTemplateFile(adapter, {...item, file: {...item.file, status: 'staging'}}, 'download'))
   assert.equal(validTemplatePage({...page, items: [{...item, file: {...item.file, status: 'staging'}}]}, page.query), false)
+  const coverageOnly: AuditTemplateAdapter = {readCatalog: adapter.readCatalog}
+  await assert.rejects(readTemplateFile(coverageOnly, item, 'preview'), /template_files_unavailable/)
+  await assert.rejects(readTemplateZip(coverageOnly, folder), /template_files_unavailable/)
 })
 
 test('template ZIPs require the same complete folder revision, distinct versions and actual ZIP bytes', async () => {

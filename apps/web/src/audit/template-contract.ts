@@ -10,9 +10,9 @@ export type TemplateFolder = Pick<TemplatePage, 'folder_id' | 'folder_revision' 
 export type TemplateContent = {reference: TemplateReference; blob: Blob}
 export type AuditTemplateAdapter = {
   readCatalog: () => Promise<TemplateCatalog>
-  listTemplates: (query: TemplateQuery) => Promise<TemplatePage>
-  readFile: (item: TemplateItem, purpose: 'preview' | 'download') => Promise<TemplateContent>
-  readZip: (folder: TemplateFolder) => Promise<{snapshot: TemplateZip; blob: Blob}>
+  listTemplates?: (query: TemplateQuery) => Promise<TemplatePage>
+  readFile?: (item: TemplateItem, purpose: 'preview' | 'download') => Promise<TemplateContent>
+  readZip?: (folder: TemplateFolder) => Promise<{snapshot: TemplateZip; blob: Blob}>
 }
 export type AuditSupportAdapter = {
   read: () => Promise<components['schemas']['AuditSupportInfo']>
@@ -23,7 +23,7 @@ export const coveredTypes = (catalog: TemplateCatalog, types: string[]) => [...n
 const safeZipName = (name: string) => Boolean(name && name !== '.' && name !== '..' && !/[/\\\u0000-\u001f]/.test(name))
 
 export function validCatalog(catalog: TemplateCatalog) {
-  return catalog.coverage_universe.length === 17 && new Set(catalog.coverage_universe).size === 17 && catalog.coverage_universe.every(Boolean) && new Set(catalog.customers.map(row => row.customer_id)).size === catalog.customers.length && catalog.customers.every(row => row.customer_id && row.name && coveredTypes(catalog, row.effective_rule_types).length > 0)
+  return catalog.coverage_universe.length === 17 && new Set(catalog.coverage_universe).size === 17 && catalog.coverage_universe.every(Boolean) && new Set(catalog.customers.map(row => row.customer_id)).size === catalog.customers.length && catalog.customers.every(row => row.customer_id && row.name && row.effective_rule_types.length > 0 && row.effective_rule_types.every(Boolean))
 }
 export function validTemplatePage(page: TemplatePage, query: TemplateQuery) {
   const sameQuery = page.query.customer_id === query.customer_id && page.query.search === query.search && page.query.page === query.page && page.query.page_size === query.page_size
@@ -32,12 +32,14 @@ export function validTemplatePage(page: TemplatePage, query: TemplateQuery) {
   return Boolean(sameQuery && page.folder_id && page.folder_revision && validCount && new Set(page.items.map(row => row.reference.template_id)).size === page.items.length && fixedVersions && page.items.every((row, index, rows) => !index || Date.parse(row.updated_at) <= Date.parse(rows[index - 1].updated_at)))
 }
 export async function readTemplateFile(adapter: AuditTemplateAdapter, item: TemplateItem, purpose: 'preview' | 'download') {
+  if (!adapter.readFile) throw new Error('template_files_unavailable')
   if (item.file.status !== 'ready' || item[`${purpose}_access`].state !== 'allowed') throw new Error('template_access_denied')
   const result = await adapter.readFile(structuredClone(item), purpose)
   if (templateKey(result.reference) !== templateKey(item.reference) || result.blob.size !== item.file.byte_size || result.blob.type !== item.file.content_type) throw new Error('template_content_mismatch')
   return result.blob
 }
 export async function readTemplateZip(adapter: AuditTemplateAdapter, folder: TemplateFolder) {
+  if (!adapter.readZip) throw new Error('template_files_unavailable')
   const {snapshot, blob} = await adapter.readZip(structuredClone(folder))
   const entries = snapshot.templates
   if (snapshot.access.state !== 'allowed' || !snapshot.complete || snapshot.customer_id !== folder.customer_id || snapshot.folder_id !== folder.folder_id || snapshot.folder_revision !== folder.folder_revision || entries.length !== folder.folder_template_count || !entries.length || new Set(entries.map(row => templateKey(row.reference))).size !== entries.length || new Set(entries.map(row => row.filename)).size !== entries.length || entries.some(row => row.reference.customer_id !== folder.customer_id || !row.reference.template_id || !row.reference.file_version_id || !safeZipName(row.filename) || !Number.isInteger(row.byte_size) || row.byte_size <= 0) || blob.type !== 'application/zip' || blob.size !== snapshot.byte_size || snapshot.manifest_filename !== null && (!safeZipName(snapshot.manifest_filename) || entries.some(row => row.filename === snapshot.manifest_filename))) throw new Error('incomplete_template_zip')

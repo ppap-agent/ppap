@@ -22,8 +22,8 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
     bytes.set(id, blob)
     return {reference: {customer_id: `preview-customer-${customer}`, template_id: `preview-template-${customer}-${index}`, file_version_id: id}, file: {id, file_id: `preview-template-${customer}-${index}`, original_filename: name, content_type: excel, byte_size: blob.size, status: 'ready', sha256: null}, document_type: index === 2 ? '尺寸检验报告' : '控制计划', updated_at: `2026-10-${String(16 - position).padStart(2, '0')}T08:00:00Z`, preview_access: scene === 'templates-denied' && index === 1 ? denied : allowed, download_access: scene === 'templates-denied' && index === 1 ? denied : allowed, share_access: allowed}
   }))
-  return {
-    readCatalog: async () => ({coverage_universe: universe, customers: scene === 'templates-empty-customers' ? [] : [{customer_id: 'preview-customer-a', name: '示例客户 A', effective_rule_types: ['控制计划', '全功能检验报告', '潜在过程失效模式及后果分析', '过程流程图', '测量系统分析评价', '零件提交保证书', '控制计划']}, {customer_id: 'preview-customer-b', name: '示例客户 B', effective_rule_types: ['控制计划']}] }),
+  const adapter: AuditTemplateAdapter = {
+    readCatalog: async () => ({coverage_universe: universe, customers: scene === 'templates-empty-customers' ? [] : [{customer_id: 'preview-customer-a', name: '示例客户 A', effective_rule_types: ['控制计划', '全功能检验报告', '潜在过程失效模式及后果分析', '过程流程图', '测量系统分析评价', '零件提交保证书', '控制计划']}, {customer_id: 'preview-customer-b', name: '示例客户 B', effective_rule_types: scene === 'templates-catalog-only' ? ['设计失效模式及后果分析'] : ['控制计划']}] }),
     listTemplates: async query => {
       listReads.set(query.customer_id, (listReads.get(query.customer_id) || 0) + 1)
       const all = scene === 'templates-empty' ? [] : rows.filter(row => row.reference.customer_id === query.customer_id), filtered = all.filter(row => `${row.file.original_filename} ${row.document_type}`.includes(query.search))
@@ -46,4 +46,5 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
       return {snapshot: {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: files.map(row => ({reference: row.reference, filename: row.file.original_filename, byte_size: row.file.byte_size})), manifest_filename: '模板清单.txt', filename: `${folder.customer_id}-示例模板.zip`, byte_size: blob.size, complete: scene !== 'templates-zip-incomplete' && (scene !== 'templates-zip-recovery' || folder.folder_revision === 'preview-revision-2'), access: allowed}, blob}
     },
   }
+  return scene === 'templates-catalog-only' ? {readCatalog: adapter.readCatalog} : adapter
 }

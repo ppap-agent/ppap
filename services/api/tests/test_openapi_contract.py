@@ -22,6 +22,7 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/integrations/feishu/usage/quota"): False,
     ("POST", "/integrations/feishu/rounds/{round_id}/writeback"): False,
     ("GET", "/rules"): False,
+    ("GET", "/audit-template-catalog"): False,
     ("POST", "/audit-tasks"): True,
     ("GET", "/audit-tasks"): False,
     ("GET", "/audit-tasks/{task_id}"): False,
@@ -228,7 +229,8 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("complete", schemas["AuditTemplateZip"]["required"])
         self.assertEqual(set(schemas["AuditTemplateZipEntry"]["required"]), {"reference", "filename", "byte_size"})
         self.assertEqual(schemas["AuditSupportInfo"]["properties"]["state"]["enum"], ["configured", "unavailable"])
-        for name in ("AuditTemplateCatalog", "AuditTemplatePage", "AuditTemplateZip"):
+        self.assertNotIn("x-contract-stage", schemas["AuditTemplateCatalog"])
+        for name in ("AuditTemplatePage", "AuditTemplateZip"):
             self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")
         self.assertNotIn("/templates", spec["paths"])
 

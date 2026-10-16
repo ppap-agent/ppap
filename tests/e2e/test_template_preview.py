@@ -13,6 +13,42 @@ if PREVIEW:
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplatePreviewTests(unittest.TestCase):
+    def test_rule_coverage_without_template_files_is_not_an_empty_template_library(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for width in (1280, 390):
+                with self.subTest(width=width):
+                    page = browser.new_page(viewport={"width": width, "height": 900})
+                    page.goto(PREVIEW + "/preview/audit.html?scene=templates-catalog-only")
+                    page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                    page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+                    page.get_by_role("button", name="查看客户模板", exact=True).click()
+                    expect(page.get_by_text("规则覆盖 6/17 类文件", exact=True)).to_be_visible()
+                    expect(page.get_by_text("模板文件暂不可用", exact=True)).to_be_visible()
+                    expect(page.get_by_role("table", name="客户模板", exact=True)).to_have_count(0)
+                    expect(page.get_by_text("此客户暂无可用模板。", exact=True)).to_have_count(0)
+                    expect(page.get_by_text("模板清单读取失败", exact=True)).to_have_count(0)
+                    for name in ("下载客户模板 ZIP", "分享客户模板", "管理文件夹权限"):
+                        expect(page.get_by_role("button", name=name, exact=True)).to_be_disabled()
+                    if width < 1024:
+                        page.get_by_role("combobox", name="选择模板客户", exact=True).click()
+                        page.get_by_role("option", name="示例客户 B", exact=True).click()
+                    else:
+                        page.get_by_role("button", name="选择客户 示例客户 B", exact=True).click()
+                    expect(page.get_by_text("规则覆盖 0/17 类文件", exact=True)).to_be_visible()
+                    expect(page.get_by_text("其他文件规则：设计失效模式及后果分析", exact=True)).to_be_visible()
+                    expect(page.get_by_text("模板文件暂不可用", exact=True)).to_be_visible()
+                    page.get_by_role("button", name="更多模板请补充", exact=True).click()
+                    dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+                    expect(dialog.get_by_role("button", name="选择附件", exact=True)).to_be_enabled()
+                    dialog.get_by_role("button", name="关闭", exact=True).click()
+                    page.get_by_role("button", name="返回审核", exact=True).click()
+                    expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
+                    expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
+                    self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width)
+                    page.close()
+            browser.close()
+
     def test_selecting_the_current_customer_keeps_the_visible_template_page(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

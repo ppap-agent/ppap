@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 
@@ -12,6 +12,21 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native template coverage reads the authenticated catalog without inventing template files', async () => {
+  const result = {coverage_universe: ['控制计划'], customers: [{customer_id: 'customer a', name: 'Customer A', effective_rule_types: ['控制计划']}]}
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), '/audit-template-catalog')
+    assert.equal(init?.method, 'GET')
+    assert.equal(init?.credentials, 'include')
+    assert.equal(init?.body, undefined)
+    return json(result)
+  }
+  assert.deepEqual(await nativeTemplateAdapter.readCatalog(), result)
+  assert.equal(nativeTemplateAdapter.listTemplates, undefined)
+  assert.equal(nativeTemplateAdapter.readFile, undefined)
+  assert.equal(nativeTemplateAdapter.readZip, undefined)
+})
 
 test('native feedback keeps a local attachment request and does not claim an operator submission', async () => {
   const adapter = nativeFeedbackAdapter

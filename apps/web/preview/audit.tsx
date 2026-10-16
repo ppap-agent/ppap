@@ -417,11 +417,12 @@ function Preview() {
       return scene === 'reports-share-race' ? defer('分享发送回执', result) : result
     },
   }), [defer])
+  const listTemplates = templateAdapter.listTemplates
   const controlledTemplates = useMemo(() => ({...templateAdapter,
-    listTemplates: async (...args: Parameters<typeof templateAdapter.listTemplates>) => {
-      const result = await templateAdapter.listTemplates(...args)
+    listTemplates: listTemplates ? async (...args: Parameters<NonNullable<typeof templateAdapter.listTemplates>>) => {
+      const result = await listTemplates(...args)
       return scene === 'templates-race' && args[0].customer_id === 'preview-customer-a' ? defer('模板清单 · 示例客户 A', result) : result
-    },
+    } : undefined,
   }), [defer])
   const submitFeedback = feedbackAdapter.submit
   const controlledFeedback = useMemo(() => ({...feedbackAdapter,
