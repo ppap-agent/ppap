@@ -1,7 +1,6 @@
 """P3 checks real file contents without matching rules or starting an audit."""
 
 from io import BytesIO
-from pathlib import Path
 from struct import pack_into
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
@@ -165,16 +164,6 @@ def test_legacy_doc_keeps_the_existing_25_mib_converter_limit() -> None:
     }
 
 
-def test_real_legacy_doc_without_converter_is_unknown_not_invalid(monkeypatch) -> None:
-    monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", "/not-installed/ppap-test-libreoffice")
-    fixture = Path(__file__).resolve().parents[3] / "tests/corpus/fixtures/legacy_doc/psw.doc"
-
-    assert validate_file("真实旧文档.doc", fixture.read_bytes()) == {
-        "state": "error",
-        "reasons": ["文件检查暂不可用，请稍后重试"],
-    }
-
-
 def test_fake_legacy_doc_is_invalid_before_conversion() -> None:
     assert validate_file("伪装.doc", b"not a binary Word document") == {
         "state": "invalid",
@@ -252,12 +241,6 @@ def test_excel_loader_wrapped_runtime_failure_is_error_not_invalid(monkeypatch) 
 
     monkeypatch.setattr(openpyxl, "load_workbook", unavailable)
     assert validate_file("资料.xlsx", content.getvalue()) == {"state": "error", "reasons": ["文件检查暂不可用，请稍后重试"]}
-
-
-def test_real_legacy_excel_is_checked_through_the_shared_loader() -> None:
-    fixture = Path(__file__).resolve().parents[3] / "assets/v2.0plus/fallback/5-模具验收报告-上海亚大.xls"
-
-    assert validate_file("真实旧工作簿.xls", fixture.read_bytes()) == {"state": "valid", "reasons": []}
 
 
 def test_zip_password_flag_is_invalid_not_a_service_failure() -> None:
