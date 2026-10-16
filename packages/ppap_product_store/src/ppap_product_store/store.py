@@ -710,9 +710,12 @@ class AuthStore:
             prepared = self._prepared_items(conn, principal, [{"file_version_id": version_id, "role": "reference"}])
             if prepared[0]["file_id"] != file_id:
                 raise KeyError("missing")
+            # Task recognition has fixed references; this legacy read is standalone.
             row = conn.execute(
                 """SELECT id FROM engine.jobs WHERE tenant_id = %s AND kind = %s
-                AND payload->>'source_file_version_id' = %s ORDER BY created_at DESC, id DESC LIMIT 1""",
+                AND payload->>'source_file_version_id' = %s
+                AND NOT (payload ? 'task_id')
+                ORDER BY created_at DESC, id DESC LIMIT 1""",
                 (principal.tenant_id, kind, version_id),
             ).fetchone()
         return self._get_file_job(principal, str(row[0]), kind) if row else None

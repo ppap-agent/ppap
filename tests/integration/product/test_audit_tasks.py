@@ -253,10 +253,12 @@ def test_ambiguous_rules_are_not_reported_as_definitive_zero_match(task_system):
 def test_task_reads_and_job_reads_require_the_private_draft_owner(task_system, auth_store_factory):
     client, worker = task_system
     file = checked_file(client, worker)
+    source_id = client.get(f"/file-validations/{file['validation_id']}").json()["source_file_id"]
+    standalone = client.post("/file-analyses", json={"request_id": str(uuid.uuid4()), "source_file_id": source_id, "source_file_version_id": file["file_version_id"]}).json()
+    process_claimed(worker, worker.claim_job("standalone"), "standalone", rule_ai=MetadataAI())
     body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
     task = client.post("/audit-tasks", json=body).json()
     job = worker.claim_job("recognition")
-    source_id = client.get(f"/file-validations/{file['validation_id']}").json()["source_file_id"]
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
     # A file grant is not a private Task grant. Seed this policy boundary directly.
     with migrator._conn() as conn:
@@ -266,6 +268,10 @@ def test_task_reads_and_job_reads_require_the_private_draft_owner(task_system, a
         assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
         if subject == "bob":
             assert client.get(f"/files/{source_id}/versions/{file['file_version_id']}").status_code == 200
+            assert client.get(f"/file-analyses/{standalone['id']}").status_code == 200
+            latest = client.get(f"/files/{source_id}/versions/{file['file_version_id']}/analysis")
+            assert latest.status_code == 200
+            assert latest.json()["analysis"]["id"] == standalone["id"]
         assert client.get("/audit-tasks").json()["tasks"] == []
         assert client.get(f"/audit-tasks/{task['id']}").status_code == 403
         assert client.post(f"/audit-tasks/{task['id']}/end").status_code == 403
