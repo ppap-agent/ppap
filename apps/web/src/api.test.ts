@@ -100,6 +100,32 @@ test('local upload fixes the request and file hash before sending bytes', async 
   assert.deepEqual(calls.map(call => call.init?.method), ['POST', 'PUT'])
 })
 
+test('local upload accepts the server canonical filename without changing its fixed bytes', async () => {
+  const id = 'd8d3bf35-2145-4094-97ea-a5f149b5891b'
+  const sha256 = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+  const file = new File(['abc'], ' report.xlsx')
+  const version = {id, file_id: 'file', original_filename: 'report.xlsx', byte_size: 3, content_type: 'application/octet-stream', status: 'staging', sha256: null}
+  const staged: string[] = []
+  const calls = installFetch((url, init) => {
+    if (init?.method === 'POST') {
+      assert.equal(JSON.parse(String(init.body)).original_filename, ' report.xlsx')
+      return jsonResponse(version)
+    }
+    if (init?.method === 'GET') return jsonResponse({request_id: id, state: 'uploading', file: version, reason: null, retry_allowed: false, resume_allowed: true})
+    assert.equal(url, `${apiUrl}/files/file/versions/${id}/blob`)
+    assert.equal(init?.method, 'PUT')
+    assert.equal(init?.body, file)
+    return jsonResponse({...version, status: 'ready', sha256})
+  })
+  const receipt = await uploadLocalVersion(file, id, next => staged.push(next.original_filename))
+  assert.equal(receipt.state, 'ready')
+  assert.equal(receipt.file?.original_filename, 'report.xlsx')
+  assert.equal(receipt.file?.id, id)
+  assert.equal(receipt.file?.sha256, sha256)
+  assert.deepEqual(staged, ['report.xlsx'])
+  assert.deepEqual(calls.map(call => call.init?.method), ['POST', 'PUT'])
+})
+
 test('a lost create reply reads the same upload without sending bytes or another create', async () => {
   const id = '1702b78f-bf60-453a-a68e-f54eaa1b991b'
   const file = new File(['abc'], 'control.xlsx')

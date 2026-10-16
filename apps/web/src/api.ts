@@ -121,7 +121,7 @@ export async function request<T, B = unknown>(path: string, method = 'GET', body
 }
 function checkLocalUpload(version: FileVersion, file: File, requestId: string, sha256: string) {
   const contentType = (file.type || 'application/octet-stream').split(';')[0].trim().toLowerCase()
-  if (version.id !== requestId || !version.file_id || version.original_filename !== file.name || version.byte_size !== file.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== sha256 || version.status === 'ready' && version.sha256 !== sha256) throw new Error('上传回执与原文件不一致，请先核对原传输请求。')
+  if (version.id !== requestId || !version.file_id || !version.original_filename.trim() || version.byte_size !== file.size || version.content_type.toLowerCase() !== contentType || version.sha256 !== null && version.sha256 !== sha256 || version.status === 'ready' && version.sha256 !== sha256) throw new Error('上传回执与原文件不一致，请先核对原传输请求。')
   return version
 }
 export async function readLocalUpload(requestId: string): Promise<UploadReceipt> {
