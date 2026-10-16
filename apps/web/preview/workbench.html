@@ -104,7 +104,7 @@
         destination = target.pathname + target.search;
         if (!reload && frame.contentDocument) {
           frame.contentDocument.documentElement.classList.toggle('dark', state.theme === 'dark');
-          frame.contentWindow.history.replaceState(null, '', destination);
+          frame.contentWindow.history.replaceState(frame.contentWindow.history.state, '', destination);
         }
       }
       document.getElementById('standalone').href = destination;

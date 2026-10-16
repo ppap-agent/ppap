@@ -28,6 +28,29 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_preview_theme_and_width_changes_preserve_both_upload_history_entries(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/__preview?page=audit&scene=populated&width=1440")
+            product = page.frame_locator("#product")
+            product.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            product.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+            product.get_by_role("button", name="新建审核任务", exact=True).click()
+            product.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            product.get_by_role("checkbox", name="深度模式", exact=True).check()
+            page.get_by_role("button", name="切换明暗主题", exact=True).click()
+            page.get_by_role("button", name="手机", exact=True).click()
+            page.go_back()
+            expect(product.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(product.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
+            expect(product.get_by_role("checkbox", name="深度模式", exact=True)).not_to_be_checked()
+            page.get_by_role("button", name="切换明暗主题", exact=True).click()
+            page.go_forward()
+            expect(product.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
+            expect(product.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
+            browser.close()
+
     def test_a_late_precheck_reply_cannot_change_the_restored_draft(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
