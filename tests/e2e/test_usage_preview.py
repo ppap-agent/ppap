@@ -4,9 +4,10 @@ import os
 import re
 import unittest
 
-from playwright.sync_api import expect, sync_playwright
-
 PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
+
+if PREVIEW:
+    from playwright.sync_api import expect, sync_playwright
 
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")

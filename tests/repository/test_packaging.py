@@ -76,7 +76,7 @@ class PackagingTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertEqual(default_collection.returncode, 0, default_collection.stderr)
+        self.assertEqual(default_collection.returncode, 0, f"{default_collection.stderr}\n{default_collection.stdout[-4000:]}")
         self.assertNotIn("tests/live/test_deep_isolated.py", default_collection.stdout)
 
         explicit_collection = subprocess.run(
