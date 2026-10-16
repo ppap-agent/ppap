@@ -77,6 +77,25 @@ class TaskRoundViewTests(unittest.TestCase):
         self.assertEqual(audit["failure"], failed_round["failure"])
         self.assertEqual(audit["report"]["state"], "not_eligible")
 
+    def test_coverage_only_human_review_stays_separate_from_machine_results(self):
+        round = frozen_round()
+        review = {
+            "judgment": "manual-satisfied",
+            "rationale": "人工按原件核对",
+            "next_step": "",
+            "version": 1,
+            "citations": [{"file_version_id": "version-a", "location": "Sheet1 A1", "excerpt": "每班"}],
+        }
+        round["coverage"]["rule_items"][0]["review"] = review
+        before = deepcopy(round)
+        audit = task_round_view(task_input(), round)["files"][0]["audit"]
+        check = audit["checks"][0]
+        self.assertEqual((check["review_item_key"], check["review"]), ("coverage:version-a:clause-a", review))
+        self.assertIsNone(check["finding"])
+        self.assertEqual((check["coverage"], check["evidence"], check["evidence_verified"]), ("unsupported", [], False))
+        self.assertEqual((audit["counts"]["pass_count"], audit["counts"]["not_covered_count"], audit["conclusion"], audit["report"]["state"]), (0, 1, "UNKNOWN", "not_eligible"))
+        self.assertEqual(round, before)
+
     def test_semantic_evidence_keeps_frozen_source_locations_without_claiming_read_time_verification(self):
         round = frozen_round()
         round["inputs"].append({"role": "reference", "file_version_id": "version-reference", "rule": None})

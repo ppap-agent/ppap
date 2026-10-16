@@ -29,6 +29,58 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_saved_human_review_is_read_only_and_keeps_the_machine_result(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            address = PREVIEW + "/preview/audit.html?scene=restore-review-records&task=preview-recovery-task"
+            page.goto(address)
+            record = page.get_by_role("region", name="已有人工复核", exact=True)
+            expect(record.get_by_text("人工确认满足要求", exact=True)).to_be_visible()
+            expect(record.get_by_text("人工查阅原件后认为频次符合要求。", exact=True)).to_be_visible()
+            expect(record.get_by_text("与客户确认频次定义。", exact=True)).to_be_visible()
+            expect(record.get_by_text("复核记录 v2", exact=True)).to_be_visible()
+            expect(record.get_by_text("审核示例 C12", exact=True)).to_be_visible()
+            expect(record.get_by_role("textbox")).to_have_count(0)
+            expect(page.get_by_role("table").get_by_role("row", name="1.1 频次一致性 不符合 查看依据 1.1", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
+            record.get_by_role("button", name="核对复核原件 控制计划.xlsx", exact=True).click()
+            original = page.get_by_role("region", name="原件预览", exact=True)
+            expect(original).to_have_attribute("data-file-version", "preview-recovery-version-1")
+            expect(original.get_by_text("每班一次", exact=True)).to_be_visible()
+            page.reload()
+            expect(record.get_by_text("复核记录 v2", exact=True)).to_be_visible()
+            page.get_by_role("button", name="查看依据 1.2", exact=True).click()
+            expect(record.get_by_text("人工记录：缺少清晰的签字页。", exact=True)).to_be_visible()
+            expect(record.get_by_text("仍无法判断", exact=True)).to_be_visible()
+            expect(record.get_by_text("人工查阅原件后认为频次符合要求。", exact=True)).to_have_count(0)
+            expect(page.get_by_role("table").get_by_role("row", name="1.2 记录完整性 未覆盖 查看依据 1.2", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("^控制计划.xlsx")).click()
+            expect(record).to_have_count(0)
+            expect(page.get_by_role("table").get_by_role("row", name="2.1 频次一致性 满足 查看依据 2.1", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_legacy_human_judgment_is_preserved_without_assuming_a_known_label(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-review-unknown&task=preview-recovery-task")
+            record = page.get_by_role("region", name="已有人工复核", exact=True)
+            expect(record.get_by_text("toString", exact=True)).to_be_visible()
+            expect(page.get_by_role("table").get_by_role("row", name="1.1 频次一致性 不符合 查看依据 1.1", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_saved_human_citation_cannot_open_a_file_outside_the_frozen_round(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-review-outside&task=preview-recovery-task")
+            record = page.get_by_role("region", name="已有人工复核", exact=True)
+            expect(record.get_by_role("button", name="核对复核原件 不在本轮的原件", exact=True)).to_be_disabled()
+            expect(record.get_by_text("引用不在本轮冻结范围", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="原件预览", exact=True)).to_have_count(0)
+            browser.close()
+
     def test_old_recovery_uses_the_newer_task_files_rules_and_mode_already_read_from_the_server(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

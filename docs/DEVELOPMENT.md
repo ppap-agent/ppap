@@ -160,7 +160,7 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 `POST /audit-tasks/{id}/confirm` 只接收 `request_id` 和 `expected_revision`，复用同一受理事务冻结当前修订中每份选中且已匹配的文件/规则，并创建唯一 Round 与原执行 job；未匹配来源在该事务中记为移除，不进入执行。`GET /audit-tasks/{id}?request_id=...` 只读原确认结果，未查到成功回执仍为待核对，不是重发许可。新 Task Round 使用显式对象授权，不通过旧同租户 Round 入口开放原件，也不允许旧 resubmit 绕过任务约束；旧 Round 的共享口径不变。收费政策未定期间，新的确认接口仅在 `PPAP_USAGE_CHARGE_ENABLED=false` 下开放，不能据此宣称逐文件收费已完成。
 
-普通 `pnpm dev` 的 `/__audit-native` 是 V3.1 真实联调入口，复用同一个 `AuditIntake`、登录、上传、预检查、Task/Round 读取和原件阅读器，不进入生产构建、不修改正式首页；4185 仍是独立 fixtures。真实 Round 投影保留机器观察、覆盖与独立人工记录，未验证证据不能成为正式 PASS/NG 或报告。当前执行异常边界仍是整个 Round；逐文件异常隔离、人工复核编辑、正式 PDF/ZIP、飞书与用量尚须接通和验收。
+普通 `pnpm dev` 的 `/__audit-native` 是 V3.1 真实联调入口，复用同一个 `AuditIntake`、登录、上传、预检查、Task/Round 读取和原件阅读器，不进入生产构建、不修改正式首页；4185 仍是独立 fixtures。真实 Round 投影保留机器观察、覆盖与独立人工记录；P5 并列只读展示已保存的人工判断、理由、版本及冻结文件引用，不改变机器结论或报告资格，也不将人工位置文字伪装为自动定位。未验证证据不能成为正式 PASS/NG 或报告。当前执行异常边界仍是整个 Round；逐文件异常隔离、人工复核编辑、正式 PDF/ZIP、飞书与用量尚须接通和验收。
 
 ## UI-first 交互预览
 

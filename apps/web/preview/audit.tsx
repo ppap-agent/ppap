@@ -268,6 +268,14 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
   const snapshot = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
   if (scene === 'restore-without-notification') delete snapshot.notification_enabled
+  if (scene.startsWith('restore-review-')) {
+    Object.assign(snapshot, fixtureResults(frozen, scene))
+    const audit = snapshot.files[0].audit!, source = snapshot.files[1].file
+    audit.checks[0].finding!.review = {judgment: scene === 'restore-review-unknown' ? 'toString' : 'manual-satisfied', rationale: '人工查阅原件后认为频次符合要求。', next_step: '与客户确认频次定义。', version: 2, citations: [{file_version_id: scene === 'restore-review-outside' ? 'outside-this-round' : source.id, location: '审核示例 C12', excerpt: '每班一次'}]}
+    audit.checks[1] = {...audit.checks[1], coverage: 'unsupported', finding: null, evidence: [], review: {judgment: 'unknown', rationale: '人工记录：缺少清晰的签字页。', next_step: '', version: 1, citations: []}}
+    audit.counts = {...audit.counts, unknown_count: 0, not_covered_count: 1}
+    if (audit.summary) audit.summary.text = '1 项不符合，1 项未覆盖。'
+  }
   if (scene.startsWith('restore-usage-')) snapshot.usage_notice = usageNotices.paid_insufficient
   if (scene.startsWith('restore-display-')) snapshot.files = snapshot.files.map(file => ({...file, display_info: {revision: 0, values: fileDisplayValues(file)}, display_edit_access: {state: 'allowed', reason: null}}))
   if (scene.startsWith('restore-estimate')) {
