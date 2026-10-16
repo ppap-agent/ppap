@@ -8,6 +8,7 @@ import os
 import re
 import unittest
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlparse
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -2289,7 +2290,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_unknown_acceptance_reads_the_same_receipt_without_a_second_command(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
             page.goto(PREVIEW + "/preview/audit.html?scene=confirm-unknown")
             page.get_by_role("button", name="使用三类文件示例").click()
             page.get_by_role("button", name="开始识别", exact=True).click()
@@ -2298,6 +2299,19 @@ class AuditPreviewTests(unittest.TestCase):
             request = page.get_by_text("请求：", exact=False).inner_text()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
             expect(page.get_by_role("button", name="上一步", exact=True)).to_be_disabled()
+            support_trigger = page.get_by_role("button", name="联系支持", exact=True)
+            support_trigger.click()
+            support = page.get_by_role("dialog", name="联系我们", exact=True)
+            support.get_by_role("button", name="复制操作信息", exact=True).click()
+            copied = page.evaluate("navigator.clipboard.readText()")
+            self.assertIn("确认审核", copied)
+            self.assertIn(request.split("：", 1)[1], copied)
+            self.assertIn(parse_qs(urlparse(page.url).query)["task"][0], copied)
+            self.assertIn("未取得受理回执。审核可能已经开始", copied)
+            page.keyboard.press("Escape")
+            expect(support_trigger).to_be_focused()
+            expect(page.get_by_text(request, exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
             page.get_by_role("button", name="读取受理结果", exact=True).click()
             expect(page.get_by_text(request, exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()

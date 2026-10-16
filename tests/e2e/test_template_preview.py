@@ -12,6 +12,20 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplatePreviewTests(unittest.TestCase):
+    def test_selecting_the_current_customer_keeps_the_visible_template_page(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?view=templates")
+            page.get_by_role("button", name="选择客户 示例客户 A", exact=True).click()
+            expect(page.get_by_role("row", name=re.compile("示例控制计划模板.xlsx"))).to_be_visible()
+            page.get_by_role("button", name="下一页模板", exact=True).click()
+            page.get_by_role("button", name="选择客户 示例客户 A", exact=True).click()
+            expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
+            expect(page.get_by_role("row", name=re.compile("示例归档模板 11.xlsx"))).to_be_visible()
+            expect(page.get_by_role("button", name="下载客户模板 ZIP", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_late_support_read_after_back_cannot_fill_a_reopened_dialog(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -320,6 +334,42 @@ class TemplatePreviewTests(unittest.TestCase):
             page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("未下载不完整或身份不符的模板包")
             self.assertEqual(downloads, [])
+            browser.close()
+
+    def test_failed_template_zip_rereads_the_same_list_before_an_explicit_new_download(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            downloads = []
+            page.on("download", lambda download: downloads.append(download))
+            page.goto(PREVIEW + "/preview/audit.html?scene=templates-zip-recovery")
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "保留的审核草稿.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
+            page.get_by_role("combobox", name="客户（可选）").click()
+            page.get_by_role("option", name="示例客户", exact=True).click()
+            page.get_by_role("button", name="查看客户模板", exact=True).click()
+            page.get_by_role("textbox", name="搜索模板", exact=True).fill("示例")
+            expect(page.get_by_role("button", name="下一页模板", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="下一页模板", exact=True).click()
+            expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
+            page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("未下载不完整或身份不符的模板包")
+            self.assertEqual(downloads, [])
+            page.get_by_role("button", name="重新读取模板清单", exact=True).click()
+            expect(page.get_by_role("button", name="下载客户模板 ZIP", exact=True)).to_be_enabled()
+            expect(page.get_by_role("textbox", name="搜索模板", exact=True)).to_have_value("示例")
+            expect(page.get_by_text("共 12 份模板 · 第 2/2 页", exact=True)).to_be_visible()
+            expect(page.get_by_role("row", name=re.compile("示例归档模板 11.xlsx"))).to_be_visible()
+            self.assertEqual(downloads, [])
+            with page.expect_download() as package:
+                page.get_by_role("button", name="下载客户模板 ZIP", exact=True).click()
+            with zipfile.ZipFile(package.value.path()) as archive:
+                self.assertEqual(len(archive.namelist()), 13)
+                self.assertIn("文件夹修订：preview-revision-2", archive.read("模板清单.txt").decode())
+                self.assertIn("示例控制计划模板.xlsx", archive.namelist())
+                self.assertIn("示例归档模板 12.xlsx", archive.namelist())
+            page.get_by_role("button", name="返回审核", exact=True).click()
+            expect(page.get_by_text("保留的审核草稿.xlsx", exact=True).first).to_be_visible()
+            expect(page.get_by_role("combobox", name="客户（可选）")).to_contain_text("示例客户")
             browser.close()
 
     def test_global_support_is_available_on_mobile_and_preserves_current_upload(self):

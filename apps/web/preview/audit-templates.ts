@@ -12,6 +12,8 @@ const universe = ['全功能检验报告', '零部件设计验证计划和报告
 export function fixtureTemplates(scene: string): AuditTemplateAdapter {
   const bytes = new Map<string, Blob>()
   const listReads = new Map<string, number>()
+  const zipFailedFolders = new Set<string>()
+  const folderRevision = (customerId: string) => scene === 'templates-zip-recovery' && zipFailedFolders.has(customerId) ? 'preview-revision-2' : 'preview-revision-1'
   const rows = (['a', 'b'] as const).flatMap(customer => Array.from({length: customer === 'a' ? 12 : 1}, (_, position): TemplateItem => {
     const index = position + 1, id = `preview-template-${customer}-${index}-v1`, name = customer === 'b' ? '示例客户B模板.xlsx' : index === 1 ? '示例控制计划模板.xlsx' : index === 2 ? '示例尺寸检验报告模板.xlsx' : `示例归档模板 ${index}.xlsx`
     const book = utils.book_new()
@@ -26,7 +28,7 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
       listReads.set(query.customer_id, (listReads.get(query.customer_id) || 0) + 1)
       const all = scene === 'templates-empty' ? [] : rows.filter(row => row.reference.customer_id === query.customer_id), filtered = all.filter(row => `${row.file.original_filename} ${row.document_type}`.includes(query.search))
       const manage = scene.startsWith('templates-permissions-') && !(scene === 'templates-permissions-restore-denied' && listReads.get(query.customer_id)! > 1)
-      return {query: structuredClone(query), folder_id: `preview-folder-${query.customer_id}`, folder_revision: 'preview-revision-1', folder_template_count: all.length, creator_name: '示例创建人', manage_access: manage ? allowed : {state: 'denied', reason: '只有服务确认的文件夹管理者可修改权限。'}, zip_access: scene === 'templates-denied' ? denied : allowed, items: structuredClone(filtered.slice((query.page - 1) * 10, query.page * 10)), total: filtered.length}
+      return {query: structuredClone(query), folder_id: `preview-folder-${query.customer_id}`, folder_revision: folderRevision(query.customer_id), folder_template_count: all.length, creator_name: '示例创建人', manage_access: manage ? allowed : {state: 'denied', reason: '只有服务确认的文件夹管理者可修改权限。'}, zip_access: scene === 'templates-denied' ? denied : allowed, items: structuredClone(filtered.slice((query.page - 1) * 10, query.page * 10)), total: filtered.length}
     },
     readFile: async (item, purpose) => {
       const row = rows.find(row => row.reference.file_version_id === item.reference.file_version_id && row.reference.customer_id === item.reference.customer_id && row.reference.template_id === item.reference.template_id)
@@ -35,12 +37,13 @@ export function fixtureTemplates(scene: string): AuditTemplateAdapter {
     },
     readZip: async folder => {
       const files = rows.filter(row => row.reference.customer_id === folder.customer_id)
-      if (scene === 'templates-denied' || folder.folder_id !== `preview-folder-${folder.customer_id}` || folder.folder_revision !== 'preview-revision-1') throw new Error('template_folder_unavailable')
+      if (scene === 'templates-denied' || folder.folder_id !== `preview-folder-${folder.customer_id}` || folder.folder_revision !== folderRevision(folder.customer_id)) throw new Error('template_folder_unavailable')
       const entries: Record<string, Uint8Array> = {}, index = ['示例模板，不是真实客户文件。']
+      if (scene === 'templates-zip-recovery') {index.push(`文件夹修订：${folder.folder_revision}`); zipFailedFolders.add(folder.customer_id)}
       for (const item of files) {entries[item.file.original_filename] = new Uint8Array(await bytes.get(item.file.id)!.arrayBuffer()); index.push(`${item.file.original_filename}\n${item.file.id}`)}
       entries['模板清单.txt'] = strToU8(index.join('\n'))
       const blob = new Blob([new Uint8Array(zipSync(entries))], {type: 'application/zip'})
-      return {snapshot: {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: files.map(row => ({reference: row.reference, filename: row.file.original_filename, byte_size: row.file.byte_size})), manifest_filename: '模板清单.txt', filename: `${folder.customer_id}-示例模板.zip`, byte_size: blob.size, complete: scene !== 'templates-zip-incomplete', access: allowed}, blob}
+      return {snapshot: {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: files.map(row => ({reference: row.reference, filename: row.file.original_filename, byte_size: row.file.byte_size})), manifest_filename: '模板清单.txt', filename: `${folder.customer_id}-示例模板.zip`, byte_size: blob.size, complete: scene !== 'templates-zip-incomplete' && (scene !== 'templates-zip-recovery' || folder.folder_revision === 'preview-revision-2'), access: allowed}, blob}
     },
   }
 }
