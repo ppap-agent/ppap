@@ -714,11 +714,20 @@ class AuditReportUpdate(TypedDict):
     report: AuditFileReport | None
 
 
+class AuditReportPackageOutcome(TypedDict):
+    """Preparation of one frozen report, not a downloadable partial package."""
+
+    reference: AuditReportReference
+    state: Literal["pending", "prepared", "failed"]
+    reason: str | None
+
+
 class AuditReportPackage(TypedDict):
     """One recoverable packaging job; report references are fixed at creation."""
 
     package_id: str | None
     reports: list[AuditReportReference]
+    outcomes: NotRequired[list[AuditReportPackageOutcome]]
     receipt: AuditAcceptance
     state: Literal["pending", "generating", "ready", "failed"]
     artifact: AuditReportArtifact | None

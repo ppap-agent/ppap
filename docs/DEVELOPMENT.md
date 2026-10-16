@@ -164,6 +164,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 文件档案及历次审核使用 `scene=archive-ready`。`archive-task-allowed` 单独演示有来源任务读取许可时，经完整 P5/报告页返回所选历史，不改开最新审核。历史报告地址包含完整冻结结果引用，切换主题和刷新后仍读取同一次审核；这只恢复固定样例，不表示任意上传已持久化。档案、来源任务、原件和报告分别使用服务提供的访问结果，不从一项权限推定另一项权限。
 
+`reports-zip-failed` 在同一固定报告集合中显示逐报告准备状态与失败原因；改变当前勾选不改变旧包明细。`reports-zip-write-failed/pending-failed/legacy/no-retry` 分别区分最终 ZIP 写入失败、尚未确认、未提供逐项状态及服务未允许重试。`reports-zip-outcome-*` 故意返回缺项、重复、错误报告引用、空失败原因或矛盾就绪状态；只读原请求即可恢复，不重新打包。下载与文件分享使用同一明细校验；“打包准备完成”不表示有部分 ZIP 可下载，也不改变单 PDF 状态。这些仍是 UI-draft 合同与受控预览，不确定真实重试或收费政策。
+
 客户模板库使用 `scene=templates-ready`。XLSX/ZIP 是明确标识的本机示例字节，不是客户飞书文件。覆盖度使用服务合同中的显式 17 类字典及生效规则类型并集，不能直接以当前 `/rule-types` 的 18 项或模板附件数代替。模板预览固定文件版本；客户 ZIP 固定文件夹修订和完整集合。全局支持未取得有效配置时显示不可用，不虚构联系方式。
 
 支持浮层使用 `support-ready`、`support-error`、`support-qr-error` 和 `support-loading`，分别走查复制/邮箱链接/图片放大、读取恢复、图片失败和返回后迟到读取。电话不可拨打，邮箱是保留的 `.invalid` 地址，图片明确不是服务二维码；不代表已取得真实客服配置或完成飞书连接。Browser Back 关闭旧浮层并保留当前文件，二维码放大关闭后回到触发按钮。

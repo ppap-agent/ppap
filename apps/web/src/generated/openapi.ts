@@ -1305,6 +1305,8 @@ export interface components {
          */
         AuditReportPackage: {
             artifact: components["schemas"]["AuditReportArtifact"] | null;
+            /** Outcomes */
+            outcomes?: components["schemas"]["AuditReportPackageOutcome"][];
             /** Package Id */
             package_id: string | null;
             /** Reason */
@@ -1319,6 +1321,20 @@ export interface components {
              * @enum {string}
              */
             state: "pending" | "generating" | "ready" | "failed";
+        };
+        /**
+         * AuditReportPackageOutcome
+         * @description Preparation of one frozen report, not a downloadable partial package.
+         */
+        AuditReportPackageOutcome: {
+            /** Reason */
+            reason: string | null;
+            reference: components["schemas"]["AuditReportReference"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "prepared" | "failed";
         };
         /** AuditReportReference */
         AuditReportReference: {

@@ -61,6 +61,17 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_ui_zip_outcomes_bind_preparation_results_to_the_fixed_report_reference(self):
+        schemas = app.openapi()["components"]["schemas"]
+        item = schemas["AuditReportPackageOutcome"]
+        self.assertEqual(set(item["required"]), {"reference", "state", "reason"})
+        self.assertEqual(item["properties"]["state"]["enum"], ["pending", "prepared", "failed"])
+        self.assertEqual(item["properties"]["reference"]["$ref"], "#/components/schemas/AuditReportReference")
+        package = schemas["AuditReportPackage"]
+        self.assertIn("outcomes", package["properties"])
+        self.assertNotIn("outcomes", package["required"])
+        self.assertEqual(item["x-contract-stage"], "ui-draft")
+
     def test_ui_display_corrections_are_separate_from_frozen_metadata_and_bind_the_original_request(self):
         spec = app.openapi()
         schemas = spec["components"]["schemas"]

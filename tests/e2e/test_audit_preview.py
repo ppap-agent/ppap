@@ -28,6 +28,91 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_zip_retry_denial_cannot_be_bypassed_by_reordering_archive_selections(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-zip-no-retry&view=archive")
+            first = page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True)
+            second = page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A002", exact=True)
+            first.check()
+            second.check()
+            create = page.get_by_role("button", name="打包所选 2 份历史报告", exact=True)
+            create.click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            package = page.get_by_role("region", name="ZIP 工作", exact=True)
+            expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+            expect(package.get_by_role("button", name="重试同一报告集合打包", exact=True)).to_be_disabled()
+            expect(create).to_be_disabled()
+            first.uncheck()
+            first.check()
+            expect(create).to_be_disabled()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+            expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_zip_incomplete_or_wrong_report_outcomes_are_read_back_without_repackaging(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for failure in ("missing", "duplicate", "reference", "blank", "ready"):
+                with self.subTest(failure=failure):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    open_reports(page, "reports-zip-outcome-" + failure)
+                    page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+                    page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+                    page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+                    package = page.get_by_role("region", name="ZIP 工作", exact=True)
+                    before = package.get_by_text(re.compile("^冻结文件：")).all_text_contents()
+                    page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+                    expect(package.get_by_text("ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。", exact=True)).to_be_visible()
+                    expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("button", name="打包所选 2 份报告", exact=True)).to_be_disabled()
+                    expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+                    self.assertEqual(package.get_by_text(re.compile("^冻结文件：")).all_text_contents(), before)
+                    if failure == "ready":
+                        page.get_by_role("button", name="读取报告状态", exact=True).click()
+                        expect(package.get_by_text("ZIP 明细需要核对", exact=True)).to_be_visible()
+                        expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name="打包所选 2 份报告", exact=True)).to_be_disabled()
+                        page.get_by_role("button", name="分享", exact=True).click()
+                        share = page.get_by_role("dialog", name="分享审核报告", exact=True)
+                        share.get_by_role("tab", name="文件", exact=True).click()
+                        expect(share.get_by_text("所选 ZIP 尚未就绪", exact=True)).to_be_visible()
+                        share.get_by_role("button", name="关闭", exact=True).click()
+                    page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+                    expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+                    self.assertEqual(package.get_by_text(re.compile("^冻结文件：")).all_text_contents(), before)
+                    page.close()
+            browser.close()
+
+    def test_zip_legacy_or_final_write_failure_does_not_invent_failed_report_statuses(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for scene in ("reports-zip-legacy", "reports-zip-write-failed", "reports-zip-pending-failed"):
+                with self.subTest(scene=scene):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    open_reports(page, scene)
+                    page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+                    page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
+                    page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
+                    page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+                    package = page.get_by_role("region", name="ZIP 工作", exact=True)
+                    expect(package.get_by_text("打包准备失败", exact=True)).to_have_count(0)
+                    if scene == "reports-zip-legacy":
+                        expect(package.get_by_text("未提供逐项状态", exact=True)).to_have_count(2)
+                        expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+                    elif scene == "reports-zip-write-failed":
+                        expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+                        expect(package.get_by_text("打包准备完成", exact=True)).to_have_count(2)
+                        expect(package.get_by_text("示例：ZIP 写入失败，各份 PDF 已准备完成。", exact=True)).to_be_visible()
+                    else:
+                        expect(package.get_by_text("尚未确认", exact=True)).to_have_count(1)
+                        expect(package.get_by_text("打包准备完成", exact=True)).to_have_count(1)
+                    expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+                    page.close()
+            browser.close()
+
     def test_display_request_survives_preview_theme_width_and_report_navigation(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -1711,6 +1796,14 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             expect(page.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+            package = page.get_by_role("region", name="ZIP 工作", exact=True)
+            expect(package.get_by_role("listitem").filter(has_text="PFMEA.xlsx").get_by_text("打包准备完成", exact=True)).to_be_visible()
+            failed = package.get_by_role("listitem").filter(has_text="控制计划.xlsx")
+            expect(failed.get_by_text("打包准备失败", exact=True)).to_be_visible()
+            expect(failed.get_by_text("示例：控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
+            page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).uncheck()
+            expect(package.get_by_role("listitem")).to_have_count(2)
+            expect(failed.get_by_text("示例：控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("button", name="重试同一报告集合打包", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()

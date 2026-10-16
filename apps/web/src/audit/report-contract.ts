@@ -1,4 +1,5 @@
 import type {components} from '../generated/openapi'
+import {packageOutcomeError} from './result-projection.ts'
 
 export type AuditReportReference = components['schemas']['AuditReportReference']
 export type AuditReportArtifact = components['schemas']['AuditReportArtifact']
@@ -20,7 +21,7 @@ export async function readReportPdf(adapter: Pick<AuditReportAdapter, 'readPdf'>
 
 export async function readReportZip(adapter: Pick<AuditReportAdapter, 'readPackageFile'>, job: AuditReportPackage): Promise<Blob> {
   const artifact = job.artifact
-  if (job.receipt.state !== 'accepted' || job.state !== 'ready' || !job.package_id || !artifact?.artifact_id || artifact.content_type !== 'application/zip' || artifact.byte_size <= 0) throw new Error('invalid_zip_artifact')
+  if (packageOutcomeError(job) || job.receipt.state !== 'accepted' || job.state !== 'ready' || !job.package_id || !artifact?.artifact_id || artifact.content_type !== 'application/zip' || artifact.byte_size <= 0) throw new Error('invalid_zip_artifact')
   const blob = await adapter.readPackageFile(structuredClone(job))
   if (blob.type !== 'application/zip' || blob.size !== artifact.byte_size || await blob.slice(0, 2).text() !== 'PK') throw new Error('invalid_zip_artifact')
   return blob

@@ -43,6 +43,13 @@ export function reportReady(task: Task, row: TaskFile): boolean {
   const report = row.audit?.report
   return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === `${row.file.original_filename}-审核报告.pdf`)
 }
+export function packageOutcomeError(job: components['schemas']['AuditReportPackage']): string {
+  const outcomes = job.outcomes
+  if (outcomes === undefined) return ''
+  if (!Array.isArray(outcomes) || outcomes.length !== job.reports.length || job.receipt.state !== 'accepted' || outcomes.some(row => !row || !['pending', 'prepared', 'failed'].includes(row.state) || row.reason !== null && typeof row.reason !== 'string' || row.state === 'failed' && !row.reason?.trim())) return '逐报告状态不完整或缺少有效失败原因。'
+  if (outcomes.some(row => job.reports.filter(reference => sameSnapshot(reference, row.reference)).length !== 1) || job.reports.some(reference => outcomes.filter(row => sameSnapshot(reference, row.reference)).length !== 1)) return '逐报告状态与本次固定报告集合不一致。'
+  return job.state === 'ready' && outcomes.some(row => row.state !== 'prepared') ? 'ZIP 声称已就绪，但仍有未准备完成的报告。' : ''
+}
 
 /** Build a send payload only for the selected frozen, ready artifacts. */
 export function shareContentFor(task: Task, reports: components['schemas']['AuditReportReference'][], mode: 'link' | 'file'): components['schemas']['AuditShareContent'] | null {
@@ -50,7 +57,7 @@ export function shareContentFor(task: Task, reports: components['schemas']['Audi
   if (mode === 'link') return {kind: 'link', artifact: null, package_id: null}
   if (reports.length === 1) return {kind: 'pdf', artifact: structuredClone(task.files.find(row => row.file.id === reports[0].file_version_id)!.audit!.report.artifact!), package_id: null}
   const job = task.report_package
-  if (job?.state === 'ready' && job.receipt.state === 'accepted' && job.package_id && job.artifact?.artifact_id && job.artifact.content_type === 'application/zip' && job.artifact.byte_size > 0 && sameSnapshot(job.reports, reports)) return {kind: 'zip', artifact: structuredClone(job.artifact), package_id: job.package_id}
+  if (job?.state === 'ready' && !packageOutcomeError(job) && job.receipt.state === 'accepted' && job.package_id && job.artifact?.artifact_id && job.artifact.content_type === 'application/zip' && job.artifact.byte_size > 0 && sameSnapshot(job.reports, reports)) return {kind: 'zip', artifact: structuredClone(job.artifact), package_id: job.package_id}
   return null
 }
 

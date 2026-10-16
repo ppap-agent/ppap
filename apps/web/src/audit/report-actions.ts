@@ -1,11 +1,12 @@
 import {useEffect, useRef, useState} from 'react'
 import type {components} from '../generated/openapi'
-import {sameSnapshot, reportReference} from './result-projection'
+import {sameSnapshot, reportReference, packageOutcomeError} from './result-projection'
 import type {AuditReportAdapter, AuditReportReference, AuditReportPackage} from './report-contract'
 
 type Task = components['schemas']['AuditTask']
 type Report = components['schemas']['AuditFileReport']
 type ReportItem = {reference: AuditReportReference; report: Report}
+const multipleDistinctReports = (reports: AuditReportReference[]) => reports.length >= 2 && reports.every((reference, index) => reports.findIndex(row => sameSnapshot(row, reference)) === index)
 
 /** Report operations accept fixed references, not ownership of a private task. */
 export function useReportGeneration(items: ReportItem[], onChange: (reference: AuditReportReference, report: Report) => void, adapter?: AuditReportAdapter) {
@@ -48,14 +49,21 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
   const [packageBusy, setPackageBusy] = useState(false)
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
   function commit(next: AuditReportPackage) {if (alive.current) {current.current = next; onChange(next)}}
+  function canCreatePackage(reports: AuditReportReference[]) {
+    if (!adapter || pending.current || !multipleDistinctReports(reports) || reports.some(reference => !eligible(reference))) return false
+    const previous = current.current
+    if (!previous) return true
+    if (packageOutcomeError(previous) || previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state)) return false
+    const sameCollection = reports.length === previous.reports.length && reports.every(reference => previous.reports.some(row => sameSnapshot(row, reference)))
+    return !(sameCollection && previous.state === 'failed' && previous.receipt.state !== 'rejected' && !previous.retry_allowed)
+  }
   async function run(readOnly: boolean, reports?: AuditReportReference[]) {
     if (!adapter || pending.current) return
     const previous = current.current
-    if (readOnly ? !previous : previous && (previous.receipt.state === 'pending' || previous.receipt.state === 'accepted' && ['pending', 'generating'].includes(previous.state))) return
+    if (readOnly ? !previous : !canCreatePackage(reports || [])) return
     const references = structuredClone(readOnly ? previous!.reports : reports || [])
     // Reading an existing job never depends on the current page or selection.
-    if (references.length < 2 || new Set(references.map(reference => JSON.stringify(reference))).size !== references.length || !readOnly && references.some(reference => !eligible(reference))) return
-    if (!readOnly && previous?.state === 'failed' && previous.receipt.state !== 'rejected' && !previous.retry_allowed && sameSnapshot(references, previous.reports)) return
+    if (!multipleDistinctReports(references)) return
     const requestId = readOnly ? previous!.receipt.request_id : crypto.randomUUID()
     pending.current = true; setPackageBusy(true)
     const observation: AuditReportPackage = readOnly ? previous! : {package_id: null, reports: references, receipt: {request_id: requestId, state: 'pending', reason: null}, state: 'pending', artifact: null, reason: 'ZIP 受理结果未知；只读取原打包请求。', retry_allowed: false}
@@ -63,12 +71,12 @@ export function useReportPackage(job: AuditReportPackage | null | undefined, onC
     try {
       const next = await (readOnly ? adapter.readPackage(requestId) : adapter.createPackage(references, requestId))
       if (!alive.current || current.current !== observation) return
-      if (next.receipt.request_id !== requestId || !sameSnapshot(next.reports, references) || next.state === 'ready' && (!next.package_id || !next.artifact?.artifact_id || next.artifact.content_type !== 'application/zip' || next.artifact.byte_size <= 0)) throw new Error('package_receipt_mismatch')
+      if (next.receipt.request_id !== requestId || !sameSnapshot(next.reports, references) || packageOutcomeError(next) || next.state === 'ready' && (!next.package_id || !next.artifact?.artifact_id || next.artifact.content_type !== 'application/zip' || next.artifact.byte_size <= 0)) throw new Error('package_receipt_mismatch')
       commit(next)
     } catch {if (current.current === observation) commit({...observation, reason: 'ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。'})}
     finally {pending.current = false; if (alive.current) setPackageBusy(false)}
   }
-  return {packageBusy, createPackage: (reports: AuditReportReference[]) => run(false, reports), readPackage: () => run(true)}
+  return {packageBusy, canCreatePackage, createPackage: (reports: AuditReportReference[]) => run(false, reports), readPackage: () => run(true)}
 }
 
 /** The task view updates only report projections; historical views use the same cores. */

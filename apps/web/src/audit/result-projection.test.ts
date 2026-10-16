@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor} from './result-projection.ts'
+import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError} from './result-projection.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -194,6 +194,35 @@ test('ZIP downloads require an accepted ready artifact and matching bytes', asyn
   assert.equal((await readReportZip({readPackageFile: async () => valid}, job)).size, 7)
   for (const state of ['pending', 'rejected'] as const) await assert.rejects(readReportZip({readPackageFile: async () => {throw new Error('must_not_read')}}, {...job, receipt: {...job.receipt, state}}), /invalid_zip_artifact/)
   for (const blob of [new Blob(['<html/>'], {type: 'application/zip'}), new Blob(['PKextra-bytes'], {type: 'application/zip'}), new Blob(['PKbytes'], {type: 'text/html'})]) await assert.rejects(readReportZip({readPackageFile: async () => blob}, job), /invalid_zip_artifact/)
+})
+test('ZIP download and file sharing reject a ready package with a failed report preparation', async () => {
+  const task = projection(), first = task.files[0]
+  first.audit!.report.generated_at = '2026-10-16T02:00:00Z'
+  first.audit!.report.artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf', byte_size: 9}
+  const second = structuredClone(first)
+  second.file.id = 'file-v2'; second.audit!.file_version_id = 'file-v2'; second.audit!.report.report_id = 'report-2'
+  task.files.push(second)
+  const reports = task.files.map(row => reportReference(task, row)!)
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'zip-1', reports, receipt: {request_id: 'pack-1', state: 'accepted', reason: null}, state: 'ready', artifact: {artifact_id: 'zip-bytes', filename: '审核报告.zip', content_type: 'application/zip', byte_size: 7}, reason: null, retry_allowed: false, outcomes: [{reference: reports[0], state: 'prepared', reason: null}, {reference: reports[1], state: 'failed', reason: 'PDF 读取失败'}]}
+  task.report_package = job
+  assert.equal(shareContentFor(task, reports, 'file'), null)
+  await assert.rejects(readReportZip({readPackageFile: async () => new Blob(['PKbytes'], {type: 'application/zip'})}, job), /invalid_zip_artifact/)
+})
+test('package outcomes identify each fixed report once and cannot invent a failed reason', () => {
+  const reports = [{task_id: 'task-1', round_id: 'round-1', file_version_id: 'file-v1', result_attempt: 1, report_id: 'report-1'}, {task_id: 'task-2', round_id: 'round-2', file_version_id: 'file-v2', result_attempt: 2, report_id: 'report-2'}]
+  const outcomes = reports.map(reference => ({reference, state: 'prepared' as const, reason: null}))
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'zip-1', reports, receipt: {request_id: 'pack-1', state: 'accepted', reason: null}, state: 'failed', artifact: null, reason: '最终压缩失败，不是单报告失败', retry_allowed: false, outcomes: [...outcomes].reverse()}
+  assert.equal(packageOutcomeError(job), '')
+  const legacy = {...job}; delete legacy.outcomes
+  assert.equal(packageOutcomeError(legacy), '')
+  for (const broken of [[], [outcomes[0]], [outcomes[0], outcomes[0]], [...outcomes, outcomes[0]], [{...outcomes[0], state: 'failed' as const, reason: '  '}, outcomes[1]], [{...outcomes[0], state: 'failed' as const, reason: null}, outcomes[1]], [{...outcomes[0], state: 'unknown' as never}, outcomes[1]]]) assert.notEqual(packageOutcomeError({...job, outcomes: broken}), '')
+  for (const field of ['task_id', 'round_id', 'file_version_id', 'result_attempt', 'report_id'] as const) {
+    const reference = {...reports[0], [field]: field === 'result_attempt' ? 99 : 'other'}
+    assert.notEqual(packageOutcomeError({...job, outcomes: [{...outcomes[0], reference}, outcomes[1]]}), '')
+  }
+  for (const state of ['pending', 'rejected'] as const) assert.notEqual(packageOutcomeError({...job, receipt: {...job.receipt, state}}), '')
+  assert.notEqual(packageOutcomeError({...job, outcomes: null as never}), '')
+  assert.notEqual(packageOutcomeError({...job, state: 'ready', outcomes: [{...outcomes[0], state: 'pending'}, outcomes[1]]}), '')
 })
 test('readback preserves the accepted round, file versions, rules and input selection', () => {
   const before = projection(), after = structuredClone(before)
