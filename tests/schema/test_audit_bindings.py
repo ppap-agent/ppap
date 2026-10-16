@@ -1010,6 +1010,123 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(denied.status_code, 403)
         self.assertIsNone(worker.claim_job("no-duplicate-zip"))
 
+    def test_failed_pdf_can_be_explicitly_regenerated_without_reopening_or_reauditing_the_task(self):
+        from ppap_worker import process_claimed
+
+        version, task, worker, _job, _result = self.prepared_query_task()
+        path = f"/audit-tasks/{task['id']}"
+        first = worker.claim_job("pdf-first")
+        self.assertTrue(worker.complete_job(first, "pdf-first", {"error": "report_pdf_failed"}, "failed"))
+        failed = self.display_client.get(path).json()
+        original = self.display_client.get(f"/rounds/{task['round_id']}").json()
+        reference = {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": version.id, "result_attempt": 1, "report_id": first.id}
+        command = {"request_id": str(uuid.uuid4()), "reference": reference}
+        retry_path = path + f"/reports/{first.id}/regenerations"
+        response = self.display_client.post(retry_path, json=command)
+        self.assertEqual(response.status_code, 201, response.text)
+        accepted = response.json()
+        self.assertEqual(accepted["reference"], reference)
+        self.assertEqual(accepted["receipt"], {"request_id": command["request_id"], "state": "accepted", "reason": None})
+        self.assertEqual(accepted["report"]["state"], "pending")
+        self.assertEqual(self.display_client.post(retry_path, json=command).json(), accepted)
+        loaded = self.display_client.get(path).json()
+        self.assertEqual((failed["state"], loaded["state"]), ("completed", "completed"))
+        self.assertEqual(loaded["files"][0]["audit"]["report"]["generation_request"], accepted["receipt"])
+        self.assertEqual([row["id"] for row in self.store.list_audit_tasks(self.alice, state="completed")], [task["id"]])
+        self.assertEqual(self.store.list_audit_tasks(self.alice, state="reviewing"), [])
+        retry = worker.claim_job("pdf-recovery")
+        self.assertEqual((retry.id, retry.kind, retry.attempt), (first.id, "report_pdf", 2))
+        self.assertEqual(retry.payload["report_input"], first.payload["report_input"])
+        self.assertIsNone(worker.claim_job("no-extra-work"))
+        process_claimed(worker, retry, "pdf-recovery")
+        report = self.display_client.get(path).json()["files"][0]["audit"]["report"]
+        self.assertEqual((report["state"], report["report_id"], report["artifact"]["artifact_id"]), ("ready", first.id, f"{first.id}:2"))
+        query = {key: reference[key] for key in ("round_id", "file_version_id", "result_attempt")}
+        observed = self.display_client.get(retry_path + "/" + command["request_id"], params=query)
+        self.assertEqual(observed.status_code, 200)
+        self.assertEqual(observed.json()["report"], report)
+        pdf = self.display_client.get(path + f"/reports/{first.id}/pdf", params={**query, "artifact_id": report["artifact"]["artifact_id"]})
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(pdf.content.startswith(b"%PDF-"))
+        self.assertEqual(self.display_client.get(f"/rounds/{task['round_id']}").json(), original)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_concurrent_pdf_recovery_and_late_attempt_cannot_schedule_or_publish_twice(self):
+        from ppap_worker import process_claimed
+
+        version, task, worker, _job, _result = self.prepared_query_task()
+        first = worker.claim_job("pdf-failed")
+        self.assertTrue(worker.complete_job(first, "pdf-failed", {"error": "report_pdf_failed"}, "failed"))
+        reference = {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": version.id, "result_attempt": 1, "report_id": first.id}
+        path = f"/audit-tasks/{task['id']}"
+        retry_path = path + f"/reports/{first.id}/regenerations"
+        commands = [{"request_id": str(uuid.uuid4()), "reference": reference} for _ in range(2)]
+        with ThreadPoolExecutor(2) as pool:
+            replies = list(pool.map(lambda command: self.display_client.post(retry_path, json=command), commands))
+        self.assertEqual(sorted(reply.status_code for reply in replies), [201, 409])
+        current = worker.claim_job("pdf-current")
+        self.assertEqual((current.id, current.kind, current.attempt), (first.id, "report_pdf", 2))
+        self.assertIsNone(worker.claim_job("no-second-recovery"))
+        late = worker.write_audit_report(first, b"%PDF-1.7\nold private attempt", "2026-10-17T01:00:00+00:00")
+        before = self.display_client.get(path).json()
+        self.assertFalse(worker.complete_job(first, "pdf-failed", late))
+        self.assertEqual(self.display_client.get(path).json(), before)
+        process_claimed(worker, current, "pdf-current")
+        ready = self.display_client.get(path).json()
+        self.assertEqual((ready["state"], ready["files"][0]["audit"]["report"]["artifact"]["artifact_id"]), ("completed", f"{first.id}:2"))
+        self.assertFalse(worker.complete_job(first, "pdf-failed", late))
+        self.assertEqual(self.display_client.get(path).json(), ready)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_pdf_recovery_requires_owner_and_explicit_no_charge_configuration(self):
+        version, task, worker, _job, _result = self.prepared_query_task()
+        first = worker.claim_job("pdf-failed")
+        self.assertTrue(worker.complete_job(first, "pdf-failed", {"error": "report_pdf_failed"}, "failed"))
+        reference = {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": version.id, "result_attempt": 1, "report_id": first.id}
+        command = {"request_id": str(uuid.uuid4()), "reference": reference}
+        path = f"/audit-tasks/{task['id']}/reports/{first.id}/regenerations"
+        query = {key: reference[key] for key in ("round_id", "file_version_id", "result_attempt")}
+        for actor in ("bob", "carol", None):
+            self.display_principal = self.store.principal_for_fixture(actor) if actor else None
+            expected = 403 if actor else 401
+            self.assertEqual(self.display_client.post(path, json=command).status_code, expected)
+            self.assertEqual(self.display_client.get(path + "/" + command["request_id"], params=query).status_code, expected)
+        self.display_principal = self.alice
+        self.settings.usage_charge_enabled = True
+        denied = self.display_client.post(path, json=command)
+        self.assertEqual((denied.status_code, denied.json()), (409, {"error": "audit_report_charging_unavailable"}))
+        self.assertFalse(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"][0]["audit"]["report"]["regenerate_allowed"])
+        self.assertIsNone(self.display_client.get(path + "/" + command["request_id"], params=query).json())
+        self.assertIsNone(worker.claim_job("no-denied-work"))
+        self.settings.usage_charge_enabled = False
+        self.assertEqual(self.display_client.post(path, json=command).status_code, 201)
+        self.settings.usage_charge_enabled = True
+        replay = self.display_client.post(path, json=command)
+        self.assertEqual((replay.status_code, replay.json()["receipt"]["state"]), (201, "accepted"))
+        self.assertIsNotNone(worker.claim_job("only-accepted-work"))
+        self.assertIsNone(worker.claim_job("no-replay-work"))
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_pdf_recovery_request_cannot_be_rebound_to_another_frozen_report(self):
+        _version, task, worker, _job, _result = self.prepared_query_task(documents=(("first.xlsx", "P-1"), ("second.xlsx", "P-2")))
+        for _ in range(2):
+            first = worker.claim_job("pdf-failed")
+            self.assertTrue(worker.complete_job(first, "pdf-failed", {"error": "report_pdf_failed"}, "failed"))
+        loaded = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        references = [
+            {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": row["file"]["id"], "result_attempt": 1, "report_id": row["audit"]["report"]["report_id"]}
+            for row in loaded["files"]
+        ]
+        key = str(uuid.uuid4())
+        for index, reference in enumerate(references):
+            path = f"/audit-tasks/{task['id']}/reports/{reference['report_id']}/regenerations"
+            response = self.display_client.post(path, json={"request_id": key, "reference": reference})
+            self.assertEqual(response.status_code, 201 if index == 0 else 409, response.text)
+        wrong = {**references[0], "result_attempt": 2}
+        self.assertEqual(self.display_client.post(f"/audit-tasks/{task['id']}/reports/{wrong['report_id']}/regenerations", json={"request_id": str(uuid.uuid4()), "reference": wrong}).status_code, 403)
+        self.assertIsNotNone(worker.claim_job("first-only"))
+        self.assertIsNone(worker.claim_job("no-rebound-work"))
+
     def test_lost_object_write_reply_retains_a_private_object_but_never_publishes_a_report(self):
         from unittest.mock import patch
 
@@ -1028,7 +1145,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             process_claimed(worker, claimed, "pdf-lost-reply")
         observed = self.display_client.get(f"/audit-tasks/{task['id']}").json()
         report = observed["files"][0]["audit"]["report"]
-        self.assertEqual((observed["state"], report["state"], report["regenerate_allowed"], report["artifact"]), ("completed", "failed", False, None))
+        self.assertEqual((observed["state"], report["state"], report["regenerate_allowed"], report["artifact"]), ("completed", "failed", True, None))
         self.assertTrue(worker.objects.get(f"reports/{claimed.tenant_id}/{claimed.id}/{claimed.attempt}.pdf").startswith(b"%PDF-"))
         self.assertEqual(self.display_client.get(f"/rounds/{task['round_id']}").json(), original)
         self.assertIsNone(worker.claim_job("not-retried"))

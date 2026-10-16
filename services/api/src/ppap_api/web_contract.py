@@ -704,6 +704,11 @@ class AuditReportPackageRequest(TypedDict):
     reports: list[AuditReportReference]
 
 
+class AuditReportRegenerationRequest(TypedDict):
+    request_id: str
+    reference: AuditReportReference
+
+
 class AuditFileReport(TypedDict):
     state: Literal["not_eligible", "pending", "generating", "ready", "failed"]
     report_id: str | None

@@ -73,6 +73,17 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_file_report_recovery_binds_the_same_frozen_reference_and_original_request(self):
+        paths = app.openapi()["paths"]
+        path = "/audit-tasks/{task_id}/reports/{report_id}/regenerations"
+        request = _request_schema(paths[path]["post"])
+        self.assertEqual(set(request["required"]), {"request_id", "reference"})
+        self.assertEqual(set(request["properties"]["reference"]["required"]), {"task_id", "report_id", "round_id", "file_version_id", "result_attempt"})
+        self.assertEqual(request["properties"]["reference"]["properties"]["result_attempt"]["type"], "integer")
+        read = paths[path + "/{request_id}"]["get"]
+        self.assertEqual({item["name"] for item in read["parameters"] if item.get("required")}, {"task_id", "report_id", "request_id", "round_id", "file_version_id", "result_attempt"})
+        self.assertEqual(_response_schema(read)["anyOf"][0]["$ref"], "#/components/schemas/AuditReportUpdate")
+
     def test_report_package_has_one_request_bound_submission_read_and_binary_download(self):
         paths = app.openapi()["paths"]
         create = paths["/audit-report-packages"]["post"]

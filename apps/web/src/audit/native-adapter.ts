@@ -65,6 +65,22 @@ export const nativeSupportAdapter: AuditSupportAdapter = {
 
 type ValidationJob = components['schemas']['FileValidationJob']
 export const nativeReportAdapter: AuditReportAdapter = {
+  async regenerate(reference, requestId) {
+    const path = `/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/regenerations`
+    try {return await request(path, 'POST', {request_id: requestId, reference})}
+    catch (failure) {
+      const error = failure as {status?: number; code?: string}
+      if (error.status !== 409 || !['report_recovery_unavailable', 'audit_report_charging_unavailable'].includes(error.code || '')) throw failure
+      const reason = error.code === 'audit_report_charging_unavailable' ? '当前环境尚未开放报告恢复计费，本次未重新生成。' : '这份报告当前不能重新生成，请读取最新状态。'
+      return {reference, receipt: {request_id: requestId, state: 'rejected', reason}, report: null}
+    }
+  },
+  async readRegeneration(reference, requestId) {
+    const path = `/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/regenerations/${encodeURIComponent(requestId)}`
+    const params = new URLSearchParams({round_id: reference.round_id, file_version_id: reference.file_version_id, result_attempt: String(reference.result_attempt)})
+    const update = await request<components['schemas']['AuditReportUpdate'] | null>(`${path}?${params}`)
+    return update ?? {reference, receipt: {request_id: requestId, state: 'pending', reason: '尚未读到原报告恢复请求，请继续读取，不重复生成。'}, report: null}
+  },
   async createPackage(reports, requestId) {
     try {return await request('/audit-report-packages', 'POST', {request_id: requestId, reports})}
     catch (failure) {

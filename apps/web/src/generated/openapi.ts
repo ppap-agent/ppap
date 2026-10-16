@@ -192,6 +192,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/reports/{report_id}/regenerations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Audit Report Regenerate */
+        post: operations["audit_report_regenerate_audit_tasks__task_id__reports__report_id__regenerations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-tasks/{task_id}/reports/{report_id}/regenerations/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Report Regeneration Read */
+        get: operations["audit_report_regeneration_read_audit_tasks__task_id__reports__report_id__regenerations__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-template-catalog": {
         parameters: {
             query?: never;
@@ -3640,6 +3674,95 @@ export interface operations {
                 };
                 content: {
                     "application/pdf": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_report_regenerate_audit_tasks__task_id__reports__report_id__regenerations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** AuditReportReference */
+                    reference: {
+                        /** File Version Id */
+                        file_version_id: string;
+                        /** Report Id */
+                        report_id: string;
+                        /** Result Attempt */
+                        result_attempt: number;
+                        /** Round Id */
+                        round_id: string;
+                        /** Task Id */
+                        task_id: string;
+                    };
+                    /** Request Id */
+                    request_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReportUpdate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_report_regeneration_read_audit_tasks__task_id__reports__report_id__regenerations__request_id__get: {
+        parameters: {
+            query: {
+                file_version_id: string;
+                result_attempt: number;
+                round_id: string;
+            };
+            header?: never;
+            path: {
+                report_id: string;
+                request_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReportUpdate"] | null;
                 };
             };
             /** @description Validation Error */

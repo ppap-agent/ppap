@@ -1371,7 +1371,8 @@ class AuthStore:
                 AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
                 AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
                 AND (%s = '' OR %s = CASE WHEN d.task_completion_reason IS NOT NULL OR (r.execution IN ('completed', 'failed') AND NOT EXISTS (
-                    SELECT 1 FROM engine.jobs p WHERE p.audit_round_id = r.id AND p.kind = 'report_pdf' AND p.status IN ('queued', 'leased'))) THEN 'completed'
+                    SELECT 1 FROM engine.jobs p WHERE p.audit_round_id = r.id AND p.kind = 'report_pdf' AND p.status IN ('queued', 'leased')
+                      AND NOT (p.payload ? 'regeneration_request_id'))) THEN 'completed'
                     WHEN r.id IS NOT NULL THEN 'reviewing'
                     WHEN EXISTS (SELECT 1 FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id AND j.status IN ('queued', 'leased')) THEN 'matching'
                     ELSE 'pending_confirm' END)
@@ -2156,10 +2157,99 @@ class AuthStore:
                 "reason": "报告生成失败。审核结果已保存。" if state == "failed" else None,
                 "artifact": result.get("artifact") if state == "ready" else None,
                 "generated_at": result.get("generated_at") if state == "ready" else None,
-                "regenerate_allowed": False,
-                "regenerate_reason": "报告重新生成尚未开放。",
+                "regenerate_allowed": state == "failed" and row[2] == "failed" and not self.settings.usage_charge_enabled,
+                "regenerate_reason": "当前环境尚未开放报告恢复计费。" if self.settings.usage_charge_enabled else None,
+                **({"generation_request": {"request_id": row[1]["regeneration_request_id"], "state": "accepted", "reason": None}} if row[1].get("regeneration_request_id") else {}),
             }
         return reports, max((row[4] for row in rows), default=None)
+
+    def _report_recovery_context(self, conn, principal: Principal, reference: dict, *, lock: bool = False) -> tuple[dict, str]:
+        if (
+            not isinstance(reference, dict)
+            or set(reference) != {"task_id", "round_id", "file_version_id", "result_attempt", "report_id"}
+            or any(not isinstance(reference.get(key), str) or _as_uuid(reference[key]) != reference[key] for key in ("task_id", "round_id", "file_version_id", "report_id"))
+            or type(reference.get("result_attempt")) is not int
+            or reference["result_attempt"] < 1
+        ):
+            raise ValueError("invalid_report_regeneration")
+        self._recognition_owner(conn, principal, reference["task_id"], lock=lock)
+        if lock:
+            grants = conn.execute(
+                """SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[])
+                AND user_id = %s AND capability IN ('read', 'review') ORDER BY resource_id FOR SHARE""",
+                ([reference["task_id"], reference["round_id"]], principal.user_id),
+            ).fetchall()
+            if {str(row[0]) for row in grants} != {reference["task_id"], reference["round_id"]}:
+                raise KeyError("missing")
+        row = conn.execute(
+            "SELECT payload, status FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf'" + (" FOR UPDATE" if lock else ""),
+            (reference["report_id"], principal.tenant_id),
+        ).fetchone()
+        if not row:
+            raise KeyError("missing")
+        payload, state = row
+        expected = {
+            "task_id": payload["task_id"],
+            "round_id": payload["source_round_id"],
+            "file_version_id": payload["source_file_version_id"],
+            "result_attempt": payload["result_attempt"],
+            "report_id": reference["report_id"],
+        }
+        task = self._recognition_public(conn, principal, reference["task_id"])
+        file = next((file for file in task["files"] if file["file"]["id"] == reference["file_version_id"] and file.get("audit")), None)
+        if (
+            expected != reference
+            or task["round_id"] != reference["round_id"]
+            or file is None
+            or file["audit"]["result_attempt"] != reference["result_attempt"]
+            or file["audit"]["report"]["report_id"] != reference["report_id"]
+        ):
+            raise KeyError("missing")
+        return file["audit"]["report"], state
+
+    def _report_recovery_receipt(self, conn, principal: Principal, reference: dict, request_id: str) -> bool:
+        row = conn.execute("SELECT tenant_id, kind, payload FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
+        if row is None:
+            return False
+        if str(row[0]) != principal.tenant_id or row[1] != "report_pdf_request" or row[2].get("created_by") != principal.user_id:
+            raise KeyError("missing")
+        if row[2].get("reference") != reference:
+            raise ValueError("idempotency_conflict")
+        return True
+
+    def regenerate_audit_report(self, principal: Principal, reference: dict, request_id: str) -> dict:
+        if not isinstance(request_id, str) or _as_uuid(request_id) != request_id:
+            raise ValueError("invalid_report_regeneration")
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("report-recovery:" + request_id,))
+            report, state = self._report_recovery_context(conn, principal, reference, lock=True)
+            if not self._report_recovery_receipt(conn, principal, reference, request_id):
+                if self.settings.usage_charge_enabled:
+                    raise ValueError("audit_report_charging_unavailable")
+                if state != "failed" or report["state"] != "failed":
+                    raise ValueError("report_recovery_unavailable")
+                conn.execute(
+                    """UPDATE engine.jobs SET status = 'queued', result = NULL, lease_owner = NULL, lease_until = NULL,
+                    payload = payload || %s, updated_at = now() WHERE id = %s""",
+                    (Jsonb({"regeneration_request_id": request_id}), reference["report_id"]),
+                )
+                conn.execute(
+                    """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status)
+                    VALUES (%s, %s, %s, 'report_pdf_request', %s, 'succeeded')""",
+                    (request_id, principal.tenant_id, reference["round_id"], Jsonb({"created_by": principal.user_id, "reference": reference})),
+                )
+                report, _state = self._report_recovery_context(conn, principal, reference)
+            return {"reference": reference, "receipt": {"request_id": request_id, "state": "accepted", "reason": None}, "report": report}
+
+    def read_audit_report_regeneration(self, principal: Principal, reference: dict, request_id: str) -> dict | None:
+        if not isinstance(request_id, str) or _as_uuid(request_id) != request_id:
+            raise ValueError("invalid_report_regeneration")
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            report, _state = self._report_recovery_context(conn, principal, reference)
+            if not self._report_recovery_receipt(conn, principal, reference, request_id):
+                return None
+            return {"reference": reference, "receipt": {"request_id": request_id, "state": "accepted", "reason": None}, "report": report}
 
     def write_audit_report(self, claimed: ClaimedJob, body: bytes, generated_at: str) -> dict:
         if claimed.kind != "report_pdf" or not claimed.tenant_id or not body.startswith(b"%PDF-") or not 0 < len(body) <= 64 * 1024 * 1024:

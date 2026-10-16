@@ -265,7 +265,11 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         files.append({**row, "audit": audit})
     selected = [row for row in files if row["selection"] == "selected"]
     ended = sum(bool(row.get("audit") and row["audit"]["execution"] in {"completed", "review_failed"}) for row in selected)
-    task_finished = finished and ended == len(selected) and all(row["audit"]["report"]["state"] not in {"pending", "generating"} for row in selected)
+    task_finished = (
+        finished
+        and ended == len(selected)
+        and all(row["audit"]["report"]["state"] not in {"pending", "generating"} or row["audit"]["report"].get("generation_request", {}).get("state") == "accepted" for row in selected)
+    )
     return {
         **task,
         "round_id": round["id"],

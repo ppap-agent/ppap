@@ -213,6 +213,47 @@ test('native PDF reads carry the full frozen reference and never create another 
   await assert.rejects(readReportPdf(nativeReportAdapter, reference, artifact))
 })
 
+test('native PDF regeneration reads the original request after a lost reply without repeating it', async () => {
+  const reference = {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a', result_attempt: 2, report_id: 'report-a'}
+  const report = {state: 'pending' as const, report_id: 'report-a', reason: null}
+  const update = {reference, receipt: {request_id: 'request-a', state: 'accepted' as const, reason: null}, report}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), 'http://example.test')
+    calls.push(`${init?.method} ${url.pathname}`)
+    assert.equal(init?.credentials, 'include')
+    if (init?.method === 'POST') {assert.deepEqual(JSON.parse(String(init.body)), {request_id: 'request-a', reference}); throw new TypeError('reply lost')}
+    assert.deepEqual(Object.fromEntries(url.searchParams), {round_id: 'round-a', file_version_id: 'version-a', result_attempt: '2'})
+    return json(update)
+  }
+  await assert.rejects(nativeReportAdapter.regenerate!(reference, 'request-a'), /reply lost/)
+  assert.deepEqual(await nativeReportAdapter.readRegeneration!(reference, 'request-a'), update)
+  assert.deepEqual(calls, ['POST /audit-tasks/task-a/reports/report-a/regenerations', 'GET /audit-tasks/task-a/reports/report-a/regenerations/request-a'])
+  globalThis.fetch = async () => json(null)
+  const unknown = await nativeReportAdapter.readRegeneration!(reference, 'request-a')
+  assert.equal(unknown.receipt.state, 'pending')
+  assert.equal(unknown.receipt.request_id, 'request-a')
+  assert.equal(unknown.report, null)
+})
+
+test('native PDF regeneration treats explicit policy refusals as rejected without submitting an audit', async () => {
+  const reference = {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a', result_attempt: 2, report_id: 'report-a'}
+  for (const code of ['report_recovery_unavailable', 'audit_report_charging_unavailable']) {
+    let calls = 0
+    globalThis.fetch = async (input, init) => {
+      calls += 1
+      assert.equal(String(input), '/audit-tasks/task-a/reports/report-a/regenerations')
+      assert.equal(init?.method, 'POST')
+      return json({error: code}, 409)
+    }
+    const update = await nativeReportAdapter.regenerate!(reference, 'request-a')
+    assert.equal(update.receipt.state, 'rejected')
+    assert.equal(update.receipt.request_id, 'request-a')
+    assert.equal(update.report, null)
+    assert.equal(calls, 1)
+  }
+})
+
 test('native ZIP uses one request identity for submission, readback and the exact artifact download', async () => {
   const reports = ['a', 'b'].map(id => ({task_id: 'task-a', round_id: 'round-a', file_version_id: `version-${id}`, result_attempt: 1, report_id: `report-${id}`}))
   const job: components['schemas']['AuditReportPackage'] = {package_id: 'package-a', reports, receipt: {request_id: 'request-a', state: 'accepted', reason: null}, state: 'ready', artifact: {artifact_id: 'artifact-a', filename: '审核报告.zip', content_type: 'application/zip', byte_size: 7}, reason: null, retry_allowed: false}

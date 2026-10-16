@@ -54,6 +54,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "report_not_ready",
                 "report_artifact_conflict",
                 "report_package_too_large",
+                "report_recovery_unavailable",
+                "audit_report_charging_unavailable",
             }
             else 400
         )
@@ -163,6 +165,30 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return Response(content, media_type="application/pdf", headers={"Content-Disposition": attachment_content_disposition(artifact["filename"]), "Cache-Control": "private, no-store"})
         except ObjectMissing:
             return JSONResponse({"error": "report_artifact_unavailable"}, status_code=409)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.post("/audit-tasks/{task_id}/reports/{report_id}/regenerations", response_model=wc.AuditReportUpdate, status_code=201, openapi_extra=wc.openapi_body(wc.AuditReportRegenerationRequest))
+    def audit_report_regenerate(task_id: str, report_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            reference = body.get("reference")
+            if set(body) != {"request_id", "reference"} or not isinstance(reference, dict) or reference.get("task_id") != task_id or reference.get("report_id") != report_id:
+                raise ValueError("invalid_report_regeneration")
+            return JSONResponse(store.regenerate_audit_report(principal, reference, body["request_id"]), status_code=201)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-tasks/{task_id}/reports/{report_id}/regenerations/{request_id}", response_model=wc.AuditReportUpdate | None)
+    def audit_report_regeneration_read(task_id: str, report_id: str, request_id: str, request: Request, round_id: str, file_version_id: str, result_attempt: int = Query(ge=1)) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            reference = {"task_id": task_id, "report_id": report_id, "round_id": round_id, "file_version_id": file_version_id, "result_attempt": result_attempt}
+            return JSONResponse(store.read_audit_report_regeneration(principal, reference, request_id))
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
