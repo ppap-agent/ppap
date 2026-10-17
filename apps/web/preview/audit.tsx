@@ -98,6 +98,9 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   },
   readValidation: async row => ({validation: driveCatalog.some(fixture => fixture.source.token === row.file.file_id) ? {state: 'valid', reasons: []} : row.validation, validation_id: `preview-validation-${row.file.id}`}),
   confirm: async (task, requestId) => {
+    if (scene === 'confirm-rule-expired' && recognitionCommands === 1) {
+      return {...task, acceptance: {request_id: requestId, state: 'rejected', reason: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。'}}
+    }
     confirmationInputs.set(task.id, structuredClone(task))
     const result = accepted.get(task.id) || fixtureAcceptance(task, requestId)
     if (scene === 'confirm-rule-conflict') {
@@ -200,6 +203,9 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       if (current.input_revision !== previous.input_revision || current.files.some(row => !files.some(file => file.file.id === row.file.id))) throw Object.assign(new Error('preview_provenance_missing'), {status: 409})
     }
     const task = {...fixtureMatch(files, mode, customer, previous, requestId, previous?.number || `PPAP-示例-${String(nextTask++).padStart(3, '0')}`), input_revision: previous ? (previous.input_revision ?? 0) + 1 : 0}
+    if (scene === 'confirm-rule-expired' && previous) {
+      task.files = task.files.map(file => file.match?.rule ? {...file, match: {...file.match, rule: {...file.match.rule, id: `${file.match.rule.id}-revised`, title: `${file.match.rule.title}（新版本）`}}} : file)
+    }
     taskStore.set(task.id, task); recognitionReceipts.set(requestId, structuredClone(task))
     if (scene === 'recognition-superseded' && recognitionCommands === 1) {
       taskStore.set(task.id, {...task, input_revision: task.input_revision + 1, recognition_request_id: 'preview-other-recognition', files: task.files.map((row, index) => index === 0 ? {...row, selection: 'unselected'} : row)})

@@ -29,6 +29,31 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_expired_rule_can_be_rematched_and_confirmed_without_another_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=confirm-rule-expired")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            original_url = page.url
+            original_rules = page.locator("[data-rule-version]").evaluate_all("nodes => nodes.map(node => node.dataset.ruleVersion)")
+            self.assertEqual(len(original_rules), 3)
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="匹配的规则已有新版本")).to_be_visible()
+            expect(page.get_by_role("button", name="读取审核结果", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="上一步", exact=True).click()
+            for name in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
+                expect(page.get_by_role("checkbox", name="选择 " + name, exact=True)).to_be_checked()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.locator("[data-rule-version]")).to_have_count(3)
+            self.assertEqual(page.locator("[data-rule-version]").evaluate_all("nodes => nodes.map(node => node.dataset.ruleVersion)"), [value + "-revised" for value in original_rules])
+            self.assertEqual(page.url, original_url)
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("button", name="读取审核结果", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
+            browser.close()
+
     def test_verified_empty_source_is_not_described_as_missing_evidence(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
