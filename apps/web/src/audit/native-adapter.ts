@@ -7,6 +7,21 @@ import type {AuditReportAdapter} from './report-contract'
 import type {AuditSupportAdapter, AuditTemplateAdapter} from './template-contract'
 import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contract.ts'
 import type {UploadAdapter} from './uploads'
+import type {AuditArchiveAdapter} from './archive-contract'
+
+export const nativeArchiveAdapter: AuditArchiveAdapter = {
+  listDocuments(query) {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== null) params.set(key, String(value))
+    return request(`/audit-archive?${params}`)
+  },
+  listHistory: documentId => request(`/audit-archive/${encodeURIComponent(documentId)}/history`),
+  readHistory(documentId, reference) {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(reference)) if (value !== null) params.set(key, String(value))
+    return request(`/audit-archive/${encodeURIComponent(documentId)}/history/result?${params}`)
+  },
+}
 
 const nativeUploads: UploadAdapter = {
   async upload(input, requestId) {

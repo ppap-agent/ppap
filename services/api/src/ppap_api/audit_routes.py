@@ -70,6 +70,60 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         return JSONResponse({"rules": store.list_rules(principal.tenant_id)})
 
+    @app.get("/audit-archive", response_model=wc.AuditArchivePage)
+    def audit_archive_list(
+        request: Request,
+        search: str = Query("", max_length=200),
+        category_id: str | None = None,
+        document_type: str | None = None,
+        customer: str | None = None,
+        initiator: str | None = None,
+        from_date: date | None = None,
+        through_date: date | None = None,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(10, ge=10, le=10),
+    ) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        if from_date and through_date and from_date > through_date:
+            return JSONResponse({"error": "invalid_archive_dates"}, status_code=400)
+        query = {
+            "search": search,
+            "category_id": category_id,
+            "document_type": document_type,
+            "customer": customer,
+            "initiator": initiator,
+            "from_date": from_date.isoformat() if from_date else None,
+            "through_date": through_date.isoformat() if through_date else None,
+            "page": page,
+            "page_size": page_size,
+        }
+        try:
+            return JSONResponse(store.list_audit_archive(principal, query))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-archive/{document_id}/history", response_model=wc.AuditHistoryPage)
+    def audit_history_list(document_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.read_audit_history(principal, document_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-archive/{document_id}/history/result", response_model=wc.AuditHistoryDetail)
+    def audit_history_result(document_id: str, task_id: str, round_id: str, file_version_id: str, request: Request, result_attempt: int | None = Query(None, ge=1)) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.read_audit_history(principal, document_id, {"task_id": task_id, "round_id": round_id, "file_version_id": file_version_id, "result_attempt": result_attempt}))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.post("/audit-tasks", response_model=wc.AuditTask, status_code=202, openapi_extra=wc.openapi_body(wc.AuditRecognitionRequest))
     def audit_tasks_create(body: dict, request: Request) -> JSONResponse:
         principal, denied = require_principal(request)

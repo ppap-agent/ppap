@@ -1077,6 +1077,150 @@ class AuthStore:
                 task["acceptance"] = {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
             return task
 
+    def _archive_rows(self, conn, principal: Principal) -> list:
+        return conn.execute(
+            """WITH history AS (SELECT d.id, i.file_version_id, s.object_kind, s.object_ref, a.created_at,
+                a.id AS round_id, f.file_id, f.original_filename, j.result->'metadata' AS metadata,
+                j.result->>'document_type' AS document_type, display.display_values,
+                GREATEST(a.created_at, display.created_at, (SELECT max(work.updated_at) FROM engine.jobs work WHERE work.audit_round_id = a.id)) AS archive_updated_at,
+                row_number() OVER (PARTITION BY s.object_kind, s.object_ref ORDER BY a.created_at, a.id, i.file_version_id) AS sequence
+            FROM product.audit_drafts d JOIN product.audit_rounds a ON a.source_draft_id = d.id AND a.tenant_id = d.tenant_id
+            JOIN product.round_inputs i ON i.round_id = a.id AND i.role = 'target'
+            JOIN product.file_versions f ON f.id = i.file_version_id AND f.tenant_id = d.tenant_id
+            JOIN product.file_version_sources s ON s.file_version_id = f.id AND s.provider = 'feishu'
+            JOIN product.draft_items di ON di.draft_id = d.id AND di.file_version_id = f.id
+            LEFT JOIN engine.jobs j ON j.id = di.analysis_job_id
+            LEFT JOIN LATERAL (SELECT display_values, created_at FROM product.audit_display_requests x
+                WHERE x.task_id = d.id AND x.round_id = a.id AND x.file_version_id = f.id AND x.state = 'saved'
+                ORDER BY expected_revision DESC LIMIT 1) display ON true
+            WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL)
+            SELECT id, file_version_id, object_kind, object_ref, created_at, sequence,
+                original_filename, metadata, document_type, display_values, archive_updated_at FROM history h
+            WHERE NOT EXISTS (SELECT 1 FROM unnest(ARRAY[h.id, h.round_id, h.file_id]) wanted(resource_id)
+                WHERE NOT EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = wanted.resource_id
+                    AND g.user_id = %s AND g.capability IN ('read', 'review')))
+            AND NOT EXISTS (SELECT 1 FROM product.draft_items other
+                JOIN product.file_versions other_file ON other_file.id = other.file_version_id
+                WHERE other.draft_id = h.id AND NOT EXISTS (SELECT 1 FROM product.resource_grants g
+                    WHERE g.resource_id = other_file.file_id AND g.user_id = %s AND g.capability IN ('read', 'review')))
+            ORDER BY created_at, round_id, file_version_id""",
+            (principal.tenant_id, principal.user_id, principal.user_id, principal.user_id),
+        ).fetchall()
+
+    @staticmethod
+    def _archive_document_id(principal: Principal, row) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([principal.tenant_id, "feishu", row[2], row[3]])))
+
+    def _archive_records(self, conn, principal: Principal, rows: list) -> dict:
+        tasks: dict[str, dict] = {}
+        records: dict[str, dict] = {}
+        for row in rows:
+            task_id, version_id, _kind, _source, accepted_at, sequence = row[:6]
+            tid, vid = str(task_id), str(version_id)
+            if tid not in tasks:
+                tasks[tid] = self._recognition_public(conn, principal, tid)
+            task = tasks[tid]
+            file = next((item for item in task["files"] if item["file"]["id"] == vid and item.get("audit")), None)
+            if file is None:
+                continue
+            audit = file["audit"]
+            document_id = self._archive_document_id(principal, row)
+            record = records.setdefault(document_id, {"entries": [], "details": []})
+            entry = {
+                "document_id": document_id,
+                "reference": {"task_id": tid, "round_id": task["round_id"], "file_version_id": vid, "result_attempt": audit["result_attempt"]},
+                "sequence": sequence,
+                "audited_at": accepted_at.isoformat(),
+                "initiator": principal.display_name,
+                "execution": audit["execution"],
+                "conclusion": audit["conclusion"],
+                "source_revision": None,
+                "report": audit["report"],
+                "report_access": {"state": "allowed", "reason": None},
+            }
+            record["entries"].append(entry)
+            record["details"].append((entry, task, file))
+            metadata = (file.get("match") or {}).get("metadata") or {"customer": None, "model": None, "part": None}
+            metadata = {**metadata, **((file.get("display_info") or {}).get("values") or {})}
+            completed = next((row for row in reversed(record["entries"]) if row["execution"] == "completed" and row["conclusion"] in {"PASS", "NG"}), None)
+            record["document"] = {
+                "document_id": document_id,
+                "provider": "feishu",
+                "title": file["file"]["original_filename"],
+                "metadata": metadata,
+                "document_type": (file.get("match") or {}).get("document_type"),
+                "updated_at": max(row[10].isoformat(), record.get("document", {}).get("updated_at", "")),
+                "latest_completed": completed,
+                "latest_activity": entry,
+            }
+        return records
+
+    def list_audit_archive(self, principal: Principal, query: dict) -> dict:
+        from .archive import archive_page
+
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            rows = self._archive_rows(conn, principal)
+            summaries: dict[str, dict] = {}
+            for row in rows:
+                document_id = self._archive_document_id(principal, row)
+                summaries[document_id] = {
+                    "document_id": document_id,
+                    "title": row[6],
+                    "metadata": {**(row[7] or {}), **(row[9] or {})},
+                    "document_type": row[8],
+                    "updated_at": max(row[10].isoformat(), summaries.get(document_id, {}).get("updated_at", "")),
+                    "latest_completed": None,
+                    "latest_activity": {"initiator": principal.display_name, "audited_at": row[4].isoformat()},
+                }
+            page = archive_page(list(summaries.values()), query)
+            selected = {document["document_id"] for document in page["documents"]}
+            records = self._archive_records(conn, principal, [row for row in rows if self._archive_document_id(principal, row) in selected])
+            page["documents"] = [records[document["document_id"]]["document"] for document in page["documents"]]
+            return page
+
+    def read_audit_history(self, principal: Principal, document_id: str, reference: dict | None = None) -> dict:
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            rows = [row for row in self._archive_rows(conn, principal) if self._archive_document_id(principal, row) == document_id]
+            if reference is not None:
+                rows = [row for row in rows if str(row[0]) == reference.get("task_id") and str(row[1]) == reference.get("file_version_id")]
+            record = self._archive_records(conn, principal, rows).get(document_id)
+            if record is None:
+                raise KeyError("missing")
+            if reference is None:
+                completed = record["document"]["latest_completed"]
+                return {"document": record["document"], "entries": list(reversed(record["entries"])), "default_reference": completed["reference"] if completed else None}
+            selected = next((detail for detail in record["details"] if detail[0]["reference"] == reference), None)
+            if selected is None:
+                raise KeyError("missing")
+            entry, task, file = selected
+            inputs = conn.execute(
+                """SELECT i.file_version_id, f.file_id, EXISTS (SELECT 1 FROM product.resource_grants g
+                WHERE g.resource_id = f.file_id AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
+                WHERE i.round_id = %s AND f.tenant_id = %s""",
+                (principal.user_id, task["round_id"], principal.tenant_id),
+            ).fetchall()
+            originals = []
+            for version_id, file_id, allowed in inputs:
+                version = self.get_version(str(file_id), str(version_id)) if allowed else None
+                originals.append(
+                    {
+                        "file_version_id": str(version_id),
+                        "file": version.public() if version else None,
+                        "access": {"state": "allowed" if version else "denied", "reason": None if version else "当前账号无权读取这份原件。"},
+                    }
+                )
+            return {
+                "entry": entry,
+                "file": file,
+                "frozen_file_version_ids": [str(row[0]) for row in inputs],
+                "originals": originals,
+                "source_task_access": {"state": "allowed", "reason": None},
+                "report_access": entry["report_access"],
+            }
+
     def confirm_audit_task(self, principal: Principal, task_id: str, request_id, expected_revision) -> dict:
         parsed_task, key = _as_uuid(task_id), _as_uuid(request_id)
         if not parsed_task or not key or type(expected_revision) is not int or expected_revision < 0:

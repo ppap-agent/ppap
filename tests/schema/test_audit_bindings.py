@@ -377,6 +377,76 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
+    def test_archive_keeps_provider_identity_and_exact_history_reference(self):
+        from ppap_api.web_contract import AuditArchivePage, AuditHistoryDetail
+        from ppap_core.feishu_drive import ImportedMaterial
+        from pydantic import TypeAdapter
+
+        def imported(token):
+            version = self.store.receive_drive_upload(
+                self.alice,
+                str(uuid.uuid4()),
+                token,
+                "file",
+                lambda: ImportedMaterial(filename="same.xlsx", content_type="application/octet-stream", data=b"x", file_token=token, doc_type="file"),
+            )
+            return self.store.finalize_version(version)
+
+        first, other = imported("document-one"), imported("document-two")
+        _, old_task, _ = self.prepared_display_task(files=[first, other])
+        newer = imported("document-one")
+        _, new_task, _ = self.prepared_display_task(files=[newer, self.upload("same.xlsx")])
+        response = self.display_client.get("/audit-archive")
+        self.assertEqual(response.status_code, 200)
+        page = response.json()
+        TypeAdapter(AuditArchivePage).validate_python(page)
+        self.assertEqual(page["total"], 2)
+        doc = next(row for row in page["documents"] if row["latest_activity"]["reference"]["task_id"] == new_task["id"])
+        history_path = f"/audit-archive/{doc['document_id']}/history"
+        history = self.display_client.get(history_path).json()
+        self.assertEqual([entry["sequence"] for entry in history["entries"]], [2, 1])
+        old = history["entries"][-1]["reference"]
+        self.assertEqual(old["task_id"], old_task["id"])
+        detail = self.display_client.get(history_path + "/result", params=old)
+        self.assertEqual(detail.status_code, 200)
+        TypeAdapter(AuditHistoryDetail).validate_python(detail.json())
+        self.assertEqual(detail.json()["file"]["file"]["id"], first.id)
+        self.assertEqual(self.display_client.get(history_path + "/result", params={**old, "file_version_id": newer.id}).status_code, 403)
+        self.assertEqual(self.display_client.get(history_path + "/result", params={**old, "result_attempt": 99}).status_code, 403)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"search": "missing"}).json()["total"], 0)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"page": 2}).json()["documents"], [])
+        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "测试客户"}).json()["total"], 2)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"from_date": "2099-01-01"}).json()["total"], 0)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"from_date": "2026-10-20", "through_date": "2026-10-01"}).status_code, 400)
+        category = page["categories"][0]
+        self.assertEqual(category["count"], 2)
+        self.assertEqual(self.display_client.get("/audit-archive", params={"category_id": category["parts"][0]["id"]}).json()["total"], 2)
+        other_doc = next(row for row in page["documents"] if row["document_id"] != doc["document_id"])
+        corrected = self.display_client.post(
+            f"/audit-tasks/{old_task['id']}/display-info",
+            json={
+                "request_id": str(uuid.uuid4()),
+                "reference": {"task_id": old_task["id"], "round_id": old_task["round_id"], "file_version_id": other.id},
+                "expected_revision": 0,
+                "values": {"customer": "更正客户", "model": "M2", "part_number": "P2", "part": "更正零件"},
+            },
+        )
+        self.assertEqual(corrected.status_code, 200)
+        refreshed = self.display_client.get("/audit-archive").json()["documents"]
+        self.assertEqual(refreshed[0]["document_id"], other_doc["document_id"])
+        self.assertGreater(refreshed[0]["updated_at"], refreshed[1]["updated_at"])
+        self.assertEqual(self.display_client.get("/audit-archive", params={"customer": "更正客户"}).json()["total"], 1)
+        from ppap_core.db import connect
+
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first.file_id, self.alice.user_id))
+        self.assertEqual(self.display_client.get(history_path + "/result", params=old).status_code, 403)
+        remaining = self.display_client.get(history_path).json()["entries"]
+        self.assertEqual([entry["sequence"] for entry in remaining], [2])
+        self.display_principal = self.store.principal_for_fixture("bob")
+        self.assertEqual(self.display_client.get("/audit-archive").json()["total"], 0)
+        self.assertEqual(self.display_client.get(history_path).status_code, 403)
+
     def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False, confirm=True):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient

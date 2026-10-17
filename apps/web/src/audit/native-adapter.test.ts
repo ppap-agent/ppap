@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 
@@ -12,6 +12,21 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native archive preserves filters and the exact selected historical result', async () => {
+  const calls: string[] = []
+  globalThis.fetch = async input => {calls.push(String(input)); return json({})}
+  await nativeArchiveAdapter.listDocuments({search: 'A & B', category_id: null, document_type: null, customer: '客户', initiator: null, from_date: null, through_date: null, page: 2, page_size: 10})
+  await nativeArchiveAdapter.listHistory('document/a')
+  await nativeArchiveAdapter.readHistory('document/a', {task_id: 'old-task', round_id: 'old-round', file_version_id: 'old-version', result_attempt: 2})
+  const query = new URL(calls[0], 'https://example.test').searchParams
+  assert.equal(query.get('search'), 'A & B')
+  assert.equal(query.get('customer'), '客户')
+  assert.equal(query.get('page'), '2')
+  assert.equal(query.has('category_id'), false)
+  assert.equal(calls[1], '/audit-archive/document%2Fa/history')
+  assert.equal(calls[2], '/audit-archive/document%2Fa/history/result?task_id=old-task&round_id=old-round&file_version_id=old-version&result_attempt=2')
+})
 
 test('Deep selection reaches task recognition and survives readback without starting an audit', async () => {
   const adapter = createNativeAuditAdapter({deepOffered: true, customers: []})
