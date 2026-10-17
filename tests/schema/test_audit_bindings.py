@@ -377,7 +377,7 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
-    def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False):
+    def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False, confirm=True):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from ppap_api.audit_routes import register_audit_routes
@@ -416,6 +416,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 },
                 "succeeded",
             )
+        if not confirm:
+            return files, self.store.get_audit_task(self.alice, task["id"]), worker
         task = self.store.confirm_audit_task(self.alice, task["id"], str(uuid.uuid4()), 0)
         if complete_audit:
             job = worker.claim_job("display-test")
@@ -426,6 +428,35 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.display_client = TestClient(app)
         self.addCleanup(self.display_client.close)
         return files, task, worker
+
+    def test_confirmation_refuses_superseded_rule_without_substituting_new_version(self):
+        files, task, worker = self.prepared_display_task(confirm=False)
+        rule_id = task["files"][0]["match"]["rule"]["id"]
+        self.store.publish_rule(self.alice, "修订规则", self.rule_body(), files[0].id, predecessor_id=rule_id)
+        with self.assertRaisesRegex(ValueError, "rule_candidate_expired"):
+            self.store.confirm_audit_task(self.alice, task["id"], str(uuid.uuid4()), 0)
+        current = self.store.get_audit_task(self.alice, task["id"])
+        self.assertIsNone(current["round_id"])
+        self.assertEqual(current["files"][0]["match"]["rule"]["id"], rule_id)
+        self.assertIsNone(worker.claim_job("no-audit-after-refusal"))
+
+    def test_accepted_confirmation_replays_frozen_rule_after_new_version_is_published(self):
+        files, task, _worker = self.prepared_display_task(confirm=False)
+        rule_id = task["files"][0]["match"]["rule"]["id"]
+        key = str(uuid.uuid4())
+        accepted = self.store.confirm_audit_task(self.alice, task["id"], key, 0)
+        self.store.publish_rule(self.alice, "后续修订", self.rule_body(), files[0].id, predecessor_id=rule_id)
+        replayed = self.store.confirm_audit_task(self.alice, task["id"], key, 0)
+        self.assertEqual(replayed["round_id"], accepted["round_id"])
+        self.assertEqual(replayed["files"][0]["match"]["rule"]["id"], rule_id)
+
+    def test_unrelated_rule_publication_does_not_invalidate_confirmation(self):
+        files, task, _worker = self.prepared_display_task(confirm=False)
+        rule_id = task["files"][0]["match"]["rule"]["id"]
+        self.store.publish_rule(self.alice, "另一套独立要求", self.rule_body(), files[0].id)
+        accepted = self.store.confirm_audit_task(self.alice, task["id"], str(uuid.uuid4()), 0)
+        self.assertIsNotNone(accepted["round_id"])
+        self.assertEqual(accepted["files"][0]["match"]["rule"]["id"], rule_id)
 
     def test_display_save_and_original_request_readback_do_not_change_audit_facts(self):
         files, task, worker = self.prepared_display_task()

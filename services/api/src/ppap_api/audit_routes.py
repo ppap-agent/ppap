@@ -51,6 +51,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "precheck_required",
                 "audit_task_charging_unavailable",
                 "task_not_ready",
+                "rule_candidate_expired",
                 "report_not_ready",
                 "report_artifact_conflict",
                 "report_package_too_large",

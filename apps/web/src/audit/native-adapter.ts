@@ -143,6 +143,7 @@ const confirmationRefusals: Record<string, string> = {
   audit_task_charging_unavailable: '当前环境尚未开放本次审核计费，审核没有开始。',
   task_revision_conflict: '任务文件已在其他页面更新。本次确认未受理，请核对当前任务。',
   task_not_ready: '文件识别尚未完成。本次确认未受理，请读取当前任务。',
+  rule_candidate_expired: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。',
   task_input_locked: '当前任务不能接受本次确认，请核对当前任务。',
   invalid_task_confirmation: '本次确认信息无效，审核没有开始。请核对当前任务。',
   target_required: '没有可进入审核的文件，本次确认未受理。',

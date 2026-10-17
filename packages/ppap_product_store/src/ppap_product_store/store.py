@@ -2650,6 +2650,9 @@ class AuthStore:
                     if (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
                 ]
                 if not existing:
+                    current_rules = {rule["id"] for rule in latest_rule_versions(self.list_rules(principal.tenant_id))}
+                    if any(item["rule_version_id"] not in current_rules for item in items):
+                        raise ValueError("rule_candidate_expired")
                     if self.settings.usage_charge_enabled:
                         raise ValueError("audit_task_charging_unavailable")
                     for row in selected:

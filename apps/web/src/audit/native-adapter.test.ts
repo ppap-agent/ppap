@@ -407,6 +407,18 @@ test('a refusal cannot overwrite an already accepted round found by readback', a
   assert.deepEqual(current.acceptance, {request_id: 'accept-original', state: 'accepted', reason: null})
 })
 
+test('a superseded rule requires recognition again instead of silently accepting another rule', async () => {
+  let posts = 0
+  globalThis.fetch = async (_url, init) => {
+    if (init?.method === 'POST') {posts += 1; return json({error: 'rule_candidate_expired'}, 409)}
+    return json(task)
+  }
+  const current = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-stale')
+  assert.equal(current.round_id, null)
+  assert.deepEqual(current.acceptance, {request_id: 'accept-stale', state: 'rejected', reason: '匹配的规则已有新版本，审核没有开始。请返回上一步重新识别，再核对规则。'})
+  assert.equal(posts, 1)
+})
+
 test('authorization, server and unknown refusals do not grant another confirmation', async () => {
   for (const [status, code] of [[401, 'unauthenticated'], [403, 'access_denied'], [500, 'audit_task_charging_unavailable'], [409, 'unrecognized_conflict']] as const) {
     const calls: string[] = []
