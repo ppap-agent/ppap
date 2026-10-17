@@ -1368,6 +1368,40 @@ class UsageAcceptanceTests(AuditDatabaseCase):
             ]
         )
 
+    def test_unknown_usage_cannot_be_claimed_for_another_send(self):
+        from datetime import datetime, timedelta, timezone
+
+        import httpx
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_core.feishu import UserTokens
+        from ppap_core.identity import SESSION_COOKIE
+
+        self.settings.feishu_free_trial_quota_points = 0
+        draft = self.prepared()
+        self.store.accept_draft(self.alice, draft, draft)
+        event = self.store.list_usage_events(self.alice)[0]
+        claim = self.store.claim_usage_report(self.alice, event["id"])
+        self.assertIsNotNone(claim)
+        self.store.settle_usage_external(self.alice, event["id"], claim, "unknown")
+        self.assertIsNone(self.store.claim_usage_report(self.alice, event["id"]))
+        current = self.store.usage_event(self.alice, event["id"])
+        self.assertEqual(current["external_status"], "unknown")
+        self.assertIsNone(current["external_record_id"])
+
+        def no_external_request(request):
+            self.fail("Unknown usage must not trigger an external request")
+
+        now = datetime.now(timezone.utc)
+        session = self.store.create_session(self.alice, UserTokens("test-access", "test-refresh", now + timedelta(hours=1), now + timedelta(days=1)))
+        with httpx.Client(transport=httpx.MockTransport(no_external_request)) as http:
+            app = create_app(self.settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store, http)
+            with TestClient(app) as client:
+                client.cookies.set(SESSION_COOKIE, session)
+                response = client.post(f"/integrations/feishu/usage/events/{event['id']}/report")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["external_status"], "unknown")
+
     def test_concurrent_rounds_share_trial_and_replay_does_not_charge(self):
         drafts = [self.prepared(), self.prepared()]
         with ThreadPoolExecutor(2) as pool:

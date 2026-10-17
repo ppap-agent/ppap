@@ -731,7 +731,7 @@ def create_app(
         if public["external_status"] == "confirmed":
             public["skipped"] = False
             return JSONResponse(public)
-        if public["external_status"] not in {"pending", "unknown"}:
+        if public["external_status"] != "pending":
             return JSONResponse(public, status_code=409)
         if not row.get("trace_id"):
             return JSONResponse({"error": "usage_trace_missing"}, status_code=409)

@@ -3199,7 +3199,7 @@ class AuthStore:
                 """UPDATE product.usage_events SET external_status = 'reporting',
                           report_claim = %s, reporting_at = now()
                    WHERE id = %s AND tenant_id = %s AND user_id = %s
-                     AND external_status IN ('pending', 'unknown') AND NOT is_free_trial
+                     AND external_status = 'pending' AND NOT is_free_trial
                    RETURNING id""",
                 (claim, event_id, principal.tenant_id, principal.user_id),
             ).fetchone()

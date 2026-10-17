@@ -340,9 +340,9 @@ class FeishuUsageTests(unittest.TestCase):
         count = len(self.partner.calls)
         self.partner.fail_report = False
         again = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
-        self.assertEqual(again.status_code, 200)
-        self.assertEqual(again.json()["external_status"], "confirmed")
-        self.assertGreater(len(self.partner.calls), count)
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(again.json()["external_status"], "unknown")
+        self.assertEqual(len(self.partner.calls), count)
 
 
 if __name__ == "__main__":
