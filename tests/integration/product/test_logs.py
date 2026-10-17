@@ -107,11 +107,13 @@ class LogTests(unittest.TestCase):
         process_claimed(store, claimed, "worker-1")
         lines = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
         claimed_log = next(row for row in lines if row["event"] == "job_claimed")
-        done = next(row for row in lines if row["event"] == "job_completed")
+        done = next(row for row in lines if row["event"] == "job_result_discarded")
         self.assertEqual(claimed_log["job_id"], job_id)
         self.assertEqual(claimed_log["attempt"], "3")
         self.assertEqual(claimed_log["tenant_id"], TENANT_A)
-        self.assertEqual(done["outcome"], "succeeded")
+        self.assertEqual(done["outcome"], "failed")
+        self.assertEqual(done["note"], "unsupported_job_kind")
+        self.assertNotIn("job_completed", [row["event"] for row in lines])
         self.assertNotIn("findings", json.dumps(lines))
 
 

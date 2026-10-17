@@ -36,7 +36,7 @@ def worker_id(explicit: str) -> str:
 def run_claimed_job(kind: str, payload: dict) -> dict:
     """Execute one claimed job with in-repo checkers. Round jobs are completed by process_claimed."""
     if kind != "audit":
-        return {"note": "claimed; execution not implemented"}
+        return {"error": "unsupported_job_kind", "note": "unsupported_job_kind"}
     if payload.get("round_id"):
         return {"note": "round_audit", "round_id": payload.get("round_id")}
     from ppap_excel_audit_engine.app_runtime import run_audit_engine
@@ -125,8 +125,9 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
             return process_file_job(store, claimed, ident, rule_ai)
         if claimed.kind != "audit" or not claimed.round_id:
             diagnostic = run_claimed_job(claimed.kind, claimed.payload or {})
-            store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, "succeeded")
-            emit("job_completed", outcome="succeeded", note=diagnostic.get("note"))
+            outcome = "failed" if diagnostic.get("error") else "succeeded"
+            accepted = store.complete_job(claimed, ident, {**diagnostic, "findings": [], "coverage": {}}, outcome)
+            emit("job_completed" if accepted else "job_result_discarded", outcome=outcome, note=diagnostic.get("note"))
             return diagnostic
         work = store.round_work(claimed.round_id)
         if work is None:

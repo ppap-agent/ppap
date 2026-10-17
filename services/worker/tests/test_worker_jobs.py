@@ -16,7 +16,7 @@ class ClaimedJobTests(unittest.TestCase):
     def test_non_audit_jobs_do_not_import_the_engine(self):
         with patch.dict(os.environ, {}, clear=False):
             result = run_claimed_job("heartbeat", {})
-        self.assertEqual(result, {"note": "claimed; execution not implemented"})
+        self.assertEqual(result, {"error": "unsupported_job_kind", "note": "unsupported_job_kind"})
 
 
 class WorkerLoopTests(unittest.TestCase):

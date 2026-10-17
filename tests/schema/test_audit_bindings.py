@@ -64,6 +64,31 @@ class AuditDatabaseCase(unittest.TestCase):
 
 
 class AuditBindingDatabaseTests(AuditDatabaseCase):
+    def test_unsupported_worker_job_is_failed_not_successful_delivery(self):
+        from ppap_core.db import connect
+        from ppap_product_store import AuthStore
+        from ppap_worker import process_claimed
+
+        job_id = str(uuid.uuid4())
+        with connect(self.settings, "migrator") as conn:
+            conn.execute(
+                "INSERT INTO engine.jobs (id, tenant_id, kind, status) VALUES (%s, %s, 'unimplemented_delivery', 'queued')",
+                (job_id, self.alice.tenant_id),
+            )
+        worker = AuthStore(self.settings, role="worker")
+        claimed = worker.claim_job("unsupported-job-test")
+        self.assertEqual(claimed.id, job_id)
+        result = process_claimed(worker, claimed, "unsupported-job-test")
+        self.assertEqual(result, {"error": "unsupported_job_kind", "note": "unsupported_job_kind"})
+        with connect(self.settings, "migrator") as conn:
+            row = conn.execute(
+                "SELECT j.status, a.outcome, a.diagnostic FROM engine.jobs j JOIN engine.attempts a ON a.job_id = j.id WHERE j.id = %s",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(row[0:2], ("failed", "failed"))
+        self.assertEqual(row[2]["note"], "unsupported_job_kind")
+        self.assertIsNone(worker.claim_job("unsupported-job-test"))
+
     def test_support_reads_current_session_and_does_not_create_audit_or_usage_records(self):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
