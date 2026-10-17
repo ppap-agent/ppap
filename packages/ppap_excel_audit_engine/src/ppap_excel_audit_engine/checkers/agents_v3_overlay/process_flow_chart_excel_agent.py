@@ -146,15 +146,15 @@ def _is_final_shipment_process(value: object) -> bool:
 def _process_name_values(ctx: RuleContext) -> list[str]:
     values = []
     for sheet in Table(ctx).find_sheets("过程流程图"):
-        headers = sheet.scan_non_empty(row_min=1, row_max=sheet.ws.max_row, col_min=1, col_max=sheet.ws.max_column)
+        cells = sheet.scan_non_empty(row_min=1, row_max=sheet.ws.max_row, col_min=1, col_max=sheet.ws.max_column)
         columns: dict[int, int] = {}
-        for header in headers:
+        for header in cells:
             if header.exact("工序名称", compact=True):
                 columns.setdefault(header.col_index, header.row_index)
-        for column, header_row in columns.items():
-            for cell in sheet.scan_non_empty(row_min=header_row + 1, row_max=sheet.ws.max_row, col_min=column, col_max=column):
-                if not cell.exact("工序名称", compact=True):
-                    values.append(str(cell.value()))
+        for cell in cells:
+            header_row = columns.get(cell.col_index)
+            if header_row is not None and cell.row_index > header_row and not cell.exact("工序名称", compact=True):
+                values.append(str(cell.value()))
     return values
 
 
