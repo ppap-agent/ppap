@@ -57,6 +57,8 @@ class ResolvedField:
 
 
 class ExcelOps(Protocol):
+    def iter_filled_cell_positions(self, ws: Worksheet, *, row_min: int, row_max: int, col_min: int, col_max: int) -> Iterator[tuple[int, int]]: ...
+
     def iter_effective_row_values(
         self,
         ws: Worksheet,

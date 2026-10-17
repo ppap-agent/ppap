@@ -709,19 +709,10 @@ class Sheet:
         if bounded_row_min > bounded_row_max or bounded_col_min > bounded_col_max:
             return []
 
-        seen_cells: set[tuple[int, int]] = set()
-        results: list[Cell] = []
-        for row_index in range(bounded_row_min, bounded_row_max + 1):
-            for col_index in range(bounded_col_min, bounded_col_max + 1):
-                anchored = _anchored_cell(self.ctx, self.ws, row_index, col_index)
-                key = (anchored.row, anchored.column)
-                if key in seen_cells:
-                    continue
-                seen_cells.add(key)
-                if not self.ctx.ops.is_filled(anchored.value):
-                    continue
-                results.append(Cell(self.ctx, self.ws, anchored.row, anchored.column))
-        return results
+        return [
+            Cell(self.ctx, self.ws, row, col)
+            for row, col in self.ctx.ops.iter_filled_cell_positions(self.ws, row_min=bounded_row_min, row_max=bounded_row_max, col_min=bounded_col_min, col_max=bounded_col_max)
+        ]
 
 
 @dataclass(frozen=True, slots=True)

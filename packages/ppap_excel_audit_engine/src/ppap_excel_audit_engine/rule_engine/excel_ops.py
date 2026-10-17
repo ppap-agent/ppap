@@ -83,6 +83,19 @@ class DefaultExcelOps:
         for col_index in column_indexes:
             yield self.get_effective_cell_value(ws, row, col_index)
 
+    def iter_filled_cell_positions(self, ws: Worksheet, *, row_min: int, row_max: int, col_min: int, col_max: int) -> Iterator[tuple[int, int]]:
+        """Scan stored cells, including merged anchors that overlap the bounds."""
+        cells = getattr(ws, "_cells", None)
+        if not isinstance(cells, dict):
+            raise TypeError("Sparse cell scanning requires a loaded worksheet")
+        positions = {(row, col) for (row, col), cell in cells.items() if row_min <= row <= row_max and col_min <= col <= col_max and self.is_filled(cell.value)}
+        for merged in ws.merged_cells.ranges:
+            if merged.max_row < row_min or merged.min_row > row_max or merged.max_col < col_min or merged.min_col > col_max:
+                continue
+            if self.is_filled(ws.cell(merged.min_row, merged.min_col).value):
+                positions.add((merged.min_row, merged.min_col))
+        yield from sorted(positions, key=lambda position: (max(row_min, position[0]), max(col_min, position[1])))
+
     def get_effective_cell_value(
         self,
         ws: Worksheet,
