@@ -2783,15 +2783,31 @@ class AuthStore:
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + principal.tenant_id + ":" + item_id,))
         consumed = self._trial_ledger_consumed(conn, principal.tenant_id, item_id)
         remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, consumed)
-        points = audit_usage_points(sum(row["role"] == "target" for row in prepared))
-        for amount, trial in split_trial_and_partner(remaining, points):
-            conn.execute(
-                """INSERT INTO product.usage_events
-                   (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
-                    external_status, trace_id, round_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (str(uuid.uuid4()), principal.tenant_id, principal.user_id, item_id, amount, trial, "none" if trial else "pending", round_id + (":trial" if trial else ":partner"), round_id),
-            )
+        for row in prepared:
+            if row["role"] != "target":
+                continue
+            version = row["file_version_id"]
+            for amount, trial in split_trial_and_partner(remaining, audit_usage_points(1)):
+                conn.execute(
+                    """INSERT INTO product.usage_events
+                       (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial,
+                        external_status, trace_id, round_id, file_version_id)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        str(uuid.uuid4()),
+                        principal.tenant_id,
+                        principal.user_id,
+                        item_id,
+                        amount,
+                        trial,
+                        "none" if trial else "pending",
+                        round_id + ":" + version + (":trial" if trial else ":partner"),
+                        round_id,
+                        version,
+                    ),
+                )
+                if trial:
+                    remaining -= amount
 
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
@@ -3149,9 +3165,10 @@ class AuthStore:
                 "trace_id",
                 "created_at",
                 "round_id",
+                "file_version_id",
             )
         }
-        for key in ("id", "user_id", "round_id"):
+        for key in ("id", "user_id", "round_id", "file_version_id"):
             if result[key] is not None:
                 result[key] = str(result[key])
         created = result["created_at"]

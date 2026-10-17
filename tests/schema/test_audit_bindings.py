@@ -1368,6 +1368,27 @@ class UsageAcceptanceTests(AuditDatabaseCase):
             ]
         )
 
+    def test_each_target_has_its_own_usage_slices(self):
+        from ppap_core.fixtures import RULE_A
+
+        first, second = self.upload("first.xlsx"), self.upload("second.xlsx")
+        draft = self.draft(
+            [
+                {"file_version_id": first.id, "role": "target", "rule_version_id": RULE_A},
+                {"file_version_id": second.id, "role": "target", "rule_version_id": RULE_A},
+            ]
+        )
+        accepted = self.store.accept_draft(self.alice, draft, draft)
+        self.store.accept_draft(self.alice, draft, draft)
+        events = self.store.list_usage_events(self.alice)
+        self.assertEqual({row.get("file_version_id") for row in events}, {first.id, second.id})
+        for version in (first.id, second.id):
+            self.assertEqual(sum(row["consumed_points"] for row in events if row["file_version_id"] == version), 500)
+        self.assertEqual(sum(row["consumed_points"] for row in events if row["is_free_trial"]), 700)
+        self.assertEqual({row["round_id"] for row in events}, {accepted["id"]})
+        self.schema.require(self.schema.apply(self.database), "reapply migrations with file usage")
+        self.assertEqual(self.store.list_usage_events(self.alice), events)
+
     def test_unknown_usage_cannot_be_claimed_for_another_send(self):
         from datetime import datetime, timedelta, timezone
 

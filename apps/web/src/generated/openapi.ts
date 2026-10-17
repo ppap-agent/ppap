@@ -3139,6 +3139,8 @@ export interface components {
             created_at: string;
             /** External Status */
             external_status?: string;
+            /** File Version Id */
+            file_version_id?: string | null;
             /** Id */
             id: string;
             /** Is Free Trial */

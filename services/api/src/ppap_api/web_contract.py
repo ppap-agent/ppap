@@ -500,6 +500,7 @@ class UsageEvent(TypedDict):
     consumed_points: int
     is_free_trial: bool
     round_id: NotRequired[str | None]
+    file_version_id: NotRequired[str | None]
     external_status: NotRequired[str]
     ai_item_id: NotRequired[str]
 
