@@ -502,6 +502,8 @@ class UsageEvent(TypedDict):
     round_id: NotRequired[str | None]
     file_version_id: NotRequired[str | None]
     external_status: NotRequired[str]
+    external_record_id: NotRequired[str | None]
+    external_confirmed_at: NotRequired[str | None]
     ai_item_id: NotRequired[str]
 
 

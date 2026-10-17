@@ -3137,6 +3137,10 @@ export interface components {
             consumed_points: number;
             /** Created At */
             created_at: string;
+            /** External Confirmed At */
+            external_confirmed_at?: string | null;
+            /** External Record Id */
+            external_record_id?: string | null;
             /** External Status */
             external_status?: string;
             /** File Version Id */

@@ -1409,6 +1409,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         current = self.store.usage_event(self.alice, event["id"])
         self.assertEqual(current["external_status"], "unknown")
         self.assertIsNone(current["external_record_id"])
+        self.assertIsNone(current["external_confirmed_at"])
 
         def no_external_request(request):
             self.fail("Unknown usage must not trigger an external request")
@@ -1430,6 +1431,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.store.accept_draft(self.alice, drafts[0], drafts[0])
         events = self.store.list_usage_events(self.alice)
         self.assertEqual(sum(e["consumed_points"] for e in events), 1000)
+        self.assertTrue(all(e["external_confirmed_at"] is None for e in events))
         self.assertEqual(sum(e["consumed_points"] for e in events if e["is_free_trial"]), 700)
         self.assertEqual({e["round_id"] for e in events}, {r["id"] for r in rounds})
         pending = next(e for e in events if not e["is_free_trial"])
@@ -1442,6 +1444,12 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertIsNone(self.store.claim_usage_report(self.alice, pending["id"]))
         late = self.store.settle_usage_external(self.alice, pending["id"], next(c for c in claims if c), "confirmed", "test-record")
         self.assertEqual(late["external_status"], "confirmed")
+        public = self.store.usage_event_public(late)
+        self.assertIsNotNone(public.get("external_confirmed_at"))
+        self.assertGreaterEqual(public["external_confirmed_at"], public["created_at"])
+        self.assertEqual(public["external_record_id"], "test-record")
+        self.assertIsNone(self.store.claim_usage_report(self.alice, pending["id"]))
+        self.assertEqual(self.store.usage_event_public(self.store.usage_event(self.alice, pending["id"])), public)
         bob = self.store.principal_for_fixture("bob")
         self.assertEqual(str(self.store.usage_event(bob, pending["id"])["id"]), pending["id"])
         self.assertIsNone(self.store.claim_usage_report(bob, pending["id"]))

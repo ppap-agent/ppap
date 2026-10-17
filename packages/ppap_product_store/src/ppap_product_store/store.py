@@ -3162,6 +3162,7 @@ class AuthStore:
                 "is_free_trial",
                 "external_status",
                 "external_record_id",
+                "external_confirmed_at",
                 "trace_id",
                 "created_at",
                 "round_id",
@@ -3171,9 +3172,10 @@ class AuthStore:
         for key in ("id", "user_id", "round_id", "file_version_id"):
             if result[key] is not None:
                 result[key] = str(result[key])
-        created = result["created_at"]
-        if created is not None and hasattr(created, "isoformat"):
-            result["created_at"] = created.isoformat()
+        for key in ("created_at", "external_confirmed_at"):
+            value = result[key]
+            if value is not None and hasattr(value, "isoformat"):
+                result[key] = value.isoformat()
         started = row.get("reporting_at")
         if isinstance(started, str):
             started = datetime.fromisoformat(started)
@@ -3227,11 +3229,12 @@ class AuthStore:
             raise ValueError("invalid_external_status")
         with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """UPDATE product.usage_events SET external_status = %s, external_record_id = %s
+                """UPDATE product.usage_events SET external_status = %s, external_record_id = %s,
+                          external_confirmed_at = CASE WHEN %s = 'confirmed' THEN now() ELSE NULL END
                    WHERE id = %s AND tenant_id = %s AND user_id = %s
                      AND report_claim = %s AND external_status = 'reporting'
                    RETURNING *""",
-                (status, record_id, event_id, principal.tenant_id, principal.user_id, claim),
+                (status, record_id, status, event_id, principal.tenant_id, principal.user_id, claim),
             )
             row = cur.fetchone()
         if row is None:
