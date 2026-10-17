@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from ppap_core.contracts import AuditInput
+
 from ppap_corpus_contracts.baseline_exceptions import ObservedRuleOutcome
 from ppap_corpus_contracts.execution_outcome import outcome_from_agent_rule
-from ppap_corpus_contracts.v2_assets_shared import FileCase, SimpleAuditFile, make_dummy_rule
+from ppap_corpus_contracts.v2_assets_shared import FileCase, make_dummy_rule
 
 
 def observe_v2_rule_outcome(case: FileCase, rule_index: int, agent: object, agent_rule_count: int) -> ObservedRuleOutcome:
@@ -41,7 +43,7 @@ def collect_v2_rule_outcomes(
     mismatch_only: bool = False,
 ) -> dict[int, ObservedRuleOutcome]:
     rule_count = max(case.expected.keys())
-    audit_file = SimpleAuditFile(
+    audit_file = AuditInput(
         file_url=str(case.file_path),
         audit_id=case.file_name,
         file_metadata={},
