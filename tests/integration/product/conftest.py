@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 
 import pytest
@@ -59,7 +60,7 @@ def make_auth_store(
 ) -> AuthStore:
     settings = settings or Settings()
     settings.pg_host = "127.0.0.1"
-    settings.pg_port = 5432
+    settings.pg_port = int(os.environ.get("PGPORT", "5432"))
     settings.pg_database = "ppap"
     settings.pg_migrator_user = "ppap_migrator"
     settings.pg_migrator_password = ISOLATED_DEV_SECRET

@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ppap_isolated_dev
       POSTGRES_DB: postgres
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${PPAP_TEST_POSTGRES_PORT:-5432}:5432"
     command: ["postgres", "-c", "listen_addresses=*"]
     volumes:
       - ../../migrations:/migrations:ro

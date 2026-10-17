@@ -27,6 +27,7 @@ CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
 - **PSW `.doc`**：从已构建的 `ppap-worker` 派生一次性测试镜像，通过 build context COPY tests/corpus/fixtures（不 bind-mount 仓库路径），并只安装 pytest。生产 worker 镜像不变，也不在 host 上 apt-install LibreOffice 或 gcc。
 - **Compose 路径**：现有 Compose stack 仍会把仓库内 `migrations/` bind-mount 进容器。因此 service modules / schema / Product integration / InsForge lifecycle 需要 Docker daemon 能看到 runner 使用的同一份仓库路径。这是既有 Compose 生命周期，不新增 host-workspace bind mount。
 - **Compose isolation**：CI 为 production、isolated-dev E2E 和 schema 使用 `ppap-ci-<purpose>-<run_id>-<run_attempt>` 作为 Compose project name，避免默认目录名互相污染。cleanup 在独立 `if: always()` step；失败时先 dump `compose ps -a` 和对应 stack 的 service logs。
+- **Host PostgreSQL isolation**：独立数据库测试设置 `PPAP_TEST_POSTGRES_PORT=0` 让 Docker 分配端口，再从 `docker compose port postgres 5432` 取得实际端口并传给 pytest 的 `PGPORT`。API/product fixtures 会清空其目标库，只能指向本次临时数据库，不能使用正在开发的共享库；普通开发默认端口仍为 5432。容器之间继续使用 PostgreSQL 的 5432。
 - **非 Docker job**：Web、无 PostgreSQL 的 Python modules 和普通 Corpus 不要求 Docker。Repository contract 需要 Docker：`docker compose config`、`docker buildx bake --check` / `--print`、nginx 路由、以及 Kustomize / kubeconform 镜像。GitHub Actions 语法由固定版本的 `actionlint` 1.7.7 检查。
 - **InsForge static config**：只需要 Docker Compose CLI（`docker compose config`）。不需要 Docker daemon 或 Buildx，也不启动容器。CLI 缺失时由 `verify-config.mjs` 给出明确错误。
 - **InsForge live lifecycle**：需要 `local start` 使用的 runtime Docker capability（CI 用 `assert-docker` fail-fast）。

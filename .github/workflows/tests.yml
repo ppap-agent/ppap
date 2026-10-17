@@ -194,9 +194,13 @@ jobs:
           enable-cache: true
       - name: Start service PostgreSQL fixture
         if: ${{ matrix.postgres }}
+        env:
+          PPAP_TEST_POSTGRES_PORT: "0"
         run: |
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
+          echo "PGPORT=${binding##*:}" >> "$GITHUB_ENV"
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
       - name: Build, install, import, and test clean distribution closure
         run: python3 scripts/validate_distribution.py --member "${{ matrix.name }}"
@@ -242,9 +246,13 @@ jobs:
         run: uv sync --locked
       - name: Start service PostgreSQL fixture
         if: ${{ matrix.postgres }}
+        env:
+          PPAP_TEST_POSTGRES_PORT: "0"
         run: |
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
+          echo "PGPORT=${binding##*:}" >> "$GITHUB_ENV"
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
       - name: Run module tests
         run: uv run --no-sync pytest ${{ matrix.path }}
@@ -280,11 +288,15 @@ jobs:
           version: "0.9.26"
           enable-cache: true
       - name: Schema PostgreSQL contracts
+        env:
+          PPAP_TEST_POSTGRES_PORT: "0"
         run: |
           set -euo pipefail
           uv sync --locked
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             up -d postgres --wait --wait-timeout 120
+          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
+          export PGPORT="${binding##*:}"
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             run --rm init-db
           uv run --no-sync pytest tests/schema
@@ -419,9 +431,12 @@ jobs:
       - name: Cross-owner product contracts
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
+          PPAP_TEST_POSTGRES_PORT: "0"
         run: |
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
+          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
+          export PGPORT="${binding##*:}"
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
           uv run --no-sync pytest tests/integration/product
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
