@@ -22,8 +22,7 @@ def discover_declared_rules(agent_cls: type[object]) -> tuple[tuple[str, str], .
     return tuple((name, description) for _number, name, description in methods)
 
 
-def declarations_for_target(doc_type: str, filename: str, rule_profile: str) -> tuple[tuple[str, str], ...]:
-    """Resolve the builtin checker list for one target file without executing it."""
+def _agent_for_target(doc_type: str, filename: str, rule_profile: str) -> type[object] | None:
     from pathlib import Path as FilePath
 
     from ppap_core.types import PpapDocumentType
@@ -39,9 +38,13 @@ def declarations_for_target(doc_type: str, filename: str, rule_profile: str) -> 
         rule_profile or "v2",
     )
     agent_cls = getattr(agent_cls, "TARGET_EXCEL_AGENT_CLASS", None) or agent_cls
-    if agent_cls is None:
-        return ()
-    return discover_declared_rules(agent_cls)
+    return agent_cls
+
+
+def declarations_for_target(doc_type: str, filename: str, rule_profile: str) -> tuple[tuple[str, str], ...]:
+    """Resolve the builtin checker list for one target file without executing it."""
+    agent_cls = _agent_for_target(doc_type, filename, rule_profile)
+    return discover_declared_rules(agent_cls) if agent_cls else ()
 
 
 def freeze_target_rule_execution(rule_body: dict | None, filename: str):
@@ -49,9 +52,11 @@ def freeze_target_rule_execution(rule_body: dict | None, filename: str):
 
     if not rule_body or rule_body.get("kind") == "presence":
         return None
-    declarations = declarations_for_target(
+    agent_cls = _agent_for_target(
         str(rule_body.get("type") or ""),
         filename,
         str(rule_body.get("rule_profile") or "v2"),
     )
-    return freeze_rule_execution(rule_body, declarations)
+    declarations = discover_declared_rules(agent_cls) if agent_cls else ()
+    implemented_texts = {method: getattr(getattr(agent_cls, method), "__implemented_rule_texts__", ()) for method, _description in declarations}
+    return freeze_rule_execution(rule_body, declarations, implemented_texts=implemented_texts)

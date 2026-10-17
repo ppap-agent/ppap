@@ -110,19 +110,16 @@ _RULE6_START_INSPECTION_KEYWORDS: tuple[str, ...] = (
     "iqc",
     "incoming inspection",
     "receiving inspection",
-)
-
-_RULE6_START_MATERIAL_KEYWORDS: tuple[str, ...] = (
-    "原材料",
-    "原料",
-    "材料",
-    "外购件",
-    "外协采购件",
-)
-
-_RULE6_START_INSPECTION_ACTION_KEYWORDS: tuple[str, ...] = (
-    "检验",
-    "检测",
+    "原材料检验",
+    "原材料检测",
+    "原料检验",
+    "原料检测",
+    "材料检验",
+    "材料检测",
+    "外购件检验",
+    "外购件检测",
+    "外协采购件检验",
+    "外协采购件检测",
 )
 
 _RULE7_FINAL_SHIPMENT_KEYWORDS: tuple[str, ...] = (
@@ -139,18 +136,26 @@ _RULE8_INSPECT_KEYWORDS: tuple[str, ...] = ("检验", "重检")
 
 
 def _is_start_inspection_process(value: object) -> bool:
-    normalized = _normalize_dense(value)
-    if not normalized:
-        return False
-    if any(_normalize_dense(keyword) in normalized for keyword in _RULE6_START_INSPECTION_KEYWORDS):
-        return True
-    return any(_normalize_dense(keyword) in normalized for keyword in _RULE6_START_MATERIAL_KEYWORDS) and any(
-        _normalize_dense(keyword) in normalized for keyword in _RULE6_START_INSPECTION_ACTION_KEYWORDS
-    )
+    return _contains_any_keyword(value, _RULE6_START_INSPECTION_KEYWORDS)
 
 
 def _is_final_shipment_process(value: object) -> bool:
     return _contains_any_keyword(value, _RULE7_FINAL_SHIPMENT_KEYWORDS)
+
+
+def _process_name_values(ctx: RuleContext) -> list[str]:
+    values = []
+    for sheet in Table(ctx).find_sheets("过程流程图"):
+        headers = sheet.scan_non_empty(row_min=1, row_max=sheet.ws.max_row, col_min=1, col_max=sheet.ws.max_column)
+        columns: dict[int, int] = {}
+        for header in headers:
+            if header.exact("工序名称", compact=True):
+                columns.setdefault(header.col_index, header.row_index)
+        for column, header_row in columns.items():
+            for cell in sheet.scan_non_empty(row_min=header_row + 1, row_max=sheet.ws.max_row, col_min=column, col_max=column):
+                if not cell.exact("工序名称", compact=True):
+                    values.append(str(cell.value()))
+    return values
 
 
 class ProcessFlowChartExcelAgent(ExcelAgent):
@@ -412,41 +417,28 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
         return "PASS", ""
 
-    @rule("起始工序拆解完整性识别")
+    @rule(
+        "起始工序拆解完整性识别",
+        implements=("识别“工序名称”列是否存在，如果存在则继续识别；当“工序名称”列下包含“进料检验”或“IQC”或相近词义的内容则通过，否则不通过",),
+    )
     def rule_6(self, ctx: RuleContext) -> tuple[str, str]:
-        table = Table(ctx)
-        sheets = table.find_sheets("过程流程图")
-        sample_rows = []
-        for sheet in sheets:
-            section = sheet.section("过程流程主数据区")
-            columns = section.columns("工序名称")
-            rows = [row for row in section.rows_from(columns) if row.is_present("工序名称")]
-            if not rows:
-                continue
-            sample_rows.extend(rows)
-            if any(_is_start_inspection_process(row.value("工序名称")) for row in rows):
-                return "PASS", ""
-
-        samples = "；".join(f"工序“{_process_label(row)}”" for row in sample_rows[:6])
-        if not samples:
+        process_names = _process_name_values(ctx)
+        if any(_is_start_inspection_process(value) for value in process_names):
+            return "PASS", ""
+        if not process_names:
             return "NG", "工序名称列未识别到有效工序。"
+        samples = "；".join(f"工序“{value}”" for value in process_names[:6])
         return "NG", f"工序名称列下未识别到进料检验、来料/进货检验或IQC内容（候选：{samples}）。"
 
-    @rule("最终工序拆解完整性识别")
+    @rule(
+        "最终工序拆解完整性识别",
+        implements=("识别“工序名称”列是否存在，如果存在则继续识别；当“工序名称”列下包含“出货”或“FQC”或“OQC”或相近词义的内容则通过，否则不通过",),
+    )
     def rule_7(self, ctx: RuleContext) -> tuple[str, str]:
-        table = Table(ctx)
-        sheets = table.find_sheets("过程流程图")
-        saw_rows = False
-        for sheet in sheets:
-            section = sheet.section("过程流程主数据区")
-            columns = section.columns("工序名称")
-            rows = [row for row in section.rows_from(columns) if row.is_present("工序名称")]
-            if not rows:
-                continue
-            saw_rows = True
-            if any(_is_final_shipment_process(row.value("工序名称")) for row in rows):
-                return "PASS", ""
-        if not saw_rows:
+        process_names = _process_name_values(ctx)
+        if any(_is_final_shipment_process(value) for value in process_names):
+            return "PASS", ""
+        if not process_names:
             return "NG", "工序名称列未识别到有效工序。"
         return "NG", "工序名称列中未包含出货/发运、FQC或OQC内容。"
 

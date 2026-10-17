@@ -62,3 +62,25 @@ class RuleCoverageTests(unittest.TestCase):
         self.assertEqual(frozen["mode"], MODE_RULE_ITEMS)
         self.assertEqual(frozen["items"][0]["id"], "keep")
         self.assertEqual(frozen["items"][0]["rule_to_check"], "文件类型勾选审核")
+
+    def test_full_text_is_declared_explicitly_without_changing_checker_index(self):
+        requirement = "工序名称列必须包含 IQC，否则不通过"
+        items = [
+            {"id": "full", "rule_to_check": "工序名称列必须包含\n iqc，否则不通过"},
+            {"id": "duplicate", "rule_to_check": "过程流程图与控制计划列项及一致性审核"},
+            {"id": "changed", "rule_to_check": "工序名称列必须包含 IQC，否则通过"},
+        ]
+        mapped = map_rule_items(items, DECLARATIONS, implemented_texts={"rule_2": (requirement,)})
+
+        self.assertEqual(mapped[0]["checker_method"], "rule_2")
+        self.assertEqual(mapped[0]["checker_index"], 1)
+        self.assertEqual(mapped[0]["rule_to_check"], items[0]["rule_to_check"])
+        self.assertEqual([item["coverage"] for item in mapped], [COVERAGE_MAPPED, COVERAGE_UNSUPPORTED, COVERAGE_UNSUPPORTED])
+
+    def test_ambiguous_full_text_never_binds_even_after_one_checker_was_used(self):
+        items = [{"id": "first", "rule_to_check": DECLARATIONS[0][1]}, {"id": "ambiguous", "rule_to_check": "shared requirement"}]
+        mapped = map_rule_items(items, DECLARATIONS, implemented_texts={"rule_1": ("shared requirement",), "rule_2": ("shared requirement",)})
+
+        self.assertEqual(mapped[0]["coverage"], COVERAGE_MAPPED)
+        self.assertEqual(mapped[1]["coverage"], COVERAGE_UNSUPPORTED)
+        self.assertNotIn("checker_method", mapped[1])
