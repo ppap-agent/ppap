@@ -1149,7 +1149,7 @@ class AuditUsageEntry(TypedDict):
     usage_id: str
     occurred_at: str
     filename: str
-    audit_sequence: int
+    audit_sequence: int | None
     initiator: str
     points: Literal[500]
     allocation: AuditUsageAllocation
@@ -1173,6 +1173,13 @@ class AuditUsagePage(TypedDict):
     from_date: str | None
     through_date: str
     notices: list[Literal["ai_disabled", "no_package", "paid_insufficient"]]
+    unattributed: NotRequired[AuditUsageUnattributed]
+
+
+class AuditUsageUnattributed(TypedDict):
+    slice_count: int
+    points: int
+    reason: str | None
 
 
 class AuditTemplateReference(TypedDict):

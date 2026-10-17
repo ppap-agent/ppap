@@ -472,6 +472,48 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get("/audit-archive").json()["total"], 0)
         self.assertEqual(self.display_client.get(history_path).status_code, 403)
 
+    def test_usage_links_the_paid_file_to_its_own_history_and_keeps_fee_when_access_is_revoked(self):
+        from ppap_core.db import connect
+
+        self.settings.feishu_ai_item_id = "test-item"
+        first = self.upload("同名.xlsx")
+        self.store.save_file_source(first.id, "file", "usage-document")
+        _files, old_task, _worker = self.prepared_display_task([first])
+        newer = self.upload("同名.xlsx")
+        self.store.save_file_source(newer.id, "file", "usage-document")
+        _files, new_task, _worker = self.prepared_display_task([newer])
+        # Historical ledger fixtures, not a charged acceptance or external debit.
+        with connect(self.settings, "migrator") as conn:
+            for task, version in ((old_task, first), (new_task, newer)):
+                conn.execute(
+                    """INSERT INTO product.usage_events
+                    (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial, external_status, round_id, file_version_id)
+                    VALUES (%s, %s, %s, 'test-item', 500, true, 'none', %s, %s)""",
+                    (str(uuid.uuid4()), self.alice.tenant_id, self.alice.user_id, task["round_id"], version.id),
+                )
+        before = self.store.list_usage_events(self.alice)
+        page = self.display_client.get("/audit-usage?range=all").json()
+        old = next(row for row in page["entries"] if row["reference"]["task_id"] == old_task["id"])
+        self.assertEqual(old["audit_sequence"], 1)
+        self.assertEqual(old["audit_access"]["state"], "allowed")
+        path = f"/audit-archive/{old['document_id']}/history/result"
+        detail = self.display_client.get(path, params=old["reference"])
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["file"]["file"]["id"], first.id)
+        self.assertEqual(detail.json()["entry"]["reference"]["round_id"], old_task["round_id"])
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first.file_id, self.alice.user_id))
+        denied_page = self.display_client.get("/audit-usage?range=all").json()
+        self.assertEqual(denied_page["total"], 2)
+        old_denied = next(row for row in denied_page["entries"] if row["usage_id"] == old["usage_id"])
+        self.assertEqual(old_denied["points"], 500)
+        self.assertIsNone(old_denied["document_id"])
+        self.assertEqual(old_denied["audit_access"]["state"], "denied")
+        new = next(row for row in denied_page["entries"] if row["reference"]["task_id"] == new_task["id"])
+        self.assertEqual(new["audit_sequence"], 2)
+        self.assertEqual(self.display_client.get(path, params=old["reference"]).status_code, 403)
+        self.assertEqual(self.store.list_usage_events(self.alice), before)
+
     def prepared_display_task(self, files=None, *, analysis_mode="standard", complete_audit=True, per_file_rules=False, confirm=True):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
@@ -1462,6 +1504,97 @@ class UsageAcceptanceTests(AuditDatabaseCase):
                 {"file_version_id": reference.id, "role": "reference"},
             ]
         )
+
+    def test_usage_page_groups_file_allocations_and_preserves_tenant_ledger_without_granting_history(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_api.web_contract import AuditUsagePage
+        from ppap_core.db import connect
+        from ppap_core.fixtures import RULE_A
+        from pydantic import TypeAdapter
+
+        first, second = self.upload("费用核对.xlsx"), self.upload("另一份.pdf")
+        draft = self.draft([{"file_version_id": version.id, "role": "target", "rule_version_id": RULE_A} for version in (first, second)])
+        accepted = self.store.accept_draft(self.alice, draft, draft)
+        before = self.store.list_usage_events(self.alice)
+        principal = [None]
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: principal[0])
+        client = TestClient(app)
+        self.assertEqual(client.get("/audit-usage").status_code, 401)
+        principal[0] = self.alice
+        response = client.get("/audit-usage?range=all")
+        self.assertEqual(response.status_code, 200)
+        page = response.json()
+        TypeAdapter(AuditUsagePage).validate_python(page)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(page["summary"]["consumption_count"]["value"], 2)
+        self.assertEqual(page["summary"]["free_remaining"]["value"], 0)
+        self.assertEqual(page["summary"]["free_total"]["value"], 700)
+        self.assertIsNone(page["summary"]["charged_points"]["value"])
+        self.assertIsNone(page["summary"]["pending_points"]["value"])
+        entries = {row["filename"]: row for row in page["entries"]}
+        self.assertEqual(entries[first.original_filename]["allocation"], {"free_points": 500, "paid_points": 0, "reason": None})
+        mixed = entries[second.original_filename]
+        self.assertEqual(mixed["allocation"], {"free_points": 200, "paid_points": 300, "reason": None})
+        self.assertEqual(mixed["settlement"]["state"], "pending")
+        self.assertEqual(mixed["reference"], {"task_id": draft, "round_id": accepted["id"], "file_version_id": second.id, "result_attempt": None})
+        self.assertEqual(entries[first.original_filename]["settlement"]["state"], "trial")
+        self.assertTrue(all(row["points"] == 500 and row["audit_access"]["state"] != "allowed" for row in page["entries"]))
+        self.assertEqual(client.get("/audit-usage?range=all&search=费用核对").json()["total"], 1)
+        self.assertEqual(client.get("/audit-usage?range=all&page=2").json()["entries"], [])
+        self.assertEqual(client.get("/audit-usage?range=invalid").status_code, 400)
+        self.assertEqual(client.get("/audit-usage?page=0").status_code, 422)
+        principal[0] = self.store.principal_for_fixture("bob")
+        teammate = client.get("/audit-usage?range=all").json()
+        self.assertEqual(teammate["entries"], page["entries"])
+        self.assertEqual(client.get("/audit-usage?search=alice").json()["total"], 2)
+        principal[0] = self.store.principal_for_fixture("carol")
+        self.assertEqual(client.get("/audit-usage?range=all").json()["entries"], [])
+        self.assertEqual(self.store.list_usage_events(self.alice), before)
+
+        pending = next(row for row in before if not row["is_free_trial"])
+        claim = self.store.claim_usage_report(self.alice, pending["id"])
+        principal[0] = self.alice
+        processing = client.get("/audit-usage?range=all").json()
+        self.assertEqual(next(row for row in processing["entries"] if row["usage_id"] == mixed["usage_id"])["settlement"]["state"], "processing")
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE product.usage_events SET reporting_at = now() - INTERVAL '3 minutes' WHERE id = %s", (pending["id"],))
+        stale = client.get("/audit-usage?range=all").json()
+        self.assertEqual(next(row for row in stale["entries"] if row["usage_id"] == mixed["usage_id"])["settlement"]["state"], "unknown")
+        self.assertIsNone(self.store.claim_usage_report(self.alice, pending["id"]))
+        self.store.settle_usage_external(self.alice, pending["id"], claim, "confirmed", "provider-usage-receipt")
+        principal[0] = self.alice
+        readback = client.get("/audit-usage?range=all").json()
+        updated = next(row for row in readback["entries"] if row["filename"] == second.original_filename)
+        self.assertEqual(updated["usage_id"], mixed["usage_id"])
+        self.assertEqual(updated["orders"], [])
+        self.assertEqual(updated["settlement"]["state"], "unknown")
+        self.assertIn("扣费", updated["settlement"]["reason"])
+
+    def test_usage_page_keeps_legacy_aggregate_visible_without_fabricating_file_charges(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_core.db import connect
+
+        with connect(self.settings, "migrator") as conn:
+            conn.execute(
+                """INSERT INTO product.usage_events (id, tenant_id, user_id, ai_item_id, consumed_points, is_free_trial, external_status)
+                VALUES (%s, %s, %s, 'test-item', 1200, false, 'unknown')""",
+                (str(uuid.uuid4()), self.alice.tenant_id, self.alice.user_id),
+            )
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: self.alice)
+        with TestClient(app) as client:
+            page = client.get("/audit-usage?range=all").json()
+        self.assertEqual(page["entries"], [])
+        self.assertEqual(page["unattributed"]["points"], 1200)
+        self.assertEqual(page["unattributed"]["slice_count"], 1)
+        self.assertTrue(page["unattributed"]["reason"])
+        self.assertIsNone(page["summary"]["consumption_count"]["value"])
+        self.assertEqual(self.store.list_usage_events(self.alice)[0]["consumed_points"], 1200)
 
     def test_each_target_has_its_own_usage_slices(self):
         from ppap_core.fixtures import RULE_A

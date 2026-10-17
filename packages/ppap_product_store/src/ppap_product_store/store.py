@@ -3332,6 +3332,40 @@ class AuthStore:
             rows = self._usage_rows(conn, principal, limit, offset, since, until)
         return [self.usage_event_public(row) for row in rows]
 
+    def list_audit_usage(self, principal: Principal, query: dict) -> dict:
+        from .usage import usage_page
+
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            tenant = conn.execute("SELECT display_name FROM product.tenants WHERE id = %s", (principal.tenant_id,)).fetchone()
+            if tenant is None:
+                raise KeyError("missing")
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """SELECT u.*, a.source_draft_id::text AS task_id, a.result_attempt,
+                        f.original_filename AS filename, COALESCE(NULLIF(identity.display_name, ''), '发起人信息不可用') AS initiator
+                    FROM product.usage_events u
+                    LEFT JOIN product.audit_rounds a ON a.id = u.round_id AND a.tenant_id = u.tenant_id
+                    LEFT JOIN product.file_versions f ON f.id = u.file_version_id AND f.tenant_id = u.tenant_id
+                    LEFT JOIN LATERAL (SELECT i.display_name FROM product.identities i
+                        WHERE i.user_id = u.user_id AND i.provider = %s AND i.app_id = %s AND i.tenant_key = %s
+                        ORDER BY i.created_at, i.id LIMIT 1) identity ON true
+                    WHERE u.tenant_id = %s ORDER BY u.created_at, u.id""",
+                    (principal.provider, principal.app_id, principal.tenant_key, principal.tenant_id),
+                )
+                rows = [{**row, **self.usage_event_public(row)} for row in cur.fetchall()]
+            item_id = self.settings.feishu_ai_item_id.strip()
+            if item_id:
+                total = max(0, self.settings.feishu_free_trial_quota_points)
+                free: dict = {
+                    "free_total": {"value": total, "reason": None},
+                    "free_remaining": {"value": remaining_trial_points(total, self._trial_ledger_consumed(conn, principal.tenant_id, item_id)), "reason": None},
+                }
+            else:
+                free = {key: {"value": None, "reason": "尚未确认当前企业的用量项目与免费额度。"} for key in ("free_total", "free_remaining")}
+            archive = {(str(row[0]), str(row[1])): {"document_id": self._archive_document_id(principal, row), "sequence": row[5]} for row in self._archive_rows(conn, principal)}
+            return usage_page(rows, query, {"id": principal.tenant_id, "name": tenant[0]}, free, archive, _now())
+
     def _usage_rows(self, conn, principal, limit, offset, since, until):
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(

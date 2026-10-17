@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeUsageAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 
@@ -12,6 +12,23 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native usage reads the enterprise projection with filters and never reports a charge', async () => {
+  const calls: string[] = []
+  const page = {organization_id: 'tenant-a', entries: []}
+  globalThis.fetch = async (input, init) => {
+    assert.equal(init?.method, 'GET')
+    assert.equal(init?.credentials, 'include')
+    calls.push(String(input)); return json(page)
+  }
+  assert.deepEqual(await nativeUsageAdapter.readUsage({range: '90d', search: '图纸 & Alice', page: 2, page_size: 10}), page)
+  assert.equal(calls.length, 1)
+  const url = new URL(calls[0], 'https://example.test')
+  assert.equal(url.pathname, '/audit-usage')
+  assert.equal(url.searchParams.get('range'), '90d')
+  assert.equal(url.searchParams.get('search'), '图纸 & Alice')
+  assert.equal(url.searchParams.get('page'), '2')
+})
 
 test('native archive preserves filters and the exact selected historical result', async () => {
   const calls: string[] = []

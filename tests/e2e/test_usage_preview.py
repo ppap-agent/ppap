@@ -102,6 +102,9 @@ class UsagePreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-unmapped&view=usage")
+            expect(page.get_by_role("alert")).to_contain_text("另有 1,200 点历史费用待核对")
+            expect(page.get_by_role("group", name="本月消费次数", exact=True)).to_contain_text("—")
+            expect(page.get_by_role("row", name="消费记录 示例消费-1", exact=True)).not_to_contain_text("第 2 次审核")
             for number, reason in ((1, "尚未确认文档关联"), (4, "当前账号无权读取这次审核"), (5, "这次审核记录已删除")):
                 row = page.get_by_role("row", name=f"消费记录 示例消费-{number}", exact=True)
                 expect(row).to_contain_text(reason)

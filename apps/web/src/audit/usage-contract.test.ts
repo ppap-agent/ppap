@@ -17,6 +17,14 @@ test('one file audit has the confirmed 500-point business obligation', () => {
   assert.equal(validUsagePage({...page, entries: [{...entry, points: 1000, allocation: {...entry.allocation, paid_points: 800}}]} as unknown as UsagePage, query, 'org-1'), false)
 })
 
+test('unmapped history keeps its fee without inventing an audit sequence or hiding older aggregate fees', () => {
+  const unmapped = {...entry, audit_sequence: null, document_id: null, audit_access: {state: 'denied' as const, reason: 'History is not authorized'}}
+  const unattributed = {slice_count: 1, points: 1200, reason: 'An older aggregate fee has no file allocation'}
+  assert.equal(validUsagePage({...page, entries: [unmapped], unattributed}, query), true)
+  assert.equal(validUsagePage({...page, unattributed: {...unattributed, reason: null}}, query), false)
+  assert.equal(validUsagePage({...page, unattributed: {...unattributed, points: -1}}, query), false)
+})
+
 test('settlement certainty cannot contradict the allocation or declared date window', () => {
   assert.equal(validUsagePage({...page, entries: [{...entry, settlement: {state: 'trial', reason: null}, allocation: {free_points: 0, paid_points: 500, reason: null}}]}, query), false)
   assert.equal(validUsagePage({...page, entries: [{...entry, occurred_at: '2026-09-16T10:00:00+08:00'}]}, query), false)

@@ -8,6 +8,11 @@ import type {AuditSupportAdapter, AuditTemplateAdapter} from './template-contrac
 import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contract.ts'
 import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
+import type {AuditUsageAdapter} from './usage-contract'
+
+export const nativeUsageAdapter: AuditUsageAdapter = {
+  readUsage: query => request(`/audit-usage?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
+}
 
 export const nativeArchiveAdapter: AuditArchiveAdapter = {
   listDocuments(query) {

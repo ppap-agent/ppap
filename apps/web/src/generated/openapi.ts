@@ -311,6 +311,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Usage */
+        get: operations["audit_usage_audit_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capabilities": {
         parameters: {
             query?: never;
@@ -2364,7 +2381,7 @@ export interface components {
             allocation: components["schemas"]["AuditUsageAllocation"];
             audit_access: components["schemas"]["AuditArchiveAccess"];
             /** Audit Sequence */
-            audit_sequence: number;
+            audit_sequence: number | null;
             /** Document Id */
             document_id: string | null;
             /** Filename */
@@ -2422,6 +2439,7 @@ export interface components {
             through_date: string;
             /** Total */
             total: number;
+            unattributed?: components["schemas"]["AuditUsageUnattributed"];
         };
         /** AuditUsageQuery */
         AuditUsageQuery: {
@@ -2466,6 +2484,15 @@ export interface components {
             pending_points: components["schemas"]["AuditUsageMetric"];
             /** Timezone */
             timezone: string;
+        };
+        /** AuditUsageUnattributed */
+        AuditUsageUnattributed: {
+            /** Points */
+            points: number;
+            /** Reason */
+            reason: string | null;
+            /** Slice Count */
+            slice_count: number;
         };
         /** BoundRule */
         BoundRule: {
@@ -4016,6 +4043,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTemplateCatalog"];
+                };
+            };
+        };
+    };
+    audit_usage_audit_usage_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+                range?: string;
+                search?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditUsagePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

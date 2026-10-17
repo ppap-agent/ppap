@@ -25,11 +25,15 @@ export function fixtureUsage(archive: AuditArchiveAdapter, scene: string): Audit
     const values = structuredClone(entries)
     const uncertain = scene === 'usage-unknown' || scene === 'usage-quota-unknown' || scene === 'usage-race' && reads === 1
     if (uncertain) values[2].settlement = {state: 'unknown', reason: '扣费结果待确认。'}
-    if (scene === 'usage-unmapped') {values[0].document_id = null; values[0].audit_access = {state: 'unknown', reason: '尚未确认文档关联。'}}
+    if (scene === 'usage-unmapped') {values[0].document_id = null; values[0].audit_sequence = null; values[0].audit_access = {state: 'unknown', reason: '尚未确认文档关联。'}}
     const from = query.range === '7d' ? '2026-10-10' : query.range === '30d' ? '2026-09-17' : query.range === '90d' ? '2026-07-19' : null
     const filtered = (scene === 'usage-empty' ? [] : values).filter(row => (!from || row.occurred_at.slice(0, 10) >= from) && `${row.filename} ${row.initiator}`.includes(query.search))
     const result: UsagePage = {organization_id: scene === 'usage-foreign' && reads > 1 ? 'other-org' : 'preview-org', organization_name: '示例质量团队', query: structuredClone(query), from_date: from, through_date: '2026-10-16', summary: {month: '2026-10', timezone: 'Asia/Shanghai', as_of: '2026-10-16T09:00:00+08:00', consumption_count: known(12), charged_points: uncertain ? unknown : known(4500), pending_points: uncertain ? unknown : known(1500), free_remaining: scene === 'usage-quota-unknown' ? unknown : known(300), free_total: scene === 'usage-quota-unknown' ? unknown : known(1000)}, entries: filtered.slice((query.page - 1) * 10, query.page * 10), total: filtered.length, notices: scene === 'usage-ai-disabled' ? ['ai_disabled'] : scene === 'usage-no-package' ? ['no_package'] : scene === 'usage-paid-insufficient' ? ['paid_insufficient'] : []}
     if (scene === 'usage-empty') result.summary = {...result.summary, consumption_count: known(0), charged_points: known(0), pending_points: known(0), free_remaining: known(1000)}
+    if (scene === 'usage-unmapped') {
+      result.unattributed = {slice_count: 1, points: 1200, reason: '示例历史汇总费用缺少文件关联，不能据此表判断全部历史消费。'}
+      result.summary.consumption_count = {value: null, reason: '本月还有无法准确拆分到文件的历史费用。'}
+    }
     if (scene === 'usage-invalid') result.entries = result.entries.map((row, index) => index === 1 ? structuredClone(result.entries[0]) : row)
     if (scene === 'usage-race' && reads > 1) {
       result.summary.charged_points = known(5000); result.summary.pending_points = known(1000)

@@ -443,6 +443,18 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         rows = store.list_usage_events(principal, limit + 1, offset, since, until)
         return JSONResponse({"events": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None})
 
+    @app.get("/audit-usage", response_model=wc.AuditUsagePage)
+    def audit_usage(request: Request, range: str = "30d", search: str = Query("", max_length=200), page: int = Query(1, ge=1), page_size: int = Query(10, ge=10, le=10)) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        if range not in {"7d", "30d", "90d", "all"}:
+            return JSONResponse({"error": "invalid_usage_range"}, status_code=400)
+        try:
+            return JSONResponse(store.list_audit_usage(principal, {"range": range, "search": search, "page": page, "page_size": page_size}))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
     @app.get("/rounds/{round_id}", response_model=wc.Round)
     def rounds_get(round_id: str, request: Request, read_view: bool = False) -> JSONResponse:
         principal, denied = require_object(request, round_id)
