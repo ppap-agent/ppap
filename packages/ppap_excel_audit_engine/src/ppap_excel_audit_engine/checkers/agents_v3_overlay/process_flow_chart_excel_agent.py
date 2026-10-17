@@ -12,6 +12,7 @@
 
 import logging
 import re
+from bisect import bisect_left, bisect_right
 from typing import Any, cast
 
 from ppap_core.types import PpapDocumentType
@@ -151,10 +152,19 @@ def _process_name_values(ctx: RuleContext) -> list[str]:
         for header in cells:
             if header.exact("工序名称", compact=True):
                 columns.setdefault(header.col_index, header.row_index)
+        header_columns = sorted(columns)
         for cell in cells:
+            if cell.exact("工序名称", compact=True):
+                continue
             header_row = columns.get(cell.col_index)
-            if header_row is not None and cell.row_index > header_row and not cell.exact("工序名称", compact=True):
+            if header_row is not None and cell.row_index > header_row:
                 values.append(str(cell.value()))
+                continue
+            merged = ctx.ops.get_detailed_merge_info(sheet.ws, cell.row_index, cell.col_index)
+            if merged is not None:
+                intersecting_columns = header_columns[bisect_left(header_columns, merged.min_col) : bisect_right(header_columns, merged.max_col)]
+                if any(columns[column] < merged.max_row for column in intersecting_columns):
+                    values.append(str(cell.value()))
     return values
 
 

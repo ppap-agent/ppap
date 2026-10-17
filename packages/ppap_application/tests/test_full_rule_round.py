@@ -83,6 +83,13 @@ def test_merged_process_names_and_repeated_headers_do_not_hide_inspection():
     assert [item["status"] for item in result["findings"]] == ["PASS"]
 
 
+@pytest.mark.parametrize("text, value", [(START_REQUIREMENT, "IQC"), (FINAL_REQUIREMENT, "FQC")])
+def test_process_value_merged_across_the_name_column_keeps_its_left_hand_anchor(text, value):
+    result = process_round([[None, "工序名称"], [value]], text=text, merges=["A2:B2"])
+
+    assert [item["status"] for item in result["findings"]] == ["PASS"]
+
+
 def test_full_requirements_project_the_original_checker_indices_not_customer_order():
     rules = [
         {"id": "final", "category": "出货要求", "priority": "P1", "rule_to_check": FINAL_REQUIREMENT},
