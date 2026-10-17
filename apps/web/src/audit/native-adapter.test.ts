@@ -13,6 +13,25 @@ const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_c
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
 
+test('Deep selection reaches task recognition and survives readback without starting an audit', async () => {
+  const adapter = createNativeAuditAdapter({deepOffered: true, customers: []})
+  const deepTask = {...task, analysis_mode: 'deep' as const}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    calls.push(`${init?.method || 'GET'} ${input}`)
+    if (init?.method === 'POST') {
+      assert.equal(String(input), '/audit-tasks')
+      assert.equal(JSON.parse(String(init.body)).analysis_mode, 'deep')
+    }
+    return json(deepTask)
+  }
+  assert.equal(adapter.deepOffered, true)
+  const matched = await adapter.match([file], 'deep', null, null, 'recognition-deep')
+  assert.equal(matched.analysis_mode, 'deep')
+  assert.equal((await adapter.readTask(matched.id)).analysis_mode, 'deep')
+  assert.deepEqual(calls, ['POST /audit-tasks', 'GET /audit-tasks/task-a'])
+})
+
 test('native Drive selection pages through the real API and reads back a lost import reply', async () => {
   const adapter = createNativeAuditAdapter({deepOffered: false, customers: []})
   const id = '0a3b1077-f018-4cac-be45-16599020f20e'

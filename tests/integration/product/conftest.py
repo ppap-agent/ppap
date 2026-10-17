@@ -14,6 +14,8 @@ from ppap_product_store import AuthStore
 from psycopg import sql
 from psycopg.rows import dict_row
 
+_CI = bool(os.environ.get("CI"))
+
 
 class MemoryObjects:
     """Small in-memory fake for the object-storage boundary only."""
@@ -58,6 +60,8 @@ def make_auth_store(
     reset: bool = True,
     role: str = "migrator",
 ) -> AuthStore:
+    if (_CI or os.environ.get("CI")) and not os.environ.get("PGPORT"):
+        raise RuntimeError("CI database fixture requires an explicit PGPORT; refusing default database")
     settings = settings or Settings()
     settings.pg_host = "127.0.0.1"
     settings.pg_port = int(os.environ.get("PGPORT", "5432"))

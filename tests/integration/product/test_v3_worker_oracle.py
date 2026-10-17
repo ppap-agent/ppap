@@ -27,10 +27,18 @@ _OCR_CACHE = _REPO / "tests" / "corpus" / "fixtures" / "ocr_cache"
 
 
 def _worker_env():
-    keep = {key: value for key, value in os.environ.items() if key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))}
+    keep = {key: value for key, value in os.environ.items() if key in {"PGPORT", "CI"} or key.startswith(("LLM_", "OPENAI_", "MODEL_NAME", "OCR_", "PADDLE_"))}
     keep["PPAP_PROFILE"] = "isolated-dev"
     keep.setdefault("OCR_LOCAL_OSS_DIR", str(_OCR_CACHE))
     return patch.dict(os.environ, keep, clear=True)
+
+
+def test_worker_environment_preserves_database_isolation(monkeypatch):
+    monkeypatch.setenv("PGPORT", "32123")
+    monkeypatch.setenv("CI", "true")
+    with _worker_env():
+        assert os.environ.get("PGPORT") == "32123"
+        assert os.environ.get("CI") == "true"
 
 
 def _upload(client: TestClient, name: str, body: bytes) -> dict:
