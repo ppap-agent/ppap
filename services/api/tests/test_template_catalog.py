@@ -16,7 +16,8 @@ def test_template_catalog_requires_login_and_has_a_runtime_contract():
     operation = spec["paths"]["/audit-template-catalog"]["get"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AuditTemplateCatalog"}
     assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplateCatalog"]
-    assert spec["components"]["schemas"]["AuditTemplatePage"]["x-contract-stage"] == "ui-draft"
+    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplatePage"]
+    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplateZip"]
 
 
 def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(auth_store_factory):

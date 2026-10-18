@@ -119,7 +119,7 @@ class Resource:
 
 
 def can_read(principal: Principal, resource: Resource, grants: set[str]) -> bool:
-    if principal.tenant_id != resource.tenant_id:
+    if principal.tenant_id != resource.tenant_id or resource.kind == "template":
         return False
     if resource.kind == "audit_round" and not resource.grant_required:
         return True

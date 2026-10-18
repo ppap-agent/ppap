@@ -319,8 +319,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Template Catalog */
-        get: operations["template_catalog_audit_template_catalog_get"];
+        /** Read Template Catalog */
+        get: operations["read_template_catalog_audit_template_catalog_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -358,6 +358,74 @@ export interface paths {
         put?: never;
         /** Submit Feedback */
         post: operations["submit_feedback_audit_template_feedback__request_id__attempts__attempt_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Package */
+        get: operations["template_package_audit_template_packages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-packages/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Package Download */
+        get: operations["template_package_download_audit_template_packages_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Templates */
+        get: operations["list_templates_audit_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-templates/{template_id}/versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Template */
+        get: operations["read_template_audit_templates__template_id__versions__version_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4208,7 +4276,7 @@ export interface operations {
             };
         };
     };
-    template_catalog_audit_template_catalog_get: {
+    read_template_catalog_audit_template_catalog_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -4314,6 +4382,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTemplateFeedbackReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_package_audit_template_packages_get: {
+        parameters: {
+            query: {
+                customer_id: string;
+                folder_id: string;
+                folder_revision: string;
+                folder_template_count: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateZip"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_package_download_audit_template_packages_download_get: {
+        parameters: {
+            query: {
+                customer_id: string;
+                folder_id: string;
+                folder_revision: string;
+                folder_template_count: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_templates_audit_templates_get: {
+        parameters: {
+            query: {
+                customer_id: string;
+                page?: number;
+                page_size?: 10;
+                search?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplatePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_template_audit_templates__template_id__versions__version_id__get: {
+        parameters: {
+            query: {
+                customer_id: string;
+                purpose?: "preview" | "download";
+            };
+            header?: never;
+            path: {
+                template_id: string;
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
                 };
             };
             /** @description Validation Error */

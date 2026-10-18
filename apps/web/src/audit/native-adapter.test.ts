@@ -4,6 +4,8 @@ import type {components} from '../generated/openapi.ts'
 import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeUsageAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
+import {readTemplateZip} from './template-contract.ts'
+import {zipSync} from 'fflate'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
@@ -162,9 +164,48 @@ test('native template coverage reads the authenticated catalog without inventing
     return json(result)
   }
   assert.deepEqual(await nativeTemplateAdapter.readCatalog(), result)
-  assert.equal(nativeTemplateAdapter.listTemplates, undefined)
-  assert.equal(nativeTemplateAdapter.readFile, undefined)
-  assert.equal(nativeTemplateAdapter.readZip, undefined)
+})
+
+test('native templates read the requested customer and frozen version with a content digest', async () => {
+  const bytes = new TextEncoder().encode('real-template')
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
+  const selected = {reference: {customer_id: '客户 A', template_id: 'template/a', file_version_id: 'frozen/a'}, file: {...file.file, id: 'frozen/a', file_id: 'template/a', byte_size: bytes.length, sha256: digest}, document_type: 'Excel', updated_at: '2026-10-18T00:00:00Z', preview_access: {state: 'allowed' as const, reason: null}, download_access: {state: 'allowed' as const, reason: null}, share_access: {state: 'unknown' as const, reason: null}}
+  const query = {customer_id: '客户 A', search: 'A & B', page: 2, page_size: 10 as const}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    assert.equal(init?.credentials, 'include')
+    calls.push(String(input))
+    return String(input).includes('/versions/') ? new Response(bytes, {headers: {'Content-Type': 'application/octet-stream', 'X-Content-SHA256': digest}}) : json({query, items: []})
+  }
+  await nativeTemplateAdapter.listTemplates!(query)
+  const result = await nativeTemplateAdapter.readFile!(selected, 'preview')
+  assert.deepEqual(result.reference, selected.reference)
+  assert.equal(await result.blob.text(), 'real-template')
+  assert.equal(new URL(calls[0], 'https://example.test').searchParams.get('search'), 'A & B')
+  assert.equal(calls[1], '/audit-templates/template%2Fa/versions/frozen%2Fa?customer_id=%E5%AE%A2%E6%88%B7+A&purpose=preview')
+  globalThis.fetch = async () => new Response('wrong-content', {headers: {'Content-Type': 'application/octet-stream', 'X-Content-SHA256': digest}})
+  await assert.rejects(nativeTemplateAdapter.readFile!(selected, 'download'))
+})
+
+test('native template ZIP reads the complete frozen folder and refuses a changed scope before downloading', async () => {
+  const folder = {customer_id: '客户 A', folder_id: 'folder-a', folder_revision: 'revision-a', folder_template_count: 2}
+  const entries = ['one.xlsx', 'two.xlsx'].map((filename, index) => ({reference: {customer_id: folder.customer_id, template_id: `template-${index}`, file_version_id: `version-${index}`}, filename, byte_size: 3}))
+  const bytes = new Uint8Array(zipSync({'one.xlsx': new TextEncoder().encode('one'), 'two.xlsx': new TextEncoder().encode('two')}))
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
+  const snapshot = {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: entries, manifest_filename: null, filename: '客户模板.zip', byte_size: bytes.length, complete: true, access: {state: 'allowed', reason: null}}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    assert.equal(init?.credentials, 'include')
+    calls.push(String(input))
+    return String(input).includes('/download?') ? new Response(bytes, {headers: {'Content-Type': 'application/zip', 'X-Content-SHA256': digest}}) : json(snapshot)
+  }
+  assert.deepEqual((await readTemplateZip(nativeTemplateAdapter, folder)).snapshot.templates, entries)
+  assert.equal(calls.length, 2)
+  assert.equal(new URL(calls[1], 'https://example.test').searchParams.get('folder_template_count'), '2')
+  calls.length = 0
+  snapshot.folder_revision = 'another-revision'
+  await assert.rejects(readTemplateZip(nativeTemplateAdapter, folder))
+  assert.equal(calls.length, 1)
 })
 
 test('native feedback keeps a local attachment request and does not claim an operator submission', async () => {

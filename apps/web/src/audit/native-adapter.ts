@@ -43,8 +43,35 @@ const nativeUploads: UploadAdapter = {
   readUpload: readLocalUpload,
 }
 
+async function readTemplateBlob(path: string, expected: Pick<components['schemas']['FileVersion'], 'byte_size' | 'content_type'> & Partial<Pick<components['schemas']['FileVersion'], 'sha256'>>) {
+  const response = await fetch(`${apiUrl}${path}`, {method: 'GET', credentials: 'include'})
+  if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+    throw withResponseTrace(new Error('模板暂时无法读取，请核对飞书访问权限。'), response)
+  }
+  const blob = await response.blob()
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
+  if (blob.size !== expected.byte_size || blob.type !== expected.content_type || response.headers.get('X-Content-SHA256') !== digest || expected.sha256 !== undefined && expected.sha256 !== digest) throw new Error('模板内容与所选版本不同，请重新读取。')
+  return blob
+}
+
 export const nativeTemplateAdapter: AuditTemplateAdapter = {
   readCatalog: () => request('/audit-template-catalog'),
+  listTemplates: query => request(`/audit-templates?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
+  async readFile(item, purpose) {
+    const reference = item.reference
+    if (!item.file.sha256 || reference.file_version_id !== item.file.id) throw new Error('模板版本尚未就绪。')
+    const params = new URLSearchParams({customer_id: reference.customer_id, purpose})
+    const blob = await readTemplateBlob(`/audit-templates/${encodeURIComponent(reference.template_id)}/versions/${encodeURIComponent(reference.file_version_id)}?${params}`, item.file)
+    return {reference, blob}
+  },
+  async readZip(folder) {
+    const params = new URLSearchParams(Object.entries(folder).map(([key, value]) => [key, String(value)]))
+    const snapshot = await request<components['schemas']['AuditTemplateZip']>(`/audit-template-packages?${params}`)
+    if (snapshot.customer_id !== folder.customer_id || snapshot.folder_id !== folder.folder_id || snapshot.folder_revision !== folder.folder_revision || snapshot.templates.length !== folder.folder_template_count || !snapshot.complete || snapshot.access.state !== 'allowed') throw new Error('模板清单已变化，请重新读取。')
+    const blob = await readTemplateBlob(`/audit-template-packages/download?${params}`, {content_type: 'application/zip', byte_size: snapshot.byte_size})
+    return {snapshot, blob}
+  },
 }
 
 export const nativeFeedbackAdapter: AuditFeedbackAdapter = {

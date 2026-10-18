@@ -251,7 +251,9 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(schemas["AuditSupportInfo"]["properties"]["state"]["enum"], ["configured", "unavailable"])
         self.assertNotIn("x-contract-stage", schemas["AuditTemplateCatalog"])
         for name in ("AuditTemplatePage", "AuditTemplateZip"):
-            self.assertEqual(schemas[name]["x-contract-stage"], "ui-draft")
+            self.assertNotIn("x-contract-stage", schemas[name])
+        self.assertEqual(spec["paths"]["/audit-templates"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplatePage")
+        self.assertEqual(spec["paths"]["/audit-template-packages"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplateZip")
         self.assertNotIn("/templates", spec["paths"])
 
     def test_support_has_a_real_read_only_api_and_version_bound_image(self):
