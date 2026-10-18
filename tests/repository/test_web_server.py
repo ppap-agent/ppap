@@ -27,6 +27,7 @@ class WebAliasTests(unittest.TestCase):
             (html / "index.html").write_text("workbench")
             (html / "addon.html").write_text("addon-page")
             (html / "audit.html").write_text("native-audit")
+            (html / "pdf.worker.mjs").write_text("export const worker = true;")
             started = _run(
                 [
                     "docker",
@@ -52,6 +53,10 @@ class WebAliasTests(unittest.TestCase):
                 for path in ("/audit?task=frozen-task&report=frozen-file", "/audit.html", "/__audit-native?view=usage"):
                     self.assertEqual(_fetch(name, path), (200, "native-audit"))
                 self.assertEqual(_fetch(name, "/"), (200, "workbench"))
+                status, body, headers = _request(name, "/pdf.worker.mjs")
+                self.assertEqual((status, body), (200, "export const worker = true;"))
+                self.assertEqual(headers.get("content-type"), "application/javascript")
+                self.assertEqual(_fetch(name, "/missing-worker.mjs")[0], 404)
                 self.assertEqual(_redirect(name, "/audit/?task=frozen-task"), "/audit?task=frozen-task")
                 self.assertEqual(_redirect(name, "/audit-files/"), "/audit-files")
                 self.assertEqual(_redirect(name, "/addon/"), "/addon")
@@ -64,7 +69,7 @@ class WebAliasTests(unittest.TestCase):
                 _run(["docker", "rm", "-f", name])
 
 
-def _request(name: str, path: str) -> tuple[int, str, str]:
+def _request(name: str, path: str) -> tuple[int, str, dict[str, str]]:
     completed = _run(
         [
             "docker",
@@ -85,24 +90,26 @@ def _request(name: str, path: str) -> tuple[int, str, str]:
     )
     header, _, body = completed.stdout.partition("\n\n")
     status = 0
-    location = ""
+    headers = {}
     for line in header.splitlines():
         if line.startswith("HTTP/"):
             status = int(line.split()[1])
-        if line.lower().startswith("location:"):
-            location = line.split(":", 1)[1].strip()
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
     if status == 0:
         raise AssertionError(completed.stderr or completed.stdout)
-    return status, body, location
+    return status, body, headers
 
 
 def _fetch(name: str, path: str) -> tuple[int, str]:
-    status, body, _location = _request(name, path)
+    status, body, _headers = _request(name, path)
     return status, body
 
 
 def _redirect(name: str, path: str) -> str:
-    status, _body, location = _request(name, path)
+    status, _body, headers = _request(name, path)
+    location = headers.get("location", "")
     if status != 301 or not location:
         raise AssertionError((status, location))
     return location

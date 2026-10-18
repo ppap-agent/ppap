@@ -20,7 +20,10 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
     reports, bodies = [], {}
     for index, (name, conclusion) in enumerate((("控制计划.xlsx", "PASS"), ("尺寸检验报告.xlsx", "NG")), 1):
         with fitz.open() as document:
-            document.new_page().insert_text((40, 60), "FROZEN REPORT " + str(index))
+            sheet = document.new_page()
+            sheet.insert_text((40, 60), "FROZEN REPORT " + str(index))
+            if index == 1:
+                sheet.insert_text((40, 90), "冻结审核报告", fontname="china-s")
             body = document.tobytes()
         reference = {"task_id": "private-task", "round_id": "frozen-round", "file_version_id": "version-" + str(index), "result_attempt": 1, "report_id": "report-" + str(index)}
         bodies[reference["report_id"]] = body
@@ -44,12 +47,13 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
             archive.writestr(row["report"]["artifact"]["filename"], bodies[row["reference"]["report_id"]])
     zip_body = zipped.getvalue()
     zip_artifact = {"artifact_id": "frozen-zip:1", "filename": "审核报告.zip", "byte_size": len(zip_body), "content_type": "application/zip"}
-    calls, denied = [], [False]
+    calls, denied, decoder_reads = [], [False], []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 900})
         page.set_default_timeout(10000)
         page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+        page.on("response", lambda response: decoder_reads.append((urlsplit(response.url).path, response.status)) if "/cmaps/" in response.url else None)
 
         def api(route):
             request, path = route.request, urlsplit(route.request.url).path.removeprefix("/api")
@@ -97,6 +101,9 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         expect(navigation.get_by_role("button")).to_have_count(2)
         expect(page.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
         expect(page.get_by_role("img", name="控制计划.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
+        page.get_by_role("button", name="当前页文字", exact=True).click()
+        expect(page.get_by_role("region", name="当前报告").locator("pre")).to_contain_text("冻结审核报告")
+        assert decoder_reads and all(status == 200 for _path, status in decoder_reads)
         navigation.get_by_role("button").filter(has_text="尺寸检验报告.xlsx").click()
         expect(page.get_by_role("heading", name="尺寸检验报告.xlsx-审核报告", exact=True)).to_be_visible()
         expect(page.get_by_role("img", name="尺寸检验报告.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()

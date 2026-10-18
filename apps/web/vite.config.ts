@@ -2,7 +2,7 @@ import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
-import {readFileSync} from 'node:fs'
+import {readFileSync, readdirSync} from 'node:fs'
 
 const docker = process.env.PPAP_VITE_DOCKER === '1'
 const preview = process.env.PPAP_PREVIEW === '1'
@@ -14,6 +14,18 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    {
+      name: 'ppap-pdf-assets',
+      apply: 'build',
+      generateBundle() {
+        for (const folder of ['cmaps', 'standard_fonts', 'wasm']) {
+          const source = path.resolve(__dirname, 'node_modules/pdfjs-dist', folder)
+          for (const file of readdirSync(source, {withFileTypes: true}).filter(file => file.isFile())) {
+            this.emitFile({type: 'asset', fileName: `pdfjs/${folder}/${file.name}`, source: readFileSync(path.join(source, file.name))})
+          }
+        }
+      },
+    },
     ...(preview ? [{
       name: 'ppap-local-preview',
       transformIndexHtml(html: string) {

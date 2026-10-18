@@ -8,8 +8,8 @@ import {Button} from '../components/ui/button'
 import {Input} from '../components/ui/input'
 
 GlobalWorkerOptions.workerSrc = workerUrl
-// This prototype is served only by Vite; all decoder assets stay on the local origin.
-const assets = (folder: string) => new URL(`/node_modules/pdfjs-dist/${folder}/`, location.origin).href
+const assetRoot = import.meta.env.DEV ? '/node_modules/pdfjs-dist' : '/pdfjs'
+const assets = (folder: string) => new URL(`${assetRoot}/${folder}/`, location.origin).href
 
 export function PdfSource({url, name}: {url: string; name: string}) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null), [error, setError] = useState('')
