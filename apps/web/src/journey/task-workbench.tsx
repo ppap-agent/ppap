@@ -89,13 +89,14 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
     <Button asChild className="justify-start text-left max-md:flex-1 max-md:justify-center" variant={view === 'requirements' ? 'secondary' : 'ghost'}><a href={viewHref('requirements')} aria-current={view === 'requirements' ? 'page' : undefined} onClick={event => navigate(event, 'requirements')}><BookOpen/><span>审核要求</span></a></Button>
   </nav>
   return <div className={"flex min-h-dvh bg-background text-foreground text-base"}>
+    <a href="#task-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus:outline-2 focus:outline-ring">跳到主要内容</a>
     <aside className={"sticky top-0 flex flex-[0_0_216px] flex-col h-dvh pt-7 pr-4 pb-4.5 pl-4 border-r bg-background [&_nav]:grid [&_nav]:gap-1.5 max-md:hidden"}>
       <div className={"flex items-center gap-2.5 pt-0 pr-3 pb-9 pl-3 text-xl [&_svg]:text-primary"}><ClipboardCheck aria-hidden="true"/><strong>PPAP</strong></div>
       {nav}
       <div className="mt-auto border-t pt-4"><AccountMenu/></div>
     </aside>
     <div className={"flex flex-1 flex-col min-w-0"}>
-      <main id="task-main" className={"w-full max-w-300 mx-auto pt-10 px-6 pb-15 max-md:pt-6.5 max-md:pr-5 max-md:pb-10 max-md:pl-5"}>
+      <main id="task-main" tabIndex={-1} className={"w-full max-w-300 mx-auto pt-10 px-6 pb-15 max-md:pt-6.5 max-md:pr-5 max-md:pb-10 max-md:pl-5"}>
         {isPreview() && <Badge variant="outline" className="mb-4">交互预览</Badge>}
         {view === 'usage' ? usage : view === 'requirements' ? requirements : <>
         <header className="mb-6 flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1><Button onClick={() => {setUploadError(''); setUploadOpen(true)}}><UploadCloud/>上传资料</Button></header>

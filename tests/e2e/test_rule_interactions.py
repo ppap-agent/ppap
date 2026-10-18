@@ -154,11 +154,56 @@ class RuleInteractionTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             self.route(page)
-            page.route("**/api/drafts?*", lambda route: route.abort("failed"))
+            drafts_failed = True
+            writes = []
+            page.on("request", lambda request: writes.append(request.url) if request.method in ("POST", "PUT", "PATCH", "DELETE") else None)
+            page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
+            page.route(
+                "**/api/rounds?*",
+                lambda route: route.fulfill(
+                    json={
+                        "rounds": [
+                            {
+                                "id": JOB,
+                                "execution": "failed",
+                                "analysis_mode": "standard",
+                                "inputs": [{"file_version_id": VERSION, "original_filename": "已读取的审核.xlsx", "role": "target"}],
+                                "result_counts": {},
+                                "reviewed_count": 0,
+                                "created_at": "2026-10-16T00:00:00Z",
+                            }
+                        ],
+                        "next_offset": None,
+                    }
+                ),
+            )
+
+            def read_drafts(route):
+                if drafts_failed:
+                    route.abort("failed")
+                else:
+                    route.fulfill(
+                        json={
+                            "drafts": [{"id": SOURCE, "items": [{"file_version_id": VERSION, "original_filename": "恢复的准备.xlsx", "role": "target"}], "updated_at": "2026-10-16T01:00:00Z"}],
+                            "next_offset": None,
+                        }
+                    )
+
+            page.route("**/api/drafts?*", read_drafts)
             page.goto(WEB)
-            alert = page.get_by_role("alert").filter(has_text="网络连接失败，请检查网络后重试。")
+            alert = page.get_by_role("alert").filter(has_text="审核准备读取失败：暂时无法连接服务，请重新读取。")
             expect(alert).to_be_visible()
             self.assertNotIn("Failed to fetch", alert.inner_text())
+            self.assertNotIn("unexpected_test_request", alert.inner_text())
+            table = page.get_by_role("table", name="需要处理审核记录", exact=True)
+            expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("已读取的记录仍可打开；状态可能已变化。", exact=True)).to_be_visible()
+            drafts_failed = False
+            alert.get_by_role("button", name="重新读取", exact=True).click()
+            expect(alert).to_have_count(0)
+            expect(table.get_by_text("恢复的准备.xlsx", exact=True)).to_be_visible()
+            expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
+            self.assertEqual(writes, [])
             browser.close()
 
     def test_draft_analysis_read_failure_is_local_and_retry_does_not_reanalyze(self):
