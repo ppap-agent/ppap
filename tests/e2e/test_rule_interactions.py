@@ -29,6 +29,269 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_leaving_during_draft_creation_never_starts_file_transmission(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            held, transmissions = [], []
+            page.route("**/api/drafts", lambda route: held.append(route))
+            page.route("**/api/files", lambda route: (transmissions.append(route.request.post_data_json), route.fulfill(status=500, json={"error": "unexpected_upload"})))
+            page.goto(WEB)
+            page.evaluate("history.pushState(null, '', '?view=workbench&queue=all')")
+            page.get_by_role("button", name="上传资料", exact=True).click()
+            with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/drafts")):
+                page.get_by_label("上传文件", exact=True).set_input_files({"name": "leave.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"})
+            page.go_back()
+            with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/api/drafts")) as late:
+                held[0].fulfill(
+                    status=201,
+                    json={
+                        "id": "late-draft",
+                        "status": "open",
+                        "analysis_mode": "standard",
+                        "predecessor_id": None,
+                        "items": [],
+                        "case_context": {},
+                        "writeback": {"available": False},
+                        "updated_at": "2026-10-18T00:00:00Z",
+                    },
+                )
+            late.value.finished()
+            expect(page.get_by_role("dialog", name="上传资料", exact=True)).to_have_count(0)
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+            self.assertEqual(transmissions, [])
+            browser.close()
+
+    def test_batch_upload_keeps_uncertain_version_for_read_only_recovery(self):
+        from playwright.sync_api import expect
+
+        names = ["first.xlsx", "second.xlsx", "third.xlsx", "fourth.xlsx"]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.set_default_timeout(4000)
+            self.route(page)
+            created, blobs, saves, reads, writes = [], [], [], [], []
+            versions = {}
+            read_state = {"state": "unknown", "fail": False, "hold": False, "mismatch": False}
+            held = []
+            draft_fields = {
+                "status": "open",
+                "analysis_mode": "standard",
+                "predecessor_id": None,
+                "updated_at": "2026-10-18T00:00:00Z",
+                "writeback": {"available": False},
+                "items": [],
+                "case_context": {},
+            }
+            page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
+
+            def create_file(route):
+                body = route.request.post_data_json
+                created.append(body["original_filename"])
+                version = {
+                    "id": body["request_id"],
+                    "file_id": f"file-{len(created)}",
+                    "original_filename": body["original_filename"],
+                    "byte_size": body["byte_size"],
+                    "content_type": body["content_type"],
+                    "sha256": body["sha256"],
+                    "status": "staging",
+                }
+                versions[version["id"]] = version
+                route.fulfill(status=201, json=version)
+
+            def write_blob(route):
+                blobs.append(route.request.url)
+                version = versions[urlsplit(route.request.url).path.split("/")[-2]]
+                if version["original_filename"] in {"third.xlsx", "sixth.xlsx"}:
+                    route.abort("failed")
+                else:
+                    version["status"] = "ready"
+                    route.fulfill(json=version)
+
+            def read_receipt(route):
+                request_id = route.request.url.rsplit("/", 1)[1]
+                reads.append(request_id)
+                if read_state["hold"]:
+                    held.append(route)
+                    return
+                if read_state["fail"]:
+                    route.abort("failed")
+                    return
+                version = dict(versions[request_id])
+                if read_state["state"] == "ready":
+                    version["status"] = "ready"
+                if read_state["mismatch"]:
+                    version["byte_size"] += 1
+                route.fulfill(
+                    json={
+                        "request_id": request_id,
+                        "state": read_state["state"],
+                        "file": version,
+                        "reason": "文件可能已接收，请核对原请求。",
+                        "retry_allowed": False,
+                        "resume_allowed": read_state["state"] == "uploading",
+                    }
+                )
+
+            def draft(route):
+                if route.request.method == "PUT":
+                    saves.append(route.request.post_data_json)
+                saved = saves[-1] if saves else {}
+                items = [
+                    {**item, "file_id": versions[item["file_version_id"]]["file_id"], "original_filename": versions[item["file_version_id"]]["original_filename"], "status": "ready", "rule": None}
+                    for item in saved.get("items", [])
+                ]
+                route.fulfill(
+                    json={
+                        **draft_fields,
+                        "id": "batch-draft",
+                        "items": items,
+                        "case_context": saved.get("case_context", {}),
+                    }
+                )
+
+            page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
+            page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
+            page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+            page.route("**/api/files", create_file)
+            page.route("**/api/files/*/versions/*/blob", write_blob)
+            page.route("**/api/file-uploads/*", read_receipt)
+            page.route("**/api/drafts", lambda route: route.fulfill(status=201, json={**draft_fields, "id": "batch-draft"}))
+            page.route("**/api/drafts/batch-draft", draft)
+            page.goto(WEB)
+            page.get_by_role("button", name="上传资料", exact=True).click()
+            page.get_by_label("上传文件", exact=True).set_input_files(
+                [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in names]
+            )
+            expect(page.get_by_role("table", name="审核资料", exact=True)).to_contain_text("first.xlsx")
+            expect(page.get_by_role("table", name="审核资料", exact=True)).to_contain_text("second.xlsx")
+            expect(page.get_by_role("button", name="核对上传结果", exact=True)).to_be_visible()
+            self.assertEqual(created, names[:3])
+            self.assertEqual(len(blobs), 3)
+            self.assertEqual([versions[item["file_version_id"]]["file_id"] for item in saves[-1]["items"]], ["file-1", "file-2"])
+            self.assertEqual(len(reads), 1)
+            writes.clear()
+            page.evaluate("localStorage.clear()")
+            page.reload()
+            table = page.get_by_role("table", name="审核资料", exact=True)
+            expect(table).to_contain_text("first.xlsx")
+            expect(table).to_contain_text("second.xlsx")
+            check = page.get_by_role("button", name="核对上传结果", exact=True)
+            expect(check).to_be_visible()
+            self.assertEqual(writes, [])
+            self.assertEqual(created, names[:3])
+            read_state["fail"] = True
+            check.click()
+            expect(page.get_by_role("alert").filter(has_text="暂时无法连接服务，请重新读取")).to_be_visible()
+            expect(check).to_be_enabled()
+            self.assertEqual(writes, [])
+            read_state["fail"] = False
+            check.click()
+            expect(check).to_be_enabled()
+            self.assertEqual(created, names[:3])
+            self.assertEqual(len(blobs), 3)
+            read_state["state"] = "ready"
+            read_state["mismatch"] = True
+            check.click()
+            expect(page.get_by_role("alert").filter(has_text="上传回执与原文件不一致")).to_be_visible()
+            expect(check).to_be_enabled()
+            self.assertEqual(len(saves[-1]["items"]), 2)
+            read_state["mismatch"] = False
+            with page.expect_response(
+                lambda response: response.request.method == "PUT" and response.url.endswith("/drafts/batch-draft") and len(response.request.post_data_json["items"]) == 3
+            ) as saved_third:
+                check.click()
+            saved_third.value.finished()
+            expect(check).to_have_count(0)
+            expect(table.get_by_role("row").filter(has_text="third.xlsx")).not_to_contain_text("核对上传结果")
+            self.assertEqual([versions[item["file_version_id"]]["file_id"] for item in saves[-1]["items"]], ["file-1", "file-2", "file-3"])
+            self.assertEqual(created, names[:3])
+            self.assertEqual(len(blobs), 3)
+            self.assertEqual(set(reads), {list(versions)[2]})
+            with page.expect_response(
+                lambda response: response.request.method == "PUT" and response.url.endswith("/drafts/batch-draft") and len(response.request.post_data_json["items"]) == 4
+            ) as saved_fourth:
+                table.get_by_role("row").filter(has_text="fourth.xlsx").get_by_role("button", name="上传此文件", exact=True).click()
+            saved_fourth.value.finished()
+            expect(table.get_by_role("row").filter(has_text="fourth.xlsx").get_by_role("button", name="上传此文件", exact=True)).to_have_count(0)
+            self.assertEqual(created, names)
+            self.assertEqual(len(blobs), 4)
+            self.assertEqual(len(saves[-1]["items"]), 4)
+            read_state["state"] = "unknown"
+            page.get_by_label("添加审核资料", exact=True).set_input_files(
+                [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in ["fifth.xlsx", "sixth.xlsx"]]
+            )
+            expect(table).to_contain_text("fifth.xlsx")
+            expect(check).to_be_enabled()
+            self.assertEqual(created, names + ["fifth.xlsx", "sixth.xlsx"])
+            self.assertEqual(len(saves[-1]["items"]), 5)
+            table.get_by_role("row").filter(has_text="sixth.xlsx").get_by_role("button", name="sixth.xlsx 操作", exact=True).click()
+            with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/drafts/batch-draft")) as removed:
+                page.get_by_role("menuitem", name="移出本次资料", exact=True).click()
+            removed.value.finished()
+            expect(table.get_by_role("checkbox", name="纳入 sixth.xlsx", exact=True)).not_to_be_checked()
+            expect(check).to_be_enabled()
+            read_state["hold"] = True
+            check.click()
+            expect(page.get_by_role("button", name="正在核对…", exact=True)).to_be_disabled()
+            self.assertEqual(len(held), 1)
+            page.get_by_role("link", name="工作台", exact=True).click()
+            page.route("**/api/drafts", lambda route: route.fulfill(status=201, json={**draft_fields, "id": "another-draft"}))
+            other_saves = []
+            fail_save = {"enabled": False}
+
+            def save_other(route):
+                if fail_save["enabled"]:
+                    route.fulfill(status=403, json={"error": "access_denied"})
+                    return
+                other_saves.append(route.request.post_data_json)
+                route.fulfill(json={**draft_fields, "id": "another-draft"})
+
+            page.route("**/api/drafts/another-draft", save_other)
+            page.get_by_role("button", name="上传资料", exact=True).click()
+            page.get_by_label("上传文件", exact=True).set_input_files({"name": "other.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"})
+            expect(page.get_by_role("table", name="审核资料", exact=True)).to_contain_text("other.xlsx")
+            writes.clear()
+            old_request = list(versions)[5]
+            late_file = {**versions[old_request], "status": "ready"}
+            with page.expect_response(lambda response: response.url.endswith(f"/file-uploads/{old_request}")) as late:
+                held[0].fulfill(json={"request_id": old_request, "state": "ready", "file": late_file, "reason": None, "retry_allowed": False})
+            late.value.finished()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(page.get_by_role("table", name="审核资料", exact=True)).not_to_contain_text("sixth.xlsx")
+            self.assertEqual(writes, [])
+            self.assertEqual(len(other_saves[-1]["items"]), 1)
+            fail_save["enabled"] = True
+            page.get_by_label("添加审核资料", exact=True).set_input_files(
+                {"name": "not-sent.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
+            )
+            not_sent = page.get_by_role("table", name="审核资料", exact=True).get_by_role("row").filter(has_text="not-sent.xlsx")
+            expect(not_sent.get_by_role("button", name="上传此文件", exact=True)).to_be_visible()
+            self.assertNotIn("not-sent.xlsx", created)
+            fail_save["enabled"] = False
+            with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/drafts/another-draft") and len(response.request.post_data_json["items"]) == 2):
+                not_sent.get_by_role("button", name="上传此文件", exact=True).click()
+            expect(not_sent.get_by_role("button", name="上传此文件", exact=True)).to_have_count(0)
+            self.assertEqual(created[-1], "not-sent.xlsx")
+            read_state.update({"hold": False, "state": "uploading"})
+            page.route("**/api/files/*/versions/*/blob", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
+            page.get_by_label("添加审核资料", exact=True).set_input_files(
+                {"name": "denied.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
+            )
+            denied = page.get_by_role("table", name="审核资料", exact=True).get_by_role("row").filter(has_text="denied.xlsx")
+            expect(denied).to_contain_text("原件未接收（401）")
+            expect(denied.get_by_role("button", name="核对上传结果", exact=True)).to_be_enabled()
+            before = list(created)
+            denied.get_by_role("button", name="核对上传结果", exact=True).click()
+            expect(denied.get_by_role("button", name="继续原传输", exact=True)).to_be_enabled()
+            self.assertEqual(created, before)
+            browser.close()
+
     def test_explicit_all_records_selection_survives_initial_history_read(self):
         from playwright.sync_api import expect
 
@@ -63,124 +326,6 @@ class RuleInteractionTests(unittest.TestCase):
             expect(selected).to_have_attribute("aria-selected", "true")
             expect(page.get_by_role("table", name="全部审核记录", exact=True)).to_contain_text("history.xlsx")
             self.assertEqual(writes, [])
-            browser.close()
-
-    def test_batch_upload_keeps_uncertain_version_for_read_only_recovery(self):
-        from playwright.sync_api import expect
-
-        names = ["first.xlsx", "second.xlsx", "P037.xlsx", "fourth.xlsx"]
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page()
-            self.route(page)
-            created, blobs, finalized, reads, analyses, drafts = [], [], [], [], [], []
-            read_results = ["failed_read", "staging", "failed_read", "ready", "staging", "staging"]
-
-            def create_file(route):
-                created.append(route.request.post_data_json["original_filename"])
-                number = len(created)
-                route.fulfill(status=201, json={"file_id": f"file-{number}", "id": f"version-{number}"})
-
-            def write_blob(route):
-                blobs.append(route.request.url)
-                route.fulfill(json={})
-
-            def finalize(route):
-                finalized.append(route.request.url)
-                if any(f"version-{number}" in route.request.url for number in (3, 4, 5)):
-                    route.abort("failed")
-                else:
-                    route.fulfill(json={"status": "ready"})
-
-            def read_version(route):
-                reads.append(route.request.url)
-                result = read_results[len(reads) - 1]
-                if result == "failed_read":
-                    route.abort("failed")
-                else:
-                    route.fulfill(json={"status": result})
-
-            def save_draft(route):
-                drafts.append(route.request.post_data_json)
-                route.fulfill(json={"id": "draft-1"})
-
-            def analyze(route):
-                analyses.append(route.request.post_data_json["source_file_version_id"])
-                route.fulfill(json={"id": "analysis-1", "status": "queued"})
-
-            page.route("**/api/files", create_file)
-            page.route("**/api/files/*/versions/*/blob", write_blob)
-            page.route("**/api/files/*/versions/*/finalize", finalize)
-            page.route("**/api/files/*/versions/*", read_version)
-            page.route("**/api/drafts", lambda route: route.fulfill(status=201, json={"id": "draft-1"}))
-            page.route("**/api/drafts/draft-1", save_draft)
-            page.route("**/api/file-analyses", analyze)
-            page.route("**/api/file-analyses/*", lambda route: route.fulfill(json={"id": "analysis-1", "status": "succeeded"}))
-            page.goto(WEB)
-            page.get_by_test_id("source-upload").set_input_files(
-                [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in names]
-            )
-
-            expect(page.get_by_test_id("draft-items")).to_contain_text("first.xlsx")
-            expect(page.get_by_test_id("draft-items")).to_contain_text("second.xlsx")
-            expect(page.get_by_role("alert").filter(has_text="上传结果未确认：P037.xlsx")).to_be_visible()
-            check = page.get_by_role("button", name="核对上传结果")
-            expect(check).to_be_visible()
-            self.assertEqual(check.evaluate("button => button.closest('[role=\"alert\"]')?.tagName"), "DIV")
-            expect(page.get_by_text("fourth.xlsx")).to_have_count(0)
-            self.assertEqual(created, names[:3])
-            self.assertEqual(len(blobs), 3)
-            self.assertEqual(len(finalized), 3)
-            self.assertEqual([item["items"][-1]["file_version_id"] for item in drafts], ["version-1", "version-2"])
-            self.assertTrue(page.evaluate("() => { const event = new Event('beforeunload', {cancelable: true}); window.dispatchEvent(event); return event.defaultPrevented }"))
-            page.get_by_role("link", name="规则库").click()
-            leave = page.get_by_role("dialog")
-            expect(leave).to_be_visible()
-            expect(leave).to_contain_text("P037.xlsx")
-            expect(leave.get_by_role("button", name="保存并离开")).to_have_count(0)
-            leave.get_by_role("button", name="继续核对").click()
-            expect(leave).to_have_count(0)
-
-            check.click()
-            expect(check).to_be_visible()
-            expect(page.get_by_role("alert").filter(has_text="仍未就绪")).to_be_visible()
-            check.click()
-            expect(check).to_be_visible()
-            expect(page.get_by_role("alert").filter(has_text="暂时无法读取")).to_be_visible()
-            check.click()
-            expect(page.get_by_test_id("draft-items")).to_contain_text("P037.xlsx")
-            expect(check).to_have_count(0)
-            self.assertEqual(created, names[:3])
-            self.assertEqual(len(blobs), 3)
-            self.assertEqual(len(finalized), 3)
-            self.assertEqual(len(reads), 4)
-            self.assertEqual(analyses, ["version-1", "version-2", "version-3"])
-            self.assertEqual(drafts[-1]["items"][-1]["file_version_id"], "version-3")
-            page.get_by_test_id("source-upload").set_input_files({"name": "later.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"})
-            expect(page.get_by_role("button", name="核对上传结果")).to_be_visible()
-            page.get_by_role("button", name="暂不加入").click()
-            expect(page.get_by_role("button", name="核对上传结果")).to_have_count(0)
-            expect(page.get_by_test_id("source-upload")).to_be_enabled()
-            expect(page.get_by_test_id("draft-items")).to_contain_text("P037.xlsx")
-            expect(page.get_by_test_id("draft-items")).not_to_contain_text("later.xlsx")
-            self.assertEqual(created, names[:3] + ["later.xlsx"])
-            self.assertEqual(drafts[-1]["items"][-1]["file_version_id"], "version-3")
-            page.get_by_test_id("source-upload").set_input_files({"name": "stuck.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"})
-            expect(page.get_by_role("button", name="核对上传结果")).to_be_visible()
-            page.get_by_role("checkbox", name="参与审核：first.xlsx").uncheck()
-            expect(page.get_by_test_id("save-draft")).to_be_disabled()
-            dialogs = []
-            page.on("dialog", lambda dialog: (dialogs.append(dialog.type), dialog.dismiss()))
-            page.get_by_role("link", name="规则库").click()
-            leave = page.get_by_role("dialog")
-            expect(leave).to_contain_text("stuck.xlsx")
-            expect(leave).to_contain_text("其他未保存修改也会放弃")
-            expect(leave.get_by_role("button", name="保存并离开")).to_have_count(0)
-            leave.get_by_role("button", name="暂不加入并离开").click()
-            expect(page.get_by_test_id("rule-versions")).to_be_visible()
-            self.assertEqual(dialogs, [])
-            self.assertEqual(drafts[-1]["items"][-1]["file_version_id"], "version-3")
-            self.assertEqual(drafts[-1]["items"][0]["role"], "target")
             browser.close()
 
     def test_draft_network_failure_has_chinese_message(self):

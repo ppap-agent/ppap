@@ -15,7 +15,7 @@ import {ProgressPrototype} from './progress'
 import {ConceptApp, isReviewDraft, savedReviewSummary, type IntakeHandoff} from './concept'
 import {isObject, listDrafts, readDraft, useSavedDraft} from './saved-draft'
 import {ProductAccess, AccountMenu, isPreview, useAccess} from './access'
-import {dateLabel, executionLabels, request, upload as uploadProduct, type Draft, type Material, type Round, type RuleDetail} from '../api'
+import {dateLabel, executionLabels, request, type Draft, type Material, type Round, type RuleDetail} from '../api'
 import {message, useRemote, inputItems} from './remote'
 import {loadRuleCollections, parsedBasis, roundInput} from './product'
 import {useLiveAudit} from './live-audit'
@@ -38,17 +38,15 @@ import {CheckPreparation} from './check-preparation'
 import {checkPlan, checkSummary, initialCheck, modeName, recoverCheck, startCheck, validCheck, type CheckPreparationState} from './check-preparation-state'
 import {UsageWorkspace} from './usage'
 import {validChecks} from './reassessment'
-import {fileAccept, optionalLocalFile, useLocalUploads, type LocalFileRef, type LocalUpload} from './local-files'
+import {fileAccept, optionalLocalFile, readLocalFile, useLocalUploads, type LocalUpload} from './local-files'
 import {FileCollection, fileReferences} from './file-collection'
+import {optionalUploadReceipt, readDocumentUpload, transferDocuments, type UploadDocument} from './upload-files'
 
 type Step = 'cases' | 'scope' | 'requirements' | 'upload' | 'prepare' | 'confirm' | 'submitted' | 'progress'
 type FileKey = string
 type Kind = string
-type Document = {
-  id: FileKey
+type Document = UploadDocument & {
   origin: 'demo' | 'local'
-  name: string
-  localFile?: LocalFileRef
   kind: Kind
   expectedKind: Kind
   declaredRevision: string
@@ -57,7 +55,6 @@ type Document = {
   selected: boolean
   associated: boolean
   readability: 'clear' | 'partial' | 'unverified'
-  material?: Material
 }
 type Gap = {fileId: FileKey; title: string; detail: string; nature: 'quality' | 'coverage' | 'identity'}
 type CaseScope = {customer: string; supplier: string; part: string; revision: string; plant: string; requirements: string}
@@ -112,10 +109,19 @@ function isIntakeDraft(value: unknown): value is IntakeDraft {
       && ['id', 'name', 'declaredRevision', 'contentRevision'].every(key => typeof file[key] === 'string')
       && ['demo', 'local'].includes(String(file.origin)) && [file.kind, file.expectedKind].every(kind => typeof kind === 'string' && kind.length > 0 && kind.length <= 200)
       && ['clear', 'partial', 'unverified'].includes(String(file.readability)) && typeof file.sourceVersion === 'number'
-      && typeof file.selected === 'boolean' && typeof file.associated === 'boolean' && optionalLocalFile(file.localFile))
+      && typeof file.selected === 'boolean' && typeof file.associated === 'boolean' && optionalLocalFile(file.localFile) && optionalUploadReceipt(file.uploadReceipt, file.localFile))
 }
 function localDocuments(incoming: LocalUpload[]): Document[] {
   return incoming.map(({file, ref}) => ({id: ref.id, localFile: ref, origin: 'local', name: file.name, kind: '待分类', expectedKind: '待分类', declaredRevision: '未知', contentRevision: '未解析', sourceVersion: 1, selected: true, associated: false, readability: 'unverified'}))
+}
+function draftMaterials(files: Document[], basis: RequirementBasis | null) {
+  return files.filter(file => file.selected).flatMap(file => {
+    const target = basis?.server && (file.kind === '尺寸报告' ? '全功能检验报告' : file.kind) === basis.server.body.type
+    return file.material ? [{...file.material, role: (target ? 'target' : 'reference') as Material['role'], rule_version_id: target ? basis.server!.ruleId ?? null : null}] : []
+  })
+}
+function removeFromDraft(files: Document[], id: string) {
+  return files.flatMap(file => file.id !== id ? [file] : file.uploadReceipt && !file.material ? [{...file, selected: false}] : [])
 }
 
 function routeStep(): Step {
@@ -177,11 +183,15 @@ function missingGap(file: Document): Gap {
 }
 
 // Reference: Stitch projects/13261964020862199279/screens/0a13f18b48164253b361644d2c02d6a0.
-function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: string; initial: IntakeDraft; onHome: () => void; requirementCollections: RequirementCollection[]; catalog: RequirementCatalogRead}) {
-  const {value, field, saveError} = useSavedDraft(`intake:${id}`, () => initial, isIntakeDraft, saved => restoreIntake(saved, initial))
+function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCollections, catalog}: {id: string; initial: IntakeDraft; initialUploadError?: string; onHome: () => void; requirementCollections: RequirementCollection[]; catalog: RequirementCatalogRead}) {
+  const {value, field, saveError, update} = useSavedDraft(`intake:${id}`, () => initial, isIntakeDraft, saved => restoreIntake(saved, initial))
   const access = useAccess(), liveMode = Boolean(access?.principal && !access.preview)
-  const [serverSaveError, setServerSaveError] = useState('')
+  const [serverSaveError, setServerSaveError] = useState(initialUploadError)
   const savingDraft = useRef<Promise<unknown>>(Promise.resolve())
+  const latestDraft = useRef(value); latestDraft.current = value
+  const mounted = useRef(true), transferBusy = useRef(false)
+  const [readingUpload, setReadingUpload] = useState<string | null>(null)
+  useEffect(() => {mounted.current = true; return () => {mounted.current = false}}, [])
   const initialRegistration = useRef(JSON.stringify(value))
   const [savedStep, setStep] = field('step')
   const [scope, setScope] = field('scope')
@@ -189,7 +199,7 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
   const [, setScopeConfirmed] = field('scopeConfirmed')
   const [submitted, setSubmitted] = field('submitted')
   const [files, setFiles] = field('files')
-  const [sourceMode, setSourceMode] = field('sourceMode')
+  const [sourceMode] = field('sourceMode')
   const [notes, setNotes] = field('notes')
   const [, setAcknowledged] = field('acknowledged')
   const [clarification, setClarification] = field('clarification')
@@ -227,8 +237,7 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
   const decisionFiles = selectedFiles.map(file => ({name: file.name, revision: file.origin === 'local' ? file.declaredRevision : file.contentRevision, sourceVersion: file.sourceVersion, localFile: file.localFile, material: file.material}))
   const decisionScope = [scope.customer, scope.supplier, scope.part, scope.revision && `图纸 Rev ${scope.revision}`, scope.plant].filter(Boolean).join(' · ')
   const plan = basis ? checkPlan(basis, confirmedFiles, receiptId, check.mode, knownInput) : null
-  const documentType = (file: Document) => file.kind === '尺寸报告' ? '全功能检验报告' : file.kind
-  const liveItems = selectedFiles.flatMap(file => file.material ? [{...file.material, role: (basis?.server && documentType(file) === basis.server.body.type ? 'target' : 'reference') as Material['role'], rule_version_id: basis?.server && documentType(file) === basis.server.body.type ? basis.server.ruleId ?? null : null}] : [])
+  const liveItems = draftMaterials(files, basis)
   // Starting the audit is the explicit confirmation of this scope and selected files.
   const registration = {...value, scopeConfirmed: true, submitted: true, acknowledged: true, step: 'progress' as Step, files: files.map(file => file.selected ? {...file, associated: true} : file)}
   const audit = useLiveAudit({id, registration, items: liveItems, ready: liveItems.length === selectedFiles.length, state: check, plan, onChange: setCheck, beforeStart: () => savingDraft.current.then(() => undefined, () => undefined)})
@@ -245,13 +254,13 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
   }
   const targets = files.filter(file => fileUse(file) === '待审').length, references = files.filter(file => fileUse(file) === '参考').length
   const fileDetails = files.find(file => file.id === infoFile)
-  const editingLocked = frozen || Boolean(audit.live?.busy)
+  const editingLocked = frozen || Boolean(audit.live?.busy) || transferBusy.current
   useEffect(() => {setCheck(current => current ? recoverCheck(current) : current)}, [])
   useEffect(() => {
-    if (!liveMode || frozen || audit.live?.busy || saveError || JSON.stringify(value) === initialRegistration.current) return
+    if (!liveMode || frozen || audit.live?.busy || transferBusy.current || saveError || JSON.stringify(value) === initialRegistration.current) return
     const timer = setTimeout(() => {
-      savingDraft.current = savingDraft.current.catch(() => undefined).then(() => request<Draft>(`/drafts/${id}`, 'PUT', {case_context: {registration: JSON.stringify(value)}, items: inputItems(liveItems), analysis_mode: check.mode}))
-      void savingDraft.current.then(() => setServerSaveError('')).catch(cause => setServerSaveError(message(cause)))
+      savingDraft.current = savingDraft.current.catch(() => undefined).then(() => mounted.current ? request<Draft>(`/drafts/${id}`, 'PUT', {case_context: {registration: JSON.stringify(value)}, items: inputItems(liveItems), analysis_mode: check.mode}) : undefined)
+      void savingDraft.current.then(() => {if (mounted.current) setServerSaveError('')}).catch(cause => {if (mounted.current) setServerSaveError(message(cause))})
     }, 600)
     return () => clearTimeout(timer)
   }, [id, value, liveMode, frozen, audit.live?.busy, saveError])
@@ -297,11 +306,67 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
     setFiles(current => current.map(file => file.id === fileId ? {...file, ...patch} : file))
     setAcknowledged(false)
   }
+  function applyFiles(next: Document[]) {
+    if (!mounted.current) return
+    const snapshot = {...latestDraft.current, files: next, sourceMode: 'local' as const}
+    latestDraft.current = snapshot; update(snapshot)
+    return snapshot
+  }
+  function finishTransfer(result: {files: Document[]; error: string}) {
+    if (!mounted.current) return
+    if (result.error) applyFiles(result.files)
+    setUploadError(result.error)
+  }
+  async function saveFiles(next: Document[]) {
+    const snapshot = applyFiles(next)
+    if (!snapshot) return
+    if (!liveMode) return
+    const items = draftMaterials(next, snapshot.basis ?? null)
+    savingDraft.current = savingDraft.current.catch(() => undefined).then(() => mounted.current ? request<Draft>(`/drafts/${id}`, 'PUT', {case_context: {registration: JSON.stringify(snapshot)}, items: inputItems(items), analysis_mode: snapshot.check?.mode ?? 'standard'}) : undefined)
+    try {await savingDraft.current; if (mounted.current) setServerSaveError('')}
+    catch (cause) {if (mounted.current) setServerSaveError(message(cause)); throw cause}
+  }
+  async function transfer(incoming: LocalUpload[], next = latestDraft.current.files) {
+    if (transferBusy.current) return
+    transferBusy.current = true
+    try {
+      if (liveMode) {
+        const result = await transferDocuments(next, incoming, saveFiles, () => mounted.current)
+        finishTransfer(result)
+      } else await saveFiles(next)
+    } finally {transferBusy.current = false}
+  }
   const upload = useLocalUploads(async incoming => {
     const mapped = localDocuments(incoming)
-    if (liveMode) for (let index = 0; index < incoming.length; index++) mapped[index].material = await uploadProduct(incoming[index].file, 'target')
-    setFiles(current => [...current, ...mapped]); setSourceMode('local'); setUploadError(''); setAcknowledged(false)
+    setUploadError(''); setAcknowledged(false)
+    await transfer(incoming, [...latestDraft.current.files, ...mapped])
   }, id)
+  async function recoverUpload(file: Document, send = false) {
+    if (editingLocked || transferBusy.current) return
+    transferBusy.current = true; setReadingUpload(file.id); setUploadError('')
+    try {
+      if (send) {
+        if (file.uploadReceipt) {
+          if (file.uploadReceipt.state === 'unknown' && !file.uploadReceipt.file) {
+            const observed = await readDocumentUpload(file)
+            if (!mounted.current) return
+            const receipt = observed.uploadReceipt!
+            if (!(receipt.state === 'unknown' && !receipt.file || receipt.state === 'uploading' && receipt.resume_allowed)) {
+              await saveFiles(latestDraft.current.files.map(item => item.id === file.id ? observed : item)); return
+            }
+          } else if (!(file.uploadReceipt.state === 'uploading' && file.uploadReceipt.resume_allowed)) return
+        }
+        const blob = file.localFile ? await readLocalFile(file.localFile) : null
+        if (!blob || !file.localFile) throw new Error('本机没有此原件。请在原上传浏览器继续；不要把新文件替换到原请求。')
+        const result = await transferDocuments(latestDraft.current.files, [{file: new File([blob], file.name, {type: file.localFile.type}), ref: file.localFile}], saveFiles, () => mounted.current)
+        finishTransfer(result)
+      } else {
+        const recovered = await readDocumentUpload(file)
+        if (mounted.current) await saveFiles(latestDraft.current.files.map(item => item.id === file.id ? recovered : item))
+      }
+    } catch (cause) {if (mounted.current) setUploadError(message(cause))}
+    finally {transferBusy.current = false; if (mounted.current) setReadingUpload(null)}
+  }
   function addFiles(list: FileList | null) {
     if (!list?.length || editingLocked) return
     if (sourceMode === 'demo') {setUploadError('请从工作台上传另一组资料，当前示例仍会保留。'); return}
@@ -327,7 +392,7 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
   const nextAction = nextIssue ? {label: nextIssue.target === 'intake-basis' ? '核对审核依据' : nextIssue.target === 'intake-scope' ? '补全审核范围' : '核对审核资料', run: () => resolveIssue(nextIssue.target)} : undefined
   const saveNotice = serverSaveError || (step === 'prepare' && plan && requirementsReady ? '' : saveError)
   function start() {
-    if (startIssues.length || !plan || upload.busy) return
+    if (startIssues.length || !plan || upload.busy || transferBusy.current) return
     setSubmitted(true); setScopeConfirmed(true); setAcknowledged(true)
     setFiles(current => current.map(file => file.selected ? {...file, associated: true} : file))
     if (audit.live) audit.live.start()
@@ -355,7 +420,7 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
       <AccountMenu compact/>
     </header>
     <main id="main-content" className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-      {saveNotice && <Alert variant="destructive" className="mb-5"><AlertDescription>{saveNotice}</AlertDescription></Alert>}
+      {saveNotice && <Alert variant="destructive" className="mb-5"><AlertDescription>{saveNotice}{serverSaveError && !frozen && <Button variant="outline" size="sm" disabled={editingLocked} onClick={() => {void saveFiles(latestDraft.current.files).catch(() => undefined)}}>重试保存资料</Button>}</AlertDescription></Alert>}
       {step === 'requirements' ? <Requirements basis={basis} scopeKey={scopeKey(scope)} scope={scope} scopeReady={!missingScope.length} collections={requirementCollections} catalog={catalog} context={decisionScope} readonly={editingLocked} backLabel={accepted ? '返回本轮资料' : '返回审核准备'} onBack={() => go('prepare')} onChange={next => setBasis(next)} onConfirm={next => {setBasis(next); setScope(current => ({...current, requirements: `${next.source.title} ${next.source.version}`})); go('prepare')}}/>
         : step === 'progress' && accepted ? <>
           {audit.enabled && !audit.round ? <div role="status" className="flex flex-wrap items-center gap-3 py-8"><p>{audit.roundError || '正在读取本轮审核…'}</p><Button variant="outline" onClick={audit.refresh}>重新读取</Button></div>
@@ -367,16 +432,26 @@ function IntakeApp({id, initial, onHome, requirementCollections, catalog}: {id: 
             <section id="intake-files" aria-label="审核资料" className="min-w-0 scroll-mt-20">
               <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-base font-semibold">资料 <span className="ml-2 font-normal text-muted-foreground">{selectedFiles.length}/{files.length}</span></h2>{!frozen && <Button variant="outline" size="sm" disabled={editingLocked || upload.busy} onClick={() => picker.current?.click()}><Plus/>添加文件</Button>}</div>
               <input ref={picker} type="file" accept={fileAccept} className="sr-only" aria-label="添加审核资料" disabled={editingLocked || upload.busy} multiple onChange={event => {addFiles(event.target.files); event.target.value = ''}}/>
-              {!files.length ? <div className="flex flex-col items-center gap-3 border border-dashed py-10 text-center"><UploadCloud className="text-muted-foreground"/><p>添加收到的资料</p><Button variant="outline" disabled={editingLocked || upload.busy} onClick={() => picker.current?.click()}>选择文件</Button></div> : <Table className="table-fixed">
+              {!files.length ? <div className="flex flex-col items-center gap-3 border border-dashed py-10 text-center"><UploadCloud className="text-muted-foreground"/><p>添加收到的资料</p><Button variant="outline" disabled={editingLocked || upload.busy} onClick={() => picker.current?.click()}>选择文件</Button></div> : <Table aria-label="审核资料" className="table-fixed">
                 <TableHeader className="hidden md:table-header-group"><TableRow><TableHead className="w-10"><span className="sr-only">纳入</span></TableHead><TableHead className="w-[45%]">文件</TableHead><TableHead>类型</TableHead>{showPurpose && <TableHead className="w-24">用途</TableHead>}<TableHead className="w-10"><span className="sr-only">操作</span></TableHead></TableRow></TableHeader>
                 <TableBody>{files.map(file => {
                   const warnings = file.selected && file.origin === 'demo' ? gapsFor({...file, associated: true}, scope.part) : []
                   return <TableRow key={file.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)_4.5rem_3.5rem] items-start md:table-row">
                     <TableCell className="align-top"><label className="-m-2 flex min-h-11 items-center justify-center md:m-0 md:min-h-0"><Checkbox aria-label={`纳入 ${file.name}`} disabled={editingLocked} checked={file.selected} onCheckedChange={checked => updateFile(file.id, {selected: checked === true})}/><span className="sr-only">纳入 {file.name}</span></label></TableCell>
-                    <TableCell className="col-span-2 col-start-2 row-start-1 min-w-0 whitespace-normal align-top"><SourceReaderButton input={readingInput} documents={readingSources} file={readingInput.files[files.indexOf(file)]} label={file.name} variant="link" className="h-auto w-full justify-start whitespace-normal text-left break-all"/>{warnings.length > 0 ? <p className="mt-1 break-words text-xs text-muted-foreground">{warnings.map(gap => gap.title).join(' · ')}</p> : file.selected && file.readability === 'partial' && <p className="mt-1 text-xs text-muted-foreground">已标记部分不可读</p>}{notes[file.id] && <p className="mt-1 break-words text-xs text-muted-foreground">{notes[file.id]}</p>}</TableCell>
+                    <TableCell className="col-span-2 col-start-2 row-start-1 min-w-0 whitespace-normal align-top">
+                      <SourceReaderButton input={readingInput} documents={readingSources} file={readingInput.files[files.indexOf(file)]} label={file.name} variant="link" className="h-auto w-full justify-start whitespace-normal text-left break-all"/>
+                      {liveMode && !file.material && <div className="mt-2 space-y-2 text-sm">
+                        <p className="text-muted-foreground">{file.uploadReceipt?.reason || (file.uploadReceipt ? '尚未确认文件已接收。' : '尚未上传。前一份文件需先核对。')}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {file.uploadReceipt && file.uploadReceipt.state !== 'ready' && <Button variant="outline" size="sm" disabled={editingLocked} onClick={() => {void recoverUpload(file)}}>{readingUpload === file.id ? '正在核对…' : '核对上传结果'}</Button>}
+                          {(!file.uploadReceipt || file.uploadReceipt.state === 'uploading' && file.uploadReceipt.resume_allowed || file.uploadReceipt.state === 'unknown' && !file.uploadReceipt.file) && <Button variant="outline" size="sm" disabled={editingLocked} onClick={() => {void recoverUpload(file, true)}}>{!file.uploadReceipt ? '上传此文件' : file.uploadReceipt.state === 'unknown' ? '核对并继续原传输' : '继续原传输'}</Button>}
+                        </div>
+                      </div>}
+                      {warnings.length > 0 ? <p className="mt-1 break-words text-xs text-muted-foreground">{warnings.map(gap => gap.title).join(' · ')}</p> : file.selected && file.readability === 'partial' && <p className="mt-1 text-xs text-muted-foreground">已标记部分不可读</p>}{notes[file.id] && <p className="mt-1 break-words text-xs text-muted-foreground">{notes[file.id]}</p>}
+                    </TableCell>
                     <TableCell className={`col-start-2 min-w-0 ${showPurpose ? '' : 'col-span-2'}`}>{frozen ? <span>{file.kind}</span> : <label><span className="mb-1 block text-xs text-muted-foreground md:sr-only">资料类型</span><NativeSelect className="w-full" aria-label={`${file.name} 资料类型`} data-missing={file.selected && file.kind === '待分类' || undefined} value={file.kind} disabled={editingLocked} onChange={event => updateFile(file.id, {kind: event.target.value})}>{availableKinds.map(kind => <NativeSelectOption key={kind} value={kind}>{kind}</NativeSelectOption>)}</NativeSelect></label>}</TableCell>
                     {showPurpose && <TableCell className="col-start-3 min-w-0 whitespace-normal"><span className="mb-1 block text-xs text-muted-foreground md:sr-only">用途</span><span className="text-sm">{fileUse(file)}</span></TableCell>}
-                    <TableCell className="col-start-4 row-start-1"><div className="-m-2 flex min-h-11 items-center justify-center md:m-0 md:min-h-0"><DropdownMenu><DropdownMenuTrigger asChild><Button id={`file-info-${file.id}`} variant="ghost" size="icon-sm" aria-label={`${file.name} 操作`}><MoreHorizontal/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => {fileInfoReturn.current = `file-info-${file.id}`; setInfoFile(file.id)}}>文件信息</DropdownMenuItem><DropdownMenuItem disabled={editingLocked} onSelect={() => setFiles(current => current.filter(item => item.id !== file.id))}>移出本次资料</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></TableCell>
+                    <TableCell className="col-start-4 row-start-1"><div className="-m-2 flex min-h-11 items-center justify-center md:m-0 md:min-h-0"><DropdownMenu><DropdownMenuTrigger asChild><Button id={`file-info-${file.id}`} variant="ghost" size="icon-sm" aria-label={`${file.name} 操作`}><MoreHorizontal/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => {fileInfoReturn.current = `file-info-${file.id}`; setInfoFile(file.id)}}>文件信息</DropdownMenuItem><DropdownMenuItem disabled={editingLocked} onSelect={() => setFiles(current => removeFromDraft(current, file.id))}>移出本次资料</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></TableCell>
                   </TableRow>
                 })}</TableBody>
               </Table>}
@@ -434,10 +509,11 @@ export function JourneyApp() {
     }).catch(cause => {if (active) setLibraryRead({loading: false, error: message(cause)})})
     return () => {active = false}
   }, [preview, libraryRevision])
-  function openState(target: CaseTarget, initial?: IntakeDraft) {
-    return {id: target.id, target, initial: initial ?? freshDraft(), missing: !initial && (!preview || !readDraft(`intake:${target.id}`, isIntakeDraft))}
+  function openState(target: CaseTarget, initial?: IntakeDraft, uploadError = '') {
+    return {id: target.id, target, initial: initial ?? freshDraft(), uploadError, missing: !initial && (!preview || !readDraft(`intake:${target.id}`, isIntakeDraft))}
   }
   const caseGeneration = useRef(0)
+  useEffect(() => () => {caseGeneration.current++}, [])
   const workbenchReturn = useRef<string | null>(null)
   const [caseReadError, setCaseReadError] = useState('')
   const [caseRevision, setCaseRevision] = useState(0)
@@ -505,7 +581,7 @@ export function JourneyApp() {
         const known = snapshot.files.find(file => file.material?.file_version_id === material.file_version_id)
         return known ? {...known, material, selected: true, associated: Boolean(round) || known.associated} : {id: material.file_version_id, material, name: material.original_filename, origin: 'local', kind: material.rule?.body.kind === 'engine' ? material.rule.body.type === '全功能检验报告' ? '尺寸报告' : kinds.includes(material.rule.body.type as Kind) ? material.rule.body.type as Kind : '待分类' : '待分类', expectedKind: '待分类', declaredRevision: '未知', contentRevision: '未解析', sourceVersion: 1, selected: true, associated: Boolean(round), readability: 'unverified'}
       })
-      snapshot.files = [...registered.map(file => restored.find(item => item.material?.file_version_id === file.material?.file_version_id) ?? {...file, selected: false}), ...restored.filter(file => !registered.some(item => item.material?.file_version_id === file.material?.file_version_id))]
+      snapshot.files = [...registered.map(file => restored.find(item => item.material && item.material.file_version_id === file.material?.file_version_id) ?? (!file.material ? file : {...file, selected: false})), ...restored.filter(file => !registered.some(item => item.material?.file_version_id === file.material?.file_version_id))]
       if (draft) snapshot.check = {...snapshot.check ?? initialCheck(), mode: draft.analysis_mode}
       if (!snapshot.basis) {
         const bound = materials.find(item => item.role === 'target' && item.rule)?.rule
@@ -526,7 +602,7 @@ export function JourneyApp() {
       if (!current()) return
       const actualId = round?.source_draft_id || draft?.id || requestedId
       const canonicalTarget: CaseTarget = round ? {id: round.id, kind: 'round'} : {id: actualId, kind: 'case'}
-      setActive({id: actualId, target: canonicalTarget, initial: snapshot, missing: false}); setCaseReadError('')
+      setActive({id: actualId, target: canonicalTarget, initial: snapshot, uploadError: '', missing: false}); setCaseReadError('')
       const url = new URL(location.href); url.searchParams.set('case', actualId); url.searchParams.delete('draft')
       if (round) url.searchParams.set('round', round.id)
       if (!['step', 'stage', 'clause', 'resume'].some(key => url.searchParams.has(key))) {
@@ -543,16 +619,16 @@ export function JourneyApp() {
     void openServer(active.target, caseGeneration.current, controller.signal)
     return () => controller.abort()
   }, [preview, active?.target, active?.missing, caseRevision])
-  function navigateCase(href: string, initial?: IntakeDraft) {
+  function navigateCase(href: string, initial?: IntakeDraft, uploadError = '') {
     const url = new URL(href, location.href), target = routeCase(url.searchParams)
     if (!target) return
     if (!active) workbenchReturn.current = location.href
     caseGeneration.current++; setCaseReadError('')
     history.pushState(null, '', url)
-    setActive(openState(target, initial)); window.scrollTo({top: 0})
+    setActive(openState(target, initial, uploadError)); window.scrollTo({top: 0})
   }
-  function open(id: string, initial?: IntakeDraft, owner?: import('./usage-state').CheckOwner) {
-    navigateCase(caseHref({id, kind: 'case'}, owner), initial)
+  function open(id: string, initial?: IntakeDraft, owner?: import('./usage-state').CheckOwner, uploadError = '') {
+    navigateCase(caseHref({id, kind: 'case'}, owner), initial, uploadError)
   }
   function home() {
     caseGeneration.current++; setCaseReadError('')
@@ -573,15 +649,23 @@ export function JourneyApp() {
   }, [])
   if (active?.missing && !preview) return <div className="flex min-h-dvh flex-col"><header className="flex h-14 items-center justify-between border-b px-4 sm:px-6"><Button variant="ghost" asChild><a href="/" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); home()}}><ArrowLeft/>工作台</a></Button><AccountMenu compact/></header><main className="m-auto flex w-full max-w-md flex-col items-start gap-4 p-6" aria-busy={!caseReadError}><h1 className="text-2xl font-semibold tracking-tight">{caseReadError ? '暂时无法打开这条审核记录' : '正在打开审核记录'}</h1><p role={caseReadError ? 'alert' : 'status'} className="text-sm text-muted-foreground">{caseReadError || '正在读取资料与审核记录…'}</p>{caseReadError && <Button variant="outline" onClick={() => {caseGeneration.current++; setCaseReadError(''); setCaseRevision(value => value + 1)}}>重新读取</Button>}</main></div>
   if (active?.missing) return <main className={"flex min-h-dvh bg-background text-foreground text-base items-center justify-center flex-col gap-3.5 py-10 px-6 text-center [&_h1]:text-2xl [&_h1]:font-semibold [&_p]:max-w-105 [&_p]:text-muted-foreground [&_p]:leading-relaxed"}><FileQuestion size={28} aria-hidden="true"/><h1>暂时无法打开这条审核记录</h1><p>此浏览器没有这条记录。请返回工作台选择已有审核记录。</p><Button className={""} onClick={home}>返回工作台<ArrowRight/></Button><AccountMenu compact/></main>
-  if (active) return <IntakeApp key={active.id} id={active.id} initial={active.initial} onHome={home} requirementCollections={collections} catalog={{...libraryRead, reload: () => setLibraryRevision(value => value + 1)}}/>
+  if (active) return <IntakeApp key={active.id} id={active.id} initial={active.initial} initialUploadError={active.uploadError} onHome={home} requirementCollections={collections} catalog={{...libraryRead, reload: () => setLibraryRevision(value => value + 1)}}/>
   return <TaskWorkbench search={preview ? undefined : search} onSearch={preview ? undefined : setSearch} loading={workbench.loading} refreshing={workbench.busy === 'refresh'} errors={workbench.errors} onRefresh={preview ? undefined : workbench.refresh} loadingMore={workbench.busy === 'more'} onLoadMore={workbench.more ? workbench.loadMore : undefined} items={items} onOpen={href => navigateCase(href)} usage={<UsageWorkspace onOpen={(id, owner) => open(id, undefined, owner)}/>} requirements={<RequirementLibraryPanel collections={collections} onChange={setCollections} saveError={library.saveError} loading={libraryRead.loading} readError={libraryRead.error} onReload={() => setLibraryRevision(value => value + 1)} uses={drafts.flatMap(({key, value}) => value.basis ? [{id: key.slice('intake:'.length), title: [value.scope.part, value.scope.supplier].filter(Boolean).join(' · '), basis: value.basis, submitted: value.submitted}] : [])} onOpen={id => open(id)}/>} onDemo={(kind = 'issues') => open(crypto.randomUUID(), freshDraft((kind === 'complete' ? completeFiles : kind === 'outlier' ? outlierFiles : initialFiles).map(file => ({...file})), true))} onFiles={async files => {
+    const identity = caseGeneration.current
     try {
       const mapped = localDocuments(files)
       const server = preview ? null : await request<Draft>('/drafts', 'POST', {})
-      if (server) for (let index = 0; index < files.length; index++) mapped[index].material = await uploadProduct(files[index].file, 'target')
-      const initial = freshDraft(mapped)
-      if (server) await request<Draft>(`/drafts/${server.id}`, 'PUT', {items: inputItems(mapped.map(file => file.material!)), case_context: {registration: JSON.stringify(initial)}})
-      open(server?.id || crypto.randomUUID(), initial)
+      if (identity !== caseGeneration.current) return null
+      let initial = freshDraft(mapped), uploadError = ''
+      if (server) {
+        const result = await transferDocuments(mapped, files, async next => {
+          initial = {...initial, files: next}
+          await request<Draft>(`/drafts/${server.id}`, 'PUT', {items: inputItems(next.flatMap(file => file.material ? [file.material] : [])), case_context: {registration: JSON.stringify(initial)}})
+        }, () => identity === caseGeneration.current)
+        initial = {...initial, files: result.files}
+        uploadError = result.error
+      }
+      if (identity === caseGeneration.current) open(server?.id || crypto.randomUUID(), initial, undefined, uploadError)
       return null
     } catch (cause) {return message(cause)}
   }}/>

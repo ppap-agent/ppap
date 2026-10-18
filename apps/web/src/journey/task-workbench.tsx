@@ -40,6 +40,7 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
   function navigate(event: MouseEvent<HTMLAnchorElement>, next: typeof view) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
+    if (upload.busy) return
     setView(next)
     history.pushState(null, '', viewHref(next))
     if (next === 'workbench') onRefresh?.()
@@ -111,7 +112,7 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
       <div className={"max-md:[&_nav_svg]:w-4.5 max-md:[&_nav_svg]:h-4.5 hidden max-md:sticky max-md:bottom-0 max-md:flex max-md:items-center max-md:gap-2 max-md:mt-auto max-md:pt-0 max-md:pr-4  max-md:pl-0 max-md:border-t max-md:bg-background max-md:[&_nav]:flex max-md:[&_nav]:flex-1"}>{nav}<AccountMenu compact/></div>
 
     </div>
-    <Dialog open={uploadOpen} onOpenChange={open => {if (!open) upload.cancel(); setUploadOpen(open)}}>
+    <Dialog open={uploadOpen} onOpenChange={open => {if (upload.busy) return; if (!open) upload.cancel(); setUploadOpen(open)}}>
       <DialogContent className={""}>
         <DialogHeader><DialogTitle>上传资料</DialogTitle><DialogDescription>先选择文件，之后核对零件、修订和归属。</DialogDescription></DialogHeader>
         <div className={"grid justify-items-center gap-3 py-7.5 px-5 border border-dashed rounded-lg text-center [&[data-dragging=\"true\"]]:bg-muted [&_>_span]:text-muted-foreground [&_>_span]:text-sm"} data-dragging={dragging} onDragOver={event => {event.preventDefault(); setDragging(true)}} onDragLeave={() => setDragging(false)} onDrop={event => {event.preventDefault(); setDragging(false); pick(Array.from(event.dataTransfer.files))}}>
