@@ -420,7 +420,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.set_default_timeout(5000)
             self.route(page)
             versions, reads, creates, writes = {}, [], [], []
-            page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT"} else None)
+            page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
             page.route("**/api/audit-template-catalog", lambda route: route.fulfill(json={"coverage_universe": [f"type-{i}" for i in range(17)], "customers": []}))
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
 
@@ -481,10 +481,9 @@ class RuleInteractionTests(unittest.TestCase):
             expect(retry).to_have_count(0)
             expect(page.get_by_role("checkbox", name="选择 control.xlsx", exact=True)).to_be_checked()
             flow = next(version for version in versions.values() if version["original_filename"] == "flow.xlsx")
-            self.assertEqual([(method, ident) for method, kind, ident in reads if kind == "job"], [("GET", "validation-" + flow["id"])] * 2)
-            self.assertEqual(len(reads), 4)
+            self.assertCountEqual(reads, [("GET", "latest", version["id"]) for version in versions.values()] + [("GET", "job", "validation-" + flow["id"])] * 2)
             self.assertEqual(creates, [])
-            self.assertEqual([path for method, path in writes if method == "POST"], ["/api/files", "/api/files"])
+            self.assertCountEqual(writes, [("POST", "/api/files")] * 2 + [("PUT", f"/api/files/{version['file_id']}/versions/{version['id']}/blob") for version in versions.values()])
             browser.close()
 
     def test_lost_or_invalid_blob_reply_reads_original_request_without_reupload(self):
