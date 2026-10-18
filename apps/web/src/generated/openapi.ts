@@ -4468,7 +4468,7 @@ export interface operations {
             query: {
                 customer_id: string;
                 page?: number;
-                page_size?: 10;
+                page_size?: number;
                 search?: string;
             };
             header?: never;

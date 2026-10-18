@@ -62,8 +62,9 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
             ).status_code
             == 201
         )
-        response = client.get("/audit-templates", params={"customer_id": "海岸线"})
+        response = client.get("/audit-templates", params={"customer_id": "海岸线", "page_size": 10})
         assert response.status_code == 200
+        assert client.get("/audit-templates", params={"customer_id": "海岸线", "page_size": 9}).status_code == 422
         assert response.headers["cache-control"] == "private, no-store"
         page = response.json()
         assert page["total"] == page["folder_template_count"] == 1

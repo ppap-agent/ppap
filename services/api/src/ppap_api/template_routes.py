@@ -135,7 +135,7 @@ def register_template_routes(app, store, session_of, http, settings):
         return folder_id, revision, sorted(items, key=lambda item: (item["updated_at"], item["reference"]["template_id"]), reverse=True)
 
     @app.get("/audit-templates", response_model=wc.AuditTemplatePage)
-    def list_templates(request: Request, customer_id: str, search: str = Query(default="", max_length=200), page: int = Query(default=1, ge=1), page_size: Literal[10] = 10):
+    def list_templates(request: Request, customer_id: str, search: str = Query(default="", max_length=200), page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=10, le=10)):
         session, source = source_of(request, customer_id)
         folder_id, revision, items = snapshot(session, source)
         filtered = [item for item in items if search.strip().casefold() in (item["file"]["original_filename"] + " " + item["document_type"]).casefold()]
