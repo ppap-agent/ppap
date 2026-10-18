@@ -17,6 +17,8 @@
 
 规则排列组合留在低层，不复制到 E2E。
 
+`tests/e2e/test_ui_a11y.py` 从当前工作台与审核要求入口验证键盘导航、单一主标题、窄屏，以及原件侧栏和草稿确认弹窗的焦点约束与取消返回；API fixtures 只用于受控 UI 验证，不证明真实登录、发布或数据持久化。
+
 ## Runner capability
 
 CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
