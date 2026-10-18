@@ -1,6 +1,7 @@
 """Deterministic browser/API interleavings; no live backend or model calls."""
 
 import os
+import time
 import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -464,57 +465,101 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(writes, [])
             browser.close()
 
-    def test_lost_or_invalid_finalize_response_reads_version_once_without_reposting(self):
+    def test_lost_or_invalid_blob_reply_reads_original_request_without_reupload(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for readback, finalize_response in (("ready", "lost"), ("ready", "bad_json"), ("staging", "lost"), ("failed_read", "lost")):
-                with self.subTest(readback=readback, finalize_response=finalize_response):
+            cases = [("ready", "lost"), ("ready", "bad_json"), ("staging", "lost"), ("failed_read", "lost"), ("wrong_request", "lost"), ("wrong_hash", "bad_json")]
+            for readback, blob_reply in cases:
+                with self.subTest(readback=readback, blob_reply=blob_reply):
                     page = browser.new_page()
+                    page.set_default_timeout(4000)
                     self.route(page)
-                    created_posts, finalize_posts, version_reads = [], [], []
+                    creates, blobs, reads, saves = [], [], [], []
+                    versions = {}
+                    draft_body = {
+                        "id": JOB,
+                        "status": "open",
+                        "analysis_mode": "standard",
+                        "predecessor_id": None,
+                        "updated_at": "2026-10-18T00:00:00Z",
+                        "writeback": {"available": False},
+                        "items": [],
+                        "case_context": {},
+                    }
 
-                    def record_create(request):
-                        if request.method == "POST" and request.url.endswith("/api/files"):
-                            created_posts.append(request.method)
+                    def create_file(route):
+                        body = route.request.post_data_json
+                        creates.append(body["request_id"])
+                        version = {
+                            "id": body["request_id"],
+                            "file_id": SOURCE,
+                            "original_filename": body["original_filename"],
+                            "byte_size": body["byte_size"],
+                            "content_type": body["content_type"],
+                            "sha256": body["sha256"],
+                            "status": "staging",
+                        }
+                        versions[body["request_id"]] = version
+                        route.fulfill(status=201, json=version)
 
-                    page.on("request", record_create)
-
-                    def lose_finalize_response(route):
-                        finalize_posts.append(route.request.method)
-                        if finalize_response == "bad_json":
+                    def lose_blob_reply(route):
+                        blobs.append(route.request.method)
+                        if blob_reply == "bad_json":
                             route.fulfill(status=200, body="{", content_type="application/json")
                         else:
                             route.abort("failed")
 
-                    def read_version(route):
-                        version_reads.append(route.request.method)
+                    def read_receipt(route):
+                        request_id = route.request.url.rsplit("/", 1)[1]
+                        reads.append((route.request.method, request_id))
+                        if route.request.method != "GET":
+                            route.fulfill(status=405, json={"error": "read_only_receipt"})
+                            return
                         if readback == "failed_read":
                             route.abort("failed")
-                        else:
-                            route.fulfill(json={"status": readback})
+                            return
+                        ready = readback != "staging"
+                        version = {**versions[request_id], "status": "ready" if ready else "staging"}
+                        if readback == "wrong_request":
+                            version["id"] = VERSION
+                        if readback == "wrong_hash":
+                            version["sha256"] = "0" * 64
+                        route.fulfill(json={"request_id": request_id, "state": "ready" if ready else "uploading", "file": version, "reason": None, "retry_allowed": False, "resume_allowed": not ready})
 
-                    page.route("**/api/files/*/versions/*/finalize", lose_finalize_response)
-                    page.route("**/api/files/*/versions/*", read_version)
-                    page.route("**/api/drafts", lambda route: route.fulfill(status=201, json={"id": JOB}))
-                    page.route("**/api/drafts/" + JOB, lambda route: route.fulfill(json={"id": JOB, "status": "open", "items": []}))
+                    def save_draft(route):
+                        saves.append(route.request.post_data_json)
+                        route.fulfill(json=draft_body)
+
+                    page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
+                    page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
+                    page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+                    page.route("**/api/files", create_file)
+                    page.route("**/api/files/*/versions/*/blob", lose_blob_reply)
+                    page.route("**/api/file-uploads/*", read_receipt)
+                    page.route("**/api/drafts", lambda route: route.fulfill(status=201, json=draft_body))
+                    page.route("**/api/drafts/" + JOB, save_draft)
                     page.goto(WEB)
-                    upload = page.get_by_test_id("source-upload")
-                    upload.set_input_files({"name": "尺寸检验报告-example.xlsm", "mimeType": "application/vnd.ms-excel.sheet.macroEnabled.12", "buffer": b"fixture"})
+                    page.get_by_role("button", name="上传资料", exact=True).click()
+                    page.get_by_label("上传文件", exact=True).set_input_files({"name": "尺寸检验报告-example.xlsm", "mimeType": "application/vnd.ms-excel.sheet.macroEnabled.12", "buffer": b"fixture"})
+                    table = page.get_by_role("table", name="审核资料", exact=True)
+                    expect(table).to_contain_text("尺寸检验报告-example.xlsm")
                     if readback == "ready":
-                        expect(page.get_by_test_id("draft-items")).to_contain_text("尺寸检验报告-example.xlsm")
-                        expect(page.get_by_role("alert")).to_have_count(0)
-                        expect(upload).to_be_enabled()
+                        expect(table.get_by_text("上传结果尚未确认，请核对原请求。", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name="添加文件", exact=True)).to_be_enabled()
+                        expect(page.get_by_role("button", name="核对上传结果", exact=True)).to_have_count(0)
+                        self.assertEqual([item["file_version_id"] for item in saves[-1]["items"]], creates)
                     else:
-                        expect(page.get_by_role("alert").filter(has_text="上传结果未确认：尺寸检验报告-example.xlsm")).to_be_visible()
-                        expect(page.get_by_test_id("draft-items")).to_have_count(0)
-                        expect(page.get_by_role("button", name="核对上传结果")).to_be_visible()
-                        expect(upload).to_be_disabled()
-                    expect(page.get_by_text("正在上传 尺寸检验报告-example.xlsm", exact=True)).to_have_count(0)
-                    self.assertEqual(created_posts, ["POST"])
-                    self.assertEqual(finalize_posts, ["POST"])
-                    self.assertEqual(version_reads, ["GET"])
+                        expect(page.get_by_role("button", name="核对上传结果", exact=True)).to_be_enabled()
+                        self.assertEqual(saves[-1]["items"], [])
+                        if readback == "staging":
+                            expect(page.get_by_role("button", name="继续原传输", exact=True)).to_be_enabled()
+                        else:
+                            expect(page.get_by_role("button", name="继续原传输", exact=True)).to_have_count(0)
+                    self.assertEqual(len(creates), 1)
+                    self.assertEqual(blobs, ["PUT"])
+                    self.assertEqual(reads, [("GET", creates[0])])
                     page.close()
             browser.close()
 
@@ -575,41 +620,150 @@ class RuleInteractionTests(unittest.TestCase):
             with self.subTest(entry=entry, first_read=first_read), sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 page = browser.new_page()
+                page.set_default_timeout(4000)
                 self.route(page)
                 draft_id = "00000000-0000-4000-8000-000000000004"
-                item = {"file_id": SOURCE, "file_version_id": VERSION, "original_filename": "control-plan.xlsx", "role": "target", "rule_version_id": "version-b"}
-                accepted = {"id": JOB, "execution": "queued", "analysis_mode": "standard", "inputs": [item], "findings": []}
-                posts, reads = [], []
-                page.route("**/api/drafts/" + draft_id, lambda route: route.fulfill(json={"id": draft_id, "status": "open", "items": [item]}))
-                page.route("**/api/files/*/versions/*/analysis", lambda route: route.fulfill(json={"analysis": None}))
+                rule = {
+                    "id": "version-b",
+                    "title": "规则 B",
+                    "body": BODY,
+                    "created_at": "2026-10-18T00:00:00Z",
+                    "source_file_id": "rule-source",
+                    "source_file_version_id": "rule-source-version",
+                    "predecessor_id": None,
+                }
+                rules = {rule["id"]: rule}
+                item = {
+                    "file_id": SOURCE,
+                    "file_version_id": VERSION,
+                    "original_filename": "control-plan.xlsx",
+                    "role": "target",
+                    "rule_version_id": rule["id"],
+                    "status": "ready",
+                    "rule": {key: rule[key] for key in ("id", "title", "body")},
+                }
+                draft = {
+                    "id": draft_id,
+                    "status": "open",
+                    "analysis_mode": "standard",
+                    "predecessor_id": None,
+                    "updated_at": "2026-10-18T00:00:00Z",
+                    "writeback": {"available": False},
+                    "items": [item],
+                    "case_context": {},
+                }
+                accepted = {
+                    "id": JOB,
+                    "source_draft_id": draft_id,
+                    "predecessor_id": None,
+                    "execution": "queued",
+                    "analysis_mode": "standard",
+                    "inputs": [item],
+                    "findings": [],
+                    "coverage": {},
+                    "created_at": "2026-10-18T00:00:00Z",
+                    "result_attempt": None,
+                    "failure": None,
+                    "progress": None,
+                    "writeback": {"available": False},
+                    "case_context": {},
+                }
+                posts, reads, pending_reads = [], [], {}
+                release_reads = False
+                page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
+                page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+                page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
                 page.route("**/api/integrations/feishu/usage/quota?*", lambda route: route.fulfill(json={"accept_allowed": True}))
 
+                def read_rule(route):
+                    selected = rules.get(route.request.url.rsplit("/", 1)[1])
+                    route.fulfill(status=200 if selected else 404, json=selected or {"error": "not_found"})
+
+                def publish_rule(route):
+                    if route.request.method != "POST":
+                        route.fulfill(json={"rules": []})
+                        return
+                    body = route.request.post_data_json
+                    published = {**rule, **{key: body[key] for key in ("title", "body", "source_file_version_id", "predecessor_id", "case_context")}, "id": body["request_id"]}
+                    rules[published["id"]] = published
+                    route.fulfill(status=201, json=published)
+
+                def save_draft(route):
+                    if route.request.method == "PUT":
+                        body = route.request.post_data_json
+                        bound = rules[body["items"][0]["rule_version_id"]]
+                        draft.update(body, items=[{**item, **body["items"][0], "rule": {key: bound[key] for key in ("id", "title", "body")}}])
+                    route.fulfill(json=draft)
+
                 def accept(route):
-                    posts.append(route.request.method)
+                    posts.append(route.request.post_data_json)
+                    draft["status"] = "accepted"
+                    accepted.update(inputs=draft["items"], case_context=draft["case_context"])
                     route.fulfill(status=201, json=accepted)
 
                 def read_round(route):
-                    reads.append(route.request.method)
+                    reads.append((route.request.method, route.request.url.rsplit("/", 1)[1]))
+                    if route.request.method != "GET":
+                        route.fulfill(status=405, json={"error": "read_only_round"})
+                        return
                     if len(reads) == 1:
                         if first_read == "connectionreset":
                             route.abort("connectionreset")
                         else:
                             route.fulfill(status=200, body="{", content_type="application/json")
-                    else:
+                    elif release_reads:
                         route.fulfill(json={**accepted, "execution": "completed"})
+                    else:
+                        pending_reads[route.request] = route
 
+                page.route("**/api/rules", publish_rule)
+                page.route("**/api/rules/*", read_rule)
+                page.route("**/api/drafts/" + draft_id, save_draft)
+                page.route("**/api/drafts/" + draft_id + "/round", lambda route: route.fulfill(json=accepted if posts else None))
                 page.route("**/api/drafts/" + draft_id + "/accept", accept)
                 page.route("**/api/rounds/" + JOB, read_round)
                 page.goto(WEB + ("/?draft=" + draft_id if entry == "submit" else "/?round=" + JOB))
                 if entry == "submit":
-                    page.get_by_test_id("submit-audit").click()
-                expect(page.get_by_text("暂时无法读取审核状态，正在重新连接。请勿重复提交。", exact=True)).to_be_visible()
-                expect(page.locator("#audit-preparation")).to_have_count(0)
-                expect(page.get_by_test_id("submit-audit")).to_have_count(0)
-                expect(page.get_by_text("检查完成", exact=True).first).to_be_visible(timeout=10000)
-                expect(page.get_by_text("暂时无法读取审核状态，正在重新连接。请勿重复提交。", exact=True)).to_have_count(0)
-                self.assertEqual(posts, ["POST"] if entry == "submit" else [])
-                self.assertEqual(reads, ["GET", "GET"])
+                    for label, value in (("客户", "测试客户"), ("供应商", "测试供应商"), ("零件与编号", "P-001"), ("图纸修订", "B"), ("生产地点", "测试工厂")):
+                        page.get_by_label(label, exact=True).fill(value)
+                    page.get_by_role("button", name="核对审核要求", exact=True).click()
+                    clause = page.get_by_role("article", name="条款 1", exact=True)
+                    clause.get_by_role("button", name="编辑", exact=True).click()
+                    clause.get_by_label("页码或单元格位置", exact=True).fill("工作表 B4")
+                    clause.get_by_role("button", name="完成编辑", exact=True).click()
+                    clause.get_by_role("radio", name="适用", exact=True).check()
+                    clause.get_by_role("checkbox", name="1 已核对条款与出处", exact=True).check()
+                    page.get_by_role("button", name="确认本次要求", exact=True).click()
+                    page.get_by_role("button", name="开始审核", exact=True).click()
+                error = "暂时无法连接服务，请重新读取。" if first_read == "connectionreset" else "服务器响应读取失败，请稍后重试。"
+                expect(page.get_by_text(error, exact=True)).to_be_visible()
+                expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="重试原请求", exact=True)).to_have_count(0)
+                if entry == "submit":
+                    deadline = time.monotonic() + 10
+                    while not pending_reads:
+                        self.assertLess(time.monotonic(), deadline, "The automatic poll did not reach its route handler")
+                        page.wait_for_timeout(10)
+                    expect(page.get_by_text(error, exact=True)).to_be_visible()
+                with page.expect_request(lambda request: request.method == "GET" and request.url.endswith("/api/rounds/" + JOB)) as recovery:
+                    page.get_by_role("button", name="重新读取", exact=True).click()
+                deadline = time.monotonic() + 5
+                while recovery.value not in pending_reads:
+                    self.assertLess(time.monotonic(), deadline, "The recovery request did not reach its route handler")
+                    page.wait_for_timeout(10)
+                release_reads = True
+                pending_reads.pop(recovery.value).fulfill(json={**accepted, "execution": "completed"})
+                expect(page.get_by_text(error, exact=True)).to_have_count(0)
+                if entry == "submit":
+                    expect(page.get_by_role("heading", name="未获得逐项检查结果", exact=True)).to_be_visible()
+                    page.get_by_role("button", name="本轮资料与依据", exact=True).click()
+                    expect(page.get_by_role("table", name="审核资料", exact=True)).to_contain_text("control-plan.xlsx")
+                else:
+                    expect(page.get_by_role("heading", name="人工复核", exact=True)).to_be_visible()
+                    expect(page.get_by_role("link", name="下载原件", exact=True)).to_have_attribute("href", WEB + f"/api/rounds/{JOB}/files/{SOURCE}/versions/{VERSION}/download")
+                self.assertEqual(len(posts), 1 if entry == "submit" else 0)
+                self.assertGreaterEqual(len(reads), 2)
+                self.assertEqual(set(reads), {("GET", JOB)})
                 browser.close()
 
     def route(self, page, *, status="succeeded", hold=False, publish_status=201):
