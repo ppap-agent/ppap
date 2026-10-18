@@ -42,7 +42,7 @@ Capture(r, state) ==
 
 Deliver(packet) ==
     /\ packet \in packets /\ packets' = packets \ {packet}
-    /\ LET eligible == ~manual /\ applied = 0
+    /\ LET eligible == (~manual \/ (Fault = "late_result" /\ packet.state = "succeeded")) /\ applied = 0
            accepts == eligible /\ (packet.id = current \/ Fault = "late_result")
        IN /\ observation' = IF accepts THEN packet ELSE observation
           /\ applied' = IF accepts /\ packet.state = "succeeded"

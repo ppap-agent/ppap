@@ -580,8 +580,9 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
             page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
-            source, posts, reads, delayed = {}, [], [], []
+            source, posts, reads, delayed, delayed_posts, writes = {}, [], [], [], [], []
             hold_original = False
+            page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path.removeprefix("/api"))) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
 
             def create_file(route):
                 value = route.request.post_data_json
@@ -611,12 +612,19 @@ class RuleInteractionTests(unittest.TestCase):
                 }
 
             def parse(route):
+                self.assertEqual(route.request.method, "POST")
                 posts.append(route.request.post_data_json)
-                route.fulfill(status=202, json=job(posts[-1]["request_id"]))
+                if len(posts) == 2:
+                    delayed_posts.append(route)
+                else:
+                    route.fulfill(status=202, json=job(posts[-1]["request_id"]))
 
             def read(route):
                 identity = route.request.url.rsplit("/", 1)[1]
-                reads.append(identity)
+                reads.append((route.request.method, identity))
+                if route.request.method != "GET":
+                    route.fulfill(status=405, json={"error": "read_only_recovery_required"})
+                    return
                 if hold_original and identity == posts[0]["request_id"]:
                     delayed.append(route)
                 else:
@@ -635,18 +643,22 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_role("status").filter(has_text="正在提取条款")).to_have_count(0)
             self.assertEqual(len(posts), 1)
             original = posts[0]["request_id"]
+            writes.clear()
             page.reload()
             expect(unknown).to_be_visible()
             self.assertEqual(len(posts), 1)
+            self.assertEqual(writes, [])
             with page.expect_request("**/api/rules/parse/" + original):
                 page.get_by_role("button", name="核对原提取请求", exact=True).click()
             expect(unknown).to_be_visible()
             self.assertEqual(len(posts), 1)
+            self.assertEqual(writes, [])
             page.get_by_role("button", name="重新提取条款", exact=True).click()
             confirmation = page.get_by_role("dialog", name="重新提取条款？", exact=True)
             expect(confirmation).to_contain_text("再次消耗模型费用")
             confirmation.get_by_role("button", name="取消", exact=True).click()
             self.assertEqual(len(posts), 1)
+            self.assertEqual(writes, [])
             hold_original = True
             with page.expect_request("**/api/rules/parse/" + original):
                 page.get_by_role("button", name="刷新提取状态", exact=True).click()
@@ -665,7 +677,22 @@ class RuleInteractionTests(unittest.TestCase):
             expect(unknown).to_be_visible()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("待核对要求")
             expect(page.get_by_role("region", name="要求条款", exact=True).get_by_role("article")).to_have_count(0)
-            self.assertIn(original, reads)
+            self.assertIn(("GET", original), reads)
+            self.assertTrue(all(method == "GET" for method, _identity in reads))
+            self.assertEqual(len(delayed_posts), 1)
+            page.get_by_role("button", name="录入条款", exact=True).click()
+            manual = page.get_by_role("textbox", name="要执行的要求", exact=True)
+            manual.fill("人工核对的要求，不能被迟到提取覆盖")
+            with page.expect_response("**/api/rules/parse") as response:
+                delayed_posts[0].fulfill(status=202, json=job(posts[1]["request_id"], "succeeded"))
+            response.value.finished()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(manual).to_have_value("人工核对的要求，不能被迟到提取覆盖")
+            expect(page.get_by_role("region", name="要求条款", exact=True).get_by_role("article")).to_have_count(1)
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("待核对要求")
+            self.assertEqual(len(posts), 2)
+            self.assertTrue(all(method == "GET" for method, _identity in reads))
+            self.assertEqual(writes, [("POST", "/rules/parse")])
             browser.close()
 
     def test_failed_task_can_be_retried_with_selected_type_without_changing_original(self):
