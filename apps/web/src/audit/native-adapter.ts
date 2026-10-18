@@ -49,6 +49,8 @@ export const nativeTemplateAdapter: AuditTemplateAdapter = {
 
 export const nativeFeedbackAdapter: AuditFeedbackAdapter = {
   ...nativeUploads,
+  submit: (input, attemptId) => request(`/audit-template-feedback/${encodeURIComponent(input.request_id)}/attempts/${encodeURIComponent(attemptId)}`, 'POST', input),
+  read: (input, attemptId) => request(`/audit-template-feedback/${encodeURIComponent(input.request_id)}/attempts/${encodeURIComponent(attemptId)}`),
   upload(input, requestId) {
     const reason = input.kind !== 'local' ? '请使用本地模板附件。' : feedbackUploadError(input.file)
     return reason ? Promise.resolve({request_id: requestId, state: 'failed', file: null, reason, retry_allowed: false}) : nativeUploads.upload(input, requestId)

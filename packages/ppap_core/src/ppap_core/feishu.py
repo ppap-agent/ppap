@@ -247,4 +247,5 @@ def user_info(http, user_access_token: str) -> dict[str, str]:
         "tenant_key": tenant_key,
         "subject": subject,
         "display_name": str(data.get("name") or ""),
+        **{key: data[key].strip() for key in ("mobile", "email", "enterprise_email") if isinstance(data.get(key), str)},
     }

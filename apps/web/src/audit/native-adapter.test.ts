@@ -23,6 +23,21 @@ test('completion notification settings use the private revisioned API and never 
   assert.deepEqual(calls, [{url: '/audit-tasks/task-a/notification', method: 'GET', body: null}, {url: '/audit-tasks/task-a/notification', method: 'PUT', body: {enabled: false, expected_revision: 2}}])
 })
 
+test('native feedback submits frozen versions and reads the same attempt without a second submission', async () => {
+  const request = {request_id: 'original-request', file_version_ids: ['v1', 'v2']}
+  const receipt = {request, attempt_id: 'original-attempt', state: 'unknown', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: false, reason: null}
+  const calls: string[] = []
+  globalThis.fetch = async (input, init) => {
+    assert.equal(init?.credentials, 'include')
+    calls.push(`${init?.method} ${input}`)
+    if (init?.method === 'POST') assert.deepEqual(JSON.parse(String(init.body)), request)
+    return json(receipt)
+  }
+  assert.deepEqual(await nativeFeedbackAdapter.submit!(request, 'original-attempt'), receipt)
+  assert.deepEqual(await nativeFeedbackAdapter.read!(request, 'original-attempt'), receipt)
+  assert.deepEqual(calls, ['POST /audit-template-feedback/original-request/attempts/original-attempt', 'GET /audit-template-feedback/original-request/attempts/original-attempt'])
+})
+
 test('native usage reads the enterprise projection with filters and never reports a charge', async () => {
   const calls: string[] = []
   const page = {organization_id: 'tenant-a', entries: []}
@@ -162,8 +177,8 @@ test('native feedback keeps a local attachment request and does not claim an ope
   const attachment = await adapter.readAttachment(received)
   assert.equal(attachment.file_version_id, id)
   assert.equal(await attachment.blob.text(), 'abc')
-  assert.equal(adapter.submit, undefined)
-  assert.equal(adapter.read, undefined)
+  assert.equal(typeof adapter.submit, 'function')
+  assert.equal(typeof adapter.read, 'function')
   assert.deepEqual(calls, ['POST /files', `PUT /files/feedback-file/versions/${id}/blob`, `GET /file-uploads/${id}`, `GET /files/feedback-file/versions/${id}`, `GET /files/feedback-file/versions/${id}/download`])
 })
 

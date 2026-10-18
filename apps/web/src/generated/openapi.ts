@@ -329,6 +329,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-template-feedback/{request_id}/attempts/{attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Feedback */
+        get: operations["read_feedback_audit_template_feedback__request_id__attempts__attempt_id__get"];
+        put?: never;
+        /** Submit Feedback */
+        post: operations["submit_feedback_audit_template_feedback__request_id__attempts__attempt_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-usage": {
         parameters: {
             query?: never;
@@ -4158,6 +4176,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTemplateCatalog"];
+                };
+            };
+        };
+    };
+    read_feedback_audit_template_feedback__request_id__attempts__attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attempt_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateFeedbackReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_feedback_audit_template_feedback__request_id__attempts__attempt_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attempt_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditTemplateFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateFeedbackReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

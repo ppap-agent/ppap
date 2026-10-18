@@ -224,7 +224,11 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "received", "rejected", "failed", "unknown"])
         for field in ("request", "attempt_id", "submission_id", "received_file_version_ids", "received_at", "retry_allowed"):
             self.assertIn(field, receipt["required"])
-        self.assertEqual(receipt["x-contract-stage"], "ui-draft")
+        self.assertNotIn("x-contract-stage", receipt)
+        path = spec["paths"]["/audit-template-feedback/{request_id}/attempts/{attempt_id}"]
+        self.assertEqual(path["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplateFeedbackRequest")
+        for method in ("post", "get"):
+            self.assertEqual(path[method]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplateFeedbackReceipt")
         self.assertNotIn("/template-feedback", spec["paths"])
 
     def test_ui_templates_keep_versions_coverage_and_support_outside_audit_rules(self):
