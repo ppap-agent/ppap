@@ -39,7 +39,7 @@ self.addEventListener('fetch', event => {
 
   // API calls, uploads, runtime configuration, and third-party resources must always remain network-only.
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || isJsonRequest(request, url)) return
-  if (['/audit', '/audit/', '/audit.html', '/__audit-native'].includes(url.pathname)) return
+  if (['/audit', '/audit/', '/audit.html', '/__audit-native', '/enter-current', '/enter-legacy'].includes(url.pathname)) return
 
   if (isStaticAsset(request, url)) {
     event.respondWith(
@@ -58,7 +58,7 @@ self.addEventListener('fetch', event => {
     event.respondWith(
       fetch(new Request(request, {cache: 'no-cache'}))
         .then(async response => {
-          if (response.ok && response.type === 'basic' && !response.headers.has('set-cookie')) {
+          if (response.ok && response.type === 'basic' && !response.redirected && !response.headers.has('set-cookie')) {
             const cache = await caches.open(SHELL_CACHE)
             await cache.put('/', response.clone())
           }
