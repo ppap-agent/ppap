@@ -169,6 +169,28 @@ def test_manifest_fallback_still_resolves_existing_dataset_name(tmp_path: Path) 
     assert cases[0].file_path == asset.resolve()
 
 
+@pytest.mark.parametrize("local_present", [True, False])
+def test_manifest_cannot_read_another_workspaces_asset(tmp_path: Path, local_present: bool) -> None:
+    dataset = tmp_path / "selected-dataset"
+    dataset.mkdir()
+    local = dataset / "1-sample.xlsx"
+    foreign = tmp_path / "other-workspace.xlsx"
+    foreign.write_bytes(b"foreign corpus data")
+    if local_present:
+        local.write_bytes(b"selected corpus data")
+    oracle = tmp_path / "oracle.csv"
+    _write_long_feedback(oracle, [("1-sample.xlsx", "Excel", "1")])
+    manifest = dataset / "manifest.json"
+    _write_manifest(manifest, [{"file_name": "1-sample.xlsx", "file_format": "Excel", "local_path": str(foreign)}])
+
+    if local_present:
+        cases = build_cases_from_long_feedback(dataset_root=dataset, expected_csv=oracle, ftype_filter="excel", manifest_path=manifest)
+        assert cases[0].file_path == local.resolve()
+    else:
+        with pytest.raises(AssertionError, match="V2 oracle assets missing"):
+            build_cases_from_long_feedback(dataset_root=dataset, expected_csv=oracle, ftype_filter="excel", manifest_path=manifest)
+
+
 def test_complete_v2_oracle_assets_build_cases(tmp_path: Path) -> None:
     first = tmp_path / "1-first.xlsx"
     second = tmp_path / "1-second.xlsx"

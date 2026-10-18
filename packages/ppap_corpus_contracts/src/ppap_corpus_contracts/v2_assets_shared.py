@@ -422,7 +422,7 @@ def _parse_feedback_doc_key(*, file_type: str, file_name: str) -> DocKey | None:
     return parse_doc_key(file_name)
 
 
-def _load_manifest_path_index(manifest_path: Path) -> dict[tuple[str, str], tuple[Path, ...]]:
+def _load_manifest_path_index(manifest_path: Path, dataset_root: Path) -> dict[tuple[str, str], tuple[Path, ...]]:
     if not manifest_path.exists():
         return {}
 
@@ -438,6 +438,8 @@ def _load_manifest_path_index(manifest_path: Path) -> dict[tuple[str, str], tupl
         if not file_name or not local_path_raw:
             continue
         local_path = Path(local_path_raw).expanduser().resolve()
+        if not local_path.is_relative_to(dataset_root):
+            continue
         bucket = collected.setdefault((file_name, file_format), [])
         if local_path not in bucket:
             bucket.append(local_path)
@@ -598,7 +600,7 @@ def build_cases_from_long_feedback(
     resolved = reconcile_v2_oracle_assets(
         selected,
         dataset_files=index_dataset_files(dataset_root),
-        manifest_paths=(_load_manifest_path_index(manifest_path.expanduser().resolve()) if manifest_path else {}),
+        manifest_paths=(_load_manifest_path_index(manifest_path.expanduser().resolve(), dataset_root) if manifest_path else {}),
     )
     return [
         FileCase(
