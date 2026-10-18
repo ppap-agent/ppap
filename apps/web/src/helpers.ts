@@ -53,13 +53,22 @@ export function parseWorkspacePosition(raw: string | null): WorkspacePosition | 
   }
 }
 
-export const analysisNotices: Record<string, string> = {
-  empty_document_text: '未提取到文字，将主要按文件名匹配。',
-  document_text_unavailable: '文字提取失败，请核对文件类型与规则。',
-  metadata_uses_excerpt: '业务信息基于文字摘录识别；审核仍读取完整文件。',
+const analysisNotices: Record<string, string | null> = {
+  empty_document_text: '未读取到文件文字，请核对原件后重新识别。',
+  document_text_unavailable: '无法读取文件文字，请核对原件后重新识别。',
+  metadata_uses_excerpt: null,
   metadata_extraction_failed: '业务信息识别失败，请人工核对。',
-  rule_matching_failed: '自动匹配失败，请手动选择规则。',
-  no_available_rules: '暂无可匹配的规则，请先上传规则。',
+  document_classification_failed: '无法确定文件类型，请核对原件后重新识别。',
+  rule_matching_failed: '自动匹配失败，请返回检查文件后重新识别。',
+  no_available_rules: '暂无可用规则，请查看标准模板或反馈对应模板。',
+  ambiguous_available_rules: '有多份生效规则符合条件，暂时无法确定审核依据。请联系支持核对规则。',
+  matching_snapshot_invalid: '匹配依据不完整，请返回检查文件后重新识别。',
+  matching_result_unknown: '尚未取得完整匹配结果，请读取识别结果。',
+}
+
+export function analysisNotice(notice: string): string | null {
+  if (Object.hasOwn(analysisNotices, notice)) return analysisNotices[notice]
+  return /\p{Script=Han}/u.test(notice) ? notice : '识别信息需要核对，请读取识别结果；若仍有异常，请联系支持。'
 }
 
 export const reviewJudgments = ['认可机器判断', '有异议', '待确认'] as const

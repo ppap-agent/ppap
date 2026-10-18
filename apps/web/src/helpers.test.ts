@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {Finding, Rule, SemanticSource} from './api.ts'
 import {
+  analysisNotice,
   findingShortTitle,
   latestRules,
   matchesFilter,
@@ -10,6 +11,15 @@ import {
   sourceLocation,
   workspaceStorageKey,
 } from './helpers.ts'
+
+test('recognition notices hide internal excerpt details without hiding actionable failures', () => {
+  assert.equal(analysisNotice('metadata_uses_excerpt'), null)
+  assert.equal(analysisNotice('ambiguous_available_rules'), '有多份生效规则符合条件，暂时无法确定审核依据。请联系支持核对规则。')
+  assert.equal(analysisNotice('matching_result_unknown'), '尚未取得完整匹配结果，请读取识别结果。')
+  assert.equal(analysisNotice('future_notice_code'), '识别信息需要核对，请读取识别结果；若仍有异常，请联系支持。')
+  for (const code of ['MATCH_TIMEOUT', 'matching-timeout', 'matching.timeout']) assert.equal(analysisNotice(code), '识别信息需要核对，请读取识别结果；若仍有异常，请联系支持。')
+  assert.equal(analysisNotice('未选择控制计划，频次一致性缺少跨文件比对资料。'), '未选择控制计划，频次一致性缺少跨文件比对资料。')
+})
 
 const round = '00000000-0000-4000-8000-000000000001'
 
