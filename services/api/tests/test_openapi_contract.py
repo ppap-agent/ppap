@@ -169,10 +169,12 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertNotIn("part_number", metadata["required"])
         self.assertIn("part_number", metadata["properties"])
 
-    def test_ui_usage_is_a_read_projection_per_file_audit_not_a_pool_allocation(self):
-        schemas = app.openapi()["components"]["schemas"]
+    def test_usage_is_a_read_projection_per_file_audit_not_a_pool_allocation(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
         page = schemas["AuditUsagePage"]
-        self.assertEqual(page["x-contract-stage"], "ui-draft")
+        response = spec["paths"]["/audit-usage"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        self.assertEqual(response["$ref"], "#/components/schemas/AuditUsagePage")
         self.assertEqual(set(page["required"]), {"organization_id", "organization_name", "query", "summary", "entries", "total", "from_date", "through_date", "notices"})
         entry = schemas["AuditUsageEntry"]["properties"]
         for field in ("usage_id", "reference", "document_id", "audit_access", "orders", "allocation", "settlement", "initiator", "occurred_at"):
@@ -259,8 +261,9 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(set(image["responses"]["200"]["content"]), {"image/png", "image/jpeg", "image/webp"})
         self.assertEqual(TestClient(app).get("/support").status_code, 401)
 
-    def test_ui_archive_separates_provider_document_history_and_access_boundaries(self):
-        schemas = app.openapi()["components"]["schemas"]
+    def test_archive_separates_provider_document_history_and_access_boundaries(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
         reference = schemas["AuditResultReference"]
         self.assertEqual(set(reference["required"]), {"task_id", "round_id", "file_version_id", "result_attempt"})
         document = schemas["AuditArchiveDocument"]["properties"]
@@ -274,7 +277,8 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("source_task_access", detail)
         self.assertIn("report_access", detail)
         self.assertEqual(schemas["AuditArchiveQuery"]["properties"]["page_size"]["const"], 10)
-        self.assertEqual(schemas["AuditHistoryDetail"]["x-contract-stage"], "ui-draft")
+        response = spec["paths"]["/audit-archive/{document_id}/history/result"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        self.assertEqual(response["$ref"], "#/components/schemas/AuditHistoryDetail")
 
     def test_ui_share_uses_organization_targets_and_per_target_recovery(self):
         schemas = app.openapi()["components"]["schemas"]
