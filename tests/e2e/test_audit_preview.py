@@ -6,6 +6,7 @@ The production browser suite remains separate and unchanged.
 
 import os
 import re
+import time
 import unittest
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -3556,6 +3557,13 @@ class AuditPreviewTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+            page.add_init_script("""if (navigator.clipboard) {
+                const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+                navigator.clipboard.writeText = async value => {
+                    await new Promise(resolve => setTimeout(resolve, 250));
+                    return write(value);
+                };
+            }""")
             page.goto(PREVIEW + "/__preview?page=audit&scene=confirm-traced")
             preview = page.frame_locator("iframe")
             preview.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -3570,11 +3578,16 @@ class AuditPreviewTests(unittest.TestCase):
             expect(support.get_by_label("服务请求编号", exact=True)).to_have_value("preview-confirm-service-170")
             expect(support.get_by_label("页面参考编号", exact=True)).to_have_value(re.compile(r"^client-"))
             support.get_by_role("button", name="复制操作信息", exact=True).click()
+            expect(support.get_by_text("已复制。", exact=True)).to_be_visible()
             before = page.evaluate("navigator.clipboard.readText()")
             self.assertIn(request_id, before)
             self.assertIn("服务请求编号：preview-confirm-service-170", before)
             page.get_by_role("button", name="返回一次示例读取", exact=True).click()
+            page.evaluate("navigator.clipboard.writeText('not-the-operation')")
             support.get_by_role("button", name="复制操作信息", exact=True).click()
+            deadline = time.monotonic() + 5
+            while page.evaluate("navigator.clipboard.readText()") != before and time.monotonic() < deadline:
+                page.wait_for_timeout(20)
             self.assertEqual(page.evaluate("navigator.clipboard.readText()"), before)
             support.get_by_role("button", name="关闭", exact=True).click()
             expect(preview.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
@@ -3582,6 +3595,7 @@ class AuditPreviewTests(unittest.TestCase):
             preview.get_by_role("button", name="联系我们", exact=True).click()
             expect(support.get_by_label("服务请求编号", exact=True)).to_have_count(0)
             support.get_by_role("button", name="复制场景与编号", exact=True).click()
+            expect(support.get_by_text("已复制。", exact=True)).to_be_visible()
             self.assertNotIn("preview-confirm-service-170", page.evaluate("navigator.clipboard.readText()"))
             browser.close()
 

@@ -9,6 +9,8 @@ const preview = process.env.PPAP_PREVIEW === '1'
 
 export default defineConfig({
   cacheDir: preview ? 'node_modules/.vite-preview' : 'node_modules/.vite',
+  // The workbook worker is loaded on demand; discover its dependencies before opening a reader.
+  optimizeDeps: {include: ['xlsx', 'xlsx/dist/cpexcel.full.mjs']},
   plugins: [
     react(),
     tailwindcss(),
