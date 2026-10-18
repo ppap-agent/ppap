@@ -1596,6 +1596,323 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(accepted.status_code, 202)
         return task, worker, completed, command, accepted.json()
 
+    def test_report_share_freezes_reports_and_keeps_recipient_task_and_original_private(self):
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        import httpx
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_application import build_product_store
+        from ppap_core.feishu import UserTokens
+        from ppap_core.identity import SESSION_COOKIE
+
+        task, _worker, completed, package_command, _ = self.prepared_report_package(accept=False)
+        self.settings.feishu_app_id, self.settings.feishu_app_secret = self.alice.app_id, "test-secret"
+        self.store.save_app_ticket(self.alice.app_id, "test-ticket")
+        bob = self.store.principal_for_fixture("bob")
+        active = [self.alice]
+        sent = []
+
+        def provider(request):
+            path = request.url.path
+            if path.endswith("user_info"):
+                return httpx.Response(200, json={"code": 0, "data": {"tenant_key": active[0].tenant_key, "open_id": active[0].subject, "name": "审核人"}})
+            if path.endswith("app_access_token"):
+                return httpx.Response(200, json={"code": 0, "app_access_token": "test-app-token"})
+            if path.endswith("tenant_access_token"):
+                return httpx.Response(200, json={"code": 0, "tenant_access_token": "test-tenant-token"})
+            if "/contact/v3/users/" in path:
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "data": {
+                            "user": {
+                                "open_id": path.rsplit("/", 1)[-1],
+                                "name": "组织成员",
+                                "status": {"is_activated": True, "is_resigned": False, "is_frozen": False, "is_exited": False, "is_unjoin": False},
+                            }
+                        },
+                    },
+                )
+            if path.endswith("/im/v1/messages"):
+                sent.append(json.loads(request.content))
+                return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_share"}})
+            raise AssertionError(path)
+
+        api = build_product_store(self.settings, objects=self.store.objects, role="api")
+        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(self.settings, auth_store=api, http=http)) as client:
+            client.cookies.set(SESSION_COOKIE, api.create_session(self.alice, UserTokens("test-user-token", "", expires, expires)))
+            command = {
+                "request_id": str(uuid.uuid4()),
+                "organization_id": self.alice.tenant_key,
+                "reports": package_command["reports"],
+                "targets": [{"id": bob.subject, "kind": "user"}],
+                "content": {"kind": "link", "artifact": None, "package_id": None},
+            }
+            path = "/audit-report-shares/" + command["request_id"]
+            response = client.post("/audit-report-shares", json=command)
+            self.assertEqual(response.status_code, 200, response.text)
+            receipt = response.json()
+            self.assertEqual(receipt["deliveries"][0]["state"], "sent")
+            self.assertEqual(client.post("/audit-report-shares", json=command).json(), receipt)
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(client.get("/audit-tasks/" + task["id"]).json()["report_share"], receipt)
+            attempts = [{"target": command["targets"][0], "attempt_id": command["request_id"]}]
+            self.assertEqual(client.get(path, params={"attempts": json.dumps(attempts)}).json(), receipt)
+            from urllib.parse import parse_qs, urlsplit
+
+            link = json.loads(sent[0]["content"])["zh_cn"]["content"][-1][0]["href"]
+            self.assertIn("share=" + command["request_id"], parse_qs(urlsplit(link).query)["return_to"][0])
+            active[0] = bob
+            client.cookies.set(SESSION_COOKIE, api.create_session(bob, UserTokens("test-bob-token", "", expires, expires)))
+            self.assertEqual(client.get(path).status_code, 403)
+            self.assertEqual(client.get("/audit-tasks/" + task["id"]).status_code, 403)
+            source_file = completed["files"][0]["file"]
+            self.assertEqual(client.get(f"/files/{source_file['file_id']}/versions/{source_file['id']}/download").status_code, 403)
+            shared = client.get(path + "/reports")
+            self.assertEqual(shared.status_code, 200, shared.text)
+            self.assertEqual([item["reference"] for item in shared.json()["reports"]], command["reports"])
+            first = shared.json()["reports"][0]
+            pdf = client.get(path + "/pdf", params={"report_id": first["reference"]["report_id"], "artifact_id": first["report"]["artifact"]["artifact_id"]})
+            self.assertEqual(pdf.status_code, 200)
+            self.assertTrue(pdf.content.startswith(b"%PDF-"))
+            self.assertEqual(client.get(path + "/pdf", params={"report_id": first["reference"]["report_id"], "artifact_id": "different"}).status_code, 403)
+            active[0] = self.store.principal_for_fixture("carol")
+            client.cookies.set(SESSION_COOKIE, api.create_session(active[0], UserTokens("test-carol-token", "", expires, expires)))
+            self.assertEqual(client.get(path + "/reports").status_code, 403)
+            client.cookies.clear()
+            self.assertEqual(client.get(path + "/reports").status_code, 401)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def prepared_share_transport(self, effect, *, file_mode=False):
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        import httpx
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_application import build_product_store
+        from ppap_core.feishu import UserTokens
+        from ppap_core.identity import SESSION_COOKIE
+
+        task, worker, completed, command, _ = self.prepared_report_package(accept=False)
+        self.settings.feishu_app_id, self.settings.feishu_app_secret = self.alice.app_id, "test-secret"
+        self.store.save_app_ticket(self.alice.app_id, "test-ticket")
+
+        def provider(request):
+            path = request.url.path
+            if path.endswith("user_info"):
+                return httpx.Response(200, json={"code": 0, "data": {"tenant_key": self.alice.tenant_key, "open_id": self.alice.subject, "name": "审核人"}})
+            if path.endswith("app_access_token"):
+                return httpx.Response(200, json={"code": 0, "app_access_token": "test-app-token"})
+            if path.endswith("tenant_access_token"):
+                self.assertEqual(json.loads(request.content)["tenant_key"], self.alice.tenant_key)
+                return httpx.Response(200, json={"code": 0, "tenant_access_token": "test-tenant-token"})
+            if "/contact/v3/users/" in path:
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "data": {
+                            "user": {
+                                "open_id": path.rsplit("/", 1)[-1],
+                                "name": "组织成员",
+                                "status": {"is_activated": True, "is_resigned": False, "is_frozen": False, "is_exited": False, "is_unjoin": False},
+                            }
+                        },
+                    },
+                )
+            return effect(request)
+
+        http = httpx.Client(transport=httpx.MockTransport(provider))
+        self.addCleanup(http.close)
+        api = build_product_store(self.settings, objects=self.store.objects, role="api")
+        client = TestClient(create_app(self.settings, auth_store=api, http=http))
+        self.addCleanup(client.close)
+        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        client.cookies.set(SESSION_COOKIE, api.create_session(self.alice, UserTokens("test-user-token", "", expires, expires)))
+        reports = command["reports"][:1] if file_mode else command["reports"]
+        content = {"kind": "pdf", "artifact": completed["files"][0]["audit"]["report"]["artifact"], "package_id": None} if file_mode else {"kind": "link", "artifact": None, "package_id": None}
+        share = {
+            "request_id": str(uuid.uuid4()),
+            "organization_id": self.alice.tenant_key,
+            "reports": reports,
+            "targets": [{"id": "ou_first", "kind": "user"}, {"id": "ou_second", "kind": "user"}],
+            "content": content,
+        }
+        return client, share, task, worker
+
+    def test_report_sharing_retries_only_a_definite_failure_and_never_replays_an_unknown_send(self):
+        import json
+
+        import httpx
+
+        calls = []
+        blocked, release = threading.Event(), threading.Event()
+        replies = {"ou_first": "sent", "ou_second": "failed"}
+
+        def effect(request):
+            self.assertTrue(request.url.path.endswith("/im/v1/messages"))
+            message = json.loads(request.content)
+            calls.append(message)
+            if replies[message["receive_id"]] == "failed":
+                return httpx.Response(400, json={"code": 230006})
+            if replies[message["receive_id"]] == "unknown":
+                blocked.set()
+                self.assertTrue(release.wait(timeout=10))
+                raise httpx.ReadTimeout("receipt_lost", request=request)
+            return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_" + message["receive_id"]}})
+
+        client, command, _task, worker = self.prepared_share_transport(effect)
+        path = "/audit-report-shares/" + command["request_id"]
+        first = client.post("/audit-report-shares", json=command)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual([item["state"] for item in first.json()["deliveries"]], ["sent", "failed"])
+        replies["ou_second"] = "sent"
+        retry = {"target": command["targets"][1], "attempt_id": str(uuid.uuid4())}
+        retried = client.post(path + "/retries", json=retry)
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertEqual([item["state"] for item in retried.json()["deliveries"]], ["sent", "sent"])
+        self.assertEqual([item["receive_id"] for item in calls], ["ou_first", "ou_second", "ou_second"])
+        self.assertEqual(client.post(path + "/retries", json=retry).json(), retried.json())
+        original = [{"target": target, "attempt_id": command["request_id"]} for target in command["targets"]]
+        observed = client.get(path, params={"attempts": json.dumps(original)})
+        self.assertEqual([item["state"] for item in observed.json()["deliveries"]], ["sent", "failed"])
+        self.assertFalse(observed.json()["deliveries"][1]["retry_allowed"])
+        self.assertEqual(len(calls), 3)
+        unknown = {**command, "request_id": str(uuid.uuid4())}
+        replies["ou_first"] = "unknown"
+        with ThreadPoolExecutor(1) as pool:
+            pending = pool.submit(client.post, "/audit-report-shares", json=unknown)
+            try:
+                self.assertTrue(blocked.wait(timeout=10))
+                live_path = "/audit-report-shares/" + unknown["request_id"]
+                concurrent = client.post("/audit-report-shares", json=unknown)
+                self.assertEqual(concurrent.status_code, 200)
+                self.assertEqual(concurrent.json()["deliveries"][0]["state"], "unknown")
+                self.assertEqual(client.get(live_path).json()["deliveries"][1]["state"], "pending")
+                self.assertEqual(client.post(live_path + "/retries", json={"target": unknown["targets"][0], "attempt_id": str(uuid.uuid4())}).status_code, 409)
+            finally:
+                release.set()
+            response = pending.result(timeout=10)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([item["state"] for item in response.json()["deliveries"]], ["unknown", "sent"])
+        self.assertEqual(client.post(live_path + "/retries", json={"target": unknown["targets"][0], "attempt_id": str(uuid.uuid4())}).status_code, 409)
+        self.assertEqual(client.get(live_path).json(), response.json())
+        self.assertEqual(client.post("/audit-report-shares", json=unknown).json(), response.json())
+        self.assertEqual(len(calls), 5)
+        self.assertIsNone(worker.claim_job("sharing-is-not-an-audit-job"))
+
+    def test_lost_share_preparation_guard_cannot_send_after_a_new_attempt_succeeds(self):
+        import json
+
+        import httpx
+        from ppap_core.db import connect
+
+        uploading, release = threading.Event(), threading.Event()
+        uploads, sends = [], []
+
+        def effect(request):
+            if request.url.path.endswith("/im/v1/files"):
+                uploads.append(request.content)
+                if len(uploads) == 1:
+                    uploading.set()
+                    self.assertTrue(release.wait(timeout=10))
+                return httpx.Response(200, json={"code": 0, "data": {"file_key": "file_" + str(len(uploads))}})
+            self.assertTrue(request.url.path.endswith("/im/v1/messages"))
+            sends.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_recovered"}})
+
+        client, command, _task, _worker = self.prepared_share_transport(effect, file_mode=True)
+        command["targets"] = command["targets"][:1]
+        path = "/audit-report-shares/" + command["request_id"]
+        with ThreadPoolExecutor(1) as pool:
+            pending = pool.submit(client.post, "/audit-report-shares", json=command)
+            try:
+                self.assertTrue(uploading.wait(timeout=10))
+                with connect(self.settings, "api") as conn:
+                    pids = conn.execute(
+                        "SELECT DISTINCT pid FROM pg_locks WHERE database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND locktype = 'advisory' AND granted"
+                    ).fetchall()
+                    self.assertEqual(len(pids), 1)
+                    self.assertTrue(conn.execute("SELECT pg_terminate_backend(%s)", (pids[0][0],)).fetchone()[0])
+                interrupted = client.get(path)
+                self.assertEqual(interrupted.status_code, 200, interrupted.text)
+                self.assertEqual(interrupted.json()["deliveries"][0]["state"], "failed")
+                retry = {"target": command["targets"][0], "attempt_id": str(uuid.uuid4())}
+                recovered = client.post(path + "/retries", json=retry)
+                self.assertEqual(recovered.status_code, 200, recovered.text)
+                self.assertEqual(recovered.json()["deliveries"][0]["state"], "sent")
+            finally:
+                release.set()
+            with self.assertRaises(Exception):
+                pending.result(timeout=10)
+        self.assertEqual(len(sends), 1)
+        self.assertEqual(sends[0]["uuid"], retry["attempt_id"])
+        self.assertEqual(client.get(path).json(), recovered.json())
+        self.assertEqual(len(uploads), 2)
+
+    def test_pdf_and_zip_shares_upload_only_the_selected_frozen_report_artifact(self):
+        import json
+        from email.parser import BytesParser
+        from email.policy import default
+
+        import httpx
+        from ppap_worker import process_claimed
+
+        uploads, sends = [], []
+
+        def effect(request):
+            if request.url.path.endswith("/im/v1/files"):
+                message = BytesParser(policy=default).parsebytes(b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n" + request.content)
+                parts = {part.get_param("name", header="content-disposition"): part for part in message.iter_parts()}
+                uploads.append(
+                    {
+                        "kind": parts["file_type"].get_payload(decode=True).decode("utf-8"),
+                        "name": parts["file_name"].get_payload(decode=True).decode("utf-8"),
+                        "body": parts["file"].get_payload(decode=True),
+                    }
+                )
+                return httpx.Response(200, json={"code": 0, "data": {"file_key": "file_" + str(len(uploads))}})
+            sends.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_file"}})
+
+        client, command, task, worker = self.prepared_share_transport(effect, file_mode=True)
+        ref = command["reports"][0]
+        expected = client.get(f"/audit-tasks/{ref['task_id']}/reports/{ref['report_id']}/pdf", params={**ref, "artifact_id": command["content"]["artifact"]["artifact_id"]})
+        self.assertEqual(expected.status_code, 200, expected.text)
+        response = client.post("/audit-report-shares", json=command)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([row["state"] for row in response.json()["deliveries"]], ["sent", "sent"])
+        self.assertEqual(uploads, [{"kind": "pdf", "name": command["content"]["artifact"]["filename"], "body": expected.content}])
+        self.assertEqual([json.loads(item["content"]) for item in sends], [{"file_key": "file_1"}, {"file_key": "file_1"}])
+        current = client.get("/audit-tasks/" + task["id"]).json()
+        references = [
+            {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": row["file"]["id"], "result_attempt": 1, "report_id": row["audit"]["report"]["report_id"]}
+            for row in current["files"]
+        ]
+        package_id = str(uuid.uuid4())
+        package = client.post("/audit-report-packages", json={"request_id": package_id, "reports": references})
+        self.assertEqual(package.status_code, 202, package.text)
+        process_claimed(worker, worker.claim_job("sharing-zip"), "sharing-zip")
+        ready = client.get("/audit-report-packages/" + package_id).json()
+        artifact = ready["artifact"]
+        expected_zip = client.get("/audit-report-packages/" + package_id + "/zip", params={"package_id": ready["package_id"], "artifact_id": artifact["artifact_id"]})
+        zipped = {**command, "request_id": str(uuid.uuid4()), "reports": references, "content": {"kind": "zip", "artifact": artifact, "package_id": ready["package_id"]}}
+        zipped_response = client.post("/audit-report-shares", json=zipped)
+        self.assertEqual(zipped_response.status_code, 200, zipped_response.text)
+        self.assertEqual([row["state"] for row in zipped_response.json()["deliveries"]], ["sent", "sent"])
+        self.assertEqual(uploads[1], {"kind": "stream", "name": artifact["filename"], "body": expected_zip.content})
+        shared_zip = client.get("/audit-report-shares/" + zipped["request_id"] + "/zip", params={"artifact_id": artifact["artifact_id"]})
+        self.assertEqual(shared_zip.content, expected_zip.content)
+        invalid = {**command, "request_id": str(uuid.uuid4()), "reports": references}
+        self.assertEqual(client.post("/audit-report-shares", json=invalid).status_code, 409)
+        self.assertEqual((len(uploads), len(sends)), (2, 4))
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
     def test_report_zip_is_persistent_and_contains_the_exact_ready_pdfs_without_another_audit(self):
         from io import BytesIO
         from zipfile import ZipFile

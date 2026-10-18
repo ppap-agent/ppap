@@ -85,6 +85,7 @@ from ppap_api.notifications import run_task_notifications
 from ppap_api.office_routes import register_office_routes
 from ppap_api.report_routes import register_report_routes
 from ppap_api.rule_routes import register_rule_routes
+from ppap_api.sharing_routes import register_sharing_routes
 from ppap_api.support_routes import register_support_routes
 from ppap_api.template_routes import register_template_routes
 
@@ -885,6 +886,7 @@ def create_app(
     register_rule_routes(app, store, principal_of)
     register_support_routes(app, principal_of, settings)
     register_feedback_routes(app, store, session_of, http, settings)
+    register_sharing_routes(app, store, session_of, http, settings)
     register_template_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)
     return app

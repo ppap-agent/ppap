@@ -9,6 +9,26 @@ import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contrac
 import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
+import type {AuditSharingAdapter} from './sharing-contract'
+
+export const nativeSharingAdapter: AuditSharingAdapter = {
+  listTargets: (query, kind, pageToken) => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`),
+  async send(input) {
+    try {return await request('/audit-report-shares', 'POST', input)}
+    catch (failure) {
+      const error = failure as {status?: number; code?: string}
+      if (![400, 401, 403, 409, 422].includes(error.status || 0) || error.code === 'share_request_pending') throw failure
+      const reason = error.code === 'share_file_too_large' ? '文件超过飞书消息的 30 MB 上限，请选择链接方式。' : error.code === 'share_target_unverified' ? '接收对象的组织或可用状态尚未核实，请重新选择。' : '分享未受理，请核对登录、报告及接收范围。'
+      return {request: input, receipt: {request_id: input.request_id, state: 'rejected', reason}, deliveries: input.targets.map(target => ({target: {...target, display_name: target.id, organization_id: input.organization_id, eligibility: 'unknown', reason}, attempt_id: input.request_id, state: 'failed', reason, retry_allowed: false}))}
+    }
+  },
+  read: input => request(`/audit-report-shares/${encodeURIComponent(input.request_id)}?${new URLSearchParams({attempts: JSON.stringify(input.attempts)})}`),
+  retryFailed: (requestId, target, attemptId) => request(`/audit-report-shares/${encodeURIComponent(requestId)}/retries`, 'POST', {target, attempt_id: attemptId}),
+}
+
+export function sharedReportAdapter(requestId: string): AuditReportAdapter {
+  return {readPdf: (reference, artifact) => readFrozenBlob(`/audit-report-shares/${encodeURIComponent(requestId)}/pdf?${new URLSearchParams({report_id: reference.report_id, artifact_id: artifact.artifact_id})}`, artifact, '报告')}
+}
 
 export const nativeUsageAdapter: AuditUsageAdapter = {
   readUsage: query => request(`/audit-usage?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
@@ -43,15 +63,15 @@ const nativeUploads: UploadAdapter = {
   readUpload: readLocalUpload,
 }
 
-async function readTemplateBlob(path: string, expected: Pick<components['schemas']['FileVersion'], 'byte_size' | 'content_type'> & Partial<Pick<components['schemas']['FileVersion'], 'sha256'>>) {
+async function readFrozenBlob(path: string, expected: Pick<components['schemas']['FileVersion'], 'byte_size' | 'content_type'> & Partial<Pick<components['schemas']['FileVersion'], 'sha256'>>, label = '模板') {
   const response = await fetch(`${apiUrl}${path}`, {method: 'GET', credentials: 'include'})
   if (!response.ok) {
     if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-    throw withResponseTrace(new Error('模板暂时无法读取，请核对飞书访问权限。'), response)
+    throw withResponseTrace(new Error(`${label}暂时无法读取，请核对飞书访问权限。`), response)
   }
   const blob = await response.blob()
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
-  if (blob.size !== expected.byte_size || blob.type !== expected.content_type || response.headers.get('X-Content-SHA256') !== digest || expected.sha256 !== undefined && expected.sha256 !== digest) throw new Error('模板内容与所选版本不同，请重新读取。')
+  if (blob.size !== expected.byte_size || blob.type !== expected.content_type || response.headers.get('X-Content-SHA256') !== digest || expected.sha256 !== undefined && expected.sha256 !== digest) throw new Error(`${label}内容与所选版本不同，请重新读取。`)
   return blob
 }
 
@@ -62,14 +82,14 @@ export const nativeTemplateAdapter: AuditTemplateAdapter = {
     const reference = item.reference
     if (!item.file.sha256 || reference.file_version_id !== item.file.id) throw new Error('模板版本尚未就绪。')
     const params = new URLSearchParams({customer_id: reference.customer_id, purpose})
-    const blob = await readTemplateBlob(`/audit-templates/${encodeURIComponent(reference.template_id)}/versions/${encodeURIComponent(reference.file_version_id)}?${params}`, item.file)
+    const blob = await readFrozenBlob(`/audit-templates/${encodeURIComponent(reference.template_id)}/versions/${encodeURIComponent(reference.file_version_id)}?${params}`, item.file)
     return {reference, blob}
   },
   async readZip(folder) {
     const params = new URLSearchParams(Object.entries(folder).map(([key, value]) => [key, String(value)]))
     const snapshot = await request<components['schemas']['AuditTemplateZip']>(`/audit-template-packages?${params}`)
     if (snapshot.customer_id !== folder.customer_id || snapshot.folder_id !== folder.folder_id || snapshot.folder_revision !== folder.folder_revision || snapshot.templates.length !== folder.folder_template_count || !snapshot.complete || snapshot.access.state !== 'allowed') throw new Error('模板清单已变化，请重新读取。')
-    const blob = await readTemplateBlob(`/audit-template-packages/download?${params}`, {content_type: 'application/zip', byte_size: snapshot.byte_size})
+    const blob = await readFrozenBlob(`/audit-template-packages/download?${params}`, {content_type: 'application/zip', byte_size: snapshot.byte_size})
     return {snapshot, blob}
   },
 }

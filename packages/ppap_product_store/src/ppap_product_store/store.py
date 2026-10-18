@@ -1749,6 +1749,11 @@ class AuthStore:
             if package:
                 task["report_package"] = self._report_package_public(conn, principal, task, str(package[0]), package[1])
                 task["updated_at"] = max(datetime.fromisoformat(task["updated_at"]), package[2]).isoformat()
+            from ppap_product_store.report_sharing import ReportShareStore
+
+            share = ReportShareStore(self).latest_for_task(conn, principal, task)
+            if share:
+                task["report_share"] = share
             return task
         return task
 

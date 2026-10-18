@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeUsageAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeUsageAdapter, sharedReportAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 import {readTemplateZip} from './template-contract.ts'
@@ -14,6 +14,60 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native report sharing reads exact recipient attempts and never turns a read into another send', async () => {
+  const calls: {method: string; path: string; params: URLSearchParams; body: unknown}[] = []
+  const target = {id: 'ou_one', kind: 'user' as const}
+  const input: components['schemas']['AuditReportShareRequest'] = {request_id: 'share-one', organization_id: 'tenant-one', reports: [], targets: [target], content: {kind: 'link', artifact: null, package_id: null}}
+  globalThis.fetch = async (address, init) => {
+    assert.equal(init?.credentials, 'include')
+    const url = new URL(String(address), 'https://example.test')
+    calls.push({method: init?.method || 'GET', path: url.pathname, params: url.searchParams, body: init?.body ? JSON.parse(String(init.body)) : null})
+    return json({})
+  }
+  await nativeSharingAdapter.listTargets('张 & 王', 'user', 'next-page')
+  await nativeSharingAdapter.send(input)
+  const selected = [{target, attempt_id: 'old-attempt'}]
+  await nativeSharingAdapter.read({request_id: input.request_id, attempts: selected})
+  await nativeSharingAdapter.retryFailed(input.request_id, target, 'new-attempt')
+  assert.deepEqual(calls.map(({method, path}) => [method, path]), [['GET', '/audit-share-targets'], ['POST', '/audit-report-shares'], ['GET', '/audit-report-shares/share-one'], ['POST', '/audit-report-shares/share-one/retries']])
+  assert.equal(calls[0].params.get('query'), '张 & 王')
+  assert.equal(calls[0].params.get('page_token'), 'next-page')
+  assert.deepEqual(calls[1].body, input)
+  assert.deepEqual(JSON.parse(calls[2].params.get('attempts')!), selected)
+  assert.deepEqual(calls[3].body, {target, attempt_id: 'new-attempt'})
+})
+
+test('definite share rejection permits new composition but an in-flight conflict remains unknown', async () => {
+  const input: components['schemas']['AuditReportShareRequest'] = {request_id: 'share-one', organization_id: 'tenant-one', reports: [], targets: [{id: 'ou_one', kind: 'user'}], content: {kind: 'link', artifact: null, package_id: null}}
+  globalThis.fetch = async () => json({error: 'share_target_unverified'}, 409)
+  const rejected = await nativeSharingAdapter.send(input)
+  assert.equal(rejected.receipt.state, 'rejected')
+  assert.deepEqual(rejected.request, input)
+  assert.equal(rejected.deliveries[0].retry_allowed, false)
+  globalThis.fetch = async () => json({error: 'share_request_pending'}, 409)
+  await assert.rejects(nativeSharingAdapter.send(input))
+  globalThis.fetch = async () => {throw new TypeError('lost response')}
+  await assert.rejects(nativeSharingAdapter.send(input))
+})
+
+test('a shared report is read only from its frozen artifact and checked against its response digest', async () => {
+  const body = new TextEncoder().encode('%PDF-frozen-report')
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', body)), byte => byte.toString(16).padStart(2, '0')).join('')
+  const reference = {task_id: 'private-task', round_id: 'round-one', file_version_id: 'version-one', result_attempt: 1, report_id: 'report-one'}
+  const artifact = {artifact_id: 'artifact-one', filename: '报告.pdf', content_type: 'application/pdf' as const, byte_size: body.length}
+  let responseDigest = digest
+  const urls: string[] = []
+  globalThis.fetch = async (url, init) => {assert.equal(init?.credentials, 'include'); urls.push(String(url)); return new Response(body, {headers: {'Content-Type': 'application/pdf', 'X-Content-SHA256': responseDigest}})}
+  const adapter = sharedReportAdapter('share-one')
+  assert.equal(await (await adapter.readPdf(reference, artifact)).text(), '%PDF-frozen-report')
+  const url = new URL(urls[0], 'https://example.test')
+  assert.equal(url.pathname, '/audit-report-shares/share-one/pdf')
+  assert.equal(url.searchParams.get('report_id'), reference.report_id)
+  assert.equal(url.searchParams.get('artifact_id'), artifact.artifact_id)
+  responseDigest = 'a'.repeat(64)
+  await assert.rejects(adapter.readPdf(reference, artifact), /报告内容与所选版本不同/)
+})
 
 test('completion notification settings use the private revisioned API and never confirm an audit', async () => {
   const preference = {task_id: task.id, enabled: false, revision: 3, available: true, can_change: true, delivery: {state: 'not_due', reason: null}}

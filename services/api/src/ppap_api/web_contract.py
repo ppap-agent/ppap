@@ -912,6 +912,24 @@ class AuditReportShare(TypedDict):
     deliveries: list[AuditShareDelivery]
 
 
+class AuditReportShareRetry(TypedDict):
+    target: AuditShareTargetReference
+    attempt_id: str
+
+
+class AuditSharedReport(TypedDict):
+    name: str
+    conclusion: Literal["PASS", "NG"]
+    rule: RoundSummaryRule
+    reference: AuditReportReference
+    report: AuditFileReport
+
+
+class AuditSharedReports(TypedDict):
+    reports: list[AuditSharedReport]
+    archive: AuditReportArtifact | None
+
+
 class AuditTaskIdentity(TypedDict):
     id: str
     number: str

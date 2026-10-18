@@ -17,7 +17,7 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
     if (!alive.current) return
     current.current = job; change.current(job)
   }
-  async function observe(observation: ShareOperation<Request>, operation: () => Promise<ShareOperation<Request>>) {
+  async function observe(observation: ShareOperation<Request>, operation: () => Promise<ShareOperation<Request>>, prior?: ShareOperation<Request>) {
     save(observation); setError('')
     try {
       const update = await operation()
@@ -30,7 +30,13 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
         return !before || row.target.organization_id !== update.request.organization_id || row.attempt_id !== before.attempt_id || ['sent', 'failed'].includes(before.state) && row.state !== before.state
       })) throw new Error('share_delivery_mismatch')
       save(update)
-    } catch {
+    } catch (cause) {
+      const rejected = cause as {status?: number; code?: string}
+      if (alive.current && current.current === observation && prior && [400, 401, 403, 409, 422].includes(rejected.status || 0) && ['share_attempt_unconfirmed', 'share_request_pending', 'access_denied', 'unauthenticated', 'invalid_share_request'].includes(rejected.code || '')) {
+        save({...prior, deliveries: prior.deliveries.map(row => ({...row, retry_allowed: false}))})
+        setError('重试未受理。请读取原发送结果，核对后再操作。')
+        return
+      }
       if (alive.current && current.current === observation) setError('未取得可靠发送回执。保留原请求与已确认结果，只读取发送结果，不重复发送。')
     }
   }
@@ -53,7 +59,7 @@ export function useShareActions<Request extends ShareInput = ShareRequest>(job: 
     if (!adapter || !job || !delivery || !shareRetryAllowed(job, delivery)) return
     const attemptId = crypto.randomUUID()
     const observation: ShareOperation<Request> = {...job, deliveries: job.deliveries.map(row => row === delivery ? {...row, attempt_id: attemptId, state: 'unknown', retry_allowed: false, reason: '重试回执未知，只读取本次发送结果。'} : row)}
-    await observe(observation, () => adapter.retryFailed(job.request.request_id, {kind: target.kind, id: target.id}, attemptId))
+    await observe(observation, () => adapter.retryFailed(job.request.request_id, {kind: target.kind, id: target.id}, attemptId), job)
   }
   function suspend() {reading.current = null; setBusyRead(false); if (current.current) save(structuredClone(current.current))}
   return {send, read, retry, suspend, busyRead, error}

@@ -123,6 +123,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-report-shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send */
+        post: operations["send_audit_report_shares_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-report-shares/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read */
+        get: operations["read_audit_report_shares__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-report-shares/{request_id}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pdf */
+        get: operations["pdf_audit_report_shares__request_id__pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-report-shares/{request_id}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reports */
+        get: operations["reports_audit_report_shares__request_id__reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-report-shares/{request_id}/retries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry */
+        post: operations["retry_audit_report_shares__request_id__retries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-report-shares/{request_id}/zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Zip File */
+        get: operations["zip_file_audit_report_shares__request_id__zip_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-share-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Targets */
+        get: operations["targets_audit_share_targets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks": {
         parameters: {
             query?: never;
@@ -2073,6 +2192,25 @@ export interface components {
             state: "pending" | "sent" | "failed" | "unknown";
             target: components["schemas"]["AuditShareTarget"];
         };
+        /** AuditSharedReport */
+        AuditSharedReport: {
+            /**
+             * Conclusion
+             * @enum {string}
+             */
+            conclusion: "PASS" | "NG";
+            /** Name */
+            name: string;
+            reference: components["schemas"]["AuditReportReference"];
+            report: components["schemas"]["AuditFileReport"];
+            rule: components["schemas"]["RoundSummaryRule"];
+        };
+        /** AuditSharedReports */
+        AuditSharedReports: {
+            archive: components["schemas"]["AuditReportArtifact"] | null;
+            /** Reports */
+            reports: components["schemas"]["AuditSharedReport"][];
+        };
         /**
          * AuditShareReadRequest
          * @description Read specific attempts; a missing transport reply is not a retry permit.
@@ -3726,6 +3864,298 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditReportPackage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_audit_report_shares_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** AuditShareContent */
+                    content: {
+                        artifact: {
+                            /** Artifact Id */
+                            artifact_id: string;
+                            /** Byte Size */
+                            byte_size: number;
+                            /**
+                             * Content Type
+                             * @enum {string}
+                             */
+                            content_type: "application/pdf" | "application/zip";
+                            /** Filename */
+                            filename: string;
+                        } | null;
+                        /**
+                         * Kind
+                         * @enum {string}
+                         */
+                        kind: "link" | "pdf" | "zip";
+                        /** Package Id */
+                        package_id: string | null;
+                    };
+                    /** Organization Id */
+                    organization_id: string;
+                    /** Reports */
+                    reports: {
+                        /** File Version Id */
+                        file_version_id: string;
+                        /** Report Id */
+                        report_id: string;
+                        /** Result Attempt */
+                        result_attempt: number;
+                        /** Round Id */
+                        round_id: string;
+                        /** Task Id */
+                        task_id: string;
+                    }[];
+                    /** Request Id */
+                    request_id: string;
+                    /** Targets */
+                    targets: {
+                        /** Id */
+                        id: string;
+                        /**
+                         * Kind
+                         * @enum {string}
+                         */
+                        kind: "user" | "group";
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReportShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_audit_report_shares__request_id__get: {
+        parameters: {
+            query?: {
+                attempts?: string | null;
+            };
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReportShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pdf_audit_report_shares__request_id__pdf_get: {
+        parameters: {
+            query: {
+                artifact_id: string;
+                report_id: string;
+            };
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reports_audit_report_shares__request_id__reports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditSharedReports"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_audit_report_shares__request_id__retries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Attempt Id */
+                    attempt_id: string;
+                    /** AuditShareTargetReference */
+                    target: {
+                        /** Id */
+                        id: string;
+                        /**
+                         * Kind
+                         * @enum {string}
+                         */
+                        kind: "user" | "group";
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReportShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    zip_file_audit_report_shares__request_id__zip_get: {
+        parameters: {
+            query: {
+                artifact_id: string;
+            };
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    targets_audit_share_targets_get: {
+        parameters: {
+            query?: {
+                kind?: "user" | "group";
+                page_token?: string | null;
+                query?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditShareTargetsPage"];
                 };
             };
             /** @description Validation Error */
