@@ -7,7 +7,6 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from openpyxl import Workbook
-from playwright.sync_api import expect, sync_playwright
 
 from .conftest import isolated_dev_login
 
@@ -16,6 +15,8 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 @pytest.mark.parametrize("lost_reply", ["blob", "draft"])
 def test_received_batch_survives_lost_receipts_and_browser_record_removal(lost_reply):
+    from playwright.sync_api import expect, sync_playwright
+
     workbook = Workbook()
     workbook.active.append(["序号", "检查项目"])
     workbook.active.append([1, "原请求回执核对"])
