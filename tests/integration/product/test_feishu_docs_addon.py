@@ -203,23 +203,10 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self._env.stop()
 
     def _usage_events(self):
-        with self.store._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT trace_id, consumed_points, is_free_trial, external_status
-                FROM product.usage_events
-                ORDER BY created_at, id
-                """
-            ).fetchall()
-        return [
-            {
-                "trace_id": row[0],
-                "consumed_points": int(row[1]),
-                "is_free_trial": bool(row[2]),
-                "external_status": row[3],
-            }
-            for row in rows
-        ]
+        response = self.client.get("/usage")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["next_offset"])
+        return response.json()["events"]
 
     def _draft_for_imported_file(self):
         imported = self.client.post("/integrations/feishu/files/import", json={"file_token": "xlsx-token", "doc_type": "file"})
@@ -291,7 +278,7 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertTrue(any("/documents/current-doc/" in url for _method, url in self.feishu.calls))
         self.assertFalse(any("/documents/xlsx-token/" in url for _method, url in self.feishu.calls))
 
-    def test_feishu_audit_records_trial_usage_once_per_round(self):
+    def test_feishu_audit_records_trial_usage_once_per_file(self):
         logged = self.client.post("/login/feishu/host", json={"code": "isolated-dev:alice"})
         self.assertEqual(logged.status_code, 200)
         before = self.client.get("/integrations/feishu/usage/quota").json()
@@ -306,8 +293,11 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(replay.json()["id"], submitted.json()["id"])
         still = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(still["remaining_trial_ai_points"], 9500)
-        events = [row for row in self._usage_events() if row["trace_id"] == submitted.json()["id"] + ":trial"]
+        round_id = submitted.json()["id"]
+        file_version_id = submitted.json()["inputs"][0]["file_version_id"]
+        events = [row for row in self._usage_events() if row["round_id"] == round_id]
         self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["file_version_id"], file_version_id)
         self.assertTrue(events[0]["is_free_trial"])
         self.assertEqual(events[0]["consumed_points"], 500)
         self.assertEqual(events[0]["external_status"], "none")
@@ -321,9 +311,14 @@ class FeishuDocsAddonTests(unittest.TestCase):
         submitted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
         self.assertEqual(submitted.status_code, 201)
         round_id = submitted.json()["id"]
-        events = self._usage_events()
-        trial = [row for row in events if row["trace_id"] == round_id + ":trial"]
-        partner = [row for row in events if row["trace_id"] == round_id + ":partner"]
+        file_version_id = submitted.json()["inputs"][0]["file_version_id"]
+        events = [row for row in self._usage_events() if row["round_id"] == round_id]
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(row["file_version_id"] == file_version_id for row in events))
+        trial = [row for row in events if row["is_free_trial"]]
+        partner = [row for row in events if not row["is_free_trial"]]
+        self.assertEqual(len(trial), 1)
+        self.assertEqual(len(partner), 1)
         self.assertEqual(trial[0]["consumed_points"], 200)
         self.assertTrue(trial[0]["is_free_trial"])
         self.assertEqual(trial[0]["external_status"], "none")
@@ -332,6 +327,14 @@ class FeishuDocsAddonTests(unittest.TestCase):
         self.assertEqual(partner[0]["external_status"], "pending")
         quota = self.client.get("/integrations/feishu/usage/quota").json()
         self.assertEqual(quota["remaining_trial_ai_points"], 0)
+        replay = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "addon-usage-split"})
+        self.assertEqual(replay.status_code, 201)
+        self.assertEqual(replay.json()["id"], round_id)
+        self.assertEqual([row for row in self._usage_events() if row["round_id"] == round_id], events)
+        usage = self.client.get("/audit-usage", params={"range": "all"}).json()
+        self.assertEqual(usage["total"], 1)
+        self.assertEqual(usage["entries"][0]["points"], 500)
+        self.assertEqual(usage["entries"][0]["allocation"], {"free_points": 200, "paid_points": 300, "reason": None})
 
     def test_preview_accept_does_not_write_usage(self):
         self.settings.usage_charge_enabled = False

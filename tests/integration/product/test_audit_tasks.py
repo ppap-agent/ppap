@@ -108,6 +108,28 @@ def test_confirmation_requires_current_revision_and_explicit_no_charge_configura
     assert worker.claim_job("no-audit") is None
 
 
+def test_superseded_candidate_requires_explicit_rematching_before_confirmation(matched_task):
+    client, worker, path, body, old = matched_task
+    new = publish_rule(client, body["files"][0], predecessor=old["id"], title="修订要求")
+    response = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert response.status_code == 409
+    assert response.json() == {"error": "rule_candidate_expired"}
+    current = client.get(path).json()
+    assert current["state"] == "pending_confirm"
+    assert current["round_id"] is None
+    assert current["files"][0]["match"]["rule"]["id"] == old["id"]
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+    assert worker.claim_job("no-audit-after-refusal") is None
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    process_claimed(worker, worker.claim_job("rematching"), "rematching", rule_ai=MetadataAI())
+    assert client.get(path).json()["files"][0]["match"]["rule"]["id"] == new["id"]
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1})
+    assert accepted.status_code == 201
+    assert accepted.json()["files"][0]["match"]["rule"]["id"] == new["id"]
+
+
 def test_confirmation_and_rematching_serialize_on_the_same_task_revision(matched_task):
     client, _worker, path, body, _rule = matched_task
     revision = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
@@ -518,7 +540,6 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
         process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
-    publish_rule(client, files[0], predecessor=rules[0]["id"], title="后发布的 PFMEA 规则", document_type="PFMEA")
     response = client.post(path + "/confirm", json=command)
     assert response.status_code == 201, response.text
     accepted = response.json()
@@ -530,6 +551,7 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert {row["file_version_id"]: row["rule_version_id"] for row in round["inputs"]} == {file["file_version_id"]: rule["id"] for file, rule in zip(files, rules)}
     assert all(row["role"] == "target" for row in round["inputs"])
     assert all(row["audit"]["round_id"] == accepted["round_id"] for row in accepted["files"])
+    publish_rule(client, files[0], predecessor=rules[0]["id"], title="受理后发布的 PFMEA 规则", document_type="PFMEA")
     assert client.post(path + "/confirm", json=command).json() == accepted
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
