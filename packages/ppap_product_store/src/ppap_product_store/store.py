@@ -1899,14 +1899,56 @@ class AuthStore:
                     raise ValueError("idempotency_conflict")
         return cast(dict, self.get_rule(principal.tenant_id, rule_id))
 
-    def create_draft(self, principal: Principal, predecessor_id: str | None = None) -> dict:
+    def _reject_task_predecessor(self, conn, predecessor_id: str | None) -> None:
+        if (
+            predecessor_id
+            and conn.execute(
+                "SELECT 1 FROM product.audit_rounds r JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = %s AND d.task_fingerprint IS NOT NULL", (predecessor_id,)
+            ).fetchone()
+        ):
+            raise ValueError("task_input_locked")
+
+    def create_draft(self, principal: Principal, predecessor_id: str | None = None, *, request_id: str | None = None, items: list[dict] | None = None, case_context: dict | None = None) -> dict:
+        draft_id = str(uuid.uuid4()) if request_id is None else _as_uuid(request_id) if isinstance(request_id, str) else None
+        if not draft_id or items is not None and not isinstance(items, list):
+            raise ValueError("invalid_draft_request")
+        context = {} if case_context is None else case_context
+        if not isinstance(context, dict) or len(json.dumps(context, ensure_ascii=False).encode()) > 262144:
+            raise ValueError("invalid_case_context")
         if predecessor_id:
             resource = self.resource(predecessor_id)
             if resource is None or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
                 raise KeyError("missing")
-        draft_id = str(uuid.uuid4())
+            predecessor_id = resource.id
         with self._conn() as conn:
             with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("draft-create:" + draft_id,))
+                self._reject_task_predecessor(conn, predecessor_id)
+                existing = conn.execute("SELECT tenant_id, created_by, predecessor_id FROM product.audit_drafts WHERE id = %s", (draft_id,)).fetchone()
+                if existing:
+                    resource = self.resource(draft_id)
+                    if (
+                        str(existing[0]) != principal.tenant_id
+                        or str(existing[1]) != principal.user_id
+                        or resource is None
+                        or not can_read(principal, resource, self.grants(draft_id, principal.user_id))
+                    ):
+                        raise KeyError("missing")
+                    saved = cast(dict, self._draft_public(conn, draft_id))
+                    if (str(existing[2]) if existing[2] else None) != predecessor_id or case_context is not None and saved["case_context"] != context:
+                        raise ValueError("idempotency_conflict")
+                    if items is not None:
+                        requested = self._bound_audit_items(conn, principal, items, require_rules=False)
+
+                        def binding(rows):
+                            return sorted((row["file_version_id"], row["role"], row["rule_version_id"]) for row in rows)
+
+                        if binding(requested) != binding(saved["items"]):
+                            raise ValueError("idempotency_conflict")
+                    return saved
+                if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (draft_id,)).fetchone():
+                    raise KeyError("missing")
+                prepared = self._bound_audit_items(conn, principal, items or [], require_rules=False)
                 mode = ANALYSIS_STANDARD
                 if predecessor_id:
                     inherited = conn.execute(
@@ -1921,10 +1963,10 @@ class AuthStore:
                 )
                 conn.execute(
                     """
-                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id, analysis_mode)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, predecessor_id, analysis_mode, case_context)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, mode),
+                    (draft_id, principal.tenant_id, principal.user_id, DRAFT_OPEN, predecessor_id, mode, Jsonb(context)),
                 )
                 conn.execute(
                     """
@@ -1938,6 +1980,11 @@ class AuthStore:
                     writeback = self._target_row(conn, "round_writeback_targets", "round_id", predecessor_id)
                     if writeback:
                         self.save_draft_writeback(conn, draft_id, writeback)
+                for row in prepared:
+                    conn.execute(
+                        "INSERT INTO product.draft_items (draft_id, file_version_id, role, rule_version_id) VALUES (%s, %s, %s, %s)",
+                        (draft_id, row["file_version_id"], row["role"], row["rule_version_id"]),
+                    )
         return cast(dict, self.get_draft(draft_id))
 
     def list_drafts(self, principal: Principal, limit: int = 20, offset: int = 0, q: str = "") -> list[dict]:
@@ -2081,10 +2128,7 @@ class AuthStore:
                 ).fetchone()
                 if not current or str(current[1]) != principal.tenant_id:
                     raise KeyError("missing")
-                if conn.execute(
-                    "SELECT 1 FROM product.audit_rounds r JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = %s AND d.task_fingerprint IS NOT NULL", (parsed,)
-                ).fetchone():
-                    raise ValueError("task_input_locked")
+                self._reject_task_predecessor(conn, parsed)
                 if items is None:
                     rows = conn.execute(
                         "SELECT file_version_id, role, rule_version_id FROM product.round_inputs WHERE round_id = %s",
@@ -3025,6 +3069,7 @@ class AuthStore:
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
+        self._reject_task_predecessor(conn, predecessor_id)
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
@@ -3364,7 +3409,8 @@ class AuthStore:
         row = conn.execute(
             """
             SELECT id, execution, coverage, predecessor_id,
-                   source_draft_id, result_attempt, created_at, analysis_mode, case_context
+                   source_draft_id, result_attempt, created_at, analysis_mode, case_context,
+                   EXISTS (SELECT 1 FROM product.audit_drafts d WHERE d.id = source_draft_id AND d.task_fingerprint IS NOT NULL)
             FROM product.audit_rounds WHERE id = %s
             """,
             (round_id,),
@@ -3437,6 +3483,7 @@ class AuthStore:
             "coverage": coverage,
             "predecessor_id": str(row[3]) if row[3] else None,
             "source_draft_id": str(row[4]) if row[4] else None,
+            "preparation_allowed": row[1] == EXEC_FAILED and not row[9],
             "result_attempt": row[5],
             "result_job_id": str(job[3]) if job else None,
             "created_at": row[6].isoformat() if row[6] is not None else None,

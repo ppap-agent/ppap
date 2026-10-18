@@ -3266,6 +3266,8 @@ export interface components {
             inputs: components["schemas"]["MaterialWire"][];
             /** Predecessor Id */
             predecessor_id: string | null;
+            /** Preparation Allowed */
+            preparation_allowed?: boolean;
             progress: components["schemas"]["RoundProgress"] | null;
             read_view?: components["schemas"]["AuditRoundReadView"];
             /** Result Attempt */
@@ -5063,8 +5065,27 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
+                    /** CaseContext */
+                    case_context?: {
+                        /** Registration */
+                        registration?: string;
+                    };
+                    /** Items */
+                    items?: {
+                        /** File Version Id */
+                        file_version_id: string;
+                        /**
+                         * Role
+                         * @enum {string}
+                         */
+                        role: "target" | "reference";
+                        /** Rule Version Id */
+                        rule_version_id: string | null;
+                    }[];
                     /** Predecessor Id */
                     predecessor_id?: string | null;
+                    /** Request Id */
+                    request_id?: string;
                 } | Record<string, never> | null;
             };
         };

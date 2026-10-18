@@ -53,12 +53,13 @@ function previewResults(snapshot: AuditSnapshot, scenario: Scenario): string[] {
   return [process, scan, dimension]
 }
 
-export function ProgressPrototype({snapshot, clarification, answer, onAnswerChange, onClarification, onOpenReview, savedScenario, onScenario, basis, completedEvidence, checkRequest, onCheckPlan, round, context, title, files, remoteError, onRefresh, onHome}: {
+export function ProgressPrototype({snapshot, clarification, answer, onAnswerChange, onClarification, onOpenReview, savedScenario, onScenario, basis, completedEvidence, checkRequest, onCheckPlan, round, context, title, files, remoteError, onRefresh, onHome, onPrepare, preparing}: {
   snapshot: AuditSnapshot; clarification: string | null; answer: string
   onAnswerChange: (answer: string) => void; onClarification: (answer: string) => void; onOpenReview: () => void
   savedScenario?: Scenario; onScenario?: (scenario: Scenario) => void
   basis: RequirementBasis | null; completedEvidence?: DecisionEvidence[]; checkRequest?: CheckRequest; onCheckPlan?: () => void
   round?: Round | null; context?: string; title?: string; files?: ReactNode; remoteError?: string; onRefresh?: () => void; onHome?: () => void
+  onPrepare?: () => void; preparing?: boolean
 }) {
   const [scenarioState, setScenarioState] = useState(() => savedScenario ?? fromRoute('scenario', scenarios, 'running'))
   const canClarify = snapshot.hasFlow && snapshot.flowUnreadable && Boolean(basis?.clauses.some(clause => clause.id === 'R2' && clause.applicability === 'apply' && isKnownDemoClause(clause)))
@@ -90,6 +91,7 @@ export function ProgressPrototype({snapshot, clarification, answer, onAnswerChan
       {scenario === 'complete' && (!round || rows.length > 0) && <Button onClick={onOpenReview}>{allReviewed ? '查看人工复核' : reviewed ? '继续复核' : '开始复核'}<ArrowRight/></Button>}
       {scenario === 'running' && round && onHome && <Button onClick={onHome}>返回工作台<ArrowRight/></Button>}
       {scenario === 'failure' && rows.length > 0 && <Button onClick={onOpenReview}>查看已有结果<ArrowRight/></Button>}
+      {round?.execution === 'failed' && round.preparation_allowed && onPrepare && <Button variant="outline" disabled={preparing} onClick={onPrepare}>{preparing ? '正在准备新一轮…' : '准备新一轮审核'}<ArrowRight/></Button>}
       {!round && scenario === 'running' && <Button onClick={() => simulate(canClarify ? 'clarification' : 'complete')}>模拟继续检查<ArrowRight/></Button>}
       {!round && scenario === 'clarification' && clarification && <Button onClick={() => simulate('complete')}>模拟继续核验<ArrowRight/></Button>}
       {!round && scenario === 'failure' && <Button onClick={() => simulate('running')}>模拟重试</Button>}

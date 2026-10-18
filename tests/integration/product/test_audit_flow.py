@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import unittest
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -108,6 +110,68 @@ class AuditFlowTests(unittest.TestCase):
         third = self.client.post(f"/drafts/{third_draft}/accept", json={"idempotency_key": "third-report", "predecessor_id": first["id"]})
         self.assertEqual(third.status_code, 201)
         self.assertEqual(third.json()["predecessor_id"], first["id"])
+
+    def test_reaudit_preparation_keeps_original_inputs_and_replays_one_draft(self):
+        self._login("alice")
+        target = self._upload("report.xlsx", b"target-bytes")
+        reference = self._upload("context.pdf", b"reference-bytes")
+        inputs = [
+            {"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A},
+            {"file_version_id": reference["id"], "role": "reference", "rule_version_id": None},
+        ]
+        source = self.client.post("/drafts").json()["id"]
+        self.assertEqual(self.client.put(f"/drafts/{source}", json={"items": inputs}).status_code, 200)
+        original = self.client.post(f"/drafts/{source}/accept", json={"idempotency_key": "preparation-source"}).json()
+        jobs = self._scalar("SELECT count(*) FROM engine.jobs")
+        charges = self._scalar("SELECT count(*) FROM product.usage_events")
+        request_id = str(uuid.uuid4())
+        payload = {"request_id": request_id, "predecessor_id": original["id"], "items": inputs, "case_context": {"registration": "{}"}}
+        created = self.client.post("/drafts", json=payload)
+        self.assertEqual(created.status_code, 201)
+        prepared = created.json()
+        self.assertEqual(prepared["id"], request_id)
+        self.assertEqual(prepared["status"], "open")
+        self.assertEqual(prepared["predecessor_id"], original["id"])
+        self.assertEqual(prepared["analysis_mode"], original["analysis_mode"])
+        self.assertCountEqual([{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in prepared["items"]], inputs)
+        self.assertEqual(prepared["case_context"], payload["case_context"])
+        self.assertEqual(self.client.get(f"/drafts/{request_id}").json(), prepared)
+        self.assertEqual(self.client.post("/drafts", json=payload).json(), prepared)
+        self.assertEqual(self.client.get(f"/rounds/{original['id']}").json(), original)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), jobs)
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.usage_events"), charges)
+        conflict = self.client.post("/drafts", json={**payload, "items": inputs[:1]})
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(self.client.get(f"/drafts/{request_id}").json(), prepared)
+        self._login("bob")
+        self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
+        self._login("carol")
+        self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
+        self._login("alice")
+        self._execute("DELETE FROM product.resource_grants WHERE resource_id = %s", (request_id,))
+        self.assertEqual(self.client.get(f"/drafts/{request_id}").status_code, 403)
+        self.assertEqual(self.client.post("/drafts", json=payload).status_code, 403)
+
+    def test_initial_draft_inputs_are_atomic_and_concurrent_creation_reuses_identity(self):
+        self._login("alice")
+        target = self._upload("initial.xlsx", b"initial-bytes")
+        request_id = str(uuid.uuid4())
+        payload = {"request_id": request_id, "items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: self.client.post("/drafts", json=payload), range(2)))
+        self.assertEqual([response.status_code for response in responses], [201, 201])
+        self.assertEqual(responses[0].json(), responses[1].json())
+        self.assertEqual(self.client.get(f"/drafts/{request_id}").json()["items"][0]["file_version_id"], target["id"])
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.audit_drafts WHERE id = %s", (request_id,)), 1)
+        self.assertEqual(self.client.post("/drafts", json={"request_id": "invalid"}).status_code, 400)
+        self.assertEqual(self.client.post("/drafts", json={"request_id": target["file_id"]}).status_code, 403)
+        self.assertEqual(self.client.post("/drafts", json={"request_id": str(uuid.uuid4()), "case_context": []}).status_code, 400)
+        failed_id = str(uuid.uuid4())
+        self._login("carol")
+        self.assertEqual(self.client.post("/drafts", json={**payload, "request_id": failed_id}).status_code, 403)
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.resources WHERE id = %s", (failed_id,)), 0)
+        self.assertEqual(self._scalar("SELECT count(*) FROM engine.jobs"), 0)
+        self.assertEqual(self._scalar("SELECT count(*) FROM product.usage_events"), 0)
 
     def test_draft_does_not_create_a_round(self):
         self._login("alice")

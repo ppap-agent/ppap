@@ -319,7 +319,10 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         try:
-            return JSONResponse(store.create_draft(principal, (body or {}).get("predecessor_id")), status_code=201)
+            value = body or {}
+            return JSONResponse(
+                store.create_draft(principal, value.get("predecessor_id"), request_id=value.get("request_id"), items=value.get("items"), case_context=value.get("case_context")), status_code=201
+            )
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

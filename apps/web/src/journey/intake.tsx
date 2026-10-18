@@ -13,9 +13,9 @@ import {Textarea} from '../components/ui/textarea'
 import '../index.css'
 import {ProgressPrototype} from './progress'
 import {ConceptApp, isReviewDraft, savedReviewSummary, type IntakeHandoff} from './concept'
-import {isObject, listDrafts, readDraft, useSavedDraft} from './saved-draft'
+import {draftPrefix, isObject, listDrafts, readDraft, useSavedDraft} from './saved-draft'
 import {ProductAccess, AccountMenu, isPreview, useAccess} from './access'
-import {dateLabel, executionLabels, request, type Draft, type Material, type Round, type RuleDetail} from '../api'
+import {dateLabel, executionLabels, request, type Draft, type DraftCreateRequest, type Material, type Round, type RuleDetail} from '../api'
 import {message, useRemote, inputItems} from './remote'
 import {loadRuleCollections, parsedBasis, roundInput} from './product'
 import {useLiveAudit} from './live-audit'
@@ -55,6 +55,7 @@ type Document = UploadDocument & {
   selected: boolean
   associated: boolean
   readability: 'clear' | 'partial' | 'unverified'
+  inheritedBinding?: boolean
 }
 type Gap = {fileId: FileKey; title: string; detail: string; nature: 'quality' | 'coverage' | 'identity'}
 type CaseScope = {customer: string; supplier: string; part: string; revision: string; plant: string; requirements: string}
@@ -109,13 +110,14 @@ function isIntakeDraft(value: unknown): value is IntakeDraft {
       && ['id', 'name', 'declaredRevision', 'contentRevision'].every(key => typeof file[key] === 'string')
       && ['demo', 'local'].includes(String(file.origin)) && [file.kind, file.expectedKind].every(kind => typeof kind === 'string' && kind.length > 0 && kind.length <= 200)
       && ['clear', 'partial', 'unverified'].includes(String(file.readability)) && typeof file.sourceVersion === 'number'
-      && typeof file.selected === 'boolean' && typeof file.associated === 'boolean' && optionalLocalFile(file.localFile) && optionalUploadReceipt(file.uploadReceipt, file.localFile))
+      && typeof file.selected === 'boolean' && typeof file.associated === 'boolean' && (file.inheritedBinding === undefined || typeof file.inheritedBinding === 'boolean') && optionalLocalFile(file.localFile) && optionalUploadReceipt(file.uploadReceipt, file.localFile))
 }
 function localDocuments(incoming: LocalUpload[]): Document[] {
   return incoming.map(({file, ref}) => ({id: ref.id, localFile: ref, origin: 'local', name: file.name, kind: '待分类', expectedKind: '待分类', declaredRevision: '未知', contentRevision: '未解析', sourceVersion: 1, selected: true, associated: false, readability: 'unverified'}))
 }
 function draftMaterials(files: Document[], basis: RequirementBasis | null) {
   return files.filter(file => file.selected).flatMap(file => {
+    if (file.inheritedBinding && file.material) return [file.material]
     const target = basis?.server && (file.kind === '尺寸报告' ? '全功能检验报告' : file.kind) === basis.server.body.type
     return file.material ? [{...file.material, role: (target ? 'target' : 'reference') as Material['role'], rule_version_id: target ? basis.server!.ruleId ?? null : null}] : []
   })
@@ -183,7 +185,7 @@ function missingGap(file: Document): Gap {
 }
 
 // Reference: Stitch projects/13261964020862199279/screens/0a13f18b48164253b361644d2c02d6a0.
-function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCollections, catalog}: {id: string; initial: IntakeDraft; initialUploadError?: string; onHome: () => void; requirementCollections: RequirementCollection[]; catalog: RequirementCatalogRead}) {
+function IntakeApp({id, initial, initialUploadError = '', onHome, onPrepareRound, requirementCollections, catalog}: {id: string; initial: IntakeDraft; initialUploadError?: string; onHome: () => void; onPrepareRound: (round: Round, snapshot: IntakeDraft) => Promise<void>; requirementCollections: RequirementCollection[]; catalog: RequirementCatalogRead}) {
   const {value, field, saveError, update} = useSavedDraft(`intake:${id}`, () => initial, isIntakeDraft, saved => restoreIntake(saved, initial))
   const access = useAccess(), liveMode = Boolean(access?.principal && !access.preview)
   const [serverSaveError, setServerSaveError] = useState(initialUploadError)
@@ -209,6 +211,8 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
   const [savedBasis, setBasis] = field('basis')
   const [savedCheck, setCheck] = field('check')
   const [uploadError, setUploadError] = useState('')
+  const [preparing, setPreparing] = useState(false), [prepareError, setPrepareError] = useState('')
+  const preparingRound = useRef(false)
   const [infoFile, setInfoFile] = useState<string | null>(null), fileInfoReturn = useRef('')
   const picker = useRef<HTMLInputElement>(null)
   const check = savedCheck ?? initialCheck()
@@ -242,11 +246,11 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
   const registration = {...value, scopeConfirmed: true, submitted: true, acknowledged: true, step: 'progress' as Step, files: files.map(file => file.selected ? {...file, associated: true} : file)}
   const audit = useLiveAudit({id, registration, items: liveItems, ready: liveItems.length === selectedFiles.length, state: check, plan, onChange: setCheck, beforeStart: () => savingDraft.current.then(() => undefined, () => undefined)})
   const executionItems = audit.round?.inputs ?? liveItems
-  const showPurpose = Boolean(audit.round || basis && (!liveMode || basis.server))
+  const showPurpose = Boolean(audit.round || files.some(file => file.inheritedBinding) || basis && (!liveMode || basis.server))
   function fileUse(file: Document) {
     if (!file.selected) return '未纳入'
     const item = executionItems.find(item => item.file_version_id === file.material?.file_version_id)
-    if (audit.round && item) return item.role === 'target' ? '待审' : '参考'
+    if ((audit.round || file.inheritedBinding) && item) return item.role === 'target' ? '待审' : '参考'
     if (!basis || liveMode && !basis.server) return '待选依据'
     if (file.kind === '待分类') return '待分类'
     if (!liveMode) return '待审'
@@ -374,7 +378,7 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
   }
   const startIssues = [
     ...(!selectedFiles.length ? [{text: '至少纳入一份资料', target: 'intake-files'}] : []),
-    ...(selectedFiles.some(file => file.kind === '待分类') ? [{text: '确认资料类型', target: 'intake-files'}] : []),
+    ...(selectedFiles.some(file => file.kind === '待分类' && !file.inheritedBinding) ? [{text: '确认资料类型', target: 'intake-files'}] : []),
     ...(missingScope.length ? [{text: `补全${missingScope.map(item => item.label).join('、')}`, target: 'intake-scope'}] : []),
     ...(!requirementsReady ? [{text: basis ? '确认本次要求的适用范围' : '选择审核依据', target: 'intake-basis'}] : []),
     ...(audit.live && !audit.live.ready ? [{text: '部分资料尚未上传成功', target: 'intake-files'}] : []),
@@ -390,7 +394,14 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
   }
   const nextIssue = startIssues[0]
   const nextAction = nextIssue ? {label: nextIssue.target === 'intake-basis' ? '核对审核依据' : nextIssue.target === 'intake-scope' ? '补全审核范围' : '核对审核资料', run: () => resolveIssue(nextIssue.target)} : undefined
-  const saveNotice = serverSaveError || (step === 'prepare' && plan && requirementsReady ? '' : saveError)
+  const saveNotice = prepareError || serverSaveError || (step === 'prepare' && plan && requirementsReady ? '' : saveError)
+  async function prepareRound() {
+    if (preparingRound.current || !audit.round || audit.round.execution !== 'failed' || !audit.round.preparation_allowed) return
+    preparingRound.current = true; setPreparing(true); setPrepareError('')
+    try {await onPrepareRound(audit.round, value)}
+    catch (cause) {if (mounted.current) setPrepareError(message(cause))}
+    finally {preparingRound.current = false; if (mounted.current) setPreparing(false)}
+  }
   function start() {
     if (startIssues.length || !plan || upload.busy || transferBusy.current) return
     setSubmitted(true); setScopeConfirmed(true); setAcknowledged(true)
@@ -424,7 +435,7 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
       {step === 'requirements' ? <Requirements basis={basis} scopeKey={scopeKey(scope)} scope={scope} scopeReady={!missingScope.length} collections={requirementCollections} catalog={catalog} context={decisionScope} readonly={editingLocked} backLabel={accepted ? '返回本轮资料' : '返回审核准备'} onBack={() => go('prepare')} onChange={next => setBasis(next)} onConfirm={next => {setBasis(next); setScope(current => ({...current, requirements: `${next.source.title} ${next.source.version}`})); go('prepare')}}/>
         : step === 'progress' && accepted ? <>
           {audit.enabled && !audit.round ? <div role="status" className="flex flex-wrap items-center gap-3 py-8"><p>{audit.roundError || '正在读取本轮审核…'}</p><Button variant="outline" onClick={audit.refresh}>重新读取</Button></div>
-            : (knownInput || Boolean(audit.round)) && requirementsReady ? <ProgressPrototype round={audit.round} remoteError={audit.roundError} onRefresh={audit.refresh} onHome={onHome} title={progressTitle} files={<FileCollection files={fileReferences(progressFiles)} context={scope.part}/>} context={decisionScope} checkRequest={check.request ?? undefined} onCheckPlan={() => go('prepare')} snapshot={{fileCount: selectedFiles.length, hasFlow: Boolean(selectedFiles.find(file => file.id === 'flow')), hasControl: Boolean(selectedFiles.find(file => file.id === 'control')), flowUnreadable: Boolean(selectedFiles.find(file => file.id === 'flow')?.readability === 'partial'), dimensionRevision: selectedFiles.find(file => file.id === 'dimension')?.contentRevision ?? null}} completedEvidence={handoff?.decisionInput?.evidence} clarification={clarification} answer={clarificationDraft ?? ''} onAnswerChange={setClarificationDraft} onClarification={setClarification} onOpenReview={openReview} savedScenario={progressScenario} onScenario={setProgressScenario} basis={basis}/>
+            : (knownInput || Boolean(audit.round)) && requirementsReady ? <ProgressPrototype round={audit.round} remoteError={audit.roundError} onRefresh={audit.refresh} onHome={onHome} onPrepare={() => {void prepareRound()}} preparing={preparing} title={progressTitle} files={<FileCollection files={fileReferences(progressFiles)} context={scope.part}/>} context={decisionScope} checkRequest={check.request ?? undefined} onCheckPlan={() => go('prepare')} snapshot={{fileCount: selectedFiles.length, hasFlow: Boolean(selectedFiles.find(file => file.id === 'flow')), hasControl: Boolean(selectedFiles.find(file => file.id === 'control')), flowUnreadable: Boolean(selectedFiles.find(file => file.id === 'flow')?.readability === 'partial'), dimensionRevision: selectedFiles.find(file => file.id === 'dimension')?.contentRevision ?? null}} completedEvidence={handoff?.decisionInput?.evidence} clarification={clarification} answer={clarificationDraft ?? ''} onAnswerChange={setClarificationDraft} onClarification={setClarification} onOpenReview={openReview} savedScenario={progressScenario} onScenario={setProgressScenario} basis={basis}/>
               : <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">没有可核对的检查结果</h1><p>适用要求仍未覆盖，可以阅读原件并人工核对。</p>{handoff?.decisionInput && <Button onClick={() => setReviewView(true)}>开始人工复核<ArrowRight/></Button>}</section>}
         </> : <>
           <header className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-semibold tracking-tight">{accepted ? '本轮资料与依据' : '审核准备'}</h1>{frozen && <p className="mt-2 text-sm text-muted-foreground">文件与审核依据已固定。</p>}</div></header>
@@ -440,6 +451,7 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
                     <TableCell className="align-top"><label className="-m-2 flex min-h-11 items-center justify-center md:m-0 md:min-h-0"><Checkbox aria-label={`纳入 ${file.name}`} disabled={editingLocked} checked={file.selected} onCheckedChange={checked => updateFile(file.id, {selected: checked === true})}/><span className="sr-only">纳入 {file.name}</span></label></TableCell>
                     <TableCell className="col-span-2 col-start-2 row-start-1 min-w-0 whitespace-normal align-top">
                       <SourceReaderButton input={readingInput} documents={readingSources} file={readingInput.files[files.indexOf(file)]} label={file.name} variant="link" className="h-auto w-full justify-start whitespace-normal text-left break-all"/>
+                      {file.inheritedBinding && <p className="mt-1 break-words text-xs text-muted-foreground">{file.material?.role === 'target' ? `审核要求：${file.material.rule?.title || '原轮规则'}` : '沿用原轮参考资料用途'}</p>}
                       {liveMode && !file.material && <div className="mt-2 space-y-2 text-sm">
                         <p className="text-muted-foreground">{file.uploadReceipt?.reason || (file.uploadReceipt ? '尚未确认文件已接收。' : '尚未上传。前一份文件需先核对。')}</p>
                         <div className="flex flex-wrap gap-2">
@@ -449,13 +461,14 @@ function IntakeApp({id, initial, initialUploadError = '', onHome, requirementCol
                       </div>}
                       {warnings.length > 0 ? <p className="mt-1 break-words text-xs text-muted-foreground">{warnings.map(gap => gap.title).join(' · ')}</p> : file.selected && file.readability === 'partial' && <p className="mt-1 text-xs text-muted-foreground">已标记部分不可读</p>}{notes[file.id] && <p className="mt-1 break-words text-xs text-muted-foreground">{notes[file.id]}</p>}
                     </TableCell>
-                    <TableCell className={`col-start-2 min-w-0 ${showPurpose ? '' : 'col-span-2'}`}>{frozen ? <span>{file.kind}</span> : <label><span className="mb-1 block text-xs text-muted-foreground md:sr-only">资料类型</span><NativeSelect className="w-full" aria-label={`${file.name} 资料类型`} data-missing={file.selected && file.kind === '待分类' || undefined} value={file.kind} disabled={editingLocked} onChange={event => updateFile(file.id, {kind: event.target.value})}>{availableKinds.map(kind => <NativeSelectOption key={kind} value={kind}>{kind}</NativeSelectOption>)}</NativeSelect></label>}</TableCell>
+                    <TableCell className={`col-start-2 min-w-0 ${showPurpose ? '' : 'col-span-2'}`}>{frozen || file.inheritedBinding ? <span>{file.kind}</span> : <label><span className="mb-1 block text-xs text-muted-foreground md:sr-only">资料类型</span><NativeSelect className="w-full" aria-label={`${file.name} 资料类型`} data-missing={file.selected && file.kind === '待分类' || undefined} value={file.kind} disabled={editingLocked} onChange={event => updateFile(file.id, {kind: event.target.value})}>{availableKinds.map(kind => <NativeSelectOption key={kind} value={kind}>{kind}</NativeSelectOption>)}</NativeSelect></label>}</TableCell>
                     {showPurpose && <TableCell className="col-start-3 min-w-0 whitespace-normal"><span className="mb-1 block text-xs text-muted-foreground md:sr-only">用途</span><span className="text-sm">{fileUse(file)}</span></TableCell>}
                     <TableCell className="col-start-4 row-start-1"><div className="-m-2 flex min-h-11 items-center justify-center md:m-0 md:min-h-0"><DropdownMenu><DropdownMenuTrigger asChild><Button id={`file-info-${file.id}`} variant="ghost" size="icon-sm" aria-label={`${file.name} 操作`}><MoreHorizontal/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => {fileInfoReturn.current = `file-info-${file.id}`; setInfoFile(file.id)}}>文件信息</DropdownMenuItem><DropdownMenuItem disabled={editingLocked} onSelect={() => setFiles(current => removeFromDraft(current, file.id))}>移出本次资料</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></TableCell>
                   </TableRow>
                 })}</TableBody>
               </Table>}
               {basis && selectedFiles.length > 0 && <p className="mt-3 text-sm text-muted-foreground">待审文件产生检查结果；参考资料不单独生成结果。</p>}
+              {files.some(file => file.inheritedBinding) && <p className="mt-2 text-sm text-muted-foreground">原轮文件保留各自的用途与审核规则；新加入的文件使用本次选择的审核依据。</p>}
               {(uploadError || upload.error) && <Alert variant="destructive" className="mt-3"><AlertDescription>{uploadError || upload.error}</AlertDescription></Alert>}
               {upload.busy && <p role="status" className="mt-3 text-sm">正在上传资料…</p>}
             </section>
@@ -579,7 +592,8 @@ export function JourneyApp() {
       const registered = snapshot.files
       const restored = materials.map<Document>(material => {
         const known = snapshot.files.find(file => file.material?.file_version_id === material.file_version_id)
-        return known ? {...known, material, selected: true, associated: Boolean(round) || known.associated} : {id: material.file_version_id, material, name: material.original_filename, origin: 'local', kind: material.rule?.body.kind === 'engine' ? material.rule.body.type === '全功能检验报告' ? '尺寸报告' : kinds.includes(material.rule.body.type as Kind) ? material.rule.body.type as Kind : '待分类' : '待分类', expectedKind: '待分类', declaredRevision: '未知', contentRevision: '未解析', sourceVersion: 1, selected: true, associated: Boolean(round), readability: 'unverified'}
+        const binding = {material, inheritedBinding: Boolean(draft?.predecessor_id), selected: true}
+        return known ? {...known, ...binding, associated: Boolean(round) || known.associated} : {id: material.file_version_id, ...binding, name: material.original_filename, origin: 'local', kind: material.rule?.body.kind === 'engine' ? material.rule.body.type === '全功能检验报告' ? '尺寸报告' : material.rule.body.type : '待分类', expectedKind: '待分类', declaredRevision: '未知', contentRevision: '未解析', sourceVersion: 1, associated: Boolean(round), readability: 'unverified'}
       })
       snapshot.files = [...registered.map(file => restored.find(item => item.material && item.material.file_version_id === file.material?.file_version_id) ?? (!file.material ? file : {...file, selected: false})), ...restored.filter(file => !registered.some(item => item.material?.file_version_id === file.material?.file_version_id))]
       if (draft) snapshot.check = {...snapshot.check ?? initialCheck(), mode: draft.analysis_mode}
@@ -630,6 +644,35 @@ export function JourneyApp() {
   function open(id: string, initial?: IntakeDraft, owner?: import('./usage-state').CheckOwner, uploadError = '') {
     navigateCase(caseHref({id, kind: 'case'}, owner), initial, uploadError)
   }
+  async function prepareFromRound(round: Round, snapshot: IntakeDraft) {
+    if (preview || round.execution !== 'failed' || !round.preparation_allowed) return
+    const identity = caseGeneration.current, current = () => identity === caseGeneration.current
+    const key = `${draftPrefix}round-preparation:${round.id}`
+    const pending = localStorage.getItem(key), requestId = pending ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestId)) throw new Error('新轮准备记录无法读取。请保留本机记录并联系支持。')
+    // This is a retry identity, not a draft or an accepted round.
+    localStorage.setItem(key, requestId)
+    const registration: IntakeDraft = {...snapshot, step: 'prepare', submitted: false, reviewView: false, acknowledged: false, progressScenario: 'running', check: {...initialCheck(), mode: round.analysis_mode}}
+    const body: DraftCreateRequest = {request_id: requestId, predecessor_id: round.id, items: inputItems(round.inputs), case_context: {registration: JSON.stringify(registration)}}
+    let prepared: Draft | null = null
+    if (pending) {
+      try {prepared = await request<Draft>(`/drafts/${requestId}`)}
+      catch (cause) {if ((cause as {status?: number}).status !== 403) throw cause}
+    }
+    if (!current()) return
+    if (!prepared) {
+      try {prepared = await request<Draft>('/drafts', 'POST', body)}
+      catch (cause) {
+        if (!current()) return
+        try {prepared = await request<Draft>(`/drafts/${requestId}`)}
+        catch {throw new Error(`新轮准备结果尚未确认，原审核未改变。再次操作会先核对同一请求。${message(cause)}`)}
+      }
+    }
+    if (!current()) return
+    if (prepared.id !== requestId || prepared.predecessor_id !== round.id) throw new Error('新轮准备回执与原请求不一致，未切换审核记录。')
+    localStorage.removeItem(key)
+    open(prepared.id)
+  }
   function home() {
     caseGeneration.current++; setCaseReadError('')
     setActive(null)
@@ -649,7 +692,7 @@ export function JourneyApp() {
   }, [])
   if (active?.missing && !preview) return <div className="flex min-h-dvh flex-col"><header className="flex h-14 items-center justify-between border-b px-4 sm:px-6"><Button variant="ghost" asChild><a href="/" onClick={event => {if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); home()}}><ArrowLeft/>工作台</a></Button><AccountMenu compact/></header><main className="m-auto flex w-full max-w-md flex-col items-start gap-4 p-6" aria-busy={!caseReadError}><h1 className="text-2xl font-semibold tracking-tight">{caseReadError ? '暂时无法打开这条审核记录' : '正在打开审核记录'}</h1><p role={caseReadError ? 'alert' : 'status'} className="text-sm text-muted-foreground">{caseReadError || '正在读取资料与审核记录…'}</p>{caseReadError && <Button variant="outline" onClick={() => {caseGeneration.current++; setCaseReadError(''); setCaseRevision(value => value + 1)}}>重新读取</Button>}</main></div>
   if (active?.missing) return <main className={"flex min-h-dvh bg-background text-foreground text-base items-center justify-center flex-col gap-3.5 py-10 px-6 text-center [&_h1]:text-2xl [&_h1]:font-semibold [&_p]:max-w-105 [&_p]:text-muted-foreground [&_p]:leading-relaxed"}><FileQuestion size={28} aria-hidden="true"/><h1>暂时无法打开这条审核记录</h1><p>此浏览器没有这条记录。请返回工作台选择已有审核记录。</p><Button className={""} onClick={home}>返回工作台<ArrowRight/></Button><AccountMenu compact/></main>
-  if (active) return <IntakeApp key={active.id} id={active.id} initial={active.initial} initialUploadError={active.uploadError} onHome={home} requirementCollections={collections} catalog={{...libraryRead, reload: () => setLibraryRevision(value => value + 1)}}/>
+  if (active) return <IntakeApp key={active.id} id={active.id} initial={active.initial} initialUploadError={active.uploadError} onHome={home} onPrepareRound={prepareFromRound} requirementCollections={collections} catalog={{...libraryRead, reload: () => setLibraryRevision(value => value + 1)}}/>
   return <TaskWorkbench search={preview ? undefined : search} onSearch={preview ? undefined : setSearch} loading={workbench.loading} refreshing={workbench.busy === 'refresh'} errors={workbench.errors} onRefresh={preview ? undefined : workbench.refresh} loadingMore={workbench.busy === 'more'} onLoadMore={workbench.more ? workbench.loadMore : undefined} items={items} onOpen={href => navigateCase(href)} usage={<UsageWorkspace onOpen={(id, owner) => open(id, undefined, owner)}/>} requirements={<RequirementLibraryPanel collections={collections} onChange={setCollections} saveError={library.saveError} loading={libraryRead.loading} readError={libraryRead.error} onReload={() => setLibraryRevision(value => value + 1)} uses={drafts.flatMap(({key, value}) => value.basis ? [{id: key.slice('intake:'.length), title: [value.scope.part, value.scope.supplier].filter(Boolean).join(' · '), basis: value.basis, submitted: value.submitted}] : [])} onOpen={id => open(id)}/>} onDemo={(kind = 'issues') => open(crypto.randomUUID(), freshDraft((kind === 'complete' ? completeFiles : kind === 'outlier' ? outlierFiles : initialFiles).map(file => ({...file})), true))} onFiles={async files => {
     const identity = caseGeneration.current
     try {

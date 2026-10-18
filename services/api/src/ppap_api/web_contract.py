@@ -257,7 +257,10 @@ class Draft(TypedDict):
 
 
 class DraftCreateRequest(TypedDict, total=False):
+    request_id: str
     predecessor_id: str | None
+    items: list[DraftInputItem]
+    case_context: CaseContext
 
 
 class DraftInputItem(TypedDict):
@@ -434,6 +437,7 @@ class Round(TypedDict):
     coverage: Coverage
     predecessor_id: str | None
     source_draft_id: str | None
+    preparation_allowed: NotRequired[bool]
     result_attempt: int | None
     result_job_id: NotRequired[str | None]
     created_at: str | None

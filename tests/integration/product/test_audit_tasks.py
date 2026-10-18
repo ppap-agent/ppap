@@ -281,6 +281,31 @@ def test_legacy_draft_operations_cannot_replace_or_accept_a_recognition_task(tas
     assert client.get("/rounds").json()["rounds"] == []
 
 
+def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
+    client, worker, path, _body, _rule = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    job = worker.claim_job("terminal-audit")
+    assert job.round_id == accepted["round_id"]
+    assert worker.complete_job(job, "terminal-audit", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, outcome="failed")
+    original = client.get(f"/rounds/{accepted['round_id']}").json()
+    usage = client.get("/usage").json()
+    prepared = client.post("/drafts", json={"request_id": str(uuid.uuid4()), "predecessor_id": original["id"]})
+    assert prepared.status_code == 409
+    assert prepared.json() == {"error": "task_input_locked"}
+    assert original["preparation_allowed"] is False
+    assert client.get(path).json()["files"][0]["audit"]["execution"] == "review_failed"
+    assert client.get(f"/rounds/{original['id']}").json() == original
+    assert client.get("/drafts").json()["drafts"] == []
+    assert client.get("/usage").json() == usage
+    manual = client.post("/drafts", json={"items": [{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in original["inputs"]]}).json()
+    bypass = client.post(f"/drafts/{manual['id']}/accept", json={"idempotency_key": "task-predecessor-bypass", "predecessor_id": original["id"]})
+    assert bypass.status_code == 409
+    assert bypass.json() == {"error": "task_input_locked"}
+    assert client.get(f"/drafts/{manual['id']}").json()["status"] == "open"
+    assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [original["id"]]
+    assert client.get("/usage").json() == usage
+
+
 def test_concurrent_creation_coalesces_and_changed_inputs_cannot_replace_it(task_system):
     client, worker = task_system
     file = checked_file(client, worker)

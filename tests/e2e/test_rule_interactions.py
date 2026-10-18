@@ -569,14 +569,65 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
+            page.set_default_timeout(4000)
             self.route(page)
-            draft_id = "00000000-0000-4000-8000-000000000004"
+            prepared = {}
+            rule = {"id": "version-b", "title": "规则 B", "body": BODY, "created_at": "2026-10-18T00:00:00Z", "source_file_id": SOURCE, "source_file_version_id": VERSION, "predecessor_id": None}
             items = [
-                {"file_id": SOURCE, "file_version_id": VERSION, "original_filename": "control-plan.xlsx", "role": "target", "rule_version_id": "version-b"},
-                {"file_id": "reference-file", "file_version_id": "reference-version", "original_filename": "process-flow.xlsx", "role": "reference", "rule_version_id": None},
+                {
+                    "file_id": SOURCE,
+                    "file_version_id": VERSION,
+                    "original_filename": "control-plan.xlsx",
+                    "role": "target",
+                    "rule_version_id": "version-b",
+                    "status": "ready",
+                    "rule": {key: rule[key] for key in ("id", "title", "body")},
+                },
+                {
+                    "file_id": "flow-file",
+                    "file_version_id": "flow-version",
+                    "original_filename": "process-flow.xlsx",
+                    "role": "target",
+                    "rule_version_id": "flow-rule",
+                    "status": "ready",
+                    "rule": {"id": "flow-rule", "title": "流程图要求", "body": {**BODY, "type": "过程流程图"}},
+                },
+                {
+                    "file_id": "other-plan-file",
+                    "file_version_id": "other-plan-version",
+                    "original_filename": "other-control-plan.xlsx",
+                    "role": "target",
+                    "rule_version_id": "other-plan-rule",
+                    "status": "ready",
+                    "rule": {"id": "other-plan-rule", "title": "另一套控制计划要求", "body": BODY},
+                },
+                {
+                    "file_id": "reference-file",
+                    "file_version_id": "reference-version",
+                    "original_filename": "context.pdf",
+                    "role": "reference",
+                    "rule_version_id": None,
+                    "status": "ready",
+                    "rule": None,
+                },
             ]
-            posts, saves, accepted = [], [], []
-            page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev", "deep_offered": True}))
+            posts, saves, accepted, reads, held = [], [], [], [], []
+            response = {"mode": "normal", "read_fails": False}
+            page.route(
+                "**/api/public-config",
+                lambda route: route.fulfill(
+                    json={
+                        "git_sha": "fixture",
+                        "api_url": WEB + "/api",
+                        "profile": "isolated-dev",
+                        "login": "isolated-dev",
+                        "deep_offered": True,
+                        "feishu_app_id": "",
+                        "current_access": "allowed",
+                        "usage_charge_enabled": False,
+                    }
+                ),
+            )
             page.route(
                 "**/api/rounds/" + JOB,
                 lambda route: route.fulfill(
@@ -584,6 +635,15 @@ class RuleInteractionTests(unittest.TestCase):
                         "id": JOB,
                         "execution": "failed",
                         "analysis_mode": "deep",
+                        "source_draft_id": "old-draft",
+                        "preparation_allowed": not response.get("task", False),
+                        "predecessor_id": None,
+                        "created_at": "2026-10-18T00:00:00Z",
+                        "coverage": {},
+                        "progress": None,
+                        "result_attempt": None,
+                        "writeback": {"available": False},
+                        "case_context": {},
                         "inputs": items,
                         "findings": [],
                         "failure": {"code": "deep_budget_exhausted", "message": "执行额度已用完。", "retryable": False},
@@ -592,25 +652,116 @@ class RuleInteractionTests(unittest.TestCase):
             )
 
             def create_draft(route):
-                posts.append(route.request.post_data_json)
-                route.fulfill(status=201, json={"id": draft_id})
+                body = route.request.post_data_json
+                posts.append(body)
+                prepared.update(
+                    id=body["request_id"],
+                    status="open",
+                    analysis_mode="deep",
+                    predecessor_id=JOB,
+                    items=items,
+                    case_context=body["case_context"],
+                    updated_at="2026-10-18T00:00:00Z",
+                    writeback={"available": False},
+                )
+                if response["mode"] in {"lost", "read_failure"}:
+                    route.abort("failed")
+                elif response["mode"] == "bad_json":
+                    route.fulfill(status=201, body="{", content_type="application/json")
+                elif response["mode"] == "mismatch":
+                    route.fulfill(status=201, json={**prepared, "id": VERSION})
+                elif response["mode"] == "leave":
+                    held.append(route)
+                else:
+                    route.fulfill(status=201, json=prepared)
 
             def save_draft(route):
-                saves.append(route.request.post_data_json)
-                route.fulfill(json={"id": draft_id, "status": "open", "items": items, "analysis_mode": "deep"})
+                if route.request.method == "PUT":
+                    body = route.request.post_data_json
+                    saves.append(body)
+                    prepared.update(case_context=body["case_context"], items=[{**next(item for item in items if item["file_version_id"] == row["file_version_id"]), **row} for row in body["items"]])
+                    route.fulfill(json=prepared)
+                    return
+                if route.request.method != "GET":
+                    route.fulfill(status=405, json={"error": "read_or_save_only"})
+                    return
+                reads.append((route.request.method, route.request.url.rsplit("/", 1)[1]))
+                if response["read_fails"]:
+                    route.abort("failed")
+                    return
+                route.fulfill(json=prepared)
 
             page.route("**/api/drafts", create_draft)
-            page.route("**/api/drafts/" + draft_id, save_draft)
+            page.route("**/api/rules/version-b", lambda route: route.fulfill(json=rule))
+            page.route("**/api/drafts/*", save_draft)
+            page.route("**/api/drafts/*/round", lambda route: route.fulfill(json=None))
             page.route("**/api/drafts/*/accept", lambda route: (accepted.append(route.request.method), route.fulfill(status=500, json={})))
             page.route("**/api/integrations/feishu/usage/quota?*", lambda route: route.fulfill(json={"accept_allowed": True}))
+            for mode in ("normal", "lost", "bad_json", "mismatch", "read_failure", "leave"):
+                with self.subTest(mode=mode):
+                    posts.clear()
+                    saves.clear()
+                    reads.clear()
+                    held.clear()
+                    prepared.clear()
+                    response.update(mode=mode, read_fails=mode == "read_failure")
+                    page.goto(WEB + "/?round=" + JOB)
+                    expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
+                    with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/drafts")):
+                        page.get_by_role("button", name="准备新一轮审核", exact=True).click()
+                    if mode == "mismatch":
+                        expect(page.get_by_text("新轮准备回执与原请求不一致，未切换审核记录。", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
+                        page.get_by_role("button", name="准备新一轮审核", exact=True).click()
+                    elif mode == "read_failure":
+                        expect(page.get_by_role("alert")).to_contain_text("新轮准备结果尚未确认")
+                        response["read_fails"] = False
+                        page.reload()
+                        page.get_by_role("button", name="准备新一轮审核", exact=True).click()
+                    elif mode == "leave":
+                        deadline = time.monotonic() + 5
+                        while not held:
+                            self.assertLess(time.monotonic(), deadline)
+                            page.wait_for_timeout(10)
+                        page.get_by_role("link", name="工作台", exact=True).click()
+                        with page.expect_response(lambda reply: reply.request.method == "POST" and reply.url.endswith("/api/drafts")) as late:
+                            held[0].fulfill(status=201, json=prepared)
+                        late.value.finished()
+                        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                        expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="审核准备", exact=True)).to_have_count(0)
+                        self.assertNotIn("case=", page.url)
+                        page.goto(WEB + "/?round=" + JOB)
+                        page.get_by_role("button", name="准备新一轮审核", exact=True).click()
+                    expect(page.get_by_role("heading", name="审核准备", exact=True)).to_be_visible()
+                    table = page.get_by_role("table", name="审核资料", exact=True)
+                    expect(table).to_contain_text("control-plan.xlsx")
+                    expect(table).to_contain_text("process-flow.xlsx")
+                    expect(table.get_by_role("checkbox", name="纳入 control-plan.xlsx", exact=True)).to_be_enabled()
+                    self.assertEqual(len(posts), 1)
+                    self.assertEqual(posts[0]["predecessor_id"], JOB)
+                    self.assertEqual(posts[0]["items"], [{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in items])
+                    self.assertEqual(prepared["analysis_mode"], "deep")
+                    self.assertEqual(set(reads), {("GET", posts[0]["request_id"])})
+                    self.assertEqual(saves, [])
+                    self.assertEqual(accepted, [])
+                    if mode == "normal":
+                        with page.expect_response(lambda reply: reply.request.method == "PUT" and reply.url.endswith("/api/drafts/" + posts[0]["request_id"])) as saved:
+                            page.get_by_label("客户", exact=True).fill("补充客户")
+                        saved.value.finished()
+                        self.assertEqual(saves[-1]["items"], posts[0]["items"])
+                        page.reload()
+                        table = page.get_by_role("table", name="审核资料", exact=True)
+                        for name in ("control-plan.xlsx", "process-flow.xlsx", "other-control-plan.xlsx"):
+                            expect(table.get_by_role("row").filter(has=page.get_by_role("button", name="阅读 " + name, exact=True)).get_by_text("待审", exact=True)).to_be_visible()
+                        expect(table.get_by_role("row").filter(has_text="context.pdf").get_by_text("参考", exact=True)).to_be_visible()
+                        self.assertEqual(accepted, [])
+            response["task"] = True
+            posts.clear()
             page.goto(WEB + "/?round=" + JOB)
-            page.get_by_test_id("prepare-again").click()
-            expect(page.locator("#audit-preparation")).to_be_visible()
-            expect(page.get_by_test_id("draft-items")).to_contain_text("control-plan.xlsx")
-            expect(page.get_by_test_id("draft-items")).to_contain_text("process-flow.xlsx")
-            self.assertEqual(posts, [{"predecessor_id": JOB}])
-            self.assertEqual(saves, [{"items": [{key: item[key] for key in ("file_version_id", "role", "rule_version_id")} for item in items], "analysis_mode": "deep"}])
-            self.assertEqual(accepted, [])
+            expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="准备新一轮审核", exact=True)).to_have_count(0)
+            self.assertEqual(posts, [])
             browser.close()
 
     def test_round_read_failure_keeps_acceptance_and_recovers_without_resubmitting(self):
