@@ -66,9 +66,9 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
   const attention = useMemo(() => shown.filter(item => ['attention', 'prepare'].includes(workTask(item))), [shown])
   const review = useMemo(() => shown.filter(item => workTask(item) === 'review'), [shown])
   const activeQueue = queue ?? (attention.length ? 'attention' : review.length ? 'review' : 'all')
-  useEffect(() => {if (!loading && queue === null) setQueue(activeQueue)}, [loading, queue, activeQueue])
+  useEffect(() => {if (!loading && queue === null) setQueue(current => current ?? activeQueue)}, [loading, queue, activeQueue])
   function changeQueue(value: string) {
-    if (value !== 'attention' && value !== 'review' && value !== 'all') return
+    if (value !== 'attention' && value !== 'review' && value !== 'all' || value === queue) return
     setQueue(value)
     const url = new URL(location.href); url.searchParams.set('queue', value); history.replaceState(null, '', url)
   }
@@ -102,7 +102,7 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
         <header className="mb-6 flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1><Button onClick={() => {setUploadError(''); setUploadOpen(true)}}><UploadCloud/>上传资料</Button></header>
         {errors.length > 0 && <Alert className="mb-6"><AlertTitle>{shown.length ? '部分状态未能更新' : '暂时无法读取审核记录'}</AlertTitle><AlertDescription><div className="space-y-2">{errors.map(error => <p key={error}>{error}</p>)}{shown.length > 0 && <p>已读取的记录仍可打开；状态可能已变化。</p>}{onRefresh && <Button variant="outline" size="sm" disabled={refreshing || loadingMore} onClick={onRefresh}>{refreshing ? '正在读取…' : '重新读取'}</Button>}</div></AlertDescription></Alert>}
           <Tabs value={activeQueue} onValueChange={changeQueue}>
-            <TabsList aria-label="审核记录"><TabsTrigger value="attention">需要处理<Badge variant="secondary">{loading || errors.length > 0 && !attention.length ? '—' : `${attention.length}${onLoadMore ? '+' : ''}`}</Badge></TabsTrigger><TabsTrigger value="review">待复核<Badge variant="secondary">{loading || errors.length > 0 && !review.length ? '—' : `${review.length}${onLoadMore ? '+' : ''}`}</Badge></TabsTrigger><TabsTrigger value="all">全部记录</TabsTrigger></TabsList>
+            <TabsList aria-label="审核记录"><TabsTrigger value="attention" onClick={() => changeQueue('attention')}>需要处理<Badge variant="secondary">{loading || errors.length > 0 && !attention.length ? '—' : `${attention.length}${onLoadMore ? '+' : ''}`}</Badge></TabsTrigger><TabsTrigger value="review" onClick={() => changeQueue('review')}>待复核<Badge variant="secondary">{loading || errors.length > 0 && !review.length ? '—' : `${review.length}${onLoadMore ? '+' : ''}`}</Badge></TabsTrigger><TabsTrigger value="all" onClick={() => changeQueue('all')}>全部记录</TabsTrigger></TabsList>
             <TabsContent key={activeQueue} value={activeQueue} className="mt-3">{table(activeQueue === 'attention' ? attention : activeQueue === 'review' ? review : shown, {attention: '需要处理', review: '待复核', all: '全部'}[activeQueue])}</TabsContent>
           </Tabs>
         {isPreview() && <Collapsible className={""}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">示例资料</Button></CollapsibleTrigger><CollapsibleContent><div className={"flex flex-wrap gap-2 my-3 mx-0"}><Button variant="outline" onClick={() => onDemo('issues')}>使用 P-204 示例资料包<ArrowRight/></Button><Button variant="outline" onClick={() => onDemo('complete')}>完整资料 · 可批准路径<ArrowRight/></Button><Button variant="outline" onClick={() => onDemo('outlier')}>尺寸超差 · 不批准路径<ArrowRight/></Button></div></CollapsibleContent></Collapsible>}

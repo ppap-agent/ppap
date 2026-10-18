@@ -8,19 +8,14 @@ import unittest
 import uuid
 from urllib.parse import parse_qs, urljoin, urlsplit
 
+from .conftest import isolated_dev_login
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:  # pragma: no cover - optional until the e2e job installs Playwright
     sync_playwright = None
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
-
-
-def isolated_dev_login(page):
-    response = page.request.post(f"{WEB}/api/isolated-dev/sessions", data={"subject": "alice"})
-    if response.status != 200:
-        raise AssertionError(f"isolated-dev session was not created: {response.status}")
-    page.goto(WEB)
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
@@ -43,7 +38,7 @@ class RulePreparationTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.set_default_timeout(5000)
-            isolated_dev_login(page)
+            api = isolated_dev_login(page, WEB)
             page.get_by_role("navigation", name="主要导航").get_by_role("link", name="审核要求", exact=True).click()
             page.get_by_role("button", name="上传要求", exact=True).click()
             page.get_by_label("上传共用要求文件").set_input_files({"name": "控制计划规则.json", "mimeType": "application/json", "buffer": source_bytes})
@@ -74,14 +69,14 @@ class RulePreparationTests(unittest.TestCase):
             link.click()
             saved_query, reopened_query = parse_qs(urlsplit(saved_url).query), parse_qs(urlsplit(page.url).query)
             self.assertEqual(reopened_query["requirement"], saved_query["requirement"])
-            published = page.request.get(f"{WEB}/api/rules/{saved_query['reqVersion'][0]}")
+            published = page.request.get(f"{api}/rules/{saved_query['reqVersion'][0]}")
             self.assertEqual(published.status, 200)
             self.assertEqual(published.json()["body"]["customers"], ["测试客户"])
             self.assertEqual(published.json()["body"]["parts"], ["零件 P-1"])
             page.close()
             page = browser.new_page()
             page.set_default_timeout(5000)
-            isolated_dev_login(page)
+            isolated_dev_login(page, WEB)
             page.goto(saved_url)
             expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
             expect(page.get_by_role("textbox", name="要执行的要求", exact=True)).to_have_count(0)

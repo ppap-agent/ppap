@@ -208,7 +208,9 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
 
-`tests/integration/product/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`packages/ppap_excel_audit_engine/tests/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `pytest tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_web_rules.py` 通过隔离登录接口建立测试会话，从当前审核要求入口使用结构化规则文件走真实上传、提取、人工编辑和保存；再用全新浏览器会话重访只读版本，并下载核对原件。它不证明真实飞书登录。`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
+`tests/integration/product/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`packages/ppap_excel_audit_engine/tests/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `pytest tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_web_rules.py` 读取 Web `runtime-config.json` 中的 API 地址，再通过隔离登录接口建立测试会话；不假定静态 Web 提供 `/api` 代理。从当前审核要求入口使用结构化规则文件走真实上传、提取、人工编辑和保存；再用全新浏览器会话重访只读版本，并下载核对原件。它不证明真实飞书登录。`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
+
+`tests/e2e/test_web_audit.py::WebAuditLoopTests::test_audit_files_path_loads_history_after_login` 从现有 `/audit-files` 深链读取服务器轮次，验证当前工作台搜索、冻结轮次入口和只读回访；隔离 fixture 的 presence 规则不证明真实 PPAP 审核质量。工作台初次读取期间，用户显式选择的队列优先于数据返回后计算的默认队列；`test_explicit_all_records_selection_survives_initial_history_read` 控制响应顺序验证此边界。
 
 其中的未知提取恢复用例从当前审核要求上传入口进入：刷新和核对只读原请求，记录 HTTP 方法以拒绝恢复期间的写操作；重新提取需确认可能的模型费用并创建新请求。原请求的迟到读取不能替换新请求；挂起的提交响应晚于人工录入返回时不能覆盖人工内容。`RuleExtractionRecovery.tla` 是一份冻结来源、两个请求及延迟响应的有限 Safety 检查；正向配置检查未知不冒充运行中、只读不重提、当前请求及人工录入边界，四个故障配置保留对应反例。它不证明 SQL 持久化、跨标签页恢复、授权、模型质量、真实收费或最终完成。
 

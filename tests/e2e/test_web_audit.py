@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ppap_core.fixtures import RULE_A
+
+from .conftest import isolated_dev_login
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -18,12 +22,6 @@ else:
 
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
-
-
-def isolated_dev_login(page):
-    page.goto(f"{WEB}/dev")
-    page.get_by_test_id("isolated-dev-login").click()
-    page.wait_for_selector('[data-testid="session-user"]', state="attached")
 
 
 def open_nav(page):
@@ -70,7 +68,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 browser = playwright.chromium.launch()
                 page = browser.new_page()
                 page.set_viewport_size({"width": 390, "height": 844})
-                isolated_dev_login(page)
+                isolated_dev_login(page, WEB)
                 page.get_by_test_id("source-upload").set_input_files(str(target))
                 page.wait_for_selector('[data-testid="draft-items"]')
                 page.get_by_test_id("item-rule").first.select_option(RULE_A)
@@ -203,20 +201,40 @@ class WebAuditLoopTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            isolated_dev_login(page)
-            pc_nav(page, "nav-audit-files").click()
-            page.wait_for_url("**/audit-files")
-            page.wait_for_function(
-                """() => ['history-list', 'history-empty', 'history-error'].some((id) => {
-                  return Boolean(document.querySelector('[data-testid=\"' + id + '\"]'));
-                })"""
-            )
-            error = page.get_by_test_id("history-error")
-            if error.count() and error.is_visible():
-                self.fail(error.inner_text())
-            visible = page.get_by_test_id("history-list").or_(page.get_by_test_id("history-empty"))
-            expect(visible).to_be_visible()
-            self.assertTrue(page.url.rstrip("/").endswith("/audit-files"))
+            page.set_default_timeout(5000)
+            api = isolated_dev_login(page, WEB)
+            name = f"history-{uuid.uuid4().hex[:8]}.txt"
+            created = page.request.post(f"{api}/files", data={"original_filename": name, "content_type": "text/plain", "byte_size": 7})
+            self.assertEqual(created.status, 201)
+            version = created.json()
+            path = f"{api}/files/{version['file_id']}/versions/{version['id']}"
+            uploaded = page.request.put(path + "/blob", data=b"history", headers={"Content-Type": "text/plain"})
+            self.assertEqual(uploaded.status, 200)
+            self.assertEqual(page.request.post(path + "/finalize").status, 200)
+            draft = page.request.post(f"{api}/drafts", data={})
+            self.assertEqual(draft.status, 201)
+            draft_id = draft.json()["id"]
+            saved = page.request.put(f"{api}/drafts/{draft_id}", data={"items": [{"file_version_id": version["id"], "role": "target", "rule_version_id": RULE_A}]})
+            self.assertEqual(saved.status, 200)
+            accepted = page.request.post(f"{api}/drafts/{draft_id}/accept", data={"idempotency_key": str(uuid.uuid4())})
+            self.assertEqual(accepted.status, 201)
+            round_id = accepted.json()["id"]
+
+            requests = []
+            page.on("request", lambda request: requests.append((request.method, urlsplit(request.url).path)))
+            page.goto(f"{WEB}/audit-files")
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+            page.get_by_role("tab", name="全部记录", exact=True).click()
+            page.get_by_role("searchbox", name="搜索零件、供应商或文件", exact=True).fill(name)
+            history = page.get_by_role("table", name="全部审核记录", exact=True)
+            row = history.get_by_role("row").filter(has_text=name)
+            expect(row).to_have_count(1)
+            expect(row.get_by_role("link")).to_have_attribute("href", f"/audit-files?round={round_id}")
+            expect(page.get_by_role("alert")).to_have_count(0)
+            self.assertIn(("GET", "/rounds"), requests)
+            self.assertIn(("GET", "/drafts"), requests)
+            self.assertEqual([method for method, _ in requests if method in {"POST", "PUT", "PATCH", "DELETE"}], [])
+            self.assertEqual(urlsplit(page.url).path, "/audit-files")
             browser.close()
 
     def test_return_from_rules_restores_file_finding_filter_and_review_next(self):
@@ -229,7 +247,7 @@ class WebAuditLoopTests(unittest.TestCase):
                 browser = playwright.chromium.launch()
                 page = browser.new_page()
                 page.set_viewport_size({"width": 1440, "height": 900})
-                isolated_dev_login(page)
+                isolated_dev_login(page, WEB)
                 page.get_by_test_id("source-upload").set_input_files(str(first))
                 page.wait_for_selector('[data-testid="draft-items"]')
                 page.get_by_test_id("item-rule").first.select_option(RULE_A)

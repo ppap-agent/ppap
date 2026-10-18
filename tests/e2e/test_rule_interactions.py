@@ -29,6 +29,39 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_explicit_all_records_selection_survives_initial_history_read(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            pending, writes = [], []
+            page.on("request", lambda request: writes.append(request.method) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
+            page.route("**/api/drafts?*", lambda route: pending.append((route, {"drafts": [], "next_offset": None})))
+            summary = {
+                "id": JOB,
+                "execution": "completed",
+                "analysis_mode": "standard",
+                "inputs": [{"file_version_id": VERSION, "original_filename": "history.xlsx", "role": "target", "rule": None}],
+                "result_counts": {"PASS": 1},
+                "reviewed_count": 0,
+                "created_at": "2026-10-18T00:00:00Z",
+            }
+            page.route("**/api/rounds?*", lambda route: pending.append((route, {"rounds": [summary], "next_offset": None})))
+            page.goto(WEB)
+            selected = page.get_by_role("tab", name="全部记录", exact=True)
+            expect(selected).to_have_attribute("aria-selected", "true")
+            selected.click()
+            self.assertEqual(len(pending), 2)
+            for route, body in pending:
+                route.fulfill(json=body)
+            expect(page.get_by_role("button", name="刷新审核记录", exact=True)).to_be_enabled()
+            expect(selected).to_have_attribute("aria-selected", "true")
+            expect(page.get_by_role("table", name="全部审核记录", exact=True)).to_contain_text("history.xlsx")
+            self.assertEqual(writes, [])
+            browser.close()
+
     def test_batch_upload_keeps_uncertain_version_for_read_only_recovery(self):
         from playwright.sync_api import expect
 
