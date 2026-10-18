@@ -8,11 +8,11 @@ from urllib.parse import urlencode
 from ppap_core.feishu_drive import OPEN_API
 
 
-def task_notification_card(task: dict, stage: str, web_url: str) -> dict:
+def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None) -> dict:
     files = task["files"]
     selected = [row for row in files if row["selection"] == "selected"]
     reports = [(row.get("audit") or {}).get("report", {}).get("state") for row in selected]
-    title = {"confirmation": "规则匹配结果待确认", "started": "审核已开始", "completed": "审核已结束"}[stage]
+    title = {"confirmation": "规则匹配结果待确认", "started": "审核已开始", "completed": "审核已结束", "zip_ready": "报告 ZIP 已就绪"}[stage]
     lines = [task["number"]]
     if stage == "confirmation":
         matched = sum((row.get("match") or {}).get("state") == "matched" for row in selected)
@@ -24,6 +24,12 @@ def task_notification_card(task: dict, stage: str, web_url: str) -> dict:
         for row in files:
             if row["selection"] == "removed":
                 lines.append("已移除：" + row["file"]["original_filename"] + "；" + (row["removal_reason"] or "未纳入审核"))
+    elif stage == "zip_ready":
+        if not report_package or report_package["state"] != "ready":
+            raise ValueError("notification_zip_not_ready")
+        lines.append(f"已打包 {len(report_package['reports'])} 份报告。请打开本次 ZIP 核对并下载。")
+        names = {row["file"]["id"]: row["file"]["original_filename"] for row in files}
+        lines.extend(names[reference["file_version_id"]] for reference in report_package["reports"])
     else:
         ready, failed = reports.count("ready"), reports.count("failed")
         errors = sum((row.get("audit") or {}).get("execution") == "review_failed" or state == "not_eligible" for row, state in zip(selected, reports, strict=True))
@@ -35,7 +41,12 @@ def task_notification_card(task: dict, stage: str, web_url: str) -> dict:
             audit = row.get("audit") or {}
             conclusion = {"PASS": "符合", "NG": "不符合"}.get(audit.get("conclusion") or "", "无正式结论")
             lines.append(row["file"]["original_filename"] + "：" + conclusion)
-    target = web_url.rstrip("/") + "/audit?" + urlencode({"task": task["id"], **({"report": "1"} if stage == "completed" and any(state == "ready" for state in reports) else {})})
+    params = {"task": task["id"]}
+    if stage == "completed" and "ready" in reports or stage == "zip_ready":
+        params["report"] = "1"
+    if stage == "zip_ready" and report_package:
+        params["packageRequest"] = report_package["receipt"]["request_id"]
+    target = web_url.rstrip("/") + "/audit?" + urlencode(params)
     link = web_url.rstrip("/") + "/enter-current?" + urlencode({"return_to": target})
     body = "\n".join(lines)
     card: dict = {
@@ -43,7 +54,17 @@ def task_notification_card(task: dict, stage: str, web_url: str) -> dict:
         "header": {"title": {"tag": "plain_text", "content": title}},
         "elements": [
             {"tag": "div", "text": {"tag": "plain_text", "content": body}},
-            {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "查看并核对规则" if stage == "confirmation" else "打开审核"}, "type": "primary", "url": link}]},
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看并核对规则" if stage == "confirmation" else "打开本次 ZIP" if stage == "zip_ready" else "打开审核"},
+                        "type": "primary",
+                        "url": link,
+                    }
+                ],
+            },
         ],
     }
     while body and len(json.dumps(card, ensure_ascii=False).encode()) > 26000:

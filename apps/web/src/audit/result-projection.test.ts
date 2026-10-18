@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
 import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError, reconcileTaskNotification} from './result-projection.ts'
-import {readReportPdf, readReportZip} from './report-contract.ts'
+import {readReportPdf, readReportZip, readTaskReportPackage} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
 function projection(): Task {
@@ -282,6 +282,16 @@ test('task ZIP scope requires distinct reports from its complete frozen result i
   }
   for (const invalid of [[], [reports[0]], [reports[0], reports[0]]]) assert.notEqual(taskPackageScopeError({...task, report_package: {...job, reports: invalid}}), '')
   assert.equal(taskPackageScopeError({...task, report_package: null}), '')
+})
+test('an explicit ZIP link reads only that request and rejects another request or frozen collection', async () => {
+  const task = projection(), second = structuredClone(task.files[0])
+  second.file.id = 'file-v2'; second.audit!.file_version_id = 'file-v2'; second.audit!.report.report_id = 'report-2'; task.files.push(second)
+  const reports = task.files.map(row => reportReference(task, row)!)
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'zip-1', reports, receipt: {request_id: 'pack-1', state: 'accepted', reason: null}, state: 'ready', artifact: {artifact_id: 'zip-bytes', filename: '审核报告.zip', content_type: 'application/zip', byte_size: 7}, reason: null, retry_allowed: false}
+  const read = {readPackage: async (requestId: string) => {assert.equal(requestId, 'pack-1'); return job}}
+  assert.equal(await readTaskReportPackage(read, task, 'pack-1'), job)
+  await assert.rejects(readTaskReportPackage({readPackage: async () => ({...job, receipt: {...job.receipt, request_id: 'another-request'}})}, task, 'pack-1'), /package_link_mismatch/)
+  await assert.rejects(readTaskReportPackage({readPackage: async () => ({...job, reports: [{...reports[0], task_id: 'other-task'}, reports[1]]})}, task, 'pack-1'), /package_link_mismatch/)
 })
 test('readback preserves the accepted round, file versions, rules and input selection', () => {
   const before = projection(), after = structuredClone(before)

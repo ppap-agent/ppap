@@ -432,6 +432,93 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
+    def test_distinct_zip_collections_keep_separate_intents_and_unknown_does_not_block_the_other(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+        from ppap_worker import process_claimed
+
+        self.settings.feishu_app_id = APP_ID
+        _, task, worker, _, _ = self.prepared_query_task(documents=(("first.xlsx", "A_ONLY_017"), ("second.xlsx", "B_ONLY_029"), ("third.xlsx", "C_ONLY_031")))
+        for _ in range(3):
+            process_claimed(worker, worker.claim_job("zip-pdfs"), "zip-pdfs")
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        for _ in range(3):
+            job, recipient = api_store.claim_task_notification("notifier")
+            if api_store.start_task_notification(job, "notifier", recipient):
+                api_store.finish_task_notification(job, "notifier", {"state": "sent", "message_id": "om_prior", "reason": None})
+        current = self.display_client.get(f"/audit-tasks/{task['id']}").json()
+        references = [
+            {"task_id": task["id"], "round_id": task["round_id"], "file_version_id": row["file"]["id"], "result_attempt": 1, "report_id": row["audit"]["report"]["report_id"]}
+            for row in current["files"]
+        ]
+        commands = [{"request_id": str(uuid.uuid4()), "reports": references[:2]}, {"request_id": str(uuid.uuid4()), "reports": references[1:]}]
+        packages = [self.display_client.post("/audit-report-packages", json=body).json() for body in commands]
+        self.assertNotEqual(packages[0]["package_id"], packages[1]["package_id"])
+        for _ in range(2):
+            process_claimed(worker, worker.claim_job("zip-packs"), "zip-packs")
+        claims = []
+        for index in range(2):
+            intent, recipient = api_store.claim_task_notification("zip-notifier")
+            claims.append(intent)
+            delivery = api_store.start_task_notification(intent, "zip-notifier", recipient)
+            package_index = next(i for i, package in enumerate(packages) if package["package_id"] == intent.payload["package_id"])
+            link = delivery["card"]["elements"][1]["actions"][0]["url"]
+            target = parse_qs(urlsplit(link).query)["return_to"][0]
+            self.assertEqual(parse_qs(urlsplit(target).query)["packageRequest"], [commands[package_index]["request_id"]])
+            self.assertTrue(
+                api_store.finish_task_notification(intent, "zip-notifier", {"state": "unknown" if index == 0 else "sent", "message_id": None if index == 0 else "om_second", "reason": None})
+            )
+        self.assertIsNone(api_store.claim_task_notification("notifier-again"))
+        self.assertTrue(api_store.finish_task_notification(claims[0], "zip-notifier", {"state": "sent", "message_id": "om_late", "reason": None}))
+        self.assertIsNone(api_store.claim_task_notification("notifier-last"))
+
+    def test_ready_zip_notifies_once_even_when_completion_notification_is_off(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+        from ppap_worker import process_claimed
+
+        self.settings.feishu_app_id = APP_ID
+        task, worker, completed, command, package = self.prepared_report_package()
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        api_store.save_task_notification(self.alice, task["id"], {"enabled": False, "expected_revision": 0})
+        for stage in ("confirmation", "started", "completed"):
+            old, recipient = api_store.claim_task_notification("notifier")
+            self.assertEqual(old.payload["stage"], stage)
+            delivery = api_store.start_task_notification(old, "notifier", recipient)
+            if delivery:
+                api_store.finish_task_notification(old, "notifier", {"state": "sent", "message_id": "om_" + stage, "reason": None})
+        zip_job = worker.claim_job("zip-notify")
+        self.assertEqual(zip_job.kind, "report_zip")
+        self.assertTrue(worker.complete_job(zip_job, "zip-notify", {"error": "report_package_artifact_failed"}, "failed"))
+        self.assertIsNone(api_store.claim_task_notification("notifier-before-recovery"))
+        recovered = self.display_client.post(
+            f"/audit-report-packages/{command['request_id']}/retries", json={"request_id": str(uuid.uuid4()), "package_id": package["package_id"], "expected_attempt": zip_job.attempt}
+        )
+        self.assertEqual(recovered.status_code, 202)
+        zip_job = worker.claim_job("zip-notify")
+        self.assertEqual(zip_job.attempt, 2)
+        process_claimed(worker, zip_job, "zip-notify")
+        ready = self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()
+        self.assertEqual(ready["state"], "ready")
+        claimed = api_store.claim_task_notification("zip-notifier")
+        self.assertIsNotNone(claimed, "a ready ZIP needs its own durable notification intent")
+        intent, recipient = claimed
+        self.assertEqual((intent.payload["stage"], intent.payload["package_id"]), ("zip_ready", package["package_id"]))
+        delivery = api_store.start_task_notification(intent, "zip-notifier", recipient)
+        self.assertEqual(delivery["card"]["header"]["title"]["content"], "报告 ZIP 已就绪")
+        link = delivery["card"]["elements"][1]["actions"][0]["url"]
+        target = parse_qs(urlsplit(link).query)["return_to"][0]
+        self.assertEqual(parse_qs(urlsplit(target).query)["packageRequest"], [command["request_id"]])
+        self.assertTrue(api_store.finish_task_notification(intent, "zip-notifier", {"state": "sent", "message_id": "om_zip", "reason": None}))
+        self.assertFalse(worker.complete_job(zip_job, "zip-notify", {}, "succeeded"))
+        self.assertEqual(self.display_client.post("/audit-report-packages", json=command).json()["package_id"], package["package_id"])
+        self.assertIsNone(api_store.claim_task_notification("notifier-again"))
+        self.assertEqual(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"], completed["files"])
+
     def test_missing_feishu_credentials_do_not_consume_the_notification_intent(self):
         import httpx
         from ppap_api.notifications import dispatch_task_notification

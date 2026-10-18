@@ -1,6 +1,6 @@
 import type {components} from '../src/generated/openapi'
 import type {AuditReportAdapter} from '../src/audit/report-contract'
-import {auditReportFilename, sameSnapshot} from '../src/audit/result-projection'
+import {auditReportFilename, sameSnapshot, reportReference} from '../src/audit/result-projection'
 import {zipSync, strToU8} from 'fflate'
 import controlPlan from './reports/control-plan.pdf?url'
 import pfmea from './reports/pfmea.pdf?url'
@@ -61,7 +61,7 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     const task = tasks.get(job.reports[0].task_id)!
     tasks.set(task.id, {...task, report_package: structuredClone(job)})
   }
-  return {
+  const adapter: Required<AuditReportAdapter> = {
   readPdf: async (reference, artifact) => {
     const {audit} = target(reference)
     if (!sameSnapshot(audit.report.artifact, artifact)) throw new Error('wrong_preview_artifact')
@@ -109,6 +109,15 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     return structuredClone(job)
   },
   readPackage: async requestId => {
+    if (!packages.has(requestId) && scene === 'reports-zip-link' && requestId === 'preview-linked-zip') {
+      const task = tasks.get('preview-report-task')!
+      const references = task.files.filter(file => file.audit?.report.state === 'ready').map(file => reportReference(task, file)!)
+      await adapter.createPackage(references.slice(0, 2), requestId)
+      await adapter.readPackage(requestId)
+      await adapter.createPackage(references.slice(1, 3), 'preview-latest-zip')
+      await adapter.readPackage('preview-latest-zip')
+      return structuredClone(packages.get(requestId)!.job)
+    }
     const stored = packages.get(requestId)
     if (!stored) throw new Error('unknown_preview_package')
     if (scene === 'reports-zip-unknown' && !reads.has(requestId)) {reads.add(requestId); return {...structuredClone(stored.job), receipt: {request_id: requestId, state: 'pending', reason: '受理结果待确认。'}, state: 'pending'}}
@@ -146,4 +155,5 @@ export function fixtureReports(tasks: Map<string, components['schemas']['AuditTa
     return stored.blob
   },
   }
+  return adapter
 }

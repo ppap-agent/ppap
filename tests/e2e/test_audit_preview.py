@@ -29,6 +29,53 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_preview_host_preserves_the_explicit_zip_link_and_clears_it_on_exit(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/__preview?page=audit&scene=reports-zip-link&task=preview-report-task&report=1&packageRequest=preview-linked-zip")
+            product = page.frame_locator("#product")
+            linked = product.get_by_role("region", name="通知中的 ZIP", exact=True)
+            expect(linked.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+            self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], ["preview-linked-zip"])
+            linked.get_by_role("button", name="返回当前报告中心", exact=True).click()
+            expect(linked).to_have_count(0)
+            self.assertNotIn("packageRequest", parse_qs(urlparse(page.url).query))
+            browser.close()
+
+    def test_zip_notification_link_stays_with_its_package_after_latest_status_changes(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-zip-link&task=preview-report-task&report=1&packageRequest=preview-linked-zip")
+            linked = page.get_by_role("region", name="通知中的 ZIP", exact=True)
+            expect(linked.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+            expect(linked.get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(linked.get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_have_count(0)
+            with page.expect_download() as downloaded:
+                linked.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+            self.assertTrue(downloaded.value.suggested_filename.endswith(".zip"))
+            page.reload()
+            expect(linked.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+            linked.get_by_role("button", name="返回当前报告中心", exact=True).click()
+            page.get_by_role("button", name="读取报告状态", exact=True).click()
+            expect(page.get_by_role("region", name="ZIP 工作", exact=True).get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_missing_explicit_zip_does_not_fall_back_or_block_individual_reports(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1&packageRequest=missing-request")
+            expect(page.get_by_text("此 ZIP 暂不可用", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="返回当前报告中心", exact=True).click()
+            expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
+            self.assertNotIn("packageRequest", parse_qs(urlparse(page.url).query))
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_expired_rule_can_be_rematched_and_confirmed_without_another_task(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

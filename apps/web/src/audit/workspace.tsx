@@ -37,8 +37,9 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     setReport(id); onReportView(id !== null)
     const url = new URL(location.href)
     if (id !== null) url.searchParams.set('report', id); else url.searchParams.delete('report')
+    if (id === null) url.searchParams.delete('packageRequest')
     history.replaceState(null, '', url)
-    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: task.id, report: id}, location.origin)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: task.id, report: id, packageRequest: url.searchParams.get('packageRequest')}, location.origin)
   }
   const file = queue.find(row => row.file.id === selected) ?? queue[0]
   const fileQueue = <div className="space-y-5"><nav aria-label="文件队列" className="grid gap-2">{queue.map(row => {

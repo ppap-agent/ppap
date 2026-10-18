@@ -48,7 +48,7 @@
           <optgroup label="上传草稿"><option value="checking-loading">预检查回执迟到</option></optgroup>
           <optgroup label="文件信息与时间估计"><option value="restore-estimate">任务结束时间区间</option><option value="restore-estimate-overdue">结束时间估计已过期</option><option value="restore-estimate-invalid">估计缺少时区</option><option value="restore-estimate-reversed">估计区间倒序</option><option value="confirm-metadata-conflict">确认回执替换文件信息</option></optgroup>
           <optgroup label="显示信息更正"><option value="restore-display-ready">更正与取消</option><option value="restore-display-rejected">更正明确失败</option><option value="restore-display-unknown">保存结果未知</option><option value="restore-display-conflict">显示版本冲突</option><option value="restore-display-loading">保存回执迟到</option><option value="restore-display-denied">保存期间撤权</option><option value="restore-display-stale">旧显示投影</option><option value="restore-display-read-failed">编辑许可读取失败</option><option value="archive-display">历史显示更正（只读）</option></optgroup>
-          <optgroup label="ZIP 明细与恢复"><option value="reports-zip-write-failed">PDF 已准备但 ZIP 写入失败</option><option value="reports-zip-pending-failed">ZIP 失败且部分报告未确认</option><option value="reports-zip-no-retry">服务未允许再次打包</option><option value="reports-zip-legacy">未提供逐报告状态</option><option value="reports-zip-outcome-ready">ZIP 就绪与明细矛盾</option><option value="reports-zip-outcome-reference">明细属于其他报告</option><option value="reports-zip-outcome-missing">明细缺项</option></optgroup>
+          <optgroup label="ZIP 明细与恢复"><option value="reports-zip-write-failed">PDF 已准备但 ZIP 写入失败</option><option value="reports-zip-pending-failed">ZIP 失败且部分报告未确认</option><option value="reports-zip-no-retry">服务未允许再次打包</option><option value="reports-zip-legacy">未提供逐报告状态</option><option value="reports-zip-outcome-ready">ZIP 就绪与明细矛盾</option><option value="reports-zip-outcome-reference">明细属于其他报告</option><option value="reports-zip-outcome-missing">明细缺项</option><option value="reports-zip-link">通知中的固定 ZIP</option></optgroup>
           <optgroup label="自动更新"><option value="match-rule-missing">候选规则缺失</option><option value="observe-matching">匹配自动读取与重新选择</option><option value="restore-observe">审核自动读取</option><option value="restore-observe-regression">拒绝较早进度</option><option value="restore-observe-missing-progress">拒绝进度缺失</option><option value="restore-observe-unresolved">未知报告请求暂停自动读</option></optgroup>
           <optgroup label="报告分享">
             <option value="reports-share-ready">组织内分享</option><option value="reports-share-partial">部分发送失败</option><option value="reports-share-unknown">发送回执未知</option><option value="reports-share-revoked">分享权限撤销</option><option value="reports-share-race">发送回执迟到</option><option value="reports-share-external">关闭期间出现未决分享</option>
@@ -79,6 +79,7 @@
     const sceneView = query.get('scene')?.startsWith('archive-') ? 'archive' : query.get('scene')?.startsWith('templates-') ? 'templates' : query.get('scene')?.startsWith('usage-') ? 'usage' : '';
     const initialView = query.has('view') ? ['archive', 'templates', 'usage'].includes(query.get('view')) ? query.get('view') : '' : sceneView;
     const state = {page: paths[query.get('page')] ? query.get('page') : 'audit', scene: choices.scene.includes(query.get('scene')) ? query.get('scene') : 'populated', width: Number.isInteger(savedWidth) && savedWidth >= 280 && savedWidth <= 2400 ? String(savedWidth) : 'fluid', theme: choices.theme.includes(query.get('theme')) ? query.get('theme') : 'light', task: query.get('task') || (query.get('scene')?.startsWith('restore-') ? 'preview-recovery-task' : query.get('scene')?.startsWith('reports-') ? 'preview-report-task' : ''), view: initialView, archiveDoc: query.get('archiveDoc') || '', auditRef: query.get('auditRef') || '', archiveReport: query.get('archiveReport') || '', report: query.get('report') || (query.get('scene')?.startsWith('reports-') ? '1' : ''), usageRange: query.get('usageRange') || '', usageSearch: query.get('usageSearch') || '', usagePage: query.get('usagePage') || ''};
+    state.packageRequest = query.get('packageRequest') || '';
     const frame = document.getElementById('product');
     const device = document.getElementById('device');
     const custom = document.getElementById('custom-width');
@@ -106,7 +107,7 @@
         target.searchParams.set('theme', state.theme);
         if (state.task) target.searchParams.set('task', state.task);
         if (state.report) target.searchParams.set('report', state.report);
-        for (const key of ['view', 'archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage']) if (state[key]) target.searchParams.set(key, state[key]);
+        for (const key of ['view', 'archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage', 'packageRequest']) if (state[key]) target.searchParams.set(key, state[key]);
         destination = target.pathname + target.search;
         if (!reload && frame.contentDocument) {
           frame.contentDocument.documentElement.classList.toggle('dark', state.theme === 'dark');
@@ -119,7 +120,7 @@
       if (reload) frame.src = destination;
     }
     document.getElementById('page').addEventListener('change', event => { state.page = event.target.value; render(true); });
-    document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; state.view = state.scene.startsWith('archive-') ? 'archive' : state.scene.startsWith('templates-') ? 'templates' : state.scene.startsWith('usage-') ? 'usage' : ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; state.usageRange = ''; state.usageSearch = ''; state.usagePage = ''; render(true); });
+    document.getElementById('scene').addEventListener('change', event => { state.scene = event.target.value; state.task = state.scene.startsWith('restore-') ? 'preview-recovery-task' : state.scene.startsWith('reports-') ? 'preview-report-task' : ''; state.report = state.scene.startsWith('reports-') ? '1' : ''; state.packageRequest = ''; state.view = state.scene.startsWith('archive-') ? 'archive' : state.scene.startsWith('templates-') ? 'templates' : state.scene.startsWith('usage-') ? 'usage' : ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; state.usageRange = ''; state.usageSearch = ''; state.usagePage = ''; render(true); });
     for (const button of document.querySelectorAll('[data-width]')) button.addEventListener('click', () => { state.width = button.dataset.width; render(false); });
     custom.addEventListener('change', () => { const width = Number(custom.value); if (Number.isFinite(width) && width >= 280 && width <= 2400) { state.width = String(width); render(false); } else render(false); });
     document.getElementById('theme').addEventListener('click', () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; render(state.page !== 'audit'); });
@@ -137,7 +138,8 @@
       }
       if (event.data?.type !== 'ppap-audit-task' || event.data.task !== null && (typeof event.data.task !== 'string' || event.data.task.length > 256)) return;
       if (event.data.report != null && (typeof event.data.report !== 'string' || event.data.report.length > 256)) return;
-      state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; state.view = ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; render(false);
+      if (event.data.packageRequest != null && (typeof event.data.packageRequest !== 'string' || event.data.packageRequest.length > 256)) return;
+      state.task = event.data.task || ''; state.report = state.task ? event.data.report || '' : ''; state.packageRequest = state.task ? event.data.packageRequest || '' : ''; state.view = ''; state.archiveDoc = ''; state.auditRef = ''; state.archiveReport = ''; render(false);
     });
     frame.addEventListener('load', () => {
       const opened = new URL(frame.contentWindow.location.href);

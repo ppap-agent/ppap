@@ -297,6 +297,12 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
   const snapshot = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
   if (scene === 'restore-without-notification') delete snapshot.notification_enabled
+  if (scene === 'reports-zip-link') {
+    const later = structuredClone(snapshot.files[0])
+    later.file = {...later.file, id: 'preview-later-pfmea', original_filename: '补充 PFMEA.xlsx'}
+    later.audit = {...later.audit!, file_version_id: later.file.id, report: {...later.audit!.report, report_id: 'preview-later-report', artifact: {...later.audit!.report.artifact!, filename: '补充 PFMEA.xlsx-审核报告.pdf'}}}
+    snapshot.files.push(later); snapshot.progress = {completed: 4, total: 4}
+  }
   if (scene.startsWith('restore-review-')) {
     Object.assign(snapshot, fixtureResults(frozen, scene))
     const audit = snapshot.files[0].audit!, source = snapshot.files[1].file

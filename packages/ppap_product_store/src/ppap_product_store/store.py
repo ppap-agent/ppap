@@ -1122,13 +1122,14 @@ class AuthStore:
             )
             return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
 
-    def _queue_task_notification(self, conn, task_id: str, stage: str, round_id: str | None = None) -> None:
+    def _queue_task_notification(self, conn, task_id: str, stage: str, round_id: str | None = None, *, package_id: str | None = None) -> None:
+        payload = {"task_id": task_id, "stage": stage, **({"package_id": package_id} if package_id else {})}
         conn.execute(
             """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status, result)
             SELECT gen_random_uuid(), d.tenant_id, %s, 'feishu_notification', %s, 'queued', %s
             FROM product.audit_drafts d WHERE d.id = %s AND d.task_fingerprint IS NOT NULL
-            ON CONFLICT (tenant_id, (payload->>'task_id'), (payload->>'stage')) WHERE kind = 'feishu_notification' DO NOTHING""",
-            (round_id, Jsonb({"task_id": task_id, "stage": stage}), Jsonb({"state": "queued", "reason": None}), task_id),
+            ON CONFLICT (tenant_id, (payload->>'task_id'), (payload->>'stage'), (COALESCE(payload->>'package_id', ''))) WHERE kind = 'feishu_notification' DO NOTHING""",
+            (round_id, Jsonb(payload), Jsonb({"state": "queued", "reason": None}), task_id),
         )
 
     def _queue_finished_notification(self, conn, task_id: str, round_id: str) -> None:
@@ -1220,10 +1221,11 @@ class AuthStore:
 
     def start_task_notification(self, claimed: ClaimedJob, worker_ident: str, principal: Principal) -> dict | None:
         task_id, stage = _as_uuid(str(claimed.payload.get("task_id") or "")), claimed.payload.get("stage")
-        if not task_id or stage not in {"confirmation", "started", "completed"}:
+        package_id = _as_uuid(str(claimed.payload.get("package_id") or "")) if stage == "zip_ready" else None
+        if not task_id or stage not in {"confirmation", "started", "completed", "zip_ready"} or stage == "zip_ready" and not package_id:
             raise ValueError("invalid_notification_scope")
         with self._conn() as conn, conn.transaction():
-            reason = None
+            reason, report_package = None, None
             try:
                 draft = self._recognition_owner(conn, principal, task_id, lock=True)
                 identity = conn.execute(
@@ -1244,20 +1246,34 @@ class AuthStore:
                     reason = "completion_disabled"
                 if stage == "completed" and task["state"] != "completed":
                     raise ValueError("notification_task_not_completed")
+                if stage == "zip_ready":
+                    request = conn.execute(
+                        """SELECT id, payload FROM engine.jobs WHERE tenant_id = %s AND kind = 'report_zip_request'
+                        AND payload->>'task_id' = %s AND payload->>'package_id' = %s AND payload->>'created_by' = %s
+                        ORDER BY created_at, id LIMIT 1""",
+                        (principal.tenant_id, task_id, package_id, principal.user_id),
+                    ).fetchone()
+                    if not request:
+                        raise KeyError("missing")
+                    report_package = self._report_package_public(conn, principal, task, str(request[0]), request[1])
+                    artifact = report_package.get("artifact") or {}
+                    if report_package["state"] != "ready" or not artifact.get("artifact_id") or artifact.get("content_type") != "application/zip" or not artifact.get("byte_size", 0) > 0:
+                        reason = "zip_not_ready"
             except KeyError:
                 reason = "notification_access_revoked"
             if reason:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
                 return None
-            card = task_notification_card(task, stage, self.settings.canonical_web_url())
+            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package)
             dispatch = {"receive_id": principal.subject, "card": card}
             row = conn.execute(
                 """UPDATE engine.jobs SET result = '{"state":"dispatching","reason":null}'::jsonb,
                 payload = payload || %s, updated_at = now(), lease_until = now() + interval '90 seconds'
                 WHERE id = %s AND kind = 'feishu_notification' AND attempt = %s AND lease_owner = %s
                 AND status = 'leased' AND result->>'state' = 'preparing' AND lease_until > now()
-                AND tenant_id = %s AND payload->>'task_id' = %s AND payload->>'stage' = %s RETURNING id""",
-                (Jsonb({"dispatch": dispatch}), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id, stage),
+                AND tenant_id = %s AND payload->>'task_id' = %s AND payload->>'stage' = %s
+                AND COALESCE(payload->>'package_id', '') = %s RETURNING id""",
+                (Jsonb({"dispatch": dispatch}), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id, stage, package_id or ""),
             ).fetchone()
             return dispatch if row else None
 
@@ -2346,7 +2362,7 @@ class AuthStore:
         execution = EXEC_COMPLETED if outcome == "succeeded" else EXEC_FAILED
         with self._conn() as conn:
             with conn.transaction():
-                task_id = claimed.payload.get("task_id") if claimed.kind in {"file_analysis", "report_pdf"} else None
+                task_id = claimed.payload.get("task_id") if claimed.kind in {"file_analysis", "report_pdf", "report_zip"} else None
                 if claimed.kind == "audit" and claimed.round_id:
                     source = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s", (claimed.round_id,)).fetchone()
                     task_id = str(source[0]) if source and source[0] else None
@@ -2398,6 +2414,8 @@ class AuthStore:
                         self._queue_task_notification(conn, task_id, "confirmation")
                     if task_id and claimed.kind == "report_pdf" and not claimed.payload.get("regeneration_request_id"):
                         self._queue_finished_notification(conn, task_id, claimed.payload["source_round_id"])
+                    if task_id and claimed.kind == "report_zip" and outcome == "succeeded":
+                        self._queue_task_notification(conn, task_id, "zip_ready", claimed.round_id, package_id=claimed.id)
                     return True
                 updated = conn.execute(
                     """

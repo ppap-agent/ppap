@@ -253,7 +253,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     const url = new URL(location.href)
     if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
     if (!keepSurface) {
-      url.searchParams.delete('report'); url.searchParams.delete('view')
+      url.searchParams.delete('report'); url.searchParams.delete('view'); url.searchParams.delete('packageRequest')
       for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) url.searchParams.delete(key)
     }
     const state = {...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}
@@ -315,7 +315,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
     setSurface('audit')
     setReportView(new URL(location.href).searchParams.has('report'))
     const id = new URL(location.href).searchParams.get('task')
-    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report')}, location.origin)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report'), packageRequest: new URL(location.href).searchParams.get('packageRequest')}, location.origin)
     const localId = typeof history.state?.auditUploadDraft === 'string' ? history.state.auditUploadDraft : null
     if (id ? fromOtherSurface && id === activeTaskId.current : localId && localId === activeUploadDraftId.current) return
     if (id) void recover(id)

@@ -57,3 +57,23 @@ def test_zero_match_card_does_not_claim_an_audit_or_report_and_oversized_card_fa
     assert "未开始审核，未生成正式报告" in card["elements"][0]["text"]["content"]
     with pytest.raises(ValueError, match="notification_card_too_large"):
         task_notification_card(task, "completed", "https://ppap.example.test/" + "x" * 30000)
+
+
+def test_zip_card_names_only_the_requested_collection_and_uses_an_authenticated_operation_link() -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "files": [{"selection": "selected", "file": {"id": version, "original_filename": name}} for version, name in (("v1", "控制计划.xlsx"), ("v2", "不在包内.docx"), ("v3", "流程图.pdf"))],
+    }
+    package = {"state": "ready", "reports": [{"file_version_id": "v1"}, {"file_version_id": "v3"}], "receipt": {"request_id": "zip-request-a"}}
+    card = task_notification_card(task, "zip_ready", "https://ppap.example.test", package)
+    action = card["elements"][1]["actions"][0]
+    assert action["text"]["content"] == "打开本次 ZIP"
+    body = card["elements"][0]["text"]["content"]
+    assert "已打包 2 份报告" in body and "不在包内.docx" not in body
+    outer = urlsplit(action["url"])
+    assert outer.path == "/enter-current"
+    target = urlsplit(parse_qs(outer.query)["return_to"][0])
+    assert target.path == "/audit" and parse_qs(target.query) == {"task": ["task-a"], "report": ["1"], "packageRequest": ["zip-request-a"]}
