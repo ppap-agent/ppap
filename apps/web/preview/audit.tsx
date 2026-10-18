@@ -75,6 +75,20 @@ function sample(index: number): AuditTaskFile {
   return {file: scene.startsWith('original-') ? fixtureOriginalFile(file) : file, selection: 'selected', removal_reason: null, validation_id: `preview-validation-${id}`, validation: {state: 'valid', reasons: []}, match: null}
 }
 const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' | 'drive'>> = {
+  notifications: {
+    async read(id) {
+      const task = taskStore.get(id)
+      if (!task || task.notification_enabled === undefined) throw new Error('notification_unavailable')
+      return {task_id: id, enabled: task.notification_enabled, revision: task.notification_revision ?? 0, available: scene !== 'restore-notification-unavailable', can_change: scene !== 'restore-notification-unknown', delivery: {state: scene === 'restore-notification-unknown' ? 'unknown' : 'not_due', reason: scene === 'restore-notification-unknown' ? 'send_receipt_unknown' : null}}
+    },
+    async save(id, enabled, revision) {
+      const task = taskStore.get(id)
+      if (!task || (task.notification_revision ?? 0) !== revision) throw new Error('notification_revision_conflict')
+      taskStore.set(id, {...task, notification_enabled: enabled, notification_revision: revision + 1})
+      if (scene === 'restore-notification-save-unknown') throw new Error('notification_save_reply_lost')
+      return adapter.notifications!.read(id)
+    },
+  },
   customers: [{value: 'sample-customer', label: '示例客户'}],
   authenticate: async () => {authenticated = true},
   drive: {
@@ -309,6 +323,7 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
     snapshot.progress = {completed: 1, total: 3}
   }
   taskStore.set(seed.id, snapshot)
+  if (scene === 'restore-notification-tasks') taskStore.set('preview-second-task', {...structuredClone(snapshot), id: 'preview-second-task', number: 'PPAP-第二个任务'})
   if (scene === 'restore-unknown') accepted.set(seed.id, frozen)
 }
 

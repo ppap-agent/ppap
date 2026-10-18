@@ -3,8 +3,7 @@ import {useContext, useState} from 'react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
-import {Checkbox} from '../components/ui/checkbox'
-import {Label} from '../components/ui/label'
+import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {FileName} from '../journey/file-name'
@@ -28,7 +27,7 @@ export function AuditExcludedFiles({files}: {files: Task['files']}) {
   })}</div>
 }
 
-export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay}: {task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void}) {
+export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, onChange, renderOriginal, reportAdapter, notificationAdapter, onReportChange, onReportView, sharingAdapter, onEditDisplay}: {task: Task; busy: boolean; readError: string; onReadSupport: () => void; onRead: () => void; onChange: (task: Task) => void; renderOriginal?: OriginalRenderer; reportAdapter?: AuditReportAdapter; notificationAdapter?: AuditNotificationAdapter; onReportChange: (task: Task) => void; onReportView: (open: boolean) => void; sharingAdapter?: AuditSharingAdapter; onEditDisplay?: (file: components['schemas']['AuditTaskFile']) => void}) {
   const openSupport = useContext(SupportEntryContext)
   const queue = task.files.filter(row => row.selection === 'selected')
   const progressIssue = taskProgressError(task)
@@ -48,7 +47,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   })}</nav><AuditExcludedFiles files={task.files}/></div>
   return <section>
     {report !== null && <AuditReports task={task} initialFile={report} onChoose={showReport} onBack={() => showReport(null)} onRead={onRead} busy={busy} readError={readError} onReadSupport={onReadSupport} adapter={reportAdapter} onChange={onReportChange} sharingAdapter={sharingAdapter}/>}
-    <div hidden={report !== null} className="space-y-5"><header className="flex flex-wrap items-center justify-between gap-3"><div className="space-y-2"><h1 className="text-2xl font-semibold">审核工作台</h1><p role="status" className="text-muted-foreground">{progressIssue ? '任务进度待核对' : <>{task.state === 'completed' ? '审核已结束' : '审核中'} · 文件已结束 {task.progress?.completed ?? '—'}/{task.progress?.total ?? queue.length}</>}</p></div><div className="flex flex-wrap items-center gap-3"><Button variant="outline" onClick={() => showReport(file?.file.id || '')}>报告中心</Button>{task.notification_enabled !== undefined && <Label><Checkbox checked={task.notification_enabled} onCheckedChange={value => onChange({...task, notification_enabled: value === true})}/>完成后飞书通知</Label>}<Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取审核结果…' : '读取审核结果'}</Button></div></header>
+    <div hidden={report !== null} className="space-y-5"><header className="flex flex-wrap items-center justify-between gap-3"><div className="space-y-2"><h1 className="text-2xl font-semibold">审核工作台</h1><p role="status" className="text-muted-foreground">{progressIssue ? '任务进度待核对' : <>{task.state === 'completed' ? '审核已结束' : '审核中'} · 文件已结束 {task.progress?.completed ?? '—'}/{task.progress?.total ?? queue.length}</>}</p></div><div className="flex flex-wrap items-center gap-3"><Button variant="outline" onClick={() => showReport(file?.file.id || '')}>报告中心</Button>{task.notification_enabled !== undefined && notificationAdapter && <CompletionNotification task={task} adapter={notificationAdapter} onChange={preference => onChange({...task, notification_enabled: preference.enabled, notification_revision: preference.revision})}/>}<Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取审核结果…' : '读取审核结果'}</Button></div></header>
       <AuditTaskEstimate task={task} progressIssue={Boolean(progressIssue)}/>
       {progressIssue && <Alert variant="destructive"><AlertTitle>任务进度需要核对</AlertTitle><AlertDescription>{progressIssue} 各文件的有效依据仍保留，请重新读取审核结果。</AlertDescription></Alert>}
       {task.usage_notice && <Alert><AlertTitle>用量提示</AlertTitle><AlertDescription>{task.usage_notice}{openSupport && <Button variant="outline" size="sm" onClick={() => openSupport({scenario: '审核用量提示', facts: [{label: '任务标识', value: task.id}, {label: '任务编号', value: task.number}, ...(task.round_id ? [{label: '审核轮次', value: task.round_id}] : []), {label: '服务提示', value: task.usage_notice!}]})}>联系支持</Button>}</AlertDescription></Alert>}{readError && <Alert variant="destructive"><AlertTitle>结果暂时无法读取</AlertTitle><AlertDescription><p>{readError} 原有结果与选择仍保留。</p><Button variant="outline" size="sm" onClick={onReadSupport}>联系支持</Button></AlertDescription></Alert>}

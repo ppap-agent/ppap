@@ -58,6 +58,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "report_recovery_unavailable",
                 "audit_report_charging_unavailable",
                 "report_package_recovery_unavailable",
+                "notification_revision_conflict",
+                "notification_already_dispatched",
             }
             else 400
         )
@@ -152,6 +154,26 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             return denied
         try:
             return JSONResponse(store.get_audit_task(principal, task_id, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/audit-tasks/{task_id}/notification", response_model=wc.AuditNotificationPreference)
+    def audit_notification_get(task_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.get_task_notification(principal, task_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.put("/audit-tasks/{task_id}/notification", response_model=wc.AuditNotificationPreference, openapi_extra=wc.openapi_body(wc.AuditNotificationPreferenceRequest))
+    def audit_notification_save(task_id: str, body: dict, request: Request) -> JSONResponse:
+        principal, denied = require_principal(request)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.save_task_notification(principal, task_id, body))
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

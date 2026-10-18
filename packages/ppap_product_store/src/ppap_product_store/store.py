@@ -30,6 +30,7 @@ from ppap_core.audits import (
 )
 from ppap_core.db import connect
 from ppap_core.feishu import UserTokens
+from ppap_core.feishu_notifications import task_notification_card
 from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.files import (
     FAILED,
@@ -1077,6 +1078,189 @@ class AuthStore:
                 task["acceptance"] = {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
             return task
 
+    def _notification_preference(self, conn, draft: dict) -> dict:
+        row = conn.execute(
+            "SELECT status, result, lease_until < now() FROM engine.jobs WHERE tenant_id = %s AND kind = 'feishu_notification' AND payload->>'task_id' = %s AND payload->>'stage' = 'completed'",
+            (draft["tenant_id"], str(draft["id"])),
+        ).fetchone()
+        state, reason = "not_due", None
+        if row:
+            result = row[1] or {}
+            state = result.get("state", "queued")
+            reason = result.get("reason")
+            if state == "dispatching":
+                state = "unknown" if row[2] else "sending"
+        available = bool(self.settings.feishu_notifications_enabled and self.settings.feishu_app_id and self.settings.feishu_app_secret)
+        if not available and state in {"not_due", "queued", "preparing"}:
+            reason = "feishu_notifications_unavailable"
+        return {
+            "task_id": str(draft["id"]),
+            "enabled": draft["notification_enabled"],
+            "revision": draft["notification_revision"],
+            "can_change": state in {"not_due", "queued", "preparing"},
+            "available": available,
+            "delivery": {"state": state, "reason": reason},
+        }
+
+    def get_task_notification(self, principal: Principal, task_id: str) -> dict:
+        with self._conn() as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
+
+    def save_task_notification(self, principal: Principal, task_id: str, body: dict) -> dict:
+        if set(body) != {"enabled", "expected_revision"} or type(body.get("enabled")) is not bool or type(body.get("expected_revision")) is not int or body["expected_revision"] < 0:
+            raise ValueError("invalid_notification_preference")
+        with self._conn() as conn, conn.transaction():
+            draft = self._recognition_owner(conn, principal, task_id, lock=True)
+            if draft["notification_revision"] != body["expected_revision"]:
+                raise ValueError("notification_revision_conflict")
+            if not self._notification_preference(conn, draft)["can_change"]:
+                raise ValueError("notification_already_dispatched")
+            conn.execute(
+                "UPDATE product.audit_drafts SET notification_enabled = %s, notification_revision = notification_revision + 1, updated_at = now() WHERE id = %s",
+                (body["enabled"], draft["id"]),
+            )
+            return self._notification_preference(conn, self._recognition_owner(conn, principal, task_id))
+
+    def _queue_task_notification(self, conn, task_id: str, stage: str, round_id: str | None = None) -> None:
+        conn.execute(
+            """INSERT INTO engine.jobs (id, tenant_id, audit_round_id, kind, payload, status, result)
+            SELECT gen_random_uuid(), d.tenant_id, %s, 'feishu_notification', %s, 'queued', %s
+            FROM product.audit_drafts d WHERE d.id = %s AND d.task_fingerprint IS NOT NULL
+            ON CONFLICT (tenant_id, (payload->>'task_id'), (payload->>'stage')) WHERE kind = 'feishu_notification' DO NOTHING""",
+            (round_id, Jsonb({"task_id": task_id, "stage": stage}), Jsonb({"state": "queued", "reason": None}), task_id),
+        )
+
+    def _queue_finished_notification(self, conn, task_id: str, round_id: str) -> None:
+        if not conn.execute(
+            """SELECT 1 FROM engine.jobs WHERE audit_round_id = %s AND kind = 'report_pdf'
+            AND status IN ('queued', 'leased') AND NOT (payload ? 'regeneration_request_id')""",
+            (round_id,),
+        ).fetchone():
+            self._queue_task_notification(conn, task_id, "completed", round_id)
+
+    def claim_task_notification(self, worker_ident: str) -> tuple[ClaimedJob, Principal] | None:
+        with self._conn() as conn, conn.transaction():
+            conn.execute(
+                """UPDATE engine.jobs SET result = result || '{"state":"unknown","reason":"send_receipt_unknown"}'::jsonb,
+                lease_until = NULL, updated_at = now() WHERE kind = 'feishu_notification' AND status = 'leased'
+                AND result->>'state' = 'dispatching' AND lease_until < now()"""
+            )
+            row = conn.execute(
+                """SELECT id, tenant_id, audit_round_id, payload FROM engine.jobs WHERE kind = 'feishu_notification'
+                AND ((status = 'queued' AND (lease_until IS NULL OR lease_until < now())) OR
+                    (status = 'leased' AND result->>'state' = 'preparing' AND lease_until < now()))
+                ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1"""
+            ).fetchone()
+            if not row:
+                return None
+            attempt = cast(
+                tuple,
+                conn.execute(
+                    """UPDATE engine.jobs SET status = 'leased', attempt = attempt + 1, lease_owner = %s,
+                lease_until = now() + interval '90 seconds', result = '{"state":"preparing","reason":null}'::jsonb,
+                updated_at = now() WHERE id = %s RETURNING attempt""",
+                    (worker_ident, row[0]),
+                ).fetchone(),
+            )[0]
+            conn.execute("INSERT INTO engine.attempts (id, job_id, attempt, worker_id) VALUES (gen_random_uuid(), %s, %s, %s)", (row[0], attempt, worker_ident))
+            claimed = ClaimedJob(str(row[0]), "feishu_notification", row[3], attempt, str(row[2]) if row[2] else None, str(row[1]))
+            identities = conn.execute(
+                """SELECT i.user_id, i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
+                FROM product.audit_drafts d JOIN product.tenants t ON t.id = d.tenant_id
+                JOIN product.memberships m ON m.tenant_id = t.id AND m.user_id = d.created_by
+                JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
+                WHERE d.id = %s AND d.tenant_id = %s AND i.app_id = %s""",
+                (row[3].get("task_id"), row[1], self.settings.feishu_app_id),
+            ).fetchall()
+            if len(identities) != 1:
+                self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": "recipient_unavailable", "message_id": None}, before_dispatch=True)
+                return None
+            identity = identities[0]
+            principal = Principal(str(identity[0]), str(row[1]), *identity[1:])
+            return claimed, principal
+
+    def _finish_task_notification(self, conn, claimed: ClaimedJob, worker_ident: str, result: dict, *, before_dispatch: bool = False) -> bool:
+        state = result["state"]
+        status = {"sent": "succeeded", "failed": "failed", "unknown": "leased", "suppressed": "cancelled"}[state]
+        updated = conn.execute(
+            """UPDATE engine.jobs SET status = %s, result = %s, lease_until = NULL, updated_at = now()
+            WHERE id = %s AND kind = 'feishu_notification' AND attempt = %s AND lease_owner = %s AND status = 'leased'
+            AND result->>'state' = ANY(%s) RETURNING id""",
+            (status, Jsonb(result), claimed.id, claimed.attempt, worker_ident, ["preparing"] if before_dispatch else ["dispatching", "unknown"]),
+        ).fetchone()
+        if not updated:
+            return False
+        conn.execute(
+            "UPDATE engine.attempts SET finished_at = now(), outcome = %s, diagnostic = %s WHERE job_id = %s AND attempt = %s",
+            (state, Jsonb({"reason": result.get("reason")}), claimed.id, claimed.attempt),
+        )
+        return True
+
+    def finish_task_notification(self, claimed: ClaimedJob, worker_ident: str, result: dict) -> bool:
+        if result.get("state") not in {"sent", "unknown", "failed"} or result["state"] == "sent" and (not isinstance(result.get("message_id"), str) or not result["message_id"].strip()):
+            raise ValueError("invalid_notification_receipt")
+        with self._conn() as conn, conn.transaction():
+            return self._finish_task_notification(conn, claimed, worker_ident, result)
+
+    def _defer_task_notification(self, conn, claimed: ClaimedJob, worker_ident: str) -> bool:
+        row = conn.execute(
+            """UPDATE engine.jobs SET status = 'queued', lease_until = now() + interval '60 seconds', updated_at = now(),
+                result = '{"state":"queued","reason":"feishu_connection_unavailable"}'::jsonb
+                WHERE id = %s AND attempt = %s AND lease_owner = %s AND status = 'leased' AND result->>'state' = 'preparing' RETURNING id""",
+            (claimed.id, claimed.attempt, worker_ident),
+        ).fetchone()
+        if row:
+            conn.execute("UPDATE engine.attempts SET finished_at = now(), outcome = 'deferred' WHERE job_id = %s AND attempt = %s", (claimed.id, claimed.attempt))
+        return row is not None
+
+    def defer_task_notification(self, claimed: ClaimedJob, worker_ident: str) -> bool:
+        with self._conn() as conn, conn.transaction():
+            return self._defer_task_notification(conn, claimed, worker_ident)
+
+    def start_task_notification(self, claimed: ClaimedJob, worker_ident: str, principal: Principal) -> dict | None:
+        task_id, stage = _as_uuid(str(claimed.payload.get("task_id") or "")), claimed.payload.get("stage")
+        if not task_id or stage not in {"confirmation", "started", "completed"}:
+            raise ValueError("invalid_notification_scope")
+        with self._conn() as conn, conn.transaction():
+            reason = None
+            try:
+                draft = self._recognition_owner(conn, principal, task_id, lock=True)
+                identity = conn.execute(
+                    """SELECT 1 FROM product.identities i JOIN product.memberships m ON m.user_id = i.user_id
+                    WHERE i.user_id = %s AND i.provider = 'feishu' AND i.app_id = %s AND i.tenant_key = %s
+                    AND i.subject = %s AND m.tenant_id = %s""",
+                    (principal.user_id, self.settings.feishu_app_id, principal.tenant_key, principal.subject, principal.tenant_id),
+                ).fetchone()
+                if not identity or not self.settings.tenant_allowed(principal.tenant_key):
+                    raise KeyError("recipient_unavailable")
+                task = self._recognition_public(conn, principal, task_id)
+                if stage == "confirmation" and task["state"] == "matching":
+                    self._defer_task_notification(conn, claimed, worker_ident)
+                    return None
+                if stage == "confirmation" and task["state"] != "pending_confirm" or stage == "started" and task["round_id"] != claimed.round_id:
+                    reason = "task_advanced"
+                if stage == "completed" and not draft["notification_enabled"]:
+                    reason = "completion_disabled"
+                if stage == "completed" and task["state"] != "completed":
+                    raise ValueError("notification_task_not_completed")
+            except KeyError:
+                reason = "notification_access_revoked"
+            if reason:
+                self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
+                return None
+            card = task_notification_card(task, stage, self.settings.canonical_web_url())
+            dispatch = {"receive_id": principal.subject, "card": card}
+            row = conn.execute(
+                """UPDATE engine.jobs SET result = '{"state":"dispatching","reason":null}'::jsonb,
+                payload = payload || %s, updated_at = now(), lease_until = now() + interval '90 seconds'
+                WHERE id = %s AND kind = 'feishu_notification' AND attempt = %s AND lease_owner = %s
+                AND status = 'leased' AND result->>'state' = 'preparing' AND lease_until > now()
+                AND tenant_id = %s AND payload->>'task_id' = %s AND payload->>'stage' = %s RETURNING id""",
+                (Jsonb({"dispatch": dispatch}), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id, stage),
+            ).fetchone()
+            return dispatch if row else None
+
     def _archive_rows(self, conn, principal: Principal) -> list:
         return conn.execute(
             """WITH history AS (SELECT d.id, i.file_version_id, s.object_kind, s.object_ref, a.created_at,
@@ -1466,6 +1650,8 @@ class AuthStore:
             "recognition_request_id": str(draft["recognition_request_id"] or draft["id"]),
             "round_id": None,
             "customer_preference": draft["customer_preference"],
+            "notification_enabled": draft["notification_enabled"],
+            "notification_revision": draft["notification_revision"],
             "files": files,
             "completion_reason": draft["task_completion_reason"],
             "estimated_points": None if matching or any(row["match"]["state"] == "failed" for row in selected) else sum(row["match"]["state"] == "matched" for row in selected) * 500,
@@ -1556,6 +1742,7 @@ class AuthStore:
             for vid, reason in removed.items():
                 conn.execute("UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s", (reason, task_id, vid))
             conn.execute("UPDATE product.audit_drafts SET task_completion_reason = 'no_matching_rules', updated_at = now() WHERE id = %s", (task_id,))
+            self._queue_task_notification(conn, task_id, "completed")
             return self._recognition_public(conn, principal, task_id)
 
     def list_rules(self, tenant_id: str) -> list[dict]:
@@ -2072,7 +2259,7 @@ class AuthStore:
                 row = conn.execute(
                     """
                     SELECT id, kind, payload, tenant_id FROM engine.jobs
-                    WHERE (
+                    WHERE kind <> 'feishu_notification' AND (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
                         OR (status = 'leased' AND kind <> ALL(%s) AND lease_until IS NOT NULL AND lease_until < now())
                     )
@@ -2159,6 +2346,12 @@ class AuthStore:
         execution = EXEC_COMPLETED if outcome == "succeeded" else EXEC_FAILED
         with self._conn() as conn:
             with conn.transaction():
+                task_id = claimed.payload.get("task_id") if claimed.kind in {"file_analysis", "report_pdf"} else None
+                if claimed.kind == "audit" and claimed.round_id:
+                    source = conn.execute("SELECT source_draft_id FROM product.audit_rounds WHERE id = %s", (claimed.round_id,)).fetchone()
+                    task_id = str(source[0]) if source and source[0] else None
+                if task_id:
+                    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("task-notification:" + task_id,))
                 won = conn.execute(
                     """
                     UPDATE engine.jobs
@@ -2193,6 +2386,18 @@ class AuthStore:
                     ),
                 )
                 if claimed.kind != "audit" or not claimed.round_id:
+                    if (
+                        task_id
+                        and claimed.kind == "file_analysis"
+                        and not conn.execute(
+                            """SELECT 1 FROM product.draft_items i LEFT JOIN engine.jobs j ON j.id = i.analysis_job_id
+                        WHERE i.draft_id = %s AND i.selection = 'selected' AND (j.status IS NULL OR j.status IN ('queued', 'leased'))""",
+                            (task_id,),
+                        ).fetchone()
+                    ):
+                        self._queue_task_notification(conn, task_id, "confirmation")
+                    if task_id and claimed.kind == "report_pdf" and not claimed.payload.get("regeneration_request_id"):
+                        self._queue_finished_notification(conn, task_id, claimed.payload["source_round_id"])
                     return True
                 updated = conn.execute(
                     """
@@ -2233,6 +2438,8 @@ class AuthStore:
                     )
                 if outcome == "succeeded":
                     self._queue_file_reports(conn, claimed, result)
+                if task_id:
+                    self._queue_finished_notification(conn, task_id, claimed.round_id)
                 return True
 
     def _queue_file_reports(self, conn, claimed: ClaimedJob, result: dict) -> None:
@@ -2916,6 +3123,8 @@ class AuthStore:
                 (DRAFT_ACCEPTED, source_draft_id),
             )
         self._record_round_usage(conn, principal, round_id, prepared)
+        if source_draft_id:
+            self._queue_task_notification(conn, source_draft_id, "started", round_id)
         return cast(dict, self._round_public(conn, round_id))
 
     def _record_round_usage(self, conn, principal, round_id, prepared) -> None:

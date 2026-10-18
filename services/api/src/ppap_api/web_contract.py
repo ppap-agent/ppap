@@ -972,6 +972,25 @@ class AuditRecognitionTasks(TypedDict):
     next_offset: int | None
 
 
+class AuditNotificationDelivery(TypedDict):
+    state: Literal["not_due", "queued", "preparing", "sending", "unknown", "sent", "failed", "suppressed"]
+    reason: str | None
+
+
+class AuditNotificationPreference(TypedDict):
+    task_id: str
+    enabled: bool
+    revision: int
+    can_change: bool
+    available: bool
+    delivery: AuditNotificationDelivery
+
+
+class AuditNotificationPreferenceRequest(TypedDict):
+    enabled: bool
+    expected_revision: int
+
+
 class AuditTask(AuditTaskIdentity):
     """Persisted Task/Round view; optional delivery operations need their own API."""
 
@@ -980,6 +999,7 @@ class AuditTask(AuditTaskIdentity):
     progress: NotRequired[AuditProgress]
     completion_estimate: NotRequired[AuditCompletionEstimate | None]
     notification_enabled: NotRequired[bool]
+    notification_revision: NotRequired[int]
     usage_notice: NotRequired[str | None]
     report_package: NotRequired[AuditReportPackage | None]
     report_share: NotRequired[AuditReportShare | None]

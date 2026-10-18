@@ -3325,6 +3325,51 @@ class AuditPreviewTests(unittest.TestCase):
             expect(notification).not_to_be_checked()
             browser.close()
 
+    def test_notification_revisions_are_scoped_to_the_selected_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-notification-tasks&task=preview-recovery-task")
+            notification = page.get_by_role("checkbox", name="完成后飞书通知", exact=True)
+            notification.uncheck()
+            expect(notification).to_be_enabled()
+            page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button").filter(has_text="PPAP-第二个任务").click()
+            expect(notification).to_be_checked()
+            expect(notification).to_be_enabled()
+            expect(page.get_by_text("通知设置暂时无法确认，请重新读取。", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_notification_unknown_save_is_read_back_without_claiming_or_repeating_a_send(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-notification-save-unknown&task=preview-recovery-task")
+            notification = page.get_by_role("checkbox", name="完成后飞书通知", exact=True)
+            notification.click()
+            expect(page.get_by_text("设置保存结果待核对，请读取当前设置。", exact=True)).to_be_visible()
+            expect(notification).to_be_disabled()
+            page.get_by_role("button", name="读取通知设置", exact=True).click()
+            expect(notification).not_to_be_checked()
+            expect(notification).to_be_enabled()
+            expect(page.get_by_text("通知已发送", exact=True)).to_have_count(0)
+            browser.close()
+
+    def test_notification_unavailable_and_unknown_delivery_do_not_offer_a_send_retry(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for scene, message in (("restore-notification-unavailable", "飞书通知暂不可用"), ("restore-notification-unknown", "发送结果待核对")):
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(PREVIEW + f"/preview/audit.html?scene={scene}&task=preview-recovery-task")
+                expect(page.get_by_text(message, exact=True)).to_be_visible()
+                expect(page.get_by_role("checkbox", name="完成后飞书通知", exact=True)).to_be_disabled()
+                expect(page.get_by_text("通知已发送", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="重新发送", exact=True)).to_have_count(0)
+                if scene.endswith("unknown"):
+                    page.get_by_role("button", name="读取通知设置", exact=True).click()
+                    expect(page.get_by_text(message, exact=True)).to_be_visible()
+                page.close()
+            browser.close()
+
     def test_audit_read_cannot_replace_the_accepted_file_or_rule_snapshot(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

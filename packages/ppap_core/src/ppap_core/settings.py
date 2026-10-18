@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
+    feishu_notifications_enabled: bool = Field(default=False, alias="PPAP_FEISHU_NOTIFICATIONS_ENABLED")
     feishu_verification_token: str = Field(default="", alias="FEISHU_VERIFICATION_TOKEN")
     feishu_ai_item_id: str = Field(default="", alias="FEISHU_AI_ITEM_ID")
     feishu_free_trial_quota_points: int = Field(default=10000, alias="FEISHU_FREE_TRIAL_QUOTA_POINTS")

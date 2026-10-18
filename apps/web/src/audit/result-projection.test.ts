@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError} from './result-projection.ts'
+import {resultConsistencyError, taskProgressError, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError, reconcileTaskNotification} from './result-projection.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -11,6 +11,16 @@ function projection(): Task {
   return {id: 'task-1', number: '001', state: 'completed', completion_reason: 'processed', analysis_mode: 'standard', source_draft_id: null, round_id: 'round-1', customer_preference: null, created_at: '', updated_at: '', estimated_points: null, files: [{file: {id: 'file-v1', file_id: 'file-1', original_filename: '控制计划.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 1024, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', metadata: {customer: null, model: null, part: null}, document_type: '控制计划', rule: structuredClone(rule), gaps: []}, audit: {file_version_id: 'file-v1', round_id: 'round-1', result_attempt: 1, rule, execution: 'completed', progress: {completed: 1, total: 1}, failure: null, conclusion: 'PASS', checks, counts: {pass_count: 1, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, summary: {conclusion: 'PASS', text: '满足要求', corrective_actions: [], extended_suggestions: []}, report: {state: 'ready', report_id: 'report-1', reason: null}}}]}
 }
 const error = (task: Task) => resultConsistencyError(task, task.files[0])
+
+test('notification preferences have their own revision and cannot leak across tasks', () => {
+  const current = {...projection(), notification_enabled: false, notification_revision: 2}
+  const old = {...projection(), notification_enabled: true, notification_revision: 1}
+  assert.equal(reconcileTaskNotification(current, old).notification_enabled, false)
+  assert.equal(reconcileTaskNotification(current, {...old, notification_revision: 3}).notification_enabled, true)
+  assert.equal(reconcileTaskNotification(current, {...old, notification_revision: 2}).notification_enabled, undefined)
+  assert.equal(reconcileTaskNotification(current, {...old, id: 'another-task'}).notification_enabled, true)
+  assert.equal(reconcileTaskNotification(current, projection()).notification_enabled, undefined)
+})
 
 test('a late snapshot cannot erase or replace a newer human review in the same frozen round', () => {
   const current = projection(), old = structuredClone(current)

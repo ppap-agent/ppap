@@ -432,6 +432,205 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
+    def test_missing_feishu_credentials_do_not_consume_the_notification_intent(self):
+        import httpx
+        from ppap_api.notifications import dispatch_task_notification
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        self.settings.feishu_app_secret = ""
+        self.settings.feishu_notifications_enabled = True
+        self.prepared_display_task(confirm=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(500))) as http:
+            self.assertFalse(dispatch_task_notification(api_store, http, self.settings, "notifier"))
+        job, _ = api_store.claim_task_notification("configured-notifier")
+        self.assertEqual((job.payload["stage"], job.attempt), ("confirmation", 1))
+
+    def test_simultaneous_pdf_endings_queue_one_truthful_completion_and_close_the_switch_at_dispatch(self):
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+        from ppap_worker import process_claimed
+
+        self.settings.feishu_app_id = APP_ID
+        _, task, worker, _, _ = self.prepared_query_task(documents=(("first.xlsx", "A_ONLY_017"), ("second.xlsx", "B_ONLY_029")))
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        for stage in ("confirmation", "started"):
+            job, recipient = api_store.claim_task_notification("notifier")
+            self.assertEqual(job.payload["stage"], stage)
+            delivery = api_store.start_task_notification(job, "notifier", recipient)
+            if delivery:
+                self.assertTrue(api_store.finish_task_notification(job, "notifier", {"state": "sent", "message_id": "om_" + stage, "reason": None}))
+        self.assertEqual(api_store.get_task_notification(self.alice, task["id"])["delivery"]["state"], "not_due")
+        first, second = worker.claim_job("pdf-first"), worker.claim_job("pdf-second")
+        self.assertEqual((first.kind, second.kind), ("report_pdf", "report_pdf"))
+        barrier = threading.Barrier(2)
+
+        def finish_first():
+            barrier.wait(timeout=10)
+            process_claimed(worker, first, "pdf-first")
+
+        def fail_second():
+            barrier.wait(timeout=10)
+            return worker.complete_job(second, "pdf-second", {"error": "report_pdf_failed"}, "failed")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            completed, failed = pool.submit(finish_first), pool.submit(fail_second)
+            completed.result(timeout=30)
+            self.assertTrue(failed.result(timeout=30))
+        self.assertEqual(api_store.get_audit_task(self.alice, task["id"])["state"], "completed")
+        intent, recipient = api_store.claim_task_notification("notifier")
+        self.assertEqual(intent.payload["stage"], "completed")
+        delivery = api_store.start_task_notification(intent, "notifier", recipient)
+        self.assertIn("报告已就绪 1 份，报告生成失败 1 份，审核异常 0 份", delivery["card"]["elements"][0]["text"]["content"])
+        with self.assertRaisesRegex(ValueError, "notification_already_dispatched"):
+            api_store.save_task_notification(self.alice, task["id"], {"enabled": False, "expected_revision": 0})
+        self.assertIsNone(api_store.claim_task_notification("another-notifier"))
+        with self.assertRaisesRegex(ValueError, "invalid_notification_receipt"):
+            api_store.finish_task_notification(intent, "notifier", {"state": "sent", "message_id": 7})
+        self.assertTrue(api_store.finish_task_notification(intent, "notifier", {"state": "sent", "message_id": "om_complete", "reason": None}))
+        self.assertEqual(api_store.get_task_notification(self.alice, task["id"])["delivery"]["state"], "sent")
+        self.assertIsNone(api_store.claim_task_notification("third-notifier"))
+
+    def test_notification_rechecks_source_access_before_dispatch(self):
+        from ppap_application import build_product_store
+        from ppap_core.db import connect
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        files, task, _ = self.prepared_display_task(confirm=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        claimed, recipient = api_store.claim_task_notification("notifier")
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[0].file_id, self.alice.user_id))
+        self.assertIsNone(api_store.start_task_notification(claimed, "notifier", recipient))
+        self.assertIsNone(api_store.claim_task_notification("notifier-again"))
+        self.assertEqual(api_store.get_task_notification(self.alice, task["id"])["delivery"]["state"], "not_due")
+
+    def test_api_notifier_uses_the_creator_and_never_replays_a_lost_provider_reply(self):
+        import json
+
+        import httpx
+        from ppap_api.notifications import dispatch_task_notification
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        self.settings.feishu_app_secret = "notification-test-secret"
+        self.settings.feishu_notifications_enabled = True
+        _, task, _ = self.prepared_display_task(confirm=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        api_store.save_app_ticket(APP_ID, "notification-test-ticket")
+        sent = []
+
+        def provider(request):
+            if request.url.path.endswith("app_access_token"):
+                return httpx.Response(200, json={"code": 0, "app_access_token": "test-app-token"})
+            if request.url.path.endswith("tenant_access_token"):
+                return httpx.Response(200, json={"code": 0, "tenant_access_token": "test-tenant-token"})
+            self.assertEqual(request.url.path, "/open-apis/im/v1/messages")
+            sent.append(json.loads(request.content))
+            raise httpx.ReadTimeout("provider reply lost", request=request)
+
+        with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+            self.assertTrue(dispatch_task_notification(api_store, http, self.settings, "api-notifier"))
+            self.assertFalse(dispatch_task_notification(api_store, http, self.settings, "api-notifier"))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["receive_id"], self.alice.subject)
+        self.assertEqual(sent[0]["msg_type"], "interactive")
+        card = json.loads(sent[0]["content"])
+        self.assertEqual(card["header"]["title"]["content"], "规则匹配结果待确认")
+        self.assertIn(task["id"], card["elements"][1]["actions"][0]["url"])
+        self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
+
+    def test_notification_takeover_fences_old_sender_and_unknown_is_never_reclaimed(self):
+        from ppap_application import build_product_store
+        from ppap_core.db import connect
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        _, task, _ = self.prepared_display_task(confirm=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        old, recipient = api_store.claim_task_notification("sender-old")
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s", (old.id,))
+        current, recipient = api_store.claim_task_notification("sender-current")
+        self.assertGreater(current.attempt, old.attempt)
+        self.assertIsNone(api_store.start_task_notification(old, "sender-old", recipient))
+        self.assertIsNotNone(api_store.start_task_notification(current, "sender-current", recipient))
+        self.assertFalse(api_store.finish_task_notification(old, "sender-old", {"state": "sent", "message_id": "om_old", "reason": None}))
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s", (current.id,))
+        self.assertIsNone(api_store.claim_task_notification("sender-third"))
+        self.assertTrue(api_store.finish_task_notification(current, "sender-current", {"state": "sent", "message_id": "om_current", "reason": None}))
+        self.assertIsNone(api_store.claim_task_notification("sender-fourth"))
+        self.assertTrue(api_store.get_task_notification(self.alice, task["id"])["enabled"])
+
+    def test_completion_switch_does_not_suppress_started_notification_or_allow_unknown_replay(self):
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        _, task, worker = self.prepared_display_task(complete_audit=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        api_store.save_task_notification(self.alice, task["id"], {"enabled": False, "expected_revision": 0})
+        old, recipient = api_store.claim_task_notification("notifier-a")
+        self.assertEqual(old.payload["stage"], "confirmation")
+        self.assertIsNone(api_store.start_task_notification(old, "notifier-a", recipient))
+        started, recipient = api_store.claim_task_notification("notifier-a")
+        self.assertEqual(started.payload["stage"], "started")
+        delivery = api_store.start_task_notification(started, "notifier-a", recipient)
+        self.assertEqual(delivery["card"]["header"]["title"]["content"], "审核已开始")
+        self.assertTrue(api_store.finish_task_notification(started, "notifier-a", {"state": "unknown", "reason": "receipt_unknown", "message_id": None}))
+        self.assertIsNone(api_store.claim_task_notification("notifier-b"))
+        audit = worker.claim_job("audit-worker")
+        self.assertEqual(audit.kind, "audit")
+        self.assertTrue(
+            worker.complete_job(
+                audit,
+                "audit-worker",
+                {"findings": [], "coverage": {"rule_items": [{"file_version_id": file["file"]["id"], "id": "1", "coverage": "unsupported"} for file in task["files"]]}},
+                "succeeded",
+            )
+        )
+        completed, recipient = api_store.claim_task_notification("notifier-b")
+        self.assertEqual(completed.payload["stage"], "completed")
+        self.assertIsNone(api_store.start_task_notification(completed, "notifier-b", recipient))
+        preference = api_store.get_task_notification(self.alice, task["id"])
+        self.assertEqual(preference["delivery"]["state"], "suppressed")
+        self.assertFalse(preference["can_change"])
+        self.assertIsNone(api_store.claim_task_notification("notifier-c"))
+
+    def test_completion_notification_setting_is_private_persistent_and_revisioned(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_application import build_product_store
+
+        _, task, _ = self.prepared_display_task(complete_audit=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        app = FastAPI()
+        register_audit_routes(app, api_store, lambda request: self.display_principal)
+        client = TestClient(app)
+        path = f"/audit-tasks/{task['id']}/notification"
+        initial = client.get(path)
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual((initial.json()["enabled"], initial.json()["revision"]), (True, 0))
+        saved = client.put(path, json={"enabled": False, "expected_revision": 0})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual((saved.json()["enabled"], saved.json()["revision"]), (False, 1))
+        refreshed = client.get(f"/audit-tasks/{task['id']}").json()
+        self.assertEqual((refreshed["notification_enabled"], refreshed["notification_revision"]), (False, 1))
+        self.assertEqual(client.put(path, json={"enabled": True, "expected_revision": 0}).status_code, 409)
+        self.assertEqual(client.put(path, json={"enabled": "false", "expected_revision": 1}).status_code, 400)
+        self.assertEqual(client.get(path).json()["revision"], 1)
+        self.display_principal = self.store.principal_for_fixture("bob")
+        self.assertEqual(client.get(path).status_code, 403)
+        self.assertEqual(client.put(path, json={"enabled": True, "expected_revision": 1}).status_code, 403)
+        self.display_principal = self.store.principal_for_fixture("carol")
+        self.assertEqual(client.get(path).status_code, 403)
+
     def test_archive_keeps_provider_identity_and_exact_history_reference(self):
         from ppap_api.web_contract import AuditArchivePage, AuditHistoryDetail
         from ppap_core.feishu_drive import ImportedMaterial

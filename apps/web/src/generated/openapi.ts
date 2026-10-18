@@ -226,6 +226,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-tasks/{task_id}/notification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit Notification Get */
+        get: operations["audit_notification_get_audit_tasks__task_id__notification_get"];
+        /** Audit Notification Save */
+        put: operations["audit_notification_save_audit_tasks__task_id__notification_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-tasks/{task_id}/recognitions/{request_id}": {
         parameters: {
             query?: never;
@@ -1712,6 +1730,30 @@ export interface components {
             /** Entries */
             entries: components["schemas"]["AuditHistoryEntry"][];
         };
+        /** AuditNotificationDelivery */
+        AuditNotificationDelivery: {
+            /** Reason */
+            reason: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "not_due" | "queued" | "preparing" | "sending" | "unknown" | "sent" | "failed" | "suppressed";
+        };
+        /** AuditNotificationPreference */
+        AuditNotificationPreference: {
+            /** Available */
+            available: boolean;
+            /** Can Change */
+            can_change: boolean;
+            delivery: components["schemas"]["AuditNotificationDelivery"];
+            /** Enabled */
+            enabled: boolean;
+            /** Revision */
+            revision: number;
+            /** Task Id */
+            task_id: string;
+        };
         /** AuditProgress */
         AuditProgress: {
             /** Completed */
@@ -2029,6 +2071,8 @@ export interface components {
             input_revision?: number;
             /** Notification Enabled */
             notification_enabled?: boolean;
+            /** Notification Revision */
+            notification_revision?: number;
             /** Number */
             number: string;
             progress?: components["schemas"]["AuditProgress"];
@@ -3856,6 +3900,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_notification_get_audit_tasks__task_id__notification_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditNotificationPreference"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_notification_save_audit_tasks__task_id__notification_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Enabled */
+                    enabled: boolean;
+                    /** Expected Revision */
+                    expected_revision: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditNotificationPreference"];
                 };
             };
             /** @description Validation Error */

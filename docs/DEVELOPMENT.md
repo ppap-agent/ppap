@@ -14,6 +14,7 @@
 - 把 API/Worker 接到已有的 self-hosted InsForge PostgreSQL 时，用 `docker compose -f deploy/insforge/compose.yaml --env-file deploy/insforge/env.example up -d`。该 overlay 不启动 postgres，加入外部 `insforge-network`。Custom Compute 规格在 `deploy/insforge/compute/`。
 - `.doc` 转换是默认行为，没有开关变量。
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置；未配置时 Core 仍可启动，Deep 轮次明确失败而不回退 Standard。Live Deep 用 `deploy/isolated-dev/deep-live.yaml` 挂 UDS。Controller 默认 process runtime；gVisor runtime 名称、guest 镜像和 `PPAP_DEEP_RUNTIME` 只属于 Controller 进程环境，不进入 Worker typed Settings。production 默认不向客户提供 Deep（`public-config.deep_offered=false`，API 拒绝 `analysis_mode=deep`）；isolated-dev/test 仍可用于协议和隔离验证。TKE current 在 process sidecar 真实 executor 可用后设置 `PPAP_DEEP_CUSTOMER_ENABLED`。
+- 飞书任务通知由 API 进程发送，`PPAP_FEISHU_NOTIFICATIONS_ENABLED` 默认 `false`；开启还需配置该应用的 ID、Secret 和有效授权。`GET/PUT /audit-tasks/{id}/notification` 读取、保存创建人的完成通知设置，修改必须带 `expected_revision`；该设置只控制完成通知，不控制待确认或开始审核通知。通知未进入发送边界前可修改，进入后只读回状态。发送结果未知不自动重发；这些接口不证明飞书已送达或已读取。
 - 预览切流用 `PPAP_CURRENT_TENANT_ALLOWLIST`（逗号分隔的 Feishu `tenant_key`）。空名单不限制。生产目录写入海岸线租户。`PPAP_USAGE_CHARGE_ENABLED=false` 时受理不写 `usage_events`，预估点数为 0。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。
 - 新增配置项前先确认它代表独立运行决策，而不是可推导内部细节。

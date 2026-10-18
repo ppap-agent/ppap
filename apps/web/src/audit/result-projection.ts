@@ -1,6 +1,12 @@
 import type {components} from '../generated/openapi'
 
 type Task = components['schemas']['AuditTask']
+export function reconcileTaskNotification(previous: Task | null | undefined, next: Task): Task {
+  if (previous?.id !== next.id || typeof previous.notification_enabled !== 'boolean' || typeof next.notification_enabled !== 'boolean' || !Number.isSafeInteger(previous.notification_revision) || !Number.isSafeInteger(next.notification_revision)) return next
+  if (previous.notification_revision! > next.notification_revision!) return {...next, notification_enabled: previous.notification_enabled, notification_revision: previous.notification_revision}
+  if (previous.notification_revision === next.notification_revision && previous.notification_enabled !== next.notification_enabled) return {...next, notification_enabled: undefined, notification_revision: undefined}
+  return next
+}
 type TaskFile = components['schemas']['AuditTaskFile']
 export type ReviewFile = Pick<TaskFile, 'file' | 'audit' | 'display_info'> & Partial<Pick<TaskFile, 'match'>>
 export function checkScopeComplete(item: components['schemas']['AuditClauseEvaluation']): boolean {

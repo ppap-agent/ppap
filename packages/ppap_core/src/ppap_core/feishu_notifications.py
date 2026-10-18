@@ -1,0 +1,75 @@
+"""Task recall cards and one bounded Feishu send. No automatic send retry."""
+
+from __future__ import annotations
+
+import json
+from urllib.parse import urlencode
+
+from ppap_core.feishu_drive import OPEN_API
+
+
+def task_notification_card(task: dict, stage: str, web_url: str) -> dict:
+    files = task["files"]
+    selected = [row for row in files if row["selection"] == "selected"]
+    reports = [(row.get("audit") or {}).get("report", {}).get("state") for row in selected]
+    title = {"confirmation": "规则匹配结果待确认", "started": "审核已开始", "completed": "审核已结束"}[stage]
+    lines = [task["number"]]
+    if stage == "confirmation":
+        matched = sum((row.get("match") or {}).get("state") == "matched" for row in selected)
+        lines.append(f"已匹配 {matched} 份，共 {len(selected)} 份。请核对匹配结果，再决定是否开始审核。")
+    elif stage == "started":
+        lines.append(f"本次审核 {len(selected)} 份资料。")
+        for row in selected:
+            lines.append("审核：" + row["file"]["original_filename"])
+        for row in files:
+            if row["selection"] == "removed":
+                lines.append("已移除：" + row["file"]["original_filename"] + "；" + (row["removal_reason"] or "未纳入审核"))
+    else:
+        ready, failed = reports.count("ready"), reports.count("failed")
+        errors = sum((row.get("audit") or {}).get("execution") == "review_failed" or state == "not_eligible" for row, state in zip(selected, reports, strict=True))
+        title = "审核报告已就绪" if ready else "审核已结束，未生成正式报告"
+        lines.append(f"报告已就绪 {ready} 份，报告生成失败 {failed} 份，审核异常 {errors} 份。")
+        if task.get("completion_reason") == "no_matching_rules":
+            lines.append("没有匹配到生效规则，未开始审核，未生成正式报告。")
+        for row in selected:
+            audit = row.get("audit") or {}
+            conclusion = {"PASS": "符合", "NG": "不符合"}.get(audit.get("conclusion") or "", "无正式结论")
+            lines.append(row["file"]["original_filename"] + "：" + conclusion)
+    target = web_url.rstrip("/") + "/audit?" + urlencode({"task": task["id"], **({"report": "1"} if stage == "completed" and any(state == "ready" for state in reports) else {})})
+    link = web_url.rstrip("/") + "/enter-current?" + urlencode({"return_to": target})
+    body = "\n".join(lines)
+    card: dict = {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": title}},
+        "elements": [
+            {"tag": "div", "text": {"tag": "plain_text", "content": body}},
+            {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "查看并核对规则" if stage == "confirmation" else "打开审核"}, "type": "primary", "url": link}]},
+        ],
+    }
+    while body and len(json.dumps(card, ensure_ascii=False).encode()) > 26000:
+        body = body[: len(body) * 3 // 4]
+        card["elements"][0]["text"]["content"] = body + "\n完整文件与原因请打开审核查看。"
+    if len(json.dumps(card, ensure_ascii=False).encode()) > 26000:
+        raise ValueError("notification_card_too_large")
+    return card
+
+
+def send_task_notification(http, tenant_token: str, notification_id: str, receive_id: str, card: dict) -> dict:
+    try:
+        response = http.post(
+            OPEN_API + "/im/v1/messages",
+            params={"receive_id_type": "open_id"},
+            headers={"Authorization": "Bearer " + tenant_token},
+            json={"receive_id": receive_id, "msg_type": "interactive", "content": json.dumps(card, ensure_ascii=False), "uuid": notification_id},
+            timeout=20,
+        )
+        body = response.json()
+        if isinstance(body, dict) and 200 <= response.status_code < 300:
+            message_id = (body.get("data") or {}).get("message_id")
+            if type(body.get("code")) is int and body["code"] == 0 and isinstance(message_id, str) and message_id.strip():
+                return {"state": "sent", "message_id": message_id.strip(), "reason": None}
+            if type(body.get("code")) is int and body["code"] != 0:
+                return {"state": "failed", "message_id": None, "reason": "feishu_send_rejected"}
+    except Exception:
+        pass
+    return {"state": "unknown", "message_id": None, "reason": "send_receipt_unknown"}

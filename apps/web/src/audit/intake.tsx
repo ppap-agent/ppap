@@ -21,7 +21,8 @@ import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
 import {AuditExcludedFiles, AuditWorkspace} from './workspace'
 import type {OriginalRenderer} from './review-content'
-import {sameFrozenInputs, sameSnapshot, progressRegressed, taskProgressError} from './result-projection'
+import {sameFrozenInputs, sameSnapshot, progressRegressed, taskProgressError, reconcileTaskNotification} from './result-projection'
+import type {AuditNotificationAdapter} from './completion-notification'
 import {canObserveTask, useTaskObservation} from './task-observation'
 import {useUploads, type UploadAdapter, type UploadRow} from './uploads'
 import {TransferList} from './transfer-list'
@@ -49,6 +50,7 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   drive?: DrivePickerSource
   customers?: {value: string; label: string}[]
   deepOffered?: boolean
+  notifications?: AuditNotificationAdapter
   autoValidate?: boolean
   readValidation: (file: AuditTaskFile) => Promise<{validation: AuditTaskFile['validation']; validation_id?: string}>
   endTask: (task: AuditTask) => Promise<AuditTask>
@@ -80,10 +82,10 @@ function taskRegressed(previous: AuditTask | null | undefined, next: AuditTask):
   if ((previous.input_revision ?? 0) === (next.input_revision ?? 0) && Object.keys(taskLabels).indexOf(next.state) < Object.keys(taskLabels).indexOf(previous.state)) return true
   return Boolean(previous.round_id && (!sameFrozenInputs(previous, next) || progressRegressed(previous, next)))
 }
-function mergeTaskSnapshot(previous: AuditTask | null | undefined, next: AuditTask, preserveNotification = false): AuditTask {
-  if (taskRegressed(previous, next)) return previous!
-  const combined = reconcileTaskDisplay(previous?.id === next.id ? previous : undefined, next)
-  return preserveNotification && previous?.id === next.id && previous.notification_enabled !== undefined ? {...combined, notification_enabled: previous.notification_enabled} : combined
+function mergeTaskSnapshot(previous: AuditTask | null | undefined, next: AuditTask): AuditTask {
+  const preference = reconcileTaskNotification(previous, next)
+  const combined = taskRegressed(previous, next) ? previous! : reconcileTaskDisplay(previous?.id === next.id ? previous : undefined, next)
+  return {...combined, notification_enabled: preference.notification_enabled, notification_revision: preference.notification_revision}
 }
 
 /** Controlled data comes through the adapter; this view never calls business APIs. */
@@ -167,13 +169,13 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
   const noMatches = Boolean(task?.state === 'pending_confirm' && !matched.length && files.every(row => row.selection !== 'selected' || row.match?.state === 'unmatched'))
   const recognitionDirty = Boolean(task && !task.round_id && (task.analysis_mode !== mode || task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyUnmatchedRemovals(task.files, files)))
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
-  function saveTask(next: AuditTask, {activate = false, preserveNotification = false, updateActive = true} = {}) {
-    const listed = mergeTaskSnapshot(latestTasks.current.find(row => row.id === next.id), next, preserveNotification)
-    const combined = mergeTaskSnapshot(task?.id === next.id ? task : undefined, listed, preserveNotification)
+  function saveTask(next: AuditTask, {activate = false, updateActive = true} = {}) {
+    const listed = mergeTaskSnapshot(latestTasks.current.find(row => row.id === next.id), next)
+    const combined = mergeTaskSnapshot(task?.id === next.id ? task : undefined, listed)
     latestTasks.current = latestTasks.current.some(row => row.id === next.id) ? latestTasks.current.map(row => row.id === next.id ? combined : row) : [...latestTasks.current, combined]
     if (activate) activeTaskId.current = next.id
-    setTask(current => activate || updateActive && current?.id === next.id ? mergeTaskSnapshot(current?.id === next.id ? current : undefined, combined, preserveNotification) : current)
-    setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? mergeTaskSnapshot(row, combined, preserveNotification) : row) : [...rows, combined])
+    setTask(current => activate || updateActive && current?.id === next.id ? mergeTaskSnapshot(current?.id === next.id ? current : undefined, combined) : current)
+    setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? mergeTaskSnapshot(row, combined) : row) : [...rows, combined])
     return combined
   }
   function changeDisplay(reference: DisplayReference, info: DisplayInfo) {
@@ -416,7 +418,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (!current.round_id && current.input_revision !== next.input_revision) throw new Error('task_input_revision_mismatch')
       if (current.round_id && !sameFrozenInputs(current, next)) throw new Error('frozen_input_mismatch')
       if (progressRegressed(current, next)) throw new Error('regressive_progress')
-      const chosen = saveTask(next, {preserveNotification: true})
+      const chosen = saveTask(next)
       const saved = drafts.current.get(chosen.id)
       if (saved?.step === 'match') saved.files = mergeFileIntent(saved.files, structuredClone(chosen.files))
       if (activeTaskId.current === chosen.id && stepRef.current === 'match') setFiles(rows => mergeFileIntent(rows, structuredClone(chosen.files)))
@@ -450,7 +452,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
       if (listEpoch.current !== epoch) return
       setTasks(rows => [...rows.map(row => {
         const next = page.tasks.find(candidate => candidate.id === row.id)
-        return next ? mergeTaskSnapshot(row, next, true) : row
+        return next ? mergeTaskSnapshot(row, next) : row
       }), ...page.tasks.filter(next => !rows.some(row => row.id === next.id))])
       setTaskList({next: page.next_offset, busy: false, error: ''})
     } catch {if (listEpoch.current === epoch) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}
@@ -525,7 +527,7 @@ export function AuditIntake({adapter, autoObserve = true, renderOriginal, report
         {recognitionState?.phase === 'rejected' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>本次识别未受理</AlertTitle><AlertDescription><p>{recognitionState.message}</p>{task?.id === recognitionState.taskId && <Button variant="outline" onClick={readCurrentRecognition}>读取当前任务</Button>}{recognitionSupport}</AlertDescription></Alert>}
         {recognitionState?.phase === 'conflict' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>任务输入版本已更新</AlertTitle><AlertDescription><p>{recognitionState.message}</p><Button variant="outline" onClick={readCurrentRecognition}>读取当前任务</Button></AlertDescription></Alert>}
         {task && task.state !== 'completed' && endStatus[task.id] === 'unknown' && <Alert><AlertTitle>结束结果待核对</AlertTitle><AlertDescription><p>尚未确认任务已结束。请读取同一任务，不要重复结束。</p>{readStatus[task.id]?.error && <p>{readStatus[task.id].error}</p>}<Button variant="outline" disabled={readStatus[task.id]?.busy} onClick={() => void readMatching(task)}>读取任务状态</Button></AlertDescription></Alert>}
-        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取任务…' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <><Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button><Button variant="outline" onClick={() => openSupport({scenario: '恢复审核任务', traceId: recovery.traceId, facts: [{label: '任务标识', value: recovery.id}, {label: '服务说明', value: recovery.message}]})}>联系支持</Button></>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onReadSupport={() => contactReadSupport(task)} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={displayAdapter ? file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file) : undefined}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
+        {recovery ? <section className="space-y-4 py-8"><h1 className="text-2xl font-semibold">{recovery.state === 'loading' ? '正在恢复任务' : '任务暂不可用'}</h1><p className="break-all text-xs text-muted-foreground">任务：{recovery.id}</p><p role="status">{recovery.state === 'loading' ? '正在读取任务…' : recovery.message}</p><div className="flex flex-wrap gap-2">{recovery.state !== 'loading' && <><Button variant="outline" onClick={() => void recover(recovery.id, recovery.state === 'unauthenticated')}>{recovery.state === 'unauthenticated' ? '恢复登录' : '重新读取任务'}</Button><Button variant="outline" onClick={() => openSupport({scenario: '恢复审核任务', traceId: recovery.traceId, facts: [{label: '任务标识', value: recovery.id}, {label: '服务说明', value: recovery.message}]})}>联系支持</Button></>}<Button variant="ghost" onClick={newTask}>返回新建</Button></div></section> : workbench && task ? <AuditWorkspace key={task.id} task={task} busy={readStatus[task.id]?.busy || false} readError={readStatus[task.id]?.error || ''} onReadSupport={() => contactReadSupport(task)} onRead={() => void readMatching(task)} onChange={saveTask} renderOriginal={renderOriginal} reportAdapter={reportAdapter} notificationAdapter={adapter.notifications} onReportChange={changeReport} onReportView={setReportView} sharingAdapter={sharingAdapter} onEditDisplay={displayAdapter ? file => displayEditor.open({task_id: task.id, round_id: task.round_id!, file_version_id: file.file.id}, file) : undefined}/> : task?.state === 'completed' ? <section className="space-y-4 py-8"><Check className="size-8"/><h1 className="text-2xl font-semibold">任务已结束</h1><p>未匹配到可用规则，未开始审核</p><p className="text-muted-foreground">未产生审核费用，也没有生成报告。</p><Button onClick={newTask}>新建审核任务<ArrowRight/></Button></section> : <>
         <fieldset disabled={inputLocked} className="min-w-0 space-y-6">
         <header className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">{step === 'upload' ? '上传 PPAP 文件' : step === 'check' ? '核对本次文件' : task?.state === 'matching' ? '正在识别文件与匹配规则' : '确认每份文件的审核规则'}</h1><p className="text-muted-foreground">{step === 'match' ? '分别核对每份文件匹配的规则。未匹配文件不会进入审核。' : '选择收到的文件，核对后开始审核。'}</p></header>
         {step !== 'match' && <div className="flex flex-wrap items-end justify-between gap-4"><div className="flex flex-wrap items-end gap-2"><div className="grid gap-2"><Label htmlFor="audit-customer">客户（可选）</Label><Select value={customer} onValueChange={setCustomer}><SelectTrigger id="audit-customer" className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="auto">自动识别客户</SelectItem>{(adapter.customers ?? []).map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div><Button variant="ghost" onClick={() => showSurface('templates')}>查看客户模板</Button><Button variant="ghost" onClick={openFeedback}>补充模板</Button></div>{step === 'check' && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => input.current?.click()}><Plus/>继续添加文件</Button>{driveButton}</div>}</div>}

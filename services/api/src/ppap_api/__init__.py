@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
@@ -75,6 +78,7 @@ from ppap_product_store import AuthStore
 
 from ppap_api import web_contract as wc
 from ppap_api.audit_routes import register_audit_routes
+from ppap_api.notifications import run_task_notifications
 from ppap_api.office_routes import register_office_routes
 from ppap_api.report_routes import register_report_routes
 from ppap_api.rule_routes import register_rule_routes
@@ -122,7 +126,22 @@ def create_app(
     object_store_probe = object_store_probe or object_store_ready
     store = auth_store or build_product_store(settings)
     http = http or httpx.Client()
-    app = FastAPI(title="PPAP Product API", docs_url=None, redoc_url=None)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        stop = threading.Event()
+        notifier = None
+        if settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret:
+            notifier = threading.Thread(target=run_task_notifications, args=(store, settings, stop), name="ppap-notifier", daemon=True)
+            notifier.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            if notifier:
+                await asyncio.to_thread(notifier.join, 1)
+
+    app = FastAPI(title="PPAP Product API", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.web_origins(),

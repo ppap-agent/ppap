@@ -13,6 +13,16 @@ const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_c
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
 
+test('completion notification settings use the private revisioned API and never confirm an audit', async () => {
+  const preference = {task_id: task.id, enabled: false, revision: 3, available: true, can_change: true, delivery: {state: 'not_due', reason: null}}
+  const calls: {url: string; method: string; body: unknown}[] = []
+  globalThis.fetch = async (input, options) => {calls.push({url: String(input), method: options?.method || 'GET', body: options?.body ? JSON.parse(String(options.body)) : null}); return json(preference)}
+  const adapter = createNativeAuditAdapter({deepOffered: false, customers: []}).notifications!
+  assert.deepEqual(await adapter.read(task.id), preference)
+  assert.deepEqual(await adapter.save(task.id, false, 2), preference)
+  assert.deepEqual(calls, [{url: '/audit-tasks/task-a/notification', method: 'GET', body: null}, {url: '/audit-tasks/task-a/notification', method: 'PUT', body: {enabled: false, expected_revision: 2}}])
+})
+
 test('native usage reads the enterprise projection with filters and never reports a charge', async () => {
   const calls: string[] = []
   const page = {organization_id: 'tenant-a', entries: []}

@@ -181,6 +181,10 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
   }
   return {
     deepOffered: options.deepOffered,
+    notifications: {
+      read: id => request(`${taskPath(id)}/notification`),
+      save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),
+    },
     customers: options.customers.map(name => ({value: name, label: name})),
     drive: {async list(pageToken) {
       try {return await request(`/integrations/feishu/files?${new URLSearchParams(pageToken ? {page_token: pageToken} : {})}`)}
