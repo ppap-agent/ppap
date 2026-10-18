@@ -38,7 +38,7 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 
 默认 merge contract 以 **required** groups 为准，不把“是否 deterministic”当成入 Gate 的条件。默认 `Tests` workflow 每个 PR 都运行：
 
-- **Web**：`apps/web` typecheck / test / lint / build。
+- **Web**：`apps/web` typecheck / test / lint / build，以及 `tests/e2e/test_*_preview.py` 的受控 UI 回归。CI 启动本候选的显式预览服务，端口占用时由 Vite 选取空闲端口，并读取实际 loopback 监听地址；未发现测试或浏览器执行失败均使此 required job 失败。预览测试只证明 UI/DTO 交互，不证明真实审核、收费或飞书外部效果。
 - **Repository contract**：`tests/repository`，加上 `docker compose config`、`docker buildx bake --check` / `--print`、固定的 `actionlint`、canonical TKE Kustomize render 的 kubeconform，以及 InsForge static config contract。Python ruff lint、format 和 mypy 也在这个 job 里，不另开 workflow。TKE CI 与 `apply-current.sh` 共用 `deploy/tke/render-current.sh`；edition proxy ConfigMap 由 `configMapGenerator` 从唯一的 `edition-proxy.conf` 生成。pytest 只保留原生工具不知道的 PPAP rendered-object policy。
 - **Python modules**：CI 发现每一个含 `test_*.py` 的 `packages/*/tests` 和 `services/*/tests`，各自一个 pytest 进程。API 与 Worker 不共享进程。需要 PostgreSQL 的只有 `services/*/tests`。纯 Corpus contract tests 位于 `packages/ppap_corpus_contracts/tests`，由同一物理 owner discovery 自动纳入。
 - **Distribution closure**：对每个 production workspace member 单独构建 wheel 和其声明的 workspace transitive wheels；在 `/tmp` clean venv 中显式安装这些 wheels，并用 `uv.lock` 约束 registry dependency 版本。从非仓库 cwd import 后再运行该 owner tests。这个 job 不执行 root `uv sync`、不使用 editable install、`PYTHONPATH` 或 `sys.path` bootstrap。删除 `ppap-product-store → ppap-core` 的真实 dependency declaration 有单独 mutation proof，必须使 isolated import fail closed。

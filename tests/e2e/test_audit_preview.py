@@ -33,6 +33,15 @@ class AuditPreviewTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.add_init_script("""if (window === window.parent) {
+                const add = window.addEventListener;
+                window.addEventListener = function(type, listener, options) {
+                    return add.call(this, type, type === 'message' ? event => {
+                        if (event.data?.type === 'ppap-audit-task' && event.data.packageRequest === null) setTimeout(() => listener.call(this, event), 500);
+                        else listener.call(this, event);
+                    } : listener, options);
+                };
+            }""")
             page.goto(PREVIEW + "/__preview?page=audit&scene=reports-zip-link&task=preview-report-task&report=1&packageRequest=preview-linked-zip")
             product = page.frame_locator("#product")
             linked = product.get_by_role("region", name="通知中的 ZIP", exact=True)
@@ -40,7 +49,12 @@ class AuditPreviewTests(unittest.TestCase):
             self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], ["preview-linked-zip"])
             linked.get_by_role("button", name="返回当前报告中心", exact=True).click()
             expect(linked).to_have_count(0)
+            expect(page).not_to_have_url(re.compile(r"[?&]packageRequest=[^&]+"))
             self.assertNotIn("packageRequest", parse_qs(urlparse(page.url).query))
+            self.assertEqual(parse_qs(urlparse(page.url).query)["task"], ["preview-report-task"])
+            page.reload()
+            expect(product.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
+            expect(linked).to_have_count(0)
             browser.close()
 
     def test_zip_notification_link_stays_with_its_package_after_latest_status_changes(self):
