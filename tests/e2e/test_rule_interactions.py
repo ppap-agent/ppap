@@ -531,7 +531,7 @@ class RuleInteractionTests(unittest.TestCase):
         page.route("**/api/**", respond)
         return pending, posts
 
-    def test_delayed_parse_cannot_be_replaced_by_new_or_open_other_rule(self):
+    def test_late_parse_reply_cannot_replace_another_requirement(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
@@ -791,7 +791,7 @@ class RuleInteractionTests(unittest.TestCase):
 
         def rules(route):
             if route.request.method == "GET":
-                route.fulfill(json={"rules": [{**rule, **{key: rule["body"][key] for key in ("customers", "models", "parts")}} for rule in state["rules"].values()]})
+                route.fulfill(json={"rules": [{**rule, **{key: rule["body"][key] for key in ("rule_profile", "customers", "models", "parts")}} for rule in state["rules"].values()]})
             else:
                 self.assertEqual(route.request.method, "POST")
                 value = route.request.post_data_json
@@ -799,7 +799,8 @@ class RuleInteractionTests(unittest.TestCase):
                 if state["save_status"] >= 400:
                     route.fulfill(status=state["save_status"], json={"error": "save_failed"})
                 else:
-                    rule = {**value, "id": value["request_id"], "kind": "engine", "type": value["body"]["type"], "source_file_id": SOURCE, "created_at": "2026-10-18T00:00:00Z"}
+                    normalized = {**value["body"], **{key: [item.strip() for item in value["body"][key]] for key in ("customers", "models", "parts")}}
+                    rule = {**value, "body": normalized, "id": value["request_id"], "kind": "engine", "type": value["body"]["type"], "source_file_id": SOURCE, "created_at": "2026-10-18T00:00:00Z"}
                     rule.update(state.get("reply_patch", {}))
                     state["rules"][rule["id"]] = rule
                     if state.get("drop_save_reply"):
@@ -981,6 +982,27 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(state["writes"], [("POST", "/rules")])
             expect(page.get_by_label("要求名称", exact=True)).to_have_count(0)
             self.assertIn("reqVersion=" + state["saves"][0]["request_id"], page.url)
+            browser.close()
+
+    def test_rule_publication_accepts_normalized_customer_and_part_metadata(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.open_requirement(page)
+            self.check_requirement(page)
+            page.get_by_label("不限定客户", exact=True).uncheck()
+            page.get_by_label("适用客户", exact=True).fill("  测试客户  ")
+            page.get_by_label("不限定零件", exact=True).uncheck()
+            page.get_by_label("适用零件", exact=True).fill("  零件 P-1  ")
+            page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+            self.assertEqual(len(state["saves"]), 1)
+            self.assertEqual(state["saves"][0]["body"]["customers"], ["测试客户"])
+            self.assertEqual(state["saves"][0]["body"]["parts"], ["零件 P-1"])
             browser.close()
 
 

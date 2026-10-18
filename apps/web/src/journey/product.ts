@@ -12,9 +12,13 @@ export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): 
 }
 export function basisRuleBody(basis: RequirementBasis): RuleBody {
   if (!basis.server) throw new Error('审核要求尚未连接到规则版本。')
-  return {...basis.server.body, rules: basis.clauses.filter(row => row.applicability === 'apply').map(row => {
+  return {...basis.server.body,
+    customers: basis.server.body.customers.map(value => value.trim()),
+    models: basis.server.body.models.map(value => value.trim()),
+    parts: basis.server.body.parts.map(value => value.trim()),
+    rules: basis.clauses.filter(row => row.applicability === 'apply').map(row => {
     const original = basis.server!.body.rules.find(item => item.id === row.id)
-    return {id: row.id.trim(), category: row.title.trim(), priority: original?.priority ?? null, rule_to_check: row.text.trim(), type_of_rule: original?.type_of_rule || 'text'}
+    return {id: row.id.trim(), category: row.title.trim(), priority: original?.priority ?? null, rule_to_check: row.text.trim(), type_of_rule: original?.type_of_rule.trim() || 'text'}
   })}
 }
 export const canonical = (value: unknown): string => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item)
