@@ -3,7 +3,8 @@
 import uuid
 from contextlib import contextmanager
 
-from ppap_core.identity import can_read
+from ppap_core.files import FileVersion
+from ppap_core.identity import Resource, can_read
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -25,6 +26,62 @@ def feedback_receipt(row: dict) -> dict:
 class TemplateFeedbackStore:
     def __init__(self, store):
         self.store = store
+
+    def history(self, principal, page: int) -> dict:
+        with self.store._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT count(DISTINCT request_id) AS total FROM product.template_feedback WHERE tenant_id = %s AND created_by = %s", (principal.tenant_id, principal.user_id))
+            total = cur.fetchone()["total"]
+            cur.execute(
+                """SELECT * FROM (
+                    SELECT DISTINCT ON (request_id) * FROM product.template_feedback
+                    WHERE tenant_id = %s AND created_by = %s ORDER BY request_id, attempt_number DESC
+                ) latest ORDER BY created_at DESC, request_id DESC LIMIT 10 OFFSET %s""",
+                (principal.tenant_id, principal.user_id, (page - 1) * 10),
+            )
+            rows = cur.fetchall()
+            version_ids = list({file["id"] for row in rows for file in row["payload"]["files"]})
+            cur.execute(
+                """SELECT v.*, r.kind, r.tenant_id AS resource_tenant_id,
+                    ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s) AS grants
+                FROM product.file_versions v JOIN product.resources r ON r.id = v.file_id
+                WHERE v.id = ANY(%s::uuid[]) AND v.tenant_id = %s""",
+                (principal.user_id, version_ids, principal.tenant_id),
+            )
+            versions = {str(item["id"]): item for item in cur.fetchall()}
+        entries = []
+        for row in rows:
+            files, available = [], True
+            for frozen in row["payload"]["files"]:
+                version = versions.get(frozen["id"])
+                resource = Resource(str(version["file_id"]), str(version["resource_tenant_id"]), version["kind"]) if version else None
+                if not version or not resource or resource.kind != "file" or not can_read(principal, resource, set(version["grants"])) or version["status"] != "ready":
+                    available = False
+                    break
+                public = FileVersion(
+                    str(version["id"]),
+                    str(version["file_id"]),
+                    str(version["tenant_id"]),
+                    version["original_filename"],
+                    version["content_type"],
+                    version["byte_size"],
+                    version["object_key"],
+                    version["status"],
+                    version["sha256"],
+                ).public()
+                if any(public[name] != frozen[name] for name in ("id", "file_id", "original_filename", "content_type", "byte_size", "sha256")):
+                    available = False
+                    break
+                files.append(public)
+            entries.append(
+                {
+                    "receipt": feedback_receipt(row),
+                    "files": files if available else [],
+                    "files_available": available,
+                    "reason": None if available else "附件访问已受限，请联系支持核对原提报。",
+                    "created_at": row["created_at"].isoformat(),
+                }
+            )
+        return {"page": page, "page_size": 10, "total": total, "entries": entries}
 
     @contextmanager
     def operation(self, principal, request_id: str, attempt_id: str, request=None, destination=None):

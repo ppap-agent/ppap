@@ -329,6 +329,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-template-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Feedback History */
+        get: operations["feedback_history_audit_template_feedback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-template-feedback/{request_id}/attempts/{attempt_id}": {
         parameters: {
             query?: never;
@@ -2148,6 +2165,32 @@ export interface components {
             effective_rule_types: string[];
             /** Name */
             name: string;
+        };
+        /** AuditTemplateFeedbackEntry */
+        AuditTemplateFeedbackEntry: {
+            /** Created At */
+            created_at: string;
+            /** Files */
+            files: components["schemas"]["FileVersion"][];
+            /** Files Available */
+            files_available: boolean;
+            /** Reason */
+            reason: string | null;
+            receipt: components["schemas"]["AuditTemplateFeedbackReceipt"];
+        };
+        /** AuditTemplateFeedbackHistory */
+        AuditTemplateFeedbackHistory: {
+            /** Entries */
+            entries: components["schemas"]["AuditTemplateFeedbackEntry"][];
+            /** Page */
+            page: number;
+            /**
+             * Page Size
+             * @constant
+             */
+            page_size: 10;
+            /** Total */
+            total: number;
         };
         /**
          * AuditTemplateFeedbackReceipt
@@ -4176,6 +4219,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTemplateCatalog"];
+                };
+            };
+        };
+    };
+    feedback_history_audit_template_feedback_get: {
+        parameters: {
+            query?: {
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateFeedbackHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -237,4 +237,4 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 上述预览测试未配置 `PPAP_PREVIEW_URL` 时，可在未安装 Playwright 的环境中收集，并按原条件跳过；显式配置地址时必须安装 `e2e` group，缺少依赖会使收集失败。
 
-模板反馈的真实提交通过 Product API 的 `/audit-template-feedback/{request_id}/attempts/{attempt_id}`（POST / GET）。配置 `PPAP_FEISHU_FEEDBACK_BASE_TOKEN`、`PPAP_FEISHU_FEEDBACK_TABLE_ID` 和 `PPAP_FEISHU_FEEDBACK_TENANT_KEY`，指定运营表及其所属租户；凭据仍使用现有飞书应用及其有效 app_ticket，不借客户 user token 写运营表。表字段为文本「请求编号」「提交人」「联系方式」「客户名称」、日期「提交时间」、单选「处理状态」和附件「文件附件」。只有核实完整附件的外部记录，才返回材料已收到。落表前失败保留附件；落表回执未知只查原请求，不再次创建。部分上传失败可复用已确认的素材；未取得回执的素材可能留在飞书，不声称已清理。配置和协议测试通过不等于真实表权限或落表已验收。
+模板反馈的真实提交通过 Product API 的 `/audit-template-feedback/{request_id}/attempts/{attempt_id}`（POST / GET）。弹窗通过 GET `/audit-template-feedback?page=1` 找回当前提交人的最近提报，每页10次、每个请求只显示最新尝试；读取列表不调用飞书或重发。附件当前无权访问时不返回文件清单。配置 `PPAP_FEISHU_FEEDBACK_BASE_TOKEN`、`PPAP_FEISHU_FEEDBACK_TABLE_ID` 和 `PPAP_FEISHU_FEEDBACK_TENANT_KEY`，指定运营表及其所属租户；凭据仍使用现有飞书应用及其有效 app_ticket，不借客户 user token 写运营表。表字段为文本「请求编号」「提交人」「联系方式」「客户名称」、日期「提交时间」、单选「处理状态」和附件「文件附件」。只有核实完整附件的外部记录，才返回材料已收到。落表前失败保留附件；落表回执未知只查原请求，不再次创建。部分上传失败可复用已确认的素材；未取得回执的素材可能留在飞书，不声称已清理。配置和协议测试通过不等于真实表权限或落表已验收。

@@ -1379,6 +1379,21 @@ class AuditTemplateFeedbackReceipt(TypedDict):
     reason: str | None
 
 
+class AuditTemplateFeedbackEntry(TypedDict):
+    receipt: AuditTemplateFeedbackReceipt
+    files: list[FileVersion]
+    files_available: bool
+    reason: str | None
+    created_at: str
+
+
+class AuditTemplateFeedbackHistory(TypedDict):
+    page: int
+    page_size: Literal[10]
+    total: int
+    entries: list[AuditTemplateFeedbackEntry]
+
+
 class AuditSupportInfo(TypedDict):
     """Current confirmed service configuration, not invented fallback contacts."""
 

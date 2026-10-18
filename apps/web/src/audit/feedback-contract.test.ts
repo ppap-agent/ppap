@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {readFeedbackAttachment, validFeedbackReceipt, type AuditFeedbackAdapter, type FeedbackFile, type FeedbackReceipt} from './feedback-contract.ts'
+import {readFeedbackAttachment, validFeedbackReceipt, validFeedbackHistory, type AuditFeedbackAdapter, type FeedbackFile, type FeedbackReceipt, type FeedbackHistory} from './feedback-contract.ts'
+
+test('feedback history preserves the original request, ordered complete files and current access', () => {
+  const file: FeedbackFile = {id: 'v1', file_id: 'f1', original_filename: '原附件.zip', status: 'ready', sha256: 'a'.repeat(64), content_type: 'application/zip', byte_size: 3}
+  const receipt: FeedbackReceipt = {request: {request_id: 'r1', file_version_ids: ['v1']}, attempt_id: 'a1', state: 'unknown', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: false, reason: null}
+  const history: FeedbackHistory = {page: 1, page_size: 10, total: 1, entries: [{receipt, files: [file], files_available: true, created_at: '2026-10-18T00:00:00Z', reason: null}]}
+  assert.equal(validFeedbackHistory(history, 1), true)
+  for (const change of [{page: 2}, {total: 0}, {entries: [history.entries[0], history.entries[0]]}, {entries: [{...history.entries[0], files: []}]}, {entries: [{...history.entries[0], files: [{...file, id: 'other'}]}]}, {entries: [{...history.entries[0], files_available: false}]}]) assert.equal(validFeedbackHistory({...history, ...change}, 1), false)
+  assert.equal(validFeedbackHistory({...history, entries: [{...history.entries[0], files: [], files_available: false, reason: '访问已受限'}]}, 1), true)
+})
 
 test('received feedback needs a nonempty distinct fixed collection and complete matching receipt', () => {
   const request = {request_id: 'request-1', file_version_ids: ['v1', 'v2']}

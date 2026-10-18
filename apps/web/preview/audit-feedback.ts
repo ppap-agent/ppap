@@ -1,4 +1,4 @@
-import {feedbackUploadError, type AuditFeedbackAdapter, type FeedbackReceipt} from '../src/audit/feedback-contract'
+import {feedbackUploadError, type AuditFeedbackAdapter, type FeedbackReceipt, type FeedbackEntry} from '../src/audit/feedback-contract'
 import type {components} from '../src/generated/openapi'
 
 /** In-memory UI fixture only. Does not write Bitable, publish rules, or create tasks. */
@@ -8,7 +8,15 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
   const submissions = new Map<string, FeedbackReceipt>()
   const inputs = new Map<string, string>()
   const uploadAttempts = new WeakMap<File, number>()
+  const history: FeedbackEntry[] = scene.startsWith('feedback-history') ? Array.from({length: 11}, (_, index) => {
+    const file = {file_id: `preview-history-file-${index}`, id: `preview-history-version-${index}`, original_filename: `保留模板-${index + 1}.zip`, content_type: 'application/zip', byte_size: 3, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'}
+    blobs.set(file.id, new Blob(['abc'], {type: file.content_type}))
+    const receipt: FeedbackReceipt = {request: {request_id: `preview-history-request-${index}`, file_version_ids: [file.id]}, attempt_id: `preview-history-attempt-${index}`, state: 'unknown', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: false, reason: null}
+    submissions.set(`${receipt.request.request_id}:${receipt.attempt_id}`, {...receipt, state: 'received', submission_id: `preview-history-record-${index}`, received_file_version_ids: [file.id], received_at: '2026-10-18T00:00:00Z'})
+    return {receipt, files: index === 10 ? [] : [file], files_available: index !== 10, reason: index === 10 ? '附件访问已受限，请联系支持核对原提报。' : null, created_at: '2026-10-18T00:00:00Z'}
+  }) : []
   const adapter: AuditFeedbackAdapter = {
+    ...(scene.startsWith('feedback-history') ? {listHistory: async (page: number) => ({page, page_size: 10 as const, total: history.length, entries: structuredClone(history.slice((page - 1) * 10, page * 10))})} : {}),
     upload: async (input, requestId) => {
       const existing = transfers.get(requestId)
       if (existing) {

@@ -38,6 +38,19 @@ test('native feedback submits frozen versions and reads the same attempt without
   assert.deepEqual(calls, ['POST /audit-template-feedback/original-request/attempts/original-attempt', 'GET /audit-template-feedback/original-request/attempts/original-attempt'])
 })
 
+test('native feedback history is an authenticated read and never submits or uploads', async () => {
+  const calls: string[] = []
+  globalThis.fetch = async (input, options) => {
+    assert.equal(options?.method, 'GET')
+    assert.equal(options?.credentials, 'include')
+    assert.equal(options?.body, undefined)
+    calls.push(String(input))
+    return json({page: 2, page_size: 10, total: 1, entries: []})
+  }
+  assert.deepEqual(await nativeFeedbackAdapter.listHistory!(2), {page: 2, page_size: 10, total: 1, entries: []})
+  assert.deepEqual(calls, ['/audit-template-feedback?page=2'])
+})
+
 test('native usage reads the enterprise projection with filters and never reports a charge', async () => {
   const calls: string[] = []
   const page = {organization_id: 'tenant-a', entries: []}

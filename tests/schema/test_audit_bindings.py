@@ -155,6 +155,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
             client = TestClient(create_app(settings=self.settings, auth_store=self.store, http=http))
             path = f"/audit-template-feedback/{command['request_id']}/attempts/{attempt}"
             self.assertEqual(client.post(path, json=command).status_code, 401)
+            self.assertEqual(client.get("/audit-template-feedback").status_code, 401)
             expiry = datetime.now(timezone.utc) + timedelta(hours=1)
             client.cookies.set(SESSION_COOKIE, self.store.create_session(self.alice, UserTokens("test-user", "", expiry, expiry)))
             session_token = self.store.create_session(self.alice, UserTokens("test-user", "", expiry, expiry))
@@ -199,7 +200,26 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
             self.assertEqual(client.get(recovered_path).json()["state"], "received")
             self.assertFalse(client.get(failed_path).json()["retry_allowed"])
             self.assertEqual(len(uploads), 4)  # The confirmed first attachment was reused.
+            history = client.get("/audit-template-feedback?page=1")
+            self.assertEqual(history.status_code, 200, history.text)
+            self.assertEqual(history.json()["total"], 2)
+            entries = history.json()["entries"]
+            self.assertEqual(len(entries), 2)  # Only the current attempt of each request.
+            self.assertEqual(entries[0]["receipt"]["request"], recovery)
+            self.assertEqual(entries[0]["receipt"]["state"], "received")
+            self.assertEqual([item["id"] for item in entries[0]["files"]], [file.id, second.id])
+            self.assertTrue(entries[0]["files_available"])
+            self.assertNotIn("object_key", entries[0]["files"][0])
+            self.assertEqual(client.get("/audit-template-feedback?page=2").json()["entries"], [])
+            self.assertEqual(len(writes), 2)
+            from ppap_core.db import connect
+
+            with connect(self.settings, "migrator") as conn:
+                conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (file.file_id, self.alice.user_id))
+            denied = client.get("/audit-template-feedback").json()["entries"]
+            self.assertTrue(all(not entry["files_available"] and not entry["files"] and entry["reason"] for entry in denied))
             client.cookies.set(SESSION_COOKIE, self.store.create_session(self.store.principal_for_fixture("bob")))
+            self.assertEqual(client.get("/audit-template-feedback").json()["entries"], [])
             self.assertEqual(client.get(path).status_code, 403)
         self.assertEqual(len(writes), 2)
 

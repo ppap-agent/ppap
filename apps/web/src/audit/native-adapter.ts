@@ -49,6 +49,7 @@ export const nativeTemplateAdapter: AuditTemplateAdapter = {
 
 export const nativeFeedbackAdapter: AuditFeedbackAdapter = {
   ...nativeUploads,
+  listHistory: page => request(`/audit-template-feedback?${new URLSearchParams({page: String(page)})}`),
   submit: (input, attemptId) => request(`/audit-template-feedback/${encodeURIComponent(input.request_id)}/attempts/${encodeURIComponent(attemptId)}`, 'POST', input),
   read: (input, attemptId) => request(`/audit-template-feedback/${encodeURIComponent(input.request_id)}/attempts/${encodeURIComponent(attemptId)}`),
   upload(input, requestId) {

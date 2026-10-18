@@ -11,6 +11,52 @@ if PREVIEW:
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplateFeedbackPreviewTests(unittest.TestCase):
+    def test_old_history_reply_cannot_fill_a_reopened_dialog_or_replace_new_materials(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for outcome in ("返回一次示例读取", "令一次示例读取失败"):
+                page = browser.new_page()
+                page.goto(PREVIEW + "/__preview?page=audit&scene=feedback-history-loading&width=390")
+                frame = page.frame_locator("iframe")
+                frame.get_by_role("button", name="补充模板", exact=True).click()
+                dialog = frame.get_by_role("dialog", name="补充模板", exact=True)
+                expect(dialog.get_by_text("正在读取提报记录…", exact=True)).to_be_visible()
+                dialog.get_by_role("button", name="关闭", exact=True).click()
+                frame.get_by_role("button", name="补充模板", exact=True).click()
+                page.get_by_role("button", name=outcome, exact=True).click()
+                expect(dialog.get_by_text("正在读取提报记录…", exact=True)).to_be_visible()
+                expect(dialog.get_by_text("保留模板-1.zip", exact=True)).to_have_count(0)
+                page.get_by_role("button", name="返回一次示例读取", exact=True).click()
+                expect(dialog.get_by_text("保留模板-1.zip", exact=True)).to_be_visible()
+                dialog.get_by_role("button", name="下一页提报", exact=True).click()
+                dialog.get_by_label("选择模板附件", exact=True).set_input_files({"name": "当前草稿.zip", "mimeType": "application/zip", "buffer": b"new draft"})
+                page.get_by_role("button", name="返回一次示例读取", exact=True).click()
+                expect(dialog.get_by_text("当前草稿.zip", exact=True)).to_be_visible()
+                expect(dialog.get_by_text("最近提报", exact=True)).to_have_count(0)
+                expect(dialog.get_by_role("button", name="提交材料", exact=True)).to_be_enabled()
+                page.close()
+            browser.close()
+
+    def test_saved_feedback_can_be_found_after_reload_without_resubmitting_materials(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=feedback-history")
+            page.reload()
+            page.get_by_role("button", name="补充模板", exact=True).click()
+            dialog = page.get_by_role("dialog", name="补充模板", exact=True)
+            expect(dialog.get_by_role("heading", name="最近提报", exact=True)).to_be_visible()
+            dialog.get_by_role("listitem").filter(has_text="保留模板-1.zip").get_by_role("button", name="查看原提报", exact=True).click()
+            expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            with page.expect_download() as download:
+                dialog.get_by_role("button", name="下载 保留模板-1.zip", exact=True).click()
+            self.assertEqual(download.value.path().read_bytes(), b"abc")
+            dialog.get_by_role("button", name="返回提报记录", exact=True).click()
+            dialog.get_by_role("button", name="下一页提报", exact=True).click()
+            expect(dialog.get_by_text("附件访问已受限，请联系支持核对原提报。", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("button", name="查看原提报", exact=True)).to_be_disabled()
+            browser.close()
+
     def test_attachment_upload_can_continue_the_original_transfer_after_closing(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

@@ -4,14 +4,29 @@ import type {UploadAdapter} from './uploads'
 export type FeedbackRequest = components['schemas']['AuditTemplateFeedbackRequest']
 export type FeedbackReceipt = components['schemas']['AuditTemplateFeedbackReceipt']
 export type FeedbackFile = components['schemas']['FileVersion']
+export type FeedbackHistory = components['schemas']['AuditTemplateFeedbackHistory']
+export type FeedbackEntry = components['schemas']['AuditTemplateFeedbackEntry']
 export const feedbackFileAccept = '.zip,.xlsx,.xls,.xlsm,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff'
 export function feedbackUploadError(file: Pick<File, 'name' | 'size'>) {
   return !feedbackFileAccept.split(',').includes(file.name.slice(file.name.lastIndexOf('.')).toLowerCase()) ? '不支持此附件格式。请使用 ZIP、Excel、Word 或图片。' : !file.size ? '附件为空，请移除后选择有内容的文件。' : file.size > 200 * 1024 * 1024 ? '附件超过 200 MB。请移除后重新选择。' : ''
 }
 export type AuditFeedbackAdapter = UploadAdapter & {
+  listHistory?: (page: number) => Promise<FeedbackHistory>
   submit?: (request: FeedbackRequest, attemptId: string) => Promise<FeedbackReceipt>
   read?: (request: FeedbackRequest, attemptId: string) => Promise<FeedbackReceipt>
   readAttachment: (file: FeedbackFile) => Promise<{file_version_id: string; blob: Blob}>
+}
+
+export function validFeedbackHistory(update: FeedbackHistory, page: number) {
+  if (update.page !== page || update.page_size !== 10 || !Number.isSafeInteger(update.total) || update.total < 0 || !Array.isArray(update.entries) || update.entries.length > 10 || update.entries.length > update.total) return false
+  const requests = new Set<string>()
+  return update.entries.every(entry => {
+    const {receipt, files} = entry
+    if (!validFeedbackReceipt(receipt, receipt.request, receipt.attempt_id) || requests.has(receipt.request.request_id) || !Number.isFinite(Date.parse(entry.created_at)) || typeof entry.files_available !== 'boolean' || !Array.isArray(files)) return false
+    requests.add(receipt.request.request_id)
+    if (!entry.files_available) return files.length === 0 && Boolean(entry.reason?.trim())
+    return files.length === receipt.request.file_version_ids.length && files.every((file, index) => file.id === receipt.request.file_version_ids[index] && file.file_id && file.original_filename && file.status === 'ready' && Number.isSafeInteger(file.byte_size) && file.byte_size > 0 && file.content_type && file.sha256 && /^[a-f0-9]{64}$/.test(file.sha256))
+  })
 }
 
 export function validFeedbackReceipt(update: FeedbackReceipt, request: FeedbackRequest, attemptId: string) {

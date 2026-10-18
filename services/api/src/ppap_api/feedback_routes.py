@@ -3,7 +3,7 @@
 import hashlib
 import uuid
 
-from fastapi import Request
+from fastapi import Query, Request
 from fastapi.responses import JSONResponse
 from ppap_core.feishu import FeishuError, user_info
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
@@ -19,6 +19,13 @@ HEADERS = {"Cache-Control": "private, no-store"}
 
 def register_feedback_routes(app, store, session_of, http, settings):
     feedbacks = TemplateFeedbackStore(store)
+
+    @app.get("/audit-template-feedback", response_model=wc.AuditTemplateFeedbackHistory)
+    def feedback_history(request: Request, page: int = Query(default=1, ge=1)):
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=HEADERS)
+        return JSONResponse(feedbacks.history(session.principal, page), headers=HEADERS)
 
     def token_for(destination):
         if destination["app_id"] != settings.feishu_app_id or not all(destination.values()):
