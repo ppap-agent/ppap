@@ -26,6 +26,7 @@ class WebAliasTests(unittest.TestCase):
             html.chmod(0o755)
             (html / "index.html").write_text("workbench")
             (html / "addon.html").write_text("addon-page")
+            (html / "audit.html").write_text("native-audit")
             started = _run(
                 [
                     "docker",
@@ -48,6 +49,10 @@ class WebAliasTests(unittest.TestCase):
                 self.assertEqual(_fetch(name, "/usage"), (200, "workbench"))
                 self.assertEqual(_fetch(name, "/rules"), (200, "workbench"))
                 self.assertEqual(_fetch(name, "/addon"), (200, "addon-page"))
+                for path in ("/audit?task=frozen-task&report=frozen-file", "/audit.html", "/__audit-native?view=usage"):
+                    self.assertEqual(_fetch(name, path), (200, "native-audit"))
+                self.assertEqual(_fetch(name, "/"), (200, "workbench"))
+                self.assertEqual(_redirect(name, "/audit/?task=frozen-task"), "/audit?task=frozen-task")
                 self.assertEqual(_redirect(name, "/audit-files/"), "/audit-files")
                 self.assertEqual(_redirect(name, "/addon/"), "/addon")
                 self.assertEqual(_redirect(name, "/usage/"), "/usage")
@@ -85,7 +90,7 @@ def _request(name: str, path: str) -> tuple[int, str, str]:
         if line.startswith("HTTP/"):
             status = int(line.split()[1])
         if line.lower().startswith("location:"):
-            location = line.split(":", 1)[1].strip().split("?", 1)[0]
+            location = line.split(":", 1)[1].strip()
     if status == 0:
         raise AssertionError(completed.stderr or completed.stdout)
     return status, body, location

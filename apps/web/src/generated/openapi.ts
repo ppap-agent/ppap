@@ -4347,7 +4347,9 @@ export interface operations {
     };
     enter_current_enter_current_get: {
         parameters: {
-            query?: never;
+            query?: {
+                return_to?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4361,6 +4363,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

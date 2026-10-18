@@ -46,14 +46,11 @@ export default defineConfig({
       name: 'ppap-runtime-config',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          if (!preview && (req.url || '').split('?')[0] === '/__audit-native') {
-            res.setHeader('Content-Type', 'text/html; charset=utf-8')
-            res.setHeader('Cache-Control', 'no-store')
-            const html = readFileSync(path.resolve(__dirname, 'index.html'), 'utf8').replace('/src/main.tsx', '/src/audit/native-main.tsx')
-            void server.transformIndexHtml('/__audit-native', html).then(transformed => res.end(transformed)).catch(next)
-            return
+          const url = new URL(req.url || '/', 'http://127.0.0.1')
+          if (!preview && ['/audit', '/audit/', '/__audit-native'].includes(url.pathname)) {
+            req.url = '/audit.html' + url.search
           }
-          if ((req.url || '').split('?')[0] !== '/runtime-config.json') {
+          if (url.pathname !== '/runtime-config.json') {
             next()
             return
           }
@@ -70,6 +67,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         app: path.resolve(__dirname, 'index.html'),
+        audit: path.resolve(__dirname, 'audit.html'),
         addon: path.resolve(__dirname, 'addon.html'),
       },
     },

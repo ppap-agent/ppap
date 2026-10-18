@@ -334,21 +334,26 @@ def create_app(
         response.delete_cookie(SESSION_COOKIE, path="/")
         return response
 
-    def _enter_edition(request: Request, edition: str) -> RedirectResponse | JSONResponse:
+    def _enter_edition(request: Request, edition: str, return_to: str = "") -> RedirectResponse | JSONResponse:
+        target = safe_return_to(return_to, settings)
+        if urlsplit(target).path in {"/enter-current", "/enter-legacy"}:
+            target = settings.canonical_web_url() + "/"
         principal = principal_of(request)
         if principal is None:
             dest = settings.canonical_web_url() + "/enter-" + edition
+            if return_to:
+                dest += "?" + urlencode({"return_to": target})
             login = settings.public_api_url.rstrip("/") + "/login/feishu?return_to=" + quote(dest, safe="")
             return RedirectResponse(login, status_code=302)
         if not settings.tenant_allowed(principal.tenant_key):
             return JSONResponse({"error": "not_found"}, status_code=404)
-        response = RedirectResponse(settings.canonical_web_url() + "/", status_code=302)
+        response = RedirectResponse(target, status_code=302)
         response.set_cookie(EDITION_COOKIE, edition, **_edition_cookie_kwargs(settings))
         return response
 
     @app.get("/enter-current", response_model=None)
-    def enter_current(request: Request) -> RedirectResponse | JSONResponse:
-        return _enter_edition(request, "current")
+    def enter_current(request: Request, return_to: str = "") -> RedirectResponse | JSONResponse:
+        return _enter_edition(request, "current", return_to)
 
     @app.get("/enter-legacy", response_model=None)
     def enter_legacy(request: Request) -> RedirectResponse | JSONResponse:

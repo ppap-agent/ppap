@@ -63,6 +63,36 @@ class AuditDatabaseCase(unittest.TestCase):
         return draft["id"]
 
 
+class NativeEntryDatabaseTests(AuditDatabaseCase):
+    def test_native_entry_keeps_the_frozen_task_after_authenticated_edition_selection(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_core.identity import SESSION_COOKIE
+
+        self.settings.feishu_app_id = "cli_test"
+        self.settings.feishu_app_secret = "test-secret"
+        client = TestClient(create_app(settings=self.settings, auth_store=self.store))
+        target = "http://127.0.0.1:4173/audit?task=frozen-task&report=frozen-file"
+        response = client.get("/enter-current", params={"return_to": target}, follow_redirects=False)
+        self.assertEqual(response.status_code, 302)
+        resume = parse_qs(urlsplit(response.headers["location"]).query)["return_to"][0]
+        self.assertEqual(urlsplit(resume).path, "/enter-current")
+        self.assertEqual(parse_qs(urlsplit(resume).query)["return_to"], [target])
+        client.cookies.set(SESSION_COOKIE, self.store.create_session(self.alice))
+        response = client.get("/enter-current", params={"return_to": target}, follow_redirects=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["location"], target)
+        self.assertEqual(response.cookies.get("ppap_edition"), "current")
+        foreign = client.get("/enter-current?return_to=https://foreign.example/audit", follow_redirects=False)
+        self.assertEqual(foreign.headers["location"], "http://127.0.0.1:4173/")
+        loop = client.get("/enter-current", params={"return_to": "http://127.0.0.1:4173/enter-current"}, follow_redirects=False)
+        self.assertEqual(loop.headers["location"], "http://127.0.0.1:4173/")
+        self.settings.current_tenant_allowlist = "unrelated-tenant"
+        self.assertEqual(client.get("/enter-current", params={"return_to": target}, follow_redirects=False).status_code, 404)
+
+
 class AuditBindingDatabaseTests(AuditDatabaseCase):
     def test_unsupported_worker_job_is_failed_not_successful_delivery(self):
         from ppap_core.db import connect
