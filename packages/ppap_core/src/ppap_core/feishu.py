@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -25,6 +27,7 @@ class Challenge:
 @dataclass(frozen=True)
 class AppTicket:
     value: str
+    issued_at: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,16 @@ def event_app_id(body: dict) -> str:
     return app_id.strip() if isinstance(app_id, str) else ""
 
 
+def ticket_event_time(body: dict, header: dict) -> Decimal | None:
+    """P1 ts is decimal seconds; P2 create_time is integer milliseconds."""
+    raw = header.get("create_time") if body.get("schema") == "2.0" else body.get("ts")
+    pattern = r"[0-9]{1,16}" if body.get("schema") == "2.0" else r"[0-9]{1,12}(?:\.[0-9]{1,18})?"
+    if not isinstance(raw, str) or not re.fullmatch(pattern, raw):
+        return None
+    issued_at = Decimal(raw) / 1000 if body.get("schema") == "2.0" else Decimal(raw)
+    return issued_at if 0 < issued_at <= Decimal(str(datetime.now(timezone.utc).timestamp())) + 300 else None
+
+
 def parse_event(body: dict) -> Challenge | AppTicket | CardAction | EncryptedEvent | UnknownEvent:
     if not isinstance(body, dict):
         return UnknownEvent()
@@ -112,7 +125,7 @@ def parse_event(body: dict) -> Challenge | AppTicket | CardAction | EncryptedEve
     ticket = event.get("app_ticket")
     event_type = header.get("event_type") or event.get("type") or body.get("type")
     if event_type == "app_ticket" and isinstance(ticket, str) and ticket.strip():
-        return AppTicket(ticket.strip())
+        return AppTicket(ticket.strip(), ticket_event_time(body, header))
     if event_type == "card.action.trigger" and body.get("schema") == "2.0":
         operator, action, context = (event.get(key) for key in ("operator", "action", "context"))
         if not isinstance(operator, dict) or not isinstance(action, dict) or not isinstance(context, dict):
@@ -139,6 +152,10 @@ def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | Card
         app_id = event_app_id(body)
         if not app_id or app_id != settings.feishu_app_id:
             return AppMismatch()
+        if isinstance(parsed, AppTicket):
+            event = body.get("event")
+            if isinstance(event, dict) and "app_id" in event and event["app_id"] != settings.feishu_app_id:
+                return AppMismatch()
     return parsed
 
 

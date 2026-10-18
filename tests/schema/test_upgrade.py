@@ -71,12 +71,31 @@ class SchemaUpgradeTests(unittest.TestCase):
                     f"prepare previous schema with {name}",
                 )
             self.assertEqual(self.schema.applied(previous), versions[:-1])
+            self.schema.require(
+                self.schema.psql(
+                    self.schema.migrator_user(),
+                    self.schema.migrator_password(),
+                    previous,
+                    "-c",
+                    "INSERT INTO product.app_tickets (provider, app_id, ticket) VALUES ('feishu', 'upgrade-test-app', 'upgrade-test-ticket')",
+                ),
+                "seed previous ticket",
+            )
 
             previous_apply = self.schema.apply(previous)
             self.schema.require(previous_apply, "upgrade previous")
             executed = [line.removeprefix("applying ") for line in (previous_apply.stdout or b"").decode().splitlines() if line.startswith("applying ")]
             self.assertEqual(executed, versions)
             self.assertEqual(self.schema.applied(previous), versions)
+            ticket = self.schema.psql(
+                self.schema.migrator_user(),
+                self.schema.migrator_password(),
+                previous,
+                "-Atc",
+                "SELECT ticket, provider_event_ts IS NULL FROM product.app_tickets WHERE provider='feishu' AND app_id='upgrade-test-app'",
+            )
+            self.schema.require(ticket, "read preserved ticket")
+            self.assertEqual(ticket.stdout.strip(), b"upgrade-test-ticket|t")
 
             tables = self.schema.psql(
                 self.schema.migrator_user(),

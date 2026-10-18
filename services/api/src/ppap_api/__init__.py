@@ -235,7 +235,7 @@ def create_app(
         body = capability_report(settings)
         if body["feishu"]["state"] == "configured":
             try:
-                body["feishu"]["app_ticket"] = "received" if store.has_app_ticket(settings.feishu_app_id) else "missing"
+                body["feishu"].update(store.app_ticket_status(settings.feishu_app_id))
             except Exception:
                 body["feishu"]["app_ticket"] = "unproven"
         return body
@@ -259,7 +259,10 @@ def create_app(
         if isinstance(parsed, Challenge):
             return JSONResponse({"challenge": parsed.value})
         if isinstance(parsed, AppTicket):
-            store.save_app_ticket(settings.feishu_app_id, parsed.value)
+            if parsed.issued_at is None:
+                return JSONResponse({"error": "invalid_ticket_timestamp"}, status_code=400)
+            updated = store.save_app_ticket(settings.feishu_app_id, parsed.value, issued_at=parsed.issued_at)
+            emit("feishu_app_ticket_received", updated=updated)
             return JSONResponse({"ok": True})
         if isinstance(parsed, CardAction):
             try:

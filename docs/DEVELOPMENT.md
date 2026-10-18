@@ -17,7 +17,9 @@
 - 飞书任务通知由 API 进程发送，`PPAP_FEISHU_NOTIFICATIONS_ENABLED` 默认 `false`；开启还需配置该应用的 ID、Secret 和有效授权。`GET/PUT /audit-tasks/{id}/notification` 读取、保存创建人的完成通知设置，修改必须带 `expected_revision`；该设置只控制完成通知，不控制待确认或开始审核通知。通知未进入发送边界前可修改，进入后只读回状态。发送结果未知不自动重发；这些接口不证明飞书已送达或已读取。
 - ZIP 通知链接使用 `/audit?task=...&report=1&packageRequest=...`，须经过当前身份入口。报告中心通过既有 `/audit-report-packages/{request_id}` 读取固定集合，失败只读回原请求，不自动创建新包；离开该 ZIP 后才回到当前报告中心。`reports-zip-link` 是显式预览场景，不证明真实飞书送达。
 - 卡片直接确认需配置 `FEISHU_VERIFICATION_TOKEN`，并将新版 `card.action.trigger` 回调订阅到现有 `/integrations/feishu/events`；不使用旧版回调结构。仅配置 Token 不证明平台订阅已生效。回调通过原消息 ID 和当前创建人身份恢复同一确认事务；消息发送未知或内容被截断时只能打开页面。当前支持 HTTPS 下的 Verification Token 校验，不接受加密回调；真实回调和三秒响应要求仍须在客户等价环境验收。
-- 从旧 UAC 恢复 `app_ticket` 时，`RedisUtils` 使用 Java 序列化的 `feishu-app-ticket` 键和值；同名普通字符串键可能是失效旧值。按实际编码读取后，须用当前应用的 ID、Secret 调用飞书接口验证，再写入本地受保护的票据存储。不得输出票据、改写现网缓存或为本地测试切换生产回调；一次恢复不代表自动续期已接通。
+- `app_ticket` 通过新版 `POST /integrations/feishu/events` 独立接收，使用现有 `FEISHU_VERIFICATION_TOKEN` 与应用 ID 校验，保存至自己的 PostgreSQL；不调用 UAC、不读取旧 Redis、不增加转发或轮询。沿用 HTTPS + Verification Token 模式；配置加密回调前必须另行支持并验证解密，当前遇到加密体明确拒绝。事件 P1 `ts` 为秒（最多十八位小数），P2 `header.create_time` 为毫秒，统一为 Decimal 秒并以 PostgreSQL numeric 保存，避免浮点或微秒舍入丢失顺序；缺失、非法或超过本机时间五分钟的时间戳拒绝。单条 guarded upsert 只接受更晚的事件，重复、迟到或同时间不同值不替换，也不刷新接收时间；时间相同无法判断新旧，须观察后续推送或显式请求重推，不自行给 ticket 排序。应用 ID 存在冲突则拒绝。数据库成功提交后才返回成功，响应丢失可安全重投。
+- `GET /capabilities` 的 `app_ticket` 只表示本地是否有记录，不证明票据仍有效、定时推送已连通或能够调用飞书；`app_ticket_event_timestamp` 是秒级 Unix 时间戳字符串，`app_ticket_received_at` 是 ISO 写入时间，均不含密钥，重复事件不能刷新它们。迁移保留原票据，但不伪造其事件时间；未带事件时间的历史初始化不能覆盖已经由回调更新的记录。正式切换与连续更新验收见 [TKE 配置](../deploy/tke/README.md#飞书回调切换尚未执行)。
+- `FeishuTicketUpdates.tla` 是一个应用、两个事件修订和一个异应用的有限 Safety 检查；正向配置为 3 个不同状态、深度 2。两个故障配置分别暴露旧值覆盖（`LatestWins`，深度 3）与错绑应用（`AppBound`，深度 2）。它不证明鉴权、时间戳含义、SQL 持久性、飞书自动投递或响应时限。API/真实 PostgreSQL 测试检查认证、原子排序和重新建立存储连接后的读回，不证明实际平台投递或数据库故障恢复。
 - 预览切流用 `PPAP_CURRENT_TENANT_ALLOWLIST`（逗号分隔的 Feishu `tenant_key`）。空名单不限制。生产目录写入海岸线租户。`PPAP_USAGE_CHARGE_ENABLED=false` 时受理不写 `usage_events`；预计点数按匹配文件和标准单价计算，不是已扣费回执。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。
 - 新增配置项前先确认它代表独立运行决策，而不是可推导内部细节。

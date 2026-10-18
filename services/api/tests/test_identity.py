@@ -305,7 +305,8 @@ class HttpAuthTests(unittest.TestCase):
         ticket = self.client.post(
             "/integrations/feishu/events",
             json={
-                "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_test"},
+                "schema": "2.0",
+                "header": {"event_type": "app_ticket", "token": "verify-test", "app_id": "cli_test", "create_time": "1700000000000"},
                 "event": {"app_ticket": "tik", "app_id": "cli_test"},
             },
         )

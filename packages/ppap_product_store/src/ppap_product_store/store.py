@@ -5,6 +5,7 @@ import json
 import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 import psycopg
@@ -156,17 +157,31 @@ class AuthStore:
             ).fetchone()
         return row[0] if row else None
 
-    def save_app_ticket(self, app_id: str, ticket: str) -> None:
+    def save_app_ticket(self, app_id: str, ticket: str, *, issued_at: Decimal | None = None) -> bool:
         with self._conn() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
-                INSERT INTO product.app_tickets (provider, app_id, ticket)
-                VALUES (%s, %s, %s)
+                INSERT INTO product.app_tickets (provider, app_id, ticket, provider_event_ts)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (provider, app_id) DO UPDATE
-                  SET ticket = EXCLUDED.ticket, received_at = now()
+                  SET ticket = EXCLUDED.ticket, received_at = clock_timestamp(),
+                      provider_event_ts = EXCLUDED.provider_event_ts
+                WHERE app_tickets.provider_event_ts IS NULL
+                   OR EXCLUDED.provider_event_ts > app_tickets.provider_event_ts
+                RETURNING 1
                 """,
-                (PROVIDER_FEISHU, app_id, ticket),
-            )
+                (PROVIDER_FEISHU, app_id, ticket, issued_at),
+            ).fetchone()
+        return row is not None
+
+    def app_ticket_status(self, app_id: str) -> dict[str, str]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT received_at, provider_event_ts FROM product.app_tickets WHERE provider = %s AND app_id = %s", (PROVIDER_FEISHU, app_id)).fetchone()
+        return {
+            "app_ticket": "received" if row else "missing",
+            "app_ticket_received_at": row[0].isoformat() if row else "",
+            "app_ticket_event_timestamp": str(row[1]) if row and row[1] is not None else "",
+        }
 
     def has_app_ticket(self, app_id: str) -> bool:
         with self._conn() as conn:
