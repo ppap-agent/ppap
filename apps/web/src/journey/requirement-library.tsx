@@ -16,7 +16,7 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {Textarea} from '../components/ui/textarea'
 import type {RequirementClause} from './requirements-state'
 import {clauseContent, libraryDraftIssues, scopeFields, scopeLabel, type RequirementCollection, type RequirementDraft, type RequirementScope, type RequirementUse, type RequirementVersion} from './requirement-library-state'
-import {fileAccept, useLocalUploads} from './local-files'
+import {requirementFileAccept, useLocalUploads} from './local-files'
 import {RequirementOriginal} from './requirements'
 import {receiveRequirement, RuleExtraction} from './rule-extraction'
 import {canonical, publishBasis} from './product'
@@ -149,7 +149,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     const basis = await receiveRequirement(entry), id = crypto.randomUUID()
     onChange(items => [...items, {id, versions: [], draft: {id: basis.source.id, basis, scope: {customer: '', part: '', revision: ''}, reason: '', baseId: null}}])
     if (mounted.current) {search(''); select(id, 'draft')}
-  }, 'requirement-library')
+  }, 'requirement-library', requirementFileAccept)
   const locked = publishing || upload.busy || loading
   const changed = current?.basis.clauses.filter(clause => !base || clauseContent(clause) !== clauseContent(base.basis.clauses.find(old => old.id === clause.id) ?? {...clause, text: ''})) ?? []
   const removed = base?.basis.clauses.filter(old => !current?.basis.clauses.some(clause => clause.id === old.id)) ?? []
@@ -165,7 +165,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     setEditing(id)
   }
   return <section className="min-w-0 space-y-6 pb-10 text-sm">
-    <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={fileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
+    <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
     {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回审核要求</a></nav> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">审核要求</h1><Button disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>上传要求</Button></header>}
     {upload.busy && <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none"/>正在上传要求原件…</p>}
     {loading && <p role="status" className="text-muted-foreground">正在读取审核要求…</p>}

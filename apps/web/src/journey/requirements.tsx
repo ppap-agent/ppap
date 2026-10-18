@@ -12,7 +12,7 @@ import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle} from '../components/ui/sheet'
 import {Textarea} from '../components/ui/textarea'
 import {basisConfirmed, basisIssues, clauseIssues, clauseSourceReady, confirmBasis, demoBasis, resolveBasisConflict, type RequirementBasis, type RequirementClause} from './requirements-state'
-import {fileAccept, useLocalUploads} from './local-files'
+import {requirementFileAccept, useLocalUploads} from './local-files'
 import {SourceReaderButton} from './source-reader'
 import {copyForCase, scopeMatches, scopeLabel, sourceContent, type RequirementCollection, type RequirementScope} from './requirement-library-state'
 import {receiveRequirement, RuleExtraction} from './rule-extraction'
@@ -69,7 +69,7 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
     }
     receive(await receiveRequirement(entry, receive))
     if (mounted.current) {setEditing(null); setSourceClause(null)}
-  }, scopeKey)
+  }, scopeKey, requirementFileAccept)
   const locked = readonly || publishing || upload.busy
   const collection = collections.find(item => item.id === basis?.library?.collectionId || item.versions.some(version => version.id === basis?.source.id || version.id === basis?.library?.versionId))
   const selectedVersion = collection?.versions.find(version => version.id === basis?.library?.versionId || version.id === basis?.source.id)
@@ -131,7 +131,7 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
   return <section ref={page} className="min-w-0 space-y-6 pb-8 text-sm">
     <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft/>{backLabel || '返回审核准备'}</Button>
     <header className="space-y-2"><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold tracking-tight">{readonly ? '本次审核依据' : '确认本次审核依据'}</h1>{(readonly || confirmed) && <Badge variant="outline">{readonly ? '只读' : '已确认'}</Badge>}</div><p className="break-words text-muted-foreground">{context}</p></header>
-    <input hidden ref={picker} type="file" aria-label="要求文件选择器" accept={fileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
+    <input hidden ref={picker} type="file" aria-label="要求文件选择器" accept={requirementFileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
     {basis ? <section className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b pb-5" aria-label="本次要求来源">
       <div className="min-w-0 space-y-2"><div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-base font-semibold">{basis.source.title || '要求名称待补充'}</h2><Badge variant="outline">{basis.source.version || '版本待核对'}</Badge><span className="text-muted-foreground">{basis.clauses.length} 条</span></div><p className="break-words text-xs text-muted-foreground">{basis.source.filename}</p></div>
       <div className="flex flex-wrap items-center gap-2"><RequirementOriginal basis={basis} label="查看原件"/>{!readonly && <><Button variant="outline" size="sm" disabled={locked} onClick={() => {setCandidate(null); setQuery(''); setSourceOpen(true)}}>更换来源</Button><Button variant="ghost" size="sm" disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>上传新要求</Button></>}</div>

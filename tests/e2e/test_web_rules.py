@@ -6,6 +6,7 @@ import json
 import os
 import unittest
 import uuid
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 try:
     from playwright.sync_api import sync_playwright
@@ -16,9 +17,10 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
 def isolated_dev_login(page):
-    page.goto(f"{WEB}/dev")
-    page.get_by_test_id("isolated-dev-login").click()
-    page.wait_for_selector('[data-testid="session-user"]', state="attached")
+    response = page.request.post(f"{WEB}/api/isolated-dev/sessions", data={"subject": "alice"})
+    if response.status != 200:
+        raise AssertionError(f"isolated-dev session was not created: {response.status}")
+    page.goto(WEB)
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
@@ -36,32 +38,58 @@ class RulePreparationTests(unittest.TestCase):
             "parts": [],
             "rules": [{"id": "1", "category": "基本信息", "priority": None, "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
         }
+        source_bytes = json.dumps(source, ensure_ascii=False).encode()
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
+            page.set_default_timeout(5000)
             isolated_dev_login(page)
-            page.get_by_test_id("pc-shell").get_by_test_id("nav-rules").click()
-            page.wait_for_url("**/rules")
-            page.get_by_test_id("new-rule").click()
-            page.get_by_test_id("rule-file").set_input_files({"name": "控制计划规则.json", "mimeType": "application/json", "buffer": json.dumps(source, ensure_ascii=False).encode()})
-            expect(page.get_by_test_id("rule-title")).to_be_visible(timeout=30000)
-            expect(page.get_by_test_id("rule-message")).to_contain_text("解析完成")
-            expect(page.get_by_test_id("rule-items").locator("article")).to_have_count(1)
-            page.get_by_test_id("rule-title").fill(title)
-            page.locator('[data-field="rule_to_check"]').fill("必须填写零件号和版本")
-            page.get_by_test_id("publish-rule").click()
-            expect(page.locator("text=已保存规则")).to_be_visible()
-            page.goto(f"{WEB}/rules")
-            row = page.get_by_test_id("rule-versions").locator("tr", has_text=title)
-            expect(row).to_have_count(1)
-            row.get_by_role("link", name=title).click()
-            expect(page.locator('[data-field="rule_to_check"]')).to_have_count(0)
-            expect(page.get_by_test_id("rule-items")).to_contain_text("必须填写零件号和版本")
-            expect(page.locator("#rule-metadata")).to_contain_text("测试客户")
-            expect(page.locator("#rule-origin")).to_contain_text("版本")
-            downloaded = page.request.get(page.locator("#rule-source").get_attribute("href"))
+            page.get_by_role("navigation", name="主要导航").get_by_role("link", name="审核要求", exact=True).click()
+            page.get_by_role("button", name="上传要求", exact=True).click()
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "控制计划规则.json", "mimeType": "application/json", "buffer": source_bytes})
+            expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
+            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_role("button", name="提取条款", exact=True).click()
+            clauses = page.get_by_role("region", name="要求条款", exact=True)
+            expect(clauses.get_by_role("article")).to_have_count(1, timeout=30000)
+            page.get_by_label("要求名称", exact=True).fill(title)
+            page.get_by_label("适用客户", exact=True).fill("测试客户")
+            page.get_by_label("不限定零件", exact=True).check()
+            page.get_by_label("不限定图纸修订", exact=True).check()
+            page.get_by_label("来源说明／变更原因", exact=True).fill("依据结构化客户规则核对首个版本。")
+            clauses.get_by_role("button", name="编辑条款", exact=True).click()
+            expect(clauses.get_by_role("textbox", name="要执行的要求", exact=True)).to_be_visible()
+            clauses.get_by_role("textbox", name="要执行的要求", exact=True).fill("必须填写零件号和版本")
+            clauses.get_by_label("出处位置", exact=True).fill("rules[0].rule_to_check")
+            clauses.get_by_label("1 已核对来源", exact=True).check()
+            clauses.get_by_role("button", name="完成编辑", exact=True).click()
+            page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+            saved_url = page.url
+            page.get_by_role("link", name="返回审核要求", exact=True).click()
+            page.get_by_role("searchbox", name="搜索审核要求", exact=True).fill(title)
+            link = page.get_by_role("link", name=title, exact=True).filter(visible=True)
+            expect(link).to_have_count(1)
+            link.click()
+            saved_query, reopened_query = parse_qs(urlsplit(saved_url).query), parse_qs(urlsplit(page.url).query)
+            self.assertEqual(reopened_query["requirement"], saved_query["requirement"])
+            page.close()
+            page = browser.new_page()
+            page.set_default_timeout(5000)
+            isolated_dev_login(page)
+            page.goto(saved_url)
+            expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
+            expect(page.get_by_role("textbox", name="要执行的要求", exact=True)).to_have_count(0)
+            expect(page.get_by_role("region", name="要求条款", exact=True)).to_contain_text("必须填写零件号和版本")
+            expect(page.get_by_role("main")).to_contain_text("测试客户")
+            expect(page.get_by_role("combobox", name="要求版本", exact=True)).to_contain_text("v1")
+            page.get_by_role("button", name="查看原件 · 控制计划规则.json", exact=True).click()
+            reader = page.get_by_role("dialog", name="原件与证据", exact=True)
+            expect(reader).to_be_visible()
+            downloaded = page.request.get(urljoin(page.url, reader.get_by_role("link", name="下载原件", exact=True).get_attribute("href")))
             self.assertEqual(downloaded.status, 200)
-            self.assertEqual(json.loads(downloaded.body()), source)
+            self.assertEqual(downloaded.body(), source_bytes)
             browser.close()
 
 

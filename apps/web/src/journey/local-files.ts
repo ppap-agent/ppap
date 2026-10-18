@@ -4,8 +4,8 @@ import {useEffect, useRef, useState} from 'react'
 export type LocalFileRef = {id: string; digest: string; size: number; type: string}
 export type LocalUpload = {file: File; ref: LocalFileRef}
 export const fileAccept = '.xls,.xlsx,.xlsm,.doc,.docx,.pdf,.png,.jpg,.jpeg,.webp,.txt,.csv'
+export const requirementFileAccept = `${fileAccept},.md,.json`
 const maxBytes = 200 * 1024 * 1024
-const supported = /\.(xlsx?|xlsm|docx?|pdf|png|jpe?g|webp|txt|csv)$/i
 export function validLocalFile(value: unknown): value is LocalFileRef {
   if (!value || typeof value !== 'object') return false
   const ref = value as Record<string, unknown>
@@ -43,9 +43,9 @@ async function writeFiles(rows: StoredFile[], restore = false) {
     })
   } finally {db.close()}
 }
-export async function storeLocalFiles(files: File[]): Promise<LocalUpload[]> {
+export async function storeLocalFiles(files: File[], accept = fileAccept): Promise<LocalUpload[]> {
   for (const file of files) {
-    if (!supported.test(file.name)) throw new Error(`${file.name}：请选择 Excel、Word、PDF、图片或文本文件。`)
+    if (!accept.split(',').some(extension => file.name.toLowerCase().endsWith(extension))) throw new Error(`${file.name}：请选择 Excel、Word、PDF、图片或文本文件。`)
     if (file.size > maxBytes) throw new Error(`${file.name} 超过 200 MB；此批文件尚未添加。`)
   }
   const uploads: LocalUpload[] = []
@@ -78,7 +78,7 @@ export function fileError(error: unknown) {
     : error instanceof Error ? error.message : '本机文件保存失败，请重新选择文件。'
 }
 // Leaving the owner or changing its identity cancels the UI attachment, not the browser write.
-export function useLocalUploads(onReady: (files: LocalUpload[]) => void | Promise<void>, owner: string) {
+export function useLocalUploads(onReady: (files: LocalUpload[]) => void | Promise<void>, owner: string, accept = fileAccept) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const active = useRef(0), pending = useRef(false), mounted = useRef(true)
   const latest = useRef({onReady, owner}); latest.current = {onReady, owner}
@@ -89,7 +89,7 @@ export function useLocalUploads(onReady: (files: LocalUpload[]) => void | Promis
     const attempt = ++active.current, identity = latest.current.owner
     pending.current = true; setBusy(true); setError('')
     try {
-      const rows = await storeLocalFiles(files)
+      const rows = await storeLocalFiles(files, accept)
       if (mounted.current && attempt === active.current && identity === latest.current.owner) await latest.current.onReady(rows)
     } catch (cause) {if (mounted.current && attempt === active.current) setError(fileError(cause))}
     finally {if (mounted.current && attempt === active.current) {pending.current = false; setBusy(false)}}
