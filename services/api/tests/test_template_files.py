@@ -24,11 +24,23 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
     files = [{"token": "template-one", "name": "控制计划.xlsx", "type": "file", "modified_time": "1750000000"}]
     content = b"real-provider-template-one"
     denied = False
+    root_meta = {"user_id": "12345"}
+    folder_meta = {"token": "test-folder", "createUid": "12345", "ownUid": "99999"}
+    profile = {"tenant_key": tenant, "open_id": "template-reader", "name": "模板创建人"}
+    metadata_unavailable = False
 
     def provider(request):
         assert request.headers["authorization"] == "Bearer template-user-token"
         if denied:
             return httpx.Response(403, json={"code": 1063002})
+        if request.url.path == "/open-apis/drive/explorer/v2/root_folder/meta":
+            if metadata_unavailable:
+                return httpx.Response(403, json={"code": 1063002})
+            return httpx.Response(200, json={"code": 0, "data": root_meta})
+        if request.url.path == "/open-apis/drive/explorer/v2/folder/test-folder/meta":
+            return httpx.Response(200, json={"code": 0, "data": folder_meta})
+        if request.url.path == "/open-apis/authen/v1/user_info":
+            return httpx.Response(200, json={"code": 0, "data": profile})
         if request.url.path == "/open-apis/drive/v1/files":
             assert request.url.params["folder_token"] == "test-folder"
             return httpx.Response(200, json={"code": 0, "data": {"files": files, "has_more": False}})
@@ -67,6 +79,32 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         assert client.get("/audit-templates", params={"customer_id": "海岸线", "page_size": 9}).status_code == 422
         assert response.headers["cache-control"] == "private, no-store"
         page = response.json()
+        assert page["creator_name"] == "模板创建人"
+        assert page["manage_access"]["state"] == "unknown"
+        # Creator and owner are different provider facts. Never substitute the
+        # current viewer or a cached uploader for an unverified creator.
+        for target, field, wrong in (
+            (folder_meta, "createUid", "99999"),
+            (folder_meta, "token", "another-folder"),
+            (profile, "tenant_key", "another-tenant"),
+            (profile, "open_id", "another-user"),
+            (root_meta, "user_id", 0),
+            (root_meta, "user_id", True),
+            (root_meta, "user_id", None),
+            (profile, "name", "  "),
+        ):
+            original_value = target[field]
+            target[field] = wrong
+            unverified = client.get("/audit-templates", params={"customer_id": "海岸线"})
+            assert unverified.status_code == 200
+            assert unverified.json()["creator_name"] is None
+            assert unverified.json()["manage_access"]["state"] == "unknown"
+            assert unverified.json()["total"] == 1
+            target[field] = original_value
+        metadata_unavailable = True
+        assert client.get("/audit-templates", params={"customer_id": "海岸线"}).json()["creator_name"] is None
+        metadata_unavailable = False
+        assert client.get("/audit-templates", params={"customer_id": "海岸线"}).json()["creator_name"] == "模板创建人"
         assert page["total"] == page["folder_template_count"] == 1
         item = page["items"][0]
         assert item["file"]["status"] == "ready"

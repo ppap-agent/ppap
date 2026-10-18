@@ -134,6 +134,32 @@ def register_template_routes(app, store, session_of, http, settings):
         revision = hashlib.sha256(json.dumps([folder_id, frozen]).encode()).hexdigest()
         return folder_id, revision, sorted(items, key=lambda item: (item["updated_at"], item["reference"]["template_id"]), reverse=True)
 
+    def creator_name(session, source):
+        try:
+            metadata = []
+            for path in ("/drive/explorer/v2/root_folder/meta", f"/drive/explorer/v2/folder/{source.folder_token}/meta", "/authen/v1/user_info"):
+                response = http.get(OPEN + path, headers={"Authorization": "Bearer " + session.access_token}, timeout=20)
+                body = response.json()
+                if response.status_code != 200 or not isinstance(body, dict) or body.get("code") != 0 or not isinstance(body.get("data"), dict):
+                    return None
+                metadata.append(body["data"])
+            root, folder, profile = metadata
+            # Drive's internal UID is not an open_id. Bind it through the same
+            # user's root metadata and current, tenant-matched profile.
+            user_uid, creator_uid = root.get("user_id"), folder.get("createUid")
+            if not all(type(uid) in {str, int} and re.fullmatch(r"[1-9][0-9]*", str(uid)) for uid in (user_uid, creator_uid)):
+                return None
+            if folder.get("token") != source.folder_token or str(user_uid) != str(creator_uid):
+                return None
+            if profile.get("tenant_key") != session.principal.tenant_key or profile.get("open_id") != session.principal.subject:
+                return None
+            name = profile.get("name")
+            if not isinstance(name, str):
+                return None
+            return name.strip() or None
+        except (httpx.HTTPError, ValueError, TypeError):
+            return None
+
     @app.get("/audit-templates", response_model=wc.AuditTemplatePage)
     def list_templates(request: Request, customer_id: str, search: str = Query(default="", max_length=200), page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=10, le=10)):
         session, source = source_of(request, customer_id)
@@ -145,7 +171,7 @@ def register_template_routes(app, store, session_of, http, settings):
                 "folder_id": folder_id,
                 "folder_revision": revision,
                 "folder_template_count": len(items),
-                "creator_name": None,
+                "creator_name": creator_name(session, source),
                 "manage_access": {"state": "unknown", "reason": "暂时无法确认文件夹管理权限。"},
                 "zip_access": {"state": "allowed", "reason": None},
                 "items": filtered[(page - 1) * 10 : page * 10],
