@@ -1687,7 +1687,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertEqual(client.get(path + "/reports").status_code, 401)
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
-    def prepared_share_transport(self, effect, *, file_mode=False):
+    def prepared_share_transport(self, effect, *, file_mode=False, directory_effect=None):
         import json
         from datetime import datetime, timedelta, timezone
 
@@ -1712,6 +1712,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 self.assertEqual(json.loads(request.content)["tenant_key"], self.alice.tenant_key)
                 return httpx.Response(200, json={"code": 0, "tenant_access_token": "test-tenant-token"})
             if "/contact/v3/users/" in path:
+                if directory_effect:
+                    return directory_effect(request)
                 return httpx.Response(
                     200,
                     json={
@@ -1771,6 +1773,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         first = client.post("/audit-report-shares", json=command)
         self.assertEqual(first.status_code, 200, first.text)
         self.assertEqual([item["state"] for item in first.json()["deliveries"]], ["sent", "failed"])
+        self.assertEqual(len({item["uuid"] for item in calls}), 2)
         replies["ou_second"] = "sent"
         retry = {"target": command["targets"][1], "attempt_id": str(uuid.uuid4())}
         retried = client.post(path + "/retries", json=retry)
@@ -1846,12 +1849,13 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 recovered = client.post(path + "/retries", json=retry)
                 self.assertEqual(recovered.status_code, 200, recovered.text)
                 self.assertEqual(recovered.json()["deliveries"][0]["state"], "sent")
+                self.assertEqual(len(sends), 1)
             finally:
                 release.set()
             with self.assertRaises(Exception):
                 pending.result(timeout=10)
         self.assertEqual(len(sends), 1)
-        self.assertEqual(sends[0]["uuid"], retry["attempt_id"])
+        self.assertEqual(str(uuid.UUID(sends[0]["uuid"])), sends[0]["uuid"])
         self.assertEqual(client.get(path).json(), recovered.json())
         self.assertEqual(len(uploads), 2)
 
@@ -1911,7 +1915,51 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         invalid = {**command, "request_id": str(uuid.uuid4()), "reports": references}
         self.assertEqual(client.post("/audit-report-shares", json=invalid).status_code, 409)
         self.assertEqual((len(uploads), len(sends)), (2, 4))
+        self.assertEqual(len({item["uuid"] for item in sends}), 4)
         self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_failed_target_can_be_rechecked_after_a_temporary_directory_failure_without_resending_successes(self):
+        import json
+
+        import httpx
+
+        directory_calls, sends = {}, []
+        restored = [False]
+
+        def directory(request):
+            target = request.url.path.rsplit("/", 1)[-1]
+            directory_calls[target] = directory_calls.get(target, 0) + 1
+            if target == "ou_second" and directory_calls[target] > 1 and not restored[0]:
+                return httpx.Response(503, json={"code": 1})
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {"user": {"open_id": target, "name": "组织审核人", "status": {"is_activated": True, "is_resigned": False, "is_frozen": False, "is_exited": False, "is_unjoin": False}}},
+                },
+            )
+
+        def effect(request):
+            sends.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_sent"}})
+
+        client, command, _task, _worker = self.prepared_share_transport(effect, directory_effect=directory)
+        path = "/audit-report-shares/" + command["request_id"]
+        response = client.post("/audit-report-shares", json=command)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([item["state"] for item in response.json()["deliveries"]], ["sent", "failed"])
+        self.assertEqual(response.json()["deliveries"][1]["target"]["eligibility"], "unknown")
+        restored[0] = True
+        rechecked = client.get(path)
+        self.assertEqual(rechecked.status_code, 200, rechecked.text)
+        self.assertTrue(rechecked.json()["deliveries"][1]["retry_allowed"])
+        self.assertEqual(rechecked.json()["deliveries"][1]["target"]["eligibility"], "eligible")
+        self.assertEqual([item["receive_id"] for item in sends], ["ou_first"])
+        retry = {"target": command["targets"][1], "attempt_id": str(uuid.uuid4())}
+        recovered = client.post(path + "/retries", json=retry)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual([item["state"] for item in recovered.json()["deliveries"]], ["sent", "sent"])
+        self.assertEqual([item["receive_id"] for item in sends], ["ou_first", "ou_second"])
 
     def test_report_zip_is_persistent_and_contains_the_exact_ready_pdfs_without_another_audit(self):
         from io import BytesIO

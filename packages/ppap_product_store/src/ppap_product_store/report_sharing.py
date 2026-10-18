@@ -1,6 +1,7 @@
 """One existing engine record owns a frozen share and its recipient attempts."""
 
 import hashlib
+import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager
 
@@ -9,6 +10,11 @@ from psycopg.types.json import Jsonb
 
 def target_key(target: Mapping) -> str:
     return target["kind"] + ":" + target["id"]
+
+
+def new_share_attempt(target: dict, request_id: str, attempt_id: str) -> dict:
+    provider_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"ppap-report-share:{request_id}:{target_key(target)}:{attempt_id}"))
+    return {"target": target, "attempt_id": attempt_id, "provider_uuid": provider_uuid, "phase": "queued", "reason": None, "message_id": None}
 
 
 class ReportShareStore:
@@ -65,7 +71,7 @@ class ReportShareStore:
             if content["kind"] != "link" and content["artifact"]["byte_size"] > 30 * 1024 * 1024:
                 raise ValueError("share_file_too_large")
             payload = {"request": command, "created_by": principal.user_id, "app_id": principal.app_id, "organization_id": principal.tenant_key, "sources": sources, "archive": archive}
-            result = {"attempts": {target_key(target): [{"target": target, "attempt_id": command["request_id"], "phase": "queued", "reason": None, "message_id": None}] for target in targets}}
+            result = {"attempts": {target_key(target): [new_share_attempt(target, command["request_id"], command["request_id"])] for target in targets}}
             guard.execute(
                 "INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result) VALUES (%s, %s, 'report_share_request', %s, 'succeeded', %s)",
                 (command["request_id"], principal.tenant_id, Jsonb(payload), Jsonb(result)),

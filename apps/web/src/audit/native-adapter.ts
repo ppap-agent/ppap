@@ -30,6 +30,11 @@ export function sharedReportAdapter(requestId: string): AuditReportAdapter {
   return {readPdf: (reference, artifact) => readFrozenBlob(`/audit-report-shares/${encodeURIComponent(requestId)}/pdf?${new URLSearchParams({report_id: reference.report_id, artifact_id: artifact.artifact_id})}`, artifact, '报告')}
 }
 
+export function readSharedArchive(requestId: string, artifact: components['schemas']['AuditReportArtifact']) {
+  if (artifact.content_type !== 'application/zip') return Promise.reject(new Error('ZIP 产物不匹配。'))
+  return readFrozenBlob(`/audit-report-shares/${encodeURIComponent(requestId)}/zip?${new URLSearchParams({artifact_id: artifact.artifact_id})}`, artifact, '报告 ZIP')
+}
+
 export const nativeUsageAdapter: AuditUsageAdapter = {
   readUsage: query => request(`/audit-usage?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
 }

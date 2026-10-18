@@ -137,14 +137,14 @@ def upload_report_message_file(http, token: str, artifact: dict, body: bytes) ->
         raise ReportSharingError("share_upload_unconfirmed") from error
 
 
-def send_report_message(http, token: str, target: dict, attempt_id: str, message_type: str, content: dict) -> dict:
+def send_report_message(http, token: str, target: dict, message_uuid: str, message_type: str, content: dict) -> dict:
     unknown = {"phase": "unknown", "reason": "发送结果尚未确认，请勿重新发送。", "message_id": None}
     try:
         response = http.post(
             BASE + "/im/v1/messages",
             headers={"Authorization": "Bearer " + token},
             params={"receive_id_type": "open_id" if target["kind"] == "user" else "chat_id"},
-            json={"receive_id": target["id"], "msg_type": message_type, "content": json.dumps(content, ensure_ascii=False), "uuid": attempt_id},
+            json={"receive_id": target["id"], "msg_type": message_type, "content": json.dumps(content, ensure_ascii=False), "uuid": message_uuid},
             timeout=30,
         )
         body = response.json()

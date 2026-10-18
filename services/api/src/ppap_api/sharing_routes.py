@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import ObjectMissing, attachment_content_disposition
 from ppap_core.report_sharing import ReportSharingError, list_report_targets, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
-from ppap_product_store.report_sharing import ReportShareStore, target_key
+from ppap_product_store.report_sharing import ReportShareStore, new_share_attempt, target_key
 from pydantic import TypeAdapter, ValidationError
 
 from ppap_api import web_contract as wc
@@ -103,7 +103,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 continue
             attempt.update(phase="dispatching", reason="正在核对发送结果，请勿重新发送。")
             shares.save(guard, row)
-            attempt.update(send_report_message(http, token, attempt["target"], attempt["attempt_id"], message_type, message))
+            attempt.update(send_report_message(http, token, attempt["target"], attempt["provider_uuid"], message_type, message))
             shares.save(guard, row)
 
     @app.post("/audit-report-shares", response_model=wc.AuditReportShare, openapi_extra=wc.openapi_body(wc.AuditReportShareRequest))
@@ -157,6 +157,16 @@ def register_sharing_routes(app, store, session_of, http, settings):
                     raise KeyError("missing")
                 if guard:
                     shares.recover(guard, row)
+                    failed = [attempts[-1] for attempts in row["result"]["attempts"].values() if attempts[-1]["phase"] == "failed" and attempts[-1]["target"]["eligibility"] != "eligible"]
+                    if failed:
+                        try:
+                            token = token_for(session.principal)
+                            for attempt in failed:
+                                reference = {field: attempt["target"][field] for field in ("id", "kind")}
+                                attempt["target"] = resolve_report_target(http, token, session.principal.tenant_key, reference)
+                            shares.save(guard, row)
+                        except FeishuUsageError:
+                            pass
                 return JSONResponse(shares.public(row, selected), headers=HEADERS)
         except (KeyError, ValueError, ReportSharingError, FeishuUsageError) as error:
             return fail(error)
@@ -193,7 +203,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                     or any(item["attempt_id"] == command["attempt_id"] for attempts in row["result"]["attempts"].values() for item in attempts)
                 ):
                     raise ValueError("share_attempt_unconfirmed")
-                history.append({"target": dict(history[-1]["target"]), "attempt_id": command["attempt_id"], "phase": "queued", "reason": None, "message_id": None})
+                history.append(new_share_attempt(dict(history[-1]["target"]), request_id, command["attempt_id"]))
                 shares.save(guard, row)
                 try:
                     token = token_for(session.principal)
