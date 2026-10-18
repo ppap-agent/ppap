@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from ppap_core.feishu_drive import OPEN_API
 
 
-def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None) -> dict:
+def task_notification_card(task: dict, stage: str, web_url: str, report_package: dict | None = None, *, confirmation_id: str | None = None) -> dict:
     files = task["files"]
     selected = [row for row in files if row["selection"] == "selected"]
     reports = [(row.get("audit") or {}).get("report", {}).get("state") for row in selected]
@@ -17,6 +17,18 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
     if stage == "confirmation":
         matched = sum((row.get("match") or {}).get("state") == "matched" for row in selected)
         lines.append(f"已匹配 {matched} 份，共 {len(selected)} 份。请核对匹配结果，再决定是否开始审核。")
+        lines.append("审核模式：" + {"standard": "标准审核", "deep": "深度审核"}.get(task.get("analysis_mode", "standard"), "待核对"))
+        for row in files:
+            match = row.get("match") or {}
+            rule = match.get("rule") or {}
+            included = row["selection"] == "selected" and match.get("state") == "matched" and rule
+            excluded_reason = row.get("removal_reason") or ("未选择此文件" if row["selection"] == "unselected" else "未匹配到生效规则")
+            detail = "\n规则：" + rule["title"] if included else "：不纳入审核；" + excluded_reason
+            if row["selection"] == "selected" and not included and match.get("state") != "unmatched":
+                detail = "：匹配尚未确认，请打开页面核对"
+            lines.append(row["file"]["original_filename"] + detail)
+            lines.extend(match.get("gaps") or [])
+        lines.append(f"预计点数：{task.get('estimated_points') if task.get('estimated_points') is not None else '待核对'}")
     elif stage == "started":
         lines.append(f"本次审核 {len(selected)} 份资料。")
         for row in selected:
@@ -67,7 +79,30 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             },
         ],
     }
+    actions = card["elements"][1]["actions"]
+    if (
+        stage == "confirmation"
+        and confirmation_id
+        and matched
+        and type(task.get("estimated_points")) is int
+        and all((row.get("match") or {}).get("state") == "unmatched" or (row.get("match") or {}).get("state") == "matched" and (row.get("match") or {}).get("rule") for row in selected)
+    ):
+        actions.insert(
+            0,
+            {
+                "tag": "button",
+                "type": "primary",
+                "text": {"tag": "plain_text", "content": "确认规则并开始审核"},
+                "value": {"action": "confirm_audit_task", "notification_id": confirmation_id},
+                "confirm": {
+                    "title": {"tag": "plain_text", "content": "开始本次审核？"},
+                    "text": {"tag": "plain_text", "content": f"按卡片所列规则审核 {matched} 份文件。未匹配文件不纳入审核。预计点数：{task['estimated_points']}。"},
+                },
+            },
+        )
+        actions[-1]["type"] = "default"
     while body and len(json.dumps(card, ensure_ascii=False).encode()) > 26000:
+        actions[:] = [action for action in actions if "value" not in action]
         body = body[: len(body) * 3 // 4]
         card["elements"][0]["text"]["content"] = body + "\n完整文件与原因请打开审核查看。"
     if len(json.dumps(card, ensure_ascii=False).encode()) > 26000:

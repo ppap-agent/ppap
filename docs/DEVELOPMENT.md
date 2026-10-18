@@ -16,7 +16,8 @@
 - 可选 capability 缺配置只影响该 capability，不阻止无关开发。Deep 由 `PPAP_DEEP_CONTROLLER_SOCKET` 表示是否配置；未配置时 Core 仍可启动，Deep 轮次明确失败而不回退 Standard。Live Deep 用 `deploy/isolated-dev/deep-live.yaml` 挂 UDS。Controller 默认 process runtime；gVisor runtime 名称、guest 镜像和 `PPAP_DEEP_RUNTIME` 只属于 Controller 进程环境，不进入 Worker typed Settings。production 默认不向客户提供 Deep（`public-config.deep_offered=false`，API 拒绝 `analysis_mode=deep`）；isolated-dev/test 仍可用于协议和隔离验证。TKE current 在 process sidecar 真实 executor 可用后设置 `PPAP_DEEP_CUSTOMER_ENABLED`。
 - 飞书任务通知由 API 进程发送，`PPAP_FEISHU_NOTIFICATIONS_ENABLED` 默认 `false`；开启还需配置该应用的 ID、Secret 和有效授权。`GET/PUT /audit-tasks/{id}/notification` 读取、保存创建人的完成通知设置，修改必须带 `expected_revision`；该设置只控制完成通知，不控制待确认或开始审核通知。通知未进入发送边界前可修改，进入后只读回状态。发送结果未知不自动重发；这些接口不证明飞书已送达或已读取。
 - ZIP 通知链接使用 `/audit?task=...&report=1&packageRequest=...`，须经过当前身份入口。报告中心通过既有 `/audit-report-packages/{request_id}` 读取固定集合，失败只读回原请求，不自动创建新包；离开该 ZIP 后才回到当前报告中心。`reports-zip-link` 是显式预览场景，不证明真实飞书送达。
-- 预览切流用 `PPAP_CURRENT_TENANT_ALLOWLIST`（逗号分隔的 Feishu `tenant_key`）。空名单不限制。生产目录写入海岸线租户。`PPAP_USAGE_CHARGE_ENABLED=false` 时受理不写 `usage_events`，预估点数为 0。
+- 卡片直接确认需配置 `FEISHU_VERIFICATION_TOKEN`，并将新版 `card.action.trigger` 回调订阅到现有 `/integrations/feishu/events`；不使用旧版回调结构。仅配置 Token 不证明平台订阅已生效。回调通过原消息 ID 和当前创建人身份恢复同一确认事务；消息发送未知或内容被截断时只能打开页面。当前支持 HTTPS 下的 Verification Token 校验，不接受加密回调；真实回调和三秒响应要求仍须在客户等价环境验收。
+- 预览切流用 `PPAP_CURRENT_TENANT_ALLOWLIST`（逗号分隔的 Feishu `tenant_key`）。空名单不限制。生产目录写入海岸线租户。`PPAP_USAGE_CHARGE_ENABLED=false` 时受理不写 `usage_events`；预计点数按匹配文件和标准单价计算，不是已扣费回执。
 - 已有组织内配置可以直接用于迁移/开发；终态配置归本仓 Settings。
 - 新增配置项前先确认它代表独立运行决策，而不是可推导内部细节。
 

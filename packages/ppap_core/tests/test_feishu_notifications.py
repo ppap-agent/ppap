@@ -7,6 +7,67 @@ import pytest
 from ppap_core.feishu_notifications import send_task_notification, task_notification_card
 
 
+def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_confirmation() -> None:
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "estimated_points": 500,
+        "files": [
+            {"selection": "selected", "file": {"original_filename": "控制计划.xlsx"}, "match": {"state": "matched", "rule": {"title": "海岸线控制计划要求"}, "gaps": ["缺少过程流程图"]}},
+            {"selection": "selected", "file": {"original_filename": "未匹配.pdf"}, "match": {"state": "unmatched", "rule": None, "gaps": []}},
+        ],
+    }
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    text = card["elements"][0]["text"]["content"]
+    assert all(value in text for value in ("控制计划.xlsx", "海岸线控制计划要求", "缺少过程流程图", "未匹配.pdf", "不纳入审核", "预计点数：500"))
+    confirm, opened = card["elements"][1]["actions"]
+    assert confirm["value"] == {"action": "confirm_audit_task", "notification_id": "intent-a"}
+    assert confirm["confirm"]["title"]["content"] == "开始本次审核？"
+    assert "预计点数：500" in confirm["confirm"]["text"]["content"]
+    assert "url" not in confirm and "url" in opened
+    task["files"][0]["file"]["original_filename"] = "很长的名称" * 6000
+    bounded = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 26000
+    assert all("value" not in button for button in bounded["elements"][1]["actions"])
+
+
+def test_card_callback_authenticates_the_app_and_operator_without_treating_card_update_token_as_verification() -> None:
+    from ppap_core.feishu import AppMismatch, CardAction, UnauthenticatedEvent, UnknownEvent, accept_event
+    from ppap_core.settings import Settings
+
+    settings = Settings(feishu_app_id="cli_test", feishu_verification_token="verify-test")
+    body = {
+        "schema": "2.0",
+        "header": {"event_type": "card.action.trigger", "app_id": "cli_test", "token": "verify-test", "tenant_key": "app-owner-tenant"},
+        "event": {
+            "operator": {"tenant_key": "customer-tenant", "open_id": "ou_creator"},
+            "token": "card-update-token",
+            "action": {"tag": "button", "value": {"action": "confirm_audit_task", "notification_id": "intent-a"}},
+            "context": {"open_message_id": "om_original"},
+        },
+    }
+    assert accept_event(settings, body) == CardAction("customer-tenant", "ou_creator", "intent-a", "om_original")
+    assert isinstance(accept_event(settings, {**body, "header": {**body["header"], "token": "card-update-token"}}), UnauthenticatedEvent)
+    assert isinstance(accept_event(settings, {**body, "header": {**body["header"], "app_id": "other-app"}}), AppMismatch)
+    for field in ("operator", "context", "action"):
+        assert isinstance(accept_event(settings, {**body, "event": {**body["event"], field: {}}}), UnknownEvent)
+
+
+def test_confirmation_without_a_rule_or_selection_does_not_offer_a_blind_acceptance() -> None:
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "estimated_points": 500,
+        "files": [
+            {"selection": "selected", "file": {"original_filename": "待核对.xlsx"}, "match": {"state": "matched", "rule": None}},
+            {"selection": "unselected", "file": {"original_filename": "未选择.xlsx"}, "match": None},
+        ],
+    }
+    card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
+    assert all("value" not in button for button in card["elements"][1]["actions"])
+    assert "未选择.xlsx：不纳入审核；未选择此文件" in card["elements"][0]["text"]["content"]
+
+
 def test_incomplete_audit_is_an_exception_not_a_ready_report_or_a_raw_unknown_label() -> None:
     task = {
         "id": "task-a",

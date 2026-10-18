@@ -432,6 +432,154 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
+    def prepared_card_confirmation(self, *, sent=True):
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        self.settings.feishu_verification_token = "callback-test-verification"
+        files, task, _ = self.prepared_display_task(confirm=False, per_file_rules=True)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        intent, recipient = api_store.claim_task_notification("card-notifier")
+        delivery = api_store.start_task_notification(intent, "card-notifier", recipient)
+        value = delivery["card"]["elements"][1]["actions"][0]["value"]
+        self.assertEqual(value, {"action": "confirm_audit_task", "notification_id": intent.id})
+        receipt = {"state": "sent", "message_id": "om_confirmation", "reason": None} if sent else {"state": "unknown", "message_id": None, "reason": "send_receipt_unknown"}
+        self.assertTrue(api_store.finish_task_notification(intent, "card-notifier", receipt))
+        body = {
+            "schema": "2.0",
+            "header": {"event_type": "card.action.trigger", "token": "callback-test-verification", "app_id": APP_ID},
+            "event": {"operator": {"tenant_key": self.alice.tenant_key, "open_id": self.alice.subject}, "action": {"tag": "button", "value": value}, "context": {"open_message_id": "om_confirmation"}},
+        }
+        client = TestClient(create_app(settings=self.settings, auth_store=api_store))
+        self.addCleanup(client.close)
+        return files, task, api_store, client, body
+
+    def test_feishu_card_confirms_the_exact_task_and_replays_without_creating_another_round(self):
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+
+        files, task, api_store, client, body = self.prepared_card_confirmation()
+        response = client.post("/integrations/feishu/events", json=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["toast"]["type"], "success")
+        accepted = api_store.get_audit_task(self.alice, task["id"])
+        self.assertEqual(accepted["state"], "reviewing")
+        inputs = api_store.get_round(accepted["round_id"])["inputs"]
+        self.assertEqual({row["file_version_id"]: row["rule"]["id"] for row in inputs}, {row["file"]["id"]: row["match"]["rule"]["id"] for row in task["files"]})
+        self.assertEqual(len(inputs), len(files))
+        restored = TestClient(create_app(settings=self.settings, auth_store=api_store))
+        self.addCleanup(restored.close)
+        replay = restored.post("/integrations/feishu/events", json=body)
+        self.assertEqual(replay.json()["toast"]["type"], "success")
+        self.assertEqual(api_store.get_audit_task(self.alice, task["id"])["round_id"], accepted["round_id"])
+        self.assertEqual(len(api_store.list_rounds(self.alice)), 1)
+        self.assertEqual(api_store.list_usage_events(self.alice), [])
+
+    def test_feishu_card_rejects_forged_or_forwarded_callbacks_and_current_permission_revocation(self):
+        from copy import deepcopy
+
+        from ppap_core.db import connect
+
+        _, task, api_store, client, body = self.prepared_card_confirmation()
+        bob, carol = (self.store.principal_for_fixture(name) for name in ("bob", "carol"))
+        for header, value, status in (("token", "forged-verification", 401), ("app_id", "other-app", 403)):
+            response = client.post("/integrations/feishu/events", json={**body, "header": {**body["header"], header: value}})
+            self.assertEqual(response.status_code, status)
+        for path, value in (
+            (["operator", "open_id"], bob.subject),
+            (["operator"], {"tenant_key": carol.tenant_key, "open_id": carol.subject}),
+            (["context", "open_message_id"], "om_forwarded"),
+            (["action", "value", "notification_id"], str(uuid.uuid4())),
+        ):
+            forged = deepcopy(body)
+            target = forged["event"]
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            response = client.post("/integrations/feishu/events", json=forged)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["toast"]["type"], "error")
+        self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
+        source_id = task["files"][0]["file"]["file_id"]
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (source_id, self.alice.user_id))
+        self.assertEqual(client.post("/integrations/feishu/events", json=body).json()["toast"]["type"], "error")
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("INSERT INTO product.resource_grants VALUES (%s, %s, 'read')", (source_id, self.alice.user_id))
+            conn.execute("DELETE FROM product.memberships WHERE user_id = %s AND tenant_id = %s", (self.alice.user_id, self.alice.tenant_id))
+        self.assertEqual(client.post("/integrations/feishu/events", json=body).json()["toast"]["type"], "error")
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("INSERT INTO product.memberships (user_id, tenant_id, role) VALUES (%s, %s, 'member')", (self.alice.user_id, self.alice.tenant_id))
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (task["id"], self.alice.user_id))
+        denied = client.post("/integrations/feishu/events", json=body)
+        self.assertEqual(denied.json()["toast"]["type"], "error")
+        self.assertEqual(api_store.list_rounds(self.alice), [])
+        self.assertEqual(api_store.list_usage_events(self.alice), [])
+
+    def test_feishu_card_never_confirms_a_newer_rule_or_input_revision(self):
+        files, task, api_store, client, body = self.prepared_card_confirmation()
+        rule_id = task["files"][0]["match"]["rule"]["id"]
+        self.store.publish_rule(self.alice, "新规则版本", self.rule_body(), files[0].id, predecessor_id=rule_id)
+        expired = client.post("/integrations/feishu/events", json=body)
+        self.assertEqual(expired.json()["toast"]["type"], "warning")
+        self.assertEqual(api_store.get_audit_task(self.alice, task["id"])["input_revision"], 0)
+        revised = api_store.create_audit_task(
+            self.alice,
+            {
+                "request_id": str(uuid.uuid4()),
+                "task_id": task["id"],
+                "expected_revision": 0,
+                "analysis_mode": "standard",
+                "customer_preference": None,
+                "files": [{"file_version_id": row["file"]["id"], "validation_id": row["validation_id"], "selection": row["selection"], "removal_reason": None} for row in task["files"]],
+            },
+        )
+        self.assertEqual(revised["input_revision"], 1)
+        stale = client.post("/integrations/feishu/events", json=body)
+        self.assertEqual(stale.json()["toast"]["type"], "warning")
+        self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
+        self.assertEqual(api_store.list_rounds(self.alice), [])
+
+    def test_feishu_card_and_web_confirmation_compete_for_one_round(self):
+        from fastapi.testclient import TestClient
+        from ppap_api import create_app
+        from ppap_core.identity import SESSION_COOKIE
+
+        _, task, api_store, client, body = self.prepared_card_confirmation()
+        web = TestClient(create_app(settings=self.settings, auth_store=api_store))
+        self.addCleanup(web.close)
+        web.cookies.set(SESSION_COOKIE, api_store.create_session(self.alice))
+        barrier = threading.Barrier(2)
+
+        def card_confirm():
+            barrier.wait(timeout=10)
+            return client.post("/integrations/feishu/events", json=body)
+
+        def web_confirm():
+            barrier.wait(timeout=10)
+            return web.post(f"/audit-tasks/{task['id']}/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            card, browser = pool.submit(card_confirm), pool.submit(web_confirm)
+            card, browser = card.result(timeout=20), browser.result(timeout=20)
+        self.assertEqual(card.status_code, 200)
+        self.assertEqual(card.json()["toast"]["type"], "success")
+        self.assertIn(browser.status_code, (201, 409))
+        current = api_store.get_audit_task(self.alice, task["id"])
+        self.assertEqual(current["state"], "reviewing")
+        self.assertEqual([row["id"] for row in api_store.list_rounds(self.alice)], [current["round_id"]])
+        self.assertEqual(api_store.list_usage_events(self.alice), [])
+
+    def test_feishu_card_with_unknown_delivery_does_not_create_an_acceptance_or_replay_the_send(self):
+        _, task, api_store, client, body = self.prepared_card_confirmation(sent=False)
+        response = client.post("/integrations/feishu/events", json=body)
+        self.assertEqual(response.json()["toast"]["type"], "error")
+        self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
+        self.assertIsNone(api_store.claim_task_notification("must-not-resend"))
+
     def test_distinct_zip_collections_keep_separate_intents_and_unknown_does_not_block_the_other(self):
         from urllib.parse import parse_qs, urlsplit
 

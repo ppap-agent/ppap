@@ -29,7 +29,7 @@ from ppap_core.audits import (
     require_targets,
 )
 from ppap_core.db import connect
-from ppap_core.feishu import UserTokens
+from ppap_core.feishu import CardAction, UserTokens
 from ppap_core.feishu_notifications import task_notification_card
 from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.files import (
@@ -1264,8 +1264,11 @@ class AuthStore:
             if reason:
                 self._finish_task_notification(conn, claimed, worker_ident, {"state": "suppressed", "reason": reason, "message_id": None}, before_dispatch=True)
                 return None
-            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package)
+            card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
             dispatch = {"receive_id": principal.subject, "card": card}
+            saved = {"dispatch": dispatch}
+            if any(action.get("value", {}).get("action") == "confirm_audit_task" for action in card["elements"][1]["actions"]):
+                saved["confirmation"] = {"request_id": str(uuid.uuid5(uuid.UUID(claimed.id), "confirm")), "expected_revision": task["input_revision"]}
             row = conn.execute(
                 """UPDATE engine.jobs SET result = '{"state":"dispatching","reason":null}'::jsonb,
                 payload = payload || %s, updated_at = now(), lease_until = now() + interval '90 seconds'
@@ -1273,9 +1276,39 @@ class AuthStore:
                 AND status = 'leased' AND result->>'state' = 'preparing' AND lease_until > now()
                 AND tenant_id = %s AND payload->>'task_id' = %s AND payload->>'stage' = %s
                 AND COALESCE(payload->>'package_id', '') = %s RETURNING id""",
-                (Jsonb({"dispatch": dispatch}), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id, stage, package_id or ""),
+                (Jsonb(saved), claimed.id, claimed.attempt, worker_ident, principal.tenant_id, task_id, stage, package_id or ""),
             ).fetchone()
             return dispatch if row else None
+
+    def confirm_task_notification(self, action: CardAction) -> dict:
+        notification_id = _as_uuid(action.notification_id)
+        if not notification_id or not self.settings.tenant_allowed(action.tenant_key):
+            raise KeyError("missing")
+        with self._conn() as conn, conn.transaction():
+            row = conn.execute(
+                """SELECT j.payload, i.user_id, j.tenant_id, m.role, i.display_name
+                FROM engine.jobs j JOIN product.audit_drafts d ON d.id::text = j.payload->>'task_id' AND d.tenant_id = j.tenant_id
+                JOIN product.tenants t ON t.id = d.tenant_id
+                JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
+                JOIN product.memberships m ON m.user_id = i.user_id AND m.tenant_id = d.tenant_id
+                WHERE j.id = %s AND j.kind = 'feishu_notification' AND j.payload->>'stage' = 'confirmation'
+                AND j.result->>'state' = 'sent' AND j.result->>'message_id' = %s
+                AND i.provider = 'feishu' AND i.app_id = %s AND i.tenant_key = %s AND i.subject = %s""",
+                (notification_id, action.message_id, self.settings.feishu_app_id, action.tenant_key, action.subject),
+            ).fetchone()
+            if not row:
+                raise KeyError("missing")
+            confirmation = row[0].get("confirmation")
+            if not isinstance(confirmation, dict):
+                raise KeyError("missing")
+            principal = Principal(str(row[1]), str(row[2]), PROVIDER_FEISHU, self.settings.feishu_app_id, action.tenant_key, action.subject, row[3], row[4])
+            task_id = row[0]["task_id"]
+            try:
+                self._accept_locked(conn, principal, confirmation["request_id"], source_draft_id=task_id, predecessor_id=None, items=None, task_revision=confirmation["expected_revision"])
+            except ValueError as error:
+                if str(error) != "draft_already_accepted":
+                    raise
+            return self._recognition_public(conn, principal, task_id)
 
     def _archive_rows(self, conn, principal: Principal) -> list:
         return conn.execute(

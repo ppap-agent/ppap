@@ -21,6 +21,7 @@ from ppap_core.db import postgres_ready
 from ppap_core.feishu import (
     AppMismatch,
     AppTicket,
+    CardAction,
     Challenge,
     EncryptedEvent,
     FeishuError,
@@ -42,6 +43,7 @@ from ppap_core.feishu_drive import (
     import_drive_material,
     list_doc_links,
 )
+from ppap_core.feishu_notifications import task_notification_card
 from ppap_core.feishu_usage import (
     FeishuUsageError,
     apply_report_credential,
@@ -258,6 +260,23 @@ def create_app(
         if isinstance(parsed, AppTicket):
             store.save_app_ticket(settings.feishu_app_id, parsed.value)
             return JSONResponse({"ok": True})
+        if isinstance(parsed, CardAction):
+            try:
+                task = store.confirm_task_notification(parsed)
+            except KeyError:
+                return JSONResponse({"toast": {"type": "error", "content": "无法确认此卡片。请由任务创建人打开页面核对。"}})
+            except ValueError as error:
+                message = {
+                    "rule_candidate_expired": "规则已更新，本次未受理。请打开页面重新识别并核对。",
+                    "task_revision_conflict": "文件或审核模式已变化，本次未受理。请打开页面核对。",
+                    "audit_task_charging_unavailable": "当前无法确认用量，未开始审核。请打开页面查看。",
+                }.get(str(error), "本次未受理，请打开页面核对当前任务。")
+                return JSONResponse({"toast": {"type": "warning", "content": message}})
+            except Exception:
+                emit("card_confirmation_unavailable", level=logging.WARNING)
+                return JSONResponse({"toast": {"type": "warning", "content": "受理结果尚未确认。请打开页面读取任务，不要重复新建审核。"}})
+            card = task_notification_card(task, "completed" if task["state"] == "completed" else "started", settings.canonical_web_url())
+            return JSONResponse({"toast": {"type": "success", "content": "本任务已受理，请打开审核查看进度。"}, "card": {"type": "raw", "data": card}})
         if isinstance(parsed, UnauthenticatedEvent):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         if isinstance(parsed, AppMismatch):

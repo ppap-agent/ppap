@@ -28,6 +28,14 @@ class AppTicket:
 
 
 @dataclass(frozen=True)
+class CardAction:
+    tenant_key: str
+    subject: str
+    notification_id: str
+    message_id: str
+
+
+@dataclass(frozen=True)
 class EncryptedEvent:
     pass
 
@@ -88,7 +96,7 @@ def event_app_id(body: dict) -> str:
     return app_id.strip() if isinstance(app_id, str) else ""
 
 
-def parse_event(body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownEvent:
+def parse_event(body: dict) -> Challenge | AppTicket | CardAction | EncryptedEvent | UnknownEvent:
     if not isinstance(body, dict):
         return UnknownEvent()
     if body.get("type") == "url_verification" or "challenge" in body and not body.get("event"):
@@ -105,10 +113,20 @@ def parse_event(body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownE
     event_type = header.get("event_type") or event.get("type") or body.get("type")
     if event_type == "app_ticket" and isinstance(ticket, str) and ticket.strip():
         return AppTicket(ticket.strip())
+    if event_type == "card.action.trigger" and body.get("schema") == "2.0":
+        operator, action, context = (event.get(key) for key in ("operator", "action", "context"))
+        if not isinstance(operator, dict) or not isinstance(action, dict) or not isinstance(context, dict):
+            return UnknownEvent()
+        value = action.get("value")
+        if action.get("tag") != "button" or not isinstance(value, dict) or set(value) != {"action", "notification_id"} or value["action"] != "confirm_audit_task":
+            return UnknownEvent()
+        fields = (operator.get("tenant_key"), operator.get("open_id"), value["notification_id"], context.get("open_message_id"))
+        if all(isinstance(field, str) and field.strip() and len(field) <= 256 for field in fields):
+            return CardAction(*(cast(str, field).strip() for field in fields))
     return UnknownEvent()
 
 
-def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
+def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | CardAction | EncryptedEvent | UnknownEvent | UnauthenticatedEvent | AppMismatch:
     """Feishu Verification Token plus app_id binding. Not a generic webhook framework."""
     parsed = parse_event(body)
     if isinstance(parsed, (EncryptedEvent, UnknownEvent)):
@@ -117,7 +135,7 @@ def accept_event(settings: Settings, body: dict) -> Challenge | AppTicket | Encr
     got = event_token(body)
     if not expected or not got or not constant_time_equal(got, expected):
         return UnauthenticatedEvent()
-    if isinstance(parsed, AppTicket):
+    if isinstance(parsed, (AppTicket, CardAction)):
         app_id = event_app_id(body)
         if not app_id or app_id != settings.feishu_app_id:
             return AppMismatch()
