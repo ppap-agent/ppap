@@ -55,7 +55,18 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
             request, path = route.request, urlsplit(route.request.url).path.removeprefix("/api")
             calls.append((request.method, path))
             if path == "/public-config":
-                route.fulfill(json={"git_sha": "fixture", "api_url": WEB + "/api", "profile": "isolated-dev", "login": "feishu", "feishu_app_id": "test-app", "deep_offered": False, "current_access": "allowed", "usage_charge_enabled": False})
+                route.fulfill(
+                    json={
+                        "git_sha": "fixture",
+                        "api_url": WEB + "/api",
+                        "profile": "isolated-dev",
+                        "login": "feishu",
+                        "feishu_app_id": "test-app",
+                        "deep_offered": False,
+                        "current_access": "allowed",
+                        "usage_charge_enabled": False,
+                    }
+                )
             elif path == "/me":
                 route.fulfill(
                     json={
