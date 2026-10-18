@@ -3,6 +3,7 @@
 import os
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 
 try:
     from playwright.sync_api import sync_playwright
@@ -371,8 +372,7 @@ class RuleInteractionTests(unittest.TestCase):
             if request.method == "OPTIONS":
                 route.fulfill(status=204, headers=cors)
                 return
-            path = request.url.split("?", 1)[0]
-            path = path[path.find("/api") + 4 :] if "/api" in path else path.replace("http://127.0.0.1:8080", "")
+            path = urlsplit(request.url).path.removeprefix("/api")
             if path == "/public-config":
                 route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev"}, headers=cors)
             elif path == "/me":

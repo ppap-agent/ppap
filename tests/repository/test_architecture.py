@@ -11,6 +11,7 @@ it does not parse workflow/config source to proxy native behavior.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tomllib
@@ -29,7 +30,7 @@ def _pyproject(path: Path) -> dict:
     return tomllib.loads(path.read_text())
 
 
-def _compose_config(path: Path, env_file: Path | None = None) -> dict:
+def _compose_config(path: Path, env_file: Path | None = None, *, env: dict[str, str] | None = None) -> dict:
     args = ["docker", "compose", "--progress", "quiet", "-f", str(path)]
     if env_file is not None:
         args.extend(["--env-file", str(env_file)])
@@ -40,6 +41,7 @@ def _compose_config(path: Path, env_file: Path | None = None) -> dict:
         check=False,
         capture_output=True,
         text=True,
+        env={**os.environ, **(env or {})},
     )
     if completed.returncode != 0:
         raise AssertionError(completed.stderr or completed.stdout)
@@ -71,6 +73,30 @@ def _production_graph() -> dict[str, set[str]]:
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_compose_supports_isolated_host_ports_and_matching_public_addresses(self):
+        env = {
+            "PPAP_API_HOST_PORT": "0",
+            "PPAP_WEB_HOST_PORT": "0",
+            "PPAP_TEST_POSTGRES_PORT": "0",
+            "PPAP_PUBLIC_API_URL": "http://127.0.0.1:55123",
+            "PPAP_WEB_URL": "http://127.0.0.1:55124",
+        }
+        for path, env_file in (
+            (ROOT / "deploy/compose.yaml", ROOT / "deploy/compose.env.example"),
+            (ROOT / "deploy/isolated-dev/compose.yaml", None),
+        ):
+            with self.subTest(compose=path):
+                services = _compose_config(path, env_file, env=env)["services"]
+                for service, target in (("api", 8080), ("web", 4173)):
+                    binding = services[service]["ports"][0]
+                    self.assertEqual(binding["host_ip"], "127.0.0.1")
+                    self.assertEqual(str(binding["published"]), "0")
+                    self.assertEqual(binding["target"], target)
+                for service in ("api", "web"):
+                    self.assertEqual(services[service]["environment"]["PPAP_PUBLIC_API_URL"], env["PPAP_PUBLIC_API_URL"])
+                for service in ("api", "worker"):
+                    self.assertEqual(services[service]["environment"]["PPAP_WEB_URL"], env["PPAP_WEB_URL"])
+
     def test_workspace_members_match_physical_owners(self):
         root = _pyproject(ROOT / "pyproject.toml")
         self.assertFalse(root["tool"]["uv"]["package"])

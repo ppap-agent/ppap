@@ -460,9 +460,8 @@ jobs:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_PROD }}
         run: |
           set -euo pipefail
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
-            up -d --wait --wait-timeout 180
-          uv run --no-sync pytest tests/integration/runtime
+          bash scripts/run-compose-tests.sh tests/integration/runtime \
+            -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans
       - name: Isolated-dev browser E2E
@@ -470,9 +469,8 @@ jobs:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_E2E }}
         run: |
           set -euo pipefail
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            up -d --wait --wait-timeout 180 --no-build
-          uv run --no-sync pytest tests/e2e
+          bash scripts/run-compose-tests.sh tests/e2e \
+            -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics

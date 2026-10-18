@@ -10,6 +10,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+API = os.environ.get("PPAP_PUBLIC_API_URL", "http://127.0.0.1:8080").rstrip("/")
+WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
 def _sha() -> str:
@@ -20,7 +22,7 @@ def _sha() -> str:
 
 
 def _get(path: str) -> tuple[int, dict | str]:
-    with urllib.request.urlopen("http://127.0.0.1:8080" + path, timeout=5) as response:
+    with urllib.request.urlopen(API + path, timeout=5) as response:
         body = response.read().decode()
         try:
             return response.status, json.loads(body)
@@ -29,7 +31,7 @@ def _get(path: str) -> tuple[int, dict | str]:
 
 
 def _page(path: str) -> tuple[int, str]:
-    with urllib.request.urlopen("http://127.0.0.1:4173" + path, timeout=5) as response:
+    with urllib.request.urlopen(WEB + path, timeout=5) as response:
         return response.status, response.read().decode()
 
 
@@ -65,7 +67,7 @@ class DeployRuntimeTests(unittest.TestCase):
         status, config_body = _page("/runtime-config.json")
         self.assertEqual(status, 200)
         config = json.loads(config_body)
-        self.assertEqual(config["api_url"], "http://127.0.0.1:8080")
+        self.assertEqual(config["api_url"], API)
 
 
 if __name__ == "__main__":

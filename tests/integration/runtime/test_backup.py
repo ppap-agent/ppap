@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = ROOT / "deploy" / "compose.yaml"
 COMPOSE_ENV = ROOT / "deploy" / "compose.env.example"
+API = os.environ.get("PPAP_PUBLIC_API_URL", "http://127.0.0.1:8080").rstrip("/")
 
 
 def _sha() -> str:
@@ -66,7 +67,7 @@ def _resume_app() -> None:
         "resume app",
         _compose("up", "-d", "--no-deps", "--wait", "--wait-timeout", "90", "api", "worker", "web"),
     )
-    with urllib.request.urlopen("http://127.0.0.1:8080/ready", timeout=90) as response:
+    with urllib.request.urlopen(API + "/ready", timeout=90) as response:
         body = json.loads(response.read().decode())
         if response.status != 200 or body.get("status") != "ready":
             raise RuntimeError(f"resume failed: {body!r}")
@@ -219,7 +220,7 @@ class DeployBackupTests(unittest.TestCase):
             self.assertTrue(_canary_present())
             _restore(first)
             self.assertFalse(_canary_present())
-            with urllib.request.urlopen("http://127.0.0.1:8080/ready", timeout=10) as response:
+            with urllib.request.urlopen(API + "/ready", timeout=10) as response:
                 body = json.loads(response.read().decode())
                 self.assertEqual(response.status, 200)
                 self.assertEqual(body["status"], "ready")

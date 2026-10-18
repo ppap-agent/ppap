@@ -121,14 +121,14 @@ services:
       PPAP_S3_BUCKET: ppap-objects
       PPAP_S3_ACCESS_KEY: ppap_isolated_dev
       PPAP_S3_SECRET_KEY: ppap_isolated_dev
-      PPAP_WEB_URL: http://127.0.0.1:4173
-      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+      PPAP_WEB_URL: ${PPAP_WEB_URL:-http://127.0.0.1:4173}
+      PPAP_PUBLIC_API_URL: ${PPAP_PUBLIC_API_URL:-http://127.0.0.1:8080}
       PPAP_DEEP_CONTROLLER_SOCKET: ${PPAP_DEEP_CONTROLLER_SOCKET:-}
       PPAP_DEEP_EXECUTOR_REVISION: ${PPAP_DEEP_EXECUTOR_REVISION:-}
       LOG_FORMAT: text
       LOG_LEVEL: INFO
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${PPAP_API_HOST_PORT:-8080}:8080"
     healthcheck:
       test:
         [
@@ -166,7 +166,7 @@ services:
       PPAP_S3_BUCKET: ppap-objects
       PPAP_S3_ACCESS_KEY: ppap_isolated_dev
       PPAP_S3_SECRET_KEY: ppap_isolated_dev
-      PPAP_WEB_URL: http://127.0.0.1:4173
+      PPAP_WEB_URL: ${PPAP_WEB_URL:-http://127.0.0.1:4173}
       PPAP_DEEP_CONTROLLER_SOCKET: ${PPAP_DEEP_CONTROLLER_SOCKET:-}
       PPAP_DEEP_EXECUTOR_REVISION: ${PPAP_DEEP_EXECUTOR_REVISION:-}
       OCR_ADAPTER_MODE: auto
@@ -180,6 +180,6 @@ services:
         condition: service_healthy
     environment:
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
-      PPAP_PUBLIC_API_URL: http://127.0.0.1:8080
+      PPAP_PUBLIC_API_URL: ${PPAP_PUBLIC_API_URL:-http://127.0.0.1:8080}
     ports:
-      - "127.0.0.1:4173:4173"
+      - "127.0.0.1:${PPAP_WEB_HOST_PORT:-4173}:4173"

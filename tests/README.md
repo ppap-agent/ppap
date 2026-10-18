@@ -123,8 +123,7 @@ Production runtime/backup:
 export PPAP_BUILD_SHA="$(git rev-parse HEAD)"
 export COMPOSE_PROJECT_NAME=ppap-prod
 docker buildx bake
-docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example up -d --wait
-uv run --no-sync pytest tests/integration/runtime
+bash scripts/run-compose-tests.sh tests/integration/runtime -f deploy/compose.yaml --env-file deploy/compose.env.example
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example down -v --remove-orphans
 ```
 
