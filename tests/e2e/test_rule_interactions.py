@@ -42,11 +42,14 @@ class RuleInteractionTests(unittest.TestCase):
             summary = {
                 "id": JOB,
                 "execution": "completed",
+                "predecessor_id": None,
                 "analysis_mode": "standard",
                 "inputs": [{"file_version_id": VERSION, "original_filename": "history.xlsx", "role": "target", "rule": None}],
                 "result_counts": {"PASS": 1},
                 "reviewed_count": 0,
                 "created_at": "2026-10-18T00:00:00Z",
+                "case_title": "",
+                "case_scope": "",
             }
             page.route("**/api/rounds?*", lambda route: pending.append((route, {"rounds": [summary], "next_offset": None})))
             page.goto(WEB)
