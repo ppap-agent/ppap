@@ -575,19 +575,97 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            _, posts = self.route(page, status="unknown")
-            page.goto(WEB + "/rules?parse=" + JOB)
-            expect(page.locator("#rule-message")).to_contain_text("再次消耗模型费用")
-            expect(page.locator("#parse-type")).to_have_value("控制计划")
-            self.assertEqual(posts, [])
-            page.reload()
-            expect(page.locator("#rule-message")).to_contain_text("原任务可能仍会完成")
-            self.assertEqual(posts, [])
-            page.get_by_test_id("rerun-rule").click()
-            expect(page.locator("#rule-message")).to_contain_text("解析结果暂不确定")
+            page.set_default_timeout(5000)
+            self.route(page)
+            page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
+            page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
+            page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+            source, posts, reads, delayed = {}, [], [], []
+            hold_original = False
+
+            def create_file(route):
+                value = route.request.post_data_json
+                source.update(
+                    file_id=SOURCE,
+                    id=value["request_id"],
+                    original_filename=value["original_filename"],
+                    byte_size=value["byte_size"],
+                    content_type=value["content_type"],
+                    sha256=value["sha256"],
+                    status="staging",
+                )
+                route.fulfill(status=201, json=source)
+
+            def receive_blob(route):
+                source["status"] = "ready"
+                route.fulfill(json=source)
+
+            def job(identity, status="unknown"):
+                return {
+                    "id": identity,
+                    "status": status,
+                    "source_file_id": SOURCE,
+                    "source_file_version_id": source["id"],
+                    "document_type": "控制计划",
+                    "result": {"title": "迟到的旧结果", "body": BODY, "source_file_version_id": source["id"]} if status == "succeeded" else None,
+                }
+
+            def parse(route):
+                posts.append(route.request.post_data_json)
+                route.fulfill(status=202, json=job(posts[-1]["request_id"]))
+
+            def read(route):
+                identity = route.request.url.rsplit("/", 1)[1]
+                reads.append(identity)
+                if hold_original and identity == posts[0]["request_id"]:
+                    delayed.append(route)
+                else:
+                    route.fulfill(json=job(identity))
+
+            page.route("**/api/files", create_file)
+            page.route("**/api/files/*/versions/*/blob", receive_blob)
+            page.route("**/api/rules/parse", parse)
+            page.route("**/api/rules/parse/*", read)
+            page.goto(WEB + "/?view=requirements")
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "待核对要求.json", "mimeType": "application/json", "buffer": b"{}"})
+            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_role("button", name="提取条款", exact=True).click()
+            unknown = page.get_by_role("alert").filter(has_text="提取结果暂不确定")
+            expect(unknown).to_contain_text("原任务可能仍会完成")
+            expect(page.get_by_role("status").filter(has_text="正在提取条款")).to_have_count(0)
             self.assertEqual(len(posts), 1)
-            self.assertNotEqual(posts[0]["request_id"], JOB)
-            self.assertEqual(posts[0]["document_type"], "控制计划")
+            original = posts[0]["request_id"]
+            page.reload()
+            expect(unknown).to_be_visible()
+            self.assertEqual(len(posts), 1)
+            with page.expect_request("**/api/rules/parse/" + original):
+                page.get_by_role("button", name="核对原提取请求", exact=True).click()
+            expect(unknown).to_be_visible()
+            self.assertEqual(len(posts), 1)
+            page.get_by_role("button", name="重新提取条款", exact=True).click()
+            confirmation = page.get_by_role("dialog", name="重新提取条款？", exact=True)
+            expect(confirmation).to_contain_text("再次消耗模型费用")
+            confirmation.get_by_role("button", name="取消", exact=True).click()
+            self.assertEqual(len(posts), 1)
+            hold_original = True
+            with page.expect_request("**/api/rules/parse/" + original):
+                page.get_by_role("button", name="刷新提取状态", exact=True).click()
+            self.assertEqual(len(delayed), 1)
+            page.get_by_role("button", name="重新提取条款", exact=True).click()
+            confirmation.get_by_role("button", name="确认重新提取", exact=True).click()
+            expect(unknown).to_be_visible()
+            self.assertEqual(len(posts), 2)
+            self.assertNotEqual(posts[1]["request_id"], original)
+            self.assertEqual(posts[1]["source_file_id"], SOURCE)
+            self.assertEqual(posts[1]["source_file_version_id"], source["id"])
+            self.assertEqual(posts[1]["document_type"], "控制计划")
+            delayed[0].fulfill(json=job(original, "succeeded"))
+            with page.expect_request("**/api/rules/parse/" + posts[1]["request_id"]):
+                page.get_by_role("button", name="刷新提取状态", exact=True).click()
+            expect(unknown).to_be_visible()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("待核对要求")
+            expect(page.get_by_role("region", name="要求条款", exact=True).get_by_role("article")).to_have_count(0)
+            self.assertIn(original, reads)
             browser.close()
 
     def test_failed_task_can_be_retried_with_selected_type_without_changing_original(self):
