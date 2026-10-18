@@ -1135,7 +1135,7 @@ class AuditUsageMetric(TypedDict):
 
 
 class AuditUsageSummary(TypedDict):
-    """Owner-provided natural-month projection; not a sum of the filtered page."""
+    """Acceptance-month totals; settlement never moves the original obligation."""
 
     month: str
     timezone: str
@@ -1148,6 +1148,8 @@ class AuditUsageSummary(TypedDict):
 
 
 class AuditUsageOrder(TypedDict):
+    """Verified debit order and actual debit time, never a usage-report ACK."""
+
     order_id: str
     confirmed_at: str
 
@@ -1168,6 +1170,7 @@ class AuditUsageEntry(TypedDict):
 
     usage_id: str
     occurred_at: str
+    debited_at: str | None
     filename: str
     audit_sequence: int | None
     initiator: str

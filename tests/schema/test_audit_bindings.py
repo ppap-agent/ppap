@@ -2125,8 +2125,8 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertEqual(page["summary"]["consumption_count"]["value"], 2)
         self.assertEqual(page["summary"]["free_remaining"]["value"], 0)
         self.assertEqual(page["summary"]["free_total"]["value"], 700)
-        self.assertIsNone(page["summary"]["charged_points"]["value"])
-        self.assertIsNone(page["summary"]["pending_points"]["value"])
+        self.assertEqual(page["summary"]["charged_points"]["value"], 700)
+        self.assertEqual(page["summary"]["pending_points"]["value"], 300)
         entries = {row["filename"]: row for row in page["entries"]}
         self.assertEqual(entries[first.original_filename]["allocation"], {"free_points": 500, "paid_points": 0, "reason": None})
         mixed = entries[second.original_filename]
@@ -2165,6 +2165,86 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         self.assertEqual(updated["orders"], [])
         self.assertEqual(updated["settlement"]["state"], "unknown")
         self.assertIn("扣费", updated["settlement"]["reason"])
+
+    def test_cross_month_debit_preserves_acceptance_cohort_and_unknown_report_receipt(self):
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        import psycopg
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from ppap_api.audit_routes import register_audit_routes
+        from ppap_core.db import connect
+
+        self.settings.feishu_free_trial_quota_points = 0
+        draft = self.prepared()
+        accepted = self.store.accept_draft(self.alice, draft, draft)
+        event = self.store.list_usage_events(self.alice)[0]
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE product.audit_rounds SET created_at = '2026-10-28T02:00:00Z' WHERE id = %s", (accepted["id"],))
+            conn.execute("UPDATE product.usage_events SET created_at = '2026-11-01T01:00:00Z' WHERE id = %s", (event["id"],))
+        app = FastAPI()
+        register_audit_routes(app, self.store, lambda request: self.alice)
+        client = TestClient(app)
+        observed = datetime(2026, 11, 4, tzinfo=timezone.utc)
+        with patch("ppap_product_store.store._now", return_value=observed):
+            before = client.get("/audit-usage?range=all").json()
+            claim = self.store.claim_usage_report(self.alice, event["id"])
+            self.assertTrue(self.store.settle_usage_external(self.alice, event["id"], claim, "confirmed", "usage-report-ack"))
+            reported = client.get("/audit-usage?range=all").json()
+            self.assertEqual(reported["entries"][0]["settlement"]["state"], "unknown")
+            self.assertIsNone(reported["entries"][0]["debited_at"])
+            # Verified provider data arranged in a scratch DB, not a real charge.
+            with connect(self.settings, "migrator") as conn:
+                for order, time in (("order", None), (None, "2026-11-03T03:00:00Z"), (" ", "2026-11-03T03:00:00Z")):
+                    with self.assertRaises(psycopg.errors.CheckViolation), conn.transaction():
+                        conn.execute("UPDATE product.usage_events SET debit_order_id = %s, debited_at = %s WHERE id = %s", (order, time, event["id"]))
+                conn.execute("UPDATE product.usage_events SET debit_order_id = 'verified-order', debited_at = '2026-11-03T03:00:00Z' WHERE id = %s", (event["id"],))
+            ledger = self.store.list_usage_events(self.alice)
+            settled = client.get("/audit-usage?range=all").json()
+            self.assertEqual(client.get("/audit-usage?range=all").json(), settled)
+            self.assertEqual(self.store.list_usage_events(self.alice), ledger)
+        for page in (before, reported, settled):
+            self.assertEqual(page["total"], 1)
+            self.assertEqual(page["summary"]["consumption_count"]["value"], 0)
+            self.assertEqual(page["summary"]["charged_points"]["value"], 0)
+            self.assertEqual(page["summary"]["pending_points"]["value"], 0)
+            self.assertEqual(page["entries"][0]["usage_id"], before["entries"][0]["usage_id"])
+            self.assertEqual(page["entries"][0]["occurred_at"], "2026-10-28T02:00:00+00:00")
+        self.assertEqual(settled["entries"][0]["settlement"]["state"], "charged")
+        self.assertEqual(settled["entries"][0]["debited_at"], "2026-11-03T03:00:00+00:00")
+        self.assertEqual(settled["entries"][0]["orders"], [{"order_id": "verified-order", "confirmed_at": "2026-11-03T03:00:00+00:00"}])
+        self.assertNotEqual(ledger[0]["external_confirmed_at"], settled["entries"][0]["debited_at"])
+
+    def test_verified_debit_cannot_be_claimed_for_another_usage_report(self):
+        from ppap_core.db import connect
+
+        self.settings.feishu_free_trial_quota_points = 0
+        draft = self.prepared()
+        self.store.accept_draft(self.alice, draft, draft)
+        event = self.store.list_usage_events(self.alice)[0]
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE product.usage_events SET debit_order_id = 'verified-order', debited_at = now() WHERE id = %s", (event["id"],))
+        self.assertIsNone(self.store.claim_usage_report(self.alice, event["id"]))
+
+    def test_late_unknown_usage_report_cannot_erase_independent_debit_evidence(self):
+        from ppap_core.db import connect
+
+        self.settings.feishu_free_trial_quota_points = 0
+        draft = self.prepared()
+        self.store.accept_draft(self.alice, draft, draft)
+        event = self.store.list_usage_events(self.alice)[0]
+        claim = self.store.claim_usage_report(self.alice, event["id"])
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE product.usage_events SET debit_order_id = 'verified-order', debited_at = now() WHERE id = %s", (event["id"],))
+        self.store.settle_usage_external(self.alice, event["id"], claim, "unknown")
+        page = self.store.list_audit_usage(self.alice, {"range": "all", "search": "", "page": 1, "page_size": 10})
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["entries"][0]["settlement"]["state"], "charged")
+        self.assertEqual(page["entries"][0]["orders"][0]["order_id"], "verified-order")
+        self.assertEqual(page["summary"]["consumption_count"]["value"], 1)
+        self.assertEqual(page["summary"]["charged_points"]["value"], 500)
+        self.assertEqual(page["summary"]["pending_points"]["value"], 0)
 
     def test_usage_page_keeps_legacy_aggregate_visible_without_fabricating_file_charges(self):
         from fastapi import FastAPI

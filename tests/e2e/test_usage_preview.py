@@ -12,6 +12,31 @@ if PREVIEW:
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class UsagePreviewTests(unittest.TestCase):
+    def test_cross_month_debit_keeps_one_original_acceptance_and_a_separate_debit_time(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for width in (1440, 390):
+                page = browser.new_page(viewport={"width": width, "height": 900})
+                page.goto(PREVIEW + "/preview/audit.html?scene=usage-cross-month&view=usage&usageRange=all")
+                table = page.get_by_role("table", name="逐文件用量记录", exact=True)
+                expect(table.get_by_role("columnheader", name="受理时间", exact=True)).to_be_visible()
+                expect(table.get_by_role("columnheader", name="实际扣费时间", exact=True)).to_have_count(1)
+                row = page.get_by_role("row", name="消费记录 示例消费-1", exact=True)
+                expect(row).to_contain_text("待扣")
+                expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
+                expect(row.locator("time")).to_have_count(1)
+                page.get_by_role("button", name="刷新用量", exact=True).click()
+                expect(row).to_contain_text("示例补扣订单")
+                expect(row.locator('time[datetime="2026-10-28T10:00:00+08:00"]')).to_have_count(1)
+                expect(row.locator('time[datetime="2026-11-03T11:00:00+08:00"]')).to_have_count(1)
+                expect(table.get_by_role("row")).to_have_count(2)
+                for label in ("本月消费次数", "本月已扣点数", "本月待扣点数"):
+                    expect(page.get_by_role("group", name=label, exact=True)).to_contain_text("0")
+                expect(page.get_by_text("按审核受理月统计；补扣不新增消费。", exact=True)).to_be_visible()
+                self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+                page.close()
+            browser.close()
+
     def test_returning_to_usage_unmounts_the_inactive_archive_history_sheet(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

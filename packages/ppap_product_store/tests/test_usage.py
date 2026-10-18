@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+import pytest
 from ppap_product_store.usage import usage_page
 
 AS_OF = datetime(2026, 11, 1, 0, 30, tzinfo=timezone.utc)
@@ -18,6 +19,7 @@ def fee(round_id="round-a", **changes):
         "filename": "Control Plan.xlsx",
         "initiator": "Alice",
         "created_at": "2026-10-31T16:00:00+00:00",
+        "accepted_at": changes.get("created_at", "2026-10-31T16:00:00+00:00"),
         "consumed_points": 500,
         "is_free_trial": True,
         "ai_item_id": "item-a",
@@ -25,6 +27,16 @@ def fee(round_id="round-a", **changes):
         "result_attempt": 2,
         **changes,
     }
+
+
+def test_later_ledger_entry_stays_in_the_frozen_round_acceptance_month():
+    row = fee(created_at="2026-11-01T00:00:00+00:00", accepted_at="2026-10-28T02:00:00+00:00")
+    page = usage_page([row], {**QUERY, "range": "all"}, ORG, FREE, {}, AS_OF)
+    assert page["summary"]["consumption_count"]["value"] == 0
+    assert page["summary"]["charged_points"]["value"] == 0
+    assert page["summary"]["pending_points"]["value"] == 0
+    assert page["entries"][0]["occurred_at"] == "2026-10-28T02:00:00+00:00"
+    assert page["entries"][0]["debited_at"] is None
 
 
 def test_month_summary_is_independent_of_filtered_page_and_local_midnight():
@@ -36,8 +48,8 @@ def test_month_summary_is_independent_of_filtered_page_and_local_midnight():
     empty = usage_page(rows, {**QUERY, "search": "missing", "page": 2}, ORG, FREE, {}, AS_OF)
     assert empty["entries"] == []
     assert empty["summary"] == page["summary"]
-    assert page["summary"]["charged_points"]["value"] is None
-    assert page["summary"]["pending_points"]["value"] is None
+    assert page["summary"]["charged_points"]["value"] == 500
+    assert page["summary"]["pending_points"]["value"] == 0
 
 
 def test_paid_receipt_is_not_an_order_or_proof_of_debit_and_obligation_survives_retry():
@@ -56,6 +68,60 @@ def test_paid_receipt_is_not_an_order_or_proof_of_debit_and_obligation_survives_
     assert updated["settlement"]["state"] == "unknown"
 
 
+def test_november_debit_updates_the_october_obligation_without_a_second_consumption():
+    accepted = "2026-10-28T02:00:00+00:00"
+    free = fee(created_at=accepted, consumed_points=200)
+    paid = fee(created_at=accepted, consumed_points=300, is_free_trial=False, external_status="pending")
+    before = usage_page([free, paid], {**QUERY, "range": "all"}, ORG, FREE, {}, datetime(2026, 10, 31, tzinfo=timezone.utc))
+    assert before["summary"]["consumption_count"]["value"] == 1
+    assert before["summary"]["charged_points"]["value"] == 200
+    assert before["summary"]["pending_points"]["value"] == 300
+    debited = {**paid, "external_status": "confirmed", "external_confirmed_at": "2026-11-04T01:00:00+00:00", "debit_order_id": "provider-order-1", "debited_at": "2026-11-03T03:00:00+00:00"}
+    after = usage_page([free, debited], {**QUERY, "range": "all"}, ORG, FREE, {}, datetime(2026, 11, 4, 2, tzinfo=timezone.utc))
+    assert after["total"] == 1
+    assert after["summary"]["consumption_count"]["value"] == 0
+    assert after["summary"]["charged_points"]["value"] == 0
+    assert after["summary"]["pending_points"]["value"] == 0
+    entry = after["entries"][0]
+    assert entry["usage_id"] == before["entries"][0]["usage_id"]
+    assert entry["occurred_at"] == accepted
+    assert entry["debited_at"] == "2026-11-03T03:00:00+00:00"
+    assert entry["settlement"]["state"] == "charged"
+    assert entry["orders"] == [{"order_id": "provider-order-1", "confirmed_at": "2026-11-03T03:00:00+00:00"}]
+
+
+def test_verified_debit_changes_only_settlement_totals_for_the_same_accepted_file():
+    free = fee(consumed_points=200)
+    paid = fee(consumed_points=300, is_free_trial=False, external_status="pending")
+    before = usage_page([free, paid], QUERY, ORG, FREE, {}, AS_OF)
+    paid.update(debit_order_id="verified-order", debited_at="2026-11-01T00:00:00+00:00")
+    after = usage_page([free, paid], QUERY, ORG, FREE, {}, AS_OF)
+    assert before["summary"]["consumption_count"] == after["summary"]["consumption_count"] == {"value": 1, "reason": None}
+    assert (before["summary"]["charged_points"]["value"], before["summary"]["pending_points"]["value"]) == (200, 300)
+    assert (after["summary"]["charged_points"]["value"], after["summary"]["pending_points"]["value"]) == (500, 0)
+    assert before["entries"][0]["usage_id"] == after["entries"][0]["usage_id"]
+
+
+@pytest.mark.parametrize("status", ["reporting", "unknown", "confirmed"])
+def test_unknown_debit_is_not_confirmed_charged_or_definitely_unpaid(status):
+    row = fee(is_free_trial=False, external_status=status, external_record_id="report-receipt", external_confirmed_at=AS_OF.isoformat())
+    page = usage_page([row], QUERY, ORG, FREE, {}, AS_OF)
+    assert page["summary"]["consumption_count"]["value"] == 1
+    assert page["summary"]["charged_points"]["value"] is None
+    assert page["summary"]["pending_points"]["value"] is None
+    assert page["entries"][0]["debited_at"] is None
+    assert page["entries"][0]["orders"] == []
+
+
+@pytest.mark.parametrize("debited", [None, "invalid", "2026-11-01T00:00:00", "2026-10-31T15:00:00+00:00", "2026-11-02T00:00:00+00:00"])
+def test_incomplete_or_inconsistent_debit_proof_does_not_establish_settlement(debited):
+    row = fee(is_free_trial=False, external_status="confirmed", debit_order_id="order", debited_at=debited)
+    entry = usage_page([row], QUERY, ORG, FREE, {}, AS_OF)["entries"][0]
+    assert entry["settlement"]["state"] == "unknown"
+    assert entry["debited_at"] is None
+    assert entry["orders"] == []
+
+
 def test_historical_aggregate_and_incomplete_file_fee_remain_visible_as_unattributed():
     aggregate = fee(file_version_id=None, consumed_points=1200)
     partial = fee("round-incomplete", consumed_points=300)
@@ -65,6 +131,15 @@ def test_historical_aggregate_and_incomplete_file_fee_remain_visible_as_unattrib
     assert page["unattributed"]["points"] == 1500
     assert page["unattributed"]["reason"]
     assert page["summary"]["consumption_count"]["value"] is None
+
+
+def test_incomplete_allocation_uses_known_acceptance_month_without_guessing_a_file_fee():
+    row = fee(created_at="2026-11-01T00:00:00+00:00", accepted_at="2026-10-28T02:00:00+00:00", consumed_points=300)
+    page = usage_page([row], {**QUERY, "range": "all"}, ORG, FREE, {}, AS_OF)
+    assert page["entries"] == []
+    assert page["unattributed"]["points"] == 300
+    assert page["summary"]["consumption_count"]["value"] == 0
+    assert page["summary"]["charged_points"]["value"] == 0
 
 
 def test_pagination_and_initiator_search_keep_the_exact_authorized_history_reference():

@@ -14,7 +14,7 @@ export const usageNotices = {
 }
 const count = (value: number) => Number.isSafeInteger(value) && value >= 0
 const metricValid = (metric: UsageMetric) => metric.value === null ? Boolean(metric.reason) : count(metric.value)
-const validTime = (value: string) => Number.isFinite(Date.parse(value))
+const validTime = (value: string) => /(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))
 function localDate(value: string, timezone: string) {
   if (!validTime(value)) return ''
   const parts = new Intl.DateTimeFormat('en', {timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date(value))
@@ -36,6 +36,10 @@ export function validUsagePage(page: UsagePage, query: UsageQuery, organization?
     const date = localDate(row.occurred_at, summary.timezone)
     if (!date || date > page.through_date || page.from_date && date < page.from_date || !['charged', 'pending', 'processing', 'unknown', 'trial'].includes(row.settlement.state) || !['allowed', 'denied', 'deleted', 'unknown'].includes(row.audit_access.state)) return false
     if (row.settlement.state === 'trial' && (allocation.free_points !== 500 || allocation.paid_points !== 0)) return false
+    if (row.settlement.state === 'charged') {
+      if (!row.debited_at || !validTime(row.debited_at) || Date.parse(row.debited_at) < Date.parse(row.occurred_at) || Date.parse(row.debited_at) > Date.parse(summary.as_of) || !row.orders.length || !allocation.paid_points) return false
+      if (row.orders.some(order => !validTime(order.confirmed_at) || Date.parse(order.confirmed_at) < Date.parse(row.occurred_at) || Date.parse(order.confirmed_at) > Date.parse(row.debited_at!)) || !row.orders.some(order => Date.parse(order.confirmed_at) === Date.parse(row.debited_at!))) return false
+    } else if (row.debited_at !== null) return false
     return row.usage_id && row.filename && row.initiator && validTime(row.occurred_at) && (row.audit_sequence === null || count(row.audit_sequence) && row.audit_sequence > 0) && row.points === 500 && reference.task_id && reference.round_id && reference.file_version_id && (reference.result_attempt === null || count(reference.result_attempt) && reference.result_attempt > 0) && (row.audit_access.state !== 'allowed' || Boolean(row.document_id)) && (allocation.free_points === null || count(allocation.free_points)) && (allocation.paid_points === null || count(allocation.paid_points)) && (allocation.free_points === null || allocation.paid_points === null ? Boolean(allocation.reason) : allocation.free_points + allocation.paid_points === row.points) && new Set(row.orders.map(order => order.order_id)).size === row.orders.length && row.orders.every(order => order.order_id && validTime(order.confirmed_at)) && (row.orders.length || row.order_reason) && (row.settlement.state !== 'unknown' || row.settlement.reason)
   })
 }

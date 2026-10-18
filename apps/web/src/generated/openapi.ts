@@ -2487,6 +2487,8 @@ export interface components {
             audit_access: components["schemas"]["AuditArchiveAccess"];
             /** Audit Sequence */
             audit_sequence: number | null;
+            /** Debited At */
+            debited_at: string | null;
             /** Document Id */
             document_id: string | null;
             /** Filename */
@@ -2516,7 +2518,10 @@ export interface components {
             /** Value */
             value: number | null;
         };
-        /** AuditUsageOrder */
+        /**
+         * AuditUsageOrder
+         * @description Verified debit order and actual debit time, never a usage-report ACK.
+         */
         AuditUsageOrder: {
             /** Confirmed At */
             confirmed_at: string;
@@ -2575,7 +2580,7 @@ export interface components {
         };
         /**
          * AuditUsageSummary
-         * @description Owner-provided natural-month projection; not a sum of the filtered page.
+         * @description Acceptance-month totals; settlement never moves the original obligation.
          */
         AuditUsageSummary: {
             /** As Of */

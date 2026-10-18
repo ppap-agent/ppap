@@ -3567,6 +3567,8 @@ class AuthStore:
                 "external_status",
                 "external_record_id",
                 "external_confirmed_at",
+                "debit_order_id",
+                "debited_at",
                 "trace_id",
                 "created_at",
                 "round_id",
@@ -3576,7 +3578,7 @@ class AuthStore:
         for key in ("id", "user_id", "round_id", "file_version_id"):
             if result[key] is not None:
                 result[key] = str(result[key])
-        for key in ("created_at", "external_confirmed_at"):
+        for key in ("created_at", "external_confirmed_at", "debited_at"):
             value = result[key]
             if value is not None and hasattr(value, "isoformat"):
                 result[key] = value.isoformat()
@@ -3602,7 +3604,7 @@ class AuthStore:
                 raise KeyError("missing")
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    """SELECT u.*, a.source_draft_id::text AS task_id, a.result_attempt,
+                    """SELECT u.*, a.source_draft_id::text AS task_id, a.result_attempt, a.created_at AS accepted_at,
                         f.original_filename AS filename, COALESCE(NULLIF(identity.display_name, ''), '发起人信息不可用') AS initiator
                     FROM product.usage_events u
                     LEFT JOIN product.audit_rounds a ON a.id = u.round_id AND a.tenant_id = u.tenant_id
@@ -3657,6 +3659,7 @@ class AuthStore:
                           report_claim = %s, reporting_at = now()
                    WHERE id = %s AND tenant_id = %s AND user_id = %s
                      AND external_status = 'pending' AND NOT is_free_trial
+                     AND debit_order_id IS NULL AND debited_at IS NULL
                    RETURNING id""",
                 (claim, event_id, principal.tenant_id, principal.user_id),
             ).fetchone()
