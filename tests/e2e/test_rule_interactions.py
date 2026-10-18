@@ -166,11 +166,14 @@ class RuleInteractionTests(unittest.TestCase):
                             {
                                 "id": JOB,
                                 "execution": "failed",
+                                "predecessor_id": None,
                                 "analysis_mode": "standard",
-                                "inputs": [{"file_version_id": VERSION, "original_filename": "已读取的审核.xlsx", "role": "target"}],
+                                "inputs": [{"file_version_id": VERSION, "original_filename": "已读取的审核.xlsx", "role": "target", "rule": None}],
                                 "result_counts": {},
                                 "reviewed_count": 0,
                                 "created_at": "2026-10-16T00:00:00Z",
+                                "case_title": "",
+                                "case_scope": "",
                             }
                         ],
                         "next_offset": None,
@@ -184,7 +187,27 @@ class RuleInteractionTests(unittest.TestCase):
                 else:
                     route.fulfill(
                         json={
-                            "drafts": [{"id": SOURCE, "items": [{"file_version_id": VERSION, "original_filename": "恢复的准备.xlsx", "role": "target"}], "updated_at": "2026-10-16T01:00:00Z"}],
+                            "drafts": [
+                                {
+                                    "id": SOURCE,
+                                    "status": "open",
+                                    "predecessor_id": None,
+                                    "analysis_mode": "standard",
+                                    "writeback": {"available": False},
+                                    "items": [
+                                        {
+                                            "file_id": JOB,
+                                            "file_version_id": "00000000-0000-4000-8000-000000000005",
+                                            "original_filename": "恢复的准备.xlsx",
+                                            "role": "target",
+                                            "rule_version_id": None,
+                                            "rule": None,
+                                            "status": "ready",
+                                        }
+                                    ],
+                                    "updated_at": "2026-10-16T01:00:00Z",
+                                }
+                            ],
                             "next_offset": None,
                         }
                     )
@@ -419,9 +442,30 @@ class RuleInteractionTests(unittest.TestCase):
                 return
             path = urlsplit(request.url).path.removeprefix("/api")
             if path == "/public-config":
-                route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev"}, headers=cors)
+                route.fulfill(
+                    json={
+                        "git_sha": "fixture",
+                        "api_url": WEB + "/api",
+                        "profile": "isolated-dev",
+                        "login": "isolated-dev",
+                        "deep_offered": False,
+                        "feishu_app_id": "",
+                        "current_access": "allowed",
+                        "usage_charge_enabled": False,
+                    },
+                    headers=cors,
+                )
             elif path == "/me":
-                route.fulfill(json={"display_name": "alice", "identity": {"subject": "fixture"}}, headers=cors)
+                route.fulfill(
+                    json={
+                        "display_name": "alice",
+                        "tenant_id": "test-tenant",
+                        "user_id": "test-user",
+                        "membership": "member",
+                        "identity": {"provider": "isolated-dev", "app_id": "test-app", "tenant_key": "test-tenant", "subject": "fixture"},
+                    },
+                    headers=cors,
+                )
             elif path == "/rule-types":
                 route.fulfill(json={"types": ["控制计划"]}, headers=cors)
             elif path == "/rules" and request.method == "POST":

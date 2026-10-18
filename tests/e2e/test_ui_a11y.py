@@ -34,8 +34,33 @@ class UiA11yTests(unittest.TestCase):
             context = browser.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce", has_touch=True)
             page = context.new_page()
             page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
-            page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev"}))
-            page.route("**/api/me", lambda route: route.fulfill(json={"display_name": "alice", "tenant_id": "test-tenant", "user_id": "test-user", "identity": {"subject": "fixture"}}))
+            page.route(
+                "**/api/public-config",
+                lambda route: route.fulfill(
+                    json={
+                        "git_sha": "fixture",
+                        "api_url": WEB + "/api",
+                        "profile": "isolated-dev",
+                        "login": "isolated-dev",
+                        "deep_offered": False,
+                        "feishu_app_id": "",
+                        "current_access": "allowed",
+                        "usage_charge_enabled": False,
+                    }
+                ),
+            )
+            page.route(
+                "**/api/me",
+                lambda route: route.fulfill(
+                    json={
+                        "display_name": "alice",
+                        "tenant_id": "test-tenant",
+                        "user_id": "test-user",
+                        "membership": "member",
+                        "identity": {"provider": "isolated-dev", "app_id": "test-app", "tenant_key": "test-tenant", "subject": "fixture"},
+                    }
+                ),
+            )
             page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
             page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
