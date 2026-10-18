@@ -175,7 +175,7 @@ docker compose -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
 
 PSW 的 `.doc` 用例需要 LibreOffice 和 Linux 上可执行的 `ppap-local-converter-sandbox`。CI 与推荐本地路径是先 `docker buildx bake worker`，再构建 `tests/corpus/Dockerfile.psw` 派生测试镜像并在其中跑 pytest（worker 已含 LibreOffice 与 sandbox；测试镜像对同一 `uv.lock` 执行 `uv sync --frozen --no-editable`，装上默认 dev dependency group；测试文件经 build context COPY，不 bind-mount 仓库）。`.doc` 转换是默认行为，没有开关变量；转换器或沙箱缺失时该项记 ERR，不跳过格式。需要 Paddle 的 PDF 转换优先使用 `tests/corpus/fixtures/ocr_cache`；未命中时再读 `PADDLE_OCR_URL`。这仍是 required corpus regression，不是 live。人工 expected 以 corpus 内 CSV/XLSX 为准，不要改它来迎合实现。
 
-#7 的代表性浏览器 E2E 覆盖待审+参考、提交、离开后回访、打开本轮原件版本（或看到 locator-gap）、原件预览、复核、显式重审，以及从账号菜单查看用量和从主导航查看审核结果：
+#7 的代表性浏览器 E2E 从当前 Web 上传待审与参考文件，经公开 Product API 显式绑定 fixture 规则并受理，由真实数据库、对象存储和 Worker 完成执行。浏览器核对两轮冻结原件的下载字节、人工复核持久化，以及返回后的条款、文件、筛选恢复和保存后继续。规则绑定、受理和显式新轮准备由 API 完成，不作为 V3.1 自动匹配与确认界面已完成的证据；presence fixture 也不证明真实 PPAP 审核质量。
 
 ```sh
 uv sync --locked --group e2e
@@ -211,6 +211,8 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 组织内测试资产和可访问环境按 [AGENTS.md](../AGENTS.md) 的默认规则直接使用。
 
 `tests/integration/product/test_rules.py` 通过真实 Excel/Word 提取与模拟外部 LLM 验证规则解析，再通过 Product API / Worker 验证受理、预览、发布、版本不变与来源授权。`packages/ppap_excel_audit_engine/tests/test_rule_ai_client.py` 验证每调用超时、零自动重试及错误日志脱敏。真实 PostgreSQL 契约在 `tests/schema/`：CI 用 `pytest tests/schema` 收集全部 `test_*.py`，共用 isolated-dev PostgreSQL fixture。其中包括 empty/previous schema 升级、规则解析的并发受理/租约/迟到完成/来源授权、审核绑定与用量分配。新增同类测试放到该目录即可进入 schema CI。`tests/e2e/test_web_rules.py` 读取 Web `runtime-config.json` 中的 API 地址，再通过隔离登录接口建立测试会话；不假定静态 Web 提供 `/api` 代理。从当前审核要求入口使用结构化规则文件走真实上传、提取、人工编辑和保存；再用全新浏览器会话重访只读版本，并下载核对原件。它不证明真实飞书登录。`tests/e2e/test_rule_interactions.py` 在浏览器 API 边界控制迟到响应，验证整页操作互斥、刷新只读、显式重跑，以及 `deep_offered` 对审核模式控件的门控。这些测试不调用外部模型服务。
+
+原生上传预检查的读取失败用例也在 `test_rule_interactions.py`：一份文件读取失败不取消另一份可审文件；重新读取只查询同一个已知检查工作，不新建检查、审核任务或受理。
 
 `tests/e2e/test_web_audit.py::WebAuditLoopTests::test_audit_files_path_loads_history_after_login` 从现有 `/audit-files` 深链读取服务器轮次，验证当前工作台搜索、冻结轮次入口和列表只读回访；隔离 fixture 的 presence 规则不证明真实 PPAP 审核质量。工作台初次读取期间，用户显式选择的队列优先于数据返回后计算的默认队列；`test_explicit_all_records_selection_survives_initial_history_read` 控制响应顺序验证此边界。
 

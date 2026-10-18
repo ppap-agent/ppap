@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import io
 import os
-import tempfile
+import re
+import time
 import unittest
 import uuid
-from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
+from openpyxl import Workbook
 from ppap_core.fixtures import RULE_A
 
 from .conftest import isolated_dev_login
@@ -24,164 +26,146 @@ else:
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
-def open_nav(page):
-    menu = page.get_by_role("button", name="菜单")
-    if menu.count() and menu.is_visible():
-        menu.click()
+def workbook_bytes(text):
+    book = Workbook()
+    book.active.append(["检查内容", text])
+    stream = io.BytesIO()
+    book.save(stream)
+    book.close()
+    return stream.getvalue()
 
 
-def pc_nav(page, test_id):
-    return page.get_by_test_id("pc-shell").get_by_test_id(test_id)
+def upload_version(page, api, name, body, file_id=None):
+    path = f"/files/{file_id}/versions" if file_id else "/files"
+    created = page.request.post(api + path, data={"original_filename": name, "content_type": "application/octet-stream", "byte_size": len(body)})
+    assert created.status == 201
+    version = created.json()
+    path = f"{api}/files/{version['file_id']}/versions/{version['id']}"
+    assert page.request.put(path + "/blob", data=body).status == 200
+    assert page.request.post(path + "/finalize").status == 200
+    return version
 
 
-def mobile_nav(page, test_id):
-    return page.locator(f'.mobile-tab-bar [data-testid="{test_id}"]')
+def completed_round(page, api, round_id):
+    deadline = time.monotonic() + 20
+    while True:
+        response = page.request.get(f"{api}/rounds/{round_id}")
+        assert response.status == 200
+        result = response.json()
+        if result["execution"] in {"completed", "failed"}:
+            assert result["execution"] == "completed", result.get("failure")
+            assert result["findings"] and all(row["status"] == "PASS" for row in result["findings"])
+            return result
+        assert time.monotonic() < deadline, "The isolated presence Worker did not finish the accepted round"
+        page.wait_for_timeout(50)
 
 
-def finding_list(page):
-    return page.get_by_role("navigation", name="审核条款")
-
-
-def current_finding(page):
-    nav = finding_list(page)
-    selected = nav.locator("[aria-current='true']")
-    return selected if selected.count() else nav.get_by_role("button").first
-
-
-def close_finding_sheet(page):
-    detail = page.get_by_role("dialog", name="检查项详情")
-    if detail.count() and detail.is_visible():
-        detail.get_by_role("button", name="关闭").click()
+def accept_round(page, api, items, predecessor=None, draft_id=None):
+    if draft_id:
+        assert page.request.put(f"{api}/drafts/{draft_id}", data={"items": items}).status == 200
+    else:
+        response = page.request.post(f"{api}/drafts", data={"items": items, "predecessor_id": predecessor})
+        assert response.status == 201
+        draft_id = response.json()["id"]
+    response = page.request.post(f"{api}/drafts/{draft_id}/accept", data={"idempotency_key": str(uuid.uuid4())})
+    assert response.status == 201
+    return completed_round(page, api, response.json()["id"])
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class WebAuditLoopTests(unittest.TestCase):
-    def test_submit_leave_return_review_and_resubmit(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "report.xlsx"
-            reference = Path(tmp) / "context.pdf"
-            newer = Path(tmp) / "report-v2.xlsx"
-            target.write_bytes(b"browser-target-v1")
-            reference.write_bytes(b"browser-reference")
-            newer.write_bytes(b"browser-target-v2")
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch()
-                page = browser.new_page()
-                page.set_viewport_size({"width": 390, "height": 844})
-                isolated_dev_login(page, WEB)
-                page.get_by_test_id("source-upload").set_input_files(str(target))
-                page.wait_for_selector('[data-testid="draft-items"]')
-                page.get_by_test_id("item-rule").first.select_option(RULE_A)
-                page.get_by_test_id("source-upload").set_input_files(str(reference))
-                page.wait_for_function("() => document.querySelector('[data-testid=\"draft-items\"]').innerText.includes('context.pdf')")
-                page.get_by_role("checkbox", name="参与审核：context.pdf").uncheck()
-                page.wait_for_function("() => new URL(window.location.href).searchParams.get('draft')")
-                save = page.get_by_test_id("save-draft")
-                if save.is_enabled():
-                    save.click()
-                page.get_by_test_id("submit-audit").click()
-                page.wait_for_function("() => new URL(window.location.href).searchParams.get('round')")
-                round_id = page.evaluate("() => new URL(window.location.href).searchParams.get('round')")
-                page.goto(WEB)
-                expect(page.locator("#audit-preparation")).to_be_visible()
-                page.goto(f"{WEB}/?round={round_id}")
-                page.wait_for_selector('[data-testid="result-summary"]')
-                status = page.get_by_test_id("finding-status").first
-                if not status.is_visible():
-                    current_finding(page).click()
-                expect(page.get_by_test_id("finding-status").first).to_have_attribute("data-status", "PASS")
-                expect(page.get_by_test_id("result-summary")).to_contain_text("通过")
-                close_finding_sheet(page)
-                original_tab = page.get_by_role("tab", name="原件", exact=True)
-                expect(original_tab).to_be_visible()
-                original_tab.click()
-                expect(page.get_by_test_id("file-version-list")).to_contain_text("report.xlsx")
-                expect(page.get_by_test_id("file-version-list")).to_contain_text("context.pdf")
-                original = page.get_by_test_id("open-original")
-                gap = page.get_by_test_id("locator-gap")
-                if original.count() == 0:
-                    expect(gap).to_be_visible()
-                else:
-                    href = original.get_attribute("href")
-                    self.assertTrue(href)
-                    downloaded = page.request.get(href)
-                    self.assertEqual(downloaded.status, 200)
-                    self.assertEqual(downloaded.body(), b"browser-target-v1")
-                    expect(page.get_by_test_id("file-preview")).to_be_visible()
-                    expect(page.get_by_test_id("file-preview-name")).to_contain_text("report.xlsx")
-                    page.get_by_role("tab", name="检查与复核").click()
-                if not page.get_by_test_id("finding-heading").first.is_visible():
-                    current_finding(page).click()
-                expect(page.get_by_test_id("finding-heading").first).to_be_visible()
-                expect(page.get_by_test_id("finding-evidence").first).to_be_visible()
-                expect(page.get_by_test_id("nav-audit-files").last).to_be_visible()
-                self.assertEqual(page.locator("h1").count(), 1)
-                page.get_by_role("tab", name="其他").click()
-                page.get_by_test_id("review-judgment").focus()
-                self.assertEqual(page.evaluate("() => document.activeElement?.getAttribute('data-testid')"), "review-judgment")
-                page.keyboard.press("Tab")
-                self.assertEqual(page.evaluate("() => document.activeElement?.getAttribute('data-testid')"), "review-rationale")
-                next_finding = page.get_by_role("button", name="下一检查项")
-                expect(next_finding).to_be_visible()
-                if next_finding.is_enabled():
-                    next_finding.focus()
-                    self.assertEqual(page.evaluate("() => document.activeElement?.getAttribute('aria-label')"), "下一检查项")
-                page.get_by_test_id("review-judgment").fill("需修改")
-                page.get_by_test_id("review-rationale").fill("尺寸缺失")
-                page.get_by_test_id("review-next").fill("补传")
-                back_to_list = page.get_by_role("button", name="← 检查项")
-                if back_to_list.is_visible():
-                    back_to_list.click()
-                current_finding(page).click()
-                expect(page.get_by_role("dialog", name="保存修改后离开？")).to_have_count(0)
-                expect(page.get_by_role("dialog", name="离开前处理待核对文件？")).to_have_count(0)
-                expect(page.get_by_test_id("review-rationale")).to_have_value("尺寸缺失")
-                expect(page.get_by_test_id("review-next")).to_have_value("补传")
-                page.get_by_test_id("save-review").click()
-                page.wait_for_selector("text=复核已保存")
-                close_finding_sheet(page)
-                page.get_by_test_id("prepare-again").click()
-                page.wait_for_selector("#audit-preparation")
-                page.wait_for_selector('[data-testid="submit-audit"]:not([disabled])')
-                page.get_by_test_id("source-upload").set_input_files(str(newer))
-                page.wait_for_function("""() => document.querySelector('[data-testid="draft-items"]').innerText.includes('report-v2.xlsx')""")
-                page.get_by_test_id("item-rule").last.select_option(RULE_A)
-                page.get_by_test_id("submit-audit").click()
-                page.wait_for_selector('[data-testid="previous-round"]')
-                expect(page.get_by_test_id("previous-round")).to_be_visible()
-                page.get_by_test_id("previous-round").click()
-                page.wait_for_selector('[data-testid="review-judgment"]')
-                expect(page.get_by_test_id("review-judgment")).to_have_value("需修改")
-                expect(page.get_by_test_id("nav-audit-files").last).to_be_visible()
-                expect(page.get_by_test_id("finding-heading").first).to_be_visible()
-                close_finding_sheet(page)
-                page.get_by_role("tab", name="原件", exact=True).click()
-                expect(page.get_by_test_id("file-version-list")).to_contain_text("report.xlsx")
-                page.locator('[data-ui="mobile-account"] [data-ui="account-button"]').click()
-                page.get_by_test_id("nav-usage").click()
-                page.wait_for_url("**/usage")
-                page.wait_for_function(
-                    """() => ['usage-list', 'usage-empty', 'usage-error'].some((id) => {
-                      return Boolean(document.querySelector('[data-testid=\"' + id + '\"]'));
-                    })"""
-                )
-                usage_error = page.get_by_test_id("usage-error")
-                if usage_error.count() and usage_error.is_visible():
-                    self.fail(usage_error.inner_text())
-                page.evaluate("() => document.querySelector('.mobile-tab-bar [data-testid=\"nav-audit-files\"]').click()")
-                page.wait_for_url("**/audit-files")
-                page.wait_for_function(
-                    """() => ['history-list', 'history-empty', 'history-error'].some((id) => {
-                      return Boolean(document.querySelector('[data-testid=\"' + id + '\"]'));
-                    })"""
-                )
-                history_error = page.get_by_test_id("history-error")
-                if history_error.count() and history_error.is_visible():
-                    self.fail(history_error.inner_text())
-                expect(page.get_by_test_id("history-list")).to_be_visible()
-                expect(page.locator('[data-testid="history-result"]', has_text="通过").first).to_be_visible()
-                expect(page.get_by_test_id("history-version").first).not_to_have_text("")
-                browser.close()
+    def test_uploaded_versions_reopen_frozen_round_and_review_after_an_explicit_new_round(self):
+        # UI upload + real Product API/DB/object storage/Worker + current history UI.
+        # Presence is an integration fixture, not proof of PPAP rule quality or V3 matching.
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.set_default_timeout(5000)
+            api = isolated_dev_login(page, WEB)
+            stamp = uuid.uuid4().hex[:8]
+            name, context = f"report-{stamp}.xlsx", f"context-{stamp}.txt"
+            target_bytes, reference_bytes = workbook_bytes("第一版"), b"frozen reference"
+            page.get_by_role("button", name="上传资料", exact=True).click()
+            page.get_by_label("上传文件", exact=True).set_input_files(
+                [
+                    {"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": target_bytes},
+                    {"name": context, "mimeType": "text/plain", "buffer": reference_bytes},
+                ]
+            )
+            table = page.get_by_role("table", name="审核资料", exact=True)
+            expect(table.get_by_role("button", name="阅读 " + name, exact=True)).to_be_visible()
+            expect(table.get_by_role("button", name="阅读 " + context, exact=True)).to_be_visible()
+            draft_id = parse_qs(urlsplit(page.url).query)["case"][0]
+            draft = page.request.get(f"{api}/drafts/{draft_id}").json()
+            self.assertEqual(len(draft["items"]), 2)
+            target = next(row for row in draft["items"] if row["original_filename"] == name)
+            reference = next(row for row in draft["items"] if row["original_filename"] == context)
+            original = accept_round(
+                page,
+                api,
+                [
+                    {"file_version_id": target["file_version_id"], "role": "target", "rule_version_id": RULE_A},
+                    {"file_version_id": reference["file_version_id"], "role": "reference", "rule_version_id": None},
+                ],
+                draft_id=draft_id,
+            )
+
+            page.goto(f"{WEB}/audit?round={original['id']}")
+            expect(page.get_by_role("heading", name="历史审核", exact=True)).to_be_visible()
+            records = page.get_by_role("region", name="历史机器记录", exact=True)
+            expect(records.get_by_text("原机器记录：满足", exact=True)).to_be_visible()
+            page.get_by_role("tab", name="核对原件", exact=True).click()
+            download = page.get_by_role("link", name="下载原件", exact=True)
+            download_url = urljoin(page.url, download.get_attribute("href"))
+            self.assertEqual(download_url, f"{api}/rounds/{original['id']}/files/{target['file_id']}/versions/{target['file_version_id']}/download")
+            self.assertEqual(page.request.get(download_url).body(), target_bytes)
+            page.get_by_role("tab", name="审核详情", exact=True).click()
+            records.get_by_role("button", name="记录人工复核", exact=True).click()
+            editor = page.get_by_role("dialog", name="人工复核", exact=True)
+            editor.get_by_role("combobox", name="人工判断", exact=True).click()
+            page.get_by_role("option", name="确认机器结果", exact=True).click()
+            editor.get_by_role("textbox", name="判断理由", exact=True).fill("已核对第一版原件，记录不等于正式批准。")
+            editor.get_by_role("textbox", name="后续建议", exact=True).fill("保留版本与原件。")
+            with page.expect_response(lambda reply: reply.request.method == "PUT" and reply.url.endswith(f"/rounds/{original['id']}/reviews")) as saved:
+                editor.get_by_role("button", name="保存人工复核", exact=True).click()
+            self.assertEqual(saved.value.status, 200)
+            expect(editor.get_by_text("人工复核已保存。", exact=True)).to_be_visible()
+            editor.get_by_role("button", name="完成", exact=True).click()
+            saved_original = page.request.get(f"{api}/rounds/{original['id']}").json()
+            self.assertEqual(saved_original["findings"][0]["review"]["judgment"], "confirm")
+            self.assertEqual(saved_original["findings"][0]["status"], "PASS")
+            self.assertEqual(saved_original["inputs"], original["inputs"])
+
+            newer_bytes = workbook_bytes("第二版")
+            newer = upload_version(page, api, name, newer_bytes, target["file_id"])
+            self.assertNotEqual(newer["id"], target["file_version_id"])
+            second = accept_round(
+                page,
+                api,
+                [
+                    {"file_version_id": newer["id"], "role": "target", "rule_version_id": RULE_A},
+                    {"file_version_id": reference["file_version_id"], "role": "reference", "rule_version_id": None},
+                ],
+                predecessor=original["id"],
+            )
+            self.assertEqual(second["predecessor_id"], original["id"])
+            self.assertIsNone(second["findings"][0]["review"])
+            page.goto(f"{WEB}/audit?round={second['id']}")
+            page.get_by_role("tab", name="核对原件", exact=True).click()
+            download = page.get_by_role("link", name="下载原件", exact=True)
+            download_url = urljoin(page.url, download.get_attribute("href"))
+            self.assertEqual(download_url, f"{api}/rounds/{second['id']}/files/{newer['file_id']}/versions/{newer['id']}/download")
+            self.assertEqual(page.request.get(download_url).body(), newer_bytes)
+
+            page.goto(WEB)
+            page.goto(f"{WEB}/audit?round={original['id']}")
+            expect(page.get_by_role("region", name="已有人工复核", exact=True)).to_contain_text("已核对第一版原件，记录不等于正式批准。")
+            page.reload()
+            expect(page.get_by_role("region", name="已有人工复核", exact=True)).to_contain_text("已核对第一版原件，记录不等于正式批准。")
+            page.get_by_role("tab", name="核对原件", exact=True).click()
+            self.assertEqual(page.request.get(urljoin(page.url, page.get_by_role("link", name="下载原件", exact=True).get_attribute("href"))).body(), target_bytes)
+            self.assertEqual(page.request.get(f"{api}/rounds/{original['id']}").json(), saved_original)
+            browser.close()
 
     def test_docs_addon_entry_reports_missing_host(self):
         with sync_playwright() as playwright:
@@ -237,68 +221,68 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertEqual(urlsplit(page.url).path, "/audit-files")
             browser.close()
 
-    def test_return_from_rules_restores_file_finding_filter_and_review_next(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            first = Path(tmp) / "alpha.xlsx"
-            second = Path(tmp) / "beta.xlsx"
-            first.write_bytes(b"browser-alpha")
-            second.write_bytes(b"browser-beta")
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch()
-                page = browser.new_page()
-                page.set_viewport_size({"width": 1440, "height": 900})
-                isolated_dev_login(page, WEB)
-                page.get_by_test_id("source-upload").set_input_files(str(first))
-                page.wait_for_selector('[data-testid="draft-items"]')
-                page.get_by_test_id("item-rule").first.select_option(RULE_A)
-                page.get_by_test_id("source-upload").set_input_files(str(second))
-                page.wait_for_function("() => document.querySelector('[data-testid=\"draft-items\"]').innerText.includes('beta.xlsx')")
-                page.get_by_test_id("item-rule").last.select_option(RULE_A)
-                page.wait_for_selector('[data-testid="submit-audit"]:not([disabled])')
-                page.get_by_test_id("submit-audit").click()
-                page.wait_for_function("() => new URL(window.location.href).searchParams.get('round')")
-                round_id = page.evaluate("() => new URL(window.location.href).searchParams.get('round')")
-                page.wait_for_selector('[data-testid="finding-status"]')
-                page.wait_for_function("() => document.body.innerText.includes('检查完成')")
-                page.wait_for_function(
-                    """() => {
-                      const sel = document.querySelector('[data-testid="file-version-list"]');
-                      return Boolean(sel && sel.options.length >= 2);
-                    }"""
-                )
-                default_file = page.get_by_test_id("file-version-list").evaluate("el => el.options[el.selectedIndex].text")
-                self.assertIn("alpha.xlsx", default_file)
-                expect(page.get_by_test_id("filter-all")).to_have_attribute("aria-pressed", "true")
-                page.get_by_test_id("file-version-list").select_option(label="beta.xlsx")
-                page.wait_for_function("() => document.querySelector('[data-testid=\"file-version-list\"]')?.selectedOptions[0]?.text.includes('beta.xlsx')")
-                page.get_by_test_id("filter-PASS").click()
-                expect(page.get_by_test_id("filter-PASS")).to_have_attribute("aria-pressed", "true")
-                heading = page.get_by_test_id("finding-heading").inner_text()
-                finding_key = page.get_by_test_id("finding-detail").get_attribute("data-finding-key")
-                self.assertTrue(finding_key)
-                page.get_by_test_id("context-link").click()
-                page.wait_for_url("**/rules**")
-                return_link = page.get_by_test_id("rule-return")
-                expect(return_link).to_be_visible()
-                expect(return_link).to_have_text("← 返回审核结果")
-                return_link.click()
-                page.wait_for_function("() => new URL(window.location.href).searchParams.get('round')")
-                page.wait_for_selector('[data-testid="finding-status"]')
-                restored_file = page.get_by_test_id("file-version-list").evaluate("el => el.options[el.selectedIndex].text")
-                self.assertIn("beta.xlsx", restored_file)
-                expect(page.get_by_test_id("filter-PASS")).to_have_attribute("aria-pressed", "true")
-                expect(page.get_by_test_id("filter-all")).to_have_attribute("aria-pressed", "false")
-                expect(page.get_by_test_id("finding-detail")).to_have_attribute("data-finding-key", finding_key)
-                expect(page.get_by_test_id("finding-heading")).to_have_text(heading)
-                page.goto(f"{WEB}/?round={round_id}&review=next")
-                page.wait_for_selector('[data-testid="finding-status"]')
-                expect(page.get_by_test_id("filter-unreviewed")).to_have_attribute("aria-pressed", "true")
-                expect(page.get_by_test_id("filter-PASS")).to_have_attribute("aria-pressed", "false")
-                next_file = page.get_by_test_id("file-version-list").evaluate("el => el.options[el.selectedIndex].text")
-                next_key = page.get_by_test_id("finding-detail").get_attribute("data-finding-key")
-                self.assertTrue(next_key)
-                self.assertIn("xlsx", next_file)
-                browser.close()
+    def test_return_from_requirements_restores_review_file_clause_filter_and_next_pending(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.set_default_timeout(5000)
+            api = isolated_dev_login(page, WEB)
+            stamp = uuid.uuid4().hex[:8]
+            names = [f"alpha-{stamp}.xlsx", f"beta-{stamp}.xlsx"]
+            versions = [upload_version(page, api, name, workbook_bytes(name)) for name in names]
+            original = accept_round(page, api, [{"file_version_id": row["id"], "role": "target", "rule_version_id": RULE_A} for row in versions])
+            page.goto(f"{WEB}/?round={original['id']}")
+            expect(page.get_by_role("heading", name="人工复核", exact=True)).to_be_visible()
+            page.get_by_role("button", name=re.compile("^条款目录")).click()
+            directory = page.get_by_role("dialog", name="审核条款", exact=True)
+            directory.get_by_role("radio", name="全部", exact=True).check()
+            links = directory.get_by_role("navigation", name="审核条款", exact=True).get_by_role("link")
+            expect(links).to_have_count(2)
+            links.first.click()
+            article = page.get_by_role("article", name=re.compile("^当前条款 "))
+            heading = article.get_by_role("heading").inner_text()
+            page.get_by_role("combobox", name="复核原件", exact=True).click()
+            page.get_by_role("option", name=names[0], exact=True).click()
+            page.get_by_role("combobox", name="复核原件", exact=True).click()
+            page.get_by_role("option", name=names[1], exact=True).click()
+            expect(page).to_have_url(re.compile(r"[?&]reviewFile="))
+            expected = parse_qs(urlsplit(page.url).query)
+            self.assertEqual(expected["round"], [original["id"]])
+            self.assertEqual(expected["reviewFilter"], ["all"])
+            self.assertIn(versions[1]["id"], expected["reviewFile"][0])
+            page.get_by_role("link", name="工作台", exact=True).click()
+            page.get_by_role("link", name="审核要求", exact=True).click()
+            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            page.go_back()
+            page.go_back()
+            expect(page.get_by_role("heading", name="人工复核", exact=True)).to_be_visible()
+            page.reload()
+            expect(article.get_by_role("heading")).to_have_text(heading)
+            expect(page.get_by_role("combobox", name="复核原件", exact=True)).to_contain_text(names[1])
+            restored = parse_qs(urlsplit(page.url).query)
+            for key in ("round", "clause", "reviewFile", "reviewFilter"):
+                self.assertEqual(restored[key], expected[key])
+            page.get_by_role("button", name=re.compile("^条款目录")).click()
+            expect(directory.get_by_role("radio", name="全部", exact=True)).to_be_checked()
+            active = directory.get_by_role("navigation", name="审核条款", exact=True).locator("[aria-current=page]")
+            self.assertEqual(parse_qs(urlsplit(active.get_attribute("href")).query)["clause"], expected["clause"])
+            page.keyboard.press("Escape")
+            article.get_by_role("combobox", name=re.compile(" 人工判断$")).click()
+            page.get_by_role("option", name="确认机器结果", exact=True).click()
+            article.get_by_role("textbox", name=re.compile(" 复核依据$")).fill("返回后核对原轮文件并保存。")
+            with page.expect_response(lambda reply: reply.request.method == "PUT" and reply.url.endswith(f"/rounds/{original['id']}/reviews")) as saved:
+                article.get_by_role("button", name="保存并继续", exact=True).click()
+            self.assertEqual(saved.value.status, 200)
+            page.wait_for_function("(previous) => new URL(location.href).searchParams.get('clause') !== previous", arg=expected["clause"][0])
+            updated = page.request.get(f"{api}/rounds/{original['id']}").json()
+            reviewed = [row for row in updated["findings"] if row["review"]]
+            self.assertEqual(len(reviewed), 1)
+            self.assertEqual(reviewed[0]["item_key"], expected["clause"][0])
+            self.assertEqual(reviewed[0]["review"]["rationale"], "返回后核对原轮文件并保存。")
+            self.assertEqual(updated["inputs"], original["inputs"])
+            self.assertEqual([row["status"] for row in updated["findings"]], ["PASS", "PASS"])
+            self.assertEqual(parse_qs(urlsplit(page.url).query)["round"], [original["id"]])
+            browser.close()
 
 
 if __name__ == "__main__":

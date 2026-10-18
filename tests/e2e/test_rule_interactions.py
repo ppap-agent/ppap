@@ -411,58 +411,80 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(writes, [])
             browser.close()
 
-    def test_draft_analysis_read_failure_is_local_and_retry_does_not_reanalyze(self):
+    def test_native_validation_read_failure_keeps_other_file_without_creating_another_job(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
+            page.set_default_timeout(5000)
             self.route(page)
-            items = [
-                {"file_id": "reference", "file_version_id": "ref-version", "original_filename": "flow.xlsx", "role": "reference", "rule_version_id": None},
-                {"file_id": SOURCE, "file_version_id": VERSION, "original_filename": "control.xlsx", "role": "target", "rule_version_id": "version-b"},
-            ]
-            reads, writes = [], []
-            page.on("request", lambda request: writes.append(request.url) if request.method in ("POST", "PUT") else None)
-            page.route("**/api/drafts/" + JOB, lambda route: route.fulfill(json={"id": JOB, "status": "open", "items": items}))
+            versions, reads, creates, writes = {}, [], [], []
+            page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT"} else None)
+            page.route("**/api/audit-template-catalog", lambda route: route.fulfill(json={"coverage_universe": [f"type-{i}" for i in range(17)], "customers": []}))
+            page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
 
-            def read_latest(route):
-                reads.append(route.request.url)
-                if "/reference/" in route.request.url and sum("/reference/" in url for url in reads) == 1:
+            def upload(route):
+                body = route.request.post_data_json
+                version = {key: body[key] for key in ("original_filename", "byte_size", "content_type", "sha256")}
+                version.update(id=body["request_id"], file_id=body["request_id"], status="staging")
+                versions[version["id"]] = version
+                route.fulfill(status=201, json=version)
+
+            def blob(route):
+                version = versions[route.request.url.split("/versions/")[1].split("/")[0]]
+                version["status"] = "ready"
+                route.fulfill(json=version)
+
+            def job(version, ready=False):
+                return {
+                    "id": "validation-" + version["id"],
+                    "source_file_id": version["file_id"],
+                    "source_file_version_id": version["id"],
+                    "status": "succeeded" if ready else "queued",
+                    "result": {"state": "valid", "reasons": []} if ready else None,
+                }
+
+            def latest(route):
+                version = versions[route.request.url.split("/versions/")[1].split("/")[0]]
+                reads.append((route.request.method, "latest", version["id"]))
+                route.fulfill(json={"validation": job(version, version["original_filename"] == "control.xlsx")})
+
+            def read_validation(route):
+                ident = route.request.url.rsplit("/", 1)[1]
+                reads.append((route.request.method, "job", ident))
+                if sum(kind == "job" for _method, kind, _ident in reads) == 1:
                     route.abort("failed")
                 else:
-                    reference = "/reference/" in route.request.url
-                    route.fulfill(json={"analysis": {"id": "ref-analysis" if reference else "target-analysis", "status": "failed" if reference else "succeeded"}})
+                    version = versions[ident.removeprefix("validation-")]
+                    route.fulfill(json={**job(version, True), "result": {"state": "invalid", "reasons": ["此文件无法读取。"]}})
 
-            page.route("**/api/files/*/versions/*/analysis", read_latest)
-            page.route("**/api/file-analyses/ref-analysis", lambda route: route.fulfill(json={"id": "ref-analysis", "status": "failed"}))
-            page.route(
-                "**/api/file-analyses/target-analysis",
-                lambda route: route.fulfill(
-                    json={
-                        "id": "target-analysis",
-                        "status": "succeeded",
-                        "result": {
-                            "metadata": {"customer": "CETUS", "model": None, "part": None},
-                            "document_type": "控制计划",
-                            "matched_rule_id": "version-b",
-                            "matching_status": "matched",
-                            "notices": [],
-                        },
-                    }
-                ),
+            def create_validation(route):
+                creates.append(route.request.post_data_json)
+                route.fulfill(status=500, json={"error": "unexpected_validation_creation"})
+
+            page.route("**/api/files", upload)
+            page.route("**/api/files/*/versions/*/blob", blob)
+            page.route("**/api/files/*/versions/*/validation", latest)
+            page.route("**/api/file-validations/*", read_validation)
+            page.route("**/api/file-validations", create_validation)
+            page.goto(WEB + "/audit")
+            page.get_by_label("选择审核文件", exact=True).set_input_files(
+                [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in ("flow.xlsx", "control.xlsx")]
             )
-            page.goto(WEB + "/?draft=" + JOB)
-            expect(page.get_by_role("button", name="重新读取 flow.xlsx 的识别结果")).to_be_visible()
-            expect(page.get_by_text("CETUS", exact=True)).to_be_visible()
-            expect(page.get_by_role("alert")).to_have_count(0)
-            expect(page.get_by_test_id("item-rule")).to_have_value("version-b")
-            page.get_by_role("button", name="重新读取 flow.xlsx 的识别结果").click()
-            expect(page.get_by_text("识别未完成，请核对原件", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="重新读取 flow.xlsx 的识别结果")).to_have_count(0)
-            expect(page.get_by_text("匹配失败，请手动选择", exact=True)).to_have_count(0)
-            self.assertEqual(len(reads), 3)
-            self.assertEqual(writes, [])
+            retry = page.get_by_role("button", name="重新读取 flow.xlsx 检查结果", exact=True)
+            expect(retry).to_be_enabled()
+            expect(page.get_by_role("checkbox", name="选择 control.xlsx", exact=True)).to_be_checked()
+            expect(page.get_by_role("heading", name="异常文件 · 1 份", exact=True)).to_be_visible()
+            retry.click()
+            expect(page.get_by_text("此文件无法读取。", exact=True)).to_be_visible()
+            expect(retry).to_have_count(0)
+            expect(page.get_by_role("checkbox", name="选择 control.xlsx", exact=True)).to_be_checked()
+            flow = next(version for version in versions.values() if version["original_filename"] == "flow.xlsx")
+            self.assertEqual([(method, ident) for method, kind, ident in reads if kind == "job"], [("GET", "validation-" + flow["id"])] * 2)
+            self.assertEqual(len(reads), 4)
+            self.assertEqual(creates, [])
+            self.assertEqual([path for method, path in writes if method == "POST"], ["/api/files", "/api/files"])
             browser.close()
 
     def test_lost_or_invalid_blob_reply_reads_original_request_without_reupload(self):
