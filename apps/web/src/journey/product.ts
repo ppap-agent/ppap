@@ -67,19 +67,23 @@ export async function publishBasis(basis: RequirementBasis, declaration?: {scope
   bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128
   const hex = Array.from(bytes.slice(0, 16), value => value.toString(16).padStart(2, '0')).join('')
   const requestId = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
+  function verified(rule: RuleDetail, exactId = false) {
+    if (!rule?.id || exactId && rule.id !== requestId || rule.title !== title || canonical(rule.body) !== content || rule.source_file_id !== server.material.file_id || rule.source_file_version_id !== server.material.file_version_id || (rule.predecessor_id ?? null) !== (server.ruleId ?? null) || canonical(rule.case_context) !== canonical(case_context)) throw new Error('保存回执与本次要求不一致。未采用该版本，请核对原请求。')
+    return rule
+  }
   async function find() {
     const direct = await request<RuleDetail>(`/rules/${requestId}`).catch(cause => {if ((cause as {status?: number}).status === 403 || (cause as {status?: number}).status === 404) return null; throw cause})
-    if (direct) return direct
+    if (direct) return verified(direct, true)
     const list = await request<RulesList>('/rules')
     for (const row of list.rules.filter(row => row.title === basis.source.title)) {
       const rule = await request<RuleDetail>(`/rules/${row.id}`)
-      if (rule.source_file_version_id === server.material.file_version_id && canonical(rule.body) === content && canonical(rule.case_context) === canonical(case_context)) return rule
+      if (rule.source_file_version_id === server.material.file_version_id && canonical(rule.body) === content && canonical(rule.case_context) === canonical(case_context)) return verified(rule)
     }
     return null
   }
   let rule = await find()
   if (!rule) {
-    try {rule = await request<RuleDetail>('/rules', 'POST', {request_id: requestId, title, body, source_file_version_id: server.material.file_version_id, predecessor_id: server.ruleId ?? null, case_context})}
+    try {rule = verified(await request<RuleDetail>('/rules', 'POST', {request_id: requestId, title, body, source_file_version_id: server.material.file_version_id, predecessor_id: server.ruleId ?? null, case_context}), true)}
     catch (cause) {
       const found = await find().catch(() => null)
       if (!found) throw cause

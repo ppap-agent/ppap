@@ -537,36 +537,44 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            pending, posts = self.route(page, hold=True)
-            page.goto(WEB + "/rules")
-            expect(page.get_by_test_id("rule-versions")).to_contain_text("规则 B")
-            page.get_by_test_id("new-rule").click()
-            with page.expect_request("**/api/rules/parse"):
-                page.get_by_test_id("rule-file").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
-            expect(page.get_by_test_id("rule-back")).to_be_disabled()
-            expect(page.get_by_test_id("rule-file")).to_be_disabled()
-            page.evaluate("() => { document.querySelector('[data-testid=rule-back]')?.click(); }")
-            self.assertEqual(len(pending), 1)
-            pending[0].fulfill(status=202, json={"id": posts[0]["request_id"], "status": "queued"}, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"})
-            page.wait_for_timeout(100)
-            page.route(
-                "**/api/rules/parse/" + posts[0]["request_id"],
-                lambda route: route.fulfill(
+            state = self.requirement_routes(page, status="queued")
+            state["hold_next_parse"] = True
+            self.open_requirement(page)
+            expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
+            first = state["parses"][0]
+            self.assertEqual(len(state["held"]), 1)
+            page.get_by_role("link", name="返回审核要求", exact=True).click()
+            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "B.json", "mimeType": "application/json", "buffer": b"second"})
+            state["status"] = "succeeded"
+            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_role("button", name="提取条款", exact=True).click()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+            page.get_by_label("要求名称", exact=True).fill("第二份要求")
+            second = state["parses"][1]
+            self.assertNotEqual(first["source_file_version_id"], second["source_file_version_id"])
+            self.assertNotEqual(first["request_id"], second["request_id"])
+            state["writes"].clear()
+            with page.expect_response(lambda response: response.request.method == "POST" and response.request.post_data_json.get("request_id") == first["request_id"]) as late:
+                state["held"][0].fulfill(
+                    status=202,
                     json={
-                        "id": posts[0]["request_id"],
+                        "id": first["request_id"],
                         "status": "succeeded",
                         "source_file_id": SOURCE,
-                        "source_file_version_id": VERSION,
+                        "source_file_version_id": first["source_file_version_id"],
                         "document_type": "控制计划",
-                        "result": {"title": "规则 A", "body": BODY, "source_file_version_id": VERSION},
+                        "result": {"title": "迟到的旧要求", "body": BODY, "source_file_version_id": first["source_file_version_id"]},
                     },
-                    headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"},
-                ),
-            )  # noqa: E501
-            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
-            expect(page.locator("#rule-origin")).to_contain_text("新规则")
-            expect(page.get_by_test_id("rule-back")).to_be_enabled()
-            self.assertEqual(len(posts), 1)
+                )
+            late.value.finished()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("第二份要求")
+            expect(page.get_by_role("region", name="要求条款", exact=True).get_by_role("article")).to_have_count(1)
+            expect(page.get_by_role("main")).not_to_contain_text("迟到的旧要求")
+            self.assertEqual(len(state["parses"]), 2)
+            self.assertEqual(state["saves"], [])
+            self.assertEqual(state["writes"], [])
             browser.close()
 
     def test_refresh_reads_unknown_without_submitting_and_warns_before_explicit_rerun(self):
@@ -701,33 +709,24 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            _, posts = self.route(page)
-            original_requests = []
-
-            def original_task(route):
-                original_requests.append(route.request.method)
-                if route.request.method == "OPTIONS":
-                    route.fulfill(status=204, headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "content-type"})
-                    return
-                route.fulfill(
-                    json={"id": JOB, "status": "failed", "source_file_id": SOURCE, "source_file_version_id": VERSION, "document_type": "", "result": {"error": "rule_type_required"}},
-                    headers={"Access-Control-Allow-Origin": WEB, "Access-Control-Allow-Credentials": "true"},
-                )  # noqa: E501
-
-            page.route("**/api/rules/parse/" + JOB, original_task)
-            page.goto(WEB + "/rules?parse=" + JOB)
-            expect(page.locator("#rule-message")).to_contain_text("请选择文档类型")
-            expect(page.locator("#parse-type")).to_have_value("")
-            self.assertEqual(posts, [])
-            page.locator("#parse-type").select_option("控制计划")
-            page.get_by_test_id("rerun-rule").click()
-            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
-            self.assertEqual(len(posts), 1)
-            self.assertNotEqual(posts[0]["request_id"], JOB)
-            self.assertEqual(posts[0]["source_file_id"], SOURCE)
-            self.assertEqual(posts[0]["source_file_version_id"], VERSION)
-            self.assertEqual(posts[0]["document_type"], "控制计划")
-            self.assertEqual([method for method in original_requests if method != "OPTIONS"], ["GET"])
+            state = self.requirement_routes(page, status="failed")
+            self.open_requirement(page)
+            expect(page.get_by_role("alert").filter(has_text="要求提取失败")).to_be_visible()
+            first = state["parses"][0]
+            state["writes"].clear()
+            page.get_by_label("适用资料类型").select_option("全功能检验报告")
+            state["status"] = "succeeded"
+            page.get_by_role("button", name="重新提取条款", exact=True).click()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+            expect(page.get_by_text("适用资料：全功能检验报告", exact=True)).to_be_visible()
+            self.assertEqual(len(state["parses"]), 2)
+            retried = state["parses"][1]
+            self.assertNotEqual(retried["request_id"], first["request_id"])
+            self.assertEqual(retried["source_file_id"], first["source_file_id"])
+            self.assertEqual(retried["source_file_version_id"], first["source_file_version_id"])
+            self.assertEqual(retried["document_type"], "全功能检验报告")
+            self.assertEqual(state["writes"], [("POST", "/rules/parse")])
+            self.assertEqual(state["saves"], [])
             browser.close()
 
     def test_save_success_clears_the_leave_guard_before_navigation(self):
@@ -736,26 +735,140 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            self.route(page)
+            state = self.requirement_routes(page)
             dialogs = []
-
-            def on_dialog(dialog):
-                dialogs.append(dialog.type)
-                dialog.dismiss()
-
-            page.on("dialog", on_dialog)
-            page.goto(WEB + "/rules?parse=" + JOB)
-            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
-            page.get_by_test_id("publish-rule").click()
-            page.wait_for_function(
-                """() => location.search.includes('saved=1') || (document.querySelector('[data-testid=publish-rule]') || {}).textContent?.includes('打开已保存规则')""",
-                timeout=5000,
-            )
+            page.on("dialog", lambda dialog: (dialogs.append(dialog.type), dialog.dismiss()))
+            self.open_requirement(page)
+            self.check_requirement(page)
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+            self.assertEqual(len(state["saves"]), 1)
+            published = state["saves"][0]
+            self.assertEqual(published["title"], "已核对要求")
+            self.assertEqual(published["body"]["rules"][0]["rule_to_check"], "检查 A")
+            self.assertEqual(published["source_file_version_id"], state["source"]["id"])
+            expect(page.get_by_label("要求名称", exact=True)).to_have_count(0)
+            state["writes"].clear()
+            page.get_by_role("link", name="返回审核要求", exact=True).click()
+            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
+            page.reload()
+            expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="创建新版本", exact=True)).to_be_enabled()
+            expect(page.get_by_role("dialog")).to_have_count(0)
+            self.assertEqual(state["writes"], [])
             self.assertEqual(dialogs, [])
-            if "saved=1" not in page.url:
-                expect(page.get_by_test_id("publish-rule")).to_have_text("打开已保存规则")
-                expect(page.get_by_test_id("publish-rule")).to_be_enabled()
             browser.close()
+
+    def requirement_routes(self, page, *, status="succeeded"):
+        """Current requirement library protocol; only its external HTTP seam is controlled."""
+        self.route(page)
+        state = {"source": {}, "parses": [], "saves": [], "rules": {}, "writes": [], "held": [], "status": status, "save_status": 201}
+        page.on("request", lambda request: state["writes"].append((request.method, urlsplit(request.url).path.removeprefix("/api"))) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
+        page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
+        page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+        page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划", "全功能检验报告"]}))
+
+        def create_file(route):
+            self.assertEqual(route.request.method, "POST")
+            value = route.request.post_data_json
+            state["source"].update(
+                file_id=SOURCE,
+                id=value["request_id"],
+                original_filename=value["original_filename"],
+                byte_size=value["byte_size"],
+                content_type=value["content_type"],
+                sha256=value["sha256"],
+                status="staging",
+            )
+            route.fulfill(status=201, json=state["source"])
+
+        def blob(route):
+            self.assertEqual(route.request.method, "PUT")
+            state["source"]["status"] = "ready"
+            route.fulfill(json=state["source"])
+
+        def rules(route):
+            if route.request.method == "GET":
+                route.fulfill(json={"rules": [{**rule, **{key: rule["body"][key] for key in ("customers", "models", "parts")}} for rule in state["rules"].values()]})
+            else:
+                self.assertEqual(route.request.method, "POST")
+                value = route.request.post_data_json
+                state["saves"].append(value)
+                if state["save_status"] >= 400:
+                    route.fulfill(status=state["save_status"], json={"error": "save_failed"})
+                else:
+                    rule = {**value, "id": value["request_id"], "kind": "engine", "type": value["body"]["type"], "source_file_id": SOURCE, "created_at": "2026-10-18T00:00:00Z"}
+                    rule.update(state.get("reply_patch", {}))
+                    state["rules"][rule["id"]] = rule
+                    if state.get("drop_save_reply"):
+                        route.abort("failed")
+                    else:
+                        route.fulfill(status=201, json=rule)
+
+        def rule(route):
+            self.assertEqual(route.request.method, "GET")
+            found = state["rules"].get(urlsplit(route.request.url).path.rsplit("/", 1)[1])
+            route.fulfill(json=found) if found else route.fulfill(status=404, json={"error": "missing"})
+
+        def parse(route):
+            self.assertEqual(route.request.method, "POST")
+            value = route.request.post_data_json
+            state["parses"].append(value)
+            if state.pop("hold_next_parse", False):
+                state["held"].append(route)
+            else:
+                route.fulfill(status=202, json=parse_job(value["request_id"], "queued"))
+
+        def parse_job(identity, status):
+            original = next(value for value in state["parses"] if value["request_id"] == identity)
+            return {
+                "id": identity,
+                "status": status,
+                "source_file_id": original["source_file_id"],
+                "source_file_version_id": original["source_file_version_id"],
+                "document_type": original["document_type"],
+                "result": {"title": "规则 A", "body": {**BODY, "type": original["document_type"]}, "source_file_version_id": original["source_file_version_id"]}
+                if status == "succeeded"
+                else {"error": "rule_parse_failed"}
+                if status == "failed"
+                else None,
+            }
+
+        def read_parse(route):
+            self.assertEqual(route.request.method, "GET")
+            route.fulfill(json=parse_job(urlsplit(route.request.url).path.rsplit("/", 1)[1], state["status"]))
+
+        page.route("**/api/files", create_file)
+        page.route("**/api/files/*/versions/*", lambda route: route.fulfill(json=state["source"]))
+        page.route("**/api/files/*/versions/*/blob", blob)
+        page.route("**/api/rules", rules)
+        page.route("**/api/rules/*", rule)
+        page.route("**/api/rules/parse", parse)
+        page.route("**/api/rules/parse/*", read_parse)
+        return state
+
+    def open_requirement(self, page):
+        page.goto(WEB + "/?view=requirements")
+        page.get_by_label("上传共用要求文件").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
+        page.get_by_label("适用资料类型").select_option("控制计划")
+        page.get_by_role("button", name="提取条款", exact=True).click()
+
+    def check_requirement(self, page):
+        from playwright.sync_api import expect
+
+        expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+        page.get_by_label("要求名称", exact=True).fill("已核对要求")
+        for label in ("不限定客户", "不限定零件", "不限定图纸修订"):
+            page.get_by_label(label, exact=True).check()
+        page.get_by_label("来源说明／变更原因", exact=True).fill("已按原件核对。")
+        clause = page.get_by_role("article", name="条款 1", exact=True)
+        clause.get_by_role("button", name="编辑条款", exact=True).click()
+        clause.get_by_label("出处位置", exact=True).fill("原件第 1 条")
+        clause.get_by_label("1 已核对来源", exact=True).check()
+        clause.get_by_role("button", name="完成编辑", exact=True).click()
+        page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
 
     def test_save_failure_returns_to_the_editable_candidate(self):
         from playwright.sync_api import expect
@@ -763,14 +876,27 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            self.route(page, publish_status=500)
-            page.goto(WEB + "/rules?parse=" + JOB)
-            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
-            page.get_by_test_id("publish-rule").click()
-            expect(page.locator("#rule-message")).to_contain_text("请求失败")
-            expect(page.get_by_test_id("publish-rule")).to_have_text("保存规则")
-            expect(page.get_by_test_id("publish-rule")).to_be_enabled()
-            expect(page.get_by_test_id("rule-title")).to_be_enabled()
+            state = self.requirement_routes(page)
+            state["save_status"] = 500
+            self.open_requirement(page)
+            self.check_requirement(page)
+            save = page.get_by_role("button", name="确认并保存版本", exact=True)
+            save.click()
+            expect(page.get_by_role("alert").filter(has_text="请求失败（500）")).to_be_visible()
+            expect(save).to_be_enabled()
+            expect(page.get_by_label("要求名称", exact=True)).to_be_enabled()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("已核对要求")
+            expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("已按原件核对。")
+            expect(page.get_by_label("1 已核对来源", exact=True)).to_be_checked()
+            self.assertEqual(len(state["saves"]), 1)
+            self.assertEqual(state["rules"], {})
+            # A same-content retry must reuse the original publication identity.
+            state["save_status"] = 201
+            save.click()
+            expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+            self.assertEqual(len(state["saves"]), 2)
+            self.assertEqual(state["saves"][0], state["saves"][1])
+            self.assertEqual(len(state["rules"]), 1)
             browser.close()
 
     def test_confirmed_abandon_leaves_without_a_second_prompt(self):
@@ -779,7 +905,7 @@ class RuleInteractionTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
-            self.route(page)
+            state = self.requirement_routes(page)
             dialogs = []
 
             def on_dialog(dialog):
@@ -787,13 +913,74 @@ class RuleInteractionTests(unittest.TestCase):
                 dialog.dismiss()
 
             page.on("dialog", on_dialog)
-            page.goto(WEB + "/rules?parse=" + JOB)
-            expect(page.get_by_test_id("rule-title")).to_have_value("规则 A")
-            page.get_by_test_id("rule-back").click()
-            expect(page.get_by_role("dialog")).to_be_visible()
-            page.get_by_role("button", name="放弃修改").click()
-            page.wait_for_function("() => location.pathname.endsWith('/rules') && !location.search", timeout=5000)
+            self.open_requirement(page)
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+            state["writes"].clear()
+            page.get_by_role("button", name="放弃草稿", exact=True).click()
+            dialog = page.get_by_role("dialog", name="放弃这个版本草稿？", exact=True)
+            expect(dialog).to_be_visible()
+            dialog.get_by_role("button", name="继续编辑", exact=True).click()
+            expect(dialog).to_have_count(0)
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+            page.get_by_role("button", name="放弃草稿", exact=True).click()
+            dialog.get_by_role("button", name="放弃此草稿", exact=True).click()
+            expect(dialog).to_have_count(0)
+            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="还没有审核要求", exact=True)).to_be_visible()
+            page.reload()
+            expect(page.get_by_role("heading", name="还没有审核要求", exact=True)).to_be_visible()
+            self.assertEqual(state["writes"], [])
+            self.assertEqual(state["saves"], [])
             self.assertEqual(dialogs, [])
+            browser.close()
+
+    def test_rule_publication_refuses_conflicting_frozen_snapshot(self):
+        from playwright.sync_api import expect
+
+        conflicts = [
+            {"source_file_version_id": "00000000-0000-4000-8000-000000000099"},
+            {"source_file_id": "00000000-0000-4000-8000-000000000099"},
+            {"title": "另一份要求"},
+            {"body": {**BODY, "rules": [{**BODY["rules"][0], "rule_to_check": "另一条要求"}]}},
+            {"case_context": {}},
+            {"predecessor_id": JOB},
+        ]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for conflict in conflicts:
+                with self.subTest(field=next(iter(conflict))):
+                    page = browser.new_page()
+                    state = self.requirement_routes(page)
+                    state["reply_patch"] = conflict
+                    self.open_requirement(page)
+                    self.check_requirement(page)
+                    page.get_by_role("button", name="确认并保存版本", exact=True).click()
+                    expect(page.get_by_role("alert").filter(has_text="保存回执与本次要求不一致")).to_be_visible()
+                    expect(page.get_by_role("status").filter(has_text="已保存")).to_have_count(0)
+                    expect(page.get_by_label("要求名称", exact=True)).to_have_value("已核对要求")
+                    expect(page.get_by_role("button", name="确认并保存版本", exact=True)).to_be_enabled()
+                    self.assertEqual(len(state["saves"]), 1)
+                    self.assertEqual(state["saves"][0]["source_file_version_id"], state["source"]["id"])
+                    page.close()
+            browser.close()
+
+    def test_lost_rule_publication_reply_reads_the_original_request_without_reposting(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            state["drop_save_reply"] = True
+            self.open_requirement(page)
+            self.check_requirement(page)
+            state["writes"].clear()
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+            self.assertEqual(len(state["saves"]), 1)
+            self.assertEqual(state["writes"], [("POST", "/rules")])
+            expect(page.get_by_label("要求名称", exact=True)).to_have_count(0)
+            self.assertIn("reqVersion=" + state["saves"][0]["request_id"], page.url)
             browser.close()
 
 
