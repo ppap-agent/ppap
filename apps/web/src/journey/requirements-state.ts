@@ -41,8 +41,8 @@ export function resolveBasisConflict(basis: RequirementBasis, choice: Requiremen
   })}
 }
 export function clauseSourceReady(clause: RequirementClause, basis?: RequirementBasis): boolean {
-  if (![clause.title, clause.text, clause.source, clause.location].every(value => value.trim()) || clause.location.includes('待核对')) return false
-  if (!basis?.server) return true
+  if (![clause.title, clause.text, clause.source, clause.location].every(value => value.trim())) return false
+  if (!basis?.server) return !clause.location.includes('待核对')
   const source = clause.provenance
   if (!source?.id || source.fileVersionId !== basis.server.material.file_version_id || source.location !== clause.location || source.excerpt !== clause.original || clause.source !== basis.server.material.original_filename) return false
   const catalog = basis.server.sources

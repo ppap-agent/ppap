@@ -35,3 +35,9 @@ test('editing placeholder or checking boxes cannot replace provenance; ambiguous
   assert.ok(libraryDraftIssues(collection).some(issue => issue.includes('出处')))
   assert.equal(restoreRequirementSources(basis, {file_version_id: 'v1', units: [unit, {...unit, id: 'other'}]}), basis)
 })
+test('real source validity never depends on words in the sheet name', () => {
+  const basis = draft().draft.basis
+  const real = {...unit, id: 'xlsx:待核对表:B2', location: '待核对表 · B2'}
+  const linked = {...basis, server: {...basis.server, sources: {file_version_id: 'v1', units: [real]}}, clauses: [{...basis.clauses[0], location: real.location, provenance: {...real, fileVersionId: 'v1'}}]}
+  assert.equal(verifiedClauseCount(linked), 1)
+})
