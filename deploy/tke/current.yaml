@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: ea3d83698aed6a80a1ed4ada76641999f86caee0
+  PPAP_BUILD_SHA: 31de9ea9e3dd87fb7e80504efdfdd8f2fe4827c6
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -411,7 +411,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: unregistry.xixifusi.online/ppap-api:ea3d83698aed6a80a1ed4ada76641999f86caee0
+          image: unregistry.xixifusi.online/ppap-api:31de9ea9e3dd87fb7e80504efdfdd8f2fe4827c6
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -505,7 +505,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: unregistry.xixifusi.online/ppap-deep:ea3d83698aed6a80a1ed4ada76641999f86caee0
+          image: unregistry.xixifusi.online/ppap-deep:31de9ea9e3dd87fb7e80504efdfdd8f2fe4827c6
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -554,7 +554,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: unregistry.xixifusi.online/ppap-worker:ea3d83698aed6a80a1ed4ada76641999f86caee0
+          image: unregistry.xixifusi.online/ppap-worker:31de9ea9e3dd87fb7e80504efdfdd8f2fe4827c6
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -636,7 +636,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: unregistry.xixifusi.online/ppap-web:ea3d83698aed6a80a1ed4ada76641999f86caee0
+          image: unregistry.xixifusi.online/ppap-web:31de9ea9e3dd87fb7e80504efdfdd8f2fe4827c6
           imagePullPolicy: Always
           ports:
             - containerPort: 4173
