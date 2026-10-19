@@ -46,6 +46,10 @@ const driveCatalog = [
   {source: {token: 'preview-native-bitable', name: '控制计划（多维表格）', type: 'bitable'}, index: 1, filename: '控制计划（多维表格）.xlsx', mime: documents[1].mime},
   {source: {token: 'preview-native-docx', name: '控制计划（飞书文档）', type: 'docx'}, index: 1, filename: '控制计划（飞书文档）.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
   {source: {token: 'preview-native-doc', name: '控制计划（旧版文档）', type: 'doc'}, index: 1, filename: '控制计划（旧版文档）.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
+  ...scene === 'drive-many' ? Array.from({length: 24}, (_, index) => {
+    const name = `控制计划-尾门扰流板总成-图纸修订RevC-${String(index + 1).padStart(2, '0')}.xlsx`
+    return {source: {token: `preview-many-${index}`, name, type: 'file'}, index: 1, filename: name, mime: documents[1].mime}
+  }) : [],
 ]
 let nextTask = 1
 let driveReads = 0
@@ -92,11 +96,12 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   customers: [{value: 'sample-customer', label: '示例客户'}],
   authenticate: async () => {authenticated = true},
   drive: {
-    list: async ({folderToken} = {}) => {
+    list: async ({folderToken, pageToken} = {}) => {
       driveReads += 1
       if (scene === 'drive-denied') throw new Error('authorization_required')
       if (scene === 'drive-error' && driveReads === 1) throw new Error('preview_read_failed')
       if (scene.startsWith('drive-folders')) return {files: folderToken === 'nested' ? [driveCatalog[1].source] : folderToken === 'project' ? [driveCatalog[0].source, {token: 'nested', name: '补充资料', type: 'folder'}] : [{token: 'project', name: '客户项目', type: 'folder'}]}
+      if (scene === 'drive-many') return folderToken ? {files: [driveCatalog[0].source]} : {files: [...driveCatalog.filter(row => row.source.token.startsWith('preview-many-')).slice(pageToken ? 12 : 0, pageToken ? 24 : 12).map(row => row.source), ...pageToken ? [] : [{token: 'project', name: '客户项目', type: 'folder'}]], next_page_token: pageToken ? undefined : 'more'}
       return {files: scene === 'drive-empty' ? [] : [...driveCatalog.map(row => row.source), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
     },
   },
