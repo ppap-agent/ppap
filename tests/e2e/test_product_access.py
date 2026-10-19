@@ -168,15 +168,30 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     assert page.url == WEB + "/audit?task=original-task&report=frozen-report#original-clause"
 
 
-def test_native_templates_can_read_provider_permissions_without_offering_a_write(page):
+def test_native_templates_can_read_provider_permissions_without_unverified_management(page):
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
     page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
-    page.route("**/api/audit-template-catalog", lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": [{"customer_id": "customer-a", "name": "客户 A", "effective_rule_types": ["1"]}]}))
-    page.route("**/api/audit-templates?*", lambda route: route.fulfill(json={
-        "query": {"customer_id": "customer-a", "search": "", "page": 1, "page_size": 10}, "folder_id": "bound-folder", "folder_revision": "frozen-revision",
-        "folder_template_count": 0, "creator_name": "创建人", "manage_access": {"state": "unknown", "reason": "管理权限未确认"}, "zip_access": {"state": "allowed", "reason": None}, "items": [], "total": 0,
-    }))
+    page.route(
+        "**/api/audit-template-catalog",
+        lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": [{"customer_id": "customer-a", "name": "客户 A", "effective_rule_types": ["1"]}]}),
+    )
+    page.route(
+        "**/api/audit-templates?*",
+        lambda route: route.fulfill(
+            json={
+                "query": {"customer_id": "customer-a", "search": "", "page": 1, "page_size": 10},
+                "folder_id": "bound-folder",
+                "folder_revision": "frozen-revision",
+                "folder_template_count": 0,
+                "creator_name": "创建人",
+                "manage_access": {"state": "unknown", "reason": "管理权限未确认"},
+                "zip_access": {"state": "allowed", "reason": None},
+                "items": [],
+                "total": 0,
+            }
+        ),
+    )
     reads = []
 
     def permissions(route):
@@ -184,11 +199,17 @@ def test_native_templates_can_read_provider_permissions_without_offering_a_write
         assert route.request.method == "GET"
         assert query["customer_id"] == ["customer-a"] and query["folder_id"] == ["bound-folder"]
         reads.append(query["query"][0])
-        route.fulfill(json={
-            "folder": {"customer_id": "customer-a", "folder_id": "bound-folder"}, "permission_revision": "permissions-one", "query": query["query"][0],
-            "creator_name": "创建人", "manage_access": {"state": "unknown", "reason": "可查看协作者，暂不支持在此修改权限。"},
-            "members": [{"target": {"kind": "user", "id": "observed-user"}, "display_name": "实际协作者", "role": "可管理", "source": "unknown"}], "actions": [],
-        })
+        route.fulfill(
+            json={
+                "folder": {"customer_id": "customer-a", "folder_id": "bound-folder"},
+                "permission_revision": "permissions-one",
+                "query": query["query"][0],
+                "creator_name": "创建人",
+                "manage_access": {"state": "unknown", "reason": "当前管理权限尚未确认。"},
+                "members": [{"target": {"kind": "user", "id": "observed-user"}, "display_name": "实际协作者", "role": "可管理", "source": "unknown"}],
+                "actions": [],
+            }
+        )
 
     page.route("**/api/audit-template-permissions?*", permissions)
     page.goto(WEB + "/audit?view=templates&task=original-task")
@@ -207,3 +228,74 @@ def test_native_templates_can_read_provider_permissions_without_offering_a_write
     dialog.get_by_role("button", name="关闭", exact=True).click()
     expect(dialog).to_have_count(0)
     assert parse_qs(urlsplit(page.url).query) == {"view": ["templates"], "task": ["original-task"]}
+
+
+def test_native_permission_change_recovers_the_original_request_after_page_reload(page):
+    login_config(page)
+    page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
+    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
+    page.route(
+        "**/api/audit-template-catalog",
+        lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": [{"customer_id": "customer-a", "name": "客户 A", "effective_rule_types": ["1"]}]}),
+    )
+    page.route(
+        "**/api/audit-templates?*",
+        lambda route: route.fulfill(
+            json={
+                "query": {"customer_id": "customer-a", "search": "", "page": 1, "page_size": 10},
+                "folder_id": "bound-folder",
+                "folder_revision": "frozen-revision",
+                "folder_template_count": 0,
+                "creator_name": None,
+                "manage_access": {"state": "allowed", "reason": None},
+                "zip_access": {"state": "allowed", "reason": None},
+                "items": [],
+                "total": 0,
+            }
+        ),
+    )
+    action = {"id": "change-reader", "target": {"kind": "user", "id": "reader"}, "target_name": "协作者", "before": "可阅读", "after": "可编辑", "label": "设为可编辑"}
+    calls, receipts = [], []
+
+    def permissions(route):
+        route.fulfill(
+            json={
+                "folder": {"customer_id": "customer-a", "folder_id": "bound-folder"},
+                "permission_revision": "acl-current" if receipts else "acl-original",
+                "query": "",
+                "creator_name": None,
+                "manage_access": {"state": "unknown" if receipts else "allowed", "reason": None},
+                "members": [{"target": action["target"], "display_name": "协作者", "role": "可编辑" if receipts else "可阅读", "source": "direct"}],
+                "actions": [] if receipts else [action],
+                "change": receipts[0] if receipts else None,
+            }
+        )
+
+    def apply(route):
+        calls.append(route.request.method)
+        receipts.append({"request": route.request.post_data_json, "state": "unknown", "result_revision": None, "reason": "未取得原修改回执。"})
+        route.fulfill(json=receipts[0])
+
+    def read(route):
+        calls.append(route.request.method)
+        assert route.request.url.endswith("/" + receipts[0]["request"]["request_id"])
+        route.fulfill(json=receipts[0])
+
+    page.route("**/api/audit-template-permissions?*", permissions)
+    page.route("**/api/audit-template-permission-changes", apply)
+    page.route("**/api/audit-template-permission-changes/*", read)
+    page.goto(WEB + "/audit?view=templates&task=original-task")
+    page.get_by_role("button", name="管理文件夹权限", exact=True).click()
+    dialog = page.get_by_role("dialog", name="文件夹权限", exact=True)
+    dialog.get_by_role("combobox", name="修改 协作者 的权限", exact=True).click()
+    page.get_by_role("option", name="设为可编辑", exact=True).click()
+    page.get_by_role("dialog", name="确认权限修改", exact=True).get_by_role("button", name="确认这项修改", exact=True).click()
+    expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
+    assert calls == ["POST"]
+    page.reload()
+    page.get_by_role("button", name="管理文件夹权限", exact=True).click()
+    expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
+    expect(dialog.get_by_role("combobox")).to_have_count(0)
+    dialog.get_by_role("button", name="读取原修改回执", exact=True).click()
+    expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
+    assert calls == ["POST", "GET"]

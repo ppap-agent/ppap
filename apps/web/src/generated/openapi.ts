@@ -517,6 +517,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-template-permission-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Permission */
+        post: operations["apply_permission_audit_template_permission_changes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-permission-changes/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Permission Change */
+        get: operations["read_permission_change_audit_template_permission_changes__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-template-permissions": {
         parameters: {
             query?: never;
@@ -2518,7 +2552,7 @@ export interface components {
         };
         /**
          * AuditTemplatePermissionReceipt
-         * @description A matching ACL read is not confirmation that the original mutation succeeded.
+         * @description result_revision identifies an acknowledged change, not the latest ACL read.
          */
         AuditTemplatePermissionReceipt: {
             /** Reason */
@@ -2545,6 +2579,7 @@ export interface components {
         AuditTemplatePermissions: {
             /** Actions */
             actions: components["schemas"]["AuditTemplatePermissionAction"][];
+            change?: components["schemas"]["AuditTemplatePermissionReceipt"] | null;
             /** Creator Name */
             creator_name: string | null;
             folder: components["schemas"]["AuditTemplatePermissionFolder"];
@@ -4899,6 +4934,108 @@ export interface operations {
                 };
                 content: {
                     "application/zip": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_permission_audit_template_permission_changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * AuditTemplatePermissionAction
+                     * @description One service-authorized choice, not a browser-defined ACL policy.
+                     */
+                    action: {
+                        /** After */
+                        after: string | null;
+                        /** Before */
+                        before: string | null;
+                        /** Id */
+                        id: string;
+                        /** Label */
+                        label: string;
+                        /** AuditShareTargetReference */
+                        target: {
+                            /** Id */
+                            id: string;
+                            /**
+                             * Kind
+                             * @enum {string}
+                             */
+                            kind: "user" | "group";
+                        };
+                        /** Target Name */
+                        target_name: string;
+                    };
+                    /** AuditTemplatePermissionFolder */
+                    folder: {
+                        /** Customer Id */
+                        customer_id: string;
+                        /** Folder Id */
+                        folder_id: string;
+                    };
+                    /** Permission Revision */
+                    permission_revision: string;
+                    /** Request Id */
+                    request_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplatePermissionReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_permission_change_audit_template_permission_changes__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplatePermissionReceipt"];
                 };
             };
             /** @description Validation Error */

@@ -12,8 +12,10 @@ import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
 
-export const nativeTemplatePermissionAdapter: Pick<AuditTemplatePermissionAdapter, 'readPermissions'> = {
+export const nativeTemplatePermissionAdapter: Required<AuditTemplatePermissionAdapter> = {
   readPermissions: (folder, query) => request(`/audit-template-permissions?${new URLSearchParams({...folder, query})}`),
+  apply: command => request('/audit-template-permission-changes', 'POST', command),
+  readChange: command => request(`/audit-template-permission-changes/${encodeURIComponent(command.request_id)}`),
 }
 
 export const nativeSharingAdapter: AuditSharingAdapter = {

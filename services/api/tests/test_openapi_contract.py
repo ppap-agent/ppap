@@ -185,8 +185,9 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertTrue(any(option["type"] == "null" for option in metric["value"]["anyOf"]))
         self.assertEqual(schemas["AuditUsageQuery"]["properties"]["page_size"]["const"], 10)
 
-    def test_ui_template_permission_change_has_its_own_revision_and_original_request_receipt(self):
-        schemas = app.openapi()["components"]["schemas"]
+    def test_template_permission_change_has_live_routes_and_an_original_request_receipt(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
         snapshot = schemas["AuditTemplatePermissions"]["properties"]
         for field in ("folder", "permission_revision", "manage_access", "members", "actions", "query"):
             self.assertIn(field, snapshot)
@@ -197,7 +198,12 @@ class OpenAPIContractTests(unittest.TestCase):
         receipt = schemas["AuditTemplatePermissionReceipt"]
         self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "applied", "rejected", "conflict", "unknown"])
         self.assertIn("result_revision", receipt["required"])
-        self.assertEqual(receipt["x-contract-stage"], "ui-draft")
+        self.assertNotIn("x-contract-stage", receipt)
+        path = "/audit-template-permission-changes"
+        self.assertEqual(set(_request_schema(spec["paths"][path]["post"])["required"]), set(request["required"]))
+        for operation in (spec["paths"][path]["post"], spec["paths"][path + "/{request_id}"]["get"]):
+            self.assertEqual(_response_schema(operation)["$ref"], "#/components/schemas/AuditTemplatePermissionReceipt")
+        self.assertIn("change", snapshot)
 
     def test_ui_template_share_freezes_customer_folder_and_template_versions_not_reports(self):
         schemas = app.openapi()["components"]["schemas"]

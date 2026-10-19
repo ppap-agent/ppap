@@ -1366,6 +1366,7 @@ class AuditTemplatePermissions(TypedDict):
     manage_access: AuditArchiveAccess
     members: list[AuditTemplatePermissionMember]
     actions: list[AuditTemplatePermissionAction]
+    change: NotRequired[AuditTemplatePermissionReceipt | None]
 
 
 class AuditTemplatePermissionRequest(TypedDict):
@@ -1376,7 +1377,7 @@ class AuditTemplatePermissionRequest(TypedDict):
 
 
 class AuditTemplatePermissionReceipt(TypedDict):
-    """A matching ACL read is not confirmation that the original mutation succeeded."""
+    """result_revision identifies an acknowledged change, not the latest ACL read."""
 
     request: AuditTemplatePermissionRequest
     state: Literal["pending", "applied", "rejected", "conflict", "unknown"]

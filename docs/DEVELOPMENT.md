@@ -236,6 +236,10 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 模板分享固定完整客户集合，不受搜索和分页影响；链接不自动授权，撤权不能收回已发送的 ZIP 副本。`scene=templates-share-partial` 演示逐目标失败，未知目标只读回，明确失败且服务允许时才单独重试。文件夹权限使用独立的 `permission_revision` 和服务提供的单项动作；`templates-permissions-unknown` 演示读取当前权限不能代替原修改回执。关闭、切客户或撤权后保留原请求的读取入口；`templates-share-race` 和 `templates-permissions-race` 可手动返回迟到回执。这些预览不发送飞书消息，也不写入 Drive 权限。
 
+原生目录权限使用 `GET /audit-template-permissions` 的当次用户身份和直接管理授权，服务端提供普通直接协作者的阅读／编辑切换。`POST /audit-template-permission-changes` 再核对身份、目录、完整权限修订与所选操作；只有飞书返回相同对象和新角色的成功回执才记为已修改。`result_revision` 标识该已确认修改，不是后来读取的 ACL。恢复使用 `GET /audit-template-permission-changes/{request_id}`，不发送第二次修改；未知记录随权限读取恢复到原弹窗，预览场景 `templates-permissions-pending` 演示整页刷新后的恢复。当前不支持新增／移除协作者、管理权限变更及无法确认的继承管理权；受控测试不代替真实目录验收。
+
+`TemplatePermissionChange.tla` 是两个固定请求竞争一个目录的有限 Safety 模型，分开持久发送边界、外部效果和回执，允许外部无响应、晚到效果及发送后数据库断线。正向配置检查不重发、成功必须有原回执及发送边界的锁授权；三个故障配置分别暴露违规。模型不证明飞书授权实现、外部人工修改的原子性或最终完成。协作者读取的范围依据[飞书官方 CLI 说明](https://github.com/larksuite/cli/blob/main/skills/lark-drive/references/lark-drive-workflow-permission-governance.md)，仅当前目标的直接授权，不代表完整继承链。
+
 补充模板的三个入口共用本页附件与提报状态。`scene=feedback-unknown` 演示提交后丢失回执；`feedback-submit-loading` 和 `feedback-upload-loading` 可手动返回迟到结果。关闭后允许读取原请求，只有明确终结且允许重试才建立新尝试。此预览只保留本页内存中的附件字节，不写入飞书运营表，也不自动改变审核规则。
 
 用量记录使用 `__preview?page=audit&view=usage&scene=usage-ready`。四卡读取服务提供的自然月汇总，不由明细筛选计算；每行固定一份文件的一次 500 点业务消费，免费／付费分配和技术重试不增加行数。历史入口复用冻结审核引用，不回退最新结果。`usage-quota-unknown`、`usage-revoked`、`usage-race` 分别演示未知额度、撤权和迟到读取；只读刷新不触发外部收费。这是共享 DTO 与明确样例，不是现有整轮用量账的逐文件投影，也不验证真实结算。

@@ -87,7 +87,7 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         assert response.headers["cache-control"] == "private, no-store"
         page = response.json()
         assert page["creator_name"] == "模板创建人"
-        assert page["manage_access"]["state"] == "unknown"
+        assert page["manage_access"] == {"state": "allowed", "reason": None}
         permissions_query = {"customer_id": "海岸线", "folder_id": page["folder_id"], "query": ""}
         permissions = client.get("/audit-template-permissions", params=permissions_query)
         assert permissions.status_code == 200
@@ -96,7 +96,12 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         assert observed["folder"] == {"customer_id": "海岸线", "folder_id": page["folder_id"]}
         assert observed["members"] == [{"target": {"kind": "user", "id": "template-reader"}, "display_name": "模板创建人", "role": "可管理", "source": "unknown"}]
         assert observed["actions"] == []
-        assert observed["manage_access"]["state"] == "unknown"
+        assert observed["manage_access"] == {"state": "allowed", "reason": None}
+        folder_meta["createUid"] = "99999"
+        non_creator = client.get("/audit-template-permissions", params=permissions_query).json()
+        assert non_creator["creator_name"] is None
+        assert non_creator["manage_access"] == {"state": "allowed", "reason": None}
+        folder_meta["createUid"] = "12345"
         assert client.get("/audit-template-permissions", params={**permissions_query, "folder_id": str(uuid.uuid4())}).status_code == 403
         filtered_permissions = client.get("/audit-template-permissions", params={**permissions_query, "query": "未找到"}).json()
         assert filtered_permissions["members"] == []
@@ -105,6 +110,7 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         read_only = client.get("/audit-template-permissions", params=permissions_query).json()
         assert read_only["permission_revision"] != observed["permission_revision"]
         assert read_only["members"][0]["role"] == "可阅读"
+        assert read_only["manage_access"]["state"] == "unknown"
         assert read_only["actions"] == []
         members[0]["perm"] = "full_access"
         members.append({"member_type": "openchat", "member_id": "internal-group", "name": "模板协作组", "perm": "view", "type": "chat"})
@@ -141,7 +147,7 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
             unverified = client.get("/audit-templates", params={"customer_id": "海岸线"})
             assert unverified.status_code == 200
             assert unverified.json()["creator_name"] is None
-            assert unverified.json()["manage_access"]["state"] == "unknown"
+            assert unverified.json()["manage_access"]["state"] == ("unknown" if target is profile and field in {"tenant_key", "open_id"} else "allowed")
             assert unverified.json()["total"] == 1
             if target is profile and field in {"tenant_key", "open_id"}:
                 assert client.get("/audit-template-permissions", params=permissions_query).status_code == 403

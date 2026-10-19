@@ -15,7 +15,7 @@ const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_c
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
 
-test('native template permissions read the selected folder with cookies and expose no mutation capability', async () => {
+test('native template permissions read the selected folder with cookies', async () => {
   let selected: URL | null = null
   globalThis.fetch = async (address, init) => {
     assert.equal(init?.method, 'GET')
@@ -26,8 +26,20 @@ test('native template permissions read the selected folder with cookies and expo
   await nativeTemplatePermissionAdapter.readPermissions({customer_id: '客户 & A', folder_id: 'frozen-folder'}, '张 & 王')
   assert.equal(selected!.pathname, '/audit-template-permissions')
   assert.deepEqual(Object.fromEntries(selected!.searchParams), {customer_id: '客户 & A', folder_id: 'frozen-folder', query: '张 & 王'})
-  assert.equal('apply' in nativeTemplatePermissionAdapter, false)
-  assert.equal('readChange' in nativeTemplatePermissionAdapter, false)
+})
+
+test('native template permission recovery reads the original command without replaying it', async () => {
+  const input: components['schemas']['AuditTemplatePermissionRequest'] = {request_id: 'original-request', folder: {customer_id: 'customer-a', folder_id: 'folder-a'}, permission_revision: 'acl-one', action: {id: 'change-one', target: {kind: 'user', id: 'reader'}, target_name: 'Reader', before: '可阅读', after: '可编辑', label: '设为可编辑'}}
+  const calls: string[] = []
+  globalThis.fetch = async (address, init) => {
+    assert.equal(init?.credentials, 'include')
+    calls.push(`${init?.method} ${address}`)
+    if (init?.method === 'POST') assert.deepEqual(JSON.parse(String(init.body)), input)
+    return json({})
+  }
+  await nativeTemplatePermissionAdapter.apply(input)
+  await nativeTemplatePermissionAdapter.readChange(input)
+  assert.deepEqual(calls, ['POST /audit-template-permission-changes', 'GET /audit-template-permission-changes/original-request'])
 })
 
 test('native report sharing reads exact recipient attempts and never turns a read into another send', async () => {

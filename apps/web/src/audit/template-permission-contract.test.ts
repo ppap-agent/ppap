@@ -24,3 +24,14 @@ test('only the exact original permission receipt confirms a mutation, never a ma
     assert.equal(permissionUnresolved({...receipt, state, result_revision: null}), ['pending', 'unknown'].includes(state))
   }
 })
+
+test('a restored unresolved change must belong to the selected folder and cannot unlock another mutation', () => {
+  const change = {request, state: 'unknown' as const, result_revision: null, reason: null}
+  const restored: TemplatePermissions = {...snapshot, manage_access: {state: 'unknown', reason: null}, actions: [], change}
+  assert.equal(validPermissions(restored, folder, ''), true)
+  assert.equal(validPermissions({...restored, actions: [action]}, folder, ''), false)
+  assert.equal(validPermissions({...restored, change: {...change, request: {...request, folder: {...folder, folder_id: 'another'}}}}, folder, ''), false)
+  assert.equal(validPermissions({...restored, change: {...change, state: 'applied', result_revision: 'later'}}, folder, ''), false)
+  assert.equal(validPermissions({...snapshot, change}, folder, ''), false)
+  assert.equal(validPermissions({...restored, change: {...change, request: {...request, request_id: ''}}}, folder, ''), false)
+})

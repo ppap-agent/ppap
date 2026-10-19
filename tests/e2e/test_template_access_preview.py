@@ -12,6 +12,23 @@ if PREVIEW:
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class TemplateAccessPreviewTests(unittest.TestCase):
+    def test_unresolved_permission_request_survives_a_full_page_reload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?view=templates&scene=templates-permissions-pending")
+            for _ in range(2):
+                page.get_by_role("button", name="管理文件夹权限", exact=True).click()
+                dialog = page.get_by_role("dialog", name="文件夹权限", exact=True)
+                expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
+                expect(dialog.get_by_role("combobox")).to_have_count(0)
+                expect(dialog.get_by_role("button", name="读取原修改回执", exact=True)).to_be_in_viewport(ratio=1)
+                dialog.get_by_role("button", name="读取原修改回执", exact=True).click()
+                expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
+                self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+                page.reload()
+            browser.close()
+
     def test_template_copy_requires_the_complete_zip_and_works_on_mobile(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

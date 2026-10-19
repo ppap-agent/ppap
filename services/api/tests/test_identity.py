@@ -572,7 +572,9 @@ class HttpAuthTests(unittest.TestCase):
         hidden = client.get("/enter-current", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(hidden.status_code, 404)
         self.assertFalse(hidden.cookies.get("ppap_edition"))
-        hidden_deep_link = client.get("/enter-current", params={"return_to": "http://127.0.0.1:4173/audit?task=private-task&report=private-report"}, cookies={"ppap_session": cookie}, follow_redirects=False)
+        hidden_deep_link = client.get(
+            "/enter-current", params={"return_to": "http://127.0.0.1:4173/audit?task=private-task&report=private-report"}, cookies={"ppap_session": cookie}, follow_redirects=False
+        )
         self.assertEqual(hidden_deep_link.status_code, 404)
         self.assertFalse(hidden_deep_link.cookies.get("ppap_edition"))
         hidden_legacy = client.get("/enter-legacy", cookies={"ppap_session": cookie}, follow_redirects=False)

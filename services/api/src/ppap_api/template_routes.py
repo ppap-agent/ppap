@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import re
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,9 @@ from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_drive import FeishuExportError, FeishuMetaError, PermanentFailure, UnsupportedDocType, import_drive_material
 from ppap_core.files import MAX_UPLOAD_BYTES, ObjectMissing, attachment_content_disposition
 from ppap_core.report_sharing import ReportSharingError, report_share_profile
+from ppap_product_store.template_permissions import TemplatePermissionChangeStore
 from ppap_product_store.templates import freeze_template, template_file_id, template_folder_id
+from pydantic import TypeAdapter
 
 from ppap_api import web_contract as wc
 from ppap_api.rule_routes import template_catalog
@@ -30,6 +33,8 @@ class TemplateError(Exception):
 
 
 def register_template_routes(app, store, session_of, http, settings):
+    changes = TemplatePermissionChangeStore(store)
+
     @app.exception_handler(TemplateError)
     async def template_error(_request, error):
         return JSONResponse({"error": error.code}, status_code=error.status, headers=HEADERS)
@@ -160,8 +165,7 @@ def register_template_routes(app, store, session_of, http, settings):
         except (httpx.HTTPError, ValueError, TypeError):
             return None
 
-    @app.get("/audit-template-permissions", response_model=wc.AuditTemplatePermissions)
-    def read_permissions(request: Request, customer_id: str, folder_id: str, query: str = Query(default="", max_length=200)):
+    def permission_snapshot(request, customer_id, folder_id, query=""):
         session, source = source_of(request, customer_id)
         if folder_id != template_folder_id(session.principal.tenant_id, source.customer_id, source.folder_token):
             raise TemplateError("access_denied", 403)
@@ -205,7 +209,10 @@ def register_template_routes(app, store, session_of, http, settings):
                         "target": {"kind": key[0], "id": key[1]},
                         "display_name": name.strip() if isinstance(name, str) and name.strip() else "名称未取得",
                         "role": roles[item["perm"]],
-                        "source": "unknown",
+                        # The member-list API covers direct grants, not the
+                        # inheritance chain. full_access may also be an owner;
+                        # never offer destructive changes for that role.
+                        "source": "direct" if item["perm"] in {"view", "edit"} else "unknown",
                     }
                 )
             members.sort(key=lambda row: (row["target"]["kind"], row["target"]["id"]))
@@ -213,23 +220,148 @@ def register_template_routes(app, store, session_of, http, settings):
         except (httpx.HTTPError, ValueError, TypeError, KeyError):
             raise TemplateError("feishu_permissions_unavailable", 503) from None
         search = query.strip()
-        return JSONResponse(
-            {
-                "folder": {"customer_id": customer_id, "folder_id": folder_id},
-                "permission_revision": revision,
-                "query": search,
-                "creator_name": creator_name(session, source),
-                "manage_access": {"state": "unknown", "reason": "可查看协作者，暂不支持在此修改权限。"},
-                "members": [member for member in members if search.casefold() in member["display_name"].casefold()],
-                "actions": [],
-            },
-            headers=HEADERS,
-        )
+        managed = any(item["member_type"] == "openid" and item["member_id"] == session.principal.subject and item["perm"] == "full_access" for item in items)
+        visible = [member for member in members if search.casefold() in member["display_name"].casefold()]
+        actions = []
+        for member in visible if managed else []:
+            if member["source"] != "direct" or member["role"] not in {"可阅读", "可编辑"}:
+                continue
+            after = "可编辑" if member["role"] == "可阅读" else "可阅读"
+            actions.append(
+                {
+                    "id": member["target"]["kind"] + ":" + member["target"]["id"] + ":" + after,
+                    "target": member["target"],
+                    "target_name": member["display_name"],
+                    "before": member["role"],
+                    "after": after,
+                    "label": "设为" + after,
+                }
+            )
+        return {
+            "folder": {"customer_id": customer_id, "folder_id": folder_id},
+            "permission_revision": revision,
+            "query": search,
+            "creator_name": creator_name(session, source),
+            "manage_access": {"state": "allowed", "reason": None} if managed else {"state": "unknown", "reason": "暂时无法确认当前用户的文件夹管理权限。"},
+            "members": visible,
+            "actions": actions,
+        }
+
+    @app.get("/audit-template-permissions", response_model=wc.AuditTemplatePermissions)
+    def read_permissions(request: Request, customer_id: str, folder_id: str, query: str = Query(default="", max_length=200)):
+        snapshot = permission_snapshot(request, customer_id, folder_id, query)
+        session, _source = source_of(request, customer_id)
+        change, unresolved = changes.unresolved(session.principal, folder_id)
+        snapshot["change"] = change
+        if unresolved:
+            snapshot["manage_access"] = {"state": "unknown", "reason": "此文件夹已有待确认的权限修改，请先读取原修改回执。"}
+            snapshot["actions"] = []
+        return JSONResponse(snapshot, headers=HEADERS)
+
+    @app.post("/audit-template-permission-changes", response_model=wc.AuditTemplatePermissionReceipt, openapi_extra=wc.openapi_body(wc.AuditTemplatePermissionRequest))
+    def apply_permission(request: Request, body: dict):
+        try:
+            command = TypeAdapter(wc.AuditTemplatePermissionRequest).validate_python(body, strict=True)
+            request_id = str(uuid.UUID(command["request_id"]))
+        except ValueError:
+            raise TemplateError("invalid_permission_request", 422) from None
+        if request_id != command["request_id"]:
+            raise TemplateError("invalid_permission_request", 422)
+        session, source = source_of(request, command["folder"]["customer_id"])
+        folder_id = template_folder_id(session.principal.tenant_id, source.customer_id, source.folder_token)
+        if folder_id != command["folder"]["folder_id"]:
+            raise TemplateError("access_denied", 403)
+        try:
+            with changes.operation(session.principal, request_id) as (row, guard):
+                if row:
+                    if row["payload"]["request"] != command:
+                        raise TemplateError("permission_request_conflict")
+                    if guard is not None:
+                        changes.recover(guard, row)
+                    return JSONResponse(changes.public(row), headers=HEADERS)
+                if guard is None:
+                    raise TemplateError("permission_request_pending", 503)
+                row = changes.accept(guard, session.principal, command)
+
+                def finish(state, reason=None, revision=None):
+                    row["result"].update(phase=state, state=state, reason=reason, result_revision=revision)
+                    changes.save(guard, row)
+                    return JSONResponse(changes.public(row), headers=HEADERS)
+
+                with changes.folder(guard, folder_id) as locked:
+                    if not locked or changes.unresolved(session.principal, folder_id, request_id, guard=guard)[1]:
+                        return finish("conflict", "此文件夹已有待确认的修改，请先读取原修改回执。")
+                    try:
+                        current = permission_snapshot(request, source.customer_id, folder_id)
+                    except TemplateError:
+                        return finish("rejected", "无法核实当前身份及文件夹权限，本次未提交修改。")
+                    if current["manage_access"]["state"] != "allowed":
+                        return finish("rejected", "当前文件夹管理权限未确认，本次未提交修改。")
+                    if current["permission_revision"] != command["permission_revision"]:
+                        return finish("conflict", "权限已变化，请重新读取后再修改。")
+                    if command["action"] not in current["actions"]:
+                        return finish("rejected", "本次修改不在当前可用操作中，请重新读取。")
+                    target = command["action"]["target"]
+                    member = {"member_type": "openid" if target["kind"] == "user" else "openchat", "perm": "edit" if command["action"]["after"] == "可编辑" else "view"}
+                    # Commit the dispatch fence before I/O. A lost connection
+                    # cannot acquire a new guard or repeat the provider call.
+                    row["result"].update(phase="dispatching", state="unknown", reason="修改已提交，正在等待原回执。")
+                    changes.save(guard, row)
+                    try:
+                        response = http.put(
+                            OPEN + f"/drive/v1/permissions/{source.folder_token}/members/{target['id']}",
+                            params={"type": "folder", "need_notification": "false"},
+                            headers={"Authorization": "Bearer " + session.access_token},
+                            json=member,
+                            timeout=20,
+                        )
+                        body = response.json()
+                        if isinstance(body, dict) and type(body.get("code")) is int:
+                            if response.status_code in {400, 403, 404} and body["code"] in {1063001, 1063002, 1063004, 1063005, 99991672}:
+                                return finish("rejected", "飞书未允许本次权限修改。")
+                            result = body.get("data", {}).get("member") if isinstance(body.get("data"), dict) else None
+                            if (
+                                response.status_code == 200
+                                and body["code"] == 0
+                                and isinstance(result, dict)
+                                and all(result.get(key) == value for key, value in {"member_id": target["id"], **member}.items())
+                            ):
+                                # This revision binds the acknowledged change,
+                                # not an unrelated later ACL observation.
+                                revision = hashlib.sha256(json.dumps([command, {"member_id": target["id"], **member}], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                                return finish("applied", revision=revision)
+                    except (httpx.HTTPError, ValueError, TypeError):
+                        pass
+                    return finish("unknown", "未取得可靠修改回执。请读取原请求，不要重复修改。")
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
+
+    @app.get("/audit-template-permission-changes/{request_id}", response_model=wc.AuditTemplatePermissionReceipt)
+    def read_permission_change(request: Request, request_id: uuid.UUID):
+        session = session_of(request)
+        if not session:
+            raise TemplateError("unauthenticated", 401)
+        if session.principal.app_id != settings.feishu_app_id:
+            raise TemplateError("access_denied", 403)
+        try:
+            with changes.operation(session.principal, str(request_id)) as (row, guard):
+                if row is None:
+                    raise TemplateError("permission_request_missing", 404)
+                if guard is not None:
+                    changes.recover(guard, row)
+                return JSONResponse(changes.public(row), headers=HEADERS)
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
 
     @app.get("/audit-templates", response_model=wc.AuditTemplatePage)
     def list_templates(request: Request, customer_id: str, search: str = Query(default="", max_length=200), page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=10, le=10)):
         session, source = source_of(request, customer_id)
         folder_id, revision, items = snapshot(session, source)
+        manage_access = {"state": "unknown", "reason": "暂时无法确认文件夹管理权限。"}
+        try:
+            manage_access = permission_snapshot(request, customer_id, folder_id)["manage_access"]
+        except TemplateError:
+            pass
         filtered = [item for item in items if search.strip().casefold() in (item["file"]["original_filename"] + " " + item["document_type"]).casefold()]
         return JSONResponse(
             {
@@ -238,7 +370,7 @@ def register_template_routes(app, store, session_of, http, settings):
                 "folder_revision": revision,
                 "folder_template_count": len(items),
                 "creator_name": creator_name(session, source),
-                "manage_access": {"state": "unknown", "reason": "暂时无法确认文件夹管理权限。"},
+                "manage_access": manage_access,
                 "zip_access": {"state": "allowed", "reason": None},
                 "items": filtered[(page - 1) * 10 : page * 10],
                 "total": len(filtered),
