@@ -194,8 +194,22 @@ exit 0
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-worker:") for image in images))
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-deep:") for image in images))
         self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-web:") for image in images))
+        app_images = [image for image in images if image.startswith("unregistry.xixifusi.online/ppap-")]
+        self.assertEqual(len(app_images), 4)
+        self.assertRegex(config["data"]["PPAP_BUILD_SHA"], r"^[0-9a-f]{40}$")
+        self.assertEqual({image.rsplit(":", 1)[1] for image in app_images}, {config["data"]["PPAP_BUILD_SHA"]})
         self.assertTrue(any("postgres:" in image for image in images))
         self.assertTrue(any(image.startswith("docker.io/pgsty/silo:") for image in images))
+        database_keys = {"PPAP_PG_API_PASSWORD", "PPAP_PG_WORKER_PASSWORD", "PPAP_PG_MIGRATOR_PASSWORD", "PPAP_PG_BOOTSTRAP_PASSWORD"}
+        for doc in docs:
+            for container in _containers(doc):
+                name = container.get("name")
+                if name not in {"api", "worker", "deep", "init-bucket"}:
+                    continue
+                self.assertFalse(any("secretRef" in entry for entry in container.get("envFrom", [])), name)
+                keys = {entry.get("valueFrom", {}).get("secretKeyRef", {}).get("key") for entry in container.get("env", [])}
+                expected = {"PPAP_PG_API_PASSWORD"} if name == "api" else {"PPAP_PG_WORKER_PASSWORD"} if name in {"worker", "deep"} else set()
+                self.assertEqual(keys & database_keys, expected, name)
         worker = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker" for container in _containers(doc) if container.get("name") == "worker")
         init_db = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-init-db" for container in _containers(doc) if container.get("name") == "init-db")
         init_command = "\n".join(init_db.get("args") or [])

@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 231487f14bf942e11cc80e5f646bd091d4b24f00
+  PPAP_BUILD_SHA: 800c07d94fe89be3f547e25e496358ab87ab6b48
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -360,8 +360,17 @@ spec:
           envFrom:
             - configMapRef:
                 name: ppap-current
-            - secretRef:
-                name: ppap-current
+          env:
+            - name: PPAP_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_ACCESS_KEY
+            - name: PPAP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_SECRET_KEY
           command: ["sh", "-c"]
           args:
             - |
@@ -402,16 +411,50 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: unregistry.xixifusi.online/ppap-api:231487f14bf942e11cc80e5f646bd091d4b24f00
+          image: unregistry.xixifusi.online/ppap-api:800c07d94fe89be3f547e25e496358ab87ab6b48
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
           envFrom:
             - configMapRef:
                 name: ppap-current
-            - secretRef:
-                name: ppap-current
           env:
+            - name: PPAP_PG_API_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_API_PASSWORD
+            - name: PPAP_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_ACCESS_KEY
+            - name: PPAP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_SECRET_KEY
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: LLM_API_KEY
+            - name: LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: LLM_BASE_URL
+            - name: FEISHU_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: FEISHU_APP_SECRET
+            - name: FEISHU_VERIFICATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: FEISHU_VERIFICATION_TOKEN
+                  optional: true
             - name: PPAP_SERVICE
               value: api
             - name: PPAP_ONLYOFFICE_SECRET
@@ -462,14 +505,37 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: unregistry.xixifusi.online/ppap-deep:231487f14bf942e11cc80e5f646bd091d4b24f00
+          image: unregistry.xixifusi.online/ppap-deep:800c07d94fe89be3f547e25e496358ab87ab6b48
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: ppap-current
-            - secretRef:
-                name: ppap-current
           env:
+            - name: PPAP_PG_WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_WORKER_PASSWORD
+            - name: PPAP_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_ACCESS_KEY
+            - name: PPAP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_SECRET_KEY
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: LLM_API_KEY
+            - name: LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: LLM_BASE_URL
             - name: PPAP_SERVICE
               value: deep
           volumeMounts:
@@ -483,14 +549,42 @@ spec:
               cpu: "1"
               memory: 2Gi
         - name: worker
-          image: unregistry.xixifusi.online/ppap-worker:231487f14bf942e11cc80e5f646bd091d4b24f00
+          image: unregistry.xixifusi.online/ppap-worker:800c07d94fe89be3f547e25e496358ab87ab6b48
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: ppap-current
-            - secretRef:
-                name: ppap-current
           env:
+            - name: PPAP_PG_WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_PG_WORKER_PASSWORD
+            - name: PPAP_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_ACCESS_KEY
+            - name: PPAP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: PPAP_S3_SECRET_KEY
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: LLM_API_KEY
+            - name: LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: LLM_BASE_URL
+            - name: FEISHU_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppap-current
+                  key: FEISHU_APP_SECRET
             - name: PPAP_SERVICE
               value: worker
           command: ["sh", "-c"]
@@ -537,7 +631,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: unregistry.xixifusi.online/ppap-web:231487f14bf942e11cc80e5f646bd091d4b24f00
+          image: unregistry.xixifusi.online/ppap-web:800c07d94fe89be3f547e25e496358ab87ab6b48
           imagePullPolicy: Always
           ports:
             - containerPort: 4173
