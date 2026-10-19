@@ -1281,6 +1281,10 @@ class RuleInteractionTests(unittest.TestCase):
                 page.route("**/api/rules", publish_rule)
                 page.route("**/api/rules/*", read_rule)
                 page.route(
+                    "**/api/files/rule-source/versions/rule-source-version",
+                    lambda route: route.fulfill(json={"file_id": "rule-source", "id": "rule-source-version", "original_filename": "原始规则.json", "status": "ready"}),
+                )
+                page.route(
                     "**/api/files/rule-source/versions/rule-source-version/rule-sources",
                     lambda route: route.fulfill(json={"file_version_id": "rule-source-version", "units": [{"id": "B4", "location": "工作表 B4", "excerpt": "检查 A"}]}),
                 )

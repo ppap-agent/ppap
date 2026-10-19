@@ -15,7 +15,7 @@ import {ProgressPrototype} from './progress'
 import {ConceptApp, isReviewDraft, savedReviewSummary, type IntakeHandoff} from './concept'
 import {draftPrefix, isObject, listDrafts, readDraft, useSavedDraft} from './saved-draft'
 import {ProductAccess, AccountMenu, isPreview, useAccess} from './access'
-import {dateLabel, executionLabels, request, type Draft, type DraftCreateRequest, type Material, type Round, type RuleDetail} from '../api'
+import {dateLabel, executionLabels, request, type Draft, type DraftCreateRequest, type FileVersion, type Material, type Round, type RuleDetail} from '../api'
 import {message, useRemote, inputItems} from './remote'
 import {loadRuleCollections, parsedBasis, roundInput} from './product'
 import {useLiveAudit} from './live-audit'
@@ -602,7 +602,11 @@ export function JourneyApp() {
         if (bound?.body.kind === 'engine') {
           const rule = await request<RuleDetail>(`/rules/${encodeURIComponent(bound.id)}`, 'GET', undefined, signal)
           const base = localBasis(rule.title)
-          if (rule.source_file_id && rule.source_file_version_id) base.server = {body: bound.body, ruleId: bound.id, material: {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: rule.title, role: 'reference', rule_version_id: null}}
+          if (rule.source_file_id && rule.source_file_version_id) {
+            const source = await request<FileVersion>(`/files/${rule.source_file_id}/versions/${rule.source_file_version_id}`, 'GET', undefined, signal)
+            base.source.filename = source.original_filename
+            base.server = {body: bound.body, ruleId: bound.id, material: {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: source.original_filename, role: 'reference', rule_version_id: null}}
+          }
           const parsed = parsedBasis(base, {title: bound.title, body: bound.body, source_file_version_id: rule.source_file_version_id || ''})
           parsed.source = {...parsed.source, id: bound.id, version: rule.created_at.slice(0, 16).replace('T', ' ')}
           parsed.clauses = parsed.clauses.map(row => ({...row, applicability: 'apply'}))
