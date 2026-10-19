@@ -86,9 +86,9 @@ class NativeEntryDatabaseTests(AuditDatabaseCase):
         self.assertEqual(response.headers["location"], target)
         self.assertEqual(response.cookies.get("ppap_edition"), "current")
         foreign = client.get("/enter-current?return_to=https://foreign.example/audit", follow_redirects=False)
-        self.assertEqual(foreign.headers["location"], "http://127.0.0.1:4173/")
+        self.assertEqual(foreign.headers["location"], "http://127.0.0.1:4173/audit")
         loop = client.get("/enter-current", params={"return_to": "http://127.0.0.1:4173/enter-current"}, follow_redirects=False)
-        self.assertEqual(loop.headers["location"], "http://127.0.0.1:4173/")
+        self.assertEqual(loop.headers["location"], "http://127.0.0.1:4173/audit")
         self.settings.current_tenant_allowlist = "unrelated-tenant"
         self.assertEqual(client.get("/enter-current", params={"return_to": target}, follow_redirects=False).status_code, 404)
 
