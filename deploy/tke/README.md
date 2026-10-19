@@ -39,6 +39,8 @@ ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `
 
 Secret `ppap-current` is not in git. Create it once from the production env file (passwords, LLM, Feishu secret, S3 keys). Host fields in the ConfigMap already point at in-cluster Services.
 
+API reads only its API database password; Worker and Deep read only the Worker password. Runtime containers must use explicit `secretKeyRef` entries, not `envFrom` for the whole Secret. Bootstrap and migrator credentials belong to database initialization, not application processes. Adding a new secret setting requires an explicit reference in its owning container.
+
 ONLYOFFICE Community 10.0 has a separate Deployment, ClusterIP Service and Secret
 `ppap-current-office`; it does not replace the legacy instance or depend on
 remote-dev. Create its JWT Secret once, without putting its value in Git:
@@ -61,7 +63,11 @@ export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ip
 
 `apply-current.sh` packages the numbered migration files plus the canonical `migrations/apply.sh` runner into the migration ConfigMap. The filenames are the only migration ordering authority. All workload objects, Services, PVCs, application ConfigMap, and edition-proxy objects are rendered from the canonical Kustomize target. The script performs `kubectl apply --dry-run=server` before the real apply, then waits for the existing Deployments and init Jobs and verifies the expected Services.
 
+Completed Jobs do not run again when the migration ConfigMap changes, and their Pod templates are immutable. For an existing-stack upgrade, stop current application writes and retain database/object backups plus the previous Job definitions and logs. Confirm the initialization Jobs have no active execution before replacing completed Jobs that must run again. Run initialization from the same rendered objects, verify the actual database migration versions, then apply the application stack. Waiting on an old `Complete` condition does not prove that new migrations ran. Never delete data PVCs as part of this rotation.
+
 No `nodeSelector`. API, Worker, Web, and Deep images must use the same current Git SHA; do not apply the manifest while any referenced image tag is missing. A Deep-only change does not require deleting or re-running the DB/bucket init Jobs.
+
+Images can be built on the host serving `unregistry.xixifusi.online`. Transfer a fixed Git commit's build sources without private environment files, then use the same `docker-bake.hcl` graph. The optional `PPAP_DEBIAN_MIRROR` build argument applies to both application and converter stages and replaces the Debian URI prefix, including its sibling `-security` repository; the mirror must serve both. On that host, tag and push through `localhost:5001/ppap-<component>:<git_sha>` to avoid sending application layers from a developer machine. Verify each image through the public `unregistry.xixifusi.online` manifest endpoint before applying the cluster objects. Do not edit source only on the build host or prune registry images needed for rollback.
 
 Build the existing `ppap-worker:<git_sha>` image from this source, then build `ppap-deep:<git_sha>` with `--platform linux/amd64 --build-arg PPAP_APP_IMAGE=ppap-worker:<git_sha> -f deploy/deep/Dockerfile`. Push the Deep image to `unregistry.xixifusi.online/ppap-deep:<git_sha>`, update the four app image tags and `PPAP_BUILD_SHA` in `current.yaml` together, then apply. Preserve the existing Secret, PostgreSQL, Silo, queue, and shared UDS; this is not a new platform or data migration.
 
