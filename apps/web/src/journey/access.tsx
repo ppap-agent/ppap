@@ -36,7 +36,7 @@ export function AccountMenu({compact = false, className, onUsage, showLocalRecor
   </DropdownMenu>
 }
 
-export function ProductAccess({children, recordValidators = emptyValidators}: {children: ReactNode; recordValidators?: RecordValidators}) {
+export function ProductAccess({children, recordValidators = emptyValidators, recordsReturnTo}: {children: ReactNode; recordValidators?: RecordValidators; recordsReturnTo?: string}) {
   const preview = isPreview()
   const [loginError] = useState(() => {
     const reason = new URL(location.href).searchParams.get('auth_error')
@@ -90,7 +90,7 @@ export function ProductAccess({children, recordValidators = emptyValidators}: {c
     setDraftOwner(principal ? `${principal.tenant_id}:${principal.user_id}` : null)
     return <AccessContext.Provider value={{principal, preview, logout: () => void logout(), records: () => setRecords(true)}}>
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}{children}
-    <LocalRecordsDialog open={records} onOpenChange={setRecords} validators={recordValidators}/>
+    <LocalRecordsDialog open={records} onOpenChange={setRecords} validators={recordValidators} returnTo={recordsReturnTo}/>
   </AccessContext.Provider>
   }
   return <div className={"flex min-h-dvh flex-col bg-background text-foreground"}>

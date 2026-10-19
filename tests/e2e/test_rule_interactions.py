@@ -30,6 +30,185 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_hidden_rule_upload_reply_cannot_navigate_away_from_audit(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            held = []
+            page.route("**/api/files/*/versions/*/blob", lambda route: held.append(route))
+            page.goto(WEB + "/audit?view=requirements")
+            with page.expect_request(lambda request: request.method == "PUT" and request.url.endswith("/blob")):
+                page.get_by_label("上传共用要求文件").set_input_files({"name": "迟到规则.json", "mimeType": "application/json", "buffer": b"{}"})
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            address = page.url
+            held[0].fulfill(json={**state["source"], "status": "ready"})
+            page.locator("a").filter(has_text="迟到规则").first.wait_for(state="attached")
+            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            self.assertEqual(page.url, address)
+            page.get_by_role("button", name="上传规则", exact=True).click()
+            expect(page.get_by_role("link", name="迟到规则", exact=True).filter(visible=True)).to_be_visible()
+            self.assertEqual(state["saves"], [])
+            browser.close()
+
+    def test_late_rule_publication_keeps_the_current_surface_and_navigation_generation(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for destination in ("audit", "list", "same-draft", "completed-then-back"):
+                with self.subTest(destination=destination):
+                    page = browser.new_page()
+                    state = self.requirement_routes(page)
+                    self.native_rule_routes(page, state)
+                    self.open_requirement(page, "/audit?view=requirements")
+                    self.check_requirement(page)
+                    state["hold_save_reply"] = True
+                    with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/rules")):
+                        page.get_by_role("button", name="确认并保存版本", exact=True).click()
+                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+                    if destination == "list":
+                        page.get_by_role("button", name="上传规则", exact=True).click()
+                    elif destination == "same-draft":
+                        page.go_back()
+                    address = page.url
+                    reply, rule = state["held_saves"][0]
+                    with page.expect_response("**/api/audit-template-catalog"):
+                        reply.fulfill(status=201, json=rule)
+                    if destination == "completed-then-back":
+                        expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+                        self.assertEqual(page.url, address)
+                        page.go_back()
+                    if destination in {"same-draft", "completed-then-back"}:
+                        expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
+                        self.assertIn("requirement=" + rule["id"], page.url)
+                        self.assertIn("reqVersion=" + rule["id"], page.url)
+                        page.get_by_role("link", name="返回审核规则", exact=True).click()
+                    else:
+                        expect(page.get_by_role("heading", name="审核规则" if destination == "list" else "上传 PPAP 文件", exact=True)).to_be_visible()
+                        self.assertEqual(page.url, address)
+                    if destination == "audit":
+                        page.get_by_role("button", name="上传规则", exact=True).click()
+                    expect(page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True)).to_be_visible()
+                    self.assertEqual(len(state["saves"]), 1)
+                    page.close()
+            browser.close()
+
+    def test_new_rule_draft_does_not_reuse_the_previous_publication_receipt(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements")
+            self.check_requirement(page)
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("button", name="创建新版本", exact=True)).to_be_visible()
+            page.get_by_role("button", name="创建新版本", exact=True).click()
+            page.get_by_label("版本号", exact=True).fill("v2")
+            page.get_by_label("来源说明／变更原因", exact=True).fill("第二次核对")
+            page.get_by_role("checkbox", name="1 已核对来源", exact=True).check()
+            page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("button", name="创建新版本", exact=True)).to_be_visible()
+            page.get_by_role("button", name="创建新版本", exact=True).click()
+            page.get_by_label("版本号", exact=True).fill("v3")
+            address = page.url
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.go_back()
+            expect(page.get_by_label("版本号", exact=True)).to_have_value("v3")
+            self.assertEqual(page.url, address)
+            self.assertEqual(len(state["saves"]), 2)
+            browser.close()
+
+    def test_native_local_record_recovery_returns_to_native_rules_not_preview(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for close_dialog in (False, True):
+                with self.subTest(close_dialog=close_dialog):
+                    page = browser.new_page()
+                    state = self.requirement_routes(page)
+                    self.native_rule_routes(page, state)
+                    page.goto(WEB + "/audit?view=requirements")
+                    expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+                    page.get_by_role("button", name="alice，账号菜单", exact=True).click()
+                    page.get_by_role("menuitem", name="本机草稿", exact=True).click()
+                    dialog = page.get_by_role("dialog", name="本机记录", exact=True)
+                    dialog.get_by_role("button", name="清理本机记录", exact=True).click()
+                    dialog.get_by_role("button", name="核对清理范围", exact=True).click()
+                    dialog.get_by_role("checkbox", name="我已保留所需备份，理解此浏览器中的原记录将被删除", exact=True).check()
+                    dialog.get_by_role("button", name="确认清理这 1 条记录", exact=True).click()
+                    if close_dialog:
+                        page.keyboard.press("Escape")
+                    else:
+                        dialog.get_by_role("button", name="重新打开工作台", exact=True).click()
+                    expect(page).to_have_url(WEB + "/audit?view=requirements")
+                    expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+                    expect(dialog).to_have_count(0)
+                    page.close()
+            browser.close()
+
+    def test_rule_publication_keeps_unknown_validation_request_identity(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            created, latest_reads = [], []
+
+            def latest(route):
+                latest_reads.append(route.request.url)
+                route.fulfill(json={"validation": None})
+
+            def create_validation(route):
+                created.append(route.request.post_data_json)
+                route.abort("failed")
+
+            def read_validation(route):
+                job = created[0]
+                self.assertEqual(route.request.url.rsplit("/", 1)[1], job["request_id"])
+                route.fulfill(
+                    json={
+                        "id": job["request_id"],
+                        "source_file_id": job["source_file_id"],
+                        "source_file_version_id": job["source_file_version_id"],
+                        "status": "succeeded",
+                        "result": {"state": "valid", "reasons": []},
+                    }
+                )
+
+            page.route("**/api/files/*/versions/*/validation", latest)
+            page.route("**/api/file-validations", create_validation)
+            page.route("**/api/file-validations/*", read_validation)
+            page.goto(WEB + "/audit")
+            page.get_by_label("选择审核文件", exact=True).set_input_files(
+                {"name": "未知回执.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
+            )
+            retry = page.get_by_role("button", name="重新读取 未知回执.xlsx 检查结果", exact=True)
+            expect(retry).to_be_enabled()
+            page.get_by_role("button", name="上传规则", exact=True).click()
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "新规则.json", "mimeType": "application/json", "buffer": b"{}"})
+            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_role("button", name="提取条款", exact=True).click()
+            self.check_requirement(page)
+            with page.expect_response("**/api/audit-template-catalog"):
+                page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            retry.click()
+            expect(page.get_by_role("checkbox", name="选择 未知回执.xlsx", exact=True)).to_be_checked()
+            self.assertEqual(len(created), 1)
+            self.assertEqual(len(latest_reads), 1)
+            browser.close()
+
     def test_native_audit_exposes_rule_upload_and_reuses_verified_publication(self):
         from playwright.sync_api import expect
 
@@ -1461,7 +1640,9 @@ class RuleInteractionTests(unittest.TestCase):
                     rule = {**value, "body": normalized, "id": value["request_id"], "kind": "engine", "type": value["body"]["type"], "source_file_id": SOURCE, "created_at": "2026-10-18T00:00:00Z"}
                     rule.update(state.get("reply_patch", {}))
                     state["rules"][rule["id"]] = rule
-                    if state.get("drop_save_reply"):
+                    if state.get("hold_save_reply"):
+                        state.setdefault("held_saves", []).append((route, rule))
+                    elif state.get("drop_save_reply"):
                         route.abort("failed")
                     else:
                         route.fulfill(status=201, json=rule)

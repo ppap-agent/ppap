@@ -48,11 +48,11 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true}: {
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
-  title?: string; uploadLabel?: string; onPublished?: () => void
+  title?: string; uploadLabel?: string; onPublished?: () => void; active?: boolean
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [query, setQuery] = useState(routeQuery)
@@ -63,7 +63,11 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const [editing, setEditing] = useState<string | null>(null), [sourceClause, setSourceClause] = useState<string | null>(null)
   const picker = useRef<HTMLInputElement>(null), working = useRef(false), mounted = useRef(true)
   const sourceTrigger = useRef<HTMLButtonElement>(null)
+  const visibility = useRef({active, revision: 0}), uploadRevision = useRef(0)
+  const savedSelections = useRef(new Map<string, {id: string; version: string}>())
+  if (visibility.current.active !== active) visibility.current = {active, revision: visibility.current.revision + 1}
   const latestSelection = useRef(selection); latestSelection.current = selection
+  useEffect(() => {if (!active) {setSourceClause(null); setDiscard(false)}}, [active])
   const collection = collections.find(item => item.id === selection.id)
   const draftSelected = Boolean(collection?.draft && (!selection.version || selection.version === 'draft'))
   const current = draftSelected ? collection!.draft! : selection.version ? collection?.versions.find(version => version.id === selection.version) : collection?.versions.at(-1)
@@ -100,7 +104,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   useEffect(() => {
     mounted.current = true
     const sync = () => {
-      const next = routeSelection()
+      const requested = routeSelection(), next = savedSelections.current.get(canonical(requested)) ?? requested
+      if (next !== requested) history.replaceState(history.state, '', requirementHref(next.id, next.version))
       if (next.id !== latestSelection.current.id || next.version !== latestSelection.current.version) {setAck(false); setFeedback(null); setEditing(null)}
       setSelection(next); setQuery(routeQuery()); setContent(routeContent()); setSourceClause(null)
     }
@@ -117,6 +122,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   }
   function startVersion() {
     if (working.current || !collection || !current) return
+    for (const version of ['', 'draft']) savedSelections.current.delete(canonical({id: collection.id, version}))
     if (collection.draft) {select(collection.id, 'draft'); return}
     const id = crypto.randomUUID()
     const draft: RequirementDraft = {id, baseId: current.id, scope: {...current.scope}, reason: '', basis: {...structuredClone(current.basis), library: undefined, confirmed: null, source: {...current.basis.source, id, version: ''}, clauses: current.basis.clauses.map(clause => ({...clause, checked: false, applicability: 'pending', reason: ''}))}}
@@ -134,12 +140,13 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       }
       version.basis.source.version = version.basis.source.version.trim()
       const savedOwner = collection.versions.length ? owner : version.id
+      savedSelections.current.set(canonical(selected), {id: savedOwner, version: version.id})
       onChange(items => items.map(item => item.id !== owner ? item : {...item,
         id: savedOwner,
         versions: item.versions.some(existing => existing.id === version.id) ? item.versions : [...item.versions, version],
         draft: item.draft && canonical(item.draft) === signature ? null : item.draft,
       }))
-      if (mounted.current && canonical(latestSelection.current) === canonical(selected)) {
+      if (mounted.current && visibility.current.active && canonical(latestSelection.current) === canonical(selected)) {
         select(savedOwner, version.id, true)
         setFeedback({text: `版本 ${version.basis.source.version} 已保存。已有事项仍使用各自的版本。`, failed: false})
       }
@@ -148,9 +155,10 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     finally {working.current = false; if (mounted.current) setPublishing(false)}
   }
   const upload = useLocalUploads(async ([entry]) => {
+    const revision = uploadRevision.current
     const basis = await receiveRequirement(entry), id = crypto.randomUUID()
     onChange(items => [...items, {id, versions: [], draft: {id: basis.source.id, basis, scope: {customer: '', part: '', revision: ''}, reason: '', baseId: null}}])
-    if (mounted.current) {search(''); select(id, 'draft')}
+    if (mounted.current && visibility.current.active && visibility.current.revision === revision) {search(''); select(id, 'draft')}
   }, 'requirement-library', requirementFileAccept)
   const locked = publishing || upload.busy || loading
   const changed = current?.basis.clauses.filter(clause => !base || clauseContent(clause) !== clauseContent(base.basis.clauses.find(old => old.id === clause.id) ?? {...clause, text: ''})) ?? []
@@ -166,8 +174,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, state: 'manual'}, clauses: [...draft.basis.clauses, {id, title: '', text: '', original: '', source: draft.basis.source.filename, location: '', applicability: 'pending', checked: false, reason: ''}]}}))
     setEditing(id)
   }
-  return <Dialog open={discard} onOpenChange={open => !working.current && setDiscard(open)}><section className="min-w-0 space-y-6 pb-10 text-sm">
-    <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
+  return <Dialog open={active && discard} onOpenChange={open => !working.current && setDiscard(open)}><section className="min-w-0 space-y-6 pb-10 text-sm">
+    <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {uploadRevision.current = visibility.current.revision; void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
     {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><Button disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>{uploadLabel}</Button></header>}
     {upload.busy && <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none"/>正在上传要求原件…</p>}
     {loading && <p role="status" className="text-muted-foreground">正在读取审核要求…</p>}
@@ -193,7 +201,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
             </Select>
             <Badge variant="outline">{draftSelected ? '草稿' : '已保存'}</Badge>
             <span className="text-muted-foreground">{current.basis.clauses.length} 条</span>
-            <RequirementOriginal basis={current.basis} label="查看原件"/>
+            {active && <RequirementOriginal basis={current.basis} label="查看原件"/>}
             {'at' in current && current.at && <time dateTime={current.at} className="text-xs text-muted-foreground">保存于 {new Date(current.at).toLocaleString('zh-CN')}</time>}
         </div>
       </header>
@@ -230,10 +238,10 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       </footer>}
       {related.length > 0 && <section className="border-t pt-4"><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">本浏览器引用 · {related.length} 个事项</Button></CollapsibleTrigger><CollapsibleContent><div className="divide-y">{related.map(use => <div className="flex flex-wrap items-center justify-between gap-3 py-3" key={use.id}><div className="min-w-0 space-y-1"><p className="break-words font-medium">{use.title}</p><p className="text-xs text-muted-foreground">{use.basis.source.version} · {use.submitted ? '依据已固定' : '未登记'}</p></div><Button variant="ghost" onClick={() => onOpen(use.id)}>查看事项<ArrowRight/></Button></div>)}</div></CollapsibleContent></Collapsible></section>}
     </> : !loading && !readError && <div className="space-y-3 py-12 text-center"><h1 className="text-xl font-semibold">暂时无法打开此要求版本</h1><p className="text-muted-foreground">记录不可用；未自动改选其他版本。</p><Button asChild variant="outline"><a href={requirementHref()} onClick={event => navigate(event)}>返回要求列表</a></Button></div>}
-    <Sheet open={Boolean(source)} onOpenChange={open => !open && setSourceClause(null)}><SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-full sm:data-[side=right]:max-w-lg" onCloseAutoFocus={event => {if (sourceTrigger.current?.isConnected) {event.preventDefault(); sourceTrigger.current.focus()}}}>
+    <Sheet open={active && Boolean(source)} onOpenChange={open => !open && setSourceClause(null)}><SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-full sm:data-[side=right]:max-w-lg" onCloseAutoFocus={event => {if (active && sourceTrigger.current?.isConnected) {event.preventDefault(); sourceTrigger.current.focus()}}}>
       <div className="pr-12"><SheetHeader><SheetTitle>{source ? `条款 ${source.id} · 核对出处` : '条款出处'}</SheetTitle><SheetDescription>{source ? `${source.source} · ${source.location || '出处待核对'}` : '对照原件核对条款。'}</SheetDescription></SheetHeader></div>
       {source && <div className="space-y-6 py-2 text-sm"><section className="space-y-2"><h2 className="text-sm font-medium">来源摘录</h2><blockquote className="whitespace-pre-wrap break-words border-l pl-3 leading-relaxed">{source.original || '未保存摘录，请阅读要求原件。'}</blockquote></section>{source.original.trim() !== source.text.trim() && <section className="space-y-2"><h2 className="text-sm font-medium">本版本条款</h2><p className="whitespace-pre-wrap break-words leading-relaxed">{source.text || '尚未录入条款。'}</p></section>}</div>}
-      <SheetFooter>{current && <RequirementOriginal basis={current.basis} label="查看原件"/>}<SheetClose asChild><Button variant="outline">返回条款</Button></SheetClose></SheetFooter>
+      <SheetFooter>{active && current && <RequirementOriginal basis={current.basis} label="查看原件"/>}<SheetClose asChild><Button variant="outline">返回条款</Button></SheetClose></SheetFooter>
     </SheetContent></Sheet>
     <DialogContent><DialogHeader><DialogTitle>放弃这个版本草稿？</DialogTitle><DialogDescription>只移除未确认的草稿。已保存版本和已有事项不变。</DialogDescription></DialogHeader><div className="flex justify-end gap-2"><Button variant="outline" disabled={locked} onClick={() => setDiscard(false)}>继续编辑</Button><Button disabled={locked} onClick={() => {if (working.current || !collection) return; onChange(items => items.flatMap(item => item.id !== collection.id ? [item] : item.versions.length ? [{...item, draft: null}] : [])); select(collection.versions.length ? collection.id : '', collection.versions.at(-1)?.id ?? '', true); setDiscard(false)}}>放弃此草稿</Button></div></DialogContent>
   </section></Dialog>

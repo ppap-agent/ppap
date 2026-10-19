@@ -5,7 +5,7 @@ import {loadRuleCollections} from '../journey/product'
 import {message} from '../journey/remote'
 import {useSavedDraft} from '../journey/saved-draft'
 
-export function AuditRules({onPublished}: {onPublished: () => void}) {
+export function AuditRules({onPublished, active}: {onPublished: () => void; active: boolean}) {
   const library = useSavedDraft('requirement-library', () => ({collections: []}), isRequirementLibrary)
   const [collections, setCollections] = library.field('collections')
   const [read, setRead] = useState({loading: true, error: ''})
@@ -20,5 +20,5 @@ export function AuditRules({onPublished}: {onPublished: () => void}) {
     }).catch(cause => {if (active) setRead({loading: false, error: message(cause)})})
     return () => {active = false}
   }, [revision])
-  return <RequirementLibraryPanel title="审核规则" uploadLabel="上传规则" collections={collections} onChange={setCollections} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={onPublished}/>
+  return <RequirementLibraryPanel title="审核规则" uploadLabel="上传规则" active={active} collections={collections} onChange={setCollections} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={onPublished}/>
 }

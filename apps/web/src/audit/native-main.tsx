@@ -27,15 +27,16 @@ function NativeAudit() {
     void nativeTemplateAdapter.readCatalog().then(result => {
       if (!active) return
       if (!validCatalog(result)) throw new Error('客户规则目录暂时无法读取，请重新读取。')
-      setAdapter(createNativeAuditAdapter({deepOffered, customers: result.customers.map(row => row.name)})); setError('')
+      const customers = result.customers.map(row => row.name)
+      setAdapter(current => current ? {...current, customers: customers.map(name => ({value: name, label: name}))} : createNativeAuditAdapter({deepOffered, customers})); setError('')
     }).catch(cause => {if (active) setError(cause instanceof Error ? cause.message : '无法读取审核规则。')})
     return () => {active = false}
   }, [revision])
-  if (adapter) return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake adapter={adapter} rules={<AuditRules onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} feedbackAdapter={nativeFeedbackAdapter} templateAdapter={nativeTemplateAdapter} templatePermissionAdapter={nativeTemplatePermissionAdapter} renderOriginal={renderOriginal}/></>
+  if (adapter) return <>{error && <Alert variant="destructive"><AlertTitle>客户规则目录未能刷新</AlertTitle><AlertDescription><p>已保存的规则和当前待审文件仍保留。</p><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取客户目录</Button></AlertDescription></Alert>}<AuditIntake adapter={adapter} rules={active => <AuditRules active={active} onPublished={() => setRevision(value => value + 1)}/>} archiveAdapter={nativeArchiveAdapter} usageAdapter={nativeUsageAdapter} displayAdapter={nativeDisplayAdapter} reportAdapter={nativeReportAdapter} sharingAdapter={nativeSharingAdapter} supportAdapter={nativeSupportAdapter} feedbackAdapter={nativeFeedbackAdapter} templateAdapter={nativeTemplateAdapter} templatePermissionAdapter={nativeTemplatePermissionAdapter} renderOriginal={renderOriginal}/></>
   return <main className="mx-auto max-w-xl space-y-4 p-6">{error ? <><Alert variant="destructive"><AlertTitle>暂时无法打开审核</AlertTitle><AlertDescription>{error}</AlertDescription></Alert><Button onClick={() => setRevision(value => value + 1)}>重新读取</Button></> : <p role="status">正在读取审核规则…</p>}</main>
 }
 
 const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURIComponent(id)}?read_view=true`, 'GET', undefined, signal)
 const roundId = new URL(location.href).searchParams.get('round')
 const shareId = new URL(location.href).searchParams.get('share')
-createRoot(document.getElementById('app')!).render(<ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}}><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : roundId ? <AuditRoundReader key={roundId} roundId={roundId} readRound={readRound} renderOriginal={renderOriginal}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)
+createRoot(document.getElementById('app')!).render(<ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/audit?view=requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : roundId ? <AuditRoundReader key={roundId} roundId={roundId} readRound={readRound} renderOriginal={renderOriginal}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)
