@@ -60,6 +60,9 @@ def template_share(auth_store_factory):
         if path.endswith("/download"):
             return httpx.Response(200, content=state["content"][path.split("/")[-2]])
         if "/contact/v3/users/" in path:
+            state["target_reads"] = state.get("target_reads", 0) + 1
+            if state.get("directory_unavailable") or state.get("fail_directory_after") and state["target_reads"] > state["fail_directory_after"]:
+                return httpx.Response(503, json={"code": 9999})
             return httpx.Response(
                 200,
                 json={
@@ -315,4 +318,57 @@ def test_concurrent_read_and_repeated_submit_never_reclaim_an_active_dispatch(te
             release.set()
         assert future.result().json()["deliveries"][0]["state"] == "sent"
     assert client.get(path).json()["deliveries"][0]["state"] == "sent"
+    assert len(state["sent"]) == 1
+
+
+def test_template_share_restores_original_scope_after_reload_even_when_folder_is_empty(template_share):
+    client, _store, state, folder, login, sender, reader = template_share
+    scope = client.get("/audit-template-share-scope", params=folder).json()
+    assert client.get("/audit-template-share-restore", params={"customer_id": "海岸线"}).json() is None
+    unconfirmed = client.get("/audit-template-share-restore", params={"customer_id": "海岸线", "request_id": str(uuid.uuid4())})
+    assert unconfirmed.status_code == 409
+    assert unconfirmed.json()["error"] == "share_request_pending"
+    command = {
+        "request_id": str(uuid.uuid4()),
+        "organization_id": sender.tenant_key,
+        "scope": {**{key: scope[key] for key in ("customer_id", "folder_id", "folder_revision")}, "templates": [item["reference"] for item in scope["templates"]]},
+        "targets": [{"kind": "user", "id": reader.subject}],
+        "content": {"kind": "link", "package": None},
+    }
+    state["mode"][reader.subject] = "unknown"
+    sent = client.post("/audit-template-shares", json=command)
+    assert sent.status_code == 200
+    state["files"].clear()
+    restored = client.get("/audit-template-share-restore", params={"customer_id": "海岸线"})
+    assert restored.status_code == 200
+    assert restored.json()["scope"] == scope
+    assert restored.json()["share"] == sent.json()
+    assert len(state["sent"]) == 1
+    login(reader)
+    assert client.get("/audit-template-share-restore", params={"customer_id": "海岸线"}).json() is None
+
+
+def test_failed_target_can_be_rechecked_without_resending_when_directory_recovers(template_share):
+    client, _store, state, folder, _login, sender, reader = template_share
+    scope = client.get("/audit-template-share-scope", params=folder).json()
+    command = {
+        "request_id": str(uuid.uuid4()),
+        "organization_id": sender.tenant_key,
+        "scope": {**{key: scope[key] for key in ("customer_id", "folder_id", "folder_revision")}, "templates": [item["reference"] for item in scope["templates"]]},
+        "targets": [{"kind": "user", "id": reader.subject}],
+        "content": {"kind": "link", "package": None},
+    }
+    state["fail_directory_after"] = 1
+    failed = client.post("/audit-template-shares", json=command)
+    assert failed.status_code == 200
+    assert failed.json()["deliveries"][0]["state"] == "failed"
+    assert not failed.json()["deliveries"][0]["retry_allowed"]
+    state["fail_directory_after"] = None
+    path = "/audit-template-shares/" + command["request_id"]
+    checked = client.get(path).json()
+    assert checked["deliveries"][0]["retry_allowed"]
+    assert not state["sent"]
+    retry = client.post(path + "/retries", json={"target": command["targets"][0], "attempt_id": str(uuid.uuid4())})
+    assert retry.status_code == 200
+    assert retry.json()["deliveries"][0]["state"] == "sent"
     assert len(state["sent"]) == 1

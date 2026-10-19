@@ -18,9 +18,9 @@ from ppap_core.feishu_drive import FeishuExportError, FeishuMetaError, Permanent
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import MAX_UPLOAD_BYTES, ObjectMissing, attachment_content_disposition
 from ppap_core.report_sharing import ReportSharingError, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
-from ppap_product_store.share_delivery import ShareDeliveryStore, new_share_attempt, target_key
+from ppap_product_store.share_delivery import new_share_attempt, target_key
 from ppap_product_store.template_permissions import TemplatePermissionChangeStore
-from ppap_product_store.templates import freeze_template, template_file_id, template_folder_id
+from ppap_product_store.templates import TemplateShareStore, freeze_template, template_file_id, template_folder_id
 from pydantic import TypeAdapter
 
 from ppap_api import web_contract as wc
@@ -37,7 +37,7 @@ class TemplateError(Exception):
 
 def register_template_routes(app, store, session_of, http, settings):
     changes = TemplatePermissionChangeStore(store)
-    shares = ShareDeliveryStore(store, "template_share_request")
+    shares = TemplateShareStore(store)
 
     @app.exception_handler(TemplateError)
     async def template_error(_request, error):
@@ -245,20 +245,57 @@ def register_template_routes(app, store, session_of, http, settings):
         except (ValueError, FeishuUsageError):
             raise TemplateError("template_share_conflict") from None
 
-    @app.get("/audit-template-shares/{request_id}", response_model=wc.AuditTemplateShare)
-    def read_template_share(request: Request, request_id: uuid.UUID, attempts: str | None = Query(None, max_length=10000)):
+    def private_share_session(request):
         session = session_of(request)
         if not session:
             raise TemplateError("unauthenticated", 401)
         if session.principal.provider != "feishu" or session.principal.app_id != settings.feishu_app_id:
             raise TemplateError("access_denied", 403)
+        return session
+
+    def recover_share(guard, row, session):
+        shares.recover(guard, row)
+        failed = [attempts[-1] for attempts in row["result"]["attempts"].values() if attempts[-1]["phase"] == "failed" and attempts[-1]["target"]["eligibility"] != "eligible"]
+        if not failed:
+            return
+        try:
+            report_share_profile(http, session.access_token, session.principal)
+            token = share_token(session)
+            for attempt in failed:
+                reference = {field: attempt["target"][field] for field in ("id", "kind")}
+                attempt["target"] = resolve_report_target(http, token, session.principal.tenant_key, reference)
+            shares.save(guard, row)
+        except (ReportSharingError, FeishuUsageError):
+            pass
+
+    @app.get("/audit-template-share-restore", response_model=wc.AuditTemplateShareRecovery | None)
+    def restore_template_share(request: Request, customer_id: str = Query(min_length=1, max_length=200), request_id: uuid.UUID | None = None):
+        session = private_share_session(request)
+        selected = str(request_id) if request_id else shares.latest_for_customer(session.principal, customer_id)
+        if selected is None:
+            return JSONResponse(None, headers=HEADERS)
+        try:
+            with shares.operation(session.principal, selected) as (row, guard):
+                if row is None:
+                    raise TemplateError("share_request_pending")
+                if row["payload"]["scope"]["customer_id"] != customer_id:
+                    raise KeyError()
+                if guard is not None:
+                    recover_share(guard, row, session)
+                return JSONResponse({"scope": row["payload"]["scope"], "share": shares.public(row)}, headers=HEADERS)
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
+
+    @app.get("/audit-template-shares/{request_id}", response_model=wc.AuditTemplateShare)
+    def read_template_share(request: Request, request_id: uuid.UUID, attempts: str | None = Query(None, max_length=10000)):
+        session = private_share_session(request)
         try:
             selected = TypeAdapter(list[wc.AuditShareAttemptReference]).validate_python(json.loads(attempts), strict=True) if attempts else None
             with shares.operation(session.principal, str(request_id)) as (row, guard):
                 if row is None:
                     raise TemplateError("share_request_missing", 404)
                 if guard is not None:
-                    shares.recover(guard, row)
+                    recover_share(guard, row, session)
                 return JSONResponse(shares.public(row, selected), headers=HEADERS)
         except KeyError:
             raise TemplateError("access_denied", 403) from None

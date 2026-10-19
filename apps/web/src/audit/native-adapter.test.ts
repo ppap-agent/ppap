@@ -9,11 +9,13 @@ import {zipSync} from 'fflate'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
+const sharePointers = new Map<string, string>()
+Object.defineProperty(globalThis, 'localStorage', {value: {getItem: (key: string) => sharePointers.get(key) ?? null, setItem: (key: string, value: string) => sharePointers.set(key, value), removeItem: (key: string) => sharePointers.delete(key)}, configurable: true})
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/octet-stream', byte_size: 3, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'pending', reasons: []}, match: null}
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
-afterEach(() => {globalThis.fetch = fetchBefore})
+afterEach(() => {globalThis.fetch = fetchBefore; sharePointers.clear()})
 
 test('native template sharing freezes the whole folder and reads original attempts without resending', async () => {
   const calls: {method: string; path: string; params: URLSearchParams; body: unknown}[] = []
@@ -36,6 +38,33 @@ test('native template sharing freezes the whole folder and reads original attemp
   assert.deepEqual(calls[1].body, input)
   assert.deepEqual(JSON.parse(calls[2].params.get('attempts')!), attempts)
   assert.deepEqual(calls[3].body, {target, attempt_id: 'new-attempt'})
+})
+
+test('a lost template acceptance reply retains only its request identity and absence never authorizes another send', async () => {
+  const input: components['schemas']['AuditTemplateShareRequest'] = {request_id: 'original-request', organization_id: 'org', scope: {customer_id: '客户 A', folder_id: 'folder', folder_revision: 'r1', templates: []}, content: {kind: 'link', package: null}, targets: [{kind: 'user', id: 'reader'}]}
+  const calls: string[] = []
+  globalThis.fetch = async (address, init) => {
+    calls.push(init?.method || 'GET')
+    if (init?.method === 'POST') throw new TypeError('lost reply')
+    assert.equal(new URL(String(address), 'https://example.test').searchParams.get('request_id'), input.request_id)
+    return json(null)
+  }
+  await assert.rejects(nativeTemplateSharingAdapter.send(input))
+  assert.deepEqual([...sharePointers.values()], [input.request_id])
+  await assert.rejects(nativeTemplateSharingAdapter.restore!('客户 A'), /原分享结果仍未确认/)
+  assert.deepEqual(calls, ['POST', 'GET'])
+})
+
+test('a template send cannot start without retaining its request identity', async () => {
+  const before = localStorage.setItem
+  let sends = 0
+  localStorage.setItem = () => {throw new Error('storage unavailable')}
+  globalThis.fetch = async () => {sends++; return json({})}
+  try {
+    const input: components['schemas']['AuditTemplateShareRequest'] = {request_id: 'not-sent', organization_id: 'org', scope: {customer_id: 'a', folder_id: 'f', folder_revision: 'r', templates: []}, content: {kind: 'link', package: null}, targets: [{kind: 'user', id: 'reader'}]}
+    assert.equal((await nativeTemplateSharingAdapter.send(input)).receipt.state, 'rejected')
+    assert.equal(sends, 0)
+  } finally {localStorage.setItem = before}
 })
 
 test('native template permissions read the selected folder with cookies', async () => {

@@ -1,5 +1,6 @@
 """Native template sharing entry and fixed-file reader at the public HTTP seam."""
 
+import copy
 import hashlib
 import os
 from urllib.parse import parse_qs, urlsplit
@@ -12,7 +13,8 @@ from playwright.sync_api import expect, sync_playwright  # noqa: E402
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
-def test_native_library_shares_the_whole_folder_not_the_search_result():
+@pytest.mark.parametrize("delivery_state", ["sent", "unknown", "pre-accept"])
+def test_native_library_shares_the_whole_folder_not_the_search_result(delivery_state):
     allowed = {"state": "allowed", "reason": None}
     files = [
         {
@@ -36,7 +38,7 @@ def test_native_library_shares_the_whole_folder_not_the_search_result():
     ]
     scope = {"customer_id": "客户 A", "customer_name": "客户 A", "folder_id": "fixed-folder", "folder_revision": "fixed-revision", "templates": files, "link_access": allowed, "zip_access": allowed}
     target = {"kind": "user", "id": "reader", "display_name": "测试接收人", "organization_id": "tenant-one", "eligibility": "eligible", "reason": None}
-    sends = []
+    sends, recovery = [], [None]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 900})
@@ -80,7 +82,7 @@ def test_native_library_shares_the_whole_folder_not_the_search_result():
                         "query": {"customer_id": "客户 A", "search": search, "page": 1, "page_size": 10},
                         "folder_id": "fixed-folder",
                         "folder_revision": "fixed-revision",
-                        "folder_template_count": 2,
+                        "folder_template_count": len(files),
                         "creator_name": None,
                         "manage_access": {"state": "denied", "reason": "只读"},
                         "zip_access": allowed,
@@ -91,6 +93,15 @@ def test_native_library_shares_the_whole_folder_not_the_search_result():
             elif path == "/audit-template-share-scope":
                 assert params["folder_template_count"] == ["2"]
                 route.fulfill(json=scope)
+            elif path == "/audit-template-share-restore":
+                if sends and delivery_state == "pre-accept":
+                    assert params["request_id"] == [sends[0]["request_id"]]
+                    route.fulfill(status=409, json={"error": "share_request_pending"})
+                    return
+                if recovery[0] is None:
+                    route.fulfill(body="null", content_type="application/json")
+                else:
+                    route.fulfill(json=recovery[0])
             elif path == "/audit-share-targets":
                 route.fulfill(
                     json={"organization_id": "tenant-one", "organization_name": "客户 A", "kind": "user", "query": params.get("query", [""])[0], "targets": [target], "next_page_token": None}
@@ -98,13 +109,19 @@ def test_native_library_shares_the_whole_folder_not_the_search_result():
             elif path == "/audit-template-shares" and request.method == "POST":
                 command = request.post_data_json
                 sends.append(command)
-                route.fulfill(
-                    json={
-                        "request": command,
-                        "receipt": {"request_id": command["request_id"], "state": "accepted", "reason": None},
-                        "deliveries": [{"target": target, "attempt_id": command["request_id"], "state": "sent", "reason": None, "retry_allowed": False}],
-                    }
-                )
+                if delivery_state == "pre-accept":
+                    route.abort("timedout")
+                    return
+                receipt = {
+                    "request": command,
+                    "receipt": {"request_id": command["request_id"], "state": "accepted", "reason": None},
+                    "deliveries": [{"target": target, "attempt_id": command["request_id"], "state": delivery_state, "reason": None, "retry_allowed": False}],
+                }
+                recovery[0] = {"scope": copy.deepcopy(scope), "share": receipt}
+                route.fulfill(json=receipt)
+            elif path.startswith("/audit-template-shares/"):
+                assert request.method == "GET"
+                route.fulfill(json=recovery[0]["share"])
             else:
                 route.fulfill(status=404, json={"error": "unexpected_request"})
 
@@ -117,10 +134,26 @@ def test_native_library_shares_the_whole_folder_not_the_search_result():
         expect(dialog.get_by_role("list", name="本次分享的模板").get_by_role("listitem")).to_have_count(2)
         dialog.get_by_role("checkbox", name="选择人员 测试接收人", exact=True).check()
         dialog.get_by_role("button", name="发送给 1 个目标", exact=True).click()
-        expect(dialog.get_by_role("listitem", name="发送到 测试接收人", exact=True)).to_contain_text("已发送")
+        expect(dialog.get_by_role("listitem", name="发送到 测试接收人", exact=True)).to_contain_text("已发送" if delivery_state == "sent" else "结果未知")
         assert len(sends) == 1
         assert sends[0]["scope"]["templates"] == [row["reference"] for row in files]
         assert sends[0]["content"] == {"kind": "link", "package": None}
+        if delivery_state != "sent":
+            files.clear()
+            for _ in range(2):
+                page.reload()
+                page.get_by_role("button", name="读取已有模板分享", exact=True).click()
+                if delivery_state == "pre-accept":
+                    expect(dialog.get_by_text("分享范围未确认", exact=True)).to_be_visible()
+                    expect(dialog.get_by_role("button", name="发送给 0 个目标", exact=True)).to_be_disabled()
+                    assert len(sends) == 1
+                    continue
+                expect(dialog.get_by_role("list", name="本次分享的模板").get_by_role("listitem")).to_have_count(2)
+                expect(dialog.get_by_role("listitem", name="发送到 测试接收人", exact=True)).to_contain_text("结果未知")
+                expect(dialog.get_by_role("button", name="新的模板分享", exact=True)).to_have_count(0)
+                dialog.get_by_role("button", name="读取发送结果", exact=True).click()
+                expect(dialog.get_by_role("listitem", name="发送到 测试接收人", exact=True)).to_contain_text("结果未知")
+                assert len(sends) == 1
         browser.close()
 
 

@@ -227,6 +227,8 @@ class OpenAPIContractTests(unittest.TestCase):
         ):
             self.assertEqual(_response_schema(spec["paths"][path][method])["$ref"], "#/components/schemas/" + schema)
         self.assertEqual(set(_request_schema(spec["paths"]["/audit-template-shares"]["post"])["required"]), set(request["required"]))
+        restore = _response_schema(spec["paths"]["/audit-template-share-restore"]["get"])
+        self.assertIn({"$ref": "#/components/schemas/AuditTemplateShareRecovery"}, restore["anyOf"])
 
     def test_ui_template_feedback_separates_attachments_submission_and_attempt_receipts(self):
         spec = app.openapi()

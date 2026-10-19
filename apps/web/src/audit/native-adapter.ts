@@ -12,6 +12,7 @@ import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
 import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
+import {draftPrefix} from '../journey/saved-draft.ts'
 
 export const nativeTemplatePermissionAdapter: Required<AuditTemplatePermissionAdapter> = {
   readPermissions: (folder, query) => request(`/audit-template-permissions?${new URLSearchParams({...folder, query})}`),
@@ -36,18 +37,34 @@ export const nativeSharingAdapter: AuditSharingAdapter = {
 
 export const nativeTemplateSharingAdapter: AuditTemplateSharingAdapter = {
   listTargets: nativeSharingAdapter.listTargets,
+  async restore(customerId) {
+    const requestId = localStorage.getItem(templateSharePointerKey(customerId))
+    const result = await request<components['schemas']['AuditTemplateShareRecovery'] | null>(`/audit-template-share-restore?${new URLSearchParams({customer_id: customerId, ...(requestId ? {request_id: requestId} : {})})}`)
+    if (requestId && (!result || result.share.request.request_id !== requestId)) throw new Error('原分享结果仍未确认，请勿重新发送。')
+    return result
+  },
   readScope: folder => request(`/audit-template-share-scope?${new URLSearchParams(Object.entries(folder).map(([key, value]) => [key, String(value)]))}`),
   async send(input) {
+    const key = templateSharePointerKey(input.scope.customer_id)
+    // Keep only the request identity before POST. Accepted facts stay on the server.
+    try {localStorage.setItem(key, input.request_id)}
+    catch {return rejectedTemplateShare(input, '浏览器未能保留原请求，尚未发送。请检查本机存储后重试。')}
     try {return await request('/audit-template-shares', 'POST', input)}
     catch (failure) {
       const error = failure as {status?: number; code?: string}
       if (![400, 401, 403, 409, 422].includes(error.status || 0) || error.code === 'share_request_pending') throw failure
       const reason = error.code === 'template_folder_changed' ? '模板清单已变化，请重新读取后分享。' : '分享未受理，请核对飞书登录、模板权限及接收对象。'
-      return {request: input, receipt: {request_id: input.request_id, state: 'rejected', reason}, deliveries: input.targets.map(target => ({target: {...target, display_name: target.id, organization_id: input.organization_id, eligibility: 'unknown', reason}, attempt_id: input.request_id, state: 'failed', reason, retry_allowed: false}))}
+      try {if (localStorage.getItem(key) === input.request_id) localStorage.removeItem(key)} catch { /* Keep the unresolved pointer rather than claim a fresh send is safe. */ }
+      return rejectedTemplateShare(input, reason)
     }
   },
   read: input => request(`/audit-template-shares/${encodeURIComponent(input.request_id)}?${new URLSearchParams({attempts: JSON.stringify(input.attempts)})}`),
   retryFailed: (requestId, target, attemptId) => request(`/audit-template-shares/${encodeURIComponent(requestId)}/retries`, 'POST', {target, attempt_id: attemptId}),
+}
+
+const templateSharePointerKey = (customerId: string) => `${draftPrefix}template-share-request:${encodeURIComponent(customerId)}`
+function rejectedTemplateShare(input: components['schemas']['AuditTemplateShareRequest'], reason: string): components['schemas']['AuditTemplateShare'] {
+  return {request: input, receipt: {request_id: input.request_id, state: 'rejected', reason}, deliveries: input.targets.map(target => ({target: {...target, display_name: target.id, organization_id: input.organization_id, eligibility: 'unknown', reason}, attempt_id: input.request_id, state: 'failed', reason, retry_allowed: false}))}
 }
 
 export function sharedTemplateAdapter(requestId: string): Pick<AuditTemplateAdapter, 'readFile'> {

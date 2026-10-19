@@ -5,6 +5,23 @@ import uuid
 
 from ppap_core.files import MAX_UPLOAD_BYTES, READY, FileVersion, ObjectExists, original_filename, safe_content_type, sha256_bytes, version_object_key
 
+from ppap_product_store.share_delivery import ShareDeliveryStore
+
+
+class TemplateShareStore(ShareDeliveryStore):
+    def __init__(self, store):
+        super().__init__(store, "template_share_request")
+
+    def latest_for_customer(self, principal, customer_id):
+        with self.store._conn() as conn:
+            row = conn.execute(
+                """SELECT id FROM engine.jobs WHERE tenant_id = %s AND kind = 'template_share_request'
+                AND payload->>'created_by' = %s AND payload->>'app_id' = %s AND payload->>'organization_id' = %s
+                AND payload->'scope'->>'customer_id' = %s ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (principal.tenant_id, principal.user_id, principal.app_id, principal.tenant_key, customer_id),
+            ).fetchone()
+        return str(row[0]) if row else None
+
 
 def template_file_id(tenant_id: str, customer: str, folder: str, remote_file: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "ppap-template:" + json.dumps([tenant_id, customer, folder, remote_file], ensure_ascii=False)))

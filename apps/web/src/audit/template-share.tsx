@@ -12,7 +12,7 @@ import {ShareResults} from './share-results'
 import {shareUnresolved, useShareActions} from './share-actions'
 import type {ShareTarget} from './sharing-contract'
 import {readTemplateZip, type AuditTemplateAdapter, type TemplateFolder, type TemplateZip} from './template-contract'
-import {templateShareContent, templateShareReference, validTemplateShareScope, type AuditTemplateSharingAdapter, type TemplateShare, type TemplateShareScope} from './template-sharing-contract'
+import {templateShareContent, templateShareReference, validTemplateShareRecovery, validTemplateShareScope, type AuditTemplateSharingAdapter, type TemplateShare, type TemplateShareScope} from './template-sharing-contract'
 
 /** One retained session per folder. Its captured input never becomes another customer's share. */
 export function TemplateShareSession({open, folder, adapter, templates, onClose, trigger}: {open: boolean; folder: TemplateFolder; adapter: AuditTemplateSharingAdapter; templates: AuditTemplateAdapter; onClose: () => void; trigger: HTMLButtonElement | null}) {
@@ -21,17 +21,29 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
   const [targetsReady, setTargetsReady] = useState(false)
   const [zip, setZip] = useState<TemplateZip | null>(null), [preparing, setPreparing] = useState(false), [zipError, setZipError] = useState(''), [retryZip, setRetryZip] = useState(0)
   const scopeEpoch = useRef(0), zipEpoch = useRef(0)
+  const restoreChecked = useRef(false)
   const actions = useShareActions(job, setJob, input => Boolean(scope && sameSnapshot(input.scope, templateShareReference(scope)) && sameSnapshot(input.content, templateShareContent(scope, input.content.kind, zip))), adapter)
   useEffect(() => {
     const run = ++scopeEpoch.current
     if (!open) {setLoading(false); actions.suspend(); return}
     if (scope || job) return
     setLoading(true); setError('')
-    void adapter.readScope(structuredClone(folder)).then(next => {
+    void (async () => {
+      const restored = !restoreChecked.current && adapter.restore ? await adapter.restore(folder.customer_id) : null
+      if (scopeEpoch.current !== run) return
+      if (restored) {
+        if (!validTemplateShareRecovery(restored, folder.customer_id)) throw new Error('template_share_restore_mismatch')
+        restoreChecked.current = true
+        setScope(restored.scope); setJob(restored.share); setMode(restored.share.request.content.kind); setZip(restored.share.request.content.package)
+        return
+      }
+      restoreChecked.current = true
+      if (!folder.folder_template_count) throw new Error('template_share_missing')
+      const next = await adapter.readScope(structuredClone(folder))
       if (scopeEpoch.current !== run) return
       if (!validTemplateShareScope(next, folder)) throw new Error('template_share_scope_mismatch')
       setScope(next)
-    }).catch(() => {if (scopeEpoch.current === run) setError('暂时无法读取完整模板清单，请重试。')}).finally(() => {if (scopeEpoch.current === run) setLoading(false)})
+    })().catch(() => {if (scopeEpoch.current === run) setError('暂时无法读取原分享或完整模板清单，请重试。')}).finally(() => {if (scopeEpoch.current === run) setLoading(false)})
     return () => {scopeEpoch.current += 1}
   }, [open, reload])
   useEffect(() => {

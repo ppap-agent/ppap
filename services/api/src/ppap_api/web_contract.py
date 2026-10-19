@@ -1346,6 +1346,11 @@ class AuditTemplateShare(TypedDict):
     deliveries: list[AuditShareDelivery]
 
 
+class AuditTemplateShareRecovery(TypedDict):
+    scope: AuditTemplateShareScope
+    share: AuditTemplateShare
+
+
 class AuditTemplatePermissionFolder(TypedDict):
     customer_id: str
     folder_id: str
