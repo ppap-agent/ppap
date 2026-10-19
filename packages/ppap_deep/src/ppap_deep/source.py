@@ -16,7 +16,7 @@ from ppap_deep.protocol import ExecuteRequest
 
 def authorize_execution(settings: Settings):
     """The caller may name a leased attempt, not select arbitrary objects or rules."""
-    from ppap_api.store import AuthStore
+    from ppap_product_store.store import AuthStore
 
     from ppap_deep.mapping import spec_from_work
 

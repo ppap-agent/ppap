@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.files import ObjectMissing
+from ppap_core.settings import Settings
 from ppap_deep.auditor import SemanticRuntime, product_response, semantic_inputs
 from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient
 from ppap_deep.controller import ExecutionContext
@@ -18,6 +19,7 @@ from ppap_deep.isolation.model_gateway import Grants, local_gateway
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.protocol import ResultBundle
+from ppap_deep.source import authorize_execution
 
 ENGINE = "a" * 64
 ROUND = "00000000-0000-4000-8000-000000000099"
@@ -153,6 +155,13 @@ def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
 
 
 class SemanticProductContractTests(unittest.TestCase):
+    def test_controller_authorization_initializes_without_external_io(self) -> None:
+        with (
+            patch("ppap_deep.source.connect", side_effect=AssertionError("startup must not connect to the database")),
+            patch("ppap_core.storage.s3_client", side_effect=AssertionError("startup must not connect to object storage")),
+        ):
+            self.assertTrue(callable(authorize_execution(Settings())))
+
     def test_deep_execution_and_transport_time_limits_match(self) -> None:
         self.assertEqual(DEEP_TOTAL_SECONDS, 40 * 60)
         self.assertEqual(SemanticRuntime(None, None).timeout, DEEP_TOTAL_SECONDS)

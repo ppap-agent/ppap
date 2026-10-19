@@ -695,12 +695,14 @@ version = "0.1.0"
 source = { editable = "packages/ppap_deep" }
 dependencies = [
     { name = "ppap-core" },
+    { name = "ppap-product-store" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "ppap-core", editable = "packages/ppap_core" },
+    { name = "ppap-product-store", editable = "packages/ppap_product_store" },
     { name = "pydantic", specifier = ">=2.10.6" },
 ]
 

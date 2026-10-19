@@ -59,7 +59,8 @@ RUN set -eux; \
     UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable; \
     uv pip check --python /app/.venv/bin/python; \
     cd /; \
-    /app/.venv/bin/python -c "import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker"
+    /app/.venv/bin/python -c "import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker"; \
+    /app/.venv/bin/python -c "from ppap_core.settings import Settings; from ppap_deep.source import authorize_execution; assert callable(authorize_execution(Settings()))"
 
 ARG PPAP_BUILD_SHA=
 ARG PPAP_SERVICE=api

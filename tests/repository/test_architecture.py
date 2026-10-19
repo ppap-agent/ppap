@@ -147,6 +147,8 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("ppap-api", graph["ppap-worker"])
         self.assertIn("ppap-product-store", graph["ppap-api"])
         self.assertIn("ppap-product-store", graph["ppap-worker"])
+        self.assertIn("ppap-product-store", graph["ppap-deep"])
+        self.assertNotIn("ppap-api", graph["ppap-deep"])
         self.assertIn("ppap-application", graph["ppap-api"])
         self.assertIn("ppap-application", graph["ppap-worker"])
 
