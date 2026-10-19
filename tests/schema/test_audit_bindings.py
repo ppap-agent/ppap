@@ -268,15 +268,26 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(client.get("/support").status_code, 401)
 
     def test_worker_persists_one_unreadable_file_error_without_losing_other_frozen_file_results(self):
+        from io import BytesIO
+
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+        from openpyxl import Workbook
         from ppap_api.audit_routes import register_audit_routes
         from ppap_api.web_contract import Round
         from ppap_application import build_product_store
         from ppap_worker import process_claimed
         from pydantic import TypeAdapter
 
-        files = [self.upload(name) for name in ("missing.xlsx", "healthy.xlsx", "last.xlsx")]
+        workbook = Workbook()
+        workbook.active.append(["控制计划", "☑批量生产"])
+        content = BytesIO()
+        workbook.save(content)
+        files = []
+        for name in ("missing.xlsx", "healthy.xlsx", "last.xlsx"):
+            file = self.store.create_staging(self.alice, name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", len(content.getvalue()))
+            self.store.put_blob(file, content.getvalue())
+            files.append(self.store.finalize_version(file))
         rule = self.store.publish_rule(self.alice, "客户自定义要求", self.rule_body(), files[-1].id)
         draft = self.draft([{"file_version_id": file.id, "role": "target", "rule_version_id": rule["id"]} for file in files])
         accepted = self.store.accept_draft(self.alice, draft, "file-isolation")
@@ -298,9 +309,10 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         audits = {row["file"]["id"]: row["audit"] for row in observed["read_view"]["files"]}
         self.assertEqual([audits[file.id]["execution"] for file in files], ["review_failed", "completed", "completed"])
         self.assertEqual(audits[files[0].id]["counts"]["error_count"], 1)
-        self.assertEqual([audits[file.id]["counts"]["not_covered_count"] for file in files[1:]], [1, 1])
-        self.assertEqual([row["status"] for row in observed["findings"]], ["ERR"])
-        self.assertTrue(all(audit["report"]["state"] == "not_eligible" for audit in audits.values()))
+        self.assertEqual([audits[file.id]["counts"]["not_covered_count"] for file in files[1:]], [0, 0])
+        self.assertEqual([audits[file.id]["counts"]["pass_count"] for file in files[1:]], [1, 1])
+        self.assertEqual([row["status"] for row in observed["findings"]], ["ERR", "PASS", "PASS"])
+        self.assertEqual(audits[files[0].id]["report"]["state"], "not_eligible")
         self.assertEqual(client.get(f"/rounds/{accepted['id']}?read_view=true").json(), observed)
         self.assertFalse(worker.complete_job(claimed, "file-isolation-test", {"findings": [], "coverage": {}}, "succeeded"))
         self.assertEqual(client.get(f"/rounds/{accepted['id']}?read_view=true").json(), observed)
@@ -1476,7 +1488,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual((audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", 1))
         self.assertTrue(audit["checks"][0]["evidence_verified"])
         self.assertEqual(audit["checks"][0]["evidence"][0]["excerpt"], "P-1")
-        self.assertEqual(audit["summary"]["text"], "已核验 1 项要求：满足 1 项，不符合 0 项，不适用 0 项。")
+        self.assertEqual(audit["summary"]["text"], "已审核 1 项要求：满足 1 项，不符合 0 项，不适用 0 项。")
         historical = self.display_client.get(f"/rounds/{task['round_id']}?read_view=true").json()
         self.assertEqual(historical["result_job_id"], job.id)
         self.assertEqual(historical["coverage"]["verification"], result["coverage"]["verification"])
@@ -1518,7 +1530,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             self.assertIn("必须填写零件号", text)
             self.assertIn("P-1", text)
             self.assertIn("审核总结", text)
-            self.assertIn("已核验1项要求：满足1项，不符合0项，不适用0项。", "".join(text.split()))
+            self.assertIn("已审核1项要求：满足1项，不符合0项，不适用0项。", "".join(text.split()))
         for field, value in (("round_id", str(uuid.uuid4())), ("file_version_id", str(uuid.uuid4())), ("result_attempt", 2), ("artifact_id", "other-artifact")):
             self.assertEqual(self.display_client.get(pdf_path, params={**query, field: value}).status_code, 403)
         self.display_principal = self.store.principal_for_fixture("bob")
@@ -1528,11 +1540,24 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.display_principal = None
         self.assertEqual(self.display_client.get(pdf_path, params=query).status_code, 401)
 
-    def test_unverified_machine_pass_does_not_enqueue_a_formal_pdf(self):
+    def test_missing_verification_mark_preserves_machine_pass_and_generates_pdf(self):
+        from ppap_worker import process_claimed
+
         _version, task, worker, _job, _result = self.prepared_query_task(verified=False)
-        observed = self.display_client.get(f"/audit-tasks/{task['id']}").json()
-        self.assertEqual((observed["state"], observed["files"][0]["audit"]["conclusion"], observed["files"][0]["audit"]["report"]["state"]), ("completed", "UNKNOWN", "not_eligible"))
-        self.assertIsNone(worker.claim_job("no-pdf"))
+        path = f"/audit-tasks/{task['id']}"
+        observed = self.display_client.get(path).json()
+        audit = observed["files"][0]["audit"]
+        self.assertEqual((observed["state"], audit["conclusion"], audit["report"]["state"]), ("reviewing", "PASS", "pending"))
+        self.assertEqual(audit["counts"]["pass_count"], 1)
+        self.assertFalse(audit["checks"][0]["evidence_verified"])
+        pdf_job = worker.claim_job("unverified-pdf")
+        self.assertEqual(pdf_job.kind, "report_pdf")
+        process_claimed(worker, pdf_job, "unverified-pdf")
+        finished = self.display_client.get(path).json()
+        final_audit = finished["files"][0]["audit"]
+        self.assertEqual((finished["state"], final_audit["conclusion"], final_audit["report"]["state"]), ("completed", "PASS", "ready"))
+        self.assertFalse(final_audit["checks"][0]["evidence_verified"])
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
 
     def test_long_pdf_filename_preserves_the_pdf_suffix(self):
         from ppap_worker import process_claimed

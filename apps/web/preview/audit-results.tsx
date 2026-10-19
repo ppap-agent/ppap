@@ -49,7 +49,12 @@ export function fixtureResults(task: AuditTask, scene: string): AuditTask {
     const audit: Review = {...file.audit, result_attempt: 1, execution: failed ? 'review_failed' : 'completed', progress: {completed: checks.length, total: checks.length}, failure: failed ? {code: 'preview_reader_failure', message: '过程流程图读取失败。', retryable: false} : null, conclusion: failed ? 'UNKNOWN' : mixed ? 'NG' : 'PASS', counts: {pass_count: mixed || failed ? 0 : checks.length, ng_count: mixed ? 1 : 0, unknown_count: mixed ? 1 : 0, not_covered_count: 0, error_count: failed ? checks.length : 0}, checks, summary: failed ? null : {conclusion: mixed ? 'NG' : 'PASS', text: mixed ? '1 项不符合，1 项无法判断。' : '2 项要求均已完成验证。', corrective_actions: mixed ? ['核对并统一控制计划与 PFMEA 的频次；提供清晰原件。'] : [], extended_suggestions: []}, report: failed || mixed ? {state: 'not_eligible', report_id: null, reason: failed ? '审核异常，无法生成报告。' : '仍有无法判断项，暂不能生成报告。'} : {state: 'ready', report_id: `preview-report-${file.file.id}`, reason: null}}
     if (scene === 'counts-conflict' && mixed) audit.counts = {pass_count: 2, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
     if (scene === 'summary-conflict' && mixed && audit.summary) audit.summary.conclusion = 'PASS'
-    if (scene === 'scope-conflict' && mixed) {audit.checks[1].finding!.status = 'PASS'; audit.checks[1].evidence_verified = true; audit.counts = {...audit.counts, pass_count: 1, unknown_count: 0}}
+    if (scene === 'scope-conflict' && mixed) {
+      audit.checks[1].finding!.status = 'PASS'; audit.checks[1].evidence_verified = true
+      audit.counts = {...audit.counts, pass_count: 1, unknown_count: 0}
+      audit.summary!.text = '1 项不符合，1 项满足；检查范围记录不完整。'
+      audit.report = {state: 'ready', report_id: `preview-report-${file.file.id}`, reason: null}
+    }
     if (scene === 'evidence-outside' && mixed) audit.checks[0].evidence[0].file_version_id = 'preview-not-in-this-round'
     if (scene === 'evidence-empty' && mixed) audit.checks[0].evidence[0].excerpt = ''
     if (scene === 'rule-conflict' && mixed) audit.checks[0].rule_item = {...audit.checks[0].rule_item, rule_to_check: '被错误改写的要求'}

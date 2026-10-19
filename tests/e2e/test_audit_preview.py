@@ -2233,7 +2233,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()
             browser.close()
 
-    def test_incomplete_scope_is_not_shown_as_pass_beside_a_valid_ng(self):
+    def test_incomplete_scope_record_preserves_actual_verdict_and_report_access(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -2244,9 +2244,11 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取审核结果", exact=True).click()
             detail = page.get_by_role("region", name="审核详情", exact=True)
             expect(detail.get_by_role("table").get_by_role("row", name=re.compile("1.1"))).to_contain_text("不符合")
-            expect(detail.get_by_role("table").get_by_role("row", name=re.compile("1.2"))).to_contain_text("范围未完成")
-            expect(detail.get_by_text("PASS 结论缺少完整的检查范围，未知不能视为满足。", exact=True).first).to_be_visible()
-            expect(detail.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
+            expect(detail.get_by_role("table").get_by_role("row", name=re.compile("1.2"))).to_contain_text("满足")
+            detail.get_by_role("button", name="查看依据 1.2", exact=True).click()
+            expect(detail.get_by_text("检查范围：已查 0/1，未知 1。", exact=True)).to_be_visible()
+            expect(detail.get_by_text(re.compile("检查范围未完整覆盖。"))).to_be_visible()
+            expect(detail.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
             browser.close()
 
     def test_two_archived_files_in_one_task_keep_their_own_unknown_share_requests(self):
@@ -3959,7 +3961,8 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="完成后飞书通知", exact=True)).to_be_checked()
             page.get_by_role("button", name="读取审核结果", exact=True).click()
             expect(page.get_by_text("不符合 1 · 无法判断 1", exact=True)).to_be_visible()
-            expect(page.get_by_text("未完整验证，不生成正式 PASS/NG 报告。", exact=True)).to_be_visible()
+            expect(page.get_by_text("部分审核项尚未取得明确结果，不生成完整 PASS/NG 报告。", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
             queue = page.get_by_role("navigation", name="文件队列", exact=True)
             queue.get_by_role("button", name="控制计划.xlsx", exact=False).click()
             expect(page.get_by_text("满足 2 · 不符合 0", exact=True)).to_be_visible()
