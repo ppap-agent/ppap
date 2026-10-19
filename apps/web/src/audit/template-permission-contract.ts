@@ -9,8 +9,8 @@ export type PermissionRequest = components['schemas']['AuditTemplatePermissionRe
 export type PermissionReceipt = components['schemas']['AuditTemplatePermissionReceipt']
 export type AuditTemplatePermissionAdapter = {
   readPermissions: (folder: PermissionFolder, query: string) => Promise<TemplatePermissions>
-  apply: (request: PermissionRequest) => Promise<PermissionReceipt>
-  readChange: (request: PermissionRequest) => Promise<PermissionReceipt>
+  apply?: (request: PermissionRequest) => Promise<PermissionReceipt>
+  readChange?: (request: PermissionRequest) => Promise<PermissionReceipt>
 }
 export const permissionUnresolved = (receipt: PermissionReceipt | null) => Boolean(receipt && ['pending', 'unknown'].includes(receipt.state))
 export function validPermissions(snapshot: TemplatePermissions, folder: PermissionFolder, query: string) {

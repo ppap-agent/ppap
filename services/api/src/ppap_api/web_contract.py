@@ -1344,7 +1344,7 @@ class AuditTemplatePermissionMember(TypedDict):
     target: AuditShareTargetReference
     display_name: str
     role: str
-    source: Literal["direct", "inherited", "owner"]
+    source: Literal["direct", "inherited", "owner", "unknown"]
 
 
 class AuditTemplatePermissionAction(TypedDict):

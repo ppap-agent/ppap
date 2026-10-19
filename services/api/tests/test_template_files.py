@@ -28,6 +28,8 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
     folder_meta = {"token": "test-folder", "createUid": "12345", "ownUid": "99999"}
     profile = {"tenant_key": tenant, "open_id": "template-reader", "name": "模板创建人"}
     metadata_unavailable = False
+    members = [{"member_type": "openid", "member_id": "template-reader", "name": "模板创建人", "perm": "full_access", "type": "user", "perm_type": "container"}]
+    permissions_denied = False
 
     def provider(request):
         assert request.headers["authorization"] == "Bearer template-user-token"
@@ -41,6 +43,11 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
             return httpx.Response(200, json={"code": 0, "data": folder_meta})
         if request.url.path == "/open-apis/authen/v1/user_info":
             return httpx.Response(200, json={"code": 0, "data": profile})
+        if request.url.path == "/open-apis/drive/v1/permissions/test-folder/members":
+            assert request.url.params["type"] == "folder"
+            if permissions_denied:
+                return httpx.Response(403, json={"code": 1063002})
+            return httpx.Response(200, json={"code": 0, "data": {"items": members}})
         if request.url.path == "/open-apis/drive/v1/files":
             assert request.url.params["folder_token"] == "test-folder"
             return httpx.Response(200, json={"code": 0, "data": {"files": files, "has_more": False}})
@@ -81,6 +88,42 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         page = response.json()
         assert page["creator_name"] == "模板创建人"
         assert page["manage_access"]["state"] == "unknown"
+        permissions_query = {"customer_id": "海岸线", "folder_id": page["folder_id"], "query": ""}
+        permissions = client.get("/audit-template-permissions", params=permissions_query)
+        assert permissions.status_code == 200
+        assert permissions.headers["cache-control"] == "private, no-store"
+        observed = permissions.json()
+        assert observed["folder"] == {"customer_id": "海岸线", "folder_id": page["folder_id"]}
+        assert observed["members"] == [{"target": {"kind": "user", "id": "template-reader"}, "display_name": "模板创建人", "role": "可管理", "source": "unknown"}]
+        assert observed["actions"] == []
+        assert observed["manage_access"]["state"] == "unknown"
+        assert client.get("/audit-template-permissions", params={**permissions_query, "folder_id": str(uuid.uuid4())}).status_code == 403
+        filtered_permissions = client.get("/audit-template-permissions", params={**permissions_query, "query": "未找到"}).json()
+        assert filtered_permissions["members"] == []
+        assert filtered_permissions["permission_revision"] == observed["permission_revision"]
+        members[0]["perm"] = "view"
+        read_only = client.get("/audit-template-permissions", params=permissions_query).json()
+        assert read_only["permission_revision"] != observed["permission_revision"]
+        assert read_only["members"][0]["role"] == "可阅读"
+        assert read_only["actions"] == []
+        members[0]["perm"] = "full_access"
+        members.append({"member_type": "openchat", "member_id": "internal-group", "name": "模板协作组", "perm": "view", "type": "chat"})
+        ordered = client.get("/audit-template-permissions", params=permissions_query).json()
+        members.reverse()
+        assert client.get("/audit-template-permissions", params=permissions_query).json() == ordered
+        members.reverse()
+        members.pop()
+        members.append(dict(members[0]))
+        assert client.get("/audit-template-permissions", params=permissions_query).status_code == 503
+        members.pop()
+        for field, unsupported in (("member_type", "department_id"), ("perm", "unexpected"), ("member_id", "../other-folder")):
+            original_value = members[0][field]
+            members[0][field] = unsupported
+            assert client.get("/audit-template-permissions", params=permissions_query).status_code == 503
+            members[0][field] = original_value
+        permissions_denied = True
+        assert client.get("/audit-template-permissions", params=permissions_query).status_code == 403
+        permissions_denied = False
         # Creator and owner are different provider facts. Never substitute the
         # current viewer or a cached uploader for an unverified creator.
         for target, field, wrong in (
@@ -100,6 +143,8 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
             assert unverified.json()["creator_name"] is None
             assert unverified.json()["manage_access"]["state"] == "unknown"
             assert unverified.json()["total"] == 1
+            if target is profile and field in {"tenant_key", "open_id"}:
+                assert client.get("/audit-template-permissions", params=permissions_query).status_code == 403
             target[field] = original_value
         metadata_unavailable = True
         assert client.get("/audit-templates", params={"customer_id": "海岸线"}).json()["creator_name"] is None
@@ -142,6 +187,9 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         assert client.get("/audit-template-packages", params={**package_query, "folder_revision": page["folder_revision"]}).status_code == 409
         denied = True
         assert client.get(selected, params={"customer_id": "海岸线"}).status_code == 403
+        missing_identity = client.get("/audit-template-permissions", params=permissions_query)
+        assert missing_identity.status_code == 503
+        assert missing_identity.json() == {"error": "feishu_identity_unavailable"}
         assert client.get("/audit-template-packages/download", params=package_query).status_code == 403
         denied = False
         files[:] = [{"token": "template-" + str(index), "name": "控制计划.xlsx", "type": "file", "modified_time": str(1750000000 + index)} for index in range(12)]
@@ -165,5 +213,7 @@ def test_template_list_freezes_real_bytes_and_generic_download_cannot_bypass_dri
         other = store.upsert_feishu_identity("other-" + tenant, "template-reader")
         client.cookies.set(SESSION_COOKIE, store.create_session(other, UserTokens("template-user-token", "", expires, expires)))
         assert client.get("/audit-templates", params={"customer_id": "海岸线"}).status_code == 403
+        assert client.get("/audit-template-permissions", params=permissions_query).status_code == 403
         client.cookies.clear()
         assert client.get("/audit-templates", params={"customer_id": "海岸线"}).status_code == 401
+        assert client.get("/audit-template-permissions", params=permissions_query).status_code == 401

@@ -166,3 +166,44 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     link = page.get_by_role("link", name="使用飞书登录")
     assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
     assert page.url == WEB + "/audit?task=original-task&report=frozen-report#original-clause"
+
+
+def test_native_templates_can_read_provider_permissions_without_offering_a_write(page):
+    login_config(page)
+    page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
+    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
+    page.route("**/api/audit-template-catalog", lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": [{"customer_id": "customer-a", "name": "客户 A", "effective_rule_types": ["1"]}]}))
+    page.route("**/api/audit-templates?*", lambda route: route.fulfill(json={
+        "query": {"customer_id": "customer-a", "search": "", "page": 1, "page_size": 10}, "folder_id": "bound-folder", "folder_revision": "frozen-revision",
+        "folder_template_count": 0, "creator_name": "创建人", "manage_access": {"state": "unknown", "reason": "管理权限未确认"}, "zip_access": {"state": "allowed", "reason": None}, "items": [], "total": 0,
+    }))
+    reads = []
+
+    def permissions(route):
+        query = parse_qs(urlsplit(route.request.url).query, keep_blank_values=True)
+        assert route.request.method == "GET"
+        assert query["customer_id"] == ["customer-a"] and query["folder_id"] == ["bound-folder"]
+        reads.append(query["query"][0])
+        route.fulfill(json={
+            "folder": {"customer_id": "customer-a", "folder_id": "bound-folder"}, "permission_revision": "permissions-one", "query": query["query"][0],
+            "creator_name": "创建人", "manage_access": {"state": "unknown", "reason": "可查看协作者，暂不支持在此修改权限。"},
+            "members": [{"target": {"kind": "user", "id": "observed-user"}, "display_name": "实际协作者", "role": "可管理", "source": "unknown"}], "actions": [],
+        })
+
+    page.route("**/api/audit-template-permissions?*", permissions)
+    page.goto(WEB + "/audit?view=templates&task=original-task")
+    page.get_by_role("button", name="查看文件夹权限", exact=True).click()
+    dialog = page.get_by_role("dialog", name="文件夹权限", exact=True)
+    expect(dialog.get_by_role("listitem", name="协作者 实际协作者")).to_contain_text("可管理")
+    expect(dialog.get_by_text("来源待核对", exact=True)).to_be_visible()
+    expect(dialog.get_by_text("继承权限", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("combobox")).to_have_count(0)
+    assert reads == [""]
+    dialog.get_by_role("textbox", name="搜索协作者").fill("实际")
+    with page.expect_response("**/api/audit-template-permissions?*"):
+        dialog.get_by_role("button", name="搜索", exact=True).click()
+    expect(dialog.get_by_role("button", name="重新读取当前权限")).to_be_enabled()
+    assert reads == ["", "实际"]
+    dialog.get_by_role("button", name="关闭", exact=True).click()
+    expect(dialog).to_have_count(0)
+    assert parse_qs(urlsplit(page.url).query) == {"view": ["templates"], "task": ["original-task"]}

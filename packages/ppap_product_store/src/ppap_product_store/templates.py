@@ -10,6 +10,10 @@ def template_file_id(tenant_id: str, customer: str, folder: str, remote_file: st
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "ppap-template:" + json.dumps([tenant_id, customer, folder, remote_file], ensure_ascii=False)))
 
 
+def template_folder_id(tenant_id: str, customer: str, folder: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([tenant_id, customer, folder])))
+
+
 def freeze_template(store, principal, file_id: str, provider_revision: str, name: str, content_type: str, body: bytes) -> FileVersion:
     if not body or len(body) > MAX_UPLOAD_BYTES or original_filename(name) != name:
         raise ValueError("invalid_template_file")

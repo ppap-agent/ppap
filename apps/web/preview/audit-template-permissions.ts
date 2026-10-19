@@ -3,7 +3,7 @@ import {sameSnapshot} from '../src/audit/result-projection'
 import {targetKey} from '../src/audit/sharing-contract'
 
 /** Service-owned choices for UI design only. No Drive ACL endpoints are called. */
-export function fixtureTemplatePermissions(scene: string): AuditTemplatePermissionAdapter {
+export function fixtureTemplatePermissions(scene: string): Required<AuditTemplatePermissionAdapter> {
   const states = new Map<string, {revision: number; members: TemplatePermissions['members']}>(), jobs = new Map<string, PermissionReceipt>()
   function snapshot(folder: PermissionFolder, query: string): TemplatePermissions {
     const key = JSON.stringify(folder)

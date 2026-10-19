@@ -10,6 +10,11 @@ import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
+import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
+
+export const nativeTemplatePermissionAdapter: Pick<AuditTemplatePermissionAdapter, 'readPermissions'> = {
+  readPermissions: (folder, query) => request(`/audit-template-permissions?${new URLSearchParams({...folder, query})}`),
+}
 
 export const nativeSharingAdapter: AuditSharingAdapter = {
   listTargets: (query, kind, pageToken) => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`),

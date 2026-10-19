@@ -4,7 +4,6 @@ import hashlib
 import io
 import json
 import re
-import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +14,8 @@ from fastapi import Query, Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_drive import FeishuExportError, FeishuMetaError, PermanentFailure, UnsupportedDocType, import_drive_material
 from ppap_core.files import MAX_UPLOAD_BYTES, ObjectMissing, attachment_content_disposition
-from ppap_product_store.templates import freeze_template, template_file_id
+from ppap_core.report_sharing import ReportSharingError, report_share_profile
+from ppap_product_store.templates import freeze_template, template_file_id, template_folder_id
 
 from ppap_api import web_contract as wc
 from ppap_api.rule_routes import template_catalog
@@ -129,7 +129,7 @@ def register_template_routes(app, store, session_of, http, settings):
 
         if signature(rows) != signature(current):
             raise TemplateError("template_folder_changed")
-        folder_id = str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([session.principal.tenant_id, source.customer_id, source.folder_token])))
+        folder_id = template_folder_id(session.principal.tenant_id, source.customer_id, source.folder_token)
         frozen = sorted((item["reference"]["file_version_id"], item["updated_at"]) for item in items)
         revision = hashlib.sha256(json.dumps([folder_id, frozen]).encode()).hexdigest()
         return folder_id, revision, sorted(items, key=lambda item: (item["updated_at"], item["reference"]["template_id"]), reverse=True)
@@ -159,6 +159,72 @@ def register_template_routes(app, store, session_of, http, settings):
             return name.strip() or None
         except (httpx.HTTPError, ValueError, TypeError):
             return None
+
+    @app.get("/audit-template-permissions", response_model=wc.AuditTemplatePermissions)
+    def read_permissions(request: Request, customer_id: str, folder_id: str, query: str = Query(default="", max_length=200)):
+        session, source = source_of(request, customer_id)
+        if folder_id != template_folder_id(session.principal.tenant_id, source.customer_id, source.folder_token):
+            raise TemplateError("access_denied", 403)
+        try:
+            report_share_profile(http, session.access_token, session.principal)
+        except ReportSharingError as error:
+            raise TemplateError("access_denied" if str(error) == "share_identity_mismatch" else "feishu_identity_unavailable", 403 if str(error) == "share_identity_mismatch" else 503) from None
+        try:
+            response = http.get(
+                OPEN + f"/drive/v1/permissions/{source.folder_token}/members",
+                params={"type": "folder", "fields": "*"},
+                headers={"Authorization": "Bearer " + session.access_token},
+                timeout=20,
+            )
+            body = response.json()
+            if response.status_code != 200 or not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0:
+                raise TemplateError("feishu_permissions_unavailable", 403 if response.status_code in {401, 403} or isinstance(body, dict) and body.get("code") == 99991672 else 503)
+            items = body["data"]["items"]
+            if not isinstance(items, list) or len(items) > 1000:
+                raise ValueError("invalid_permission_members")
+            members: list[wc.AuditTemplatePermissionMember] = []
+            seen = set()
+            roles = {"view": "可阅读", "edit": "可编辑", "full_access": "可管理"}
+            kinds: dict[str, Literal["user", "group"]] = {"openid": "user", "openchat": "group"}
+            for item in items:
+                if (
+                    not isinstance(item, dict)
+                    or item.get("member_type") not in kinds
+                    or item.get("perm") not in roles
+                    or not isinstance(item.get("member_id"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", item["member_id"])
+                ):
+                    raise ValueError("unsupported_permission_member")
+                key = (kinds[item["member_type"]], item["member_id"])
+                if key in seen:
+                    raise ValueError("duplicate_permission_member")
+                seen.add(key)
+                name = item.get("name")
+                members.append(
+                    {
+                        "target": {"kind": key[0], "id": key[1]},
+                        "display_name": name.strip() if isinstance(name, str) and name.strip() else "名称未取得",
+                        "role": roles[item["perm"]],
+                        "source": "unknown",
+                    }
+                )
+            members.sort(key=lambda row: (row["target"]["kind"], row["target"]["id"]))
+            revision = hashlib.sha256(json.dumps([folder_id, sorted(items, key=lambda item: (item["member_type"], item["member_id"]))], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            raise TemplateError("feishu_permissions_unavailable", 503) from None
+        search = query.strip()
+        return JSONResponse(
+            {
+                "folder": {"customer_id": customer_id, "folder_id": folder_id},
+                "permission_revision": revision,
+                "query": search,
+                "creator_name": creator_name(session, source),
+                "manage_access": {"state": "unknown", "reason": "可查看协作者，暂不支持在此修改权限。"},
+                "members": [member for member in members if search.casefold() in member["display_name"].casefold()],
+                "actions": [],
+            },
+            headers=HEADERS,
+        )
 
     @app.get("/audit-templates", response_model=wc.AuditTemplatePage)
     def list_templates(request: Request, customer_id: str, search: str = Query(default="", max_length=200), page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=10, le=10)):
