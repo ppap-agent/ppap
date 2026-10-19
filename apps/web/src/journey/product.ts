@@ -4,9 +4,7 @@ import type {RequirementCollection} from './requirement-library-state'
 import {sourceContent} from './requirement-library-state'
 import type {DecisionEvidence, DecisionInput} from './decision'
 
-export const ruleParseReceiptError = '提取回执与当前原件或资料类型不一致。草稿已保留，请核对原提取请求。'
 export function parsedBasis(basis: RequirementBasis, candidate: RuleCandidate): RequirementBasis {
-  if (!basis.server || candidate.source_file_version_id !== basis.server.material.file_version_id || basis.server.body.type && candidate.body.type !== basis.server.body.type) throw new Error(ruleParseReceiptError)
   return {...basis, confirmed: null, source: {...basis.source, title: candidate.title, version: basis.source.version || 'v1', state: 'ready'},
     server: {...basis.server!, body: candidate.body},
     clauses: candidate.body.rules.map(row => ({id: row.id, title: row.rule_to_check.split('\n')[0].slice(0, 60), text: row.rule_to_check,

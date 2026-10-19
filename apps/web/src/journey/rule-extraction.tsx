@@ -7,10 +7,11 @@ import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
 import {isPreview} from './access'
 import {localBasis, type RequirementBasis} from './requirements-state'
 import type {LocalUpload} from './local-files'
-import {canonical, parsedBasis, ruleParseReceiptError} from './product'
+import {canonical, parsedBasis} from './product'
 import {message, useRemote} from './remote'
 import {restoreRequirementSources} from './requirement-sources'
 
+const ruleParseReceiptError = '提取回执与当前原件或资料类型不一致。草稿已保留，请核对原提取请求。'
 function matchesSource(job: RuleParseJob, basis: RequirementBasis) {
   const server = basis.server
   // A failed job has no candidate to apply; the user may correct its type.
@@ -54,12 +55,11 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     if (!result) {setError(''); return}
     if (consumed.current === job.value!.id) return
     if ('body' in result && job.value?.status === 'succeeded') {
-      try {
-        const parsed = parsedBasis(latest.current, result)
-        consumed.current = job.value.id
-        setError('')
-        onChange(parsed)
-      } catch (cause) {setError(message(cause))}
+      const current = latest.current.server!
+      if (result.source_file_version_id !== current.material.file_version_id || result.body.type !== current.body.type) {setError(ruleParseReceiptError); return}
+      consumed.current = job.value.id
+      setError('')
+      onChange(parsedBasis(latest.current, result))
     } else if ('error' in result) {consumed.current = job.value!.id; setError(`要求提取未完成：${result.error}`)}
   }, [job.value, onChange, readonly])
   if (!basis.server || readonly) return null

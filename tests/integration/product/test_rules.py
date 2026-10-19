@@ -267,6 +267,33 @@ class RuleApiTests(unittest.TestCase):
         self.assertEqual(response["result"], {"error": "rule_parse_failed"})
         self.assertEqual(self.client.get("/rules").json()["rules"], before)
 
+    def test_json_type_conflict_is_recoverable_with_the_same_original(self):
+        from ppap_worker import process_claimed
+
+        content = json.dumps(rule_body()).encode()
+        source = self.upload("rules.json", content)
+        before = self.client.get("/rules").json()["rules"]
+        receipts = []
+        for document_type in ("全功能检验报告", "控制计划"):
+            accepted = self.submit_parse(source, document_type=document_type)
+            self.assertEqual(accepted.status_code, 202)
+            job = self.store.claim_job("rule-worker")
+            self.assertEqual(job.id, accepted.json()["id"])
+            process_claimed(self.store, job, "rule-worker", rule_ai=self.ai)
+            receipt = self.client.get("/rules/parse/" + job.id).json()
+            self.assertEqual(receipt["source_file_id"], source["file_id"])
+            self.assertEqual(receipt["source_file_version_id"], source["id"])
+            self.assertEqual(receipt["document_type"], document_type)
+            receipts.append(receipt)
+        self.assertNotEqual(receipts[0]["id"], receipts[1]["id"])
+        self.assertEqual(receipts[0]["status"], "failed")
+        self.assertEqual(receipts[0]["result"], {"error": "rule_document_type_mismatch"})
+        self.assertEqual(receipts[1]["status"], "succeeded")
+        self.assertEqual(receipts[1]["result"]["body"], rule_body())
+        self.assertEqual(self.client.get("/rules").json()["rules"], before)
+        self.assertEqual(self.client.get(f"/files/{source['file_id']}/versions/{source['id']}/download").content, content)
+        self.assertEqual(self.ai.requests, [])
+
     def test_invalid_request_shapes_do_not_echo_payloads(self):
         for path in ("/rules", "/rules/parse"):
             with self.subTest(path=path):

@@ -30,6 +30,55 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_historical_engine_rule_without_original_can_still_be_read(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            writes, errors = [], []
+            page.on("request", lambda request: writes.append(request.method) if "/api/" in request.url and request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            rule = {"id": "version-b", "title": "历史要求", "body": BODY, "created_at": "2026-10-18T00:00:00Z", "source_file_id": None, "source_file_version_id": None}
+            material = {
+                "file_id": SOURCE,
+                "file_version_id": VERSION,
+                "original_filename": "control-plan.xlsx",
+                "role": "target",
+                "rule_version_id": rule["id"],
+                "status": "ready",
+                "rule": {key: rule[key] for key in ("id", "title", "body")},
+            }
+            round = {
+                "id": JOB,
+                "execution": "failed",
+                "analysis_mode": "standard",
+                "source_draft_id": "old-draft",
+                "preparation_allowed": False,
+                "created_at": "2026-10-18T00:00:00Z",
+                "coverage": {},
+                "progress": None,
+                "result_attempt": None,
+                "writeback": {"available": False},
+                "case_context": {},
+                "inputs": [material],
+                "findings": [],
+                "failure": {"code": "engine_error", "message": "历史执行失败", "retryable": False},
+            }
+            page.route("**/api/rules/version-b", lambda route: route.fulfill(json=rule))
+            page.route("**/api/rounds/" + JOB, lambda route: route.fulfill(json=round))
+            page.goto(WEB + "/?round=" + JOB)
+            expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
+            page.get_by_role("button", name="本轮资料与依据", exact=True).click()
+            page.get_by_role("button", name="查看本轮条款", exact=True).click()
+            expect(page.get_by_role("heading", name="本次审核依据", exact=True)).to_be_visible()
+            expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("检查 A")
+            expect(page.get_by_text("只读", exact=True)).to_be_visible()
+            self.assertEqual(writes, [])
+            self.assertEqual(errors, [])
+            browser.close()
+
     def test_json_type_conflict_allows_explicit_correction_without_losing_the_source(self):
         from playwright.sync_api import expect
 

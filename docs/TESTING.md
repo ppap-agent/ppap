@@ -218,6 +218,8 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 
 原生上传预检查的读取失败用例也在 `test_rule_interactions.py`：一份文件读取失败不取消另一份可审文件；重新读取只查询同一个已知检查工作，不新建检查、审核任务或受理。
 
+规则提取回执的工作编号、文件、固定版本与资料类型必须符合原请求，错配不能替换草稿；核对只读原请求。JSON 中的类型与所选类型不同会明确失败，用户可在同一原件上更正类型后显式创建新提取请求。上述浏览器测试同时保留无规则原件的旧轮次只读回访；新提取门禁不能应用到历史条款投影。`test_rules.py` 用真实 API／PostgreSQL／Worker 验证类型冲突与更正、原件字节不变及未发布规则；JSON 路径不调用模型，对象存储仍为受控边界。
+
 `tests/e2e/test_web_audit.py::WebAuditLoopTests::test_audit_files_path_loads_history_after_login` 从现有 `/audit-files` 深链读取服务器轮次，验证当前工作台搜索、冻结轮次入口和列表只读回访；隔离 fixture 的 presence 规则不证明真实 PPAP 审核质量。工作台初次读取期间，用户显式选择的队列优先于数据返回后计算的默认队列；`test_explicit_all_records_selection_survives_initial_history_read` 控制响应顺序验证此边界。
 
 `tests/e2e/test_report_sharing.py` 验证固定 PDF/ZIP、中文字符映射、报告切换和撤权后拒绝访问，不读取私有任务或原件。静态构建将已安装 PDF.js 的 `cmaps`、`standard_fonts`、`wasm` 资源及许可证放入 `dist/pdfjs`；开发环境继续使用本机依赖。Nginx 必须以 JavaScript MIME 提供 `.mjs` worker；`tests/repository/test_web_server.py` 通过实际 Nginx 请求检查该响应和不存在文件的 404。
