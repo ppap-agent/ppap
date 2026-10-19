@@ -53,6 +53,7 @@ const driveCatalog = [
 ]
 let nextTask = 1
 let driveReads = 0
+let drivePageReads = 0
 const accepted = new Map<string, ReturnType<typeof fixtureAcceptance>>()
 const confirmationInputs = new Map<string, AuditTask>()
 const taskStore = new Map<string, AuditTask>()
@@ -100,6 +101,14 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       driveReads += 1
       if (scene === 'drive-denied') throw new Error('authorization_required')
       if (scene === 'drive-error' && driveReads === 1) throw new Error('preview_read_failed')
+      if (scene.startsWith('drive-tree')) {
+        if (folderToken === 'project') {
+          if (pageToken && ++drivePageReads === 1) throw new Error('preview_page_read_failed')
+          return {files: pageToken ? [driveCatalog[2].source] : [driveCatalog[0].source], next_page_token: pageToken ? undefined : 'project-more'}
+        }
+        if (folderToken === 'shared') return {files: [driveCatalog[0].source, driveCatalog[1].source]}
+        return {files: [{token: 'project', name: '客户项目', type: 'folder'}, {token: 'shared', name: '共享资料', type: 'folder'}]}
+      }
       if (scene.startsWith('drive-folders')) return {files: folderToken === 'nested' ? [driveCatalog[1].source] : folderToken === 'project' ? [driveCatalog[0].source, {token: 'nested', name: '补充资料', type: 'folder'}] : [{token: 'project', name: '客户项目', type: 'folder'}]}
       if (scene === 'drive-many') return folderToken ? {files: [driveCatalog[0].source]} : {files: [...driveCatalog.filter(row => row.source.token.startsWith('preview-many-')).slice(pageToken ? 12 : 0, pageToken ? 24 : 12).map(row => row.source), ...pageToken ? [] : [{token: 'project', name: '客户项目', type: 'folder'}]], next_page_token: pageToken ? undefined : 'more'}
       return {files: scene === 'drive-empty' ? [] : [...driveCatalog.map(row => row.source), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
@@ -388,7 +397,7 @@ function Preview() {
     },
     drive: {...adapter.drive, list: async query => {
       const result = await adapter.drive.list(query)
-      return scene === 'drive-loading' || scene === 'drive-folders-late' && query?.folderToken === 'project' ? defer('飞书文件列表', result) : result
+      return scene === 'drive-loading' || ['drive-folders-late', 'drive-tree-late'].includes(scene) && query?.folderToken === 'project' ? defer('飞书文件列表', result) : result
     }},
     match: async (...args) => {
       const result = await adapter.match(...args)
