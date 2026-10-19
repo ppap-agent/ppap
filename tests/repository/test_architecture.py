@@ -250,7 +250,14 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("uv sync --frozen --no-dev --no-editable", app)
         self.assertIn("cd /;", app)
         self.assertIn("import ppap_api, ppap_application, ppap_core, ppap_excel_audit_engine, ppap_product_store, ppap_worker", app)
-        self.assertNotIn("pip install", app)
+        # Only hash-checked prefetch may precede the authoritative frozen sync.
+        prefetch = "uv pip install --python /app/.venv/bin/python --require-hashes --no-deps -r /tmp/ppap-requirements.txt"
+        export = "uv export --quiet --frozen --no-dev --no-editable --no-emit-workspace"
+        self.assertIn(export, app)
+        self.assertIn(prefetch, app)
+        self.assertLess(app.index(export), app.index(prefetch))
+        self.assertLess(app.index(prefetch), app.index("uv sync --frozen --no-dev --no-editable"))
+        self.assertNotIn("pip install", app.replace(prefetch, ""))
         self.assertNotIn("PYTHONPATH", app)
         psw = (ROOT / "tests/corpus/Dockerfile.psw").read_text()
         self.assertIn("uv sync --project /app --frozen --no-editable", psw)
