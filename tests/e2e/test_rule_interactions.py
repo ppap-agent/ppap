@@ -30,6 +30,74 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_json_type_conflict_allows_explicit_correction_without_losing_the_source(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page, status="queued")
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements", document_type="全功能检验报告")
+            state["status"] = "failed"
+            state["parse_patch"] = {"result": {"error": "rule_document_type_mismatch"}}
+            page.get_by_role("button", name="刷新提取状态", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="原件中的资料类型与所选类型不同")).to_be_visible()
+            page.get_by_label("适用资料类型").select_option("控制计划")
+            state["status"] = "succeeded"
+            state["parse_patch"] = {}
+            page.get_by_role("button", name="重新提取条款", exact=True).click()
+            expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("检查 A")
+            self.assertEqual(len(state["parses"]), 2)
+            first, corrected = state["parses"]
+            self.assertNotEqual(first["request_id"], corrected["request_id"])
+            self.assertEqual(first["source_file_id"], corrected["source_file_id"])
+            self.assertEqual(first["source_file_version_id"], corrected["source_file_version_id"])
+            self.assertEqual(first["document_type"], "全功能检验报告")
+            self.assertEqual(corrected["document_type"], "控制计划")
+            self.assertEqual(state["saves"], [])
+            browser.close()
+
+    def test_rule_parse_receipt_must_match_original_and_type_before_replacing_draft(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for patch in (
+                {"id": "another-job"},
+                {"source_file_id": "another-file"},
+                {"source_file_version_id": "another-version"},
+                {"document_type": "全功能检验报告"},
+                {"result": {"source_file_version_id": "another-version"}},
+                {"result": {"body": {"type": "全功能检验报告"}}},
+            ):
+                with self.subTest(patch=patch):
+                    page = browser.new_page()
+                    state = self.requirement_routes(page, status="queued")
+                    self.native_rule_routes(page, state)
+                    self.open_requirement(page, "/audit?view=requirements")
+                    page.get_by_label("要求名称", exact=True).fill("保留的草稿名称")
+                    page.get_by_role("textbox", name="来源说明／变更原因", exact=True).fill("保留的来源说明")
+                    state["parse_patch"] = patch
+                    state["status"] = "succeeded"
+                    page.get_by_role("button", name="刷新提取状态", exact=True).click()
+                    expect(page.get_by_role("alert").filter(has_text="提取回执与当前原件或资料类型不一致")).to_be_visible()
+                    expect(page.get_by_label("要求名称", exact=True)).to_have_value("保留的草稿名称")
+                    expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("保留的来源说明")
+                    expect(page.get_by_role("article", name="条款 1", exact=True)).to_have_count(0)
+                    expect(page.get_by_text("正在提取条款，完成后逐条核对原文。", exact=True)).to_have_count(0)
+                    self.assertEqual(len(state["parses"]), 1)
+                    self.assertEqual(state["saves"], [])
+                    state["parse_patch"] = {}
+                    page.get_by_role("button", name="核对原提取请求", exact=True).click()
+                    expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("检查 A")
+                    expect(page.get_by_text("提取回执与当前原件或资料类型不一致", exact=False)).to_have_count(0)
+                    expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("保留的来源说明")
+                    self.assertEqual(len(state["parses"]), 1)
+                    self.assertEqual(state["saves"], [])
+                    page.close()
+            browser.close()
+
     def test_rule_source_recovery_preserves_checked_draft_without_reextracting_or_publishing(self):
         from playwright.sync_api import expect
 
@@ -1733,7 +1801,7 @@ class RuleInteractionTests(unittest.TestCase):
 
         def parse_job(identity, status):
             original = next(value for value in state["parses"] if value["request_id"] == identity)
-            return {
+            job = {
                 "id": identity,
                 "status": status,
                 "source_file_id": original["source_file_id"],
@@ -1745,6 +1813,16 @@ class RuleInteractionTests(unittest.TestCase):
                 if status == "failed"
                 else None,
             }
+            patch = state.get("parse_patch", {})
+            for key, value in patch.items():
+                if key == "result":
+                    result = {**job["result"], **value}
+                    if "body" in value:
+                        result["body"] = {**job["result"]["body"], **value["body"]}
+                    job["result"] = result
+                else:
+                    job[key] = value
+            return job
 
         def read_parse(route):
             self.assertEqual(route.request.method, "GET")
@@ -1765,10 +1843,10 @@ class RuleInteractionTests(unittest.TestCase):
         page.route("**/api/rules/parse/*", read_parse)
         return state
 
-    def open_requirement(self, page, path="/?view=requirements"):
+    def open_requirement(self, page, path="/?view=requirements", *, document_type="控制计划"):
         page.goto(WEB + path)
         page.get_by_label("上传共用要求文件").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
-        page.get_by_label("适用资料类型").select_option("控制计划")
+        page.get_by_label("适用资料类型").select_option(document_type)
         page.get_by_role("button", name="提取条款", exact=True).click()
 
     def check_requirement(self, page):

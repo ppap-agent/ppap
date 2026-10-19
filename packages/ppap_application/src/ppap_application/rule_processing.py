@@ -21,9 +21,12 @@ def parse_rule_file(filename: str, content: bytes, *, document_type: str = "", a
         raise RuleParseError("unsupported_rule_file")
     if extension == ".json":
         try:
-            return normalize_rule_body(json.loads(content.decode("utf-8-sig")))
+            body = normalize_rule_body(json.loads(content.decode("utf-8-sig")))
         except (ValueError, TypeError):
             raise RuleParseError("invalid_rule_json") from None
+        if document_type and document_type != body["type"]:
+            raise RuleParseError("rule_document_type_mismatch")
+        return body
 
     from ppap_docops.extractors import get_extractor
     from ppap_excel_audit_engine.checkers.prompts import PromptManager

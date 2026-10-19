@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from ppap_application import parse_rule_file
 from ppap_core.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3
+from ppap_core.rules import RuleParseError
 
 
 def _item() -> dict:
@@ -35,3 +37,11 @@ def test_json_parse_maps_default_profile_to_v2() -> None:
     payload = {"kind": "engine", "type": "控制计划", "rule_profile": "default", "rules": [_item()]}
     body = parse_rule_file("rules.json", json.dumps(payload).encode())
     assert body["rule_profile"] == RULE_PROFILE_V2
+
+
+def test_json_parse_rejects_a_different_requested_document_type() -> None:
+    payload = {"kind": "engine", "type": "控制计划", "rules": [_item()]}
+    content = json.dumps(payload).encode()
+    with pytest.raises(RuleParseError, match="^rule_document_type_mismatch$"):
+        parse_rule_file("rules.json", content, document_type="全功能检验报告")
+    assert parse_rule_file("rules.json", content, document_type="控制计划")["type"] == "控制计划"

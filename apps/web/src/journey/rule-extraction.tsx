@@ -7,9 +7,15 @@ import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
 import {isPreview} from './access'
 import {localBasis, type RequirementBasis} from './requirements-state'
 import type {LocalUpload} from './local-files'
-import {canonical, parsedBasis} from './product'
+import {canonical, parsedBasis, ruleParseReceiptError} from './product'
 import {message, useRemote} from './remote'
 import {restoreRequirementSources} from './requirement-sources'
+
+function matchesSource(job: RuleParseJob, basis: RequirementBasis) {
+  const server = basis.server
+  // A failed job has no candidate to apply; the user may correct its type.
+  return Boolean(server && job.id === server.parseId && job.source_file_id === server.material.file_id && job.source_file_version_id === server.material.file_version_id && (job.document_type === server.body.type || job.status === 'failed'))
+}
 
 export async function receiveRequirement(entry: LocalUpload, stage?: (basis: RequirementBasis) => void) {
   let basis = localBasis(entry.file.name, entry.ref)
@@ -28,7 +34,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [rerun, setRerun] = useState(false)
   const working = useRef(false), consumed = useRef(''), latest = useRef(basis); latest.current = basis
   const observed = useRef<RuleParseJob | null>(null)
-  if (job.value && job.value.id === basis.server?.parseId) observed.current = job.value
+  if (job.value && matchesSource(job.value, basis)) observed.current = job.value
   useEffect(() => {
     const current = latest.current, value = sources.value
     if (readonly || !value || !current.server || value.file_version_id !== current.server.material.file_version_id || canonical(current.server.sources) === canonical(value)) return
@@ -37,23 +43,29 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
   }, [sources.value, onChange, readonly])
   useEffect(() => {
     const result = job.value?.result
-    if (readonly || !job.value || job.value.id !== latest.current.server?.parseId || ['ready', 'manual'].includes(latest.current.source.state)) return
+    if (readonly || !job.value || ['ready', 'manual'].includes(latest.current.source.state)) return
+    if (!matchesSource(job.value, latest.current)) {setError(ruleParseReceiptError); return}
     if (job.value?.status === 'failed' && consumed.current !== job.value.id) {
       consumed.current = job.value.id
-      setError(result && 'error' in result ? `要求提取失败：${result.error}` : '要求提取失败，可重新提取或按原件补录条款。')
+      setError(result && 'error' in result ? result.error === 'rule_document_type_mismatch' ? '原件中的资料类型与所选类型不同。请选择与原件一致的类型，再重新提取。' : `要求提取失败：${result.error}` : '要求提取失败，可重新提取或按原件补录条款。')
       onChange({...latest.current, source: {...latest.current.source, state: 'failed'}})
       return
     }
-    if (!result || consumed.current === job.value!.id) return
+    if (!result) {setError(''); return}
+    if (consumed.current === job.value!.id) return
     if ('body' in result && job.value?.status === 'succeeded') {
-      consumed.current = job.value.id
-      onChange(parsedBasis(latest.current, result))
+      try {
+        const parsed = parsedBasis(latest.current, result)
+        consumed.current = job.value.id
+        setError('')
+        onChange(parsed)
+      } catch (cause) {setError(message(cause))}
     } else if ('error' in result) {consumed.current = job.value!.id; setError(`要求提取未完成：${result.error}`)}
   }, [job.value, onChange, readonly])
   if (!basis.server || readonly) return null
   if (basis.source.state === 'ready' || basis.source.state === 'manual' && basis.server.body.type) return <div className="space-y-2"><p className="text-sm text-muted-foreground">适用资料：{basis.server.body.type}</p>{sources.error && <p role="alert" className="text-sm text-destructive">无法读取原文出处。<Button variant="outline" size="sm" onClick={sources.refresh}>重新读取出处</Button></p>}</div>
   // A read in flight does not erase the last observation of this exact job.
-  const status = observed.current?.id === basis.server.parseId ? observed.current?.status : null
+  const status = job.value && !matchesSource(job.value, basis) ? null : observed.current?.id === basis.server.parseId ? observed.current?.status : null
   const pending = status === 'queued' || status === 'leased'
   const unknown = status === 'unknown'
   async function parse(restart = false) {
