@@ -30,6 +30,157 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_native_audit_exposes_rule_upload_and_reuses_verified_publication(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            page.goto(WEB + "/audit")
+            page.get_by_role("button", name="上传规则", exact=True).click()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+            with page.expect_file_chooser():
+                page.get_by_role("button", name="上传规则", exact=True).click()
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "客户规则.json", "mimeType": "application/json", "buffer": b"{}"})
+            page.get_by_label("适用资料类型").select_option("控制计划")
+            page.get_by_role("button", name="提取条款", exact=True).click()
+            self.check_requirement(page)
+            page.get_by_label("不限定客户", exact=True).uncheck()
+            page.get_by_label("适用客户", exact=True).fill("测试客户")
+            page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("status").filter(has_text="版本 v1 已保存")).to_be_visible()
+            self.assertEqual(len(state["parses"]), 1)
+            self.assertEqual(len(state["saves"]), 1)
+            self.assertEqual(state["saves"][0]["body"]["customers"], ["测试客户"])
+            self.assertEqual(state["saves"][0]["source_file_version_id"], state["source"]["id"])
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("combobox", name="客户（可选）", exact=True).click()
+            expect(page.get_by_role("option", name="测试客户", exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
+            page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            page.reload()
+            expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
+            expect(page.get_by_text("检查 A", exact=True)).to_be_visible()
+            self.assertEqual(len(state["saves"]), 1)
+            self.assertFalse(any(path.startswith(("/audit-tasks", "/drafts", "/rounds")) for method, path in state["writes"]))
+            browser.close()
+
+    def test_native_rule_draft_survives_navigation_and_mobile_deep_link(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            page.goto(WEB + "/audit?view=requirements")
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "草稿规则.json", "mimeType": "application/json", "buffer": b"{}"})
+            page.get_by_label("要求名称", exact=True).fill("未发布的规则草稿")
+            page.get_by_role("button", name="打开产品导航", exact=True).click()
+            page.get_by_role("dialog").get_by_role("button", name="PPAP Audit", exact=True).click()
+            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            page.get_by_role("button", name="上传规则", exact=True).click()
+            page.get_by_role("link", name="未发布的规则草稿").filter(visible=True).click()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("未发布的规则草稿")
+            page.reload()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("未发布的规则草稿")
+            self.assertEqual(state["parses"], [])
+            self.assertEqual(state["saves"], [])
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
+            browser.close()
+
+    def native_rule_routes(self, page, state):
+        def catalog(route):
+            if state.get("catalog_failed"):
+                route.fulfill(status=503, json={"error": "catalog_unavailable"})
+                return
+            customers = sorted({customer for rule in state["rules"].values() for customer in rule["body"]["customers"]})
+            route.fulfill(
+                json={
+                    "coverage_universe": ["控制计划", *[f"资料类型{index}" for index in range(16)]],
+                    "customers": [{"customer_id": name, "name": name, "effective_rule_types": ["控制计划"]} for name in customers],
+                }
+            )
+
+        page.route("**/api/audit-template-catalog", catalog)
+        page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
+
+    def test_native_rule_catalog_refresh_failure_keeps_the_saved_version(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements")
+            self.check_requirement(page)
+            state["catalog_failed"] = True
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            notice = page.get_by_role("alert").filter(has_text="客户规则目录未能刷新")
+            expect(notice).to_be_visible()
+            expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
+            self.assertEqual(len(state["saves"]), 1)
+            state["catalog_failed"] = False
+            notice.get_by_role("button", name="重新读取客户目录", exact=True).click()
+            expect(notice).to_have_count(0)
+            expect(page.get_by_role("heading", name="已核对要求", exact=True)).to_be_visible()
+            self.assertEqual(len(state["saves"]), 1)
+            browser.close()
+
+    def test_native_rule_upload_keeps_unconfirmed_audit_files_and_selection(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+
+            def validation(route):
+                version = state["source"]
+                route.fulfill(
+                    json={
+                        "validation": {
+                            "id": "validation-original",
+                            "source_file_id": version["file_id"],
+                            "source_file_version_id": version["id"],
+                            "status": "succeeded",
+                            "result": {"state": "valid", "reasons": []},
+                        }
+                    }
+                )
+
+            page.route("**/api/files/*/versions/*/validation", validation)
+            page.goto(WEB + "/audit")
+            page.get_by_label("选择审核文件", exact=True).set_input_files(
+                {"name": "保留选择.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"}
+            )
+            selected = page.get_by_role("checkbox", name="选择 保留选择.xlsx", exact=True)
+            expect(selected).to_be_checked()
+            selected.uncheck()
+            upload_identity = page.evaluate("history.state.auditUploadDraft")
+            self.assertTrue(upload_identity)
+            page.get_by_role("button", name="上传规则", exact=True).click()
+            page.get_by_label("上传共用要求文件").set_input_files({"name": "新增规则.json", "mimeType": "application/json", "buffer": b"{}"})
+            page.get_by_label("要求名称", exact=True).fill("待核对规则")
+            page.get_by_role("tab", name="版本变化", exact=True).click()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            page.get_by_role("searchbox", name="搜索审核要求", exact=True).fill("待核对")
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(selected).not_to_be_checked()
+            self.assertEqual(page.evaluate("history.state.auditUploadDraft"), upload_identity)
+            self.assertEqual(state["parses"], [])
+            self.assertEqual(state["saves"], [])
+            self.assertFalse(any(path.startswith(("/audit-tasks", "/drafts", "/rounds")) for method, path in state["writes"]))
+            browser.close()
+
     def test_leaving_during_draft_creation_never_starts_file_transmission(self):
         from playwright.sync_api import expect
 
@@ -1357,8 +1508,8 @@ class RuleInteractionTests(unittest.TestCase):
         page.route("**/api/rules/parse/*", read_parse)
         return state
 
-    def open_requirement(self, page):
-        page.goto(WEB + "/?view=requirements")
+    def open_requirement(self, page, path="/?view=requirements"):
+        page.goto(WEB + path)
         page.get_by_label("上传共用要求文件").set_input_files({"name": "A.json", "mimeType": "application/json", "buffer": b"{}"})
         page.get_by_label("适用资料类型").select_option("控制计划")
         page.get_by_role("button", name="提取条款", exact=True).click()

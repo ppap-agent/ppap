@@ -48,10 +48,11 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished}: {
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
+  title?: string; uploadLabel?: string; onPublished?: () => void
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [query, setQuery] = useState(routeQuery)
@@ -75,7 +76,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   })
   function select(id: string, version = '', replace = false) {
     setSelection({id, version}); setAck(false); setFeedback(null); setEditing(null); setSourceClause(null)
-    history[replace ? 'replaceState' : 'pushState'](null, '', requirementHref(id, version))
+    history[replace ? 'replaceState' : 'pushState'](history.state, '', requirementHref(id, version))
     setContent(routeContent())
     window.scrollTo({top: 0})
   }
@@ -87,14 +88,14 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     setQuery(value)
     const url = new URL(location.href)
     if (value) url.searchParams.set('reqQuery', value); else url.searchParams.delete('reqQuery')
-    history.replaceState(null, '', url)
+    history.replaceState(history.state, '', url)
   }
   function showContent(value: string) {
     if (value !== 'clauses' && value !== 'changes') return
     setContent(value)
     const url = new URL(location.href)
     if (value === 'changes') url.searchParams.set('reqTab', value); else url.searchParams.delete('reqTab')
-    history.pushState(null, '', url)
+    history.pushState(history.state, '', url)
   }
   useEffect(() => {
     mounted.current = true
@@ -142,6 +143,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         select(savedOwner, version.id, true)
         setFeedback({text: `版本 ${version.basis.source.version} 已保存。已有事项仍使用各自的版本。`, failed: false})
       }
+      onPublished?.()
     } catch (cause) {if (mounted.current) setFeedback({text: errorMessage(cause), failed: true})}
     finally {working.current = false; if (mounted.current) setPublishing(false)}
   }
@@ -166,7 +168,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   }
   return <Dialog open={discard} onOpenChange={open => !working.current && setDiscard(open)}><section className="min-w-0 space-y-6 pb-10 text-sm">
     <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
-    {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回审核要求</a></nav> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">审核要求</h1><Button disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>上传要求</Button></header>}
+    {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><Button disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>{uploadLabel}</Button></header>}
     {upload.busy && <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none"/>正在上传要求原件…</p>}
     {loading && <p role="status" className="text-muted-foreground">正在读取审核要求…</p>}
     {readError && <Alert variant="destructive"><AlertTitle>审核要求未能读取</AlertTitle><AlertDescription>{readError}<div><Button variant="outline" disabled={locked} onClick={onReload}>重新读取</Button></div></AlertDescription></Alert>}

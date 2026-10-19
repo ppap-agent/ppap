@@ -174,6 +174,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 V3.1 的 `/audit` 与 `/__audit-native` 共用 `audit.html → src/audit/native-main.tsx`，开发服务器与正式 Web 构建均使用这一入口，默认首页不切换；4185 仍是独立 fixtures。复用同一个 `AuditIntake`、登录、上传、预检查、Task/Round 读取和原件阅读器。新版入口仅走网络，不回退到旧版 PWA 壳。集群经 edition proxy 打开时，先使用 `/enter-current?return_to=<同源完整审核地址>` 登录并选择 current，再返回精确的任务/报告 URL；该路由仍执行租户名单限制，不授予任务访问权。真实 Round 投影保留机器观察、覆盖与独立人工记录；P5 并列展示已保存的人工判断、理由、版本及冻结文件引用，不改变机器结论或报告资格，也不将人工位置文字伪装为自动定位。未验证证据不能成为正式 PASS/NG 或报告。Standard 在同一个 job/attempt 内隔离逐文件读取、准备和执行异常，保留其他文件结果；不可读取的冻结文件不进入可用上下文，依赖它的查询产生执行错误，不冒充未提交文档。Task 与历史 Round 阅读共用文件异常投影，单条错误不覆盖其他已完成条款。Deep 的逐文件隔离与整体跨文件语义审核质量仍待验证；正式 PDF/ZIP、飞书与用量尚须接通和验收。
 
+`/audit?view=requirements` 提供用户上传审核规则的入口，复用现有 `RequirementLibraryPanel` 和 `/rules` 的原件上传、条款解析、人工核对、版本发布与读回，不另建规则库。上传原件不等于规则已生效；保存版本后刷新客户匹配目录，既有任务仍使用原冻结版本。规则页切换、搜索和版本导航须保留外层 `history.state`，避免返回审核时丢失未确认文件及勾选。
+
 `/__audit-native?round=<id>` 复用 P5 阅读已授权的历史 Round，不要求补建 Task 或事项。`GET /rounds/{id}?read_view=true` 从本轮冻结输入提供文件级结果与原件元信息；普通 Round 读取响应保持不变。旧 engine/presence 和无明确条款关联的 Finding、人工记录单独保留，不猜测条款关系、不增加正式报告资格；原件继续走本轮授权路径。返回入口仍指向同一 Round 的原审核页面。
 
 P5 与历史阅读器的“记录人工复核”复用 `PUT /rounds/{id}/reviews`，保存原始记录键、已读版本、判断、理由、建议及本轮冻结引用。响应丢失先读回；未知请求在当前页面内跨弹窗／文件切换保留，只允许核对后显式重试相同内容。版本冲突需明确采用服务器版本再编辑；刷新后以服务器记录为准，不承诺恢复未提交输入。保存成功使旧任务读取失效，再读取当前 Task／Round；人工记录不改写机器结果或报告资格。
