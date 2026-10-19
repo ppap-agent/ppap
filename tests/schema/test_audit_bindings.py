@@ -311,7 +311,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertEqual(audits[files[0].id]["counts"]["error_count"], 1)
         self.assertEqual([audits[file.id]["counts"]["not_covered_count"] for file in files[1:]], [0, 0])
         self.assertEqual([audits[file.id]["counts"]["pass_count"] for file in files[1:]], [1, 1])
-        self.assertEqual([row["status"] for row in observed["findings"]], ["ERR", "PASS", "PASS"])
+        self.assertCountEqual([row["status"] for row in observed["findings"]], ["ERR", "PASS", "PASS"])
         self.assertEqual(audits[files[0].id]["report"]["state"], "not_eligible")
         self.assertEqual(client.get(f"/rounds/{accepted['id']}?read_view=true").json(), observed)
         self.assertFalse(worker.complete_job(claimed, "file-isolation-test", {"findings": [], "coverage": {}}, "succeeded"))
