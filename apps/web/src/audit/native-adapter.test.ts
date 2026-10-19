@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeTemplatePermissionAdapter, nativeUsageAdapter, sharedReportAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeTemplatePermissionAdapter, nativeTemplateSharingAdapter, nativeUsageAdapter, sharedReportAdapter} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 import {readTemplateZip} from './template-contract.ts'
@@ -14,6 +14,29 @@ const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', 
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
 afterEach(() => {globalThis.fetch = fetchBefore})
+
+test('native template sharing freezes the whole folder and reads original attempts without resending', async () => {
+  const calls: {method: string; path: string; params: URLSearchParams; body: unknown}[] = []
+  const folder = {customer_id: '客户 & A', folder_id: 'folder-one', folder_revision: 'revision-one', folder_template_count: 12}
+  const target = {kind: 'user' as const, id: 'reader'}
+  const input: components['schemas']['AuditTemplateShareRequest'] = {request_id: 'share-one', organization_id: 'org', scope: {...folder, templates: []}, content: {kind: 'link', package: null}, targets: [target]}
+  globalThis.fetch = async (address, init) => {
+    assert.equal(init?.credentials, 'include')
+    const url = new URL(String(address), 'https://example.test')
+    calls.push({method: init?.method || 'GET', path: url.pathname, params: url.searchParams, body: init?.body ? JSON.parse(String(init.body)) : null})
+    return json({})
+  }
+  await nativeTemplateSharingAdapter.readScope(folder)
+  await nativeTemplateSharingAdapter.send(input)
+  const attempts = [{target, attempt_id: 'original-attempt'}]
+  await nativeTemplateSharingAdapter.read({request_id: input.request_id, attempts})
+  await nativeTemplateSharingAdapter.retryFailed(input.request_id, target, 'new-attempt')
+  assert.deepEqual(calls.map(({method, path}) => [method, path]), [['GET', '/audit-template-share-scope'], ['POST', '/audit-template-shares'], ['GET', '/audit-template-shares/share-one'], ['POST', '/audit-template-shares/share-one/retries']])
+  assert.deepEqual(Object.fromEntries(calls[0].params), {...folder, folder_template_count: '12'})
+  assert.deepEqual(calls[1].body, input)
+  assert.deepEqual(JSON.parse(calls[2].params.get('attempts')!), attempts)
+  assert.deepEqual(calls[3].body, {target, attempt_id: 'new-attempt'})
+})
 
 test('native template permissions read the selected folder with cookies', async () => {
   let selected: URL | null = null

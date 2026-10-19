@@ -17,6 +17,7 @@ export function templateShareContent(scope: TemplateShareScope, mode: 'link' | '
   if (!scope.templates.length || scope.templates.some(row => row.share_access.state !== 'allowed')) return null
   if (mode === 'link') return scope.link_access.state === 'allowed' ? {kind: 'link', package: null} : null
   if (scope.zip_access.state !== 'allowed' || scope.templates.some(row => row.download_access.state !== 'allowed') || !zip || !zip.complete || zip.access.state !== 'allowed' || zip.customer_id !== scope.customer_id || zip.folder_id !== scope.folder_id || zip.folder_revision !== scope.folder_revision || zip.templates.length !== scope.templates.length || new Set(zip.templates.map(row => templateKey(row.reference))).size !== scope.templates.length || !zip.byte_size) return null
-  if (!scope.templates.every(row => zip.templates.some(entry => sameSnapshot(entry.reference, row.reference) && entry.filename === row.file.original_filename && entry.byte_size === row.file.byte_size))) return null
+  if (new Set(zip.templates.map(entry => entry.filename)).size !== zip.templates.length || zip.templates.some(entry => !entry.filename || /[/\\\u0000-\u001f]/.test(entry.filename))) return null
+  if (!scope.templates.every(row => zip.templates.some(entry => sameSnapshot(entry.reference, row.reference) && entry.byte_size === row.file.byte_size))) return null
   return {kind: 'zip', package: structuredClone(zip)}
 }

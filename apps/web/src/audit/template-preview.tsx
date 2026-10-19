@@ -10,7 +10,7 @@ const WordSource = lazy(() => import('../journey/word-source').then(module => ({
 const PdfSource = lazy(() => import('../journey/pdf-source').then(module => ({default: module.PdfSource})))
 
 /** The dialog owns one fixed version. Catalog updates cannot replace its content. */
-export function TemplatePreview({item, adapter, onClose, trigger}: {item: TemplateItem; adapter: AuditTemplateAdapter; onClose: () => void; trigger: HTMLButtonElement | null}) {
+export function TemplatePreview({item, adapter, onClose, trigger}: {item: TemplateItem; adapter: Pick<AuditTemplateAdapter, 'readFile'>; onClose: () => void; trigger: HTMLButtonElement | null}) {
   const [content, setContent] = useState<{blob: Blob; url: string} | null>(null), [error, setError] = useState(''), [retry, setRetry] = useState(0)
   useEffect(() => {
     let current = true, url = ''

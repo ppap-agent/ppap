@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import ObjectMissing, attachment_content_disposition
 from ppap_core.report_sharing import ReportSharingError, list_report_targets, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
-from ppap_product_store.report_sharing import ReportShareStore, new_share_attempt, target_key
+from ppap_product_store.report_sharing import ReportShareStore
+from ppap_product_store.share_delivery import new_share_attempt, target_key
 from pydantic import TypeAdapter, ValidationError
 
 from ppap_api import web_contract as wc

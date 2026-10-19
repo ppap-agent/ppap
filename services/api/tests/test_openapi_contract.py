@@ -206,7 +206,8 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertIn("change", snapshot)
 
     def test_ui_template_share_freezes_customer_folder_and_template_versions_not_reports(self):
-        schemas = app.openapi()["components"]["schemas"]
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
         scope = schemas["AuditTemplateShareScope"]["properties"]
         for field in ("customer_id", "customer_name", "folder_id", "folder_revision", "templates", "link_access", "zip_access"):
             self.assertIn(field, scope)
@@ -216,7 +217,16 @@ class OpenAPIContractTests(unittest.TestCase):
         self.assertEqual(schemas["AuditTemplateShareContent"]["properties"]["kind"]["enum"], ["link", "zip"])
         job = schemas["AuditTemplateShare"]
         self.assertEqual(job["properties"]["deliveries"]["items"]["$ref"], "#/components/schemas/AuditShareDelivery")
-        self.assertEqual(job["x-contract-stage"], "ui-draft")
+        self.assertNotIn("x-contract-stage", job)
+        for path, method, schema in (
+            ("/audit-template-share-scope", "get", "AuditTemplateShareScope"),
+            ("/audit-template-shares", "post", "AuditTemplateShare"),
+            ("/audit-template-shares/{request_id}", "get", "AuditTemplateShare"),
+            ("/audit-template-shares/{request_id}/retries", "post", "AuditTemplateShare"),
+            ("/audit-template-shares/{request_id}/templates", "get", "AuditTemplateShareScope"),
+        ):
+            self.assertEqual(_response_schema(spec["paths"][path][method])["$ref"], "#/components/schemas/" + schema)
+        self.assertEqual(set(_request_schema(spec["paths"]["/audit-template-shares"]["post"])["required"]), set(request["required"]))
 
     def test_ui_template_feedback_separates_attachments_submission_and_attempt_receipts(self):
         spec = app.openapi()

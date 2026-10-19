@@ -230,4 +230,6 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 
 ## Web OpenAPI contract
 
+模板分享的 API/数据库回归由 `services/api/tests/test_template_sharing.py` 拥有；飞书为受控 HTTP 边界，覆盖全目录固定版本、逐文件权限、完整 ZIP、撤权、并发读取和明确失败目标的重试。`tests/e2e/test_template_sharing.py` 验证原生模板库使用同一分享界面，以及固定版本接收页的预览、下载和撤权后重访。它们不证明真实飞书消息送达。报告分享的物理连接失效回归仍由 `tests/schema/test_audit_bindings.py` 拥有。共用发送生命周期沿用 `ReportShareDispatch.tla`：两个接收人、各两次尝试的有限 Safety 检查；无公平性、状态约束、对称缩减或覆盖，静止终态不按死锁处理，不证明权限、文件内容、无限重试或最终送达。
+
 API owner tests validate that every major Web-consumed endpoint has an explicit successful JSON response schema and that JSON write endpoints have an explicit request schema. Repository CI then installs the frozen Web lockfile inside `apps/web`, runs `pnpm api-types` there, and fails if `apps/web/src/generated/openapi.ts` differs from the committed artifact. Web CI typechecks/tests/lints/builds the generated consumers.

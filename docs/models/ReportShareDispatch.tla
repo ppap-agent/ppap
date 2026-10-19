@@ -1,7 +1,7 @@
 ------------------------- MODULE ReportShareDispatch -------------------------
 EXTENDS Naturals, FiniteSets
 
-\* #169 focused obligation: two recipients, two explicit attempts each.
+\* #169/#170 shared delivery obligation: two recipients, two explicit attempts each.
 \* A private upload/preparation is not recipient delivery. The durable dispatch
 \* boundary precedes the provider call; a lost reply never proves non-delivery.
 \* The guard is one physical database connection, not a renewable time lease.

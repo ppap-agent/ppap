@@ -568,6 +568,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-template-share-scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Share Scope */
+        get: operations["read_share_scope_audit_template_share_scope_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send Templates */
+        post: operations["send_templates_audit_template_shares_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-shares/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Template Share */
+        get: operations["read_template_share_audit_template_shares__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-shares/{request_id}/files/{template_id}/versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Shared Template */
+        get: operations["read_shared_template_audit_template_shares__request_id__files__template_id__versions__version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-shares/{request_id}/retries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Template Share */
+        post: operations["retry_template_share_audit_template_shares__request_id__retries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-template-shares/{request_id}/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Shared Templates */
+        get: operations["read_shared_templates_audit_template_shares__request_id__templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-templates": {
         parameters: {
             query?: never;
@@ -5102,6 +5204,304 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditTemplatePermissions"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_share_scope_audit_template_share_scope_get: {
+        parameters: {
+            query: {
+                customer_id: string;
+                folder_id: string;
+                folder_revision: string;
+                folder_template_count: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateShareScope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_templates_audit_template_shares_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** AuditTemplateShareContent */
+                    content: {
+                        /**
+                         * Kind
+                         * @enum {string}
+                         */
+                        kind: "link" | "zip";
+                        package: {
+                            /** AuditArchiveAccess */
+                            access: {
+                                /** Reason */
+                                reason: string | null;
+                                /**
+                                 * State
+                                 * @enum {string}
+                                 */
+                                state: "allowed" | "denied" | "unknown" | "deleted";
+                            };
+                            /** Byte Size */
+                            byte_size: number;
+                            /** Complete */
+                            complete: boolean;
+                            /** Customer Id */
+                            customer_id: string;
+                            /** Filename */
+                            filename: string;
+                            /** Folder Id */
+                            folder_id: string;
+                            /** Folder Revision */
+                            folder_revision: string;
+                            /** Manifest Filename */
+                            manifest_filename: string | null;
+                            /** Templates */
+                            templates: {
+                                /** Byte Size */
+                                byte_size: number;
+                                /** Filename */
+                                filename: string;
+                                /**
+                                 * AuditTemplateReference
+                                 * @description A template file version, never a rule snapshot or an audit report.
+                                 */
+                                reference: {
+                                    /** Customer Id */
+                                    customer_id: string;
+                                    /** File Version Id */
+                                    file_version_id: string;
+                                    /** Template Id */
+                                    template_id: string;
+                                };
+                            }[];
+                        } | null;
+                    };
+                    /** Organization Id */
+                    organization_id: string;
+                    /** Request Id */
+                    request_id: string;
+                    /** AuditTemplateShareReference */
+                    scope: {
+                        /** Customer Id */
+                        customer_id: string;
+                        /** Folder Id */
+                        folder_id: string;
+                        /** Folder Revision */
+                        folder_revision: string;
+                        /** Templates */
+                        templates: {
+                            /** Customer Id */
+                            customer_id: string;
+                            /** File Version Id */
+                            file_version_id: string;
+                            /** Template Id */
+                            template_id: string;
+                        }[];
+                    };
+                    /** Targets */
+                    targets: {
+                        /** Id */
+                        id: string;
+                        /**
+                         * Kind
+                         * @enum {string}
+                         */
+                        kind: "user" | "group";
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_template_share_audit_template_shares__request_id__get: {
+        parameters: {
+            query?: {
+                attempts?: string | null;
+            };
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_shared_template_audit_template_shares__request_id__files__template_id__versions__version_id__get: {
+        parameters: {
+            query?: {
+                purpose?: "preview" | "download";
+            };
+            header?: never;
+            path: {
+                request_id: string;
+                template_id: string;
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_template_share_audit_template_shares__request_id__retries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Attempt Id */
+                    attempt_id: string;
+                    /** AuditShareTargetReference */
+                    target: {
+                        /** Id */
+                        id: string;
+                        /**
+                         * Kind
+                         * @enum {string}
+                         */
+                        kind: "user" | "group";
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateShare"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_shared_templates_audit_template_shares__request_id__templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTemplateShareScope"];
                 };
             };
             /** @description Validation Error */

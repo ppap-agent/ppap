@@ -9,13 +9,16 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import Query, Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_drive import FeishuExportError, FeishuMetaError, PermanentFailure, UnsupportedDocType, import_drive_material
+from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import MAX_UPLOAD_BYTES, ObjectMissing, attachment_content_disposition
-from ppap_core.report_sharing import ReportSharingError, report_share_profile
+from ppap_core.report_sharing import ReportSharingError, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
+from ppap_product_store.share_delivery import ShareDeliveryStore, new_share_attempt, target_key
 from ppap_product_store.template_permissions import TemplatePermissionChangeStore
 from ppap_product_store.templates import freeze_template, template_file_id, template_folder_id
 from pydantic import TypeAdapter
@@ -34,6 +37,7 @@ class TemplateError(Exception):
 
 def register_template_routes(app, store, session_of, http, settings):
     changes = TemplatePermissionChangeStore(store)
+    shares = ShareDeliveryStore(store, "template_share_request")
 
     @app.exception_handler(TemplateError)
     async def template_error(_request, error):
@@ -52,6 +56,304 @@ def register_template_routes(app, store, session_of, http, settings):
         if len(sources) != 1:
             raise TemplateError("template_source_unavailable", 503)
         return session, sources[0]
+
+    def share_identity(request, customer_id):
+        session, source = source_of(request, customer_id)
+        if session.principal.provider != "feishu":
+            raise TemplateError("access_denied", 403)
+        try:
+            report_share_profile(http, session.access_token, session.principal)
+        except ReportSharingError:
+            raise TemplateError("feishu_identity_unavailable", 403) from None
+        return session, source
+
+    def file_access(session, row, action):
+        try:
+            response = http.get(
+                OPEN + f"/drive/v1/permissions/{row['token']}/members/auth", params={"type": row["type"], "action": action}, headers={"Authorization": "Bearer " + session.access_token}, timeout=20
+            )
+            body = response.json()
+            value = body.get("data", {}).get("auth_result") if isinstance(body, dict) and isinstance(body.get("data"), dict) else None
+            if response.status_code == 200 and isinstance(body, dict) and type(body.get("code")) is int and body["code"] == 0 and type(value) is bool:
+                return {"state": "allowed" if value else "denied", "reason": None if value else "飞书未允许当前账号执行此操作。"}
+        except (httpx.HTTPError, ValueError, TypeError):
+            pass
+        return {"state": "unknown", "reason": "暂时无法确认飞书文件权限。"}
+
+    def combined_access(values):
+        return next((value for value in values if value["state"] == "denied"), next((value for value in values if value["state"] != "allowed"), {"state": "allowed", "reason": None}))
+
+    def share_scope(request, customer_id, folder_id, folder_revision, folder_template_count):
+        session, source = share_identity(request, customer_id)
+        actual_folder, actual_revision, items = snapshot(session, source)
+        if (actual_folder, actual_revision, len(items)) != (folder_id, folder_revision, folder_template_count) or not items:
+            raise TemplateError("template_folder_changed")
+        rows = inventory(session, source)
+        providers = {template_file_id(session.principal.tenant_id, source.customer_id, source.folder_token, row["token"]): row for row in rows}
+        for item in items:
+            row = providers.get(item["reference"]["template_id"])
+            if row is None:
+                raise TemplateError("template_folder_changed")
+            view = file_access(session, row, "view")
+            item["preview_access"] = view
+            item["share_access"] = combined_access([view, file_access(session, row, "share")])
+            item["download_access"] = combined_access([view, file_access(session, row, "export")])
+        scope = {
+            "customer_id": customer_id,
+            "customer_name": customer_id,
+            "folder_id": folder_id,
+            "folder_revision": folder_revision,
+            "templates": items,
+            "link_access": combined_access([item["share_access"] for item in items]),
+            "zip_access": combined_access([access for item in items for access in (item["share_access"], item["download_access"])]),
+        }
+        return session, source, scope, providers
+
+    @app.get("/audit-template-share-scope", response_model=wc.AuditTemplateShareScope)
+    def read_share_scope(request: Request, customer_id: str, folder_id: str, folder_revision: str, folder_template_count: int = Query(ge=1, le=1000)):
+        _session, _source, scope, _providers = share_scope(request, customer_id, folder_id, folder_revision, folder_template_count)
+        return JSONResponse(scope, headers=HEADERS)
+
+    def frozen_template(item):
+        file = item["file"]
+        version = store.get_version(file["file_id"], file["id"])
+        resource = store.resource(file["file_id"])
+        if version is None or version.public() != file or resource is None or resource.kind != "template":
+            raise TemplateError("template_version_unavailable")
+        return version
+
+    def share_authority(request, payload, *, copying=False, sending=False):
+        scope = payload["scope"]
+        session, source = share_identity(request, scope["customer_id"])
+        if source.folder_token != payload["folder_token"] or template_folder_id(session.principal.tenant_id, source.customer_id, source.folder_token) != scope["folder_id"]:
+            raise TemplateError("access_denied", 403)
+        current = {row["token"]: row for row in inventory(session, source)}
+        for row in payload["providers"]:
+            if row["token"] not in current or current[row["token"]]["type"] != row["type"]:
+                raise TemplateError("access_denied", 403)
+            for action in ["view", *(["share"] if sending else []), *(["export"] if copying else [])]:
+                access = file_access(session, row, action)
+                if access["state"] != "allowed":
+                    raise TemplateError("template_share_permission_unverified", 403)
+        return session
+
+    def frozen_zip(payload):
+        output = io.BytesIO()
+        by_reference = {item["reference"]["template_id"]: item for item in payload["scope"]["templates"]}
+        info = payload["request"]["content"]["package"]
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+            for entry in info["templates"]:
+                item = by_reference[entry["reference"]["template_id"]]
+                if entry["reference"] != item["reference"]:
+                    raise TemplateError("template_version_unavailable")
+                body = store.version_bytes(frozen_template(item))
+                if len(body) != entry["byte_size"]:
+                    raise TemplateError("template_version_unavailable")
+                archive.writestr(zipfile.ZipInfo(entry["filename"], date_time=(1980, 1, 1, 0, 0, 0)), body)
+        data = output.getvalue()
+        if len(data) != info["byte_size"]:
+            raise TemplateError("template_version_unavailable")
+        return data
+
+    def share_token(session):
+        return tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", session.principal.tenant_key)
+
+    def dispatch_share(guard, row, request, session, keys):
+        for key in keys:
+            attempt = row["result"]["attempts"][key][-1]
+            attempt.update(phase="preparing")
+            shares.save(guard, row)
+            try:
+                copying = row["payload"]["request"]["content"]["kind"] == "zip"
+                token = share_token(session)
+                if copying:
+                    share_authority(request, row["payload"], copying=True, sending=True)
+                    if not row["result"].get("file_key"):
+                        info = row["payload"]["request"]["content"]["package"]
+                        row["result"]["file_key"] = upload_report_message_file(http, token, {**info, "content_type": "application/zip"}, frozen_zip(row["payload"]))
+                        shares.save(guard, row)
+                    message_type, message = "file", {"file_key": row["result"]["file_key"]}
+                else:
+                    target = settings.canonical_web_url() + "/audit?" + urlencode({"templateShare": row["payload"]["request"]["request_id"]})
+                    address = settings.canonical_web_url() + "/enter-current?" + urlencode({"return_to": target})
+                    names = "、".join(item["file"]["original_filename"] for item in row["payload"]["scope"]["templates"])
+                    message_type, message = (
+                        "post",
+                        {"zh_cn": {"title": "客户 PPAP 模板", "content": [[{"tag": "text", "text": names[:2000]}], [{"tag": "a", "text": "查看固定模板版本", "href": address}]]}},
+                    )
+                share_authority(request, row["payload"], copying=copying, sending=True)
+                reference = {field: attempt["target"][field] for field in ("id", "kind")}
+                attempt["target"] = resolve_report_target(http, token, session.principal.tenant_key, reference)
+                if attempt["target"]["eligibility"] != "eligible":
+                    raise TemplateError("template_share_target_unverified")
+            except (TemplateError, KeyError, ValueError, ObjectMissing, ReportSharingError, FeishuUsageError):
+                attempt.update(phase="failed", reason="尚未发送消息。请核对模板权限、机器人和接收对象；私有上传可能仍保留。")
+                shares.save(guard, row)
+                continue
+            attempt.update(phase="dispatching", reason="正在核对发送结果，请勿重新发送。")
+            shares.save(guard, row)
+            attempt.update(send_report_message(http, token, attempt["target"], attempt["provider_uuid"], message_type, message))
+            shares.save(guard, row)
+
+    @app.post("/audit-template-shares", response_model=wc.AuditTemplateShare, openapi_extra=wc.openapi_body(wc.AuditTemplateShareRequest))
+    def send_templates(body: dict, request: Request):
+        try:
+            command = TypeAdapter(wc.AuditTemplateShareRequest).validate_python(body, strict=True)
+            identity = str(uuid.UUID(command["request_id"]))
+            if identity != command["request_id"] or not 1 <= len(command["scope"]["templates"]) <= 1000 or not 1 <= len(command["targets"]) <= 20:
+                raise ValueError()
+            if any(not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", target["id"]) for target in command["targets"]) or len({target_key(target) for target in command["targets"]}) != len(command["targets"]):
+                raise ValueError()
+            session, source = share_identity(request, command["scope"]["customer_id"])
+            if command["organization_id"] != session.principal.tenant_key:
+                raise KeyError()
+            with shares.operation(session.principal, identity) as (row, guard):
+                if row:
+                    if row["payload"]["request"] != command:
+                        raise ValueError()
+                    if guard is not None:
+                        shares.recover(guard, row)
+                    return JSONResponse(shares.public(row), headers=HEADERS)
+                if guard is None:
+                    raise TemplateError("share_request_pending")
+                selected = command["scope"]
+                _session, _source, scope, providers = share_scope(request, selected["customer_id"], selected["folder_id"], selected["folder_revision"], len(selected["templates"]))
+                if selected["templates"] != [item["reference"] for item in scope["templates"]]:
+                    raise ValueError()
+                copying = command["content"]["kind"] == "zip"
+                if scope["zip_access" if copying else "link_access"]["state"] != "allowed":
+                    raise TemplateError("template_share_permission_unverified", 403)
+                if copying:
+                    info, data = package(request, selected["customer_id"], selected["folder_id"], selected["folder_revision"], len(selected["templates"]))
+                    if command["content"]["package"] != info or len(data) > 30 * 1024 * 1024:
+                        raise ValueError()
+                elif command["content"]["package"] is not None:
+                    raise ValueError()
+                targets = [resolve_report_target(http, share_token(session), session.principal.tenant_key, target) for target in command["targets"]]
+                if any(target["eligibility"] != "eligible" for target in targets):
+                    raise TemplateError("template_share_target_unverified")
+                bindings = [
+                    {"template_id": item["reference"]["template_id"], "token": providers[item["reference"]["template_id"]]["token"], "type": providers[item["reference"]["template_id"]]["type"]}
+                    for item in scope["templates"]
+                ]
+                with guard.transaction():
+                    row = shares.record(guard, session.principal, command, targets, {"scope": scope, "folder_token": source.folder_token, "providers": bindings})
+                dispatch_share(guard, row, request, session, list(row["result"]["attempts"]))
+                return JSONResponse(shares.public(row), headers=HEADERS)
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
+        except (ValueError, FeishuUsageError):
+            raise TemplateError("template_share_conflict") from None
+
+    @app.get("/audit-template-shares/{request_id}", response_model=wc.AuditTemplateShare)
+    def read_template_share(request: Request, request_id: uuid.UUID, attempts: str | None = Query(None, max_length=10000)):
+        session = session_of(request)
+        if not session:
+            raise TemplateError("unauthenticated", 401)
+        if session.principal.provider != "feishu" or session.principal.app_id != settings.feishu_app_id:
+            raise TemplateError("access_denied", 403)
+        try:
+            selected = TypeAdapter(list[wc.AuditShareAttemptReference]).validate_python(json.loads(attempts), strict=True) if attempts else None
+            with shares.operation(session.principal, str(request_id)) as (row, guard):
+                if row is None:
+                    raise TemplateError("share_request_missing", 404)
+                if guard is not None:
+                    shares.recover(guard, row)
+                return JSONResponse(shares.public(row, selected), headers=HEADERS)
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
+        except ValueError:
+            raise TemplateError("invalid_share_attempts", 400) from None
+
+    @app.post("/audit-template-shares/{request_id}/retries", response_model=wc.AuditTemplateShare, openapi_extra=wc.openapi_body(wc.AuditReportShareRetry))
+    def retry_template_share(request: Request, request_id: uuid.UUID, body: dict):
+        try:
+            command = TypeAdapter(wc.AuditReportShareRetry).validate_python(body, strict=True)
+            attempt_id = str(uuid.UUID(command["attempt_id"]))
+            if attempt_id != command["attempt_id"] or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", command["target"]["id"]):
+                raise ValueError()
+            session = session_of(request)
+            if not session:
+                raise TemplateError("unauthenticated", 401)
+            if session.principal.provider != "feishu" or session.principal.app_id != settings.feishu_app_id:
+                raise KeyError()
+            with shares.operation(session.principal, str(request_id)) as (row, guard):
+                if row is None:
+                    raise TemplateError("share_request_missing", 404)
+                key = target_key(command["target"])
+                history = row["result"]["attempts"].get(key)
+                if not history:
+                    raise KeyError()
+                if any(item["attempt_id"] == attempt_id for item in history):
+                    selected = [
+                        {"target": {field: attempts[-1]["target"][field] for field in ("id", "kind")}, "attempt_id": attempt_id if selected_key == key else attempts[-1]["attempt_id"]}
+                        for selected_key, attempts in row["result"]["attempts"].items()
+                    ]
+                    return JSONResponse(shares.public(row, selected), headers=HEADERS)
+                if guard is None:
+                    raise TemplateError("share_request_pending")
+                shares.recover(guard, row)
+                if history[-1]["phase"] != "failed" or attempt_id == str(request_id) or any(item["attempt_id"] == attempt_id for attempts in row["result"]["attempts"].values() for item in attempts):
+                    raise ValueError()
+                history.append(new_share_attempt(dict(history[-1]["target"]), str(request_id), attempt_id))
+                shares.save(guard, row)
+                dispatch_share(guard, row, request, session, [key])
+                return JSONResponse(shares.public(row), headers=HEADERS)
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
+        except ValueError:
+            raise TemplateError("share_attempt_unconfirmed") from None
+
+    def shared_templates(request, request_id):
+        session = session_of(request)
+        if not session:
+            raise TemplateError("unauthenticated", 401)
+        if session.principal.provider != "feishu" or session.principal.app_id != settings.feishu_app_id:
+            raise TemplateError("access_denied", 403)
+        try:
+            payload = shares.shared(session.principal, str(request_id))
+        except KeyError:
+            raise TemplateError("access_denied", 403) from None
+        return payload, share_authority(request, payload)
+
+    @app.get("/audit-template-shares/{request_id}/templates", response_model=wc.AuditTemplateShareScope)
+    def read_shared_templates(request: Request, request_id: uuid.UUID):
+        payload, session = shared_templates(request, request_id)
+        items = []
+        for item, row in zip(payload["scope"]["templates"], payload["providers"], strict=True):
+            items.append(
+                {
+                    **item,
+                    "preview_access": {"state": "allowed", "reason": None},
+                    "download_access": file_access(session, row, "export"),
+                    "share_access": {"state": "denied", "reason": "请从客户模板库发起新的分享。"},
+                }
+            )
+        return JSONResponse(
+            {
+                **payload["scope"],
+                "templates": items,
+                "link_access": {"state": "denied", "reason": "请从客户模板库发起新的分享。"},
+                "zip_access": combined_access([item["download_access"] for item in items]),
+            },
+            headers=HEADERS,
+        )
+
+    @app.get("/audit-template-shares/{request_id}/files/{template_id}/versions/{version_id}", response_class=Response)
+    def read_shared_template(request: Request, request_id: uuid.UUID, template_id: str, version_id: str, purpose: Literal["preview", "download"] = "download"):
+        payload, session = shared_templates(request, request_id)
+        item = next((item for item in payload["scope"]["templates"] if item["reference"]["template_id"] == template_id and item["file"]["id"] == version_id), None)
+        if item is None:
+            raise TemplateError("access_denied", 403)
+        provider = next(row for row in payload["providers"] if row["template_id"] == template_id)
+        if purpose == "download" and file_access(session, provider, "export")["state"] != "allowed":
+            raise TemplateError("template_share_permission_unverified", 403)
+        version = frozen_template(item)
+        return Response(
+            store.version_bytes(version),
+            media_type=version.content_type,
+            headers={**HEADERS, "X-Content-SHA256": version.sha256, "Content-Disposition": attachment_content_disposition(version.original_filename), "X-Content-Type-Options": "nosniff"},
+        )
 
     def inventory(session, source):
         rows, seen_tokens, seen_pages = [], set(), set()

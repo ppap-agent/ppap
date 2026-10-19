@@ -11,6 +11,7 @@ import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
+import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
 
 export const nativeTemplatePermissionAdapter: Required<AuditTemplatePermissionAdapter> = {
   readPermissions: (folder, query) => request(`/audit-template-permissions?${new URLSearchParams({...folder, query})}`),
@@ -31,6 +32,31 @@ export const nativeSharingAdapter: AuditSharingAdapter = {
   },
   read: input => request(`/audit-report-shares/${encodeURIComponent(input.request_id)}?${new URLSearchParams({attempts: JSON.stringify(input.attempts)})}`),
   retryFailed: (requestId, target, attemptId) => request(`/audit-report-shares/${encodeURIComponent(requestId)}/retries`, 'POST', {target, attempt_id: attemptId}),
+}
+
+export const nativeTemplateSharingAdapter: AuditTemplateSharingAdapter = {
+  listTargets: nativeSharingAdapter.listTargets,
+  readScope: folder => request(`/audit-template-share-scope?${new URLSearchParams(Object.entries(folder).map(([key, value]) => [key, String(value)]))}`),
+  async send(input) {
+    try {return await request('/audit-template-shares', 'POST', input)}
+    catch (failure) {
+      const error = failure as {status?: number; code?: string}
+      if (![400, 401, 403, 409, 422].includes(error.status || 0) || error.code === 'share_request_pending') throw failure
+      const reason = error.code === 'template_folder_changed' ? '模板清单已变化，请重新读取后分享。' : '分享未受理，请核对飞书登录、模板权限及接收对象。'
+      return {request: input, receipt: {request_id: input.request_id, state: 'rejected', reason}, deliveries: input.targets.map(target => ({target: {...target, display_name: target.id, organization_id: input.organization_id, eligibility: 'unknown', reason}, attempt_id: input.request_id, state: 'failed', reason, retry_allowed: false}))}
+    }
+  },
+  read: input => request(`/audit-template-shares/${encodeURIComponent(input.request_id)}?${new URLSearchParams({attempts: JSON.stringify(input.attempts)})}`),
+  retryFailed: (requestId, target, attemptId) => request(`/audit-template-shares/${encodeURIComponent(requestId)}/retries`, 'POST', {target, attempt_id: attemptId}),
+}
+
+export function sharedTemplateAdapter(requestId: string): Pick<AuditTemplateAdapter, 'readFile'> {
+  return {async readFile(item, purpose) {
+    const reference = item.reference
+    if (!item.file.sha256 || reference.file_version_id !== item.file.id) throw new Error('模板版本尚未就绪。')
+    const blob = await readFrozenBlob(`/audit-template-shares/${encodeURIComponent(requestId)}/files/${encodeURIComponent(reference.template_id)}/versions/${encodeURIComponent(reference.file_version_id)}?${new URLSearchParams({purpose})}`, item.file)
+    return {reference, blob}
+  }}
 }
 
 export function sharedReportAdapter(requestId: string): AuditReportAdapter {

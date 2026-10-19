@@ -31,7 +31,7 @@ export function validTemplatePage(page: TemplatePage, query: TemplateQuery) {
   const fixedVersions = page.items.every(row => row.reference.customer_id === query.customer_id && row.reference.template_id && row.reference.file_version_id === row.file.id && row.file.status === 'ready' && row.file.byte_size > 0 && Number.isFinite(Date.parse(row.updated_at)))
   return Boolean(sameQuery && page.folder_id && page.folder_revision && validCount && new Set(page.items.map(row => row.reference.template_id)).size === page.items.length && fixedVersions && page.items.every((row, index, rows) => !index || Date.parse(row.updated_at) <= Date.parse(rows[index - 1].updated_at)))
 }
-export async function readTemplateFile(adapter: AuditTemplateAdapter, item: TemplateItem, purpose: 'preview' | 'download') {
+export async function readTemplateFile(adapter: Pick<AuditTemplateAdapter, 'readFile'>, item: TemplateItem, purpose: 'preview' | 'download') {
   if (!adapter.readFile) throw new Error('template_files_unavailable')
   if (item.file.status !== 'ready' || item[`${purpose}_access`].state !== 'allowed') throw new Error('template_access_denied')
   const result = await adapter.readFile(structuredClone(item), purpose)
