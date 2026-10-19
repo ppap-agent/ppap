@@ -982,6 +982,10 @@ class RuleInteractionTests(unittest.TestCase):
             page = browser.new_page()
             page.set_default_timeout(4000)
             self.route(page)
+            page.route(
+                f"**/api/files/{SOURCE}/versions/{VERSION}",
+                lambda route: route.fulfill(json={"file_id": SOURCE, "id": VERSION, "original_filename": "原始规则.json", "status": "ready"}),
+            )
             prepared = {}
             rule = {"id": "version-b", "title": "规则 B", "body": BODY, "created_at": "2026-10-18T00:00:00Z", "source_file_id": SOURCE, "source_file_version_id": VERSION, "predecessor_id": None}
             items = [
