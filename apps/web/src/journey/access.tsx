@@ -20,7 +20,7 @@ const loginErrors: Record<string, string> = {
   tenant_not_allowed: '当前企业尚未开通此审核服务，请切换飞书账号或联系管理员。',
 }
 
-export function AccountMenu({compact = false, className}: {compact?: boolean; className?: string}) {
+export function AccountMenu({compact = false, className, onUsage, showLocalRecords = true}: {compact?: boolean; className?: string; onUsage?: () => void; showLocalRecords?: boolean}) {
   const access = useAccess()
   const name = access?.principal?.display_name || (access?.preview ? '林悦 · 演示' : '审核账号')
   return <DropdownMenu>
@@ -29,8 +29,8 @@ export function AccountMenu({compact = false, className}: {compact?: boolean; cl
       {!compact && <><span className={"min-w-0 flex-1 truncate text-left"}>{name}</span><ChevronDown/></>}
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end"><DropdownMenuLabel>{name}</DropdownMenuLabel><DropdownMenuSeparator/>
-      <DropdownMenuItem asChild><a href="/?view=usage"><Gauge/>用量记录</a></DropdownMenuItem>
-      <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>
+      {onUsage ? <DropdownMenuItem onSelect={onUsage}><Gauge/>用量记录</DropdownMenuItem> : <DropdownMenuItem asChild><a href="/?view=usage"><Gauge/>用量记录</a></DropdownMenuItem>}
+      {showLocalRecords && <DropdownMenuItem onSelect={access?.records}><FolderClock/>本机草稿</DropdownMenuItem>}
       <DropdownMenuItem onSelect={access?.logout}><LogOut/>退出登录</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>
