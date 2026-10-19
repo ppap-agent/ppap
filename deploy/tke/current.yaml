@@ -548,6 +548,11 @@ spec:
             limits:
               cpu: "1"
               memory: 2Gi
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'test -S "$PPAP_DEEP_CONTROLLER_SOCKET"']
+            periodSeconds: 5
+            timeoutSeconds: 3
         - name: worker
           image: unregistry.xixifusi.online/ppap-worker:89b8f605940d76a0cdbd85fac8520c6d95035a28
           imagePullPolicy: Always

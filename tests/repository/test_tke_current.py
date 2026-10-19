@@ -223,6 +223,7 @@ exit 0
         self.assertNotIn("deep controller socket missing", command)
         deep = next(container for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker" for container in _containers(doc) if container.get("name") == "deep")
         self.assertEqual(next(item["value"] for item in deep["env"] if item["name"] == "PPAP_SERVICE"), "deep")
+        self.assertEqual(deep.get("readinessProbe", {}).get("exec", {}).get("command"), ["sh", "-c", 'test -S "$PPAP_DEEP_CONTROLLER_SOCKET"'])
         self.assertTrue(any("emptyDir" in json.dumps(doc.get("spec", {})) for doc in docs if doc.get("metadata", {}).get("name") == "ppap-current-worker"))
         proxy_conf = next(doc for doc in docs if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].startswith("edition-proxy-"))
         self.assertEqual(proxy_conf["data"]["default.conf"].strip(), (TKE / "edition-proxy.conf").read_text().strip())
