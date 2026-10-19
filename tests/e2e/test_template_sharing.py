@@ -13,8 +13,8 @@ from playwright.sync_api import expect, sync_playwright  # noqa: E402
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
-@pytest.mark.parametrize("delivery_state", ["sent", "unknown", "pre-accept"])
-def test_native_library_shares_the_whole_folder_not_the_search_result(delivery_state):
+@pytest.mark.parametrize("delivery_state,directory_status", [("sent", 200), ("unknown", 200), ("pre-accept", 200), ("unknown", 403), ("unknown", 503)])
+def test_native_library_shares_the_whole_folder_not_the_search_result(delivery_state, directory_status):
     allowed = {"state": "allowed", "reason": None}
     files = [
         {
@@ -75,6 +75,9 @@ def test_native_library_shares_the_whole_folder_not_the_search_result(delivery_s
             elif path == "/audit-tasks":
                 route.fulfill(json={"tasks": [], "next_offset": None})
             elif path == "/audit-templates":
+                if sends and directory_status != 200:
+                    route.fulfill(status=directory_status, json={"error": "feishu_templates_unavailable"})
+                    return
                 search = params.get("search", [""])[0]
                 rows = [row for row in files if search in row["file"]["original_filename"]]
                 route.fulfill(

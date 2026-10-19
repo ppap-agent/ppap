@@ -8,6 +8,7 @@ export type TemplateShareRequest = components['schemas']['AuditTemplateShareRequ
 export type TemplateShareScope = components['schemas']['AuditTemplateShareScope']
 export type TemplateShareContent = components['schemas']['AuditTemplateShareContent']
 export type TemplateShareRecovery = components['schemas']['AuditTemplateShareRecovery']
+export type TemplateShareSource = TemplateFolder | Pick<TemplateFolder, 'customer_id'>
 export type AuditTemplateSharingAdapter = ShareTransport<TemplateShareRequest> & {
   readScope: (folder: TemplateFolder) => Promise<TemplateShareScope>
   restore?: (customerId: string) => Promise<TemplateShareRecovery | null>

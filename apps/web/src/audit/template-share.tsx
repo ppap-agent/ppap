@@ -11,11 +11,11 @@ import {ShareTargets} from './share-targets'
 import {ShareResults} from './share-results'
 import {shareUnresolved, useShareActions} from './share-actions'
 import type {ShareTarget} from './sharing-contract'
-import {readTemplateZip, type AuditTemplateAdapter, type TemplateFolder, type TemplateZip} from './template-contract'
-import {templateShareContent, templateShareReference, validTemplateShareRecovery, validTemplateShareScope, type AuditTemplateSharingAdapter, type TemplateShare, type TemplateShareScope} from './template-sharing-contract'
+import {readTemplateZip, type AuditTemplateAdapter, type TemplateZip} from './template-contract'
+import {templateShareContent, templateShareReference, validTemplateShareRecovery, validTemplateShareScope, type AuditTemplateSharingAdapter, type TemplateShare, type TemplateShareScope, type TemplateShareSource} from './template-sharing-contract'
 
 /** One retained session per folder. Its captured input never becomes another customer's share. */
-export function TemplateShareSession({open, folder, adapter, templates, onClose, trigger}: {open: boolean; folder: TemplateFolder; adapter: AuditTemplateSharingAdapter; templates: AuditTemplateAdapter; onClose: () => void; trigger: HTMLButtonElement | null}) {
+export function TemplateShareSession({open, folder, adapter, templates, onClose, trigger}: {open: boolean; folder: TemplateShareSource; adapter: AuditTemplateSharingAdapter; templates: AuditTemplateAdapter; onClose: () => void; trigger: HTMLButtonElement | null}) {
   const [scope, setScope] = useState<TemplateShareScope | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
   const [job, setJob] = useState<TemplateShare | null>(null), [targets, setTargets] = useState<ShareTarget[]>([]), [mode, setMode] = useState<'link' | 'zip'>('link')
   const [targetsReady, setTargetsReady] = useState(false)
@@ -38,7 +38,7 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
         return
       }
       restoreChecked.current = true
-      if (!folder.folder_template_count) throw new Error('template_share_missing')
+      if (!('folder_id' in folder) || !folder.folder_template_count) throw new Error('template_share_missing')
       const next = await adapter.readScope(structuredClone(folder))
       if (scopeEpoch.current !== run) return
       if (!validTemplateShareScope(next, folder)) throw new Error('template_share_scope_mismatch')
@@ -76,6 +76,6 @@ export function TemplateShareSession({open, folder, adapter, templates, onClose,
       ]}}/> : open && <ShareTargets adapter={adapter} value={targets} onChange={setTargets} onReadyChange={setTargetsReady}/>}
       {!job && !content && !preparing && <p role="status" className="text-sm">{scope.link_access.reason || scope.zip_access.reason || '完整模板集合或本方式的分享权限尚未确认，不能发送。'}</p>}
     </>}</div>
-    <DialogFooter className="shrink-0 flex-row flex-wrap"><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && <Button variant="outline" onClick={fresh}>新的模板分享</Button>}{!job && <Button disabled={!validTargets || !content || loading || preparing} onClick={() => {if (scope && content) void actions.send({organization_id: targets[0].organization_id, scope: templateShareReference(scope), targets: targets.map(({kind, id}) => ({kind, id})), content}, targets)}}>发送给 {targets.length} 个目标</Button>}</DialogFooter>
+    <DialogFooter className="shrink-0 flex-row flex-wrap"><Button variant="outline" onClick={onClose}>关闭</Button>{job && !shareUnresolved(job) && 'folder_id' in folder && folder.folder_template_count > 0 && <Button variant="outline" onClick={fresh}>新的模板分享</Button>}{!job && <Button disabled={!validTargets || !content || loading || preparing} onClick={() => {if (scope && content) void actions.send({organization_id: targets[0].organization_id, scope: templateShareReference(scope), targets: targets.map(({kind, id}) => ({kind, id})), content}, targets)}}>发送给 {targets.length} 个目标</Button>}</DialogFooter>
   </DialogContent></Dialog>
 }
