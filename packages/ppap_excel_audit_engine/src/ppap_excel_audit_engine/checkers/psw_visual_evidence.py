@@ -14,7 +14,14 @@ logger = logging.getLogger(__name__)
 
 PSW_ALWAYS_VISUAL_RULES = frozenset({3, 5})
 PSW_CHECKBOX_DEPENDENT_RULES = frozenset({7, 8, 9, 10})
-_CONDITIONAL_VISUAL_RULES = frozenset({9, 10})
+_DISPOSITION_VISUAL_RULES = frozenset({8, 9, 10})
+_SUBMISSION_CHECKBOX_FIELDS = (
+    "dimensional_checked",
+    "appearance_checked",
+    "material_functional_checked",
+    "statistical_checked",
+    "requirements_yes_checked",
+)
 # Same window as the structured PSW rule 9: 0 through 92 days is inside 3 months.
 _CONDITIONAL_APPROVAL_WINDOW_DAYS = 92
 _UNVERIFIABLE = "视觉证据识别失败，无法验证必需证据。"
@@ -23,6 +30,7 @@ _MISSING_FIELD_NG = "未找到“认可情况”字段。"
 _DATE_MISSING_NG = "无法识别条件批准日期。"
 _DATE_WINDOW_NG = "条件批准日期超出3个月。"
 _COMMENTS_NG = "条件批准需填写补充评论。"
+_SUBMISSION_NG = "“批准”状态下提交结果勾选不完整。"
 
 _CONDITIONAL_OBSERVATION_PROMPT = "查看“认可情况”中的“批准”“条件批准”“拒绝”，以及该区域的日期和补充评论。只报告可见事实，不要判断通过或不通过。"
 
@@ -56,11 +64,13 @@ PSW_RULE_PROMPTS: dict[int, dict[str, str]] = {
         "label": "认可情况检查",
         "classification": "认可情况检查",
         "item": "认可情况检查",
-        "system_prompt": "你是一个专业的图片审核员，擅长识别图片中的内容。",
+        "system_prompt": "你是一个专业的图片审核员，擅长识别图片中的内容。只报告可见事实，不要判断通过或不通过。",
         "user_prompt": (
-            "识别PSW是否包含“认可情况”字段；“认可情况”是否有且仅有一个选项被勾选；"
-            "当“批准”选项被勾选时，“提交结果”区域的“尺寸测量”“外观标准”“材料和功能试验”"
-            "“统计过程数据”均被勾选且“这些结果均满足所有图纸和规范要求”也有选项被勾选才通过，否则不通过。"
+            "查看“认可情况”中的“批准”“条件批准”“拒绝”，分别报告三个选项的勾选状态。"
+            "另行查看“提交结果”区域的“尺寸测量”“外观标准”“材料和功能试验”“统计过程数据”，"
+            "以及“这些结果均满足所有图纸和规范要求”下的“是”，分别报告勾选状态。"
+            "两个区域互相独立，不得用“提交结果”或其他区域的勾选代替“认可情况”的勾选。"
+            "只报告可见事实，不要判断通过或不通过。"
         ),
     },
     9: {
@@ -119,19 +129,19 @@ def _parse_approval_date(value: object) -> date | None:
         return None
 
 
-def decide_conditional_visual_rule(
+def decide_disposition_visual_rule(
     rule_no: int,
     observation: dict[str, object],
     *,
     today: date,
 ) -> tuple[str, str]:
-    """Apply the structured PSW rule 9/10 order to reported checkbox facts.
+    """Apply the structured PSW rule 8/9/10 order to reported checkbox facts.
 
     The model does not choose PASS or NG. A missing or unreadable fact fails closed.
     """
 
-    if rule_no not in _CONDITIONAL_VISUAL_RULES:
-        raise ValueError(f"rule {rule_no} is not a conditional visual rule")
+    if rule_no not in _DISPOSITION_VISUAL_RULES:
+        raise ValueError(f"rule {rule_no} is not a disposition visual rule")
 
     visible = _as_bool(observation.get("disposition_visible"))
     approved = _as_bool(observation.get("approved_checked"))
@@ -145,6 +155,17 @@ def decide_conditional_visual_rule(
     checked = [name for name, selected in (("approved", approved), ("conditional", conditional), ("rejected", rejected)) if selected]
     if len(checked) != 1:
         return "NG", _SELECTION_NG
+
+    if rule_no == 8:
+        if not approved:
+            return "PASS", ""
+        submission = [_as_bool(observation.get(field)) for field in _SUBMISSION_CHECKBOX_FIELDS]
+        if any(value is None for value in submission):
+            return "NG", _UNVERIFIABLE
+        if all(submission):
+            return "PASS", ""
+        return "NG", _SUBMISSION_NG
+
     if checked[0] != "conditional":
         return "PASS", ""
 
@@ -210,11 +231,11 @@ class PswVisualRuleEvaluator:
         source_note = ""
         if source_locations:
             source_note = "\n\n视觉证据来源：\n- " + "\n- ".join(source_locations)
-        if rule_no in _CONDITIONAL_VISUAL_RULES:
-            return self._evaluate_conditional_rule(rule_no, config, list(images), source_note, today or date.today())
+        if rule_no in _DISPOSITION_VISUAL_RULES:
+            return self._evaluate_disposition_rule(rule_no, config, list(images), source_note, today or date.today())
         return self._evaluate_status_rule(rule_no, config, list(images), source_note)
 
-    def _evaluate_conditional_rule(
+    def _evaluate_disposition_rule(
         self,
         rule_no: int,
         config: dict[str, str],
@@ -222,20 +243,25 @@ class PswVisualRuleEvaluator:
         source_note: str,
         today: date,
     ) -> AuditResult:
+        fields: dict[str, object] = {
+            "disposition_visible": True,
+            "approved_checked": False,
+            "conditional_checked": False,
+            "rejected_checked": False,
+        }
+        if rule_no == 8:
+            fields.update({field: False for field in _SUBMISSION_CHECKBOX_FIELDS})
+            field_note = "提交结果的四项与满足要求的“是”分别对应 dimensional、appearance、material_functional、statistical、requirements_yes。"
+        else:
+            fields.update(approval_date="", comments_present=False)
+            field_note = "approval_date 使用 YYYY-MM-DD；没有日期时为空字符串。补充评论有非空内容时 comments_present 为 true。"
         user_prompt = (
             f"{config['user_prompt']}{source_note}\n\n"
             "请只返回以下 JSON，不要添加解释：\n"
-            "{\n"
-            '    "disposition_visible": true,\n'
-            '    "approved_checked": false,\n'
-            '    "conditional_checked": false,\n'
-            '    "rejected_checked": false,\n'
-            '    "approval_date": "",\n'
-            '    "comments_present": false\n'
-            "}\n"
+            f"{json.dumps(fields, ensure_ascii=False, indent=4)}\n"
             "空框为 false。看不清“认可情况”时 disposition_visible 为 false。"
-            "approval_date 使用 YYYY-MM-DD；没有日期时为空字符串。"
-            "补充评论有非空内容时 comments_present 为 true。"
+            "无法辨认的勾选状态返回 null，不得猜测。"
+            f"{field_note}"
         )
         response = self._analyze(
             system_prompt=config["system_prompt"],
@@ -245,7 +271,7 @@ class PswVisualRuleEvaluator:
         )
         try:
             observation = self._load_json_object(response)
-            status, suggestions = decide_conditional_visual_rule(rule_no, observation, today=today)
+            status, suggestions = decide_disposition_visual_rule(rule_no, observation, today=today)
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("PSW rule %s visual evidence could not be verified: %s", rule_no, exc)
             return self._unverifiable(config)
@@ -311,5 +337,5 @@ __all__ = [
     "PSW_RULE_PROMPTS",
     "PswVisualAnalyzer",
     "PswVisualRuleEvaluator",
-    "decide_conditional_visual_rule",
+    "decide_disposition_visual_rule",
 ]
