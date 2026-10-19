@@ -528,7 +528,7 @@ class AuditFlowTests(unittest.TestCase):
         bob_list = self.client.get("/rounds").json()["rounds"]
         self.assertEqual([row["id"] for row in bob_list], [round_id])
 
-    def test_selected_rule_items_are_frozen_and_cover_unchecked(self):
+    def test_selected_rule_items_are_frozen_in_confirmed_order(self):
         from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
         from ppap_excel_audit_engine import app_runtime
         from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target
@@ -555,7 +555,8 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(frozen["mode"], "rule_items")
         self.assertEqual([row["id"] for row in frozen["items"]], ["keep", "extra"])
         self.assertEqual(frozen["items"][0]["coverage"], "mapped")
-        self.assertEqual(frozen["items"][1]["coverage"], "unsupported")
+        self.assertEqual(frozen["items"][1]["coverage"], "mapped")
+        self.assertEqual([row["checker_index"] for row in frozen["items"]], [0, 1])
 
         def fake_run(audit, rule, group_context=None):
             return [
@@ -581,7 +582,8 @@ class AuditFlowTests(unittest.TestCase):
         loaded = self.client.get("/rounds/" + accepted.json()["id"]).json()
         self.assertEqual(loaded["findings"][0]["item_key"], target["id"] + ":rule:keep")
         self.assertEqual(loaded["findings"][0]["item"], mapped_text)
-        self.assertTrue(any("arbitrary customer requirement" in row for row in loaded["coverage"]["unchecked"]))
+        self.assertFalse(loaded["coverage"]["unchecked"])
+        self.assertEqual(loaded["findings"][1]["item"], "arbitrary customer requirement")
         changed = rule_body()
         changed["rules"][0]["rule_to_check"] = "新版要求"
         successor = self.client.post("/rules", json={"title": "新版", "body": changed, "source_file_version_id": source["id"], "predecessor_id": published.json()["id"]})

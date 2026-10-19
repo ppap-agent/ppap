@@ -5,14 +5,14 @@ from pathlib import Path
 
 from ppap_application import run_round_from_bytes
 from ppap_core.audits import RoundInput, RoundWork
-from ppap_core.rule_coverage import COVERAGE_MAPPED, COVERAGE_UNSUPPORTED
+from ppap_core.rule_coverage import COVERAGE_MAPPED
 from ppap_excel_audit_engine.checkers.rule_declarations import declarations_for_target, freeze_target_rule_execution
 
 REPO = Path(__file__).resolve().parents[3]
 
 
 class DimensionProjectionTests(unittest.TestCase):
-    def test_v3_dimension_product_projection_keeps_unconfirmed_rule_unchecked(self):
+    def test_v3_dimension_product_projection_uses_confirmed_order_and_keeps_original_text(self):
         file_name = "尺寸检验报告-example.xlsm"
         asset = REPO / "assets" / "poc测试" / "POC测试样本" / file_name
         self.assertTrue(asset.is_file(), asset)
@@ -32,7 +32,8 @@ class DimensionProjectionTests(unittest.TestCase):
             ],
         }
         execution = freeze_target_rule_execution(body, file_name)
-        self.assertEqual([row["coverage"] for row in execution["items"]], [COVERAGE_MAPPED, COVERAGE_UNSUPPORTED])
+        self.assertEqual([row["coverage"] for row in execution["items"]], [COVERAGE_MAPPED, COVERAGE_MAPPED])
+        self.assertEqual([row["checker_index"] for row in execution["items"]], [0, 1])
         target = RoundInput(
             "target",
             "file-1",
@@ -47,10 +48,12 @@ class DimensionProjectionTests(unittest.TestCase):
             RoundWork("round-1", "tenant-1", [target]),
             {"version-1": asset.read_bytes()},
         )
-        self.assertEqual([(row["item_key"], row["status"]) for row in result["findings"]], [("version-1:rule:declared-1", "NG")])
+        self.assertEqual([row["item_key"] for row in result["findings"]], ["version-1:rule:declared-1", "version-1:rule:unconfirmed-1"])
+        self.assertEqual(result["findings"][1]["item"], customer_text)
+        self.assertTrue(all(row["status"] in {"PASS", "NG"} for row in result["findings"]))
         self.assertEqual(result["coverage"]["checked"], [file_name])
         self.assertEqual(
             [(row["id"], row["coverage"]) for row in result["coverage"]["rule_items"]],
-            [("declared-1", COVERAGE_MAPPED), ("unconfirmed-1", COVERAGE_UNSUPPORTED)],
+            [("declared-1", COVERAGE_MAPPED), ("unconfirmed-1", COVERAGE_MAPPED)],
         )
-        self.assertTrue(any(customer_text in note for note in result["coverage"]["unchecked"]))
+        self.assertFalse(result["coverage"]["unchecked"])

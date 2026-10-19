@@ -631,14 +631,21 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert job.round_id == accepted["round_id"]
     assert worker.claim_job("no-second-audit") is None
     process_claimed(worker, job, "one-audit")
+    reporting = client.get(path).json()
+    assert reporting["state"] == "reviewing"
+    assert [row["audit"]["report"]["state"] for row in reporting["files"]] == ["pending", "not_eligible", "pending"]
+    for _ in range(2):
+        report_job = worker.claim_job("file-report")
+        assert report_job.kind == "report_pdf"
+        process_claimed(worker, report_job, "file-report")
     finished = client.get(path).json()
     assert finished["state"] == "completed"
     assert finished["completion_reason"] == "processed"
     assert finished["progress"] == {"completed": 3, "total": 3}
-    assert all(row["audit"]["execution"] == "completed" for row in finished["files"])
-    assert all(row["audit"]["checks"][0]["coverage"] == "unsupported" for row in finished["files"])
-    assert all(row["audit"]["conclusion"] == "UNKNOWN" for row in finished["files"])
-    assert all(row["audit"]["report"]["state"] == "not_eligible" for row in finished["files"])
+    assert [row["audit"]["execution"] for row in finished["files"]] == ["completed", "review_failed", "completed"]
+    assert all(row["audit"]["checks"][0]["coverage"] == "executed" for row in finished["files"])
+    assert [row["audit"]["conclusion"] for row in finished["files"]] == ["NG", "UNKNOWN", "NG"]
+    assert [row["audit"]["report"]["state"] for row in finished["files"]] == ["ready", "not_eligible", "ready"]
     assert client.get("/audit-tasks", params={"state": "completed"}).json()["tasks"] == [finished]
 
 

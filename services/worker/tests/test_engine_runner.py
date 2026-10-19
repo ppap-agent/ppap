@@ -44,7 +44,7 @@ class EngineRunnerTests(unittest.TestCase):
     def _upload(self, name: str, body: bytes) -> dict:
         return self.store.upload(name, body)
 
-    def test_unreadable_frozen_context_is_an_execution_error_not_a_missing_document_ng(self):
+    def test_unreadable_context_of_historical_frozen_checks_is_an_execution_error_not_a_missing_document_ng(self):
         from io import BytesIO
 
         from openpyxl import Workbook
@@ -71,6 +71,13 @@ class EngineRunnerTests(unittest.TestCase):
                 "rules": [
                     {"id": "cross", "category": "关联工序", "rule_to_check": "过程流程图与控制计划列项及一致性审核", "type_of_rule": "text"},
                     {"id": "local", "category": "本文件列", "rule_to_check": "特殊特性分类与产品/过程列存在性审核", "type_of_rule": "text"},
+                ],
+            },
+            rule_execution={
+                "mode": "rule_items",
+                "items": [
+                    {"id": "cross", "coverage": "mapped", "checker_index": 1},
+                    {"id": "local", "coverage": "mapped", "checker_index": 3},
                 ],
             },
         )
@@ -347,13 +354,13 @@ class EngineRunnerTests(unittest.TestCase):
 
         with patch.object(app_runtime, "run_audit_engine", fake_run):
             result = engine_runner(work, self.store)
-        self.assertEqual([row["item_key"] for row in result["findings"]], [f"{first['id']}:rule:keep"])
+        self.assertEqual([row["item_key"] for row in result["findings"]], [f"{first['id']}:rule:keep", f"{first['id']}:rule:extra"])
         self.assertEqual(result["findings"][0]["item"], mapped_text)
         self.assertEqual(result["findings"][0]["locator"]["rule_item_id"], "keep")
-        self.assertTrue(any("arbitrary customer requirement" in row for row in result["coverage"]["unchecked"]))
+        self.assertFalse(result["coverage"]["unchecked"])
         self.assertEqual([row["id"] for row in result["coverage"]["rule_items"]], ["keep", "extra"])
-        self.assertEqual(result["coverage"]["rule_items"][1]["coverage"], "unsupported")
-        self.assertNotIn("customer-only", " ".join(row["item"] for row in result["findings"]))
+        self.assertEqual(result["coverage"]["rule_items"][1]["coverage"], "mapped")
+        self.assertEqual(result["findings"][1]["item"], "arbitrary customer requirement")
 
     def test_cross_file_type_uses_standard_inference_before_rule_type(self):
         from ppap_excel_audit_engine import app_runtime

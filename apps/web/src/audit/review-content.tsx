@@ -11,7 +11,7 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {FileName} from '../journey/file-name'
-import {clauseObservation, checkScopeComplete, frozenResultError, sameSnapshot, type ReviewFile} from './result-projection'
+import {clauseObservation, frozenResultError, sameSnapshot, type ReviewFile} from './result-projection'
 import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info-contract'
 import {RecordedReview, frozenOriginal} from './recorded-review'
 import {HistoricalFindings} from './historical-findings'
@@ -32,8 +32,6 @@ function checkLabel(check: Evaluation) {
   if (check.execution === 'running') return '审核中'
   if (check.execution === 'failed') return '技术错误'
   if (check.coverage !== 'executed') return '未覆盖'
-  if (check.finding?.status === 'PASS' && !checkScopeComplete(check)) return '范围未完成'
-  if (check.finding && ['PASS', 'NG', 'NA'].includes(check.finding.status) && !check.evidence_verified) return '依据待核对'
   return check.finding ? statusLabel[check.finding.status] : '结果未知'
 }
 
@@ -84,7 +82,7 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
         {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <Button variant="outline" size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: `${check.rule_item.id} · ${check.rule_item.category}`, attempt: audit.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮冻结原件'}))})}>记录人工复核</Button>}
       </article>}
       <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">审核总结</h3>{issue ? <p role="alert">{issue}</p> : audit.summary ? <><p>{audit.summary.text}</p>{audit.summary.corrective_actions.length > 0 && <div className="space-y-2"><h4 className="font-medium">核心整改建议</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.corrective_actions.map(text => <li key={text}>{text}</li>)}</ul></div>}{audit.summary.extended_suggestions.length > 0 && <div className="space-y-2"><h4 className="font-medium">AI 延伸建议（不是客户要求）</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.extended_suggestions.map(text => <li key={text}>{text}</li>)}</ul></div>}</> : <p className="text-muted-foreground">{audit.execution === 'review_failed' ? '审核异常，没有通过总结。' : '总结尚未生成。'}</p>}</section>
-      <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' && audit.counts.unknown_count + audit.counts.not_covered_count + audit.counts.error_count > 0 ? '未完整验证，不生成正式 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !onReport || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
+      <section className="space-y-3 border-t pt-4"><h3 className="font-semibold">报告</h3><p>{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' && audit.counts.unknown_count + audit.counts.not_covered_count + audit.counts.error_count > 0 ? '部分审核项尚未取得明确结果，不生成完整 PASS/NG 报告。' : reportLabel[audit.report.state]}</p>{!issue && audit.report.reason && <p className="text-muted-foreground">{audit.report.reason}</p>}<Button variant="outline" disabled={Boolean(issue) || !onReport || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}>{audit.report.state === 'failed' ? '查看报告失败原因' : '查看报告'}</Button></section>
     </>}
     <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} resultAttempt={audit?.result_attempt ?? null} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
   </section>

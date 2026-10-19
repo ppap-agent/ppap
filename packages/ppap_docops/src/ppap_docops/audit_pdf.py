@@ -43,13 +43,22 @@ def render_audit_pdf(source: dict) -> bytes:
                 f"<hr><h2>{_text(rule['id'])} · {_text(rule['category'])} - {_text(finding['status'])}</h2>",
                 f"<h3>审核要求</h3><p>{_text(rule['rule_to_check'])}</p>",
                 f"<h3>判定说明</h3><p>{_text(finding.get('suggestions') or finding.get('classification'))}</p>",
-                f"<p class='meta'>检查范围：已查 {check['scope']['checked']}/{check['scope']['total']}，未知 {check['scope']['unknown']}。</p>",
-                "<h3>来源证据</h3>",
             ]
         )
+        scope = check.get("scope")
+        if scope:
+            parts.append(f"<p class='meta'>检查范围：已查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。</p>")
+        if check.get("scope_notice"):
+            parts.append(f"<p class='meta'>{_text(check['scope_notice'])}</p>")
+        parts.append("<h3>来源证据</h3>")
+        if not check["evidence"]:
+            parts.append("<p class='meta'>未提供原件定位与摘录。</p>")
         for evidence in check["evidence"]:
             name = source["originals"][evidence["file_version_id"]]
-            parts.append(f"<p>{_text(name)} · {_text(_location(evidence['locator']))}</p><p>{_text(evidence['excerpt'] or '该位置内容为空。')}</p>")
+            locator = evidence.get("locator")
+            location = _location(locator) if locator else evidence.get("location_gap") or "未提供具体位置。"
+            excerpt = evidence.get("excerpt") or ("该位置内容为空。" if locator else "未提供摘录。")
+            parts.append(f"<p>{_text(name)} · {_text(location)}</p><p>{_text(excerpt)}</p>")
     summary = audit.get("summary")
     if summary:
         parts.append(f"<hr><h2>审核总结</h2><p>{_text(summary['text'])}</p>")

@@ -35,14 +35,13 @@ GENERIC_RULE_CATEGORIES = {"local_excel_check"}
 RuleEvidencePhase = Literal["decision", "guard", "error"]
 
 
-def rule(description: str, *, implements: tuple[str, ...] = ()) -> Callable[[Any], Any]:
+def rule(description: str) -> Callable[[Any], Any]:
     """
     规则装饰器，用于自动注册规则描述和检查器。
     """
 
     def decorator(func: Any) -> Any:
         func.__rule_description__ = description
-        func.__implemented_rule_texts__ = implements
         return func
 
     return decorator

@@ -58,5 +58,4 @@ def freeze_target_rule_execution(rule_body: dict | None, filename: str):
         str(rule_body.get("rule_profile") or "v2"),
     )
     declarations = discover_declared_rules(agent_cls) if agent_cls else ()
-    implemented_texts = {method: getattr(getattr(agent_cls, method), "__implemented_rule_texts__", ()) for method, _description in declarations}
-    return freeze_rule_execution(rule_body, declarations, implemented_texts=implemented_texts)
+    return freeze_rule_execution(rule_body, declarations)

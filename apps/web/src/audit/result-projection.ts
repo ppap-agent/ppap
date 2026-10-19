@@ -9,14 +9,10 @@ export function reconcileTaskNotification(previous: Task | null | undefined, nex
 }
 type TaskFile = components['schemas']['AuditTaskFile']
 export type ReviewFile = Pick<TaskFile, 'file' | 'audit' | 'display_info'> & Partial<Pick<TaskFile, 'match'>>
-export function checkScopeComplete(item: components['schemas']['AuditClauseEvaluation']): boolean {
-  return !item.scope || item.scope.unknown === 0 && item.scope.checked === item.scope.total && (item.scope.total > 0 || item.finding?.status === 'NA')
-}
-
 export function clauseObservation(check: components['schemas']['AuditClauseEvaluation']): string {
   if (check.execution === 'queued' || check.execution === 'running') return '本项审核中…'
   const notice = check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice
-  return [...new Set([check.finding?.classification, notice].filter(Boolean))].join('；') || '没有可用的机器观察。'
+  return [...new Set([check.finding?.suggestions || check.finding?.classification, notice].filter(Boolean))].join('；') || '没有可用的机器观察。'
 }
 
 /** Wire property order is irrelevant; array order and all snapshot values are not. */
@@ -123,23 +119,22 @@ export function frozenResultError(roundId: string | null, row: ReviewFile, froze
   if (audit.execution === 'completed' && audit.checks.some(item => ['queued', 'running'].includes(item.execution))) return '文件声称审核结束，但仍有未结束的审核项。'
   const frozen = new Set(frozenFileVersionIds)
   if (audit.checks.some(item => item.evidence.some(source => !frozen.has(source.file_version_id)))) return '来源证据不在本轮冻结文件范围内。'
-  const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.evidence_verified && item.finding)
-  if (valid.some(item => item.finding?.status === 'PASS' && !checkScopeComplete(item))) return 'PASS 结论缺少完整的检查范围，未知不能视为满足。'
+  const valid = audit.checks.filter(item => item.execution === 'completed' && item.coverage === 'executed' && item.finding)
   const counts = {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
   for (const item of audit.checks) {
     if (['queued', 'running'].includes(item.execution)) continue
     if (item.execution === 'failed' || item.finding?.status === 'ERR') counts.error_count += 1
     else if (item.coverage !== 'executed') counts.not_covered_count += 1
-    else if (!item.evidence_verified || !item.finding || item.finding.status === 'UNABLE') counts.unknown_count += 1
+    else if (!item.finding || item.finding.status === 'UNABLE') counts.unknown_count += 1
     else if (item.finding.status === 'PASS') counts.pass_count += 1
     else if (item.finding.status === 'NG') counts.ng_count += 1
   }
   if (!sameSnapshot(counts, audit.counts)) return '审核计数与条目明细不一致。'
-  const complete = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status) && checkScopeComplete(item))
+  const complete = rules.length > 0 && audit.execution === 'completed' && valid.length === rules.length && valid.every(item => ['PASS', 'NG', 'NA'].includes(item.finding!.status))
   if (audit.progress.completed !== audit.checks.filter(item => ['completed', 'failed'].includes(item.execution)).length) return '审核进度与条目状态不一致。'
-  if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return 'PASS 结论缺少完整、已验证的审核依据。'
-  if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return 'NG 结论没有对应的已验证不符合项。'
+  if (audit.conclusion === 'PASS' && (!complete || valid.some(item => item.finding?.status === 'NG'))) return 'PASS 结论缺少完整的实际审核结果。'
+  if (audit.conclusion === 'NG' && !valid.some(item => item.finding?.status === 'NG')) return 'NG 结论没有对应的不符合项。'
   if (audit.summary && audit.summary.conclusion !== audit.conclusion) return '总结与审核明细不一致，暂不展示总结和正式报告。'
-  if (audit.report.state !== 'not_eligible' && (!complete || !['PASS', 'NG'].includes(audit.conclusion || ''))) return '未完整验证的文件不能生成正式 PASS/NG 报告。'
+  if (audit.report.state !== 'not_eligible' && (!complete || !['PASS', 'NG'].includes(audit.conclusion || ''))) return '尚未取得全部审核结果，不能生成正式 PASS/NG 报告。'
   return ''
 }

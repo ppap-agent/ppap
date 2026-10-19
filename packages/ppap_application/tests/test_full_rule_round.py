@@ -10,6 +10,7 @@ FINAL_REQUIREMENT = "识别“工序名称”列是否存在，如果存在则�
 
 
 def process_round(rows, *, text="起始工序拆解完整性识别", execution=None, rules=None, extra_sheets=(), merges=()):
+    """Exercise the incoming/final checks through their historical frozen bindings."""
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "过程流程图"
@@ -30,6 +31,11 @@ def process_round(rows, *, text="起始工序拆解完整性识别", execution=N
         "rule_profile": "v3",
         "rules": rules if rules is not None else [{"id": "customer-start", "category": "入料检查", "rule_to_check": text}],
     }
+    if execution is None:
+        execution = {
+            "mode": "rule_items",
+            "items": [{**item, "coverage": "mapped", "checker_index": 6 if item["rule_to_check"] == FINAL_REQUIREMENT else 5} for item in body["rules"]],
+        }
     target = RoundInput("target", "process", "process-v1", "process.xlsx", "ready", rule_version_id="rules-v1", rule_body=body, rule_execution=execution)
     return run_round_from_bytes(RoundWork("round", "tenant", [target]), {"process-v1": blob.getvalue()})
 
@@ -90,7 +96,7 @@ def test_process_value_merged_across_the_name_column_keeps_its_left_hand_anchor(
     assert [item["status"] for item in result["findings"]] == ["PASS"]
 
 
-def test_full_requirements_project_the_original_checker_indices_not_customer_order():
+def test_existing_frozen_checker_indices_are_preserved_instead_of_remapped_by_new_order():
     rules = [
         {"id": "final", "category": "出货要求", "priority": "P1", "rule_to_check": FINAL_REQUIREMENT},
         {"id": "start", "category": "来料要求", "priority": "P0", "rule_to_check": START_REQUIREMENT},

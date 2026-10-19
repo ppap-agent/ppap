@@ -10,6 +10,28 @@ from .base import BaseExtractor, ExtractionError
 logger = logging.getLogger(__name__)
 
 
+def word_paragraph_text(paragraph: Any) -> str:
+    """Read the final revision view, including insertions but not deletions."""
+    prefix = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    chunks: list[str] = []
+
+    def visit(node: Any) -> None:
+        if node.tag in {prefix + "del", prefix + "moveFrom"}:
+            return
+        if node.tag == prefix + "t":
+            chunks.append(node.text or "")
+        elif node.tag == prefix + "tab":
+            chunks.append("\t")
+        elif node.tag in {prefix + "br", prefix + "cr"}:
+            chunks.append("\n")
+        else:
+            for child in node:
+                visit(child)
+
+    visit(paragraph)
+    return "".join(chunks)
+
+
 class WordExtractor(BaseExtractor):
     """Word文档内容提取器"""
 
@@ -21,7 +43,7 @@ class WordExtractor(BaseExtractor):
     def _xml_cell_paragraphs(cell: Any, ns: Dict[str, str]) -> List[str]:
         paragraphs: List[str] = []
         for paragraph in cell.findall(".//w:p", ns):
-            text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns)).strip()
+            text = word_paragraph_text(paragraph).strip()
             if text:
                 paragraphs.append(text)
         return paragraphs
@@ -72,7 +94,7 @@ class WordExtractor(BaseExtractor):
     def _extract_tables_with_python_docx(cls, doc: Any) -> List[str]:
         table_texts: List[str] = []
         for table in doc.tables:
-            rows = [[[paragraph.text.strip() for paragraph in cell.paragraphs if paragraph.text.strip()] for cell in row.cells] for row in table.rows]
+            rows = [[[text for paragraph in cell.paragraphs if (text := word_paragraph_text(paragraph._p).strip())] for cell in row.cells] for row in table.rows]
             if rows:
                 table_text = cls._format_raw_table(rows, len(table_texts) + 1)
                 if table_text:
@@ -100,7 +122,7 @@ class WordExtractor(BaseExtractor):
             logger.debug(f"开始提取Word文本内容，文件大小: {len(file_content)} bytes")
             doc = Document(BytesIO(file_content))
 
-            text_parts = [paragraph.text.strip() for paragraph in doc.paragraphs if paragraph.text.strip()]
+            text_parts = [text for paragraph in doc.paragraphs if (text := word_paragraph_text(paragraph._p).strip())]
             table_texts = self._extract_docx_tables(file_content)
             text_parts.extend(table_texts if table_texts is not None else self._extract_tables_with_python_docx(doc))
 

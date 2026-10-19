@@ -132,14 +132,15 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
         finding["item_key"] = rule["id"]
     evidence, scope, evidence_notice = _evidence(round, finding, version_id, rule_id, str(rule["id"]))
     verified = _verified(round, coverage, original, rule_id, rule, evidence, scope, notice or evidence_notice)
+    scope_gap = f"检查范围说明：已检查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。" if scope and (scope["unknown"] or scope["checked"] < scope["total"]) else None
     return {
         "rule_item": rule,
         "execution": "failed" if file_failed and not finding or round["execution"] == "failed" or finding and finding["status"] == "ERR" else "completed" if finished else round["execution"],
-        "coverage": "executed" if finding and (coverage or {}).get("coverage") != "unsupported" else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
+        "coverage": "executed" if finding else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
         "finding": finding,
         "evidence_verified": verified,
         "scope": scope,
-        "scope_notice": notice or evidence_notice or (coverage or {}).get("reason") or ("请核对原件中的证据和检查范围。" if finding and not verified else None),
+        "scope_notice": notice or evidence_notice or scope_gap or ("请核对原件中的证据和检查范围。" if finding and not verified else None) or ((coverage or {}).get("reason") if not finding else None),
         "evidence": evidence,
         **({"review_item_key": original["item_key"] if original else f"coverage:{version_id}:{rule['id']}"} if original or coverage and coverage.get("coverage") != "executed" else {}),
         "review": deepcopy((original or coverage or {}).get("review")),
@@ -156,11 +157,10 @@ def _counts(checks: list[dict]) -> dict:
             counts["error_count"] += 1
         elif check["coverage"] != "executed":
             counts["not_covered_count"] += 1
-        elif check["evidence_verified"] and finding and finding["status"] in {"PASS", "NG", "NA"}:
+        elif finding and finding["status"] in {"PASS", "NG", "NA"}:
             if finding["status"] != "NA":
                 counts["pass_count" if finding["status"] == "PASS" else "ng_count"] += 1
         else:
-            # Persisted legacy positions are not verified semantic evidence.
             counts["unknown_count"] += 1
     return counts
 
@@ -170,15 +170,7 @@ def report_eligible(checks: list[dict], failed: bool, unmapped: list[dict]) -> b
         bool(checks)
         and not failed
         and not unmapped
-        and all(
-            check["execution"] == "completed"
-            and check["evidence_verified"]
-            and check["finding"]["status"] in {"PASS", "NG", "NA"}
-            and check["scope"]["checked"] == check["scope"]["total"]
-            and check["scope"]["unknown"] == 0
-            and (check["scope"]["total"] > 0 or check["finding"]["status"] == "NA")
-            for check in checks
-        )
+        and all(check["execution"] == "completed" and check["coverage"] == "executed" and check["finding"] is not None and check["finding"]["status"] in {"PASS", "NG", "NA"} for check in checks)
     )
 
 
@@ -214,7 +206,7 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         not_applicable = sum(check["finding"]["status"] == "NA" for check in checks)
         summary = {
             "conclusion": conclusion,
-            "text": f"已核验 {len(checks)} 项要求：满足 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {not_applicable} 项。",
+            "text": f"已审核 {len(checks)} 项要求：满足 {counts['pass_count']} 项，不符合 {counts['ng_count']} 项，不适用 {not_applicable} 项。",
             "corrective_actions": [],
             "extended_suggestions": [],
         }
@@ -233,7 +225,7 @@ def file_round_audit(round: dict, frozen: dict) -> dict:
         "checks": checks,
         "unmapped_findings": unmapped,
         "summary": summary,
-        "report": {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用" if complete else "审核依据尚未完整核验" if finished else "审核尚未完成"},
+        "report": {"state": "not_eligible", "report_id": None, "reason": "正式报告暂不可用" if complete else "尚未取得全部审核项的结果" if finished else "审核尚未完成"},
     }
 
 

@@ -47,6 +47,19 @@ def test_a_pdf_contains_readable_chinese_rule_result_and_empty_cell_evidence():
         assert document.metadata["subject"] == "round=round-one;file_version=version-one;result_attempt=1;rule_version=rule-one"
 
 
+def test_optional_evidence_and_scope_can_be_absent_without_losing_the_report_or_verdict():
+    source = report_source()
+    check = source["audit"]["checks"][0]
+    check["scope"] = None
+    check["scope_notice"] = "未提供具体定位与摘录。"
+    check["evidence"] = [{"file_version_id": "version-one", "locator": None, "excerpt": "", "location_gap": "原件定位信息不完整。"}]
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(page.get_text() for page in document)
+        assert "NG" in text and "必须填写零件号" in text
+        assert "原件定位信息不完整" in text
+        assert "该位置内容为空" not in text
+
+
 def test_long_reports_keep_every_clause_and_treat_embedded_markup_as_source_text():
     source = report_source()
     base = source["audit"]["checks"][0]

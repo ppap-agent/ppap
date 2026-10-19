@@ -21,7 +21,7 @@ function matchesSource(job: RuleParseJob, basis: RequirementBasis) {
 export async function receiveRequirement(entry: LocalUpload, stage?: (basis: RequirementBasis) => void) {
   let basis = localBasis(entry.file.name, entry.ref)
   if (isPreview()) return basis
-  const body = {kind: 'engine' as const, type: '', rule_profile: 'v2', customers: [], models: [], parts: [], rules: []}
+  const body = {kind: 'engine' as const, type: '', rule_profile: 'v3', customers: [], models: [], parts: [], rules: []}
   const material = await upload(entry.file, 'reference', material => {
     basis = {...basis, server: {material, body}}; stage?.(basis)
   })

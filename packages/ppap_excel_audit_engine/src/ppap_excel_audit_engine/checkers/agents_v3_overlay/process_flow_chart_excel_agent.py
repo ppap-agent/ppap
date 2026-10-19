@@ -427,10 +427,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
 
         return "PASS", ""
 
-    @rule(
-        "起始工序拆解完整性识别",
-        implements=("识别“工序名称”列是否存在，如果存在则继续识别；当“工序名称”列下包含“进料检验”或“IQC”或相近词义的内容则通过，否则不通过",),
-    )
+    @rule("起始工序拆解完整性识别")
     def rule_6(self, ctx: RuleContext) -> tuple[str, str]:
         process_names = _process_name_values(ctx)
         if any(_is_start_inspection_process(value) for value in process_names):
@@ -440,10 +437,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
         samples = "；".join(f"工序“{value}”" for value in process_names[:6])
         return "NG", f"工序名称列下未识别到进料检验、来料/进货检验或IQC内容（候选：{samples}）。"
 
-    @rule(
-        "最终工序拆解完整性识别",
-        implements=("识别“工序名称”列是否存在，如果存在则继续识别；当“工序名称”列下包含“出货”或“FQC”或“OQC”或相近词义的内容则通过，否则不通过",),
-    )
+    @rule("最终工序拆解完整性识别")
     def rule_7(self, ctx: RuleContext) -> tuple[str, str]:
         process_names = _process_name_values(ctx)
         if any(_is_final_shipment_process(value) for value in process_names):

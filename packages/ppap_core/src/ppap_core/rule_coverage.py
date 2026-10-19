@@ -1,8 +1,8 @@
-"""Map frozen customer rule items onto builtin checkers without rewriting them."""
+"""Bind confirmed rule items to the Standard checker's fixed execution order."""
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Sequence
 
 COVERAGE_MAPPED = "mapped"
 COVERAGE_UNSUPPORTED = "unsupported"
@@ -12,22 +12,14 @@ REASON_MANUAL_ONLY = "manual-only"
 REASON_UNSUPPORTED = "unsupported"
 
 
-def normalize_match_text(value: Any) -> str:
-    return "".join(str(value or "").split()).casefold()
-
-
 def map_rule_items(
     items: Sequence[dict[str, Any]],
     declarations: Sequence[tuple[str, str]],
-    *,
-    implemented_texts: Mapping[str, Sequence[str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Match exact declared text to one unambiguous, unused builtin checker."""
-    accepted = [{normalize_match_text(text) for text in (description, *(implemented_texts or {}).get(method, ()))} for method, description in declarations]
-    used: set[int] = set()
+    """Keep user text and order; do not adjudicate the rule's business meaning."""
     mapped: list[dict[str, Any]] = []
     reason = REASON_UNSUPPORTED if not declarations else REASON_MANUAL_ONLY
-    for raw in items:
+    for position, raw in enumerate(items):
         item = {
             "id": str(raw.get("id") or "").strip(),
             "category": str(raw.get("category") or "").strip(),
@@ -36,10 +28,7 @@ def map_rule_items(
         }
         if not item["id"]:
             continue
-        rule_text = normalize_match_text(item["rule_to_check"])
-        matches = [position for position, texts in enumerate(accepted) if rule_text and rule_text in texts]
-        if len(matches) == 1 and matches[0] not in used:
-            position = matches[0]
+        if position < len(declarations):
             method, description = declarations[position]
             item.update(
                 coverage=COVERAGE_MAPPED,
@@ -47,7 +36,6 @@ def map_rule_items(
                 checker_index=position,
                 checker_description=description,
             )
-            used.add(position)
         else:
             item.update(coverage=COVERAGE_UNSUPPORTED, reason=reason)
         mapped.append(item)
@@ -57,8 +45,6 @@ def map_rule_items(
 def freeze_rule_execution(
     rule_body: dict[str, Any] | None,
     declarations: Iterable[tuple[str, str]] | None = None,
-    *,
-    implemented_texts: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any] | None:
     if not rule_body or rule_body.get("kind") == "presence":
         return None
@@ -66,7 +52,7 @@ def freeze_rule_execution(
     declared = tuple(declarations or ())
     if not items:
         return {"mode": MODE_LEGACY_BUILTIN, "items": []}
-    return {"mode": MODE_RULE_ITEMS, "items": map_rule_items(items, declared, implemented_texts=implemented_texts)}
+    return {"mode": MODE_RULE_ITEMS, "items": map_rule_items(items, declared)}
 
 
 def unsupported_item_note(item: dict[str, Any]) -> str:

@@ -12,6 +12,19 @@ function projection(): Task {
 }
 const error = (task: Task) => resultConsistencyError(task, task.files[0])
 
+test('missing optional evidence does not downgrade executed PASS or NG or block its report', () => {
+  for (const status of ['PASS', 'NG'] as const) {
+    const task = projection(), audit = task.files[0].audit!, check = audit.checks[0]
+    check.finding!.status = status
+    check.evidence_verified = false; check.scope = null; check.evidence = []
+    check.scope_notice = '未提供具体定位与摘录。'
+    audit.conclusion = status; audit.summary!.conclusion = status
+    audit.counts = {pass_count: status === 'PASS' ? 1 : 0, ng_count: status === 'NG' ? 1 : 0, unknown_count: 0, not_covered_count: 0, error_count: 0}
+    assert.equal(error(task), '')
+    assert.ok(reportReference(task, task.files[0]))
+  }
+})
+
 test('uncovered clauses explain the next human action without exposing checker codes', () => {
   const check = projection().files[0].audit!.checks[0]
   check.finding = null
@@ -156,18 +169,16 @@ test('a finding cannot impersonate another frozen rule item', () => {
   task.files[0].audit!.checks[0].finding!.item_key = 'other-rule'
   assert.match(error(task), /审核项与冻结规则不一致/)
 })
-test('explicitly incomplete scope cannot earn PASS or a formal report, but can retain verified NG', () => {
+test('optional scope gaps do not replace actual PASS or NG or block a formal report', () => {
   const task = projection(), audit = task.files[0].audit!
   audit.checks[0].scope = {checked: 0, total: 1, unknown: 1}
-  assert.match(error(task), /PASS 结论缺少完整/)
+  assert.equal(error(task), '')
   audit.conclusion = 'NG'; audit.summary = null
   audit.checks[0].finding!.status = 'NG'
   audit.counts = {...audit.counts, pass_count: 0, ng_count: 1}
-  assert.match(error(task), /不能生成正式/)
-  audit.report = {state: 'not_eligible', report_id: null, reason: '范围未完成'}
   assert.equal(error(task), '')
 })
-test('a valid NG cannot hide a second PASS whose scope is still unknown', () => {
+test('NG and PASS both count when the second check has an optional scope gap', () => {
   const task = projection(), row = task.files[0], audit = row.audit!
   const second = structuredClone(audit.checks[0])
   second.rule_item.id = '2'; second.finding!.item_key = '2'; second.scope = {checked: 0, total: 1, unknown: 1}
@@ -175,7 +186,7 @@ test('a valid NG cannot hide a second PASS whose scope is still unknown', () => 
   if (audit.rule.body.kind === 'engine') audit.rule.body.rules.push(structuredClone(second.rule_item))
   row.match!.rule = structuredClone(audit.rule)
   audit.progress = {completed: 2, total: 2}; audit.counts = {...audit.counts, ng_count: 1}; audit.conclusion = 'NG'; audit.summary = null; audit.report = {state: 'not_eligible', report_id: null, reason: null}
-  assert.match(error(task), /PASS 结论缺少完整/)
+  assert.equal(error(task), '')
   assert.equal(audit.checks[0].finding!.status, 'NG')
 })
 test('sharing accepts only a ready frozen report and its exact PDF artifact', () => {

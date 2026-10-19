@@ -7,6 +7,30 @@ from openpyxl import Workbook
 from ppap_application.rule_sources import rule_sources, validate_registration_sources
 
 
+def test_word_source_includes_insertions_and_excludes_deleted_revision_text():
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    doc = Document()
+    cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+    cell.text = "产品、"
+    for tag, text_tag, text in (("ins", "t", "过程"), ("del", "delText", "旧字段")):
+        change, run, value = OxmlElement("w:" + tag), OxmlElement("w:r"), OxmlElement("w:" + text_tag)
+        change.set(qn("w:id"), "1" if tag == "ins" else "2")
+        value.text = text
+        run.append(value)
+        change.append(run)
+        cell.paragraphs[0]._p.append(change)
+    out = io.BytesIO()
+    doc.save(out)
+    assert rule_sources("rules.docx", out.getvalue())[0]["excerpt"] == "产品、过程"
+    from ppap_docops.extractors.word import WordExtractor
+
+    text = WordExtractor().extract_text(out.getvalue())
+    assert "产品、过程" in text
+    assert "旧字段" not in text
+
+
 def test_word_sources_use_actual_paragraph_and_physical_table_coordinates():
     doc = Document()
     doc.add_paragraph("")
