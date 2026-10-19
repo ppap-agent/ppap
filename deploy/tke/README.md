@@ -13,6 +13,12 @@ TKE qcloud Ingress only accepts NodePort / LoadBalancer Service. `edition-proxy`
 
 Validation and deployment consume the same rendered object stream from `deploy/tke/render-current.sh`. That script runs the pinned Kustomize 5.6.0 image against this directory. CI pipes the render to kubeconform; deployment first sends the same render through Kubernetes server-side dry-run and then applies that exact stream.
 
+## Alpha 入口边界
+
+ppap-web 仍是未选择版本时的默认界面，不能把 edition proxy 的 `default legacy` 改为 current。新版选择入口 `/enter-current` 在登录和租户校验通过后，默认返回 `/audit`。可用 `return_to=<同源完整地址>` 保留任务、报告或历史轮次深链；外部地址及指回版本选择入口的地址回退到 `/audit`。`/enter-legacy` 仍选择旧版并返回 `/`。版本 cookie 不是任务或报告的授权凭据。
+
+这是获批的代码边界，不代表本轮执行了集群发布、飞书入口或事件回调切换。以下生产切换步骤仍需单独放行。
+
 ## 飞书回调切换（尚未执行）
 
 新旧系统共用飞书应用时，不要求两个事件回调地址。当前阶段只准备新版代码与测试，不修改飞书控制台、旧 UAC、旧 Redis、现网 Secret 或请求路由，不执行本节切换。

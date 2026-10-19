@@ -484,11 +484,73 @@ class HttpAuthTests(unittest.TestCase):
         cookie = denied_host.cookies.get("ppap_session")
         allowed = client.get("/enter-current", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(allowed.status_code, 302)
-        self.assertEqual(allowed.headers["location"], "http://127.0.0.1:4173/")
+        self.assertEqual(allowed.headers["location"], "http://127.0.0.1:4173/audit")
         self.assertEqual(allowed.cookies.get("ppap_edition"), "current")
         legacy = client.get("/enter-legacy", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(legacy.status_code, 302)
+        self.assertEqual(legacy.headers["location"], "http://127.0.0.1:4173/")
         self.assertEqual(legacy.cookies.get("ppap_edition"), "legacy")
+
+    def test_enter_current_preserves_deep_links_through_oauth(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="tk-live",
+            PPAP_WEB_URL="http://127.0.0.1:4173",
+            PPAP_PUBLIC_API_URL="http://127.0.0.1:8080",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        for target in (
+            "",
+            "http://127.0.0.1:4173/",
+            "http://127.0.0.1:4173/audit?task=frozen-task&report=frozen-report#clause-2",
+            "http://127.0.0.1:4173/audit?share=frozen-share",
+            "http://127.0.0.1:4173/?round=frozen-round&clause=rule-2",
+        ):
+            with self.subTest(target=target):
+                client = self._oauth_client(_TokenHttp(), settings)
+                start = client.get("/enter-current", params={"return_to": target}, follow_redirects=False)
+                self.assertEqual(start.status_code, 302)
+                self.assertFalse(start.cookies.get("ppap_edition"))
+                login_url = urlsplit(start.headers["location"])
+                self.assertEqual(login_url.path, "/login/feishu")
+                self.assertEqual((login_url.scheme, login_url.netloc), ("http", "127.0.0.1:8080"))
+                entry_url = parse_qs(login_url.query)["return_to"][0]
+                self.assertEqual(urlsplit(entry_url).path, "/enter-current")
+                done, raw = self._complete_login(client, entry_url)
+                self.assertEqual(done.headers["location"], entry_url)
+                entry = urlsplit(done.headers["location"])
+                landed = client.get(entry.path + ("?" + entry.query if entry.query else ""), cookies={"ppap_session": raw}, follow_redirects=False)
+                self.assertEqual(landed.status_code, 302)
+                self.assertEqual(landed.headers["location"], target or "http://127.0.0.1:4173/audit")
+                self.assertEqual(landed.cookies.get("ppap_edition"), "current")
+
+    def test_enter_current_rejects_foreign_and_recursive_destinations(self):
+        with _clean_env(
+            FEISHU_APP_ID="cli_test",
+            FEISHU_APP_SECRET="secret",
+            FEISHU_VERIFICATION_TOKEN="verify-test",
+            PPAP_CURRENT_TENANT_ALLOWLIST="tk-live",
+            PPAP_WEB_URL="http://127.0.0.1:4173",
+            PPAP_BUILD_SHA="a" * 40,
+        ):
+            settings = Settings()
+        client = self._oauth_client(_TokenHttp(), settings)
+        self.assertEqual(client.post("/login/feishu/host", json={"code": "host-code"}).status_code, 200)
+        for target in (
+            "https://evil.example/audit?task=other",
+            "http://127.0.0.1:4173@evil.example/audit",
+            "http://127.0.0.1:4173/enter-current?return_to=loop",
+            "http://127.0.0.1:4173/enter-legacy",
+        ):
+            with self.subTest(target=target):
+                result = client.get("/enter-current", params={"return_to": target}, follow_redirects=False)
+                self.assertEqual(result.status_code, 302)
+                self.assertEqual(result.headers["location"], "http://127.0.0.1:4173/audit")
 
     def test_enter_edition_hides_route_from_other_tenants(self):
         with _clean_env(
@@ -510,6 +572,9 @@ class HttpAuthTests(unittest.TestCase):
         hidden = client.get("/enter-current", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(hidden.status_code, 404)
         self.assertFalse(hidden.cookies.get("ppap_edition"))
+        hidden_deep_link = client.get("/enter-current", params={"return_to": "http://127.0.0.1:4173/audit?task=private-task&report=private-report"}, cookies={"ppap_session": cookie}, follow_redirects=False)
+        self.assertEqual(hidden_deep_link.status_code, 404)
+        self.assertFalse(hidden_deep_link.cookies.get("ppap_edition"))
         hidden_legacy = client.get("/enter-legacy", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(hidden_legacy.status_code, 404)
 
