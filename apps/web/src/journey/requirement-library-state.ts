@@ -1,6 +1,6 @@
 // Requirement version projections. File bytes and published versions remain owned by the Product API.
-import {demoBasis, isRequirementBasis, type RequirementBasis, type RequirementClause} from './requirements-state'
-import {isObject} from './saved-draft'
+import {clauseSourceReady, demoBasis, isRequirementBasis, type RequirementBasis, type RequirementClause} from './requirements-state.ts'
+import {isObject} from './saved-draft.ts'
 
 export type RequirementScope = {customer: string; part: string; revision: string; allCustomers?: boolean; allParts?: boolean; allRevisions?: boolean}
 export type RequirementVersion = {id: string; basis: RequirementBasis; scope: RequirementScope; reason: string; at: string; baseId: string | null}
@@ -16,7 +16,7 @@ export function initialLibrary(): RequirementLibrary {
 export const scopeLabel = (scope: RequirementScope) => `${scope.allCustomers ? '不限定客户' : scope.customer || '客户待核对'} · ${scope.allParts ? '不限定零件' : scope.part || '零件待核对'} · ${scope.allRevisions ? '不限定图纸修订' : scope.revision ? `图纸 Rev ${scope.revision}` : '图纸修订待核对'}`
 export const scopeFields = [{key: 'customer', flag: 'allCustomers', label: '客户'}, {key: 'part', flag: 'allParts', label: '零件'}, {key: 'revision', flag: 'allRevisions', label: '图纸修订'}] as const
 export const scopeMatches = (left: RequirementScope, right: RequirementScope) => scopeFields.every(({key, flag}) => right[flag] || left[key].trim().toLowerCase() === right[key].trim().toLowerCase())
-export const clauseContent = (clause: RequirementClause) => JSON.stringify([clause.title, clause.text, clause.original, clause.source, clause.location])
+export const clauseContent = (clause: RequirementClause) => JSON.stringify([clause.title, clause.text, clause.original, clause.source, clause.location, clause.provenance ?? null])
 export function sourceContent(basis: RequirementBasis) {
   return JSON.stringify([basis.source, basis.clauses.map(clauseContent), basis.conflict])
 }
@@ -37,7 +37,7 @@ export function libraryDraftIssues(collection: RequirementCollection): string[] 
   if (!draft.reason.trim()) issues.push('记录来源说明或变更原因。')
   if (!draft.basis.clauses.length) issues.push('至少录入一条要求。')
   for (const clause of draft.basis.clauses) {
-    if (![clause.title, clause.text, clause.source, clause.location].every(value => value.trim()) || clause.location.includes('待核对')) issues.push(`${clause.id}：补全条款与出处。`)
+    if (!clauseSourceReady(clause, draft.basis)) issues.push(`${clause.id}：选择可定位的原文出处。`)
     if (!clause.checked) issues.push(`${clause.id}：核对来源内容。`)
   }
   return issues

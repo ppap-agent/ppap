@@ -1,10 +1,11 @@
 // Requirement snapshots. The three known preview clauses are synthetic, not a PPAP standard.
-import {isObject} from './saved-draft'
-import {optionalLocalFile, type LocalFileRef} from './local-files'
+import {isObject} from './saved-draft.ts'
+import {optionalLocalFile, type LocalFileRef} from './local-files.ts'
 
 export type RequirementClause = {
   id: string; title: string; text: string; original: string; source: string; location: string
   applicability: 'pending' | 'apply' | 'exclude'; reason: string; checked: boolean
+  provenance?: {id: string; location: string; excerpt: string; fileVersionId: string}
 }
 export type RequirementBasis = {
   source: {id: string; title: string; filename: string; version: string; origin: 'demo' | 'local'; state: 'ready' | 'unparsed' | 'failed' | 'manual'; localFile?: LocalFileRef}
@@ -12,7 +13,7 @@ export type RequirementBasis = {
   conflict: {active: boolean; choice: 'pending' | 'customer' | 'internal'; reason: string}
   confirmed: {at: string; by: string; scope: string; content: string} | null
   library?: {collectionId: string; versionId: string; content: string}
-  server?: {body: import('../api').RuleBody; material: import('../api').Material; ruleId?: string; parseId?: string; publishedContent?: string; verifiedContent?: string}
+  server?: {body: import('../api').RuleBody; material: import('../api').Material; sources?: import('../api').RuleSources; ruleId?: string; parseId?: string; publishedContent?: string; verifiedContent?: string}
 }
 export const customerSource = 'P204_客户审核要求_v2.pdf'
 export const internalSource = '内部尺寸模板_v1.pdf'
@@ -39,10 +40,17 @@ export function resolveBasisConflict(basis: RequirementBasis, choice: Requiremen
     checked: false, applicability: 'pending',
   })}
 }
-export const clauseSourceReady = (clause: RequirementClause) => [clause.title, clause.text, clause.source, clause.location].every(value => value.trim()) && !clause.location.includes('待核对')
-export function clauseIssues(clause: RequirementClause): string[] {
+export function clauseSourceReady(clause: RequirementClause, basis?: RequirementBasis): boolean {
+  if (![clause.title, clause.text, clause.source, clause.location].every(value => value.trim()) || clause.location.includes('待核对')) return false
+  if (!basis?.server) return true
+  const source = clause.provenance
+  if (!source?.id || source.fileVersionId !== basis.server.material.file_version_id || source.location !== clause.location || source.excerpt !== clause.original || clause.source !== basis.server.material.original_filename) return false
+  const catalog = basis.server.sources
+  return catalog ? catalog.file_version_id === source.fileVersionId && catalog.units.some(unit => unit.id === source.id && unit.location === source.location && unit.excerpt === source.excerpt) : Boolean(basis.server.ruleId && basis.server.publishedContent)
+}
+export function clauseIssues(clause: RequirementClause, basis?: RequirementBasis): string[] {
   const issues: string[] = []
-  if (!clauseSourceReady(clause)) issues.push(`${clause.id}：补全条款与出处。`)
+  if (!clauseSourceReady(clause, basis)) issues.push(`${clause.id}：补全条款与出处。`)
   if (!clause.checked) issues.push(`${clause.id}：核对条款与来源。`)
   if (clause.applicability === 'pending') issues.push(`${clause.id}：确认是否适用。`)
   if (clause.applicability === 'exclude' && !clause.reason.trim()) issues.push(`${clause.id}：说明不适用理由。`)
@@ -54,7 +62,7 @@ export function basisIssues(basis: RequirementBasis | null | undefined): string[
   if (!basis.source.title.trim() || !basis.source.version.trim()) issues.push('补全要求名称与版本。')
   if (['unparsed', 'failed'].includes(basis.source.state)) issues.push('要求文件尚无可核对条款；请人工录入，或更换文件。')
   if (!basis.clauses.length) issues.push('至少记录一条要求。')
-  issues.push(...basis.clauses.flatMap(clauseIssues))
+  issues.push(...basis.clauses.flatMap(clause => clauseIssues(clause, basis)))
   if (!basis.clauses.some(clause => clause.applicability === 'apply')) issues.push('本次至少需要一条适用要求；不能用空范围开始审核。')
   if (basis.conflict.active && (basis.conflict.choice === 'pending' || !basis.conflict.reason.trim())) issues.push('确认公差冲突的依据，并记录理由。')
   return issues

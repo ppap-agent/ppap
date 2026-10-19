@@ -884,7 +884,7 @@ def create_app(
         return response
 
     register_audit_routes(app, store, principal_of)
-    register_rule_routes(app, store, principal_of)
+    register_rule_routes(app, store, principal_of, require_file_read)
     register_support_routes(app, principal_of, settings)
     register_feedback_routes(app, store, session_of, http, settings)
     register_sharing_routes(app, store, session_of, http, settings)

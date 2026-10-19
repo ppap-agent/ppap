@@ -978,6 +978,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/files/{file_id}/versions/{version_id}/rule-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Rule Sources */
+        get: operations["read_rule_sources_files__file_id__versions__version_id__rule_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files/{file_id}/versions/{version_id}/validation": {
         parameters: {
             query?: never;
@@ -3531,6 +3548,22 @@ export interface components {
             /** Rules */
             rules: components["schemas"]["Rule"][];
         };
+        /** RuleSources */
+        RuleSources: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Units */
+            units: components["schemas"]["RuleSourceUnit"][];
+        };
+        /** RuleSourceUnit */
+        RuleSourceUnit: {
+            /** Excerpt */
+            excerpt: string;
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+        };
         /** RuleTypes */
         RuleTypes: {
             /** Types */
@@ -6005,6 +6038,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_rule_sources_files__file_id__versions__version_id__rule_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                file_id: string;
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSources"];
                 };
             };
             /** @description Validation Error */

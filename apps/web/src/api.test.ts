@@ -23,6 +23,11 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
+test('rule source rejection explains the required correction without claiming publication', async () => {
+  installFetch(() => jsonResponse({error: 'rule_source_unverified'}, 400))
+  await assert.rejects(request('/rules', 'POST', {}), /请重新选择原文位置并核对，草稿未发布/)
+})
+
 test('connect reads runtime config then public-config and gates deep mode', async () => {
   const calls = installFetch(url => {
     if (url === '/runtime-config.json') return jsonResponse({api_url: 'http://api.example'})

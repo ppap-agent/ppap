@@ -168,6 +168,8 @@ class UiA11yTests(unittest.TestCase):
                         },
                         headers=cors,
                     )
+                elif path == f"/files/{SOURCE}/versions/{VERSION}/rule-sources":
+                    route.fulfill(json={"file_version_id": VERSION, "units": [{"id": "json:0", "location": "rules[0].rule_to_check", "excerpt": BODY["rules"][0]["rule_to_check"]}]}, headers=cors)
                 elif path == "/rule-types":
                     route.fulfill(json={"types": ["控制计划"]}, headers=cors)
                 elif path == "/rules":

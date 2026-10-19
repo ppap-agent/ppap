@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {request, upload, type RuleParseJob, type RuleTypes} from '../api'
+import {request, upload, type RuleParseJob, type RuleTypes, type RuleSources} from '../api'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger} from '../components/ui/dialog'
@@ -7,8 +7,9 @@ import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
 import {isPreview} from './access'
 import {localBasis, type RequirementBasis} from './requirements-state'
 import type {LocalUpload} from './local-files'
-import {parsedBasis} from './product'
+import {canonical, parsedBasis} from './product'
 import {message, useRemote} from './remote'
+import {restoreRequirementSources} from './requirement-sources'
 
 export async function receiveRequirement(entry: LocalUpload, stage?: (basis: RequirementBasis) => void) {
   let basis = localBasis(entry.file.name, entry.ref)
@@ -23,10 +24,17 @@ export async function receiveRequirement(entry: LocalUpload, stage?: (basis: Req
 export function RuleExtraction({basis, onChange, readonly = false}: {basis: RequirementBasis; onChange: (basis: RequirementBasis) => void; readonly?: boolean}) {
   const types = useRemote<RuleTypes>(basis.server && !readonly ? '/rule-types' : null)
   const job = useRemote<RuleParseJob>(basis.server?.parseId && !['ready', 'manual'].includes(basis.source.state) ? `/rules/parse/${basis.server.parseId}` : null, 2000)
+  const sources = useRemote<RuleSources>(basis.server && !readonly && basis.clauses.length ? `/files/${basis.server.material.file_id}/versions/${basis.server.material.file_version_id}/rule-sources` : null)
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [rerun, setRerun] = useState(false)
   const working = useRef(false), consumed = useRef(''), latest = useRef(basis); latest.current = basis
   const observed = useRef<RuleParseJob | null>(null)
   if (job.value && job.value.id === basis.server?.parseId) observed.current = job.value
+  useEffect(() => {
+    const current = latest.current, value = sources.value
+    if (readonly || !value || !current.server || value.file_version_id !== current.server.material.file_version_id || canonical(current.server.sources) === canonical(value)) return
+    const restored = restoreRequirementSources(current, value)
+    onChange({...restored, server: {...current.server, sources: value}})
+  }, [sources.value, onChange, readonly])
   useEffect(() => {
     const result = job.value?.result
     if (readonly || !job.value || job.value.id !== latest.current.server?.parseId || ['ready', 'manual'].includes(latest.current.source.state)) return
@@ -43,7 +51,7 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     } else if ('error' in result) {consumed.current = job.value!.id; setError(`要求提取未完成：${result.error}`)}
   }, [job.value, onChange, readonly])
   if (!basis.server || readonly) return null
-  if (basis.source.state === 'ready' || basis.source.state === 'manual' && basis.server.body.type) return <p className="text-sm text-muted-foreground">适用资料：{basis.server.body.type}</p>
+  if (basis.source.state === 'ready' || basis.source.state === 'manual' && basis.server.body.type) return <div className="space-y-2"><p className="text-sm text-muted-foreground">适用资料：{basis.server.body.type}</p>{sources.error && <p role="alert" className="text-sm text-destructive">无法读取原文出处。<Button variant="outline" size="sm" onClick={sources.refresh}>重新读取出处</Button></p>}</div>
   // A read in flight does not erase the last observation of this exact job.
   const status = observed.current?.id === basis.server.parseId ? observed.current?.status : null
   const pending = status === 'queued' || status === 'leased'

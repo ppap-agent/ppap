@@ -160,6 +160,41 @@ class RuleApiTests(unittest.TestCase):
         process_claimed(self.store, job, "rule-worker", rule_ai=self.ai)
         return self.client.get("/rules/parse/" + job.id).json()
 
+    def test_original_sources_and_publication_use_the_same_fixed_version(self):
+        source = self.upload()
+        path = f"/files/{source['file_id']}/versions/{source['id']}/rule-sources"
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        units = response.json()["units"]
+        unit = next(unit for unit in units if unit["excerpt"] == "必须填写零件号")
+        self.assertEqual(unit["location"], "Sheet · B2")
+        candidate = self.finish_parse(source)["result"]
+        clause = {
+            "id": "1",
+            "title": "基本信息",
+            "text": "必须填写零件号",
+            "source": source["original_filename"],
+            "original": unit["excerpt"],
+            "location": unit["location"],
+            "checked": True,
+            "provenance": {**unit, "fileVersionId": source["id"]},
+        }
+
+        def payload(row):
+            return {**candidate, "request_id": str(uuid.uuid4()), "case_context": {"registration": json.dumps({"basis": {"source": {"filename": source["original_filename"]}, "clauses": [row]}})}}
+
+        for changed in ({**clause, "location": "已核对原件"}, {**clause, "checked": False}, {**clause, "provenance": {**unit, "fileVersionId": str(uuid.uuid4())}}):
+            rejected = self.client.post("/rules", json=payload(changed))
+            self.assertEqual(rejected.status_code, 400)
+            self.assertEqual(rejected.json()["error"], "rule_source_unverified")
+        self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 201)
+        self.login("bob")
+        self.assertEqual(self.client.get(path).status_code, 403)
+        self.assertEqual(self.client.post("/rules", json=payload(clause)).status_code, 403)
+        self.client.cookies.clear()
+        self.assertEqual(self.client.get(path).status_code, 401)
+
     def test_customer_parses_reviews_and_publishes_an_immutable_rule_version(self):
         source = self.upload()
         before = self.client.get("/rules").json()["rules"]

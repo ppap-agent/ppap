@@ -46,6 +46,7 @@ export type RuleDetail = Schema<'RuleDetail'>
 export type RuleBody = Schema<'EngineRuleBody'>
 export type RuleItem = Schema<'RuleItem'>
 export type RuleCandidate = Schema<'RuleCandidate'>
+export type RuleSources = Schema<'RuleSources'>
 export type HostLoginRequest = JsonBody<'login_feishu_host_login_feishu_host_post'>
 export type FileCreateRequest = JsonBody<'files_create_files_post'>
 export type FileFinalizeRequest = JsonBody<'files_finalize_files__file_id__versions__version_id__finalize_post'>
@@ -100,6 +101,8 @@ const messages: Record<string,string> = {
   unauthenticated: '请先登录飞书。', access_denied: '没有访问这份资料的权限。', file_not_ready: '文件尚未上传完成。',
   rule_required: '请为待审文件选择规则。', target_required: '请添加至少一份待审文件。', review_conflict: '复核已被更新，请刷新后核对。',
   draft_already_accepted: '此草稿已提交，请打开对应审核。', rule_parse_failed: '规则解析失败，请检查原文件或文档类型。',
+  rule_source_unverified: '条款出处与原件不一致。请重新选择原文位置并核对，草稿未发布。',
+  rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',

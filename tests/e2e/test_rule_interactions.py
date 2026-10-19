@@ -30,6 +30,66 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_rule_source_recovery_preserves_checked_draft_without_reextracting_or_publishing(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements")
+            self.check_requirement(page)
+            address = page.url
+            page.evaluate("""() => {
+                const key = Object.keys(localStorage).find(key => key.endsWith(':requirement-library'));
+                const saved = JSON.parse(localStorage.getItem(key));
+                const basis = saved.value.collections.find(item => item.draft).draft.basis;
+                delete basis.server.sources;
+                for (const clause of basis.clauses) {
+                    delete clause.provenance;
+                    clause.location = `条款 ${clause.id}（原件位置待核对）`;
+                }
+                localStorage.setItem(key, JSON.stringify(saved));
+            }""")
+            page.reload()
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("已核对要求")
+            expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("已按原件核对。")
+            expect(page.get_by_label("1 已核对来源", exact=True)).to_be_checked()
+            expect(page.get_by_text("已核对 1/1 条", exact=True)).to_be_visible()
+            self.assertEqual(page.url, address)
+            self.assertEqual(len(state["parses"]), 1)
+            self.assertEqual(state["saves"], [])
+            browser.close()
+
+    def test_unmatched_source_requires_original_selection_not_a_free_form_location(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            state["source_units"] = [{"id": "p:1", "location": "段落 1", "excerpt": "原文的检查 A，包含完整条件"}]
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements")
+            expect(page.get_by_text("已核对 0/1 条", exact=True)).to_be_visible()
+            clause = page.get_by_role("article", name="条款 1", exact=True)
+            expect(clause.get_by_label("1 已核对来源", exact=True)).to_be_disabled()
+            clause.get_by_role("button", name="编辑条款", exact=True).click()
+            expect(clause.get_by_label("出处位置", exact=True)).not_to_be_editable()
+            clause.get_by_role("button", name="完成编辑", exact=True).click()
+            clause.get_by_role("button", name="核对出处", exact=True).click()
+            page.get_by_role("combobox", name="原文位置", exact=True).click()
+            page.get_by_role("option", name="段落 1 · 原文的检查 A，包含完整条件", exact=True).click()
+            expect(page.get_by_role("blockquote")).to_contain_text("原文的检查 A，包含完整条件")
+            page.get_by_role("button", name="返回条款", exact=True).click()
+            expect(clause.get_by_label("1 已核对来源", exact=True)).not_to_be_checked()
+            clause.get_by_label("1 已核对来源", exact=True).check()
+            expect(page.get_by_text("已核对 1/1 条", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="确认并保存版本", exact=True)).to_be_disabled()
+            self.assertEqual(state["saves"], [])
+            browser.close()
+
     def test_hidden_rule_upload_reply_cannot_navigate_away_from_audit(self):
         from playwright.sync_api import expect
 
@@ -1220,6 +1280,10 @@ class RuleInteractionTests(unittest.TestCase):
 
                 page.route("**/api/rules", publish_rule)
                 page.route("**/api/rules/*", read_rule)
+                page.route(
+                    "**/api/files/rule-source/versions/rule-source-version/rule-sources",
+                    lambda route: route.fulfill(json={"file_version_id": "rule-source-version", "units": [{"id": "B4", "location": "工作表 B4", "excerpt": "检查 A"}]}),
+                )
                 page.route("**/api/drafts/" + draft_id, save_draft)
                 page.route("**/api/drafts/" + draft_id + "/round", lambda route: route.fulfill(json=accepted if posts else None))
                 page.route("**/api/drafts/" + draft_id + "/accept", accept)
@@ -1230,9 +1294,7 @@ class RuleInteractionTests(unittest.TestCase):
                         page.get_by_label(label, exact=True).fill(value)
                     page.get_by_role("button", name="核对审核要求", exact=True).click()
                     clause = page.get_by_role("article", name="条款 1", exact=True)
-                    clause.get_by_role("button", name="编辑", exact=True).click()
-                    clause.get_by_label("页码或单元格位置", exact=True).fill("工作表 B4")
-                    clause.get_by_role("button", name="完成编辑", exact=True).click()
+                    expect(clause).to_contain_text("工作表 B4")
                     clause.get_by_role("radio", name="适用", exact=True).check()
                     clause.get_by_role("checkbox", name="1 已核对条款与出处", exact=True).check()
                     page.get_by_role("button", name="确认本次要求", exact=True).click()
@@ -1682,6 +1744,12 @@ class RuleInteractionTests(unittest.TestCase):
 
         page.route("**/api/files", create_file)
         page.route("**/api/files/*/versions/*", lambda route: route.fulfill(json=state["source"]))
+        page.route(
+            "**/api/files/*/versions/*/rule-sources",
+            lambda route: route.fulfill(
+                json={"file_version_id": state["source"]["id"], "units": state.get("source_units", [{"id": "json:0", "location": "rules[0].rule_to_check", "excerpt": "检查 A"}])}
+            ),
+        )
         page.route("**/api/files/*/versions/*/blob", blob)
         page.route("**/api/rules", rules)
         page.route("**/api/rules/*", rule)
@@ -1704,10 +1772,8 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_label(label, exact=True).check()
         page.get_by_label("来源说明／变更原因", exact=True).fill("已按原件核对。")
         clause = page.get_by_role("article", name="条款 1", exact=True)
-        clause.get_by_role("button", name="编辑条款", exact=True).click()
-        clause.get_by_label("出处位置", exact=True).fill("原件第 1 条")
+        expect(clause).to_contain_text("rules[0].rule_to_check")
         clause.get_by_label("1 已核对来源", exact=True).check()
-        clause.get_by_role("button", name="完成编辑", exact=True).click()
         page.get_by_label("已核对本版本的来源、范围和变更", exact=True).check()
 
     def test_save_failure_returns_to_the_editable_candidate(self):

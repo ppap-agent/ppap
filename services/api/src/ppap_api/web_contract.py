@@ -178,6 +178,17 @@ class RuleCandidate(TypedDict):
     source_file_version_id: str
 
 
+class RuleSourceUnit(TypedDict):
+    id: str
+    location: str
+    excerpt: str
+
+
+class RuleSources(TypedDict):
+    file_version_id: str
+    units: list[RuleSourceUnit]
+
+
 class RulesList(TypedDict):
     rules: list[Rule]
 

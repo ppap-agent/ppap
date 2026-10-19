@@ -19,6 +19,7 @@ import {receiveRequirement, RuleExtraction} from './rule-extraction'
 import {canonical, publishBasis} from './product'
 import {isPreview, useAccess} from './access'
 import {message} from './remote'
+import {RequirementSourceSelect} from './requirement-source-select'
 
 const applicability = {pending: '待确认', apply: '适用', exclude: '不适用'} as const
 const separateTitle = (clause: RequirementClause) => clause.title.trim() && !clause.text.trim().startsWith(clause.title.trim())
@@ -82,7 +83,7 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
   }
   if (!readonly && selectedVersion && !scopeMatches(scope, selectedVersion.scope)) issues.push('当前事项不在所选版本的声明范围内，请重新选择适用版本或上传本次要求。')
   const confirmed = basisConfirmed(basis, scopeKey)
-  const checked = basis?.clauses.filter(clause => !clauseIssues(clause).length).length ?? 0
+  const checked = basis?.clauses.filter(clause => !clauseIssues(clause, basis).length).length ?? 0
   const source = basis?.clauses.find(clause => clause.id === sourceClause)
   const mixedApplicability = basis?.clauses.some(clause => clause.applicability !== 'apply')
   const versions = collections.flatMap(family => (showSourceHistory ? [...family.versions].reverse() : family.versions.slice(-1)).map(version => ({family, version})))
@@ -114,7 +115,7 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
     if (!basis) return
     if (basis.library && catalog?.error) {catalog.reload(); return}
     if (basis.library && !selectedVersion || selectedVersion && !scopeMatches(scope, selectedVersion.scope)) {setCandidate(null); setSourceOpen(true); return}
-    const missing = basis.clauses.find(clause => clauseIssues(clause).length)
+    const missing = basis.clauses.find(clause => clauseIssues(clause, basis).length)
     let setup = ''
     if (!basis.source.title.trim() || !basis.source.version.trim()) setup = 'metadata'
     else if (['unparsed', 'failed'].includes(basis.source.state)) setup = basis.server ? 'extraction' : 'metadata'
@@ -122,7 +123,10 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
     else if (!missing && basis.conflict.active) setup = 'conflict'
     const target = setup ? page.current?.querySelector<HTMLElement>(`[data-basis-setup="${setup}"]`) : missing ? document.getElementById(`basis-clause-${missing.id}`) : page.current?.querySelector<HTMLElement>('[aria-label^="条款 "]')
     target?.scrollIntoView({block: 'center'})
-    if (missing && !clauseSourceReady(missing)) setEditing(missing.id)
+    if (missing && !clauseSourceReady(missing, basis)) {
+      if (basis.server) {setSourceClause(missing.id); return}
+      setEditing(missing.id)
+    }
     requestAnimationFrame(() => {
       const control = target?.querySelector<HTMLElement>('[data-basis-missing="true"]:not(:disabled)') ?? target?.querySelector<HTMLElement>('input:not(:disabled),textarea:not(:disabled),select:not(:disabled),button:not(:disabled)') ?? target
       control?.focus({preventScroll: true})
@@ -155,7 +159,7 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
           <div className="min-w-0 space-y-3">
             {editing === clause.id && !readonly ? <div className="grid gap-3"><label className="grid gap-1.5">条款名称<Input data-basis-missing={!clause.title.trim()} disabled={locked} value={clause.title} onChange={event => patch(clause.id, {title: event.target.value, checked: false})}/></label><label className="grid gap-1.5">条款正文<Textarea data-basis-missing={!clause.text.trim()} disabled={locked} value={clause.text} onChange={event => patch(clause.id, {text: event.target.value, checked: false})}/></label><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1.5">来源文件<Input data-basis-missing={!clause.source.trim()} disabled={locked} value={clause.source} onChange={event => patch(clause.id, {source: event.target.value, checked: false})}/></label><label className="grid gap-1.5">页码或单元格位置<Input data-basis-missing={!clause.location.trim() || clause.location.includes('待核对')} disabled={locked} value={clause.location} placeholder="如第 3 页 §2，或工作表 B4" onChange={event => patch(clause.id, {location: event.target.value, checked: false})}/></label></div><Button variant="outline" size="sm" className="w-fit" onClick={() => setEditing(null)}>完成编辑</Button></div> : <>{(separateTitle(clause) || readonly && mixedApplicability) && <div className="flex flex-wrap items-start justify-between gap-2">{separateTitle(clause) && <h3 className="break-words font-semibold">{clause.title}</h3>}{readonly && mixedApplicability && <Badge variant="outline">{applicability[clause.applicability]}</Badge>}</div>}<p className="whitespace-pre-wrap break-words leading-relaxed">{clause.text || '条款正文待录入'}</p><p className="break-words text-xs text-muted-foreground">{clause.source === basis.source.filename || clause.source === basis.source.title ? '' : `${clause.source} · `}{clause.location || '出处待补充'}</p></>}
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
-              {!readonly && <><RadioGroup value={clause.applicability} disabled={locked} onValueChange={value => patch(clause.id, {applicability: value as RequirementClause['applicability']})} aria-label={`${clause.id} 本次适用性`} className="w-auto"><div className="flex flex-wrap gap-x-4">{Object.entries(applicability).map(([value, label]) => <label key={value} className="flex min-h-9 items-center gap-2 max-md:min-h-11"><RadioGroupItem data-basis-missing={clause.applicability === 'pending' && value === 'pending'} value={value}/>{label}</label>)}</div></RadioGroup><label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox data-basis-missing={!clause.checked} aria-label={`${clause.id} 已核对条款与出处`} disabled={locked} checked={clause.checked} onCheckedChange={value => patch(clause.id, {checked: value === true})}/>原文已核对</label></>}
+              {!readonly && <><RadioGroup value={clause.applicability} disabled={locked} onValueChange={value => patch(clause.id, {applicability: value as RequirementClause['applicability']})} aria-label={`${clause.id} 本次适用性`} className="w-auto"><div className="flex flex-wrap gap-x-4">{Object.entries(applicability).map(([value, label]) => <label key={value} className="flex min-h-9 items-center gap-2 max-md:min-h-11"><RadioGroupItem data-basis-missing={clause.applicability === 'pending' && value === 'pending'} value={value}/>{label}</label>)}</div></RadioGroup><label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox data-basis-missing={!clause.checked || !clauseSourceReady(clause, basis)} aria-label={`${clause.id} 已核对条款与出处`} disabled={locked || !clauseSourceReady(clause, basis)} checked={clause.checked && clauseSourceReady(clause, basis)} onCheckedChange={value => patch(clause.id, {checked: value === true})}/>原文已核对</label></>}
               <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={event => {sourceTrigger.current = event.currentTarget; setSourceClause(clause.id)}}><BookOpen/>核对出处</Button>{!readonly && editing !== clause.id && <Button variant="ghost" size="sm" disabled={locked} onClick={() => setEditing(clause.id)}>编辑</Button>}</div>
             </div>
             {clause.applicability === 'exclude' && (readonly ? <p className="whitespace-pre-wrap break-words">不适用理由：{clause.reason}</p> : <label className="grid gap-1.5">不适用理由<Textarea data-basis-missing={!clause.reason.trim()} disabled={locked} value={clause.reason} onChange={event => patch(clause.id, {reason: event.target.value})} placeholder="说明本事项为何不适用，并提供依据"/></label>)}
@@ -183,8 +187,8 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
     </DialogContent></Dialog>
     <Sheet open={sourceClause !== null} onOpenChange={open => !open && setSourceClause(null)}><SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-full sm:data-[side=right]:max-w-160" onCloseAutoFocus={event => {if (sourceTrigger.current?.isConnected) {event.preventDefault(); sourceTrigger.current.focus()}}}>
       <div className="pr-8"><SheetHeader><SheetTitle>核对条款 {source?.id} 的出处</SheetTitle><SheetDescription>{source?.source} · {source?.location || '位置待补充'}</SheetDescription></SheetHeader></div>
-      {source && <div className="space-y-5 py-2 text-sm leading-relaxed">{source.original ? <section className="space-y-2"><h3 className="font-medium">来源摘录</h3><blockquote className="whitespace-pre-wrap break-words border-l-2 pl-4">{source.original}</blockquote></section> : <p className="text-muted-foreground">没有已提取的来源摘录，请查看原件并补充出处。</p>}{source.text !== source.original && <section className="space-y-2"><h3 className="font-medium">本次条款</h3><p className="whitespace-pre-wrap break-words">{source.text || '正文待录入'}</p></section>}{basis?.source.origin === 'demo' && <p className="text-xs text-muted-foreground">这是固定示例的来源片段。</p>}</div>}
-      <div className="mt-auto border-t pt-4"><SheetFooter>{basis && <RequirementOriginal basis={basis} label="查看要求原件"/>}{source && !readonly && <Button disabled={locked} onClick={() => {patch(source.id, {checked: true}); setSourceClause(null)}}>标记已核对并返回</Button>}<SheetClose asChild><Button variant="outline">返回条款</Button></SheetClose></SheetFooter></div>
+      {source && basis && <div className="space-y-5 py-2 text-sm leading-relaxed">{!readonly && <RequirementSourceSelect basis={basis} clause={source} disabled={locked} onChange={clause => patch(source.id, clause)}/>}<section className="space-y-2"><h3 className="font-medium">来源摘录</h3><blockquote className="whitespace-pre-wrap break-words border-l-2 pl-4">{clauseSourceReady(source, basis) ? source.original : '尚未关联原文位置。请选择对应原文，并对照原件核对。'}</blockquote></section>{source.text !== source.original && <section className="space-y-2"><h3 className="font-medium">本次条款</h3><p className="whitespace-pre-wrap break-words">{source.text || '正文待录入'}</p></section>}{basis.source.origin === 'demo' && <p className="text-xs text-muted-foreground">这是固定示例的来源片段。</p>}</div>}
+      <div className="mt-auto border-t pt-4"><SheetFooter>{basis && <RequirementOriginal basis={basis} label="查看要求原件"/>}{source && !readonly && <Button disabled={locked || !clauseSourceReady(source, basis ?? undefined)} onClick={() => {patch(source.id, {checked: true}); setSourceClause(null)}}>标记已核对并返回</Button>}<SheetClose asChild><Button variant="outline">返回条款</Button></SheetClose></SheetFooter></div>
     </SheetContent></Sheet>
   </section>
 }

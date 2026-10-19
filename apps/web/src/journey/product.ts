@@ -1,5 +1,5 @@
 import {request, type FileVersion, type Material, type Round, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api'
-import {isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state'
+import {clauseSourceReady, isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state'
 import type {RequirementCollection} from './requirement-library-state'
 import {sourceContent} from './requirement-library-state'
 import type {DecisionEvidence, DecisionInput} from './decision'
@@ -46,7 +46,7 @@ export async function loadRuleCollections(): Promise<RequirementCollection[]> {
     basis.source.id = rule.id; basis.source.filename = material.original_filename
     if (!rule.case_context?.registration) basis.source.version = rule.created_at.slice(0, 16).replace('T', ' ')
     basis.server!.publishedContent = canonical({body: rule.body, title: basis.source.title, version: basis.source.version})
-    if (basis.clauses.every(clause => clause.checked && clause.location.trim() && !clause.location.includes('待核对'))) basis.server!.verifiedContent = sourceContent(basis)
+    if (basis.clauses.every(clause => clause.checked && clauseSourceReady(clause, basis))) basis.server!.verifiedContent = sourceContent(basis)
     return [{id: rule.id, draft: null, versions: [{id: rule.id, basis, scope, reason, at: rule.created_at, baseId: rule.predecessor_id || null}]}]
   }))).flat()
   const byId = new Map(collections.map(collection => [collection.id, collection.versions[0]]))

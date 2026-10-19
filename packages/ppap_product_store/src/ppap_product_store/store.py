@@ -735,6 +735,17 @@ class AuthStore:
             ).fetchone()
         return self._version_from_row(row) if row else None
 
+    def readable_version(self, principal: Principal, version_id: str) -> FileVersion:
+        vid = _as_uuid(version_id)
+        if not vid:
+            raise KeyError("missing")
+        with self._conn() as conn:
+            prepared = self._prepared_items(conn, principal, [{"file_version_id": vid, "role": "reference"}])
+        version = self.get_version(prepared[0]["file_id"], vid)
+        if version is None:
+            raise KeyError("missing")
+        return version
+
     def put_blob(self, version: FileVersion, body: bytes) -> FileVersion:
         if len(body) > MAX_UPLOAD_BYTES:
             raise ValueError("invalid_size")

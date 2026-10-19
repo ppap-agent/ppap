@@ -4,6 +4,8 @@ from typing import Any
 
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
+from ppap_application.rule_sources import rule_sources, validate_registration_sources
+from ppap_core.files import ObjectMissing
 from ppap_core.rules import document_types, latest_rule_versions
 from ppap_core.types import PpapDocumentType
 
@@ -27,7 +29,30 @@ def template_catalog(store, tenant_id: str):
     return {"coverage_universe": universe, "customers": sorted(customers.values(), key=lambda item: item["customer_id"])}
 
 
-def register_rule_routes(app: FastAPI, store, principal_of):
+def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
+    def sources(principal, file_id, version_id):
+        version = store.get_version(file_id, version_id)
+        if version is None or version.tenant_id != principal.tenant_id:
+            raise KeyError("missing")
+        content = store.version_bytes(version)
+        try:
+            return version, rule_sources(version.original_filename, content)
+        except Exception:
+            raise ValueError("rule_source_unavailable") from None
+
+    @app.get("/files/{file_id}/versions/{version_id}/rule-sources", response_model=wc.RuleSources)
+    def read_rule_sources(file_id: str, version_id: str, request: Request):
+        principal, denied = require_file_read(request, file_id)
+        if denied:
+            return denied
+        try:
+            _, units = sources(principal, file_id, version_id)
+            return JSONResponse({"file_version_id": version_id, "units": units}, headers={"Cache-Control": "private, no-store"})
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except (ValueError, ObjectMissing):
+            return JSONResponse({"error": "rule_source_unavailable"}, status_code=409)
+
     @app.get("/audit-template-catalog", response_model=wc.AuditTemplateCatalog)
     def read_template_catalog(request: Request):
         headers = {"Cache-Control": "private, no-store"}
@@ -77,6 +102,13 @@ def register_rule_routes(app: FastAPI, store, principal_of):
         if not isinstance(body, dict):
             return JSONResponse({"error": "invalid_rule_request"}, status_code=400)
         try:
+            if isinstance(body.get("case_context"), dict) and "registration" in body["case_context"]:
+                rule_body = body.get("body")
+                if not isinstance(rule_body, dict):
+                    raise ValueError("invalid_rule_body")
+                version = store.readable_version(principal, body.get("source_file_version_id"))
+                version, units = sources(principal, version.file_id, version.id)
+                validate_registration_sources(body["case_context"], rule_body, version.id, version.original_filename, units)
             published = store.publish_rule(
                 principal,
                 body.get("title"),
@@ -90,6 +122,8 @@ def register_rule_routes(app: FastAPI, store, principal_of):
             return JSONResponse({"error": "access_denied"}, status_code=403)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409 if str(exc) == "file_not_ready" else 400)
+        except ObjectMissing:
+            return JSONResponse({"error": "rule_source_unavailable"}, status_code=409)
         return JSONResponse(published, status_code=201)
 
     @app.get("/rules/{rule_version_id}", response_model=wc.RuleDetail)
