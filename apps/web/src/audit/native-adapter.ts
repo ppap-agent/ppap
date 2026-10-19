@@ -291,8 +291,8 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),
     },
     customers: options.customers.map(name => ({value: name, label: name})),
-    drive: {async list(pageToken) {
-      try {return await request(`/integrations/feishu/files?${new URLSearchParams(pageToken ? {page_token: pageToken} : {})}`)}
+    drive: {async list({folderToken, pageToken} = {}) {
+      try {return await request(`/integrations/feishu/files?${new URLSearchParams({...folderToken ? {folder_token: folderToken} : {}, ...pageToken ? {page_token: pageToken} : {}})}`)}
       catch (failure) {
         if (failure instanceof Error && 'code' in failure && failure.code === 'feishu_user_token_missing') failure.message = 'authorization_required'
         throw failure

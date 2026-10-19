@@ -50,11 +50,11 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true, automaticMatching = false}: {
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
-  title?: string; uploadLabel?: string; onPublished?: () => void; active?: boolean
+  title?: string; uploadLabel?: string; onPublished?: () => void; active?: boolean; automaticMatching?: boolean
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [query, setQuery] = useState(routeQuery)
@@ -216,6 +216,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <dl className="grid grid-cols-3 gap-x-4 gap-y-4">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1" key={key}><dt className="text-xs text-muted-foreground">适用{label}</dt><dd className="break-words">{current.scope[flag] ? '不限定' : current.scope[key] || '待核对'}</dd></div>)}</dl>
         <dl className="space-y-3 text-xs"><div className="flex flex-wrap gap-x-3 gap-y-1"><dt className="text-muted-foreground">来源文件</dt><dd className="min-w-0 break-words">{current.basis.source.filename}</dd></div>{current.reason && <div className="space-y-1"><dt className="text-muted-foreground">版本说明</dt><dd className="whitespace-pre-wrap break-words text-sm">{current.reason}</dd></div>}</dl>
       </div>}
+      {automaticMatching && (current.scope.allCustomers || !current.scope.customer.trim()) && <Alert role="status"><AlertTitle>此版本不参与自动匹配</AlertTitle><AlertDescription>{draftSelected ? '请指定适用客户后保存。未限定客户的规则不会作为通用规则自动套用。' : '未指定适用客户。请创建新版本并核对客户范围，已有审核依据不变。'}</AlertDescription></Alert>}
       <Tabs value={content} onValueChange={showContent}><div className="flex flex-wrap items-center justify-between gap-3 border-b pb-1"><TabsList variant="line" aria-label="要求内容"><TabsTrigger value="clauses">条款</TabsTrigger><TabsTrigger value="changes">版本变化</TabsTrigger></TabsList>{draftSelected && <p className="text-xs text-muted-foreground">已核对 {verifiedClauseCount(current.basis)}/{current.basis.clauses.length} 条</p>}</div>
         <TabsContent value="clauses"><section aria-label="要求条款" className="divide-y">{current.basis.clauses.map((clause, index) => {
           const repeated = Boolean(clause.title.trim()) && clause.text.trim().startsWith(clause.title.trim())

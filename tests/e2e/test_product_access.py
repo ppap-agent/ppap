@@ -39,6 +39,67 @@ def login_config(page, login="feishu"):
     page.route("**/api/public-config", lambda route: route.fulfill(json={"api_url": WEB + "/api", "profile": "isolated-dev", "login": login, "feishu_app_id": "test-app"}))
 
 
+def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(page):
+    login_config(page)
+    page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
+    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
+    task = {
+        "id": "original-task",
+        "number": "PPAP-20261019-001",
+        "state": "pending_confirm",
+        "analysis_mode": "standard",
+        "created_at": "2026-10-19T00:00:00Z",
+        "updated_at": "2026-10-19T00:00:00Z",
+        "source_draft_id": "original-task",
+        "round_id": None,
+        "customer_preference": None,
+        "completion_reason": None,
+        "estimated_points": 0,
+        "input_revision": 0,
+        "files": [
+            {
+                "file": {
+                    "id": "version-one",
+                    "file_id": "file-one",
+                    "original_filename": "控制计划.xlsx",
+                    "byte_size": 32,
+                    "content_type": "application/octet-stream",
+                    "status": "ready",
+                    "sha256": None,
+                },
+                "selection": "selected",
+                "removal_reason": None,
+                "validation_id": "validation-one",
+                "validation": {"state": "valid", "reasons": []},
+                "match": {
+                    "state": "unmatched",
+                    "metadata": {"customer": None, "model": None, "part": None, "part_number": None},
+                    "document_type": "控制计划",
+                    "rule": None,
+                    "gaps": ["matching_customer_required"],
+                },
+            }
+        ],
+    }
+    page.route("**/api/audit-tasks/original-task", lambda route: route.fulfill(json=task))
+    reads = []
+
+    def catalog(route):
+        reads.append(route.request.method)
+        customers = [] if len(reads) == 1 else [{"customer_id": "customer-new", "name": "新客户", "effective_rule_types": ["控制计划"]}]
+        route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": customers})
+
+    page.route("**/api/audit-template-catalog", catalog)
+    page.goto(WEB + "/audit?task=original-task")
+    page.get_by_role("button", name="返回核对客户", exact=True).click()
+    page.get_by_role("combobox", name="客户（可选）", exact=True).click()
+    page.get_by_role("option", name="新客户", exact=True).click()
+    expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
+    expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+    assert page.url == WEB + "/audit?task=original-task"
+    assert reads == ["GET", "GET"]
+
+
 def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configuration(page):
     login_config(page, "disabled")
     page.route("**/api/me", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))

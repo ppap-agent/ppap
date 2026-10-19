@@ -265,6 +265,49 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert worker.claim_job("unexpected-audit") is None
 
 
+def test_customer_recovery_rematches_and_finishes_the_original_task_without_changing_files(task_system):
+    client, worker = task_system
+    worker.settings.usage_charge_enabled = False
+    file = checked_file(client, worker)
+    rule = publish_rule(client, file)
+
+    class CustomerUnknownAI(MetadataAI):
+        def structured_completion(self, **request):
+            return "{}" if request["operation"] == "document_metadata_extraction" else super().structured_completion(**request)
+
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    task = client.post("/audit-tasks", json=body).json()
+    path = f"/audit-tasks/{task['id']}"
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=CustomerUnknownAI())
+    unmatched = client.get(path).json()
+    assert unmatched["files"][0]["match"]["gaps"] == ["matching_customer_required"]
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": task["id"], "expected_revision": 0, "customer_preference": "测试客户"}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=CustomerUnknownAI())
+    matched = client.get(path).json()
+    assert matched["input_revision"] == 1
+    assert matched["files"][0]["file"]["id"] == file["file_version_id"]
+    assert matched["files"][0]["match"]["rule"]["id"] == rule["id"]
+    assert matched["files"][0]["match"]["metadata"]["customer"] is None
+
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 1}
+    accepted = client.post(path + "/confirm", json=command)
+    assert accepted.status_code == 201
+    round_id = accepted.json()["round_id"]
+    assert client.post(path + "/confirm", json=command).json()["round_id"] == round_id
+    process_claimed(worker, worker.claim_job("audit"), "audit")
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    finished = client.get(path).json()
+    assert (finished["id"], finished["round_id"], finished["state"], finished["completion_reason"]) == (task["id"], round_id, "completed", "processed")
+    assert finished["files"][0]["file"]["id"] == file["file_version_id"]
+    assert len(client.get("/rounds").json()["rounds"]) == 1
+    assert client.get("/usage").json()["events"] == []
+
+
 def test_legacy_draft_operations_cannot_replace_or_accept_a_recognition_task(task_system):
     client, worker = task_system
     file = checked_file(client, worker)

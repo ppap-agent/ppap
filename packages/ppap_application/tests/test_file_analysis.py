@@ -57,6 +57,18 @@ def rule(rule_id: str, customers: list[str], document_type: str = "控制计划"
     return {"id": rule_id, "title": f"规则-{rule_id}", "kind": "engine", "type": document_type, "customers": customers, **fields}
 
 
+def test_unknown_customer_explains_how_to_recover_without_taking_an_unscoped_rule() -> None:
+    result = analyze_file(
+        "控制计划.xlsx",
+        workbook_bytes(("文件类型", "控制计划")),
+        [rule("customer-rule", ["甲客户"]), rule("generic", [])],
+        ai=MetadataAI({}),
+        scoped=True,
+    )
+
+    assert (result["matching_status"], result["matched_rule_id"], result["notices"]) == ("unmatched", None, ["matching_customer_required"])
+
+
 def test_customer_preference_selects_an_actual_rule_without_replacing_recognized_customer() -> None:
     result = analyze_file(
         "控制计划.xlsx",
@@ -89,17 +101,18 @@ def test_missing_preferred_scope_falls_back_to_the_customer_identified_in_the_fi
 
 
 @pytest.mark.parametrize(
-    "metadata,available_rules",
+    "metadata,available_rules,reason",
     [
-        ({}, [rule("known-customer", ["甲客户"])]),
-        ({"customer": "甲客户"}, [rule("generic", [])]),
-        ({"customer": "甲客户"}, [rule("wrong-customer", ["乙客户"])]),
-        ({"customer": "甲客户"}, [rule("wrong-type", ["甲客户"], "过程流程图")]),
-        ({"customer": "甲客户"}, [rule("unknown-type", ["甲客户"], "未知")]),
-        ({"customer": "甲客户"}, [{"id": "no-customers", "title": "客户控制计划", "kind": "engine", "type": "控制计划"}]),
+        ({}, [rule("known-customer", ["甲客户"])], "matching_customer_required"),
+        ({}, [rule("generic", [])], "matching_rules_customer_unassigned"),
+        ({"customer": "甲客户"}, [rule("generic", [])], "matching_rules_customer_unassigned"),
+        ({"customer": "甲客户"}, [rule("wrong-customer", ["乙客户"])], "matching_customer_rules_missing"),
+        ({"customer": "甲客户"}, [rule("wrong-type", ["甲客户"], "过程流程图")], "matching_document_type_rules_missing"),
+        ({"customer": "甲客户"}, [rule("unknown-type", ["甲客户"], "未知")], "matching_document_type_rules_missing"),
+        ({"customer": "甲客户"}, [{"id": "no-customers", "title": "客户控制计划", "kind": "engine", "type": "控制计划"}], "matching_rules_customer_unassigned"),
     ],
 )
-def test_scoped_recognition_does_not_invent_a_customer_or_generic_rule(metadata, available_rules) -> None:
+def test_scoped_recognition_does_not_invent_a_customer_or_generic_rule(metadata, available_rules, reason) -> None:
     result = analyze_file(
         "控制计划.xlsx",
         workbook_bytes(("文件类型", "控制计划")),
@@ -108,7 +121,7 @@ def test_scoped_recognition_does_not_invent_a_customer_or_generic_rule(metadata,
         scoped=True,
     )
 
-    assert (result["matched_rule_id"], result["matching_status"], result["document_type"], result["notices"]) == (None, "unmatched", "控制计划", ["no_available_rules"])
+    assert (result["matched_rule_id"], result["matching_status"], result["document_type"], result["notices"]) == (None, "unmatched", "控制计划", [reason])
 
 
 def test_unknown_document_type_does_not_take_the_only_available_customer_rule() -> None:
@@ -121,6 +134,7 @@ def test_unknown_document_type_does_not_take_the_only_available_customer_rule() 
     )
 
     assert (result["matched_rule_id"], result["matching_status"], result["document_type"]) == (None, "unmatched", None)
+    assert result["notices"] == ["matching_document_type_required"]
 
 
 @pytest.mark.parametrize("reverse", [False, True])

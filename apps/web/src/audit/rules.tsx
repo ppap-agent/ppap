@@ -20,5 +20,5 @@ export function AuditRules({onPublished, active}: {onPublished: () => void; acti
     }).catch(cause => {if (active) setRead({loading: false, error: message(cause)})})
     return () => {active = false}
   }, [revision])
-  return <RequirementLibraryPanel title="审核规则" uploadLabel="上传规则" active={active} collections={collections} onChange={setCollections} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={onPublished}/>
+  return <RequirementLibraryPanel title="审核规则" uploadLabel="上传规则" automaticMatching active={active} collections={collections} onChange={setCollections} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={onPublished}/>
 }

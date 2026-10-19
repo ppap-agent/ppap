@@ -90,15 +90,11 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
         matching = "failed"
     elif scoped:
         ambiguous = False
-        for customer in dict.fromkeys(value.strip().casefold() for value in (customer_preference, metadata["customer"]) if value and value.strip()):
-            applicable = [
-                rule
-                for rule in candidates
-                if inferred != PpapDocumentType.UNKNOWN
-                and PpapDocumentType.from_string(rule.get("type") or "") == inferred
-                and isinstance(rule.get("customers"), list)
-                and customer in {value.strip().casefold() for value in rule["customers"] if isinstance(value, str)}
-            ]
+        customers = tuple(dict.fromkeys(value.strip().casefold() for value in (customer_preference, metadata["customer"]) if value and value.strip()))
+        typed_rules = [rule for rule in candidates if inferred != PpapDocumentType.UNKNOWN and PpapDocumentType.from_string(rule.get("type") or "") == inferred]
+        scoped_rules = [rule for rule in typed_rules if isinstance(rule.get("customers"), list) and any(isinstance(value, str) and value.strip() for value in rule["customers"])]
+        for customer in customers:
+            applicable = [rule for rule in scoped_rules if customer in {value.strip().casefold() for value in rule["customers"] if isinstance(value, str)}]
             if len(applicable) == 1:
                 matched_id = applicable[0]["id"]
                 matching = "matched"
@@ -106,7 +102,18 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
             ambiguous = ambiguous or len(applicable) > 1
         if not matched_id:
             matching = "failed" if ambiguous else "unmatched"
-            notices.append("ambiguous_available_rules" if ambiguous else "no_available_rules")
+            if ambiguous:
+                notices.append("ambiguous_available_rules")
+            elif inferred == PpapDocumentType.UNKNOWN:
+                notices.append("matching_document_type_required")
+            elif not typed_rules:
+                notices.append("matching_document_type_rules_missing")
+            elif not scoped_rules:
+                notices.append("matching_rules_customer_unassigned")
+            elif not customers:
+                notices.append("matching_customer_required")
+            else:
+                notices.append("matching_customer_rules_missing")
     elif candidates:
         try:
             matched_id = RuleMatchingAIService(ai, PromptManager()).get_matched_rule_id(

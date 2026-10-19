@@ -92,10 +92,11 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   customers: [{value: 'sample-customer', label: '示例客户'}],
   authenticate: async () => {authenticated = true},
   drive: {
-    list: async () => {
+    list: async ({folderToken} = {}) => {
       driveReads += 1
       if (scene === 'drive-denied') throw new Error('authorization_required')
       if (scene === 'drive-error' && driveReads === 1) throw new Error('preview_read_failed')
+      if (scene.startsWith('drive-folders')) return {files: folderToken === 'nested' ? [driveCatalog[1].source] : folderToken === 'project' ? [driveCatalog[0].source, {token: 'nested', name: '补充资料', type: 'folder'}] : [{token: 'project', name: '客户项目', type: 'folder'}]}
       return {files: scene === 'drive-empty' ? [] : [...driveCatalog.map(row => row.source), {token: 'preview-image', name: '现场照片.jpg', type: 'file'}]}
     },
   },
@@ -269,11 +270,12 @@ function fixtureMatch(files: AuditTaskFile[], mode: AuditTask['analysis_mode'], 
       const index = row.file.file_id === 'preview-duplicate-document' && scene === 'reports-duplicate' ? 1 : driveCatalog.find(fixture => fixture.source.token === row.file.file_id)?.index ?? -1
       const document = documents[index]
       const known = Number.isInteger(index) && index >= 0 && Boolean(document)
-      const matched = known && !scene.startsWith('unmatched') && !scene.endsWith('-unmatched') && !(scene === 'partial' && index === 2) && !(scene === 'recognition-progress-removal' && index === 0)
+      const customerMissing = scene === 'matching-customer-required' && !customer
+      const matched = known && !customerMissing && !scene.startsWith('unmatched') && !scene.endsWith('-unmatched') && !(scene === 'partial' && index === 2) && !(scene === 'recognition-progress-removal' && index === 0)
       const sampleChecks = reportSamples.documents[index]?.checks
       const rules = sampleChecks ? sampleChecks.map(check => ({id: check.id, category: check.category, priority: null, rule_to_check: check.requirement, type_of_rule: 'table'})) : [{id: `${index + 1}.1`, category: '频次一致性', priority: null, rule_to_check: '示例条款，仅用于界面走查', type_of_rule: 'table'}, {id: `${index + 1}.2`, category: '记录完整性', priority: null, rule_to_check: '示例：指定的检查记录必须完整且可读。', type_of_rule: 'table'}]
-      const gaps = scene === 'matching-gaps' && matched && index === 0 && !hasControlPlan ? ['示例：未选择控制计划，频次一致性缺少跨文件比对资料。'] : []
-      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: '示例客户', model: '示例车型', part: '尾门导流板', part_number: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' && !(scene === 'match-rule-missing' && index === 1) ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps}}
+      const gaps = customerMissing ? ['matching_customer_required'] : scene === 'matching-gaps' && matched && index === 0 && !hasControlPlan ? ['示例：未选择控制计划，频次一致性缺少跨文件比对资料。'] : []
+      return {...row, match: {state: scene === 'error' ? 'failed' as const : matched ? 'matched' as const : 'unmatched' as const, metadata: {customer: scene === 'matching-customer-required' ? null : '示例客户', model: '示例车型', part: '尾门导流板', part_number: 'P-204'}, document_type: known ? document.type : null, rule: matched && scene !== 'error' && !(scene === 'match-rule-missing' && index === 1) ? {id: `preview-rule-${index + 1}`, title: document.rule, body: {kind: 'engine' as const, type: document.type, rule_profile: 'v3', customers: ['示例客户'], models: [], parts: [], rules}} : null, gaps}}
     })
     const count = matchedFiles.filter(row => row.selection === 'selected' && row.match?.state === 'matched' && row.match.rule).length
     // Fixture display only. Real estimates remain Product API-owned.
@@ -379,9 +381,9 @@ function Preview() {
       const result = await adapter.readUpload(requestId)
       return scene === 'upload-resume' ? defer(`读取传输回执 · ${result.file?.original_filename} · 请求 ${requestId} · 版本 ${result.file?.id} · 传输命令 ${transferCommands.get(requestId)}`, result) : result
     },
-    drive: {...adapter.drive, list: async pageToken => {
-      const result = await adapter.drive.list(pageToken)
-      return scene === 'drive-loading' ? defer('飞书文件列表', result) : result
+    drive: {...adapter.drive, list: async query => {
+      const result = await adapter.drive.list(query)
+      return scene === 'drive-loading' || scene === 'drive-folders-late' && query?.folderToken === 'project' ? defer('飞书文件列表', result) : result
     }},
     match: async (...args) => {
       const result = await adapter.match(...args)

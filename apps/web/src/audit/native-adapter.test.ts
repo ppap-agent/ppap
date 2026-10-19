@@ -254,11 +254,11 @@ test('native Drive selection pages through the real API and reads back a lost im
     return json({request_id: id, state: 'ready', file: ready, reason: null, retry_allowed: false})
   }
   assert.ok(adapter.drive)
-  assert.deepEqual((await adapter.drive.list('next / page')).files, [source])
+  assert.deepEqual((await adapter.drive.list({pageToken: 'next / page', folderToken: 'chosen-folder'})).files, [source])
   const receipt = await adapter.upload({kind: 'feishu', file: source}, id)
   assert.equal(receipt.state, 'ready')
   assert.equal(receipt.file?.id, id)
-  assert.deepEqual(calls, ['GET /integrations/feishu/files?page_token=next+%2F+page', 'POST /integrations/feishu/files/import', `GET /file-uploads/${id}`])
+  assert.deepEqual(calls, ['GET /integrations/feishu/files?folder_token=chosen-folder&page_token=next+%2F+page', 'POST /integrations/feishu/files/import', `GET /file-uploads/${id}`])
 })
 
 test('native Drive unknown results permit readback, never an automatic second import', async () => {

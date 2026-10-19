@@ -30,6 +30,84 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_late_child_folder_read_cannot_replace_the_root_or_import_files(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/__preview?page=audit&scene=drive-folders-late")
+            product = page.frame_locator("#product")
+            product.get_by_role("button", name="从飞书选择", exact=True).click()
+            picker = product.get_by_role("dialog", name="从飞书选择文件", exact=True)
+            picker.get_by_role("button", name="打开文件夹 客户项目", exact=True).click()
+            expect(picker.get_by_text("正在读取飞书文件…", exact=True)).to_be_visible()
+            picker.get_by_role("button", name="我的云盘", exact=True).click()
+            expect(picker.get_by_role("button", name="打开文件夹 客户项目", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回一次示例读取", exact=True).click()
+            expect(picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True)).to_have_count(0)
+            expect(picker.get_by_role("button", name="添加所选文件（0）", exact=True)).to_be_disabled()
+            picker.get_by_role("button", name="取消", exact=True).click()
+            expect(product.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            expect(product.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(0)
+            browser.close()
+
+    def test_removal_history_starts_with_recognition_not_with_upload_selection(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="移除 过程流程图.pdf", exact=True).click()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
+            expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(0)
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            excluded = page.get_by_role("region", name="已移除文件", exact=True)
+            expect(excluded.get_by_text("过程流程图.pdf", exact=True)).to_be_visible()
+            expect(page.get_by_text("2 份文件 · 2 份匹配到规则", exact=True)).to_be_visible()
+            page.get_by_role("button", name="上一步", exact=True).click()
+            expect(excluded).to_be_visible()
+            browser.close()
+
+    def test_cloud_folders_are_navigable_and_selection_survives_folder_changes(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(PREVIEW + "/preview/audit.html?scene=drive-folders")
+            page.get_by_role("button", name="从飞书选择", exact=True).click()
+            picker = page.get_by_role("dialog", name="从飞书选择文件", exact=True)
+            expect(picker.get_by_role("checkbox", name="选择飞书文件 客户项目", exact=True)).to_have_count(0)
+            picker.get_by_role("button", name="打开文件夹 客户项目", exact=True).click()
+            picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True).check()
+            picker.get_by_role("button", name="打开文件夹 补充资料", exact=True).click()
+            picker.get_by_role("checkbox", name="选择飞书文件 控制计划.xlsx", exact=True).check()
+            picker.get_by_role("button", name="我的云盘", exact=True).click()
+            picker.get_by_role("button", name="打开文件夹 客户项目", exact=True).click()
+            expect(picker.get_by_role("checkbox", name="选择飞书文件 PFMEA.xlsx", exact=True)).to_be_checked()
+            picker.get_by_role("button", name="添加所选文件（2）", exact=True).click()
+            expect(page.get_by_text("PFMEA.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("控制计划.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(0)
+            browser.close()
+
+    def test_missing_customer_returns_to_check_and_rematches_the_same_files_and_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto(PREVIEW + "/preview/audit.html?scene=matching-customer-required")
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            task_url = page.url
+            expect(page.get_by_text("请先核对客户", exact=True)).to_have_count(3)
+            page.get_by_role("button", name="返回核对客户", exact=True).first.click()
+            page.get_by_role("combobox", name="客户（可选）", exact=True).click()
+            page.get_by_role("option", name="示例客户", exact=True).click()
+            expect(page.get_by_role("checkbox", name=re.compile(r"^选择 "))).to_have_count(3)
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page).to_have_url(task_url)
+            expect(page.get_by_text("请先核对客户", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_preview_host_preserves_the_explicit_zip_link_and_clears_it_on_exit(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -1434,7 +1512,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("草稿B.pdf", exact=True)).to_be_visible()
             expect(page.get_by_text("草稿A.pdf", exact=True)).to_have_count(0)
             expect(page.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
-            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
             expect(page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True)).to_have_count(0)
             expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
             browser.close()
@@ -3237,9 +3315,10 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已排除.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             page.get_by_role("button", name="排除传输 已排除.pdf", exact=True).click()
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
-            expect(page.get_by_text("传输期间排除，不纳入识别", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
+            expect(page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(0)
             browser.close()
 
     def test_a_deep_link_restores_the_same_frozen_task_after_reload(self):
@@ -3306,8 +3385,8 @@ class AuditPreviewTests(unittest.TestCase):
                             page.get_by_role("button", name="排除传输 PFMEA.xlsx", exact=True).click()
                         page.get_by_role("button", name="返回示例读取 2", exact=True).click()
                         if removed:
-                            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
-                            expect(page.get_by_text("传输期间排除，不纳入识别", exact=True)).to_be_visible()
+                            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
+                            expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
                             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
                         else:
                             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
@@ -3342,8 +3421,8 @@ class AuditPreviewTests(unittest.TestCase):
                         page.get_by_role("button", name="排除传输 待续传.xlsx", exact=True).click()
                     page.get_by_role("button", name="返回示例读取 2", exact=True).click()
                     if removed:
-                        expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
-                        expect(page.get_by_text("传输期间排除，不纳入识别", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_disabled()
                         expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_have_count(0)
                     else:
                         expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
@@ -3814,6 +3893,8 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
             expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
             expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
+            expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="开始识别", exact=True).click()
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_be_visible()
             browser.close()
 

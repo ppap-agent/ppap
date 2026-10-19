@@ -30,6 +30,25 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_native_rule_customer_scope_is_explained_without_publishing_or_replacing_the_draft(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements")
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+            notice = page.get_by_role("status").filter(has_text="此版本不参与自动匹配")
+            expect(notice).to_be_visible()
+            page.get_by_label("不限定客户", exact=True).uncheck()
+            page.get_by_label("适用客户", exact=True).fill("指定客户")
+            expect(notice).to_have_count(0)
+            expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+            self.assertEqual(state["saves"], [])
+            browser.close()
+
     def test_historical_engine_rule_without_original_can_still_be_read(self):
         from playwright.sync_api import expect
 
