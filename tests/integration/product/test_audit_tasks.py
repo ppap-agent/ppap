@@ -547,6 +547,119 @@ def publish_rule(client, file, *, predecessor=None, title="客户控制计划", 
     return response.json()
 
 
+def test_explicit_customer_scope_and_reference_survive_acceptance_and_recovery(task_system):
+    client, worker = task_system
+    worker.settings.usage_charge_enabled = False
+    target = checked_file(client, worker)
+    reference = checked_file(client, worker, "特殊特性清单.xlsx", "过程特殊特性清单")
+    first = publish_rule(client, target)
+    declaration = {"title": first["title"], "body": {**first["body"], "customers": []}, "source_file_version_id": target["file_version_id"], "predecessor_id": first["id"]}
+    legacy = client.post("/rules", json=declaration).json()
+    assert legacy["customer_scope"] == "unconfirmed"
+    source = client.get(f"/file-validations/{target['validation_id']}").json()
+    version = client.get(f"/files/{source['source_file_id']}/versions/{target['file_version_id']}").json()
+    units = client.get(f"/files/{source['source_file_id']}/versions/{target['file_version_id']}/rule-sources").json()["units"]
+    unit, rule = units[0], legacy["body"]["rules"][0]
+    clause = {
+        "id": rule["id"],
+        "title": rule["category"],
+        "text": rule["rule_to_check"],
+        "original": unit["excerpt"],
+        "source": version["original_filename"],
+        "location": unit["location"],
+        "checked": True,
+        "provenance": {**unit, "fileVersionId": version["id"]},
+    }
+    registration = {"basis": {"source": {"filename": version["original_filename"]}, "clauses": [clause]}, "scope": {"allCustomers": True}}
+    response = client.post("/rules", json={**declaration, "predecessor_id": legacy["id"], "case_context": {"registration": json.dumps(registration)}})
+    assert response.status_code == 201, response.text
+    confirmed = response.json()
+    assert confirmed["customer_scope"] == "all"
+    assert confirmed["body"] == legacy["body"]
+    assert client.get(f"/rules/{legacy['id']}").json() == legacy
+    listed = {row["id"]: row for row in client.get("/rules").json()["rules"]}
+    assert (listed[legacy["id"]]["customer_scope"], listed[confirmed["id"]]["customer_scope"]) == ("unconfirmed", "all")
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [target, reference]}).json()
+    for _ in range(2):
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    path = f"/audit-tasks/{task['id']}"
+    matched = client.get(path).json()
+    assert [row["match"]["state"] for row in matched["files"]] == ["matched", "reference"]
+    assert matched["files"][0]["match"]["rule"]["id"] == confirmed["id"]
+    assert matched["estimated_points"] == 500
+    command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    response = client.post(path + "/confirm", json=command)
+    assert response.status_code == 201, response.text
+    accepted = response.json()
+    assert accepted["progress"] == {"completed": 0, "total": 1}
+    assert [row["selection"] for row in accepted["files"]] == ["selected", "selected"]
+    assert accepted["files"][1]["audit"] is None
+    assert client.post(path + "/confirm", json=command).json() == accepted
+    round = client.get(f"/rounds/{accepted['round_id']}").json()
+    assert {row["file_version_id"]: (row["role"], (row["rule"] or {}).get("id")) for row in round["inputs"]} == {
+        target["file_version_id"]: ("target", confirmed["id"]),
+        reference["file_version_id"]: ("reference", None),
+    }
+    assert client.get("/usage").json()["events"] == []
+    audit = worker.claim_job("reference-test")
+    assert worker.complete_job(
+        audit, "reference-test", {"findings": [], "coverage": {"rule_items": [{"file_version_id": target["file_version_id"], "id": "1", "coverage": "unsupported"}]}}, "succeeded"
+    )
+    finished = client.get(path).json()
+    assert (finished["state"], finished["progress"]) == ("completed", {"completed": 1, "total": 1})
+    assert finished["files"][1]["match"]["state"] == "reference"
+    assert finished["files"][1]["audit"] is None
+    assert client.get(f"/rules/{legacy['id']}").json() == legacy
+
+
+def test_scope_only_publication_preserves_legacy_body_source_and_version(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    first = publish_rule(client, file)
+    command = {"title": first["title"], "body": {**first["body"], "customers": []}, "source_file_version_id": first["source_file_version_id"], "predecessor_id": first["id"]}
+    legacy = client.post("/rules", json=command).json()
+    confirmed = client.post("/rules", json={**command, "predecessor_id": legacy["id"], "case_context": {"customer_scope": "all"}})
+    assert confirmed.status_code == 201, confirmed.text
+    assert confirmed.json()["customer_scope"] == "all"
+    assert confirmed.json()["case_context"] == {"customer_scope": "all"}
+    assert confirmed.json()["body"] == legacy["body"]
+    assert confirmed.json()["source_file_version_id"] == legacy["source_file_version_id"]
+    assert client.get("/rules/" + legacy["id"]).json() == legacy
+    unverified = client.post("/rules", json={**command, "case_context": {"customer_scope": "all", "registration": "{}"}})
+    assert unverified.status_code == 400
+    assert unverified.json()["error"] == "rule_source_unverified"
+    for context, body in [({"customer_scope": True}, command["body"]), ({"customer_scope": "all"}, first["body"])]:
+        response = client.post("/rules", json={**command, "body": body, "case_context": context})
+        assert response.status_code == 400
+        assert response.json()["error"] == "invalid_rule_scope"
+
+
+def test_scope_only_version_inherits_legacy_citations_without_claiming_new_verification(task_system, auth_store_factory):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    first = publish_rule(client, file)
+    store = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    legacy_context = {"registration": json.dumps({"basis": {"source": {"filename": "原件.xlsx"}, "clauses": [{"location": "原件位置待核对", "checked": False}]}})}
+    legacy = store.publish_rule(store.principal_for_fixture("alice"), first["title"], {**first["body"], "customers": []}, file["file_version_id"], first["id"], case_context=legacy_context)
+    command = {
+        "title": legacy["title"],
+        "body": legacy["body"],
+        "source_file_version_id": legacy["source_file_version_id"],
+        "predecessor_id": legacy["id"],
+        "case_context": {**legacy_context, "customer_scope": "all"},
+    }
+    response = client.post("/rules", json=command)
+    assert response.status_code == 201, response.text
+    assert response.json()["body"] == legacy["body"]
+    assert response.json()["customer_scope"] == "all"
+    assert response.json()["case_context"]["registration"] == legacy_context["registration"]
+    assert client.get("/rules/" + legacy["id"]).json() == legacy
+    for change in ({"title": "重新命名正文版本"}, {"body": {**legacy["body"], "rules": [{**legacy["body"]["rules"][0], "rule_to_check": "改写后的条款"}]}}):
+        rejected = client.post("/rules", json={**command, **change})
+        assert rejected.status_code == 400
+        assert rejected.json()["error"] == "rule_source_unverified"
+
+
 def test_two_tasks_bind_their_own_jobs_and_candidate_versions(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
@@ -695,16 +808,36 @@ def test_task_creation_requires_the_exact_completed_precheck_receipt(task_system
 def test_ambiguous_rules_are_not_reported_as_definitive_zero_match(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
-    publish_rule(client, file)
-    publish_rule(client, file, title="另一套同时生效的客户控制计划")
+    first = publish_rule(client, file)
+    second = publish_rule(client, file, title="另一套同时生效的客户控制计划")
     task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
     process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
     path = f"/audit-tasks/{task['id']}"
     recovered = client.get(path).json()
     assert recovered["files"][0]["match"]["state"] == "failed"
     assert recovered["files"][0]["match"]["gaps"] == ["ambiguous_available_rules"]
+    assert {row["id"]: row["title"] for row in recovered["files"][0]["match"]["candidates"]} == {rule["id"]: rule["title"] for rule in (first, second)}
     assert recovered["estimated_points"] is None
     assert client.post(path + "/end", json={"expected_revision": 0}).status_code == 409
+    assert client.get("/rounds").json()["rounds"] == []
+
+
+def test_reference_only_task_can_end_without_a_round_report_or_charge(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker, "特殊特性清单.xlsx", "过程特殊特性清单")
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [file]}).json()
+    process_claimed(worker, worker.claim_job("reference-only"), "reference-only", rule_ai=MetadataAI())
+    path = "/audit-tasks/" + task["id"]
+    recognized = client.get(path).json()
+    assert recognized["files"][0]["match"]["state"] == "reference"
+    assert recognized["estimated_points"] == 0
+    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    ended = client.post(path + "/end", json={"expected_revision": 0})
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["state"] == "completed"
+    assert ended.json()["round_id"] is None
+    assert ended.json()["files"][0]["selection"] == "selected"
+    assert client.get("/usage").json()["events"] == []
     assert client.get("/rounds").json()["rounds"] == []
 
 

@@ -30,6 +30,27 @@ def open_reports(page, scene):
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class AuditPreviewTests(unittest.TestCase):
+    def test_reference_is_visible_before_confirmation_and_retained_without_a_report(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=with-reference")
+            page.get_by_role("button", name="使用三类文件示例").click()
+            page.get_by_role("button", name="开始识别", exact=True).click()
+            expect(page.get_by_text("3 份文件 · 2 份匹配到规则 · 1 份比对资料", exact=True)).to_be_visible()
+            expect(page.get_by_text("预计点数：1000", exact=True)).to_be_visible()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("heading", name="审核工作台", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="文件队列").get_by_role("button", name=re.compile("特殊特性清单.xlsx")).click()
+            expect(page.get_by_role("region", name="比对资料原件")).to_be_visible()
+            page.get_by_role("button", name="读取审核结果", exact=True).click()
+            expect(page.get_by_text("审核已结束 · 文件已结束 2/2", exact=True)).to_be_visible()
+            page.get_by_role("button", name="报告中心", exact=True).click()
+            expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
+            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            expect(page.get_by_role("navigation", name="文件队列").get_by_role("button", name=re.compile("特殊特性清单.xlsx"))).to_be_visible()
+            browser.close()
+
     def test_cancel_cloud_selection_preserves_the_existing_upload_draft_without_importing(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

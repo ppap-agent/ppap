@@ -70,7 +70,7 @@ from ppap_core.identity import (
     new_token,
     token_hash,
 )
-from ppap_core.rules import FILE_PREPARATION_KINDS, latest_rule_versions, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
+from ppap_core.rules import FILE_PREPARATION_KINDS, customer_scope, latest_rule_versions, normalize_rule_body, rule_parse_request, rule_parse_view, rule_title
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
 from ppap_core.writeback_targets import normalize_external_ref, public_target
@@ -1684,11 +1684,14 @@ class AuthStore:
                     if not bound:
                         result = {"notices": ["matching_snapshot_invalid"]}
                     match.update(
-                        state=state if state in {"matched", "unmatched", "failed"} else "failed",
+                        state=state if state in {"matched", "reference", "unmatched", "failed"} else "failed",
                         metadata=result.get("metadata") or match["metadata"],
                         document_type=result.get("document_type"),
                         gaps=result.get("notices") or (["rule_matching_failed"] if state == "failed" else []),
                     )
+                    if "ambiguous_available_rules" in match["gaps"]:
+                        ids = result.get("candidate_rule_ids") or []
+                        match["candidates"] = [{"id": rule["id"], "title": rule["title"]} for rule in payload.get("candidate_rules", []) if rule["id"] in ids]
                     rid = result.get("matched_rule_id")
                     if match["state"] == "matched":
                         allowed = any(candidate["id"] == rid for candidate in payload.get("candidate_rules", []))
@@ -1817,7 +1820,7 @@ class AuthStore:
             if task["completion_reason"] == "no_matching_rules":
                 return task
             selected = [row for row in task["files"] if row["selection"] == "selected"]
-            if task["state"] != "pending_confirm" or not selected or any(row["match"]["state"] != "unmatched" for row in selected):
+            if task["state"] != "pending_confirm" or not selected or any(row["match"]["state"] not in {"unmatched", "reference"} for row in selected):
                 raise ValueError("task_not_zero_match")
             for vid, reason in removed.items():
                 conn.execute("UPDATE product.draft_items SET selection = 'removed', removal_reason = %s WHERE draft_id = %s AND file_version_id = %s", (reason, task_id, vid))
@@ -1828,7 +1831,7 @@ class AuthStore:
     def list_rules(self, tenant_id: str) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, title, body, created_at, predecessor_id FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
+                "SELECT id, title, body, created_at, predecessor_id, case_context FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
                 (tenant_id,),
             ).fetchall()
         out = []
@@ -1841,6 +1844,7 @@ class AuthStore:
                     "kind": str(body.get("kind") or "engine"),
                     "created_at": row[3].isoformat(),
                     "predecessor_id": str(row[4]) if row[4] else None,
+                    "customer_scope": customer_scope(body, row[5]),
                     **{field: body.get(field) for field in ("type", "rule_profile", "customers", "models", "parts")},
                 }
             )
@@ -1873,6 +1877,7 @@ class AuthStore:
             "predecessor_id": str(row[6]) if row[6] else None,
             "created_by": str(row[7]) if row[7] else None,
             "case_context": row[8] or {},
+            "customer_scope": customer_scope(row[2], row[8]),
         }
 
     def publish_rule(self, principal: Principal, title, body, source_file_version_id, predecessor_id=None, request_id=None, case_context=None) -> dict:
@@ -1883,6 +1888,8 @@ class AuthStore:
         context = case_context or {}
         if not isinstance(context, dict) or len(json.dumps(context, ensure_ascii=False).encode()) > 262144:
             raise ValueError("invalid_case_context")
+        if "customer_scope" in context and (context["customer_scope"] != "all" or body["customers"]):
+            raise ValueError("invalid_rule_scope")
         with self._conn() as conn:
             with conn.transaction():
                 self._prepared_items(conn, principal, [{"file_version_id": source_file_version_id, "role": "reference"}])
@@ -3119,17 +3126,22 @@ class AuthStore:
                 task = self._recognition_public(conn, principal, source_draft_id)
                 selected = [row for row in task["files"] if row["selection"] == "selected"]
                 if not existing and (
-                    task["state"] != "pending_confirm" or any((row["match"] or {}).get("state") not in {"matched", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
+                    task["state"] != "pending_confirm"
+                    or any((row["match"] or {}).get("state") not in {"matched", "reference", "unmatched"} or row["validation"]["state"] != "valid" for row in selected)
                 ):
                     raise ValueError("task_not_ready")
                 items = [
-                    {"file_version_id": row["file"]["id"], "role": "target", "rule_version_id": row["match"]["rule"]["id"]}
+                    {
+                        "file_version_id": row["file"]["id"],
+                        "role": "reference" if row["match"]["state"] == "reference" else "target",
+                        "rule_version_id": row["match"]["rule"]["id"] if row["match"]["rule"] else None,
+                    }
                     for row in selected
-                    if (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
+                    if (row["match"] or {}).get("state") == "reference" or (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
                 ]
                 if not existing:
                     current_rules = {rule["id"] for rule in latest_rule_versions(self.list_rules(principal.tenant_id))}
-                    if any(item["rule_version_id"] not in current_rules for item in items):
+                    if any(item["role"] == "target" and item["rule_version_id"] not in current_rules for item in items):
                         raise ValueError("rule_candidate_expired")
                     if self.settings.usage_charge_enabled:
                         raise ValueError("audit_task_charging_unavailable")

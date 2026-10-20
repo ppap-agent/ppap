@@ -69,6 +69,19 @@ def test_unknown_customer_explains_how_to_recover_without_taking_an_unscoped_rul
     assert (result["matching_status"], result["matched_rule_id"], result["notices"]) == ("unmatched", None, ["matching_customer_required"])
 
 
+@pytest.mark.parametrize("customer", [None, "NIO"])
+def test_explicitly_unrestricted_rule_matches_without_inventing_a_customer(customer) -> None:
+    result = analyze_file(
+        "控制计划.xlsx",
+        workbook_bytes(("文件类型", "控制计划")),
+        [rule("unconfirmed", []), rule("confirmed", [], customer_scope="all"), rule("other-customer", ["甲客户"])],
+        ai=MetadataAI({"customer": customer}),
+        scoped=True,
+    )
+
+    assert (result["matching_status"], result["matched_rule_id"], result["metadata"]["customer"], result["notices"]) == ("matched", "confirmed", customer, [])
+
+
 def test_customer_preference_selects_an_actual_rule_without_replacing_recognized_customer() -> None:
     result = analyze_file(
         "控制计划.xlsx",
@@ -153,7 +166,7 @@ def test_ambiguous_scoped_rules_do_not_use_order_or_invent_model_priority(revers
     assert (result["matched_rule_id"], result["matching_status"], result["notices"]) == (None, "failed", ["ambiguous_available_rules"])
 
 
-def test_ambiguous_preferred_scope_can_fall_back_to_identified_customer() -> None:
+def test_ambiguous_preferred_scope_does_not_silently_choose_another_customer() -> None:
     result = analyze_file(
         "控制计划.xlsx",
         workbook_bytes(("客户", "乙客户")),
@@ -163,7 +176,31 @@ def test_ambiguous_preferred_scope_can_fall_back_to_identified_customer() -> Non
         scoped=True,
     )
 
-    assert (result["matched_rule_id"], result["matching_status"], result["notices"]) == ("identified", "matched", [])
+    assert (result["matched_rule_id"], result["matching_status"], result["notices"]) == (None, "failed", ["ambiguous_available_rules"])
+    assert result["candidate_rule_ids"] == ["preferred-first", "preferred-second"]
+
+
+@pytest.mark.parametrize("customers", [[], ["甲客户"]])
+def test_multiple_applicable_rules_include_explicitly_unrestricted_candidates(customers) -> None:
+    result = analyze_file(
+        "控制计划.xlsx",
+        workbook_bytes(("文件类型", "控制计划")),
+        [rule("all", [], customer_scope="all"), rule("other", customers, customer_scope="all" if not customers else "restricted")],
+        ai=MetadataAI({"customer": "甲客户"}),
+        scoped=True,
+    )
+    assert (result["matching_status"], result["matched_rule_id"], result["candidate_rule_ids"]) == ("failed", None, ["all", "other"])
+
+
+def test_special_characteristic_list_is_recognized_as_reference_without_a_fake_rule() -> None:
+    result = analyze_file(
+        "11 特殊特性清单.xlsx",
+        workbook_bytes(("特殊特性清单", "产品及过程特殊特性")),
+        [rule("control-plan", [], customer_scope="all")],
+        ai=MetadataAI({"part_number": "P0377535"}),
+        scoped=True,
+    )
+    assert (result["matching_status"], result["matched_rule_id"], result["document_type"], result["notices"]) == ("reference", None, "过程特殊特性清单", [])
 
 
 def test_legacy_default_still_selects_the_latest_engine_rule_without_customer_scope() -> None:

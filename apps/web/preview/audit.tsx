@@ -122,6 +122,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       files[2].validation = {state: 'invalid', reasons: ['示例：文件加密，不能读取']}
     }
     if (scene === 'invalid') files.push({...sample(0), file: {...sample(0).file, original_filename: '加密文件.xlsx'}, validation: {state: 'invalid', reasons: ['文件加密或异常，无法识别']}})
+    if (scene === 'with-reference') files[2].file.original_filename = '特殊特性清单.xlsx'
     if (scene === 'reports-duplicate') {const duplicate = sample(1); files.push({...duplicate, file: {...duplicate.file, file_id: 'preview-duplicate-document'}})}
     return files
   },
@@ -283,6 +284,7 @@ function fixtureMatch(files: AuditTaskFile[], mode: AuditTask['analysis_mode'], 
       // Map fixture identities, never infer real audit answers from filenames.
       const index = row.file.file_id === 'preview-duplicate-document' && scene === 'reports-duplicate' ? 1 : driveCatalog.find(fixture => fixture.source.token === row.file.file_id)?.index ?? -1
       const document = documents[index]
+      if (scene === 'with-reference' && index === 2) return {...row, match: {state: 'reference' as const, metadata: {customer: null, model: null, part: null}, document_type: '过程特殊特性清单', rule: null, gaps: []}}
       const known = Number.isInteger(index) && index >= 0 && Boolean(document)
       const customerMissing = scene === 'matching-customer-required' && !customer
       const matched = known && !customerMissing && !scene.startsWith('unmatched') && !scene.endsWith('-unmatched') && !(scene === 'partial' && index === 2) && !(scene === 'recognition-progress-removal' && index === 0)

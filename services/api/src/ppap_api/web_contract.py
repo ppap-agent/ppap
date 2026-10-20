@@ -130,6 +130,7 @@ class Rule(TypedDict):
     customers: list[str] | None
     models: list[str] | None
     parts: list[str] | None
+    customer_scope: Literal["all", "restricted", "unconfirmed"]
 
 
 class RuleItem(TypedDict):
@@ -165,6 +166,7 @@ class RuleDetail(TypedDict):
     title: str
     created_at: str
     body: EngineRuleBody | PresenceRuleBody
+    customer_scope: Literal["all", "restricted", "unconfirmed"]
     source_file_id: str | None
     source_file_version_id: str | None
     predecessor_id: NotRequired[str | None]
@@ -253,6 +255,7 @@ class MaterialWire(TypedDict):
 
 
 class CaseContext(TypedDict):
+    customer_scope: NotRequired[Literal["all"]]
     registration: NotRequired[str]
 
 
@@ -635,12 +638,18 @@ class LatestFileValidation(TypedDict):
     validation: FileValidationJob | None
 
 
+class MatchingCandidate(TypedDict):
+    id: str
+    title: str
+
+
 class AuditRuleMatch(TypedDict):
-    state: Literal["pending", "matching", "matched", "unmatched", "failed"]
+    state: Literal["pending", "matching", "matched", "reference", "unmatched", "failed"]
     metadata: Metadata
     document_type: str | None
     rule: BoundRule | None
     gaps: list[str]
+    candidates: NotRequired[list[MatchingCandidate]]
 
 
 class AuditProgress(TypedDict):

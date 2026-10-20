@@ -69,6 +69,17 @@ def verified_round(status="NG"):
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_frozen_reference_does_not_prevent_completion_or_create_an_audit(self):
+        round = frozen_round()
+        round["inputs"].append({"role": "reference", "file_version_id": "reference-v1", "rule": None})
+        task = task_input()
+        task["files"].append({"file": {"id": "reference-v1"}, "selection": "selected", "match": {"state": "reference", "rule": None}})
+        view = task_round_view(task, round)
+        self.assertEqual(view["state"], "completed")
+        self.assertEqual(view["progress"], {"completed": 1, "total": 1})
+        self.assertEqual(view["files"][1]["selection"], "selected")
+        self.assertIsNone(view["files"][1]["audit"])
+
     def test_missing_optional_evidence_preserves_actual_results_counts_and_report_eligibility(self):
         for status in ("PASS", "NG"):
             with self.subTest(status=status):

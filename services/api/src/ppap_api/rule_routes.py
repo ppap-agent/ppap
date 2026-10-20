@@ -106,9 +106,19 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
                 rule_body = body.get("body")
                 if not isinstance(rule_body, dict):
                     raise ValueError("invalid_rule_body")
-                version = store.readable_version(principal, body.get("source_file_version_id"))
-                version, units = sources(principal, version.file_id, version.id)
-                validate_registration_sources(body["case_context"], rule_body, version.id, version.original_filename, units)
+                previous = store.get_rule(principal.tenant_id, body.get("predecessor_id")) if body["case_context"].get("customer_scope") == "all" else None
+                scope_only = (
+                    previous
+                    and body.get("title") == previous["title"]
+                    and rule_body == previous["body"]
+                    and body.get("source_file_version_id") == previous["source_file_version_id"]
+                    and body["case_context"] == {**previous["case_context"], "customer_scope": "all"}
+                )
+                # Inherit existing citations for a scope-only successor, not a new claim that they were rechecked.
+                if not scope_only:
+                    version = store.readable_version(principal, body.get("source_file_version_id"))
+                    version, units = sources(principal, version.file_id, version.id)
+                    validate_registration_sources(body["case_context"], rule_body, version.id, version.original_filename, units)
             published = store.publish_rule(
                 principal,
                 body.get("title"),

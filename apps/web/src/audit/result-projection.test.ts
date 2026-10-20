@@ -65,6 +65,15 @@ test('snapshot equality ignores property order, not values or array order', () =
   assert.equal(sameSnapshot({a: undefined}, {}), false)
 })
 test('a complete frozen result can show its report', () => assert.equal(error(projection()), ''))
+test('a frozen reference remains available without adding an unfinished audit or report', () => {
+  const task = projection(), reference = structuredClone(task.files[0])
+  reference.file.id = 'reference-v1'; reference.file.original_filename = '特殊特性清单.xlsx'
+  reference.match = {...reference.match!, state: 'reference', rule: null}; reference.audit = null
+  task.files.push(reference); task.progress = {completed: 1, total: 1}
+  assert.equal(taskProgressError(task), '')
+  assert.equal(reportReference(task, reference), null)
+  assert.equal(reportReady(task, reference), false)
+})
 test('a historical presence result needs no invented clause and cannot earn a formal PASS', () => {
   const file = projection().files[0], audit = file.audit!
   audit.rule = {id: 'presence-rule', title: '文件存在', body: {kind: 'presence'}}

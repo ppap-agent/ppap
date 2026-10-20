@@ -2335,6 +2335,8 @@ export interface components {
         };
         /** AuditRuleMatch */
         AuditRuleMatch: {
+            /** Candidates */
+            candidates?: components["schemas"]["MatchingCandidate"][];
             /** Document Type */
             document_type: string | null;
             /** Gaps */
@@ -2345,7 +2347,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "pending" | "matching" | "matched" | "unmatched" | "failed";
+            state: "pending" | "matching" | "matched" | "reference" | "unmatched" | "failed";
         };
         /** AuditShareAttemptReference */
         AuditShareAttemptReference: {
@@ -3014,6 +3016,11 @@ export interface components {
         };
         /** CaseContext */
         CaseContext: {
+            /**
+             * Customer Scope
+             * @constant
+             */
+            customer_scope?: "all";
             /** Registration */
             registration?: string;
         };
@@ -3243,6 +3250,13 @@ export interface components {
         /** LatestFileValidation */
         LatestFileValidation: {
             validation: components["schemas"]["FileValidationJob"] | null;
+        };
+        /** MatchingCandidate */
+        MatchingCandidate: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
         };
         /** MaterialWire */
         MaterialWire: {
@@ -3555,6 +3569,11 @@ export interface components {
         Rule: {
             /** Created At */
             created_at: string;
+            /**
+             * Customer Scope
+             * @enum {string}
+             */
+            customer_scope: "all" | "restricted" | "unconfirmed";
             /** Customers */
             customers: string[] | null;
             /** Id */
@@ -3628,6 +3647,11 @@ export interface components {
             created_at: string;
             /** Created By */
             created_by?: string | null;
+            /**
+             * Customer Scope
+             * @enum {string}
+             */
+            customer_scope: "all" | "restricted" | "unconfirmed";
             /** Id */
             id: string;
             /** Predecessor Id */
@@ -5741,6 +5765,11 @@ export interface operations {
                 "application/json": {
                     /** CaseContext */
                     case_context?: {
+                        /**
+                         * Customer Scope
+                         * @constant
+                         */
+                        customer_scope?: "all";
                         /** Registration */
                         registration?: string;
                     };
@@ -5834,6 +5863,11 @@ export interface operations {
                     analysis_mode?: "standard" | "deep";
                     /** CaseContext */
                     case_context?: {
+                        /**
+                         * Customer Scope
+                         * @constant
+                         */
+                        customer_scope?: "all";
                         /** Registration */
                         registration?: string;
                     };
@@ -7553,6 +7587,11 @@ export interface operations {
                     body: components["schemas"]["EngineRuleBody"];
                     /** CaseContext */
                     case_context?: {
+                        /**
+                         * Customer Scope
+                         * @constant
+                         */
+                        customer_scope?: "all";
                         /** Registration */
                         registration?: string;
                     };

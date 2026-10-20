@@ -13,13 +13,14 @@ export function fixtureAcceptance(task: AuditTask, requestId: string): AuditTask
   const round = `preview-round-${requestId}`
   const files = structuredClone(task.files).map(file => {
     if (file.selection !== 'selected') return file
+    if (file.match?.state === 'reference') return {...file, audit: null}
     if (file.match?.state !== 'matched' || !file.match.rule) return {...file, selection: 'removed' as const, removal_reason: '未匹配到规则，不进入本轮审核'}
     const rule = file.match.rule
     const checks: Check[] = rule.body.kind === 'engine' ? rule.body.rules.map(rule_item => ({rule_item, execution: 'queued', coverage: 'mapped', finding: null, evidence_verified: false, scope: null, scope_notice: null, evidence: []})) : []
     const audit: Review = {round_id: round, file_version_id: file.file.id, result_attempt: null, rule, execution: 'queued', progress: {completed: 0, total: checks.length}, failure: null, conclusion: null, counts: {pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, checks, summary: null, report: {state: 'not_eligible', report_id: null, reason: '审核尚未完成。'}}
     return {...file, audit}
   })
-  return {...task, state: 'reviewing', round_id: round, acceptance: {request_id: requestId, state: 'accepted', reason: null}, progress: {completed: 0, total: files.filter(file => file.selection === 'selected').length}, notification_enabled: task.notification_enabled ?? true, notification_revision: task.notification_revision ?? 0, files}
+  return {...task, state: 'reviewing', round_id: round, acceptance: {request_id: requestId, state: 'accepted', reason: null}, progress: {completed: 0, total: files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference').length}, notification_enabled: task.notification_enabled ?? true, notification_revision: task.notification_revision ?? 0, files}
 }
 
 /** A fixed intermediate read: unfinished checks have neither findings nor evidence. */
@@ -34,7 +35,7 @@ export function fixtureProgress(task: AuditTask): AuditTask {
 }
 
 export function fixtureResults(task: AuditTask, scene: string): AuditTask {
-  const selected = task.files.filter(file => file.selection === 'selected')
+  const selected = task.files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference')
   const crossFile = selected.find(file => file.match?.document_type === '控制计划')
   const files = task.files.map(file => {
     if (!file.audit || file.selection !== 'selected') return file

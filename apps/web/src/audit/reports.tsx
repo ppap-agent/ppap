@@ -20,7 +20,7 @@ type Task = components['schemas']['AuditTask']
 const labels = {not_eligible: '无正式报告', pending: '待生成', generating: '生成中', ready: '就绪', failed: '生成失败'}
 
 export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy, readError, onReadSupport, adapter, onChange, sharingAdapter}: {task: Task; initialFile: string; onBack: () => void; onChoose: (fileId: string) => void; onRead: () => void; busy: boolean; readError: string; onReadSupport: () => void; adapter?: AuditReportAdapter; onChange: (task: Task) => void; sharingAdapter?: AuditSharingAdapter}) {
-  const rows = task.files.filter(file => file.selection === 'selected')
+  const rows = task.files.filter(file => file.selection === 'selected' && file.match?.state !== 'reference')
   function statusFor(row: Task['files'][number]) {
     const report = row.audit?.report
     return resultConsistencyError(task, row) ? '结果待核对' : !report ? '尚未取得结果' : report.state === 'ready' && !reportReady(task, row) ? '产物待核对' : labels[report.state]

@@ -6,7 +6,8 @@ EXTENDS Integers, FiniteSets
 \* Projection: recognition's current Task revision becomes revision[t]; its
 \* completed matching results become InputsAt(t, revision[t]). Confirm captures
 \* that revision. A successful existing acceptance transaction freezes exactly
-\* its matched/selected per-file versions and rules, creates one Round and its
+\* its matched/selected per-file versions and rules plus explicit reference
+\* versions without a rule, creates one Round and its
 \* existing engine job, and locks further recognition input changes.
 \*
 \* Two Tasks have the same creator, so cross-Task reuse of a successful key is
@@ -15,7 +16,9 @@ EXTENDS Integers, FiniteSets
 \* Two revisions expose confirm/rematch interleaving. Revision 0 has two
 \* matched targets with distinct rules. Revision 1 removes the second target
 \* and uses a distinct frozen rule. An unmatched third file never enters either
-\* execution input set. Actual bytes, parsing, recognition jobs and arbitrary
+\* execution input set. A fourth file is an explicit reference in both revisions;
+\* it must not disappear or acquire a target role/rule. Actual bytes, parsing,
+\* customer scope/ambiguity resolution, recognition jobs and arbitrary
 \* selection sets are delegated to TaskRecognitionRevisions / implementation
 \* tests; this model checks the acceptance cut only.
 \*
@@ -31,7 +34,7 @@ EXTENDS Integers, FiniteSets
 \* leaked/wrong-Task response rather than a second receipt/business ledger.
 \*
 \* Finite instance: 2 Tasks, 2 keys, 2 actors, 2 revisions, 2 possible Round IDs,
-\* 3 file versions per Task, and 4 rule-version tokens per Task. Round IDs are
+\* 4 file versions per Task, and 4 rule-version tokens per Task. Round IDs are
 \* allocated independently of keys. Both Tasks intentionally have one owner;
 \* tenant partitioning, changing ACLs and legacy accepted Drafts are outside
 \* this focused owner-only Task contract. No constraint, symmetry or override.
@@ -44,7 +47,7 @@ EXTENDS Integers, FiniteSets
 
 CONSTANT Fault
 ASSUME Fault \in {"none", "stale_revision", "cross_task_key", "split_commit",
-                  "wrong_inputs"}
+                  "wrong_inputs", "dropped_reference", "reference_as_target"}
 
 Tasks == {1, 2}
 Keys == {"key-a", "key-b"}
@@ -59,15 +62,22 @@ TargetsAt(rev) == IF rev = 0 THEN {1, 2} ELSE {1}
 FileVersion(t, file) == 10 * t + file
 RuleVersion(t, file, rev) == 100 * t + 10 * rev + file
 InputsAt(t, rev) ==
-    {<<FileVersion(t, file), RuleVersion(t, file, rev)>> :
-        file \in TargetsAt(rev)}
+    {<<FileVersion(t, file), "target", RuleVersion(t, file, rev)>> :
+        file \in TargetsAt(rev)} \cup {<<FileVersion(t, 4), "reference", 0>>}
 \* The forbidden unmatched version is in the checked value domain, not just
 \* absent from a property antecedent. This fault silently substitutes it for
 \* a matched/selected target; exact per-file freeze must reject that behavior.
 WrongInputsAt(t, rev) ==
-    {<<FileVersion(t, 1), RuleVersion(t, 1, rev)>>,
-     <<FileVersion(t, 3), RuleVersion(t, 3, 0)>>}
-AllInputs == UNION { {InputsAt(t, rev), WrongInputsAt(t, rev)} :
+    {<<FileVersion(t, 1), "target", RuleVersion(t, 1, rev)>>,
+     <<FileVersion(t, 3), "target", RuleVersion(t, 3, 0)>>,
+     <<FileVersion(t, 4), "reference", 0>>}
+DroppedReferenceAt(t, rev) ==
+    InputsAt(t, rev) \ {<<FileVersion(t, 4), "reference", 0>>}
+ReferenceAsTargetAt(t, rev) ==
+    DroppedReferenceAt(t, rev) \cup
+        {<<FileVersion(t, 4), "target", RuleVersion(t, 1, rev)>>}
+AllInputs == UNION { {InputsAt(t, rev), WrongInputsAt(t, rev),
+                      DroppedReferenceAt(t, rev), ReferenceAsTargetAt(t, rev)} :
                      t \in Tasks, rev \in Revisions}
 EmptyRound == [exists |-> FALSE, task |-> NoTask, key |-> "none",
     actor |-> "none", requestedRevision |-> NoRevision,
@@ -128,6 +138,10 @@ Commit(key, round) ==
              frozenRevision |-> revision[c.task],
              inputs |-> IF Fault = "wrong_inputs"
                 THEN WrongInputsAt(c.task, revision[c.task])
+                ELSE IF Fault = "dropped_reference"
+                THEN DroppedReferenceAt(c.task, revision[c.task])
+                ELSE IF Fault = "reference_as_target"
+                THEN ReferenceAsTargetAt(c.task, revision[c.task])
                 ELSE InputsAt(c.task, revision[c.task])]]
         /\ server' = [server EXCEPT ![key] =
             [status |-> "accepted", round |-> round]]

@@ -29,7 +29,7 @@ export function sameFrozenFileInfo(before: TaskFile, after: TaskFile): boolean {
 }
 
 export function sameFrozenInputs(before: Task, after: Task): boolean {
-  return before.id === after.id && before.round_id === after.round_id && before.analysis_mode === after.analysis_mode && before.files.length === after.files.length && before.files.every(file => after.files.some(next => sameFrozenFileInfo(file, next) && file.selection === next.selection && file.removal_reason === next.removal_reason && sameSnapshot(file.match?.rule, next.match?.rule)))
+  return before.id === after.id && before.round_id === after.round_id && before.analysis_mode === after.analysis_mode && before.files.length === after.files.length && before.files.every(file => after.files.some(next => sameFrozenFileInfo(file, next) && file.selection === next.selection && file.removal_reason === next.removal_reason && file.match?.state === next.match?.state && sameSnapshot(file.match?.rule, next.match?.rule)))
 }
 
 /** Reject a regressive snapshot rather than mixing old counters with new checks. */
@@ -98,7 +98,7 @@ export function resultConsistencyError(task: Task, row: TaskFile): string {
 /** Task totals do not decide the validity of another file's evidence or report. */
 export function taskProgressError(task: Task): string {
   if (!task.round_id) return ''
-  const selected = task.files.filter(row => row.selection === 'selected')
+  const selected = task.files.filter(row => row.selection === 'selected' && row.match?.state !== 'reference')
   const ended = selected.filter(row => row.audit?.execution === 'review_failed' || row.audit?.execution === 'completed' && row.audit.checks.every(item => ['completed', 'failed'].includes(item.execution))).length
   if (task.state === 'completed' && ended !== selected.length) return '任务声称审核结束，但仍有未结束的文件。'
   if (task.state === 'completed' && selected.some(row => {

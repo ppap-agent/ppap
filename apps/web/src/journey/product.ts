@@ -31,7 +31,7 @@ export async function loadRuleCollections(): Promise<RequirementCollection[]> {
     const material: Material = {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: file?.original_filename || rule.title, role: 'reference', rule_version_id: null}
     const base = localBasis(rule.title)
     let basis = parsedBasis({...base, server: {body: rule.body, material, ruleId: rule.id}}, {title: rule.title, body: rule.body, source_file_version_id: rule.source_file_version_id})
-    let scope: RequirementCollection['versions'][number]['scope'] = {customer: rule.body.customers[0] || '', part: rule.body.parts[0] || '', revision: '', allCustomers: !rule.body.customers.length, allParts: !rule.body.parts.length, allRevisions: true}
+    let scope: RequirementCollection['versions'][number]['scope'] = {customer: rule.body.customers[0] || '', part: rule.body.parts[0] || '', revision: '', allCustomers: rule.customer_scope === 'all', allParts: !rule.body.parts.length, allRevisions: true}
     let reason = ''
     if (rule.case_context?.registration) {
       try {
@@ -43,6 +43,7 @@ export async function loadRuleCollections(): Promise<RequirementCollection[]> {
         }
       } catch { /* Older published versions have no registration metadata. */ }
     }
+    scope = {...scope, allCustomers: rule.customer_scope === 'all'}
     basis.source.id = rule.id; basis.source.filename = material.original_filename
     if (!rule.case_context?.registration) basis.source.version = rule.created_at.slice(0, 16).replace('T', ' ')
     basis.server!.publishedContent = canonical({body: rule.body, title: basis.source.title, version: basis.source.version})

@@ -255,7 +255,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
         if reports and row["file"]["id"] in reports:
             audit["report"] = reports[row["file"]["id"]]
         files.append({**row, "audit": audit})
-    selected = [row for row in files if row["selection"] == "selected"]
+    references = {item["file_version_id"] for item in round["inputs"] if item["role"] == "reference"}
+    selected = [row for row in files if row["selection"] == "selected" and row["file"]["id"] not in references]
     ended = sum(bool(row.get("audit") and row["audit"]["execution"] in {"completed", "review_failed"}) for row in selected)
     task_finished = (
         finished

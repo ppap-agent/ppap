@@ -85,24 +85,29 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
             except Exception:
                 notices.append("document_classification_failed")
     matched_id = None
+    ambiguous_ids: list[str] = []
     matching = "unmatched"
     if scoped and any(notice in notices for notice in ("document_text_unavailable", "empty_document_text", "metadata_extraction_failed", "document_classification_failed")):
         matching = "failed"
+    elif scoped and inferred == PpapDocumentType.PROCESS_SPECIAL_CHARACTERISTIC_LIST:
+        matching = "reference"
     elif scoped:
-        ambiguous = False
         customers = tuple(dict.fromkeys(value.strip().casefold() for value in (customer_preference, metadata["customer"]) if value and value.strip()))
         typed_rules = [rule for rule in candidates if inferred != PpapDocumentType.UNKNOWN and PpapDocumentType.from_string(rule.get("type") or "") == inferred]
         scoped_rules = [rule for rule in typed_rules if isinstance(rule.get("customers"), list) and any(isinstance(value, str) and value.strip() for value in rule["customers"])]
-        for customer in customers:
-            applicable = [rule for rule in scoped_rules if customer in {value.strip().casefold() for value in rule["customers"] if isinstance(value, str)}]
+        unrestricted = [rule for rule in typed_rules if rule.get("customer_scope") == "all" and not rule.get("customers")]
+        for customer in customers or (None,):
+            applicable = unrestricted + [rule for rule in scoped_rules if customer in {value.strip().casefold() for value in rule["customers"] if isinstance(value, str)}]
             if len(applicable) == 1:
                 matched_id = applicable[0]["id"]
                 matching = "matched"
                 break
-            ambiguous = ambiguous or len(applicable) > 1
+            if len(applicable) > 1:
+                ambiguous_ids = sorted(rule["id"] for rule in applicable)
+                break
         if not matched_id:
-            matching = "failed" if ambiguous else "unmatched"
-            if ambiguous:
+            matching = "failed" if ambiguous_ids else "unmatched"
+            if ambiguous_ids:
                 notices.append("ambiguous_available_rules")
             elif inferred == PpapDocumentType.UNKNOWN:
                 notices.append("matching_document_type_required")
@@ -134,4 +139,5 @@ def analyze_file(filename: str, content: bytes, rules: list[dict], *, ai=None, c
         "matched_rule_id": matched_id,
         "matching_status": matching,
         "notices": notices,
+        **({"candidate_rule_ids": ambiguous_ids} if ambiguous_ids else {}),
     }

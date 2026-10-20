@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -34,6 +35,21 @@ def rule_parse_view(job_id: str, payload: dict, status: str, result, expired: bo
 
 def document_types() -> list[str]:
     return [item.get_type_name() for item in PpapDocumentType if item != PpapDocumentType.UNKNOWN]
+
+
+def customer_scope(body: dict, case_context: dict | None = None) -> str:
+    """An empty customer list is not proof that the user confirmed all customers."""
+    if body.get("customers"):
+        return "restricted"
+    if (case_context or {}).get("customer_scope") == "all":
+        return "all"
+    try:
+        registration = json.loads((case_context or {}).get("registration") or "{}")
+        if isinstance(registration, dict) and isinstance(registration.get("scope"), dict) and registration["scope"].get("allCustomers") is True:
+            return "all"
+    except (TypeError, ValueError):
+        pass
+    return "unconfirmed"
 
 
 def latest_rule_versions(rules: list[dict]) -> list[dict]:

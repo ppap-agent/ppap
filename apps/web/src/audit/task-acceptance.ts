@@ -13,9 +13,9 @@ type Observation = {requestId: string; phase: 'sending' | 'unknown' | 'reading' 
 function acceptedSnapshot(before: Task, after: Task, requestId: string) {
   if (after.id !== before.id || after.acceptance?.request_id !== requestId || after.acceptance.state !== 'accepted' || !after.round_id || !['reviewing', 'completed'].includes(after.state) || after.analysis_mode !== before.analysis_mode) return false
   if (after.state === 'completed' ? after.completion_reason !== 'processed' : after.completion_reason !== null) return false
-  const expected = before.files.filter(file => file.selection === 'selected' && file.match?.state === 'matched' && file.match.rule)
+  const expected = before.files.filter(file => file.selection === 'selected' && (file.match?.state === 'reference' || file.match?.state === 'matched' && file.match.rule))
   const actual = after.files.filter(file => file.selection === 'selected')
-  return expected.length > 0 && actual.length === expected.length && expected.every(file => actual.some(next => sameFrozenFileInfo(file, next) && sameSnapshot(next.match?.rule, file.match?.rule) && (!next.audit || sameSnapshot(next.audit.rule, file.match?.rule) && next.audit.file_version_id === file.file.id && next.audit.round_id === after.round_id))) && after.files.length === before.files.length && after.files.every(file => before.files.some(previous => sameSnapshot(previous.file, file.file)) && (file.selection === 'selected' || !file.audit))
+  return expected.some(file => file.match?.state === 'matched') && actual.length === expected.length && expected.every(file => actual.some(next => sameFrozenFileInfo(file, next) && next.match?.state === file.match?.state && sameSnapshot(next.match?.rule, file.match?.rule) && (file.match?.state === 'reference' ? !next.audit : !next.audit || sameSnapshot(next.audit.rule, file.match?.rule) && next.audit.file_version_id === file.file.id && next.audit.round_id === after.round_id))) && after.files.length === before.files.length && after.files.every(file => before.files.some(previous => sameSnapshot(previous.file, file.file)) && (file.selection === 'selected' || !file.audit))
 }
 
 /** A lost response retains its request identity. Only an explicit rejection permits another command. */

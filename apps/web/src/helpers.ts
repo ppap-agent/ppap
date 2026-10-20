@@ -65,8 +65,8 @@ const analysisNotices: Record<string, string | null> = {
   matching_document_type_required: '尚未确定文件类型。请返回核对原件，重新识别；不会仅凭现有规则推断文件类型。',
   matching_document_type_rules_missing: '本次识别的候选中没有此类文件的生效规则。请上传并核对对应规则，保存后返回本任务重新识别。',
   matching_customer_rules_missing: '本次识别的候选中没有适用于该客户和文件类型的生效规则。请核对客户或上传对应规则，保存后重新识别。',
-  matching_rules_customer_unassigned: '此类文件的候选规则未指定适用客户，不参与自动匹配。请核对规则的客户范围，保存对应版本后重新识别。',
-  ambiguous_available_rules: '有多份生效规则符合条件，暂时无法确定审核依据。请联系支持核对规则。',
+  matching_rules_customer_unassigned: '此类规则尚未确认客户范围。请指定客户或明确确认“不限定客户”，保存新版本后重新识别。旧版本不变。',
+  ambiguous_available_rules: '有多份生效规则符合条件，未自动选择。请核对候选规则的适用范围与版本，再返回本任务重新识别。',
   matching_snapshot_invalid: '匹配依据不完整，请返回检查文件后重新识别。',
   matching_result_unknown: '尚未取得完整匹配结果，请读取识别结果。',
 }
