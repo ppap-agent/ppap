@@ -101,9 +101,9 @@ class SupportPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.goto(PREVIEW + "/preview/audit.html")
-            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "保留本次文件.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
             page.get_by_role("combobox", name="客户（可选）").click()
             page.get_by_role("option", name="示例客户", exact=True).click()
+            page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "保留本次文件.xlsx", "mimeType": "application/octet-stream", "buffer": b"sample"})
             page.get_by_role("button", name="用量记录", exact=True).click()
             page.get_by_role("button", name="联系我们", exact=True).click()
             expect(page.get_by_role("dialog", name="联系我们", exact=True)).to_be_visible()
@@ -111,7 +111,12 @@ class SupportPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="联系我们", exact=True)).to_have_count(0)
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(page.get_by_text("保留本次文件.xlsx", exact=True).first).to_be_visible()
+            expect(page.get_by_role("combobox", name="客户（可选）")).to_have_count(0)
+            page.get_by_role("button", name="上一步", exact=True).click()
+            expect(page.get_by_text("已选 1 个文件", exact=True)).to_be_visible()
             expect(page.get_by_role("combobox", name="客户（可选）")).to_contain_text("示例客户")
+            page.get_by_role("button", name="查看已选文件", exact=True).click()
+            expect(page.get_by_text("保留本次文件.xlsx", exact=True).first).to_be_visible()
             browser.close()
 
     def test_empty_configured_support_has_an_explicit_unavailable_exit(self):
