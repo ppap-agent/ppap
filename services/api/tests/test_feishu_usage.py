@@ -56,13 +56,48 @@ class QuotaSemanticsTests(unittest.TestCase):
         blocked = estimate_audit(2, 0, PartnerAiItem(False, 0, False))
         self.assertFalse(blocked["accept_allowed"])
         self.assertEqual(blocked["estimated_points"], 1000)
-        trial_only = estimate_audit(1, 500, None)
+        trial_only = estimate_audit(1, 500, PartnerAiItem(True, 0, False))
         self.assertTrue(trial_only["accept_allowed"])
         self.assertEqual(trial_only["estimated_points"], 500)
         preview = estimate_audit(2, 0, PartnerAiItem(False, 0, False), charge_enabled=False)
         self.assertTrue(preview["accept_allowed"])
         self.assertEqual(preview["estimated_points"], 0)
         self.assertEqual(preview["accept_reason"], "current_preview_not_charged")
+
+    def test_estimate_requires_enabled_business_switch_and_only_positive_available_balance(self):
+        for free, partner, allowed in (
+            (1, PartnerAiItem(True, 0, False), True),
+            (0, PartnerAiItem(True, 1, True), True),
+            (600, PartnerAiItem(True, 0, False), True),
+            (0, PartnerAiItem(True, 0, True), False),
+            (10000, PartnerAiItem(False, 10000, True), False),
+            (10000, None, False),
+        ):
+            with self.subTest(free=free, partner=partner):
+                body = estimate_audit(3, free, partner)
+                self.assertEqual(body["estimated_points"], 1500)
+                self.assertIs(body["accept_allowed"], allowed)
+                if not allowed:
+                    self.assertTrue(body["accept_reason"])
+
+    def test_zero_target_and_development_no_charge_estimates_do_not_gain_a_business_gate(self):
+        for partner in (None, PartnerAiItem(False, 0, False), PartnerAiItem(True, 0, True)):
+            with self.subTest(partner=partner):
+                empty = estimate_audit(0, 0, partner)
+                self.assertEqual(empty["estimated_points"], 0)
+                self.assertIs(empty["accept_allowed"], True)
+                self.assertEqual(empty["accept_reason"], "")
+                development = estimate_audit(3, 0, partner, charge_enabled=False)
+                self.assertEqual(development["estimated_points"], 0)
+                self.assertIs(development["accept_allowed"], True)
+                self.assertEqual(development["accept_reason"], "current_preview_not_charged")
+
+    def test_disabled_business_switch_is_the_reported_cause_even_with_sufficient_free_points(self):
+        body = estimate_audit(1, 1000, PartnerAiItem(False, 0, False))
+        self.assertIs(body["accept_allowed"], False)
+        self.assertEqual(body["message"], "飞书AI包开关已关闭")
+        self.assertEqual(body["accept_reason"], "飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度")
+        self.assertEqual(body["detailed_message"], body["accept_reason"])
 
 
 class _PartnerMock:

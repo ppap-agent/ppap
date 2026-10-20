@@ -26,10 +26,11 @@ def feedback_client(auth_store_factory):
     store = auth_store_factory(settings, reset=False)
     principal = store.upsert_feishu_identity("feedback-" + uuid.uuid4().hex, "submitter")
     store.save_app_ticket(settings.feishu_app_id, "test-ticket")
-    state = SimpleNamespace(reject=True, denial=(400, {"code": 99991672, "msg": "Access denied. One of the following scopes is required"}), writes=[], records=[], uploads=[])
+    state = SimpleNamespace(reject=True, denial=(400, {"code": 99991672, "msg": "Access denied. One of the following scopes is required"}), writes=[], records=[], uploads=[], external_paths=[])
 
     def provider(request):
         path = request.url.path
+        state.external_paths.append(path)
         if path.endswith("app_access_token"):
             return httpx.Response(200, json={"code": 0, "app_access_token": "test-app"})
         if path.endswith("tenant_access_token"):
@@ -70,6 +71,39 @@ def feedback_client(auth_store_factory):
         assert client.post(path + "/finalize").status_code == 200
         state.client, state.store, state.settings, state.http, state.version = client, store, settings, http, version
         yield state
+
+
+def test_missing_destination_keeps_material_and_resumes_after_configuration_is_repaired(feedback_client):
+    state = feedback_client
+    table_id = state.settings.feishu_feedback_table_id
+    state.settings.feishu_feedback_table_id = ""
+    command = {"request_id": str(uuid.uuid4()), "file_version_ids": [state.version["id"]]}
+    path = f"/audit-template-feedback/{command['request_id']}/attempts/{uuid.uuid4()}"
+    first = state.client.post(path, json=command).json()
+    assert (first["state"], first["retry_allowed"]) == ("failed", True)
+    assert first["reason"] == "模板提报服务配置暂不可用，材料未提交给运营。已上传附件仍保留，请联系支持。"
+    assert first["request"] == command and not first["received_file_version_ids"]
+    assert state.client.get(path).json() == first
+    assert state.client.post(path, json=command).json() == first
+    assert state.external_paths == []
+    history = state.client.get("/audit-template-feedback").json()
+    assert history["entries"][0]["files_available"]
+    assert history["entries"][0]["files"][0]["id"] == state.version["id"]
+
+    state.settings.feishu_feedback_table_id = table_id
+    state.reject = False
+    with TestClient(create_app(state.settings, auth_store=state.store, http=state.http)) as restored:
+        restored.cookies.update(state.client.cookies)
+        assert restored.get(path).json() == first
+        assert state.external_paths == []
+        retry = f"/audit-template-feedback/{command['request_id']}/attempts/{uuid.uuid4()}"
+        received = restored.post(retry, json=command).json()
+        assert received["state"] == "received" and received["request"] == command
+        assert received["received_file_version_ids"] == command["file_version_ids"]
+        assert restored.get(retry).json() == received
+        assert restored.post(retry, json=command).json() == received
+        assert not restored.get(path).json()["retry_allowed"]
+    assert len(state.writes) == 1 and len(state.records) == 1 and len(state.uploads) == 1
 
 
 def test_explicit_creation_denial_can_resume_with_the_original_uploaded_material(feedback_client):

@@ -115,8 +115,13 @@ def register_feedback_routes(app, store, session_of, http, settings):
                         "文件附件": [{"file_token": payload["tokens"][file["id"]]} for file in payload["files"]],
                     }
                     row = feedbacks.save(guard, row, "dispatching")
-                except (FeedbackError, FeishuUsageError, FeishuError, ObjectMissing, OSError):
-                    row = feedbacks.save(guard, row, "failed", reason="材料尚未落表，已上传附件仍保留。请检查授权或联系支持后重试。")
+                except (FeedbackError, FeishuUsageError, FeishuError, ObjectMissing, OSError) as error:
+                    reason = (
+                        "模板提报服务配置暂不可用，材料未提交给运营。已上传附件仍保留，请联系支持。"
+                        if isinstance(error, FeedbackError) and str(error) == "feedback_destination_unavailable"
+                        else "材料尚未落表，已上传附件仍保留。请检查授权或联系支持后重试。"
+                    )
+                    row = feedbacks.save(guard, row, "failed", reason=reason)
                     return JSONResponse(feedback_receipt(row), headers=HEADERS)
                 try:
                     record_id = create_feedback_record(http, token, payload["destination"]["base_token"], payload["destination"]["table_id"], payload["operation_id"], fields)

@@ -284,9 +284,20 @@ def estimate_audit(
         payload["accept_reason"] = "current_preview_not_charged"
         return payload
     points = audit_usage_points(target_count)
-    partner_ok = bool(partner and quota_sufficient(partner.enabled, partner.user_quota))
-    allowed = remaining >= points or partner_ok
+    allowed = points == 0 or bool(partner and partner.enabled and (remaining > 0 or partner.user_quota > 0))
+    if allowed:
+        reason = ""
+    elif partner is None:
+        reason = "无法确认飞书AI包开关与额度，请重新读取。"
+    elif not partner.enabled:
+        reason = "飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度"
+        payload["message"] = "飞书AI包开关已关闭"
+        payload["detailed_message"] = reason
+    elif not partner.ai_package_purchased:
+        reason = "提示：试用额度不足，且未采购飞书AI包，请联系管理员在飞书管理后台进行充值或联系我们获取免费额度"
+    else:
+        reason = "免费额度和飞书AI包额度均已用完，请充值后重试。"
     payload["estimated_points"] = points
     payload["accept_allowed"] = allowed
-    payload["accept_reason"] = "" if allowed else "试用剩余不足，且 Partner AI 额度不可用"
+    payload["accept_reason"] = reason
     return payload
