@@ -120,6 +120,37 @@ def test_explicit_permission_rejection_is_not_a_lost_send_receipt(status, expect
     assert receipt["message_id"] is None
 
 
+@pytest.mark.parametrize("stage", ["confirmation", "started", "completed"])
+def test_recall_card_separates_comparison_material_from_audited_files(stage) -> None:
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "estimated_points": 500,
+        "files": [
+            {
+                "selection": "selected",
+                "file": {"original_filename": "控制计划.xlsx"},
+                "match": {"state": "matched", "rule": {"title": "控制计划规则"}},
+                "audit": {"execution": "completed", "conclusion": "PASS", "report": {"state": "ready"}},
+            },
+            {"selection": "selected", "file": {"original_filename": "特殊特性清单.xlsx"}, "match": {"state": "reference"}, "audit": None},
+        ],
+    }
+    card = task_notification_card(task, stage, "https://ppap.example.test", confirmation_id="intent-a")
+    body = card["elements"][0]["text"]["content"]
+    assert "比对资料：特殊特性清单.xlsx；已固定版本，不单独审核。" in body
+    assert "审核：特殊特性清单.xlsx" not in body
+    assert "特殊特性清单.xlsx：无正式结论" not in body
+    if stage == "confirmation":
+        assert "已匹配 1 份，共 1 份" in body
+        assert "匹配尚未确认" not in body
+        assert card["elements"][1]["actions"][0]["value"]["notification_id"] == "intent-a"
+    elif stage == "started":
+        assert "本次审核 1 份资料。" in body
+    else:
+        assert "报告已就绪 1 份，报告生成失败 0 份，审核异常 0 份。" in body
+
+
 def test_zero_match_card_does_not_claim_an_audit_or_report_and_oversized_card_fails_boundedly() -> None:
     task = {"id": "task-a", "number": "001", "completion_reason": "no_matching_rules", "files": []}
     card = task_notification_card(task, "completed", "https://ppap.example.test")
