@@ -73,6 +73,15 @@ def _production_graph() -> dict[str, set[str]]:
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_isolated_compose_requires_explicit_opt_in_for_customer_charging(self):
+        for value, expected in (("", "false"), ("true", "true")):
+            with self.subTest(charging=value):
+                services = _compose_config(ROOT / "deploy/isolated-dev/compose.yaml", env={"PPAP_USAGE_CHARGE_ENABLED": value})["services"]
+                for service in ("api", "worker"):
+                    self.assertEqual(services[service]["environment"].get("PPAP_USAGE_CHARGE_ENABLED"), expected)
+        production = _compose_config(ROOT / "deploy/compose.yaml", ROOT / "deploy/compose.env.example", env={"PPAP_USAGE_CHARGE_ENABLED": "true"})["services"]
+        self.assertEqual(production["api"]["environment"]["PPAP_USAGE_CHARGE_ENABLED"], "true")
+
     def test_compose_supports_isolated_host_ports_and_matching_public_addresses(self):
         env = {
             "PPAP_API_HOST_PORT": "0",

@@ -111,6 +111,7 @@ services:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
       PPAP_SERVICE: api
+      PPAP_USAGE_CHARGE_ENABLED: ${PPAP_USAGE_CHARGE_ENABLED:-false}
       PPAP_PG_HOST: postgres
       PPAP_PG_PORT: "5432"
       PPAP_PG_DATABASE: ppap
@@ -156,6 +157,7 @@ services:
       PPAP_PROFILE: isolated-dev
       PPAP_BUILD_SHA: ${PPAP_BUILD_SHA:-local}
       PPAP_SERVICE: worker
+      PPAP_USAGE_CHARGE_ENABLED: ${PPAP_USAGE_CHARGE_ENABLED:-false}
       PPAP_PG_HOST: postgres
       PPAP_PG_PORT: "5432"
       PPAP_PG_DATABASE: ppap

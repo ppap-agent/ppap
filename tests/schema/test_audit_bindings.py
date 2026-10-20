@@ -6,6 +6,7 @@ import time
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import pytest
 
@@ -42,6 +43,7 @@ class AuditDatabaseCase(unittest.TestCase):
         else:
             self.schema.require(self.schema.apply(self.database), "apply audit schema")
         self.settings = Settings(
+            usage_charge_enabled=False,
             pg_database=self.database,
             pg_host=os.environ.get("PGHOST", "127.0.0.1"),
             pg_port=int(os.environ.get("PGPORT", "5432")),
@@ -169,7 +171,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         process_claimed(worker, claimed, "file-isolation-test")
 
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: self.alice)
+        register_audit_routes(app, self.store, lambda request: self.alice, Mock())
         client = TestClient(app)
         response = client.get(f"/rounds/{accepted['id']}?read_view=true")
         self.assertEqual(response.status_code, 200)
@@ -205,7 +207,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         self.assertTrue(worker.complete_job(claimed, "review-test", {"findings": [], "coverage": coverage}))
         principal = [self.alice]
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: principal[0])
+        register_audit_routes(app, self.store, lambda request: principal[0], Mock())
         client = TestClient(app)
         path = f"/rounds/{round['id']}"
         before = client.get(path).json()
@@ -243,7 +245,7 @@ class AuditBindingDatabaseTests(AuditDatabaseCase):
         round = self.store.accept_draft(self.alice, draft, "historical-reader")
         principal = [self.alice]
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: principal[0])
+        register_audit_routes(app, self.store, lambda request: principal[0], Mock())
         client = TestClient(app)
         path = f"/rounds/{round['id']}"
         before = client.get(path).json()
@@ -896,7 +898,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         _, task, _ = self.prepared_display_task(complete_audit=False)
         api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
         app = FastAPI()
-        register_audit_routes(app, api_store, lambda request: self.display_principal)
+        register_audit_routes(app, api_store, lambda request: self.display_principal, Mock())
         client = TestClient(app)
         path = f"/audit-tasks/{task['id']}/notification"
         initial = client.get(path)
@@ -1218,7 +1220,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             worker.complete_job(job, "display-test", {"findings": [], "coverage": {"rule_items": [{"file_version_id": file.id, "id": "1", "coverage": "unsupported"} for file in files]}}, "succeeded")
         self.display_principal = self.alice
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: self.display_principal)
+        register_audit_routes(app, self.store, lambda request: self.display_principal, Mock())
         self.display_client = TestClient(app)
         self.addCleanup(self.display_client.close)
         return files, task, worker
@@ -2284,7 +2286,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(f"/audit-report-packages/{fresh['request_id']}").json()["state"], "ready")
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
-    def test_zip_recovery_rechecks_owner_permissions_and_blocks_only_new_charged_requests(self):
+    def test_zip_recovery_rechecks_owner_and_quota_only_for_new_requests(self):
         task, worker, _completed, command, package = self.prepared_report_package()
         old = worker.claim_job("zip-denied-failed")
         self.assertTrue(worker.complete_job(old, "zip-denied-failed", {"error": "temporary_failure"}, "failed"))
@@ -2296,8 +2298,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.display_principal = self.alice
         self.settings.usage_charge_enabled = True
         denied = self.display_client.post(path, json=retry)
-        self.assertEqual((denied.status_code, denied.json()), (409, {"error": "audit_report_charging_unavailable"}))
-        self.assertFalse(self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()["retry_allowed"])
+        self.assertEqual((denied.status_code, denied.json()), (409, {"error": "usage_quota_unavailable"}))
+        self.assertTrue(self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()["retry_allowed"])
         self.assertIsNone(self.display_client.get(f"/audit-report-packages/{retry['request_id']}").json())
         self.assertIsNone(worker.claim_job("no-charged-retry"))
         self.settings.usage_charge_enabled = False
@@ -2530,7 +2532,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get(path).json(), ready)
         self.assertEqual(self.store.list_usage_events(self.alice), [])
 
-    def test_pdf_recovery_requires_owner_and_explicit_no_charge_configuration(self):
+    def test_pdf_recovery_requires_owner_and_live_quota_for_new_requests(self):
         version, task, worker, _job, _result = self.prepared_query_task()
         first = worker.claim_job("pdf-failed")
         self.assertTrue(worker.complete_job(first, "pdf-failed", {"error": "report_pdf_failed"}, "failed"))
@@ -2546,8 +2548,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.display_principal = self.alice
         self.settings.usage_charge_enabled = True
         denied = self.display_client.post(path, json=command)
-        self.assertEqual((denied.status_code, denied.json()), (409, {"error": "audit_report_charging_unavailable"}))
-        self.assertFalse(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"][0]["audit"]["report"]["regenerate_allowed"])
+        self.assertEqual((denied.status_code, denied.json()), (409, {"error": "usage_quota_unavailable"}))
+        self.assertTrue(self.display_client.get(f"/audit-tasks/{task['id']}").json()["files"][0]["audit"]["report"]["regenerate_allowed"])
         self.assertIsNone(self.display_client.get(path + "/" + command["request_id"], params=query).json())
         self.assertIsNone(worker.claim_job("no-denied-work"))
         self.settings.usage_charge_enabled = False
@@ -2630,8 +2632,14 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
 class UsageAcceptanceTests(AuditDatabaseCase):
     def setUp(self):
         super().setUp()
+        self.settings.usage_charge_enabled = True
         self.settings.feishu_ai_item_id = "test-item"
         self.settings.feishu_free_trial_quota_points = 700
+
+    def accepted(self, draft, key=None):
+        from ppap_core.feishu_usage import PartnerAiItem
+
+        return self.store.accept_draft(self.alice, draft, key or draft, usage_policy=lambda actor: PartnerAiItem(True, 1, True))
 
     def prepared(self):
         from ppap_core.fixtures import RULE_A
@@ -2655,11 +2663,11 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
         first, second = self.upload("费用核对.xlsx"), self.upload("另一份.pdf")
         draft = self.draft([{"file_version_id": version.id, "role": "target", "rule_version_id": RULE_A} for version in (first, second)])
-        accepted = self.store.accept_draft(self.alice, draft, draft)
+        accepted = self.accepted(draft)
         before = self.store.list_usage_events(self.alice)
         principal = [None]
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: principal[0])
+        register_audit_routes(app, self.store, lambda request: principal[0], Mock())
         client = TestClient(app)
         self.assertEqual(client.get("/audit-usage").status_code, 401)
         principal[0] = self.alice
@@ -2724,13 +2732,13 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
-        accepted = self.store.accept_draft(self.alice, draft, draft)
+        accepted = self.accepted(draft)
         event = self.store.list_usage_events(self.alice)[0]
         with connect(self.settings, "migrator") as conn:
             conn.execute("UPDATE product.audit_rounds SET created_at = '2026-10-28T02:00:00Z' WHERE id = %s", (accepted["id"],))
             conn.execute("UPDATE product.usage_events SET created_at = '2026-11-01T01:00:00Z' WHERE id = %s", (event["id"],))
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: self.alice)
+        register_audit_routes(app, self.store, lambda request: self.alice, Mock())
         client = TestClient(app)
         observed = datetime(2026, 11, 4, tzinfo=timezone.utc)
         with patch("ppap_product_store.store._now", return_value=observed):
@@ -2767,7 +2775,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
-        self.store.accept_draft(self.alice, draft, draft)
+        self.accepted(draft)
         event = self.store.list_usage_events(self.alice)[0]
         with connect(self.settings, "migrator") as conn:
             conn.execute("UPDATE product.usage_events SET debit_order_id = 'verified-order', debited_at = now() WHERE id = %s", (event["id"],))
@@ -2778,7 +2786,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
-        self.store.accept_draft(self.alice, draft, draft)
+        self.accepted(draft)
         event = self.store.list_usage_events(self.alice)[0]
         claim = self.store.claim_usage_report(self.alice, event["id"])
         with connect(self.settings, "migrator") as conn:
@@ -2805,7 +2813,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
                 (str(uuid.uuid4()), self.alice.tenant_id, self.alice.user_id),
             )
         app = FastAPI()
-        register_audit_routes(app, self.store, lambda request: self.alice)
+        register_audit_routes(app, self.store, lambda request: self.alice, Mock())
         with TestClient(app) as client:
             page = client.get("/audit-usage?range=all").json()
         self.assertEqual(page["entries"], [])
@@ -2825,8 +2833,8 @@ class UsageAcceptanceTests(AuditDatabaseCase):
                 {"file_version_id": second.id, "role": "target", "rule_version_id": RULE_A},
             ]
         )
-        accepted = self.store.accept_draft(self.alice, draft, draft)
-        self.store.accept_draft(self.alice, draft, draft)
+        accepted = self.accepted(draft)
+        self.accepted(draft)
         events = self.store.list_usage_events(self.alice)
         self.assertEqual({row.get("file_version_id") for row in events}, {first.id, second.id})
         for version in (first.id, second.id):
@@ -2847,7 +2855,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
 
         self.settings.feishu_free_trial_quota_points = 0
         draft = self.prepared()
-        self.store.accept_draft(self.alice, draft, draft)
+        self.accepted(draft)
         event = self.store.list_usage_events(self.alice)[0]
         claim = self.store.claim_usage_report(self.alice, event["id"])
         self.assertIsNotNone(claim)
@@ -2874,8 +2882,8 @@ class UsageAcceptanceTests(AuditDatabaseCase):
     def test_concurrent_rounds_share_trial_and_replay_does_not_charge(self):
         drafts = [self.prepared(), self.prepared()]
         with ThreadPoolExecutor(2) as pool:
-            rounds = list(pool.map(lambda d: self.store.accept_draft(self.alice, d, d), drafts))
-        self.store.accept_draft(self.alice, drafts[0], drafts[0])
+            rounds = list(pool.map(self.accepted, drafts))
+        self.accepted(drafts[0])
         events = self.store.list_usage_events(self.alice)
         self.assertEqual(sum(e["consumed_points"] for e in events), 1000)
         self.assertTrue(all(e["external_confirmed_at"] is None for e in events))
@@ -2909,7 +2917,7 @@ class UsageAcceptanceTests(AuditDatabaseCase):
         draft = self.prepared()
         with patch.object(self.store, "_record_round_usage", side_effect=RuntimeError("test rollback")):
             with self.assertRaises(RuntimeError):
-                self.store.accept_draft(self.alice, draft, "rollback")
+                self.accepted(draft, "rollback")
         with self.store._conn() as conn:
             for table in ("product.audit_rounds", "engine.jobs", "product.usage_events"):
                 self.assertEqual(conn.execute("SELECT count(*) FROM " + table).fetchone()[0], 0)
