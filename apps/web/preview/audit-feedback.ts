@@ -71,7 +71,7 @@ export function fixtureFeedback(scene: string): AuditFeedbackAdapter {
       const received = request.file_version_ids.length > 0 && new Set(request.file_version_ids).size === request.file_version_ids.length && request.file_version_ids.every(id => blobs.has(id))
       const receipt: FeedbackReceipt = {request: structuredClone(request), attempt_id: attemptId, state: received ? 'received' : 'rejected', submission_id: received ? `preview-feedback-${crypto.randomUUID()}` : null, received_file_version_ids: received ? [...request.file_version_ids] : [], received_at: received ? new Date().toISOString() : null, retry_allowed: false, reason: received ? null : '附件版本不完整，本次未受理。'}
       submissions.set(key, receipt)
-      if (scene === 'feedback-unknown' || scene === 'feedback-failed') throw new Error('preview_feedback_response_lost')
+      if (scene === 'feedback-unknown' || scene === 'feedback-failed') throw Object.assign(new Error('preview_feedback_response_lost'), {traceId: 'preview-feedback-service-request'})
       if (scene === 'feedback-incomplete-receipt') return {...receipt, received_file_version_ids: receipt.received_file_version_ids.slice(0, 1)}
       return structuredClone(receipt)
     },

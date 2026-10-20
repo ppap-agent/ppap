@@ -13,7 +13,8 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
     selected = [row for row in files if row["selection"] == "selected"]
     reports = [(row.get("audit") or {}).get("report", {}).get("state") for row in selected]
     title = {"confirmation": "规则匹配结果待确认", "started": "审核已开始", "completed": "审核已结束", "zip_ready": "报告 ZIP 已就绪"}[stage]
-    lines = [task["number"]]
+    archive_package = bool(stage == "zip_ready" and report_package and any(reference.get("task_id", task["id"]) != task["id"] for reference in report_package["reports"]))
+    lines = ["文件档案" if archive_package else task["number"]]
     if stage == "confirmation":
         matched = sum((row.get("match") or {}).get("state") == "matched" for row in selected)
         lines.append(f"已匹配 {matched} 份，共 {len(selected)} 份。请核对匹配结果，再决定是否开始审核。")
@@ -41,7 +42,9 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             raise ValueError("notification_zip_not_ready")
         lines.append(f"已打包 {len(report_package['reports'])} 份报告。请打开本次 ZIP 核对并下载。")
         names = {row["file"]["id"]: row["file"]["original_filename"] for row in files}
-        lines.extend(names[reference["file_version_id"]] for reference in report_package["reports"])
+        for reference in report_package["reports"]:
+            outcome: dict = next((item for item in report_package.get("outcomes", []) if item["reference"] == reference), {})
+            lines.append(outcome.get("filename") or names[reference["file_version_id"]])
     else:
         ready, failed = reports.count("ready"), reports.count("failed")
         errors = sum((row.get("audit") or {}).get("execution") == "review_failed" or state == "not_eligible" for row, state in zip(selected, reports, strict=True))
@@ -53,8 +56,8 @@ def task_notification_card(task: dict, stage: str, web_url: str, report_package:
             audit = row.get("audit") or {}
             conclusion = {"PASS": "符合", "NG": "不符合"}.get(audit.get("conclusion") or "", "无正式结论")
             lines.append(row["file"]["original_filename"] + "：" + conclusion)
-    params = {"task": task["id"]}
-    if stage == "completed" and "ready" in reports or stage == "zip_ready":
+    params = {"view": "archive"} if archive_package else {"task": task["id"]}
+    if not archive_package and (stage == "completed" and "ready" in reports or stage == "zip_ready"):
         params["report"] = "1"
     if stage == "zip_ready" and report_package:
         params["packageRequest"] = report_package["receipt"]["request_id"]

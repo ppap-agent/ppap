@@ -9,7 +9,7 @@ from ppap_core.feishu import FeishuError, user_info
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import ObjectMissing
 from ppap_core.identity import can_read
-from ppap_core.template_feedback import FeedbackError, create_feedback_record, find_feedback_record, upload_feedback_attachment
+from ppap_core.template_feedback import FeedbackError, FeedbackRejected, create_feedback_record, find_feedback_record, upload_feedback_attachment
 from ppap_product_store.feedback import TemplateFeedbackStore, feedback_receipt
 
 from ppap_api import web_contract as wc
@@ -121,6 +121,8 @@ def register_feedback_routes(app, store, session_of, http, settings):
                 try:
                     record_id = create_feedback_record(http, token, payload["destination"]["base_token"], payload["destination"]["table_id"], payload["operation_id"], fields)
                     row = feedbacks.save(guard, row, "received", submission_id=record_id)
+                except FeedbackRejected:
+                    row = feedbacks.save(guard, row, "failed", reason="飞书未允许本次落表。已上传附件仍保留；请检查权限后安全重试。")
                 except FeedbackError:
                     row = feedbacks.save(guard, row, "unknown", reason="材料可能已收到，请读取原提交结果，不要再次提交。")
                 return JSONResponse(feedback_receipt(row), headers=HEADERS)

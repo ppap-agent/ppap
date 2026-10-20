@@ -2253,6 +2253,8 @@ export interface components {
          * @description Preparation of one frozen report, not a downloadable partial package.
          */
         AuditReportPackageOutcome: {
+            /** Filename */
+            filename?: string;
             /** Reason */
             reason: string | null;
             reference: components["schemas"]["AuditReportReference"];

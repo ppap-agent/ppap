@@ -290,10 +290,15 @@ class TemplateFeedbackPreviewTests(unittest.TestCase):
             self.assertIn(reference[0].split("请求：", 1)[1], copied)
             self.assertIn(next_reference[1].split("尝试：", 1)[1], copied)
             self.assertNotIn(reference[1].split("尝试：", 1)[1], copied)
+            expect(support.get_by_label("服务请求编号", exact=True)).to_have_value("preview-feedback-service-request")
+            self.assertIn("preview-feedback-service-request", copied)
             support.get_by_role("button", name="关闭", exact=True).click()
             expect(dialog.get_by_role("button", name="移除 重试材料.zip", exact=True)).to_be_disabled()
             dialog.get_by_role("button", name="读取原提交结果", exact=True).click()
             expect(dialog.get_by_role("heading", name="已收到 1 份材料", exact=True)).to_be_visible()
+            dialog.get_by_role("button", name="关闭", exact=True).click()
+            page.get_by_role("button", name="联系我们", exact=True).click()
+            expect(support.get_by_label("服务请求编号", exact=True)).to_have_count(0)
             browser.close()
 
     def test_upload_readback_after_close_ignores_the_removed_upload_late_reply(self):

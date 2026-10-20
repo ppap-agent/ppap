@@ -210,8 +210,9 @@ export const nativeReportAdapter: AuditReportAdapter = {
     try {return await request('/audit-report-packages', 'POST', {request_id: requestId, reports})}
     catch (failure) {
       const error = failure as {status?: number; code?: string}
-      if (error.status !== 409 || error.code !== 'report_package_too_large') throw failure
-      const reason = '所选报告总量过大，请减少本次打包的报告数量。'
+      const reasons: Record<string, string> = {report_package_too_large: '所选报告总量过大，请减少本次打包的报告数量。', invalid_report_package: '本次未受理，请重新核对所选报告。', report_not_ready: '所选报告尚未全部就绪，请刷新报告状态后再打包。'}
+      const reason = reasons[error.code || '']
+      if (![400, 409].includes(error.status || 0) || !reason) throw failure
       return {package_id: null, reports, receipt: {request_id: requestId, state: 'rejected', reason}, state: 'failed', artifact: null, reason, retry_allowed: false}
     }
   },

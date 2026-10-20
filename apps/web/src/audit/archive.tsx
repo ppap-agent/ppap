@@ -13,11 +13,11 @@ import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHea
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileName} from '../journey/file-name'
 import {ArchiveHistory} from './history'
-import {readReportPdf, readReportZip, type AuditReportAdapter, type AuditReportPackage, type AuditReportReference} from './report-contract'
+import {readReportPackage, readReportPdf, readReportZip, type AuditReportAdapter, type AuditReportPackage, type AuditReportReference} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {useReportPackage} from './report-actions'
 import {ReportPackage} from './report-package'
-import {historyReportReady, historyReportReference, resultKey, readArchiveAddress, writeArchiveAddress, type HistoryEntry} from './archive-contract'
+import {historyReportReady, historyReportReference, resultKey, readArchiveAddress, writeArchiveAddress, writeArchivePackageAddress, type HistoryEntry} from './archive-contract'
 import type {OriginalRenderer} from './review-content'
 import {sameSnapshot} from './result-projection'
 import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive-contract'
@@ -30,11 +30,21 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
   const [treeOpen, setTreeOpen] = useState(false), [address, setAddress] = useState(() => readArchiveAddress(location.search)), [restore, setRestore] = useState(0)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [packageRequest, setPackageRequest] = useState(() => new URLSearchParams(location.search).get('packageRequest'))
+  const packageRequestRef = useRef(packageRequest), packageEpoch = useRef(0), activeRef = useRef(active)
+  activeRef.current = active
   const epoch = useRef(0)
   useEffect(() => {
     if (!active) return
-    const changed = () => {if (new URLSearchParams(location.search).get('view') !== 'archive') return; setAddress(readArchiveAddress(location.search)); setRestore(value => value + 1)}
-    if (!sameSnapshot(address, readArchiveAddress(location.search))) changed()
+    const changed = () => {
+      const params = new URLSearchParams(location.search)
+      if (params.get('view') !== 'archive') return
+      const requestId = params.get('packageRequest')
+      if (requestId !== packageRequestRef.current) {packageEpoch.current += 1; packageRequestRef.current = requestId; setPackageRequest(requestId); setJob(null); setPackageError(''); setPackageReading(false)}
+      setAddress(readArchiveAddress(location.search)); setRestore(value => value + 1)
+    }
+    if (!new URLSearchParams(location.search).has('packageRequest') && packageRequestRef.current) writeArchivePackageAddress(packageRequestRef.current)
+    if (!sameSnapshot(address, readArchiveAddress(location.search)) || new URLSearchParams(location.search).get('packageRequest') !== packageRequestRef.current) changed()
     window.addEventListener('popstate', changed)
     return () => window.removeEventListener('popstate', changed)
   }, [active])
@@ -43,9 +53,35 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   const [checked, setChecked] = useState<Record<string, {entry: HistoryEntry; title: string}>>({})
   const known = useRef(new Map<string, {entry: HistoryEntry; title: string}>())
   const [job, setJob] = useState<AuditReportPackage | null>(null), [downloadError, setDownloadError] = useState(''), [downloading, setDownloading] = useState(false)
+  const [packageReading, setPackageReading] = useState(false), [packageError, setPackageError] = useState('')
   const alive = useRef(true)
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
-  const packaging = useReportPackage(job, setJob, reference => {const item = known.current.get(resultKey(reference)); return Boolean(item && historyReportReady(item.entry) && sameSnapshot(historyReportReference(item.entry), reference))}, reportAdapter)
+  function commitPackage(next: AuditReportPackage) {
+    const requestId = next.receipt.state === 'rejected' && !next.package_id ? null : next.receipt.request_id
+    packageEpoch.current += 1; packageRequestRef.current = requestId
+    setPackageRequest(requestId); setJob(next); setPackageError(''); setPackageReading(false)
+    if (activeRef.current && new URLSearchParams(location.search).get('view') === 'archive') writeArchivePackageAddress(requestId)
+  }
+  const packaging = useReportPackage(job, commitPackage, reference => {
+    const item = known.current.get(resultKey(reference))
+    return Boolean(item && historyReportReady(item.entry) && sameSnapshot(historyReportReference(item.entry), reference) || job?.reports.some(row => sameSnapshot(row, reference)))
+  }, reportAdapter)
+  async function restorePackage() {
+    const requestId = packageRequestRef.current
+    if (!requestId || !reportAdapter) return
+    const request = ++packageEpoch.current
+    setPackageReading(true); setPackageError('')
+    try {
+      const next = await readReportPackage(reportAdapter, requestId)
+      if (activeRef.current && request === packageEpoch.current && packageRequestRef.current === requestId) setJob(next)
+    } catch {if (activeRef.current && request === packageEpoch.current) setPackageError('未能读取此打包请求。请重新读取，保留原请求，不会重新打包。')}
+    finally {if (activeRef.current && request === packageEpoch.current) setPackageReading(false)}
+  }
+  useEffect(() => {
+    if (!active || !packageRequest || job?.receipt.request_id === packageRequest) return
+    void restorePackage()
+    return () => {packageEpoch.current += 1}
+  }, [active, packageRequest, reportAdapter])
   const chosen = Object.values(checked)
   const chosenReferences = chosen.map(item => historyReportReference(item.entry)!)
   function toggle(document: ArchiveDocument, value: boolean) {
@@ -121,7 +157,9 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
       </footer>
     </div>}
     {!current && selection}
-    <ReportPackage job={job} nameFor={reference => known.current.get(resultKey(reference))?.title || '历史文件'} busy={packaging.packageBusy || downloading} onRead={() => void packaging.readPackage()} onDownload={() => void download(true)} onRetry={() => {if (job?.state === 'failed' && job.retry_allowed) void packaging.createPackage(job.reports)}} downloadError={downloadError}/>
+    {packageReading && <p role="status">正在恢复 ZIP 工作…</p>}
+    {packageError && <Alert variant="destructive"><AlertTitle>ZIP 暂不可用</AlertTitle><AlertDescription><p>{packageError}</p><Button variant="outline" disabled={packageReading} onClick={() => void restorePackage()}>重新读取 ZIP</Button></AlertDescription></Alert>}
+    <ReportPackage job={job} nameFor={reference => known.current.get(resultKey(reference))?.title || '历史文件'} busy={packaging.packageBusy || downloading || packageReading} onRead={() => void packaging.readPackage()} onDownload={() => void download(true)} onRetry={() => {if (job?.state === 'failed' && job.retry_allowed) void packaging.createPackage(job.reports)}} downloadError={downloadError}/>
     {!job && downloadError && <p role="alert">{downloadError}</p>}
   </section>
 }

@@ -9,6 +9,21 @@ import {zipSync} from 'fflate'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
+
+test('known ZIP rejections stay distinct from lost acceptance replies', async () => {
+  const reports = [1, 2].map(n => ({task_id: `task-${n}`, round_id: `round-${n}`, file_version_id: `version-${n}`, result_attempt: 1, report_id: `report-${n}`}))
+  for (const [status, code] of [[400, 'invalid_report_package'], [409, 'report_not_ready'], [409, 'report_package_too_large']] as const) {
+    globalThis.fetch = async () => new Response(JSON.stringify({error: code}), {status, headers: {'Content-Type': 'application/json'}})
+    const result = await nativeReportAdapter.createPackage!(reports, 'original-request')
+    assert.equal(result.receipt.state, 'rejected')
+    assert.equal(result.receipt.request_id, 'original-request')
+    assert.deepEqual(result.reports, reports)
+  }
+  globalThis.fetch = async () => {throw new TypeError('reply lost')}
+  await assert.rejects(nativeReportAdapter.createPackage!(reports, 'original-request'))
+  globalThis.fetch = async () => new Response(JSON.stringify({error: 'temporarily_unavailable'}), {status: 503, headers: {'Content-Type': 'application/json'}})
+  await assert.rejects(nativeReportAdapter.createPackage!(reports, 'original-request'))
+})
 const sharePointers = new Map<string, string>()
 Object.defineProperty(globalThis, 'localStorage', {value: {getItem: (key: string) => sharePointers.get(key) ?? null, setItem: (key: string, value: string) => sharePointers.set(key, value), removeItem: (key: string) => sharePointers.delete(key)}, configurable: true})
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})

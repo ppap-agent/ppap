@@ -318,7 +318,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (view !== 'audit') {
       surfaceRef.current = view; setSurface(view)
       if (view === 'archive') setArchiveOpened(true); else if (view === 'requirements') setRulesOpened(true); else if (view === 'templates') setTemplatesOpened(true); else setUsageOpened(true)
-      if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, ...Object.fromEntries(['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage'].map(key => [key, params.get(key)]))}, location.origin)
+      if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, ...Object.fromEntries(['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage', 'packageRequest'].map(key => [key, params.get(key)]))}, location.origin)
       return
     }
     const fromOtherSurface = surfaceRef.current !== 'audit'
@@ -485,11 +485,11 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (value === 'templates') setTemplatesOpened(true)
     if (value === 'usage') setUsageOpened(true)
     const url = new URL(location.href)
-    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'requirement', 'reqVersion', 'reqTab', 'reqQuery']) url.searchParams.delete(key)
+    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'packageRequest']) url.searchParams.delete(key)
     if (value !== 'audit') url.searchParams.set('view', value); else url.searchParams.delete('view')
     if (value === 'audit' && activeTaskId.current) url.searchParams.set('task', activeTaskId.current)
     history.pushState(history.state, '', url)
-    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: value}, location.origin)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: value, packageRequest: null}, location.origin)
     if (value === 'audit') {restoreAddress(); return}
     surfaceRef.current = value
     setSurface(value)

@@ -2759,8 +2759,11 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True).check()
             page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A002", exact=True).check()
             page.get_by_role("button", name="打包所选 2 份历史报告", exact=True).click()
+            request_id = parse_qs(urlparse(page.url).query)["packageRequest"][0]
+            self.assertTrue(request_id)
             page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True).uncheck()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], [request_id])
             with page.expect_download() as download:
                 page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
             import zipfile

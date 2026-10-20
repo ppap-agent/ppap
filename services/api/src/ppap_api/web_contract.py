@@ -823,6 +823,7 @@ class AuditReportPackageOutcome(TypedDict):
     reference: AuditReportReference
     state: Literal["pending", "prepared", "failed"]
     reason: str | None
+    filename: NotRequired[str]
 
 
 class AuditReportPackage(TypedDict):

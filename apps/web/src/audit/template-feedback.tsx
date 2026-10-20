@@ -10,8 +10,9 @@ import {feedbackFileAccept, readFeedbackAttachment, validFeedbackReceipt, validF
 import {canResumeUpload, canRetryUpload, uploadName, useUploads, type UploadRow} from './uploads'
 import {FeedbackPreview} from './feedback-preview'
 import {SupportEntryContext} from './support'
+import {requestTrace} from '../api'
 
-type Submission = {receipt: FeedbackReceipt; files: FeedbackFile[]; busy: boolean}
+type Submission = {receipt: FeedbackReceipt; files: FeedbackFile[]; busy: boolean; traceId?: string}
 const ready = (row: UploadRow) => row.receipt.state === 'ready' && row.receipt.file?.status === 'ready' && row.receipt.file.byte_size > 0
 const statusLabel = {uploading: '上传中', ready: '已上传', failed: '上传失败', unknown: '上传结果未知'}
 const feedbackLabels = {pending: '正在核对提交回执', unknown: '提交结果未知', failed: '提报未完成', rejected: '材料未受理', received: '材料已收到'}
@@ -55,8 +56,9 @@ export function TemplateFeedback({open, onClose, adapter, trigger}: {open: boole
   }, [showHistory, adapter, historyPage, historyRefresh])
   const blocker = !adapter ? '暂时无法提交材料，请稍后再试。' : !adapter.submit || !adapter.read ? '运营提交暂不可用，附件尚未提交给运营。' : !rows.length ? '请先上传至少 1 份附件。' : rows.some(row => row.busy || !ready(row)) ? '请先完成所有附件上传，或移除不能提交的附件。' : new Set(files.map(file => file.id)).size !== files.length ? '附件版本重复，请移除重复项。' : ''
   function save(next: Submission | null) {current.current = next; if (alive.current) setJob(next)}
-  async function observe(observation: Submission, readOnly: boolean) {
+  async function observe(previous: Submission, readOnly: boolean) {
     if (!adapter?.submit || !adapter.read) return
+    const observation = {...previous, traceId: undefined}
     save(observation); setNotice('')
     const {request, attempt_id} = observation.receipt
     try {
@@ -64,8 +66,8 @@ export function TemplateFeedback({open, onClose, adapter, trigger}: {open: boole
       if (!alive.current || current.current !== observation) return
       if (!validFeedbackReceipt(update, request, attempt_id)) throw new Error('feedback_receipt_mismatch')
       save({...observation, busy: false, receipt: {...update, retry_allowed: update.state === 'failed' && update.retry_allowed}})
-    } catch {
-      if (alive.current && current.current === observation) save({...observation, busy: false, receipt: {...observation.receipt, state: 'unknown', retry_allowed: false, reason: '未取得可靠提交回执。材料可能已收到；请读取原提交结果，不要再次提交。'}})
+    } catch (failure) {
+      if (alive.current && current.current === observation) save({...observation, busy: false, traceId: requestTrace(failure), receipt: {...observation.receipt, state: 'unknown', retry_allowed: false, reason: '未取得可靠提交回执。材料可能已收到；请读取原提交结果，不要再次提交。'}})
     }
   }
   function submit() {
@@ -99,7 +101,7 @@ export function TemplateFeedback({open, onClose, adapter, trigger}: {open: boole
   const receipt = job?.receipt
   function contactSupport() {
     if (!receipt || !job || !openSupport) return
-    openSupport({scenario: '补充模板提报', facts: [
+    openSupport({scenario: '补充模板提报', traceId: job.traceId, facts: [
       {label: '状态', value: feedbackLabels[receipt.state]},
       {label: '原请求', value: receipt.request.request_id}, {label: '本次尝试', value: receipt.attempt_id},
       {label: '原因', value: receipt.reason || '服务未提供原因。'},

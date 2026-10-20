@@ -138,3 +138,21 @@ def test_zip_card_names_only_the_requested_collection_and_uses_an_authenticated_
     assert outer.path == "/enter-current"
     target = urlsplit(parse_qs(outer.query)["return_to"][0])
     assert target.path == "/audit" and parse_qs(target.query) == {"task": ["task-a"], "report": ["1"], "packageRequest": ["zip-request-a"]}
+
+
+def test_cross_task_zip_notification_restores_the_archive_package_and_frozen_report_names() -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    task = {"id": "task-a", "number": "001", "files": []}
+    references = [{"task_id": "task-a", "file_version_id": "v1"}, {"task_id": "task-b", "file_version_id": "v2"}]
+    package = {
+        "state": "ready",
+        "reports": references,
+        "receipt": {"request_id": "archive-package"},
+        "outcomes": [{"reference": reference, "filename": name} for reference, name in zip(references, ("控制计划-审核报告.pdf", "流程图-审核报告.pdf"), strict=True)],
+    }
+    card = task_notification_card(task, "zip_ready", "https://ppap.example.test", package)
+    body = card["elements"][0]["text"]["content"]
+    assert all(value in body for value in ("文件档案", "控制计划-审核报告.pdf", "流程图-审核报告.pdf"))
+    target = urlsplit(parse_qs(urlsplit(card["elements"][1]["actions"][0]["url"]).query)["return_to"][0])
+    assert target.path == "/audit" and parse_qs(target.query) == {"view": ["archive"], "packageRequest": ["archive-package"]}

@@ -224,6 +224,8 @@ Overlay 显式设置 `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`、`PPAP_DEEP_RUN
 
 `tests/e2e/test_report_sharing.py` 验证固定 PDF/ZIP、中文字符映射、报告切换和撤权后拒绝访问，不读取私有任务或原件。静态构建将已安装 PDF.js 的 `cmaps`、`standard_fonts`、`wasm` 资源及许可证放入 `dist/pdfjs`；开发环境继续使用本机依赖。Nginx 必须以 JavaScript MIME 提供 `.mjs` worker；`tests/repository/test_web_server.py` 通过实际 Nginx 请求检查该响应和不存在文件的 404。
 
+`tests/e2e/test_report_packages.py` 使用原生档案组件与受控 HTTP，验证原 ZIP 请求的刷新恢复、固定下载字节、失败后只读恢复、错误回执拒绝及切页后的迟到响应；不据此证明真实服务或飞书送达。跨任务包的实际 PostgreSQL／Worker 回归位于 `tests/schema/test_audit_bindings.py`，覆盖同名 PDF、固定字节、反序请求复用、全部来源授权、原集合重试与旧 attempt 拒绝。模板反馈的明确权限拒绝与未知回执由 `services/api/tests/test_template_feedback.py` 验证；数据库是真实隔离实例，飞书仍为受控 HTTP 边界。
+
 其中的未知提取恢复用例从当前审核要求上传入口进入：刷新和核对只读原请求，记录 HTTP 方法以拒绝恢复期间的写操作；重新提取需确认可能的模型费用并创建新请求。原请求的迟到读取不能替换新请求；挂起的提交响应晚于人工录入返回时不能覆盖人工内容。`RuleExtractionRecovery.tla` 是一份冻结来源、两个请求及延迟响应的有限 Safety 检查；正向配置检查未知不冒充运行中、只读不重提、当前请求及人工录入边界，四个故障配置保留对应反例。它不证明 SQL 持久化、跨标签页恢复、授权、模型质量、真实收费或最终完成。
 
 批量上传恢复从当前“上传资料”和草稿内“添加审核资料”进入。`test_rule_interactions.py` 控制逐文件回执、保存拒绝和迟到读取，要求已收到文件保留、未发送与未知分开、查询不新建传输，以及离开后的结果不写入另一草稿。`test_upload_recovery.py` 通过真实 Product API/数据库上传三份 XLSX，分别中断第三份已完成传输的回执、或传输前已完成草稿保存的回执；清除本机记录后读回同一草稿，查询或显式继续原请求完成关联。继续操作固定原请求 ID 和文件摘要，复用现有幂等创建，不把“未查到”当作新建身份的许可。测试不启动审核或扣费；对象存储的实际持久性另由运行环境验证。`UploadBatchRecovery.tla` 是两个页面 owner、三份文件的有限 Safety 检查，保留丢失成功文件、新建未知请求及迟到提交的故障配置；同身份创建/写入的幂等性由 API/存储边界验证，模型不证明完整系统 refinement、跨标签页并发、SQL/对象存储持久性或最终完成。

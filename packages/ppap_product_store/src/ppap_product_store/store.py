@@ -1805,7 +1805,10 @@ class AuthStore:
                 """SELECT r.id, r.payload, GREATEST(r.updated_at, p.updated_at) FROM engine.jobs r
                 JOIN engine.jobs p ON p.id = (r.payload->>'package_id')::uuid
                 WHERE r.kind = 'report_zip_request' AND r.tenant_id = %s AND r.payload->>'task_id' = %s
-                  AND r.payload->>'created_by' = %s ORDER BY r.created_at DESC, r.id DESC LIMIT 1""",
+                  AND r.payload->>'created_by' = %s AND NOT EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(r.payload->'reports') reference
+                    WHERE reference->>'task_id' <> r.payload->>'task_id')
+                ORDER BY r.created_at DESC, r.id DESC LIMIT 1""",
                 (principal.tenant_id, task_id, principal.user_id),
             ).fetchone()
             if package:
@@ -2910,6 +2913,16 @@ class AuthStore:
             "generated_at": result["generated_at"],
         }
 
+    def _report_package_sources(self, conn, principal, reports, task):
+        tasks = {task["id"]: task}
+        sources = []
+        for reference in sorted(reports, key=lambda reference: (reference["file_version_id"], reference["report_id"])):
+            task_id = reference["task_id"]
+            if task_id not in tasks:
+                tasks[task_id] = self._recognition_public(conn, principal, task_id)
+            sources.append(self._report_source(conn, principal, tasks[task_id], reference))
+        return sources
+
     def accept_report_package(self, principal: Principal, body: dict) -> dict:
         request_id, reports = body.get("request_id"), body.get("reports")
         if (
@@ -2926,11 +2939,10 @@ class AuthStore:
                 or reference["result_attempt"] < 1
                 for reference in reports
             )
-            or len({reference["task_id"] for reference in reports}) != 1
-            or len({reference["file_version_id"] for reference in reports}) != len(reports)
+            or len({tuple(reference[key] for key in ("task_id", "round_id", "file_version_id", "result_attempt", "report_id")) for reference in reports}) != len(reports)
         ):
             raise ValueError("invalid_report_package")
-        task_id = reports[0]["task_id"]
+        task_id = min(reference["task_id"] for reference in reports)
         with self._conn() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("report-package:" + request_id,))
             task = self._recognition_public(conn, principal, task_id)
@@ -2942,7 +2954,7 @@ class AuthStore:
                 if {key: existing[2][key] for key in request} != request:
                     raise ValueError("idempotency_conflict")
                 return self._report_package_public(conn, principal, task, request_id, existing[2])
-            sources = [self._report_source(conn, principal, task, reference) for reference in sorted(reports, key=lambda reference: reference["file_version_id"])]
+            sources = self._report_package_sources(conn, principal, reports, task)
             if sum(source["artifact"]["byte_size"] for source in sources) > MAX_UPLOAD_BYTES:
                 raise ValueError("report_package_too_large")
             frozen = {"created_by": principal.user_id, "task_id": task_id, "sources": sources}
@@ -2984,14 +2996,17 @@ class AuthStore:
             if not source or str(source[0]) != principal.tenant_id or source[1] != "report_zip_request" or source[2].get("created_by") != principal.user_id:
                 raise KeyError("missing")
             original = source[2]
-            self._recognition_owner(conn, principal, original["task_id"], lock=True)
+            task_ids = sorted({reference["task_id"] for reference in original["reports"]})
+            for task_id in task_ids:
+                self._recognition_owner(conn, principal, task_id, lock=True)
             task = self._recognition_public(conn, principal, original["task_id"])
+            resources = task_ids + sorted({reference["round_id"] for reference in original["reports"]})
             grants = conn.execute(
                 """SELECT resource_id FROM product.resource_grants WHERE resource_id = ANY(%s::uuid[])
                 AND user_id = %s AND capability IN ('read', 'review') ORDER BY resource_id FOR SHARE""",
-                ([task["id"], task["round_id"]], principal.user_id),
+                (resources, principal.user_id),
             ).fetchall()
-            if {str(row[0]) for row in grants} != {task["id"], task["round_id"]} or original["package_id"] != body["package_id"]:
+            if {str(row[0]) for row in grants} != set(resources) or original["package_id"] != body["package_id"]:
                 raise KeyError("missing")
             row = conn.execute(
                 "SELECT status, attempt FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_zip' FOR UPDATE",
@@ -3028,9 +3043,8 @@ class AuthStore:
         if not row or request["created_by"] != principal.user_id or row[0]["created_by"] != principal.user_id or row[0]["task_id"] != task["id"]:
             raise KeyError("missing")
         frozen, status, result, attempt = row
-        for source in frozen["sources"]:
-            self._report_source(conn, principal, task, source["reference"], source["artifact"]["artifact_id"])
-        if sorted(request["reports"], key=lambda reference: reference["file_version_id"]) != [source["reference"] for source in frozen["sources"]]:
+        sources = self._report_package_sources(conn, principal, request["reports"], task)
+        if sources != frozen["sources"]:
             raise ValueError("report_artifact_conflict")
         result = result or {}
         state = {"queued": "pending", "leased": "generating", "succeeded": "ready"}.get(status, "failed")
@@ -3041,7 +3055,10 @@ class AuthStore:
             "reports": request["reports"],
             "receipt": {"request_id": request_id, "state": "accepted", "reason": None},
             "state": state,
-            "outcomes": [next(item for item in outcomes if item["reference"] == reference) for reference in request["reports"]],
+            "outcomes": [
+                {**next(item for item in outcomes if item["reference"] == reference), "filename": next(source["artifact"]["filename"] for source in sources if source["reference"] == reference)}
+                for reference in request["reports"]
+            ],
             "artifact": result.get("artifact") if state == "ready" else None,
             "reason": ("ZIP 打包失败，已就绪的 PDF 不受影响。" + ("当前环境尚未开放 ZIP 恢复计费。" if self.settings.usage_charge_enabled else "")) if state == "failed" else None,
             "retry_allowed": status == "failed" and not self.settings.usage_charge_enabled,

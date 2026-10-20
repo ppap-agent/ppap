@@ -9,10 +9,20 @@ class FeedbackError(Exception):
     pass
 
 
+class FeedbackRejected(FeedbackError):
+    """The provider explicitly denied this operation before creating a record."""
+
+
 def _call(http, method, path, token, **kwargs) -> dict:
     try:
         response = http.request(method, BASE + path, headers={"Authorization": "Bearer " + token}, timeout=30, **kwargs)
         payload = response.json()
+        # Only documented permission denials prove this create did not happen.
+        # Do not apply this to 5xx, write conflicts, timeouts or incomplete replies.
+        # https://open.feishu.cn/document/server-docs/docs/bitable-v1/app-table-record/create
+        # https://open.feishu.cn/document/server-docs/api-call-guide/generic-error-code
+        if response.status_code in {200, 400, 403} and isinstance(payload, dict) and type(payload.get("code")) is int and payload["code"] in {99991672, 99991679, 1254302, 1254304}:
+            raise FeedbackRejected("feedback_permission_denied")
         if not 200 <= response.status_code < 300 or not isinstance(payload, dict) or type(payload.get("code")) is not int or payload["code"] != 0 or not isinstance(payload.get("data"), dict):
             raise FeedbackError("feedback_provider_unconfirmed")
         return payload["data"]

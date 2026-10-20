@@ -3,7 +3,15 @@ import uuid
 
 import httpx
 import pytest
-from ppap_core.template_feedback import FeedbackError, create_feedback_record, find_feedback_record, upload_feedback_attachment
+from ppap_core.template_feedback import FeedbackError, FeedbackRejected, create_feedback_record, find_feedback_record, upload_feedback_attachment
+
+
+@pytest.mark.parametrize("status,code", [(400, 99991672), (403, 99991679), (403, 1254302), (403, 1254304), (200, 1254302)])
+def test_documented_permission_denial_proves_record_creation_was_rejected(status, code):
+    fields = {"请求编号": "operation", "文件附件": [{"file_token": "box_original"}]}
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(status, json={"code": code, "msg": "private provider details"}))) as http:
+        with pytest.raises(FeedbackRejected, match="^feedback_permission_denied$"):
+            create_feedback_record(http, "test-token", "base_test", "tbl_test", "operation", fields)
 
 
 def test_lost_record_reply_is_read_back_without_creating_another_record():

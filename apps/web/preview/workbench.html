@@ -131,10 +131,11 @@
       if (event.origin !== location.origin || event.source !== frame.contentWindow) return;
       if (event.data?.type === 'ppap-audit-view') {
         if (!['archive', 'audit', 'templates', 'usage'].includes(event.data.view)) return;
-        if (['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage'].some(key => event.data[key] != null && (typeof event.data[key] !== 'string' || event.data[key].length > 1200))) return;
+        if (['archiveDoc', 'auditRef', 'archiveReport', 'usageRange', 'usageSearch', 'usagePage', 'packageRequest'].some(key => event.data[key] != null && (typeof event.data[key] !== 'string' || event.data[key].length > 1200))) return;
         state.view = event.data.view === 'audit' ? '' : event.data.view;
         for (const key of ['archiveDoc', 'auditRef', 'archiveReport']) state[key] = state.view ? event.data[key] || '' : '';
         for (const key of ['usageRange', 'usageSearch', 'usagePage']) if (key in event.data) state[key] = event.data[key] || '';
+        if ('packageRequest' in event.data) state.packageRequest = event.data.packageRequest || '';
         render(false); return;
       }
       if (event.data?.type !== 'ppap-audit-task' || event.data.task !== null && (typeof event.data.task !== 'string' || event.data.task.length > 256)) return;

@@ -28,7 +28,13 @@ export function writeArchiveAddress(documentId: string | null, reference: Result
     if (value) url.searchParams.set(key, value); else url.searchParams.delete(key)
   }
   history[replace ? 'replaceState' : 'pushState'](history.state, '', url)
-  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null}, location.origin)
+  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view, archiveDoc: documentId, auditRef: reference ? resultKey(reference) : null, archiveReport: report ? '1' : null, packageRequest: url.searchParams.get('packageRequest')}, location.origin)
+}
+export function writeArchivePackageAddress(requestId: string | null) {
+  const url = new URL(location.href)
+  if (requestId) url.searchParams.set('packageRequest', requestId); else url.searchParams.delete('packageRequest')
+  history.replaceState(history.state, '', url)
+  if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-view', view: 'archive', packageRequest: requestId, ...Object.fromEntries(['archiveDoc', 'auditRef', 'archiveReport'].map(key => [key, url.searchParams.get(key)]))}, location.origin)
 }
 export function historyReportReference(entry: HistoryEntry): components['schemas']['AuditReportReference'] | null {
   return entry.reference.result_attempt !== null && entry.report.report_id ? {...entry.reference, result_attempt: entry.reference.result_attempt, report_id: entry.report.report_id} : null

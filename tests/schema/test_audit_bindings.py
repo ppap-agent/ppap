@@ -1764,6 +1764,110 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(accepted.status_code, 202)
         return task, worker, completed, command, accepted.json()
 
+    def test_archive_zip_accepts_frozen_reports_from_different_tasks_without_changing_task_packages(self):
+        import json
+        from io import BytesIO
+        from urllib.parse import parse_qs, urlsplit
+        from zipfile import ZipFile
+
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+        from ppap_worker import process_claimed
+
+        self.settings.feishu_app_id = APP_ID
+        first, _worker, _completed, first_command, _ = self.prepared_report_package(accept=False)
+        second, worker, _completed, second_command, _ = self.prepared_report_package(accept=False)
+        reports = [first_command["reports"][0], second_command["reports"][0]]
+        command = {"request_id": str(uuid.uuid4()), "reports": reports}
+        accepted = self.display_client.post("/audit-report-packages", json=command)
+        self.assertEqual(accepted.status_code, 202, accepted.text)
+        package = accepted.json()
+        self.assertEqual(package["reports"], reports)
+        self.assertEqual(self.display_client.post("/audit-report-packages", json=command).json(), package)
+        for task in (first, second):
+            self.assertNotIn("report_package", self.display_client.get(f"/audit-tasks/{task['id']}").json())
+        job = worker.claim_job("archive-cross-task")
+        self.assertEqual(job.kind, "report_zip")
+        process_claimed(worker, job, "archive-cross-task")
+        ready = self.display_client.get(f"/audit-report-packages/{command['request_id']}").json()
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual([outcome["filename"] for outcome in ready["outcomes"]], ["same.xlsx-审核报告.pdf", "same.xlsx-审核报告.pdf"])
+        downloaded = self.display_client.get(
+            f"/audit-report-packages/{command['request_id']}/zip",
+            params={"package_id": ready["package_id"], "artifact_id": ready["artifact"]["artifact_id"]},
+        )
+        self.assertEqual(downloaded.status_code, 200, downloaded.text[:100])
+        with ZipFile(BytesIO(downloaded.content)) as archive:
+            entries = json.loads(archive.read("报告清单.txt"))["reports"]
+            self.assertEqual({entry["reference"]["task_id"] for entry in entries}, {first["id"], second["id"]})
+            self.assertEqual(len({entry["archive_name"] for entry in entries}), 2)
+            self.assertEqual(len({entry["filename"] for entry in entries}), 1)
+            for entry in entries:
+                reference = entry["reference"]
+                source = next(source for source in job.payload["sources"] if source["reference"] == reference)
+                self.assertEqual(archive.read(entry["archive_name"]), worker.objects.get(source["object_key"]))
+        alias = self.display_client.post("/audit-report-packages", json={"request_id": str(uuid.uuid4()), "reports": list(reversed(reports))})
+        self.assertEqual(alias.status_code, 202, alias.text)
+        self.assertEqual(alias.json()["package_id"], ready["package_id"])
+        self.assertEqual(alias.json()["reports"], list(reversed(reports)))
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        notified = []
+        while claimed := api_store.claim_task_notification("archive-notifier"):
+            notification, recipient = claimed
+            delivery = api_store.start_task_notification(notification, "archive-notifier", recipient)
+            if delivery:
+                if notification.payload["stage"] == "zip_ready":
+                    card = delivery["card"]
+                    notified.append(card)
+                    target = urlsplit(parse_qs(urlsplit(card["elements"][1]["actions"][0]["url"]).query)["return_to"][0])
+                    self.assertEqual(parse_qs(target.query), {"view": ["archive"], "packageRequest": [command["request_id"]]})
+                api_store.finish_task_notification(notification, "archive-notifier", {"state": "sent", "message_id": "om_test", "reason": None})
+        self.assertEqual(len(notified), 1)
+        self.assertIsNone(worker.claim_job("no-extra-archive-work"))
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
+    def test_archive_zip_rechecks_every_task_and_recovers_only_the_same_frozen_collection(self):
+        from ppap_core.db import connect
+        from ppap_worker import process_claimed
+
+        first, _worker, _completed, first_command, _ = self.prepared_report_package(accept=False)
+        second, worker, _completed, second_command, _ = self.prepared_report_package(accept=False)
+        reports = [first_command["reports"][0], second_command["reports"][0]]
+        command = {"request_id": str(uuid.uuid4()), "reports": reports}
+        accepted = self.display_client.post("/audit-report-packages", json=command)
+        self.assertEqual(accepted.status_code, 202, accepted.text)
+        package = accepted.json()
+        old = worker.claim_job("archive-failed")
+        orphan = worker.build_report_package(old, "2026-10-20T00:00:00+00:00", threading.Event())
+        self.assertTrue(worker.complete_job(old, "archive-failed", {"error": "temporary_failure"}, "failed"))
+        path = f"/audit-report-packages/{command['request_id']}"
+        retry = {"request_id": str(uuid.uuid4()), "package_id": package["package_id"], "expected_attempt": 1}
+        with connect(self.settings, "migrator") as conn:
+            capabilities = conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s RETURNING capability", (second["round_id"], self.alice.user_id)).fetchall()
+        self.assertEqual(self.display_client.get(path).status_code, 403)
+        self.assertEqual(self.display_client.post(path + "/retries", json=retry).status_code, 403)
+        self.assertEqual(self.display_client.post("/audit-report-packages", json={**command, "request_id": str(uuid.uuid4())}).status_code, 403)
+        self.assertIsNone(worker.claim_job("permission-denied-cannot-retry"))
+        with connect(self.settings, "migrator") as conn:
+            for (capability,) in capabilities:
+                conn.execute("INSERT INTO product.resource_grants VALUES (%s, %s, %s)", (second["round_id"], self.alice.user_id, capability))
+        recovered = self.display_client.post(path + "/retries", json=retry)
+        self.assertEqual(recovered.status_code, 202, recovered.text)
+        self.assertEqual(recovered.json()["reports"], reports)
+        current = worker.claim_job("archive-recovery")
+        self.assertEqual((current.id, current.attempt), (old.id, 2))
+        self.assertEqual(current.payload, old.payload)
+        self.assertFalse(worker.complete_job(old, "archive-failed", orphan))
+        process_claimed(worker, current, "archive-recovery")
+        ready = self.display_client.get(path).json()
+        self.assertEqual((ready["state"], ready["artifact"]["artifact_id"]), ("ready", f"{old.id}:2"))
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (first["round_id"], self.alice.user_id))
+        self.assertEqual(self.display_client.get(path).status_code, 403)
+        self.assertEqual(self.display_client.post("/audit-report-packages", json=command).status_code, 403)
+        self.assertEqual(self.display_client.get(path + "/zip", params={"package_id": ready["package_id"], "artifact_id": ready["artifact"]["artifact_id"]}).status_code, 403)
+        self.assertEqual(self.store.list_usage_events(self.alice), [])
+
     def test_report_share_freezes_reports_and_keeps_recipient_task_and_original_private(self):
         import json
         from datetime import datetime, timedelta, timezone

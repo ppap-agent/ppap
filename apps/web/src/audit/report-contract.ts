@@ -1,5 +1,5 @@
 import type {components} from '../generated/openapi'
-import {packageOutcomeError, taskPackageScopeError} from './result-projection.ts'
+import {multipleDistinctReports, packageOutcomeError, taskPackageScopeError} from './result-projection.ts'
 
 export type AuditReportReference = components['schemas']['AuditReportReference']
 export type AuditReportArtifact = components['schemas']['AuditReportArtifact']
@@ -14,10 +14,16 @@ export type AuditReportAdapter = {
   readPackageFile?: (job: AuditReportPackage) => Promise<Blob>
 }
 
-export async function readTaskReportPackage(adapter: Pick<AuditReportAdapter, 'readPackage'>, task: components['schemas']['AuditTask'], requestId: string): Promise<AuditReportPackage> {
+export async function readReportPackage(adapter: Pick<AuditReportAdapter, 'readPackage'>, requestId: string): Promise<AuditReportPackage> {
   if (!adapter.readPackage) throw new Error('zip_read_unavailable')
   const job = await adapter.readPackage(requestId)
-  if (!job || job.receipt.request_id !== requestId || packageOutcomeError(job) || taskPackageScopeError({...task, report_package: job}) || job.state === 'ready' && (!job.package_id || !job.artifact?.artifact_id || job.artifact.content_type !== 'application/zip' || job.artifact.byte_size <= 0)) throw new Error('package_link_mismatch')
+  if (!job || job.receipt.request_id !== requestId || !multipleDistinctReports(job.reports) || packageOutcomeError(job) || job.state === 'ready' && (!job.package_id || !job.artifact?.artifact_id || job.artifact.content_type !== 'application/zip' || job.artifact.byte_size <= 0)) throw new Error('package_link_mismatch')
+  return job
+}
+
+export async function readTaskReportPackage(adapter: Pick<AuditReportAdapter, 'readPackage'>, task: components['schemas']['AuditTask'], requestId: string): Promise<AuditReportPackage> {
+  const job = await readReportPackage(adapter, requestId)
+  if (taskPackageScopeError({...task, report_package: job})) throw new Error('package_link_mismatch')
   return job
 }
 
