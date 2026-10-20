@@ -1,0 +1,61 @@
+name: Publish private GHCR images
+run-name: Publish main ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: read
+  packages: write
+
+concurrency:
+  group: ghcr-release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PPAP_BUILD_SHA: ${{ github.sha }}
+      PPAP_IMAGE_PREFIX: ghcr.io/ppap-agent/ppap-
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require tested main and private packages
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
+          gh api "repos/$GITHUB_REPOSITORY/commits/$PPAP_BUILD_SHA/check-runs" \
+            --jq '.check_runs | map(select(.name == "CI Gate")) | sort_by(.started_at) | last | .conclusion' \
+            | grep -qx success
+          for component in api worker web deep; do
+            # A first publication is private by default. Existing packages must
+            # already be private; this job never changes their visibility.
+            if metadata="$(gh api "orgs/ppap-agent/packages/container/ppap-$component" 2>/dev/null)"; then
+              test "$(printf '%s' "$metadata" | jq -r .visibility)" = private
+            fi
+          done
+      - uses: ./.github/actions/assert-docker
+      - name: Build and publish exact source commit
+        run: |
+          set -euo pipefail
+          task_docker_config="$(mktemp -d "$RUNNER_TEMP/ghcr-auth.XXXXXX")"
+          export DOCKER_CONFIG="$task_docker_config"
+          trap 'rm -f "$task_docker_config/config.json"; rmdir "$task_docker_config" 2>/dev/null || true' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx bake release --set '*.platform=linux/amd64' \
+            --provenance=false --metadata-file "$RUNNER_TEMP/ppap-images.json" --push
+          for component in api worker web deep; do
+            test "$(gh api "orgs/ppap-agent/packages/container/ppap-$component" --jq .visibility)" = private
+            digest="$(jq -er --arg component "$component" '.[$component]["containerimage.digest"]' "$RUNNER_TEMP/ppap-images.json")"
+            printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+            printf '%s@%s\n' "$PPAP_IMAGE_PREFIX$component" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          done
+          printf '\nSource: %s\nPlatform: linux/amd64\n' "$PPAP_BUILD_SHA" >> "$GITHUB_STEP_SUMMARY"

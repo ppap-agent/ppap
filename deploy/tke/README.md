@@ -74,6 +74,12 @@ Completed Jobs do not run again when the migration ConfigMap changes, and their 
 
 No `nodeSelector`. API, Worker, Web, and Deep images must use the same current Git SHA; do not apply the manifest while any referenced image tag is missing. A Deep-only change does not require deleting or re-running the DB/bucket init Jobs.
 
+## Private GHCR build
+
+`.github/workflows/publish-images.yml` is manually dispatched on `main` after that exact commit's `CI Gate` passes. It checks out the event SHA, builds all four `linux/amd64` images through the canonical Bake `release` group, and publishes private `ghcr.io/ppap-agent/ppap-<component>:<full_sha>` packages. Deep consumes the Worker target in the same build graph. The workflow records immutable image digests in its run summary; it does not deploy. Existing packages must already be private and connected to this repository's Actions access. The job uses the run's `GITHUB_TOKEN`, not a stored publishing PAT.
+
+Do not use a mutable `main`/`latest` image tag as deployment identity. Keep the previous unregistry references for rollback until the new digest-pinned release has passed node-local startup and live health checks. The following registry-host procedure remains the unregistry fallback.
+
 Images can be built on the host serving `unregistry.xixifusi.online`. Transfer a fixed Git commit's build sources without private environment files, then use the same `docker-bake.hcl` graph. The optional `PPAP_DEBIAN_MIRROR` build argument applies to both application and converter stages and replaces the Debian URI prefix, including its sibling `-security` repository; the mirror must serve both. On that host, tag and push through `localhost:5001/ppap-<component>:<git_sha>` to avoid sending application layers from a developer machine. Verify each image through the public `unregistry.xixifusi.online` manifest endpoint before applying the cluster objects. Do not edit source only on the build host or prune registry images needed for rollback.
 
 When `PPAP_PIP_INDEX_URL` is set, the app build exports production registry requirements from the frozen lockfile and prefetches them through that index with `--require-hashes --no-deps`, then runs the original frozen workspace sync and `uv pip check`. This changes transport, not locked versions or hashes; `uv.lock` is not rewritten. Setting an index alone does not redirect artifact URLs already recorded in a frozen lockfile.

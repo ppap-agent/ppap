@@ -77,6 +77,19 @@ if (bake) {
   }
 }
 
+const release = nativeJson('docker', ['buildx', 'bake', 'release', '--print'], {
+  ...process.env, ...selected, PPAP_IMAGE_PREFIX: 'ghcr.io/ppap-agent/ppap-',
+})
+if (release) {
+  const targets = release.target || {}
+  for (const target of ['api', 'worker', 'web', 'deep']) {
+    if (targetTag(release, target) !== `ghcr.io/ppap-agent/ppap-${target}:${sha}`) fail(`release ${target} must use the fixed source SHA`)
+    const labels = targets[target]?.labels || {}
+    if (labels['org.opencontainers.image.revision'] !== sha || labels['org.opencontainers.image.source'] !== 'https://github.com/ppap-agent/ppap') fail(`release ${target} must identify its source`)
+  }
+  if (targets.deep?.contexts?.['ppap-worker'] !== 'target:worker') fail('Deep must consume the same Bake Worker build')
+}
+
 verifyCompose(
   'isolated-dev',
   composeJson('deploy/isolated-dev/compose.yaml', null, selected),
