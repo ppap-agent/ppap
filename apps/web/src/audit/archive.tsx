@@ -31,7 +31,13 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   const [treeOpen, setTreeOpen] = useState(false), [address, setAddress] = useState(() => readArchiveAddress(location.search)), [restore, setRestore] = useState(0)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const epoch = useRef(0)
-  useEffect(() => {if (!active) return; const changed = () => {if (new URLSearchParams(location.search).get('view') !== 'archive') return; setAddress(readArchiveAddress(location.search)); setRestore(value => value + 1)}; changed(); window.addEventListener('popstate', changed); return () => window.removeEventListener('popstate', changed)}, [active])
+  useEffect(() => {
+    if (!active) return
+    const changed = () => {if (new URLSearchParams(location.search).get('view') !== 'archive') return; setAddress(readArchiveAddress(location.search)); setRestore(value => value + 1)}
+    if (!sameSnapshot(address, readArchiveAddress(location.search))) changed()
+    window.addEventListener('popstate', changed)
+    return () => window.removeEventListener('popstate', changed)
+  }, [active])
   function openDocument(document: ArchiveDocument) {setAddress({documentId: document.document_id, reference: null, invalid: false, report: false}); writeArchiveAddress(document.document_id, null)}
   function closeDocument() {setAddress({documentId: null, reference: null, invalid: false, report: false}); writeArchiveAddress(null, null)}
   const [checked, setChecked] = useState<Record<string, {entry: HistoryEntry; title: string}>>({})
@@ -63,7 +69,9 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
     } catch {if (alive.current) setDownloadError('下载未完成，请重试。')}
     finally {if (url) URL.revokeObjectURL(url); if (alive.current) setDownloading(false)}
   }
+  const browsing = active && !address.documentId && !address.invalid
   useEffect(() => {
+    if (!browsing) return
     const run = ++epoch.current
     setLoading(true); setError('')
     void adapter.listDocuments(structuredClone(query)).then(result => {
@@ -72,7 +80,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
       setPage(result)
     }).catch(() => {if (epoch.current === run) setError('文件档案暂时无法读取，请重试。')}).finally(() => {if (epoch.current === run) setLoading(false)})
     return () => {epoch.current += 1}
-  }, [adapter, query, reload])
+  }, [adapter, query, reload, browsing])
   function filter(update: Partial<ArchiveQuery>) {setQuery(current => ({...current, ...update, page: 1}))}
   const current = page && sameSnapshot(page.query, query) ? page : null
   const tree = <nav className="grid gap-1" aria-label="车型与零件"><Button variant={!query.category_id ? 'secondary' : 'ghost'} className="justify-between" onClick={() => {filter({category_id: null}); setTreeOpen(false)}}>全部文件 <span className="text-muted-foreground">{page?.document_count ?? '—'}</span></Button>{page?.categories.map(category => <Collapsible key={category.id} defaultOpen><div className="flex items-center"><CollapsibleTrigger asChild><Button variant="ghost" size="icon" aria-label={`展开或收起 ${category.label}`} className="group"><ChevronDown className="transition-transform group-data-[state=closed]:-rotate-90"/></Button></CollapsibleTrigger><Button variant={query.category_id === category.id ? 'secondary' : 'ghost'} className="min-w-0 flex-1 justify-between" onClick={() => {filter({category_id: category.id}); setTreeOpen(false)}}>{category.label === '其他' ? '未归类车型' : category.label}<span className="text-muted-foreground">{category.count}</span></Button></div><CollapsibleContent><div className="ml-5 grid gap-1 border-l pl-3">{category.parts.map(part => <Button key={part.id} className="justify-between" variant={query.category_id === part.id ? 'secondary' : 'ghost'} onClick={() => {filter({category_id: part.id}); setTreeOpen(false)}}>{part.label === '其他' ? '未归类零件' : part.label}<span className="text-muted-foreground">{part.count}</span></Button>)}</div></CollapsibleContent></Collapsible>)}</nav>

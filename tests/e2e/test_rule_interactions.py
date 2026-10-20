@@ -30,6 +30,46 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_native_history_does_not_wait_for_the_customer_catalog(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            pending_catalog, reads = [], []
+            page.on("request", lambda request: reads.append(urlsplit(request.url).path))
+            page.route("**/api/audit-template-catalog", lambda route: pending_catalog.append(route))
+            page.route(
+                "**/api/audit-archive/history-document/history",
+                lambda route: route.fulfill(
+                    json={
+                        "document": {
+                            "document_id": "history-document",
+                            "provider": "feishu",
+                            "title": "历史原件.xlsx",
+                            "metadata": {},
+                            "document_type": "控制计划",
+                            "updated_at": "2026-10-01T00:00:00Z",
+                            "latest_completed": None,
+                            "latest_activity": None,
+                        },
+                        "entries": [],
+                        "default_reference": None,
+                    }
+                ),
+            )
+            page.goto(WEB + "/audit?view=archive&archiveDoc=history-document")
+            expect(page.get_by_role("heading", name="历史原件.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("尚无完成审核。可以选择已有记录查看进度或异常。", exact=True)).to_be_visible()
+            self.assertEqual(len(pending_catalog), 1)
+            self.assertEqual(reads.count("/api/audit-archive/history-document/history"), 1)
+            self.assertNotIn("/api/audit-archive", reads)
+            self.assertNotIn("/api/audit-tasks", reads)
+            pending_catalog[0].fulfill(json={"coverage_universe": [f"type-{index}" for index in range(17)], "customers": []})
+            expect(page.get_by_role("heading", name="历史原件.xlsx", exact=True)).to_be_visible()
+            browser.close()
+
     def test_native_rule_customer_scope_is_explained_without_publishing_or_replacing_the_draft(self):
         from playwright.sync_api import expect
 

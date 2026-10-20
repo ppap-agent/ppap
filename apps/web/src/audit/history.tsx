@@ -21,9 +21,15 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [reload, setReload] = useState(0), [listReload, setListReload] = useState(0)
   const [open, setOpen] = useState(false), [reportView, setReportView] = useState(initialAddress.report)
   const epoch = useRef(0)
+  const preliminary = useRef<{reference: ResultReference; read: Promise<HistoryDetail>} | null>(null)
   useEffect(() => {
     let current = true
     setLoading(true); setError('')
+    const reference = !initialAddress.invalid ? initialAddress.reference || document?.latest_completed?.reference : null
+    const early = reference ? {reference: structuredClone(reference), read: adapter.readHistory(documentId, structuredClone(reference))} : null
+    // Selection still comes from the history list. Keep an early rejection handled until then.
+    void early?.read.catch(() => {})
+    preliminary.current = early
     void adapter.listHistory(documentId).then(result => {
       if (!current) return
       if (result.document.document_id !== documentId || result.entries.some(row => row.document_id !== documentId) || new Set(result.entries.map(row => resultKey(row.reference))).size !== result.entries.length) throw new Error('history_document_mismatch')
@@ -35,13 +41,16 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
       setHistory(result); setSelected(initial || null); setLoading(false)
       if (initial) onNavigate(initial.reference, initialAddress.report, true)
     }).catch(() => {if (current) {setError('历史审核清单暂不可用，未打开其他文档。'); setLoading(false)}})
-    return () => {current = false}
+    return () => {current = false; if (preliminary.current === early) preliminary.current = null}
   }, [adapter, documentId, listReload])
   useEffect(() => {
     if (!selected) return
     const run = ++epoch.current
     setDetail(null); setLoading(true); setError('')
-    void adapter.readHistory(documentId, structuredClone(selected.reference)).then(result => {
+    const early = preliminary.current
+    preliminary.current = null
+    const read = early && sameSnapshot(early.reference, selected.reference) ? early.read : adapter.readHistory(documentId, structuredClone(selected.reference))
+    void read.then(result => {
       if (epoch.current !== run) return
       const reference = selected.reference, audit = result.file.audit
       if (result.entry.document_id !== documentId || !sameSnapshot(result.entry.reference, reference) || result.entry.sequence !== selected.sequence || !historyShareMatches(result.entry, result.report_share) || result.file.file.id !== reference.file_version_id || result.file.selection !== 'selected' || !audit || result.entry.execution !== audit.execution || result.entry.conclusion !== audit.conclusion || !sameSnapshot(result.entry.report, audit.report) || !sameSnapshot(result.entry.report_access, result.report_access) || new Set(result.frozen_file_version_ids).size !== result.frozen_file_version_ids.length || new Set(result.originals.map(row => row.file_version_id)).size !== result.originals.length || audit.round_id !== reference.round_id || audit.result_attempt !== reference.result_attempt || audit.file_version_id !== reference.file_version_id || !result.frozen_file_version_ids.includes(reference.file_version_id) || result.originals.some(row => !result.frozen_file_version_ids.includes(row.file_version_id) || row.file && row.file.id !== row.file_version_id)) throw new Error('history_snapshot_mismatch')

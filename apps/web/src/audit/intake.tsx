@@ -102,6 +102,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return productLinks.find(link => link.view === view && (link.view !== 'requirements' || rules))?.view ?? 'audit'
   }
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
+  const [taskListOpened, setTaskListOpened] = useState(surface === 'audit')
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
@@ -475,7 +476,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     } catch {if (listEpoch.current === epoch) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}
   }
   const loadTasksCurrent = useRef(loadTasks); loadTasksCurrent.current = loadTasks
-  useEffect(() => {void loadTasksCurrent.current(); return () => {listEpoch.current += 1}}, [query, filter])
+  useEffect(() => {if (surface === 'audit') setTaskListOpened(true)}, [surface])
+  useEffect(() => {if (!taskListOpened) return; void loadTasksCurrent.current(); return () => {listEpoch.current += 1}}, [query, filter, taskListOpened])
   const shownTasks = tasks.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: ProductSurface) {
     setSheet(false)

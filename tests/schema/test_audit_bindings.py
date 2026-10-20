@@ -1077,6 +1077,29 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(self.display_client.get("/audit-archive").json()["total"], 0)
         self.assertEqual(self.display_client.get(history_path).status_code, 403)
 
+    def test_history_reads_reuse_one_connection_and_keep_the_task_projection(self):
+        from unittest.mock import patch
+
+        files = [self.upload(f"frozen-{index}.xlsx") for index in range(6)]
+        for index, file in enumerate(files):
+            self.store.save_file_source(file.id, "file", f"history-document-{index}")
+        _, task, _ = self.prepared_display_task(files=files)
+        expected = self.store.get_audit_task(self.alice, task["id"])
+        page = self.display_client.get("/audit-archive").json()
+        document_id = next(row["document_id"] for row in page["documents"] if row["title"] == files[0].original_filename)
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
+            history = self.store.read_audit_history(self.alice, document_id)
+        self.assertEqual(connections.call_count, 1, "history must not reconnect for every file or validation")
+        reference = history["entries"][0]["reference"]
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
+            detail = self.store.read_audit_history(self.alice, document_id, reference)
+        self.assertEqual(connections.call_count, 1, "detail and frozen originals must share the read transaction")
+        self.assertEqual(detail["file"], next(row for row in expected["files"] if row["file"]["id"] == files[0].id))
+        self.assertEqual(detail["entry"], history["entries"][0])
+        self.assertEqual(set(detail["frozen_file_version_ids"]), {file.id for file in files})
+        self.assertEqual({row["file"]["id"] for row in detail["originals"]}, {file.id for file in files})
+        self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)
+
     def test_usage_links_the_paid_file_to_its_own_history_and_keeps_fee_when_access_is_revoked(self):
         from ppap_core.db import connect
 

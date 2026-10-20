@@ -382,6 +382,7 @@ function Preview() {
   const controlled: AuditIntakeAdapter = {...adapter,
     listTasks: async args => {
       const result = await adapter.listTasks(args)
+      if (scene === 'archive-history-loads') return defer('审核任务清单', result)
       return scene === 'recognition-tasks-list-stale' && args.q ? defer('任务列表旧投影', result) : result
     },
     readValidation: async row => {
@@ -448,8 +449,17 @@ function Preview() {
     return delayedDisplay ? defer(`显示保存回执 · ${args[0].reference.file_version_id}`, structuredClone(result)) : result
   }}), [defer])
   const controlledArchive = useMemo(() => ({...archiveAdapter,
+    listDocuments: async (...args: Parameters<typeof archiveAdapter.listDocuments>) => {
+      const result = await archiveAdapter.listDocuments(...args)
+      return scene === 'archive-history-loads' ? defer('文件档案清单', result) : result
+    },
+    listHistory: async (...args: Parameters<typeof archiveAdapter.listHistory>) => {
+      const result = await archiveAdapter.listHistory(...args)
+      return scene === 'archive-history-loads' ? defer('历史审核清单', result) : result
+    },
     readHistory: async (...args: Parameters<typeof archiveAdapter.readHistory>) => {
       const result = await archiveAdapter.readHistory(...args)
+      if (scene === 'archive-history-loads') return defer('历史审核详情', result)
       return scene === 'archive-history-race' && result.entry.sequence === 2 ? defer('历史审核 · 第 2 次', result) : result
     },
   }), [defer])
@@ -518,7 +528,7 @@ function Preview() {
       return fixtureReviewRound(task)
     },
   }), [])
-  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'feedback-history-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'feedback-history-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
     <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }

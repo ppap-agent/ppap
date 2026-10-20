@@ -3010,7 +3010,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(table.get_by_role("row")).to_have_count(11)
             first = table.get_by_role("row", name=re.compile("档案 A001"))
             expect(first.get_by_text("第 3 次审核 · PASS", exact=True).last).to_be_visible()
-            expect(first.get_by_text("第 4 次审核中", exact=True).last).to_be_visible()
+            expect(first.get_by_text("第 4 次审核排队中", exact=True).last).to_be_visible()
             expect(table.get_by_text("控制计划.xlsx", exact=True)).to_have_count(2)
             expect(page.get_by_role("button", name="下一页", exact=True)).to_be_enabled()
             browser.close()

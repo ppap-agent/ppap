@@ -81,6 +81,8 @@ class ProductExperienceTests(unittest.TestCase):
         self.auth_store = auth_store_factory
 
     def test_round_findings_follow_effective_clause_order_not_lexical_ids(self):
+        from contextlib import nullcontext
+
         from ppap_product_store import AuthStore
 
         clauses = [{"id": str(number)} for number in (1, 2, 6, 10, 11)]
@@ -108,7 +110,7 @@ class ProductExperienceTests(unittest.TestCase):
             result.fetchone.return_value = None
             result.fetchall.return_value = []
             if "FROM product.audit_rounds" in sql:
-                result.fetchone.return_value = ("round", "completed", {}, None, None, 1, None, "deep", {})
+                result.fetchone.return_value = ("round", "completed", {}, None, None, 1, None, "deep", {}, False, None)
             elif "FROM product.round_inputs" in sql:
                 result.fetchall.return_value = inputs
             elif "FROM product.findings" in sql:
@@ -117,6 +119,7 @@ class ProductExperienceTests(unittest.TestCase):
 
         conn = Mock()
         conn.execute.side_effect = execute
+        conn.pipeline.return_value = nullcontext()
         body = AuthStore._round_public(object.__new__(AuthStore), conn, "round")
         self.assertEqual([item["locator"]["rule_item_id"] for item in body["findings"]], ["1", "2", "6", "10", "11"])
         self.assertEqual(body["findings"][2]["review"]["judgment"], "认可")

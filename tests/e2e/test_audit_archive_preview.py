@@ -19,6 +19,57 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditArchivePreviewTests(unittest.TestCase):
+    def test_explicit_history_reads_start_together_but_wait_for_selection_before_display(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive&archiveDoc=preview-archive-A001")
+            expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+            address = page.url.replace("scene=archive-ready", "scene=archive-history-loads")
+            for first, fail_detail in (("历史审核详情", False), ("历史审核清单", False), ("历史审核详情", True)):
+                with self.subTest(first=first, fail_detail=fail_detail):
+                    page.goto(address)
+                    events = page.get_by_role("complementary", name="预览事件控制", exact=True)
+                    expect(events.get_by_text("历史审核清单", exact=True)).to_have_count(1)
+                    expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
+                    self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], parse_qs(urlparse(address).query)["auditRef"])
+                    event = events.get_by_text(first, exact=True).locator("..")
+                    event.get_by_role("button", name=re.compile("令示例读取 .* 失败" if fail_detail else "返回示例读取 ")).click()
+                    expect(page.get_by_role("region", name="审核详情", exact=True)).to_have_count(0)
+                    events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
+                    if fail_detail:
+                        expect(page.get_by_role("alert")).to_contain_text("这次审核暂时无法读取")
+                        page.get_by_role("button", name="重新读取这次审核", exact=True).click()
+                        expect(events.get_by_text("历史审核清单", exact=True)).to_have_count(0)
+                        expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
+                        events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
+                    expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+                    expect(events.get_by_role("button")).to_have_count(0)
+            browser.close()
+
+    def test_history_deep_link_does_not_mount_twice_or_read_the_hidden_archive(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-history-loads&view=archive&archiveDoc=preview-archive-A001")
+            events = page.get_by_role("complementary", name="预览事件控制", exact=True)
+            expect(events.get_by_text("历史审核清单", exact=True)).to_have_count(1)
+            expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(0)
+            expect(events.get_by_text("审核任务清单", exact=True)).to_have_count(0)
+            events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
+            expect(events.get_by_text("历史审核详情", exact=True)).to_have_count(1)
+            events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
+            expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+            expect(events.get_by_role("button")).to_have_count(0)
+            page.get_by_role("button", name="返回文件档案", exact=True).click()
+            expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(1)
+            events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
+            expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            expect(events.get_by_text("审核任务清单", exact=True)).to_have_count(1)
+            expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(0)
+            browser.close()
+
     def test_file_table_owns_the_width_and_keeps_actions_on_one_line(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

@@ -178,6 +178,18 @@ class HttpAuthTests(unittest.TestCase):
         self.assertEqual(gone.status_code, 200)
         self.assertEqual(self.client.get("/me", cookies=cookies).status_code, 401)
 
+    def test_request_logging_never_loads_a_session_and_each_request_still_authenticates(self):
+        cookies = self._cookie("alice")
+        self.client.cookies.update(cookies)
+        with patch.object(self.store, "load_session", wraps=self.store.load_session) as loads:
+            self.assertEqual(self.client.get("/public-config").status_code, 200)
+            self.assertEqual(loads.call_count, 0, "public configuration must not authenticate just for logging")
+            self.assertEqual(self.client.get("/me").status_code, 200)
+            self.assertEqual(loads.call_count, 1, "logging must not repeat the route's session read")
+            self.store.revoke_session(cookies["ppap_session"])
+            self.assertEqual(self.client.get("/me").status_code, 401)
+            self.assertEqual(loads.call_count, 2, "a later request must not reuse a prior authorization")
+
     def test_object_grants_two_tenants(self):
         alice = self._cookie("alice")
         bob = self._cookie("bob")

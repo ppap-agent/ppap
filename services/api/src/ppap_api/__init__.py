@@ -158,6 +158,7 @@ def create_app(
     configure_logs(settings)
 
     def session_of(request: Request):
+        request.state.authenticated_principal = None
         raw = request.cookies.get(SESSION_COOKIE, "")
         if not raw:
             return None
@@ -172,10 +173,12 @@ def create_app(
                 store.revoke_session(raw)
                 return None
             store.update_provider_auth(raw, tokens)
-            return store.load_session(raw)
-        if session.provider_auth_dead(now):
+            session = store.load_session(raw)
+        elif session.provider_auth_dead(now):
             store.revoke_session(raw)
             return None
+        if session:
+            request.state.authenticated_principal = session.principal
         return session
 
     def principal_of(request: Request):
@@ -190,7 +193,7 @@ def create_app(
         started = time.perf_counter()
         try:
             response = await call_next(request)
-            principal = principal_of(request)
+            principal = getattr(request.state, "authenticated_principal", None)
             if principal:
                 tokens.extend(bind(tenant_id=principal.tenant_id))
             if path not in QUIET_PATHS:
