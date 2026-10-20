@@ -1,7 +1,6 @@
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.files import ObjectMissing, attachment_content_disposition, safe_content_type
-from ppap_core.identity import can_read
 from ppap_core.office_preview import preview_config, read_ticket
 
 from ppap_api import web_contract as wc
@@ -13,12 +12,9 @@ def register_office_routes(app, store, principal_of, settings):
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        resource_id = round_id or file_id
-        resource = store.resource(resource_id)
-        if resource is None or not can_read(principal, resource, store.grants(resource_id, principal.user_id)):
-            return JSONResponse({"error": "access_denied"}, status_code=403)
-        version = store.round_input_version(round_id, file_id, version_id) if round_id else store.get_version(file_id, version_id)
-        if version is None or version.tenant_id != principal.tenant_id:
+        try:
+            version = store.read_file_version(principal, file_id, version_id, round_id=round_id)
+        except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         if version.status != "ready":
             return JSONResponse({"error": "file_not_ready"}, status_code=409)

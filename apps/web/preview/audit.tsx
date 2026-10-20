@@ -2,6 +2,7 @@ import {createRoot} from 'react-dom/client'
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import '../src/index.css'
 import {AuditIntake, type AuditIntakeAdapter, type AuditTask, type AuditTaskFile} from '../src/audit/intake'
+import {summarizeTask} from '../src/audit/task-summary'
 import type {components} from '../src/generated/openapi'
 import {Button} from '../src/components/ui/button'
 import {fixtureAcceptance, fixtureProgress, fixtureResults, FixtureOriginal} from './audit-results'
@@ -179,6 +180,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       const next = await withReportBytes(fixtureResults(result, scene)); taskStore.set(id, next); return next
     }
     if (task.round_id) {const next = await withReportBytes(fixtureResults(task, scene)); taskStore.set(id, next); return next}
+    if (task.state === 'pending_confirm' && task.files.every(file => file.selection !== 'selected' || ['matched', 'reference', 'unmatched', 'failed'].includes(file.match?.state ?? ''))) return structuredClone(task)
     const next = fixtureMatch(task.files, task.analysis_mode, task.customer_preference, task, task.recognition_request_id || task.id)
     taskStore.set(id, next)
     return next
@@ -273,7 +275,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     }
     const tasks = [...taskStore.values()].filter(task => (!state || task.state === state) && `${task.number} ${task.files.map(row => row.file.original_filename).join(' ')}`.toLowerCase().includes(q.toLowerCase()))
     const page = tasks.slice(offset, offset + 20).map(task => scene === 'recognition-tasks-list-stale' && q ? recognitionReceipts.get(task.recognition_request_id || '') || task : task)
-    return {tasks: structuredClone(page), next_offset: tasks.length > offset + 20 ? offset + 20 : null}
+    return {tasks: structuredClone(page.map(summarizeTask)), next_offset: tasks.length > offset + 20 ? offset + 20 : null}
   },
 }
 

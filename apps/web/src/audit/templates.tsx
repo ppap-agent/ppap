@@ -41,6 +41,7 @@ export function AuditTemplates({active, adapter, sharingAdapter, permissionAdapt
   useEffect(() => {if (!active) {setPreview(null); setSharingKey(''); setPermissionKey('')}}, [active])
   useEffect(() => {alive.current = true; return () => {alive.current = false}}, [])
   useEffect(() => {
+    if (!active) return
     let current = true
     setCatalogError('')
     void adapter.readCatalog().then(result => {
@@ -50,10 +51,11 @@ export function AuditTemplates({active, adapter, sharingAdapter, permissionAdapt
       setCustomerId(previous => result.customers.some(row => row.customer_id === previous) ? previous : result.customers[0]?.customer_id || '')
     }).catch(() => {if (current) setCatalogError('客户目录暂时无法读取，请重试。')})
     return () => {current = false}
-  }, [adapter, reloadCatalog])
+  }, [adapter, reloadCatalog, active])
   useEffect(() => {
     const run = ++epoch.current
     const listTemplates = adapter.listTemplates
+    if (!active) {setLoading(false); return}
     if (!customerId || !listTemplates) {setPage(null); setLoading(false); setError(''); return}
     setLoading(true); setError('')
     const query: TemplateQuery = {customer_id: customerId, search: search.trim(), page: pageNumber, page_size: 10}
@@ -65,7 +67,7 @@ export function AuditTemplates({active, adapter, sharingAdapter, permissionAdapt
       }).catch(() => {if (epoch.current === run) setError('暂时无法读取所选客户的模板，请重试。')}).finally(() => {if (epoch.current === run) setLoading(false)})
     }, search ? 250 : 0)
     return () => {window.clearTimeout(timer); epoch.current += 1}
-  }, [adapter, customerId, search, pageNumber, reloadPage])
+  }, [adapter, customerId, search, pageNumber, reloadPage, active])
   function chooseCustomer(id: string) {if (id === customerId) return; epoch.current += 1; setSharingKey(''); setPermissionKey(''); setCustomerId(id); setSearch(''); setPageNumber(1); setPage(null); setDownloadError('')}
   function reloadTemplates() {setDownloadError(''); setReloadPage(value => value + 1)}
   const customers = catalog?.customers.filter(row => row.name.toLowerCase().includes(customerSearch.toLowerCase())) || []

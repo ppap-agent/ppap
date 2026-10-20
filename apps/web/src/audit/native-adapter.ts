@@ -332,7 +332,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       }
     },
     endTask: task => request<AuditTask>(`${taskPath(task.id)}/end`, 'POST', {expected_revision: task.input_revision ?? 0, removals: removals(task)}),
-    listTasks: ({q, state, offset}) => request(`/audit-tasks?${new URLSearchParams({q, state: state || '', offset: String(offset)})}`),
+    listTasks: ({q, state, offset, signal}) => request(`/audit-tasks?${new URLSearchParams({q, state: state || '', offset: String(offset)})}`, 'GET', undefined, signal),
     authenticate: async () => {await request('/me')},
   }
 }

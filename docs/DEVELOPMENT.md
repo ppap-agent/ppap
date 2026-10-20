@@ -166,6 +166,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 
 确认前的任务使用 `POST /audit-tasks`、`GET /audit-tasks` 和 `GET /audit-tasks/{id}`。创建请求固定文件版本、每份预检查回执、选中/未选/已移除来源、模式和客户倾向；同一请求 ID 不允许替换输入。它复用私有 `audit_drafts` 和逐文件识别 job，在同一事务分配 UTC 日编号并入队，不创建审核轮次或消费。Worker 只消费创建时冻结的生效候选；按客户×文件类型及已明确确认的不限客户范围匹配，不用范围未确认的规则兜底。读取固定 job，不取该文件最新识别；提取/模型失败与未匹配分开。
 
+`GET /audit-tasks` 只返回任务摘要及完整文件身份、选择状态，不构造规则正文、审核结果或报告；打开任务后再读 `/audit-tasks/{id}`。摘要不能替换完整任务快照；若恢复回执落后于已知摘要，重新读完整详情，不拼接两个修订的字段。原件读取在同一连接内核对当前授权、文件及版本；轮次入口还核对冻结输入归属，不复用过期授权。
+
 返回修改后，仍用 `POST /audit-tasks`，同时提交原 `task_id`、当前 `expected_revision` 和新的 `request_id`。初始输入修订为 0；重新识别在同一事务增加修订、保存完整来源并替换逐文件 job 引用。旧 job 回执只归原 job；Worker 读到旧代次时跳过文件解析和模型调用，已开始的外部调用不承诺可取消。`GET /audit-tasks/{id}/recognitions/{request_id}` 读取原请求受理回执及当前任务；回执修订与当前输入修订可以不同。`unknown` 不证明请求未受理，不能据此自动重发或生成新请求。
 
 `POST /audit-tasks/{id}/end` 必须带 `expected_revision`，仅结束全部选中文件已明确未匹配的任务；失败或未知不能当作零匹配。该动作可同时保存未匹配文件的 `removals`（版本与原因），不要求再次识别，也不产生审核或消费。任务沿用私有草稿授权，不出现在旧草稿清单，也不能通过旧草稿修改/受理接口绕过固定输入。已移除来源可以没有预检查回执；这不允许选中文件跳过预检查。
@@ -177,6 +179,8 @@ UI-first contracts without a runtime operation are explicit OpenAPI components m
 V3.1 的 `/audit` 与 `/__audit-native` 共用 `audit.html → src/audit/native-main.tsx`，开发服务器与正式 Web 构建均使用这一入口，默认首页不切换；4185 仍是独立 fixtures。复用同一个 `AuditIntake`、登录、上传、预检查、Task/Round 读取和原件阅读器。新版入口仅走网络，不回退到旧版 PWA 壳。集群经 edition proxy 打开时，先使用 `/enter-current?return_to=<同源完整审核地址>` 登录并选择 current，再返回精确的任务/报告 URL；该路由仍执行租户名单限制，不授予任务访问权。真实 Round 投影保留机器观察、覆盖与独立人工记录；P5 并列展示已保存的人工判断、理由、版本及冻结文件引用，不改变机器结论或报告资格，也不将人工位置文字伪装为自动定位。未验证证据不能成为正式 PASS/NG 或报告。Standard 在同一个 job/attempt 内隔离逐文件读取、准备和执行异常，保留其他文件结果；不可读取的冻结文件不进入可用上下文，依赖它的查询产生执行错误，不冒充未提交文档。Task 与历史 Round 阅读共用文件异常投影，单条错误不覆盖其他已完成条款。Deep 的逐文件隔离与整体跨文件语义审核质量仍待验证；正式 PDF/ZIP、飞书与用量尚须接通和验收。
 
 `/audit?view=requirements` 提供用户上传审核规则的入口，复用现有 `RequirementLibraryPanel` 和 `/rules` 的原件上传、条款解析、人工核对、版本发布与读回，不另建规则库。上传原件不等于规则已生效；保存版本后刷新客户匹配目录，既有任务仍使用原冻结版本。刷新只更新目录，不重建持有预检查请求身份的适配器。规则页切换、搜索和版本导航须保留外层 `history.state`，避免返回审核时丢失未确认文件及勾选。隐藏面板的迟到上传或保存只更新记录，不能切换页面或对象；重新打开同一草稿详情时可采用其已保存回执。本机草稿恢复后返回原生规则入口，不跳入预览页。
+
+规则目录先读 `/rule-library` 的当前租户元信息；仅打开所选版本时读取正文与原件元信息，版本比较再读明确的前置版本。版本按显式 predecessor 分组，同范围独立规则不合并。离开面板后停止新读取，返回时刷新；取消或错身份的回执不能显示为当前版本，读取已发布版本不能替换本机草稿。
 
 `/__audit-native?round=<id>` 复用 P5 阅读已授权的历史 Round，不要求补建 Task 或事项。`GET /rounds/{id}?read_view=true` 从本轮冻结输入提供文件级结果与原件元信息；普通 Round 读取响应保持不变。旧 engine/presence 和无明确条款关联的 Finding、人工记录单独保留，不猜测条款关系、不增加正式报告资格；原件继续走本轮授权路径。返回入口仍指向同一 Round 的原审核页面。
 

@@ -24,6 +24,7 @@ import {receiveRequirement, RuleExtraction} from './rule-extraction'
 import {canonical, publishBasis} from './product'
 import {isPreview} from './access'
 import {message as errorMessage} from './remote'
+import {requirementDirectory, type ReadRequirementVersions, type RequirementDirectoryCollection, type RequirementDirectoryVersion} from './requirement-directory'
 
 const routeSelection = () => ({id: new URLSearchParams(location.search).get('requirement') ?? '', version: new URLSearchParams(location.search).get('reqVersion') ?? ''})
 const routeQuery = () => (new URLSearchParams(location.search).get('reqQuery') ?? '').slice(0, 200)
@@ -50,11 +51,12 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true, automaticMatching = false}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0}: {
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
   title?: string; uploadLabel?: string; onPublished?: () => void; active?: boolean; automaticMatching?: boolean
+  directory?: RequirementDirectoryCollection[]; readVersions?: ReadRequirementVersions; readRevision?: number
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [query, setQuery] = useState(routeQuery)
@@ -67,19 +69,50 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const sourceTrigger = useRef<HTMLButtonElement>(null)
   const visibility = useRef({active, revision: 0}), uploadRevision = useRef(0)
   const savedSelections = useRef(new Map<string, {id: string; version: string}>())
+  const changeCollections = useRef(onChange); changeCollections.current = onChange
+  const [versionRead, setVersionRead] = useState<{key: string; versions: RequirementVersion[]; error: string; loading: boolean}>({key: '', versions: [], error: '', loading: false})
+  const [versionRetry, setVersionRetry] = useState(0)
   if (visibility.current.active !== active) visibility.current = {active, revision: visibility.current.revision + 1}
   const latestSelection = useRef(selection); latestSelection.current = selection
   useEffect(() => {if (!active) {setSourceClause(null); setDiscard(false)}}, [active])
   const collection = collections.find(item => item.id === selection.id)
+  const catalog = requirementDirectory(collections, directory)
+  const catalogCollection = catalog.find(item => item.id === selection.id)
   const draftSelected = Boolean(collection?.draft && (!selection.version || selection.version === 'draft'))
-  const current = draftSelected ? collection!.draft! : selection.version ? collection?.versions.find(version => version.id === selection.version) : collection?.versions.at(-1)
-  const base = current?.baseId ? collection?.versions.find(version => version.id === current.baseId) : undefined
+  const selectedVersion = selection.version ? catalogCollection?.versions.find(version => version.id === selection.version) : catalogCollection?.versions.at(-1)
+  const storedCurrent = draftSelected ? collection!.draft! : selection.version ? collection?.versions.find(version => version.id === selection.version) : collection?.versions.at(-1)
+  const baseId = content === 'changes' ? (draftSelected ? storedCurrent?.baseId : selectedVersion?.baseId) : null
+  const versionIds = [...new Set([!draftSelected ? selectedVersion?.id : null, baseId].filter((id): id is string => Boolean(id)))]
+  const versionIdsKey = versionIds.join(',')
+  const versionKey = `${selection.id}:${versionIdsKey}:${visibility.current.revision}:${readRevision}:${versionRetry}`
+  const remoteRequired = Boolean(readVersions && versionIds.length)
+  const remoteReady = versionRead.key === versionKey && !versionRead.loading && !versionRead.error && !loading && !readError
+  const current = !remoteRequired ? storedCurrent : remoteReady ? draftSelected ? storedCurrent : versionRead.versions.find(version => version.id === selectedVersion?.id) : undefined
+  const base = baseId ? readVersions ? versionRead.key === versionKey ? versionRead.versions.find(version => version.id === baseId) : undefined : collection?.versions.find(version => version.id === baseId) : undefined
   const issues = collection ? libraryDraftIssues(collection) : []
+  if (collection?.draft && catalogCollection?.versions.some(version => version.version.trim().toLowerCase() === collection.draft!.basis.source.version.trim().toLowerCase()) && !issues.includes('此版本号已存在，请使用新的版本号。')) issues.push('此版本号已存在，请使用新的版本号。')
   const related = uses.filter(use => collection?.versions.some(version => use.basis.source.id === version.id || use.basis.library?.versionId === version.id))
-  const shown = collections.filter(item => {
+  const shown = catalog.filter(item => {
     const content = item.draft ?? item.versions.at(-1)
-    return content && `${content.basis.source.title} ${scopeLabel(content.scope)}`.toLowerCase().includes(query.trim().toLowerCase())
+    return content && `${content.title} ${scopeLabel(content.scope)}`.toLowerCase().includes(query.trim().toLowerCase())
   })
+  useEffect(() => {
+    if (!readVersions || !active || !versionIdsKey || loading || readError) return
+    const controller = new AbortController(), key = versionKey, owner = selection.id
+    const ids = versionIdsKey.split(',')
+    setVersionRead({key, versions: [], error: '', loading: true})
+    void readVersions(ids, controller.signal).then(versions => {
+      if (controller.signal.aborted) return
+      if (versions.length !== ids.length || ids.some(id => versions.filter(version => version.id === id).length !== 1)) throw new Error('要求版本回执不完整，未显示其他版本。')
+      changeCollections.current(items => {
+        const found = items.find(item => item.id === owner)
+        const next = {...(found ?? {id: owner, draft: null, versions: []}), versions: [...(found?.versions ?? []).filter(version => !ids.includes(version.id)), ...versions].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))}
+        return found ? items.map(item => item.id === owner ? next : item) : [...items, next]
+      })
+      setVersionRead({key, versions, error: '', loading: false})
+    }).catch(cause => {if (!controller.signal.aborted) setVersionRead({key, versions: [], error: errorMessage(cause), loading: false})})
+    return () => controller.abort()
+  }, [readVersions, active, versionIdsKey, versionKey, selection.id, loading, readError])
   function select(id: string, version = '', replace = false) {
     setSelection({id, version}); setAck(false); setFeedback(null); setEditing(null); setSourceClause(null)
     history[replace ? 'replaceState' : 'pushState'](history.state, '', requirementHref(id, version))
@@ -166,8 +199,8 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
   const changed = current?.basis.clauses.filter(clause => !base || clauseContent(clause) !== clauseContent(base.basis.clauses.find(old => old.id === clause.id) ?? {...clause, text: ''})) ?? []
   const removed = base?.basis.clauses.filter(old => !current?.basis.clauses.some(clause => clause.id === old.id)) ?? []
   const source = current?.basis.clauses.find(clause => clause.id === sourceClause)
-  function versionDetail(version: RequirementVersion) {
-    const sameName = collection?.versions.filter(item => item.basis.source.version === version.basis.source.version) ?? []
+  function versionDetail(version: RequirementDirectoryVersion) {
+    const sameName = catalogCollection?.versions.filter(item => item.version === version.version) ?? []
     if (sameName.length < 2) return ''
     return version.at && sameName.filter(item => item.at === version.at).length === 1 ? `保存于 ${new Date(version.at).toLocaleString('zh-CN')}` : `记录 ${version.id.slice(0, 8)}`
   }
@@ -189,9 +222,9 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
       {shown.length ? <>
         <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-[40%]">要求名称</TableHead><TableHead>适用范围</TableHead><TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{shown.map(item => {
           const latest = item.draft ?? item.versions.at(-1)!
-          return <TableRow key={item.id} className="relative"><TableCell className="whitespace-normal"><a className="flex items-start gap-2.5 py-1 text-left font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{latest.basis.source.title || '待命名要求'}</span></a></TableCell><TableCell className="whitespace-normal break-words"><span className="text-muted-foreground">{listScope(latest.scope)}</span></TableCell><TableCell className="whitespace-normal"><div className="flex flex-wrap items-center gap-2"><span className="break-words">{latest.basis.source.version || '版本待核对'}</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></TableCell><TableCell><span className="tabular-nums">{latest.basis.clauses.length}</span></TableCell><TableCell><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true"/></TableCell></TableRow>
+          return <TableRow key={item.id} className="relative"><TableCell className="whitespace-normal"><a className="flex items-start gap-2.5 py-1 text-left font-medium underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground"/><span className="min-w-0 break-words">{latest.title || '待命名要求'}</span></a></TableCell><TableCell className="whitespace-normal break-words"><span className="text-muted-foreground">{listScope(latest.scope)}</span></TableCell><TableCell className="whitespace-normal"><div className="flex flex-wrap items-center gap-2"><span className="break-words">{latest.version || '版本待核对'}</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></TableCell><TableCell><span className="tabular-nums">{latest.clauseCount}</span></TableCell><TableCell><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true"/></TableCell></TableRow>
         })}</TableBody></Table></div>
-        <ul className="divide-y border-y lg:hidden" aria-label="要求目录">{shown.map(item => {const latest = item.draft ?? item.versions.at(-1)!; return <li key={item.id}><a className="flex items-center gap-3 py-4 text-left focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><div className="min-w-0 flex-1 space-y-1.5"><p className="break-words font-medium">{latest.basis.source.title || '待命名要求'}</p><p className="break-words text-muted-foreground">{listScope(latest.scope)}</p><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{latest.basis.source.version || '版本待核对'} · {latest.basis.clauses.length} 条</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></div><ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/></a></li>})}</ul>
+        <ul className="divide-y border-y lg:hidden" aria-label="要求目录">{shown.map(item => {const latest = item.draft ?? item.versions.at(-1)!; return <li key={item.id}><a className="flex items-center gap-3 py-4 text-left focus-visible:outline-ring" href={requirementHref(item.id)} onClick={event => navigate(event, item.id)}><div className="min-w-0 flex-1 space-y-1.5"><p className="break-words font-medium">{latest.title || '待命名要求'}</p><p className="break-words text-muted-foreground">{listScope(latest.scope)}</p><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{latest.version || '版本待核对'} · {latest.clauseCount} 条</span>{item.draft && <Badge variant="outline">草稿</Badge>}</div></div><ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/></a></li>})}</ul>
       </> : !loading && !readError && <div className="space-y-3 py-12 text-center"><BookOpen className="mx-auto size-7 text-muted-foreground"/><h2 className="text-lg font-semibold">{query ? '没有匹配的要求' : '还没有审核要求'}</h2><Button variant="outline" onClick={() => query ? search('') : picker.current?.click()}>{query ? '清除搜索' : '选择要求文件'}</Button></div>}
     </> : current && collection ? <>
       <header className="space-y-4">
@@ -199,7 +232,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
             <Select value={draftSelected ? 'draft' : current.id} onValueChange={value => select(collection.id, value, true)} disabled={locked}>
               <SelectTrigger aria-label="要求版本" className="min-w-0 max-w-full"><SelectValue className="min-w-0">版本 {current.basis.source.version || '待核对'}</SelectValue></SelectTrigger>
-              <SelectContent position="popper" align="start" className="max-w-[calc(100vw-2rem)]">{[...collection.versions].reverse().map(version => <SelectItem key={version.id} value={version.id} textValue={`${version.basis.source.version} ${versionDetail(version)}`}><span className="grid min-w-0 gap-0.5 whitespace-normal break-words"><span>{version.basis.source.version} · 已保存</span>{versionDetail(version) && <span className="text-xs text-muted-foreground">{versionDetail(version)}</span>}</span></SelectItem>)}{collection.draft && <SelectItem value="draft">{collection.draft.basis.source.version || '新版本'} · 草稿</SelectItem>}</SelectContent>
+              <SelectContent position="popper" align="start" className="max-w-[calc(100vw-2rem)]">{[...(catalogCollection?.versions ?? [])].reverse().map(version => <SelectItem key={version.id} value={version.id} textValue={`${version.version} ${versionDetail(version)}`}><span className="grid min-w-0 gap-0.5 whitespace-normal break-words"><span>{version.version} · 已保存</span>{versionDetail(version) && <span className="text-xs text-muted-foreground">{versionDetail(version)}</span>}</span></SelectItem>)}{collection.draft && <SelectItem value="draft">{collection.draft.basis.source.version || '新版本'} · 草稿</SelectItem>}</SelectContent>
             </Select>
             <Badge variant="outline">{draftSelected ? '草稿' : '已保存'}</Badge>
             <span className="text-muted-foreground">{current.basis.clauses.length} 条</span>
@@ -240,7 +273,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">草稿保存在本机；保存新版不改变已有事项。</p><div className="flex items-center gap-2"><DialogTrigger asChild><Button variant="ghost" disabled={locked}>放弃草稿</Button></DialogTrigger><Button disabled={locked || Boolean(readError) || issues.length > 0 || !ack || Boolean(saveError)} onClick={() => void save()}>{publishing ? <Loader2 className="animate-spin motion-reduce:animate-none"/> : <Check/>}{publishing ? '正在保存版本…' : '确认并保存版本'}</Button></div></div>
       </footer>}
       {related.length > 0 && <section className="border-t pt-4"><Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">本浏览器引用 · {related.length} 个事项</Button></CollapsibleTrigger><CollapsibleContent><div className="divide-y">{related.map(use => <div className="flex flex-wrap items-center justify-between gap-3 py-3" key={use.id}><div className="min-w-0 space-y-1"><p className="break-words font-medium">{use.title}</p><p className="text-xs text-muted-foreground">{use.basis.source.version} · {use.submitted ? '依据已固定' : '未登记'}</p></div><Button variant="ghost" onClick={() => onOpen(use.id)}>查看事项<ArrowRight/></Button></div>)}</div></CollapsibleContent></Collapsible></section>}
-    </> : !loading && !readError && <div className="space-y-3 py-12 text-center"><h1 className="text-xl font-semibold">暂时无法打开此要求版本</h1><p className="text-muted-foreground">记录不可用；未自动改选其他版本。</p><Button asChild variant="outline"><a href={requirementHref()} onClick={event => navigate(event)}>返回要求列表</a></Button></div>}
+    </> : remoteRequired && !loading && !readError ? versionRead.key === versionKey && versionRead.error ? <Alert variant="destructive"><AlertTitle>要求版本未能读取</AlertTitle><AlertDescription><p>{versionRead.error}</p><Button variant="outline" onClick={() => setVersionRetry(value => value + 1)}>重新读取版本</Button></AlertDescription></Alert> : <p role="status" className="text-muted-foreground">正在读取要求版本…</p> : !loading && !readError && <div className="space-y-3 py-12 text-center"><h1 className="text-xl font-semibold">暂时无法打开此要求版本</h1><p className="text-muted-foreground">记录不可用；未自动改选其他版本。</p><Button asChild variant="outline"><a href={requirementHref()} onClick={event => navigate(event)}>返回要求列表</a></Button></div>}
     <Sheet open={active && Boolean(source)} onOpenChange={open => !open && setSourceClause(null)}><SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-full sm:data-[side=right]:max-w-lg" onCloseAutoFocus={event => {if (active && sourceTrigger.current?.isConnected) {event.preventDefault(); sourceTrigger.current.focus()}}}>
       <div className="pr-12"><SheetHeader><SheetTitle>{source ? `条款 ${source.id} · 核对出处` : '条款出处'}</SheetTitle><SheetDescription>{source ? `${source.source} · ${source.location || '出处待核对'}` : '对照原件核对条款。'}</SheetDescription></SheetHeader></div>
       {source && current && <div className="space-y-6 py-2 text-sm">{draftSelected && <RequirementSourceSelect basis={current.basis} clause={source} disabled={locked} onChange={clause => patchClause(source.id, clause)}/>}<section className="space-y-2"><h2 className="text-sm font-medium">来源摘录</h2><blockquote className="whitespace-pre-wrap break-words border-l pl-3 leading-relaxed">{clauseSourceReady(source, current.basis) ? source.original : '尚未关联原文位置。请选择对应原文，并对照原件核对。'}</blockquote></section><section className="space-y-2"><h2 className="text-sm font-medium">本版本条款</h2><p className="whitespace-pre-wrap break-words leading-relaxed">{source.text || '尚未录入条款。'}</p></section></div>}

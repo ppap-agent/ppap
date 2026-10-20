@@ -492,11 +492,12 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
 
     @app.get("/rounds/{round_id}/files/{file_id}/versions/{version_id}/download")
     def rounds_download(round_id: str, file_id: str, version_id: str, request: Request):
-        principal, denied = require_object(request, round_id)
+        principal, denied = require_principal(request)
         if denied:
             return denied
-        version = store.round_input_version(round_id, file_id, version_id)
-        if version is None or version.tenant_id != principal.tenant_id:
+        try:
+            version = store.read_file_version(principal, file_id, version_id, round_id=round_id)
+        except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         try:
             data = store.version_bytes(version)
@@ -539,11 +540,12 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
     def rounds_preview(round_id: str, file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
 
-        principal, denied = require_object(request, round_id)
+        principal, denied = require_principal(request)
         if denied:
             return denied
-        version = store.round_input_version(round_id, file_id, version_id)
-        if version is None or version.tenant_id != principal.tenant_id:
+        try:
+            version = store.read_file_version(principal, file_id, version_id, round_id=round_id)
+        except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         if version.byte_size > MAX_PREVIEW_BYTES:
             return JSONResponse({"available": False, "notice": "文件过大，请下载原件。"})

@@ -45,6 +45,7 @@ import type {AuditUsageAdapter} from './usage-contract'
 import {reconcileTaskDisplay, unconfirmedDisplayAccess, type DisplayInfo, type DisplayReference} from './display-info-contract'
 import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
+import {reconcileTaskSummary, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -57,7 +58,7 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   autoValidate?: boolean
   readValidation: (file: AuditTaskFile) => Promise<{validation: AuditTaskFile['validation']; validation_id?: string}>
   endTask: (task: AuditTask) => Promise<AuditTask>
-  listTasks: (query: {q: string; state: AuditTask['state'] | null; offset: number}) => Promise<{tasks: AuditTask[]; next_offset: number | null}>
+  listTasks: (query: {q: string; state: AuditTask['state'] | null; offset: number; signal?: AbortSignal}) => Promise<{tasks: TaskSummary[]; next_offset: number | null}>
   authenticate: () => Promise<void>
 }
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
@@ -102,7 +103,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return productLinks.find(link => link.view === view && (link.view !== 'requirements' || rules))?.view ?? 'audit'
   }
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
-  const [taskListOpened, setTaskListOpened] = useState(surface === 'audit')
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [templatesOpened, setTemplatesOpened] = useState(surface === 'templates')
@@ -140,6 +140,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [customer, setCustomer] = useState('auto')
   const [task, setTask] = useState<AuditTask | null>(null)
   const [tasks, setTasks] = useState<AuditTask[]>([])
+  const [summaries, setSummaries] = useState<TaskSummary[]>([])
+  const latestSummaries = useRef(summaries); latestSummaries.current = summaries
   const latestTasks = useRef(tasks); latestTasks.current = tasks
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const [sheet, setSheet] = useState(false)
@@ -194,6 +196,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (activate) activeTaskId.current = next.id
     setTask(current => activate || updateActive && current?.id === next.id ? mergeTaskSnapshot(current?.id === next.id ? current : undefined, combined) : current)
     setTasks(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? mergeTaskSnapshot(row, combined) : row) : [...rows, combined])
+    setSummaries(rows => rows.some(row => row.id === next.id) ? rows.map(row => row.id === next.id ? reconcileTaskSummary(row, summarizeTask(combined)) : row) : [...rows, summarizeTask(combined)])
     return combined
   }
   function changeDisplay(reference: DisplayReference, info: DisplayInfo) {
@@ -279,20 +282,6 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
   function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
-  function openTask(row: AuditTask) {
-    if (!acceptance.restore(row)) {setError('任务回执与原请求不一致，未替换当前文件。'); return}
-    restoreEpoch.current += 1; setRecovery(null)
-    retainDraft()
-    clearReads()
-    activeUploadDraftId.current = null
-    activeTaskId.current = row.id
-    if (recognition.get(row.id)) recognitionTargets.current.set(row.id, {epoch: draftEpoch.current, uploadId: null})
-    const current = saveTask(row, {activate: true})
-    const saved = current.round_id ? undefined : drafts.current.get(current.id)
-    if (saved) uploads.restore(saved.uploads)
-    setFiles(structuredClone(saved ? mergeFileIntent(saved.files, current.files) : current.files)); setMode(saved?.mode ?? current.analysis_mode); setCustomer(saved?.customer ?? current.customer_preference ?? 'auto'); setStep(saved?.step ?? 'match'); setSheet(false)
-    taskAddress(current.id)
-  }
   async function recover(id: string, login = false) {
     const epoch = ++restoreEpoch.current
     acceptance.suspend(id)
@@ -300,9 +289,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = null; setTask(null); setFiles([]); setRecovery({id, state: 'loading', message: ''})
     try {
       if (login) await adapter.authenticate()
-      const next = await adapter.readTask(id)
+      let next = await adapter.readTask(id)
+      if (restoreEpoch.current !== epoch) return
+      const behind = () => taskIsBehindSummary(next, latestSummaries.current.find(row => row.id === id))
+      if (behind()) next = await adapter.readTask(id)
       if (restoreEpoch.current !== epoch) return
       if (next.id !== id) throw new Error('task_identity_mismatch')
+      if (behind()) throw new Error('task_snapshot_changed')
       if (!acceptance.restore(next)) throw new Error('acceptance_snapshot_mismatch')
       if (recognition.get(id)) recognitionTargets.current.set(id, {epoch: draftEpoch.current, uploadId: null})
       setEndStatus(rows => {if (rows[id] !== 'rejected') return rows; const nextRows = {...rows}; delete nextRows[id]; return nextRows})
@@ -462,23 +455,29 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }, [reviewEditor?.revision])
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
   useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
-  async function loadTasks(offset = 0) {
+  async function loadTasks(offset = 0, signal?: AbortSignal) {
     const epoch = ++listEpoch.current
     setTaskList(current => ({...current, busy: true, error: ''}))
     try {
-      const page = await latestAdapter.current.listTasks({q: query, state: filter === 'all' ? null : filter as AuditTask['state'], offset})
-      if (listEpoch.current !== epoch) return
-      setTasks(rows => [...rows.map(row => {
+      const page = await latestAdapter.current.listTasks({q: query, state: filter === 'all' ? null : filter as AuditTask['state'], offset, signal})
+      if (listEpoch.current !== epoch || signal?.aborted) return
+      setSummaries(rows => [...rows.map(row => {
         const next = page.tasks.find(candidate => candidate.id === row.id)
-        return next ? mergeTaskSnapshot(row, next) : row
+        return next ? reconcileTaskSummary(row, next) : row
       }), ...page.tasks.filter(next => !rows.some(row => row.id === next.id))])
       setTaskList({next: page.next_offset, busy: false, error: ''})
-    } catch {if (listEpoch.current === epoch) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}
+    } catch {if (listEpoch.current === epoch && !signal?.aborted) setTaskList(current => ({...current, busy: false, error: '任务列表读取失败。当前文件与任务仍保留。'}))}
   }
   const loadTasksCurrent = useRef(loadTasks); loadTasksCurrent.current = loadTasks
-  useEffect(() => {if (surface === 'audit') setTaskListOpened(true)}, [surface])
-  useEffect(() => {if (!taskListOpened) return; void loadTasksCurrent.current(); return () => {listEpoch.current += 1}}, [query, filter, taskListOpened])
-  const shownTasks = tasks.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
+  useEffect(() => {
+    if (surface !== 'audit') return
+    let controller: AbortController | undefined
+    const read = () => {controller?.abort(); if (document.hidden) return; controller = new AbortController(); void loadTasksCurrent.current(0, controller.signal)}
+    const timer = window.setTimeout(read, query ? 200 : 0)
+    document.addEventListener('visibilitychange', read)
+    return () => {window.clearTimeout(timer); document.removeEventListener('visibilitychange', read); controller?.abort(); listEpoch.current += 1}
+  }, [query, filter, surface])
+  const shownTasks = summaries.filter(row => (filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: ProductSurface) {
     setSheet(false)
     if (value === 'archive') setArchiveOpened(true)
@@ -512,7 +511,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     <Button variant="outline" onClick={newTask}><Plus/>新建审核任务</Button>
     <label className="flex items-center gap-2"><span className="sr-only">搜索任务文件</span><Search className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索文件名" value={query} onChange={event => setQuery(event.target.value)}/></label>
     <Select value={filter} onValueChange={setFilter}><SelectTrigger className="w-full" aria-label="任务状态"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(taskLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-    <nav className="grid gap-2" aria-label="任务列表">{shownTasks.length ? shownTasks.map(row => <Button key={row.id} variant={task?.id === row.id ? 'secondary' : 'ghost'} className="h-auto min-w-0 justify-start whitespace-normal text-left" onClick={() => openTask(row)}><span className="grid min-w-0 gap-1"><span>{row.number}</span><span className="text-xs">{taskProgressError(row) ? '任务进度待核对' : taskLabels[row.state]} · {row.files.filter(file => file.selection === 'selected').length} 份文件</span></span></Button>) : <p className="text-sm text-muted-foreground">{tasks.length ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}</nav>
+    <nav className="grid gap-2" aria-label="任务列表">{shownTasks.length ? shownTasks.map(row => <Button key={row.id} variant={task?.id === row.id ? 'secondary' : 'ghost'} className="h-auto min-w-0 justify-start whitespace-normal text-left" onClick={() => {setSheet(false); taskAddress(row.id); void recover(row.id)}}><span className="grid min-w-0 gap-1"><span>{row.number}</span><span className="text-xs">{taskLabels[row.state]} · {row.files.filter(file => file.selection === 'selected').length} 份文件</span></span></Button>) : <p className="text-sm text-muted-foreground">{summaries.length ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}</nav>
     {taskList.error && <p role="alert" className="text-xs">{taskList.error}</p>}
     {(taskList.next !== null || taskList.error) && <Button variant="outline" disabled={taskList.busy} onClick={() => void loadTasks(taskList.error ? 0 : taskList.next!)}>{taskList.busy ? '正在读取任务…' : taskList.error ? '重新读取任务列表' : '加载更多任务'}</Button>}
   </div>

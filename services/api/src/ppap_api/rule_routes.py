@@ -30,8 +30,8 @@ def template_catalog(store, tenant_id: str):
 
 
 def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
-    def sources(principal, file_id, version_id):
-        version = store.get_version(file_id, version_id)
+    def sources(principal, file_id, version_id, version=None):
+        version = version or store.get_version(file_id, version_id)
         if version is None or version.tenant_id != principal.tenant_id:
             raise KeyError("missing")
         content = store.version_bytes(version)
@@ -40,13 +40,21 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
         except Exception:
             raise ValueError("rule_source_unavailable") from None
 
+    @app.get("/rule-library", response_model=wc.RuleLibrary)
+    def read_rule_library(request: Request):
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401, headers={"Cache-Control": "private, no-store"})
+        return JSONResponse({"versions": store.list_rule_library(principal.tenant_id)}, headers={"Cache-Control": "private, no-store"})
+
     @app.get("/files/{file_id}/versions/{version_id}/rule-sources", response_model=wc.RuleSources)
     def read_rule_sources(file_id: str, version_id: str, request: Request):
-        principal, denied = require_file_read(request, file_id)
-        if denied:
-            return denied
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
         try:
-            _, units = sources(principal, file_id, version_id)
+            version = store.read_file_version(principal, file_id, version_id)
+            _, units = sources(principal, file_id, version_id, version)
             return JSONResponse({"file_version_id": version_id, "units": units}, headers={"Cache-Control": "private, no-store"})
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)

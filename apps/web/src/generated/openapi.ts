@@ -1608,6 +1608,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rule-library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Rule Library */
+        get: operations["read_rule_library_rule_library_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rule-types": {
         parameters: {
             query?: never;
@@ -2190,7 +2207,7 @@ export interface components {
             /** Next Offset */
             next_offset: number | null;
             /** Tasks */
-            tasks: components["schemas"]["AuditTask"][];
+            tasks: components["schemas"]["AuditTaskSummary"][];
         };
         /** AuditReportArtifact */
         AuditReportArtifact: {
@@ -2541,6 +2558,44 @@ export interface components {
             validation: components["schemas"]["AuditFileValidation"];
             /** Validation Id */
             validation_id?: string;
+        };
+        /** AuditTaskSummary */
+        AuditTaskSummary: {
+            /**
+             * Analysis Mode
+             * @enum {string}
+             */
+            analysis_mode: "standard" | "deep";
+            /** Completion Reason */
+            completion_reason: ("no_matching_rules" | "processed") | null;
+            /** Created At */
+            created_at: string;
+            /** Files */
+            files: components["schemas"]["AuditTaskSummaryFile"][];
+            /** Id */
+            id: string;
+            /** Input Revision */
+            input_revision: number;
+            /** Number */
+            number: string;
+            /** Round Id */
+            round_id: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "matching" | "pending_confirm" | "reviewing" | "completed";
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AuditTaskSummaryFile */
+        AuditTaskSummaryFile: {
+            file: components["schemas"]["FileVersion"];
+            /**
+             * Selection
+             * @enum {string}
+             */
+            selection: "selected" | "unselected" | "removed";
         };
         /**
          * AuditTemplateCatalog
@@ -3675,6 +3730,44 @@ export interface components {
             rule_to_check: string;
             /** Type Of Rule */
             type_of_rule: string;
+        };
+        /** RuleLibrary */
+        RuleLibrary: {
+            /** Versions */
+            versions: components["schemas"]["RuleLibraryEntry"][];
+        };
+        /** RuleLibraryEntry */
+        RuleLibraryEntry: {
+            /** Clause Count */
+            clause_count: number;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Predecessor Id */
+            predecessor_id: string | null;
+            /** Reason */
+            reason: string;
+            scope: components["schemas"]["RuleLibraryScope"];
+            /** Title */
+            title: string;
+            /** Version */
+            version: string;
+        };
+        /** RuleLibraryScope */
+        RuleLibraryScope: {
+            /** Allcustomers */
+            allCustomers: boolean;
+            /** Allparts */
+            allParts: boolean;
+            /** Allrevisions */
+            allRevisions: boolean;
+            /** Customer */
+            customer: string;
+            /** Part */
+            part: string;
+            /** Revision */
+            revision: string;
         };
         /** RuleParseJob */
         RuleParseJob: {
@@ -7530,6 +7623,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_rule_library_rule_library_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleLibrary"];
                 };
             };
         };

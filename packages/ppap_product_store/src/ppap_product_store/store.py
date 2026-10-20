@@ -741,10 +741,34 @@ class AuthStore:
             raise KeyError("missing")
         with self._conn() as conn:
             prepared = self._prepared_items(conn, principal, [{"file_version_id": vid, "role": "reference"}])
-        version = self.get_version(prepared[0]["file_id"], vid)
-        if version is None:
+            row = conn.execute(
+                "SELECT id, file_id, tenant_id, original_filename, content_type, byte_size, sha256, object_key, status FROM product.file_versions WHERE file_id = %s AND id = %s",
+                (prepared[0]["file_id"], vid),
+            ).fetchone()
+        if row is None:
             raise KeyError("missing")
-        return version
+        return self._version_from_row(row)
+
+    def read_file_version(self, principal: Principal, file_id: str, version_id: str, *, round_id: str | None = None) -> FileVersion:
+        fid, vid = _as_uuid(file_id), _as_uuid(version_id)
+        rid = _as_uuid(round_id) if round_id else fid
+        if not fid or not vid or not rid:
+            raise KeyError("missing")
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
+                    r.id, r.tenant_id, r.kind,
+                    EXISTS (SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
+                        WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL),
+                    ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s)
+                FROM product.file_versions f JOIN product.resources r ON r.id = %s
+                WHERE f.file_id = %s AND f.id = %s AND f.tenant_id = %s
+                  AND (%s OR EXISTS (SELECT 1 FROM product.round_inputs i WHERE i.round_id = r.id AND i.file_version_id = f.id))""",
+                (principal.user_id, rid, fid, vid, principal.tenant_id, round_id is None),
+            ).fetchone()
+        if row is None or row[11] != ("audit_round" if round_id else "file") or not can_read(principal, Resource(str(row[9]), str(row[10]), row[11], row[12]), set(row[13])):
+            raise KeyError("missing")
+        return self._version_from_row(row[:9])
 
     def put_blob(self, version: FileVersion, body: bytes) -> FileVersion:
         if len(body) > MAX_UPLOAD_BYTES:
@@ -1802,21 +1826,49 @@ class AuthStore:
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = conn.execute(
-                """SELECT d.id FROM product.audit_drafts d
-                LEFT JOIN product.audit_rounds r ON r.source_draft_id = d.id
-                WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
-                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
-                AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
-                AND (%s = '' OR %s = CASE WHEN d.task_completion_reason IS NOT NULL OR (r.execution IN ('completed', 'failed') AND NOT EXISTS (
+                """WITH visible AS (SELECT d.id, d.input_revision, d.analysis_mode, d.created_at, d.updated_at, d.task_day, d.task_sequence,
+                d.task_completion_reason, r.id AS round_id,
+                CASE WHEN d.task_completion_reason IS NOT NULL OR (r.execution IN ('completed', 'failed') AND NOT EXISTS (
                     SELECT 1 FROM engine.jobs p WHERE p.audit_round_id = r.id AND p.kind = 'report_pdf' AND p.status IN ('queued', 'leased')
                       AND NOT (p.payload ? 'regeneration_request_id'))) THEN 'completed'
                     WHEN r.id IS NOT NULL THEN 'reviewing'
                     WHEN EXISTS (SELECT 1 FROM product.draft_items i JOIN engine.jobs j ON j.id = i.analysis_job_id WHERE i.draft_id = d.id AND j.status IN ('queued', 'leased')) THEN 'matching'
-                    ELSE 'pending_confirm' END)
-                ORDER BY d.created_at DESC, d.id DESC LIMIT %s OFFSET %s""",
+                    ELSE 'pending_confirm' END AS state
+                FROM product.audit_drafts d
+                LEFT JOIN product.audit_rounds r ON r.source_draft_id = d.id
+                WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL
+                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                AND (%s = '' OR EXISTS (SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
+                ) SELECT * FROM visible WHERE (%s = '' OR state = %s) ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s""",
                 (principal.tenant_id, principal.user_id, principal.user_id, q, needle, state, state, limit, offset),
             ).fetchall()
-            return [self._recognition_public(conn, principal, str(row[0])) for row in rows]
+            if not rows:
+                return []
+            files = conn.execute(
+                """SELECT i.draft_id, i.selection, f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status
+                FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
+                WHERE i.draft_id = ANY(%s::uuid[]) ORDER BY i.draft_id, i.position""",
+                ([str(row[0]) for row in rows],),
+            ).fetchall()
+            self._prepared_items(conn, principal, [{"file_version_id": vid, "role": "reference"} for vid in dict.fromkeys(str(file[2]) for file in files)])
+            grouped: dict[str, list] = {}
+            for file in files:
+                grouped.setdefault(str(file[0]), []).append({"file": self._version_from_row(file[2:]).public(), "selection": file[1]})
+            return [
+                {
+                    "id": str(row[0]),
+                    "input_revision": row[1],
+                    "analysis_mode": row[2],
+                    "created_at": row[3].isoformat(),
+                    "updated_at": row[4].isoformat(),
+                    "number": f"PPAP-{row[5]:%Y%m%d}-{row[6]:03d}",
+                    "completion_reason": row[7] or ("processed" if row[8] and row[9] == "completed" else None),
+                    "round_id": str(row[8]) if row[8] else None,
+                    "state": row[9],
+                    "files": grouped.get(str(row[0]), []),
+                }
+                for row in rows
+            ]
 
     def end_unmatched_task(self, principal: Principal, task_id: str, expected_revision: int, removals: list) -> dict:
         with self._conn() as conn, conn.transaction():
@@ -1873,6 +1925,46 @@ class AuthStore:
                 }
             )
         return out
+
+    def list_rule_library(self, tenant_id: str) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT id, title, created_at, predecessor_id, body->'customers', body->'parts', case_context,
+                    CASE WHEN jsonb_typeof(body->'rules') = 'array' THEN jsonb_array_length(body->'rules') ELSE 0 END
+                FROM product.rule_versions WHERE tenant_id = %s AND body->>'kind' = 'engine' AND source_file_version_id IS NOT NULL
+                ORDER BY created_at DESC, id DESC""",
+                (tenant_id,),
+            ).fetchall()
+        versions = []
+        for row in rows:
+            customers, parts, context = row[4] or [], row[5] or [], row[6] or {}
+            try:
+                registration = json.loads(context.get("registration") or "{}")
+            except (TypeError, ValueError):
+                registration = {}
+            registration = registration if isinstance(registration, dict) else {}
+            stored_scope = registration.get("scope") or {}
+            stored_scope = stored_scope if isinstance(stored_scope, dict) else {}
+            scope = {"customer": customers[0] if customers else "", "part": parts[0] if parts else "", "revision": "", "allParts": not parts, "allRevisions": True}
+            scope.update({key: stored_scope[key] for key in ("customer", "part", "revision") if isinstance(stored_scope.get(key), str)})
+            scope.update({key: stored_scope[key] for key in ("allParts", "allRevisions") if isinstance(stored_scope.get(key), bool)})
+            scope["allCustomers"] = customer_scope({"customers": customers}, context) == "all"
+            basis = registration.get("basis")
+            source = basis.get("source") if isinstance(basis, dict) else None
+            version = source.get("version") if isinstance(source, dict) else None
+            versions.append(
+                {
+                    "id": str(row[0]),
+                    "title": row[1],
+                    "version": version if isinstance(version, str) else row[2].isoformat()[:16].replace("T", " "),
+                    "scope": scope,
+                    "reason": registration.get("reason") if isinstance(registration.get("reason"), str) else "",
+                    "created_at": row[2].isoformat(),
+                    "predecessor_id": str(row[3]) if row[3] else None,
+                    "clause_count": row[7],
+                }
+            )
+        return versions
 
     def get_rule(self, tenant_id: str, rule_version_id: str) -> dict | None:
         parsed = _as_uuid(rule_version_id)
@@ -2242,7 +2334,7 @@ class AuthStore:
                    ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
                 (principal.tenant_id, principal.user_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
             ).fetchall()
-            return [cast(dict, self._round_history(conn, row[0])) for row in rows]
+            return self._round_histories(conn, [str(row[0]) for row in rows])
 
     def round_input_version(self, round_id: str, file_id: str, version_id: str) -> FileVersion | None:
         rid, fid, vid = _as_uuid(round_id), _as_uuid(file_id), _as_uuid(version_id)
@@ -3379,30 +3471,29 @@ class AuthStore:
             ],
         }
 
-    def _round_history(self, conn, round_id) -> dict | None:
-        row = conn.execute(
-            """
-            SELECT id, execution, predecessor_id, created_at, analysis_mode, case_context, coverage
-            FROM product.audit_rounds WHERE id = %s
-            """,
-            (round_id,),
-        ).fetchone()
-        if not row:
-            return None
-        inputs = conn.execute(
-            """
-            SELECT i.role, fv.original_filename, fv.id, i.rule_version_id, i.rule_title
-            FROM product.round_inputs i
-            JOIN product.file_versions fv ON fv.id = i.file_version_id
-            WHERE i.round_id = %s
-            ORDER BY i.role, fv.original_filename
-            """,
-            (round_id,),
-        ).fetchall()
-        counts = conn.execute(
-            "SELECT status, COUNT(*), array_agg(item_key) FROM product.findings WHERE round_id = %s GROUP BY status",
-            (round_id,),
-        ).fetchall()
+    def _round_histories(self, conn, round_ids: list[str]) -> list[dict]:
+        if not round_ids:
+            return []
+        with conn.pipeline():
+            rounds = conn.execute("SELECT id, execution, predecessor_id, created_at, analysis_mode, case_context, coverage FROM product.audit_rounds WHERE id = ANY(%s::uuid[])", (round_ids,))
+            inputs = conn.execute(
+                """SELECT i.round_id, i.role, fv.original_filename, fv.id, i.rule_version_id, i.rule_title
+                FROM product.round_inputs i JOIN product.file_versions fv ON fv.id = i.file_version_id
+                WHERE i.round_id = ANY(%s::uuid[]) ORDER BY i.role, fv.original_filename""",
+                (round_ids,),
+            )
+            counts = conn.execute("SELECT round_id, status, COUNT(*), array_agg(item_key) FROM product.findings WHERE round_id = ANY(%s::uuid[]) GROUP BY round_id, status", (round_ids,))
+            reviews = conn.execute("SELECT round_id, item_key, judgment, rationale, citations FROM product.reviews WHERE round_id = ANY(%s::uuid[])", (round_ids,))
+        by_id = {str(row[0]): row for row in rounds.fetchall()}
+        groups = []
+        for cursor in (inputs, counts, reviews):
+            grouped: dict[str, list] = {}
+            for row in cursor.fetchall():
+                grouped.setdefault(str(row[0]), []).append(row[1:])
+            groups.append(grouped)
+        return [self._round_history(by_id[ident], *(group.get(ident, []) for group in groups)) for ident in round_ids if ident in by_id]
+
+    def _round_history(self, row, inputs, counts, reviews) -> dict:
         result_counts = {"PASS": 0, "NG": 0, "ERR": 0, "UNABLE": 0, "NA": 0}
         finding_keys = set()
         reviewable_keys = set()
@@ -3431,7 +3522,7 @@ class AuthStore:
                     for cite in citations
                 )
             )
-            for key, judgment, rationale, citations in conn.execute("SELECT item_key, judgment, rationale, citations FROM product.reviews WHERE round_id = %s", (round_id,)).fetchall()
+            for key, judgment, rationale, citations in reviews
         )
         try:
             registration = json.loads((row[5] or {}).get("registration", "{}"))

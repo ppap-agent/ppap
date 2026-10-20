@@ -1,7 +1,10 @@
 import {useEffect, useState} from 'react'
 import {RequirementLibraryPanel} from '../journey/requirement-library'
 import {isRequirementLibrary} from '../journey/requirement-library-state'
-import {loadRuleCollections} from '../journey/product'
+import {readRuleVersions} from '../journey/product'
+import {request} from '../api'
+import type {components} from '../generated/openapi'
+import {groupRequirementDirectory, type RequirementDirectoryCollection} from '../journey/requirement-directory'
 import {message} from '../journey/remote'
 import {useSavedDraft} from '../journey/saved-draft'
 
@@ -10,15 +13,17 @@ export function AuditRules({onPublished, active}: {onPublished: () => void; acti
   const [collections, setCollections] = library.field('collections')
   const [read, setRead] = useState({loading: true, error: ''})
   const [revision, setRevision] = useState(0)
+  const [directory, setDirectory] = useState<RequirementDirectoryCollection[]>([])
   useEffect(() => {
-    let active = true
+    if (!active) return
+    const controller = new AbortController()
     setRead({loading: true, error: ''})
-    void loadRuleCollections().then(rows => {
-      if (!active) return
-      setCollections(current => [...current.filter(item => item.draft), ...rows.filter(row => !current.some(item => item.draft && item.versions.some(version => version.id === row.id)))])
+    void request<components['schemas']['RuleLibrary']>('/rule-library', 'GET', undefined, controller.signal).then(result => {
+      if (controller.signal.aborted) return
+      setDirectory(groupRequirementDirectory(result.versions))
       setRead({loading: false, error: ''})
-    }).catch(cause => {if (active) setRead({loading: false, error: message(cause)})})
-    return () => {active = false}
-  }, [revision])
-  return <RequirementLibraryPanel title="审核规则" uploadLabel="上传规则" automaticMatching active={active} collections={collections} onChange={setCollections} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={onPublished}/>
+    }).catch(cause => {if (!controller.signal.aborted) setRead({loading: false, error: message(cause)})})
+    return () => controller.abort()
+  }, [revision, active])
+  return <RequirementLibraryPanel title="审核规则" uploadLabel="上传规则" automaticMatching active={active} collections={collections} onChange={setCollections} directory={directory} readVersions={readRuleVersions} readRevision={revision} uses={[]} onOpen={() => {}} saveError={library.saveError} loading={read.loading} readError={read.error} onReload={() => setRevision(value => value + 1)} onPublished={() => {setRevision(value => value + 1); onPublished()}}/>
 }

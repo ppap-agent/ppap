@@ -48,17 +48,18 @@ class OfficePreviewTests(unittest.TestCase):
     def test_file_scope_and_authorization(self):
         store = Mock()
         store.get_version.return_value = self.version
-        store.round_input_version.return_value = self.version
+        store.read_file_version.return_value = self.version
         store.version_bytes.return_value = b"file-content"
         principal = SimpleNamespace(tenant_id="tenant1", user_id="user1")
         app = FastAPI()
         register_office_routes(app, store, lambda request: principal, self.settings)
         client = TestClient(app)
-        with patch("ppap_api.office_routes.can_read", return_value=False):
+        with patch.object(store, "read_file_version", side_effect=KeyError("missing")):
             self.assertEqual(client.get("/files/file1/versions/version1/office").status_code, 403)
-        with patch("ppap_api.office_routes.can_read", return_value=True):
-            self.assertEqual(client.get("/files/file1/versions/version1/office?round_id=round1").status_code, 200)
-            store.round_input_version.assert_called_with("round1", "file1", "version1")
+        self.assertEqual(client.get("/files/file1/versions/version1/office?round_id=round1").status_code, 200)
+        store.read_file_version.assert_called_with(principal, "file1", "version1", round_id="round1")
+        store.resource.assert_not_called()
+        store.grants.assert_not_called()
         token = self.ticket()
         response = client.get("/office/content", params={"ticket": token})
         self.assertEqual(response.content, b"file-content")

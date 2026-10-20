@@ -1,6 +1,6 @@
 import {request, type FileVersion, type Material, type Round, type RuleCandidate, type RuleDetail, type RulesList, type RuleBody} from '../api'
 import {clauseSourceReady, isRequirementBasis, localBasis, type RequirementBasis} from './requirements-state'
-import type {RequirementCollection} from './requirement-library-state'
+import type {RequirementCollection, RequirementVersion} from './requirement-library-state'
 import {sourceContent} from './requirement-library-state'
 import type {DecisionEvidence, DecisionInput} from './decision'
 
@@ -24,10 +24,33 @@ export function basisRuleBody(basis: RequirementBasis): RuleBody {
 export const canonical = (value: unknown): string => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item)
 export async function loadRuleCollections(): Promise<RequirementCollection[]> {
   const listed = await request<RulesList>('/rules')
-  const details = await Promise.all(listed.rules.map(row => request<RuleDetail>(`/rules/${row.id}`)))
-  const collections = (await Promise.all(details.map(async rule => {
+  const versions = await readRuleVersions(listed.rules.filter(row => row.kind === 'engine').map(row => row.id), new AbortController().signal)
+  const collections: RequirementCollection[] = versions.map(version => ({id: version.id, draft: null, versions: [version]}))
+  const byId = new Map(collections.map(collection => [collection.id, collection.versions[0]]))
+  const grouped = new Map<string, RequirementCollection>()
+  for (const collection of collections) {
+    const version = collection.versions[0], seen = new Set<string>()
+    let root = version
+    while (root.baseId && byId.has(root.baseId) && !seen.has(root.baseId)) {seen.add(root.id); root = byId.get(root.baseId)!}
+    const family = grouped.get(root.id) ?? {id: root.id, draft: null, versions: []}
+    family.versions.push(version); grouped.set(root.id, family)
+  }
+  return [...grouped.values()].map(collection => ({...collection, versions: collection.versions.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))}))
+}
+
+export async function readRuleVersions(ids: string[], signal: AbortSignal): Promise<RequirementVersion[]> {
+  const details = await Promise.all([...new Set(ids)].map(async id => {
+    const rule = await request<RuleDetail>(`/rules/${encodeURIComponent(id)}`, 'GET', undefined, signal)
+    if (rule.id !== id) throw new Error('要求版本回执不一致，未显示其他版本。')
+    return rule
+  }))
+  const files = new Map<string, Promise<FileVersion | null>>()
+  return (await Promise.all(details.map(async rule => {
     if (rule.body.kind !== 'engine' || !rule.source_file_id || !rule.source_file_version_id) return []
-    const file = await request<FileVersion>(`/files/${rule.source_file_id}/versions/${rule.source_file_version_id}`).catch(() => null)
+    const path = `/files/${encodeURIComponent(rule.source_file_id)}/versions/${encodeURIComponent(rule.source_file_version_id)}`
+    if (!files.has(path)) files.set(path, request<FileVersion>(path, 'GET', undefined, signal).catch(cause => {if (signal.aborted) throw cause; return null}))
+    const file = await files.get(path)!
+    if (file && (file.id !== rule.source_file_version_id || file.file_id !== rule.source_file_id)) throw new Error('要求原件回执不一致，未使用其他文件。')
     const material: Material = {file_id: rule.source_file_id, file_version_id: rule.source_file_version_id, original_filename: file?.original_filename || rule.title, role: 'reference', rule_version_id: null}
     const base = localBasis(rule.title)
     let basis = parsedBasis({...base, server: {body: rule.body, material, ruleId: rule.id}}, {title: rule.title, body: rule.body, source_file_version_id: rule.source_file_version_id})
@@ -48,18 +71,8 @@ export async function loadRuleCollections(): Promise<RequirementCollection[]> {
     if (!rule.case_context?.registration) basis.source.version = rule.created_at.slice(0, 16).replace('T', ' ')
     basis.server!.publishedContent = canonical({body: rule.body, title: basis.source.title, version: basis.source.version})
     if (basis.clauses.every(clause => clause.checked && clauseSourceReady(clause, basis))) basis.server!.verifiedContent = sourceContent(basis)
-    return [{id: rule.id, draft: null, versions: [{id: rule.id, basis, scope, reason, at: rule.created_at, baseId: rule.predecessor_id || null}]}]
+    return [{id: rule.id, basis, scope, reason, at: rule.created_at, baseId: rule.predecessor_id || null}]
   }))).flat()
-  const byId = new Map(collections.map(collection => [collection.id, collection.versions[0]]))
-  const grouped = new Map<string, RequirementCollection>()
-  for (const collection of collections) {
-    const version = collection.versions[0], seen = new Set<string>()
-    let root = version
-    while (root.baseId && byId.has(root.baseId) && !seen.has(root.baseId)) {seen.add(root.id); root = byId.get(root.baseId)!}
-    const family = grouped.get(root.id) ?? {id: root.id, draft: null, versions: []}
-    family.versions.push(version); grouped.set(root.id, family)
-  }
-  return [...grouped.values()].map(collection => ({...collection, versions: collection.versions.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))}))
 }
 // Reuse an immutable version only after reading its full content. Unknown publication is reconciled by the same source and body.
 export async function publishBasis(basis: RequirementBasis, declaration?: {scope: RequirementCollection['versions'][number]['scope']; reason: string}): Promise<RequirementBasis> {

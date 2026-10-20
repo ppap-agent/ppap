@@ -24,6 +24,8 @@ function NativeAudit() {
   const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => createNativeAuditAdapter({deepOffered, customers: []}))
   const [error, setError] = useState(''), [revision, setRevision] = useState(0)
   useEffect(() => {
+    const address = new URL(location.href)
+    if (!revision && (address.searchParams.has('task') || address.searchParams.get('view') && address.searchParams.get('view') !== 'audit')) return
     let active = true
     void nativeTemplateAdapter.readCatalog().then(result => {
       if (!active) return

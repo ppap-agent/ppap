@@ -30,7 +30,7 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
-    def test_native_history_does_not_wait_for_the_customer_catalog(self):
+    def test_native_history_does_not_read_the_unused_customer_catalog(self):
         from playwright.sync_api import expect
 
         with sync_playwright() as playwright:
@@ -62,12 +62,68 @@ class RuleInteractionTests(unittest.TestCase):
             page.goto(WEB + "/audit?view=archive&archiveDoc=history-document")
             expect(page.get_by_role("heading", name="历史原件.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_text("尚无完成审核。可以选择已有记录查看进度或异常。", exact=True)).to_be_visible()
-            self.assertEqual(len(pending_catalog), 1)
+            self.assertEqual(len(pending_catalog), 0)
             self.assertEqual(reads.count("/api/audit-archive/history-document/history"), 1)
             self.assertNotIn("/api/audit-archive", reads)
             self.assertNotIn("/api/audit-tasks", reads)
-            pending_catalog[0].fulfill(json={"coverage_universe": [f"type-{index}" for index in range(17)], "customers": []})
             expect(page.get_by_role("heading", name="历史原件.xlsx", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_native_rule_directory_reads_only_selected_versions_and_ignores_late_reads(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1400, "height": 1000})
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            state["source"].update(id=VERSION, file_id=SOURCE, original_filename="规则原件.json", content_type="application/json", byte_size=2, sha256=None, status="ready")
+            for identity, title, text, at, parent in (
+                ("rule-a1", "规则 A", "旧版条款 A", "2026-10-16T00:00:00Z", None),
+                ("rule-a2", "规则 A", "新版条款 A", "2026-10-18T00:00:00Z", "rule-a1"),
+                ("rule-b1", "规则 B", "条款 B", "2026-10-17T00:00:00Z", None),
+            ):
+                state["rules"][identity] = {
+                    "id": identity,
+                    "title": title,
+                    "created_at": at,
+                    "predecessor_id": parent,
+                    "body": {**BODY, "rules": [{**BODY["rules"][0], "rule_to_check": text}]},
+                    "source_file_id": SOURCE,
+                    "source_file_version_id": VERSION,
+                }
+            reads, held = [], []
+            page.on("request", lambda request: reads.append(urlsplit(request.url).path.removeprefix("/api")))
+            # Deliberately retain the transport after cancellation: the commit gate must still reject it.
+            page.add_init_script(
+                "const realFetch = window.fetch.bind(window);window.fetch = (url, init) => realFetch(url, /\\/(rules|files)\\//.test(String(url)) ? {...init, signal: undefined} : init)"
+            )
+            page.route("**/api/rules/rule-b1", lambda route: held.append(route))
+            page.goto(WEB + "/audit?view=requirements")
+            expect(page.get_by_role("link", name="规则 A", exact=True)).to_be_visible()
+            expect(page.get_by_role("link", name="规则 B", exact=True)).to_be_visible()
+            self.assertEqual(reads.count("/rule-library"), 1)
+            self.assertFalse(any(path.startswith(("/rules/", "/files/")) for path in reads))
+            page.get_by_role("link", name="规则 A", exact=True).click()
+            expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
+            self.assertEqual([path for path in reads if path.startswith("/rules/")], ["/rules/rule-a2"])
+            page.get_by_role("tab", name="版本变化", exact=True).click()
+            expect(page.get_by_role("region", name="版本差异", exact=True)).to_contain_text("旧版条款 A")
+            self.assertNotIn("/rules/rule-b1", reads)
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            page.get_by_role("link", name="规则 B", exact=True).click()
+            expect(page.get_by_text("正在读取要求版本…", exact=True)).to_be_visible()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            page.get_by_role("link", name="规则 A", exact=True).click()
+            expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
+            self.assertEqual(len(held), 1)
+            with page.expect_response(lambda response: response.url.endswith("/api/rules/rule-b1")) as late:
+                held[0].fulfill(json=state["rules"]["rule-b1"])
+            late.value.finished()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(page.get_by_role("heading", name="规则 A", exact=True)).to_be_visible()
+            expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
+            self.assertEqual(state["writes"], [])
             browser.close()
 
     def test_native_rule_customer_scope_is_explained_without_publishing_or_replacing_the_draft(self):
@@ -365,6 +421,41 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(state["saves"]), 2)
             browser.close()
 
+    def test_late_published_version_read_does_not_replace_current_draft_edits(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            page.add_init_script(
+                "const realFetch = window.fetch.bind(window);window.fetch = (url, init) => realFetch(url, /\\/(rules|files)\\//.test(String(url)) ? {...init, signal: undefined} : init)"
+            )
+            self.open_requirement(page, "/audit?view=requirements")
+            self.check_requirement(page)
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("button", name="创建新版本", exact=True)).to_be_visible()
+            published = next(iter(state["rules"].values()))
+            page.get_by_role("button", name="创建新版本", exact=True).click()
+            page.get_by_label("版本号", exact=True).fill("v2")
+            held = []
+            page.route("**/api/rules/" + published["id"], lambda route: held.append(route))
+            page.get_by_role("tab", name="版本变化", exact=True).click()
+            expect(page.get_by_text("正在读取要求版本…", exact=True)).to_be_visible()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            page.get_by_label("来源说明／变更原因", exact=True).fill("等待旧版本期间补充的说明")
+            self.assertEqual(len(held), 1)
+            with page.expect_response(lambda response: response.url.endswith("/api/rules/" + published["id"])) as late:
+                held[0].fulfill(json=published)
+            late.value.finished()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
+            expect(page.get_by_role("textbox", name="来源说明／变更原因", exact=True)).to_have_value("等待旧版本期间补充的说明")
+            self.assertEqual(len(state["saves"]), 1)
+            browser.close()
+
     def test_native_local_record_recovery_returns_to_native_rules_not_preview(self):
         from playwright.sync_api import expect
 
@@ -527,6 +618,29 @@ class RuleInteractionTests(unittest.TestCase):
 
         page.route("**/api/audit-template-catalog", catalog)
         page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
+
+        def library(route):
+            import json
+
+            versions = []
+            for rule in state["rules"].values():
+                registration = json.loads(rule.get("case_context", {}).get("registration") or "{}")
+                scope = registration.get("scope", {"customer": "", "part": "", "revision": "", "allCustomers": False, "allParts": True, "allRevisions": True})
+                versions.append(
+                    {
+                        "id": rule["id"],
+                        "title": rule["title"],
+                        "version": registration.get("basis", {}).get("source", {}).get("version", rule["created_at"][:16].replace("T", " ")),
+                        "scope": scope,
+                        "reason": registration.get("reason", ""),
+                        "created_at": rule["created_at"],
+                        "predecessor_id": rule.get("predecessor_id"),
+                        "clause_count": len(rule["body"]["rules"]),
+                    }
+                )
+            route.fulfill(json={"versions": versions})
+
+        page.route("**/api/rule-library", library)
 
     def test_native_rule_catalog_refresh_failure_keeps_the_saved_version(self):
         from playwright.sync_api import expect
@@ -1325,7 +1439,7 @@ class RuleInteractionTests(unittest.TestCase):
                         expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
                         expect(page.get_by_role("heading", name="审核准备", exact=True)).to_have_count(0)
                         self.assertNotIn("case=", page.url)
-                        page.goto(WEB + "/?round=" + JOB)
+                        page.goto(WEB + "/?round=" + JOB, wait_until="domcontentloaded")
                         page.get_by_role("button", name="准备新一轮审核", exact=True).click()
                     expect(page.get_by_role("heading", name="审核准备", exact=True)).to_be_visible()
                     table = page.get_by_role("table", name="审核资料", exact=True)
@@ -1886,7 +2000,20 @@ class RuleInteractionTests(unittest.TestCase):
                     route.fulfill(status=state["save_status"], json={"error": "save_failed"})
                 else:
                     normalized = {**value["body"], **{key: [item.strip() for item in value["body"][key]] for key in ("customers", "models", "parts")}}
-                    rule = {**value, "body": normalized, "id": value["request_id"], "kind": "engine", "type": value["body"]["type"], "source_file_id": SOURCE, "created_at": "2026-10-18T00:00:00Z"}
+                    import json
+
+                    registration = json.loads(value.get("case_context", {}).get("registration") or "{}")
+                    customer_scope = "restricted" if normalized["customers"] else "all" if registration.get("scope", {}).get("allCustomers") else "unconfirmed"
+                    rule = {
+                        **value,
+                        "body": normalized,
+                        "id": value["request_id"],
+                        "kind": "engine",
+                        "type": value["body"]["type"],
+                        "source_file_id": SOURCE,
+                        "created_at": "2026-10-18T00:00:00Z",
+                        "customer_scope": customer_scope,
+                    }
                     rule.update(state.get("reply_patch", {}))
                     state["rules"][rule["id"]] = rule
                     if state.get("hold_save_reply"):

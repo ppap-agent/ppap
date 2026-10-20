@@ -36,7 +36,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   }, [active])
   useEffect(() => {
     const run = ++epoch.current
-    if (!active) {setPage(null); setLoading(false); return}
+    if (!active) {setLoading(false); return}
     if (!adapter) {setPage(null); setLoading(false); setError('用量暂不可用，请稍后重试。'); return}
     setLoading(true); setError('')
     void adapter.readUsage(structuredClone(query)).then(next => {

@@ -20,6 +20,14 @@ def test_template_catalog_requires_login_and_has_a_runtime_contract():
     assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplateZip"]
 
 
+def test_rule_library_requires_login_and_declares_its_metadata_contract():
+    response = TestClient(app).get("/rule-library")
+    assert response.status_code == 401
+    assert response.headers["cache-control"] == "private, no-store"
+    operation = app.openapi()["paths"]["/rule-library"]["get"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/RuleLibrary"}
+
+
 def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(auth_store_factory):
     store = auth_store_factory(Settings(feishu_app_id="catalog-test"), reset=False)
     clients = []
@@ -64,6 +72,14 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         assert set(customers[0]) == {"customer_id", "name", "effective_rule_types"}
         assert customers[1] == {"customer_id": "dfmea only", "name": "DFMEA only", "effective_rule_types": ["设计失效模式及后果分析"]}
         assert second.get("/audit-template-catalog").json()["customers"] == [{"customer_id": "其他企业客户", "name": "其他企业客户", "effective_rule_types": ["控制计划"]}]
+        library = first.get("/rule-library")
+        assert library.headers["cache-control"] == "private, no-store"
+        versions = library.json()["versions"]
+        assert len(versions) == 6
+        assert any(version["id"] == old for version in versions)
+        assert any(version["predecessor_id"] == old for version in versions)
+        assert all(set(version) == {"id", "title", "version", "scope", "reason", "created_at", "predecessor_id", "clause_count"} and version["clause_count"] == 1 for version in versions)
+        assert not {version["id"] for version in versions} & {version["id"] for version in second.get("/rule-library").json()["versions"]}
         assert first.get("/audit-tasks").json()["tasks"] == []
         assert first.get("/rounds").json()["rounds"] == []
         assert first.get("/usage").json()["events"] == []

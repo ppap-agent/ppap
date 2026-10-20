@@ -195,6 +195,30 @@ class RulesList(TypedDict):
     rules: list[Rule]
 
 
+class RuleLibraryScope(TypedDict):
+    customer: str
+    part: str
+    revision: str
+    allCustomers: bool
+    allParts: bool
+    allRevisions: bool
+
+
+class RuleLibraryEntry(TypedDict):
+    id: str
+    title: str
+    version: str
+    scope: RuleLibraryScope
+    reason: str
+    created_at: str
+    predecessor_id: str | None
+    clause_count: int
+
+
+class RuleLibrary(TypedDict):
+    versions: list[RuleLibraryEntry]
+
+
 class RuleTypes(TypedDict):
     types: list[str]
 
@@ -1010,8 +1034,26 @@ class AuditTaskRemoval(TypedDict):
 
 
 class AuditRecognitionTasks(TypedDict):
-    tasks: list[AuditTask]
+    tasks: list[AuditTaskSummary]
     next_offset: int | None
+
+
+class AuditTaskSummaryFile(TypedDict):
+    file: FileVersion
+    selection: Literal["selected", "unselected", "removed"]
+
+
+class AuditTaskSummary(TypedDict):
+    id: str
+    number: str
+    state: Literal["matching", "pending_confirm", "reviewing", "completed"]
+    input_revision: int
+    analysis_mode: AnalysisMode
+    created_at: str
+    updated_at: str
+    round_id: str | None
+    completion_reason: Literal["no_matching_rules", "processed"] | None
+    files: list[AuditTaskSummaryFile]
 
 
 class AuditNotificationDelivery(TypedDict):

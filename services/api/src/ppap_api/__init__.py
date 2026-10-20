@@ -221,6 +221,15 @@ def create_app(
             return principal, JSONResponse({"error": "access_denied"}, status_code=403)
         return principal, None
 
+    def require_file_version(request: Request, file_id: str, version_id: str):
+        principal = principal_of(request)
+        if not principal:
+            return None, JSONResponse({"error": "unauthenticated"}, status_code=401)
+        try:
+            return store.read_file_version(principal, file_id, version_id), None
+        except KeyError:
+            return None, JSONResponse({"error": "access_denied"}, status_code=403)
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "alive"}
@@ -547,22 +556,16 @@ def create_app(
 
     @app.get("/files/{file_id}/versions/{version_id}", response_model=wc.FileVersion)
     def files_version_get(file_id: str, version_id: str, request: Request) -> JSONResponse:
-        principal, denied = require_file_read(request, file_id)
+        version, denied = require_file_version(request, file_id, version_id)
         if denied:
             return denied
-        version = store.get_version(file_id, version_id)
-        if version is None or version.tenant_id != principal.tenant_id:
-            return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(version_payload(version))
 
     @app.get("/files/{file_id}/versions/{version_id}/download")
     def files_download(file_id: str, version_id: str, request: Request):
-        principal, denied = require_file_read(request, file_id)
+        version, denied = require_file_version(request, file_id, version_id)
         if denied:
             return denied
-        version = store.get_version(file_id, version_id)
-        if version is None or version.tenant_id != principal.tenant_id:
-            return JSONResponse({"error": "access_denied"}, status_code=403)
         try:
             data = store.version_bytes(version)
         except (ValueError, ObjectMissing):
@@ -584,12 +587,9 @@ def create_app(
     def files_preview(file_id: str, version_id: str, request: Request, sheet: str = Query("", max_length=100), start_row: int = Query(1, ge=1, le=1048576)):
         from ppap_core.preview import MAX_PREVIEW_BYTES, document_preview
 
-        principal, denied = require_file_read(request, file_id)
+        version, denied = require_file_version(request, file_id, version_id)
         if denied:
             return denied
-        version = store.get_version(file_id, version_id)
-        if version is None or version.tenant_id != principal.tenant_id:
-            return JSONResponse({"error": "access_denied"}, status_code=403)
         if version.byte_size > MAX_PREVIEW_BYTES:
             return JSONResponse({"available": False, "notice": "文件过大，请下载原件。"})
         try:

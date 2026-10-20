@@ -1100,6 +1100,126 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual({row["file"]["id"] for row in detail["originals"]}, {file.id for file in files})
         self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)
 
+    def test_task_list_reads_summaries_without_building_result_details(self):
+        from unittest.mock import patch
+
+        from ppap_core.db import connect
+
+        files, task, _ = self.prepared_display_task()
+        expected = self.store.get_audit_task(self.alice, task["id"])
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections, patch.object(self.store, "_recognition_public", side_effect=AssertionError("list must not build task details")):
+            rows = self.store.list_audit_tasks(self.alice)
+        self.assertEqual(connections.call_count, 1)
+        summary = next(row for row in rows if row["id"] == task["id"])
+        for key in ("id", "number", "state", "round_id", "input_revision", "analysis_mode", "created_at", "completion_reason"):
+            self.assertEqual(summary[key], expected[key])
+        self.assertEqual(summary["files"], [{"file": row["file"], "selection": row["selection"]} for row in expected["files"]])
+        self.assertNotIn("progress", summary)
+        self.assertNotIn("audit", summary["files"][0])
+        self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("bob")), [])
+        self.assertEqual(self.store.list_audit_tasks(self.store.principal_for_fixture("carol")), [])
+        self.assertEqual(self.store.get_audit_task(self.alice, task["id"]), expected)
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[0].file_id, self.alice.user_id))
+        with self.assertRaises(KeyError):
+            self.store.list_audit_tasks(self.alice)
+
+    def test_rule_directory_is_metadata_only_and_preserves_customer_scope_and_lineage(self):
+        import json
+        from unittest.mock import patch
+
+        file = self.upload("客户规则.docx")
+        first = self.store.publish_rule(self.alice, "客户要求", self.rule_body(), file.id)
+        body = {**self.rule_body(), "customers": []}
+        second = self.store.publish_rule(
+            self.alice,
+            "客户要求",
+            body,
+            file.id,
+            predecessor_id=first["id"],
+            case_context={
+                "registration": json.dumps(
+                    {
+                        "basis": {"source": {"version": "v2"}},
+                        "scope": {"customer": "", "part": "", "revision": "", "allCustomers": True, "allParts": True, "allRevisions": True},
+                        "reason": "明确适用范围",
+                    }
+                )
+            },
+        )
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections, patch.object(self.store, "get_rule", side_effect=AssertionError("directory must not fetch each rule")):
+            directory = self.store.list_rule_library(self.alice.tenant_id)
+        self.assertEqual(connections.call_count, 1)
+        versions = {row["id"]: row for row in directory}
+        self.assertEqual(versions[second["id"]]["predecessor_id"], first["id"])
+        self.assertEqual(versions[second["id"]]["version"], "v2")
+        self.assertTrue(versions[second["id"]]["scope"]["allCustomers"])
+        self.assertEqual(versions[first["id"]]["scope"]["customer"], "测试客户")
+        self.assertEqual(versions[second["id"]]["clause_count"], 1)
+        self.assertEqual(versions[second["id"]]["reason"], "明确适用范围")
+        self.assertFalse(any("body" in row or "clauses" in row for row in directory))
+        self.assertEqual(self.store.list_rule_library(self.store.principal_for_fixture("carol").tenant_id), [])
+
+    def test_round_list_query_count_does_not_grow_per_row(self):
+        from unittest.mock import patch
+
+        self.prepared_display_task()
+        self.prepared_display_task()
+        original = self.store._conn
+        count = [0]
+
+        class CountedConnection:
+            def __init__(self):
+                self.connection = original()
+
+            def __enter__(self):
+                self.connection.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self.connection.__exit__(*args)
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            def execute(self, *args, **kwargs):
+                count[0] += 1
+                return self.connection.execute(*args, **kwargs)
+
+        with patch.object(self.store, "_conn", side_effect=CountedConnection):
+            first = self.store.list_rounds(self.alice, limit=1)
+            one = count[0]
+            count[0] = 0
+            all_rows = self.store.list_rounds(self.alice, limit=2)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(len(all_rows), 2)
+        self.assertEqual(first[0], all_rows[0])
+        self.assertEqual(count[0], one, "list queries must be batched, not repeated for each round")
+
+    def test_file_read_shares_authorization_and_version_connection_and_honors_revocation(self):
+        from unittest.mock import patch
+
+        from ppap_core.db import connect
+
+        files, task, _ = self.prepared_display_task()
+        file = files[0]
+        with patch.object(self.store, "_conn", wraps=self.store._conn) as connections:
+            actual = self.store.read_file_version(self.alice, file.file_id, file.id)
+        self.assertEqual(actual, file)
+        self.assertEqual(connections.call_count, 1)
+        self.assertEqual(self.store.read_file_version(self.alice, file.file_id, file.id, round_id=task["round_id"]), file)
+        for principal in (self.store.principal_for_fixture("bob"), self.store.principal_for_fixture("carol")):
+            with self.assertRaises(KeyError):
+                self.store.read_file_version(principal, file.file_id, file.id, round_id=task["round_id"])
+        with self.assertRaises(KeyError):
+            self.store.read_file_version(self.alice, str(uuid.uuid4()), file.id)
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (file.file_id, self.alice.user_id))
+        with self.assertRaises(KeyError):
+            self.store.read_file_version(self.alice, file.file_id, file.id)
+        # Frozen round access is independent of the current source-file grant.
+        self.assertEqual(self.store.read_file_version(self.alice, file.file_id, file.id, round_id=task["round_id"]), file)
+
     def test_usage_links_the_paid_file_to_its_own_history_and_keeps_fee_when_access_is_revoked(self):
         from ppap_core.db import connect
 
