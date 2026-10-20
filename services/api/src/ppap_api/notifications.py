@@ -14,10 +14,10 @@ from ppap_core.settings import Settings
 from ppap_product_store import AuthStore
 
 
-def dispatch_task_notification(store: AuthStore, http, settings: Settings, worker_ident: str) -> bool:
+def dispatch_task_notification(store: AuthStore, http, settings: Settings, worker_ident: str, *, task_id: str | None = None) -> bool:
     if not (settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret):
         return False
-    claimed = store.claim_task_notification(worker_ident)
+    claimed = store.claim_task_notification(worker_ident, task_id=task_id)
     if not claimed:
         return False
     job, recipient = claimed

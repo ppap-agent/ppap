@@ -123,11 +123,11 @@ def send_task_notification(http, tenant_token: str, notification_id: str, receiv
             timeout=20,
         )
         body = response.json()
-        if isinstance(body, dict) and 200 <= response.status_code < 300:
+        if isinstance(body, dict):
             message_id = (body.get("data") or {}).get("message_id")
-            if type(body.get("code")) is int and body["code"] == 0 and isinstance(message_id, str) and message_id.strip():
+            if 200 <= response.status_code < 300 and type(body.get("code")) is int and body["code"] == 0 and isinstance(message_id, str) and message_id.strip():
                 return {"state": "sent", "message_id": message_id.strip(), "reason": None}
-            if type(body.get("code")) is int and body["code"] != 0:
+            if (200 <= response.status_code < 300 or 400 <= response.status_code < 500) and type(body.get("code")) is int and body["code"] != 0:
                 return {"state": "failed", "message_id": None, "reason": "feishu_send_rejected"}
     except Exception:
         pass

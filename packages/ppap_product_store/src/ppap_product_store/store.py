@@ -1286,18 +1286,24 @@ class AuthStore:
         ).fetchone():
             self._queue_task_notification(conn, task_id, "completed", round_id)
 
-    def claim_task_notification(self, worker_ident: str) -> tuple[ClaimedJob, Principal] | None:
+    def claim_task_notification(self, worker_ident: str, *, task_id: str | None = None) -> tuple[ClaimedJob, Principal] | None:
+        if task_id is not None and not _as_uuid(task_id):
+            raise ValueError("invalid_task_id")
         with self._conn() as conn, conn.transaction():
             conn.execute(
                 """UPDATE engine.jobs SET result = result || '{"state":"unknown","reason":"send_receipt_unknown"}'::jsonb,
                 lease_until = NULL, updated_at = now() WHERE kind = 'feishu_notification' AND status = 'leased'
-                AND result->>'state' = 'dispatching' AND lease_until < now()"""
+                AND result->>'state' = 'dispatching' AND lease_until < now()
+                AND (%s::text IS NULL OR payload->>'task_id' = %s)""",
+                (task_id, task_id),
             )
             row = conn.execute(
                 """SELECT id, tenant_id, audit_round_id, payload FROM engine.jobs WHERE kind = 'feishu_notification'
                 AND ((status = 'queued' AND (lease_until IS NULL OR lease_until < now())) OR
                     (status = 'leased' AND result->>'state' = 'preparing' AND lease_until < now()))
-                ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1"""
+                AND (%s::text IS NULL OR payload->>'task_id' = %s)
+                ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1""",
+                (task_id, task_id),
             ).fetchone()
             if not row:
                 return None

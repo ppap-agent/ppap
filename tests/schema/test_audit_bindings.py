@@ -791,6 +791,42 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertIn(task["id"], card["elements"][1]["actions"][0]["url"])
         self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
 
+    def test_scoped_notifier_sends_only_the_requested_task_and_leaves_history_claimable(self):
+        import json
+
+        import httpx
+        from ppap_api.notifications import dispatch_task_notification
+        from ppap_application import build_product_store
+        from ppap_core.fixtures import APP_ID
+
+        self.settings.feishu_app_id = APP_ID
+        self.settings.feishu_app_secret = "notification-test-secret"
+        self.settings.feishu_notifications_enabled = True
+        _, historical, _ = self.prepared_display_task(confirm=False)
+        _, current, _ = self.prepared_display_task(confirm=False)
+        api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
+        api_store.save_app_ticket(APP_ID, "notification-test-ticket")
+        sent = []
+
+        def provider(request):
+            if request.url.path.endswith("app_access_token"):
+                return httpx.Response(200, json={"code": 0, "app_access_token": "test-app-token"})
+            if request.url.path.endswith("tenant_access_token"):
+                return httpx.Response(200, json={"code": 0, "tenant_access_token": "test-tenant-token"})
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_scoped"}})
+
+        with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+            self.assertFalse(dispatch_task_notification(api_store, http, self.settings, "scoped-notifier", task_id=str(uuid.uuid4())))
+            self.assertTrue(dispatch_task_notification(api_store, http, self.settings, "scoped-notifier", task_id=current["id"]))
+            self.assertFalse(dispatch_task_notification(api_store, http, self.settings, "scoped-notifier", task_id=current["id"]))
+        self.assertEqual(len(sent), 1)
+        self.assertIn(current["id"], sent[0]["content"])
+        self.assertNotIn(historical["id"], sent[0]["content"])
+        old, _ = api_store.claim_task_notification("historical-notifier", task_id=historical["id"])
+        self.assertEqual(old.payload["task_id"], historical["id"])
+        self.assertEqual(old.attempt, 1, "the scoped sender must not claim historical work")
+
     def test_notification_takeover_fences_old_sender_and_unknown_is_never_reclaimed(self):
         from ppap_application import build_product_store
         from ppap_core.db import connect

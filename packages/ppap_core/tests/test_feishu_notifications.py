@@ -112,6 +112,14 @@ def test_receipt_distinguishes_provider_acceptance_rejection_and_unconfirmed_dat
         assert send_task_notification(http, "test-token", "intent-a", "ou_creator", {})["state"] == expected
 
 
+@pytest.mark.parametrize(("status", "expected"), [(400, "failed"), (403, "failed"), (500, "unknown")])
+def test_explicit_permission_rejection_is_not_a_lost_send_receipt(status, expected) -> None:
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(status, json={"code": 99991672, "msg": "permission denied"}))) as http:
+        receipt = send_task_notification(http, "test-token", "intent-a", "ou_creator", {})
+    assert receipt["state"] == expected
+    assert receipt["message_id"] is None
+
+
 def test_zero_match_card_does_not_claim_an_audit_or_report_and_oversized_card_fails_boundedly() -> None:
     task = {"id": "task-a", "number": "001", "completion_reason": "no_matching_rules", "files": []}
     card = task_notification_card(task, "completed", "https://ppap.example.test")
