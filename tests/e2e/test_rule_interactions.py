@@ -22,6 +22,7 @@ def open_rule_library(page):
         page.get_by_role("button", name="打开审核任务", exact=True).click()
         page.get_by_role("dialog").get_by_role("button", name="审核规则", exact=True).click()
 
+
 ROOT = Path(__file__).resolve().parents[2]
 JOB = "00000000-0000-4000-8000-000000000001"
 SOURCE = "00000000-0000-4000-8000-000000000002"
