@@ -12,7 +12,7 @@ from ppap_product_store import AuthStore
 from ppap_api import web_contract as wc
 
 
-def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
+def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_for) -> None:
     def require_principal(request: Request):
         principal = principal_of(request)
         if not principal:
@@ -50,7 +50,11 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 "task_file_provenance_required",
                 "precheck_required",
                 "audit_task_charging_unavailable",
+                "usage_quota_unavailable",
+                "usage_ai_disabled",
+                "usage_balance_empty",
                 "task_not_ready",
+                "target_required",
                 "rule_candidate_expired",
                 "report_not_ready",
                 "report_artifact_conflict",
@@ -132,7 +136,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         try:
-            return JSONResponse(store.create_audit_task(principal, body), status_code=202)
+            return JSONResponse(store.create_audit_task(principal, body, usage_policy=lambda actor: quota_for(request, actor)), status_code=202)
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
@@ -185,7 +189,9 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         try:
             if set(body) != {"request_id", "expected_revision"}:
                 raise ValueError("invalid_task_confirmation")
-            return JSONResponse(store.confirm_audit_task(principal, task_id, body.get("request_id"), body.get("expected_revision")), status_code=201)
+            return JSONResponse(
+                store.confirm_audit_task(principal, task_id, body.get("request_id"), body.get("expected_revision"), usage_policy=lambda actor: quota_for(request, actor)), status_code=201
+            )
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
@@ -255,7 +261,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
             reference = body.get("reference")
             if set(body) != {"request_id", "reference"} or not isinstance(reference, dict) or reference.get("task_id") != task_id or reference.get("report_id") != report_id:
                 raise ValueError("invalid_report_regeneration")
-            return JSONResponse(store.regenerate_audit_report(principal, reference, body["request_id"]), status_code=201)
+            return JSONResponse(store.regenerate_audit_report(principal, reference, body["request_id"], usage_policy=lambda actor: quota_for(request, actor)), status_code=201)
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
@@ -286,7 +292,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         try:
-            return JSONResponse(store.retry_report_package(principal, source_request_id, body), status_code=202)
+            return JSONResponse(store.retry_report_package(principal, source_request_id, body, usage_policy=lambda actor: quota_for(request, actor)), status_code=202)
         except (KeyError, ValueError) as exc:
             return fail(exc)
 
@@ -441,7 +447,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
         if denied:
             return denied
         try:
-            round_body = store.accept_draft(principal, draft_id, cast(str, body.get("idempotency_key")), body.get("predecessor_id"))
+            round_body = store.accept_draft(principal, draft_id, cast(str, body.get("idempotency_key")), body.get("predecessor_id"), usage_policy=lambda actor: quota_for(request, actor))
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(round_body, status_code=201)
@@ -568,6 +574,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of) -> None:
                 round_id,
                 cast(str, body.get("idempotency_key")),
                 items,
+                usage_policy=lambda actor: quota_for(request, actor),
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)

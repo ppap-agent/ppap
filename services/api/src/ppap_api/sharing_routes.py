@@ -10,7 +10,7 @@ from fastapi import Query, Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import ObjectMissing, attachment_content_disposition
-from ppap_core.report_sharing import ReportSharingError, list_report_targets, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
+from ppap_core.report_sharing import ReportSharingError, list_report_targets, own_report_target, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
 from ppap_product_store.report_sharing import ReportShareStore
 from ppap_product_store.share_delivery import new_share_attempt, target_key
 from pydantic import TypeAdapter, ValidationError
@@ -47,6 +47,11 @@ def register_sharing_routes(app, store, session_of, http, settings):
 
     def token_for(principal):
         return tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", principal.tenant_key)
+
+    def target_for(principal, profile, token, reference):
+        if reference["kind"] == "user" and reference["id"] == principal.subject:
+            return own_report_target(principal, profile)
+        return resolve_report_target(http, token, principal.tenant_key, reference)
 
     def fail(error):
         status = (
@@ -93,9 +98,9 @@ def register_sharing_routes(app, store, session_of, http, settings):
                         row["result"]["file_key"] = upload_report_message_file(http, token, source["artifact"], shares.read_bytes(source))
                         shares.save(guard, row)
                     message_type, message = "file", {"file_key": row["result"]["file_key"]}
-                report_share_profile(http, session.access_token, session.principal)
+                profile = report_share_profile(http, session.access_token, session.principal)
                 reference = {field: attempt["target"][field] for field in ("id", "kind")}
-                attempt["target"] = resolve_report_target(http, token, session.principal.tenant_key, reference)
+                attempt["target"] = target_for(session.principal, profile, token, reference)
                 if attempt["target"]["eligibility"] != "eligible":
                     raise ReportSharingError("share_target_unverified")
             except (KeyError, ValueError, ObjectMissing, ReportSharingError, FeishuUsageError):
@@ -136,7 +141,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 if guard is None:
                     raise ValueError("share_request_pending")
                 token = token_for(session.principal)
-                selected = [resolve_report_target(http, token, session.principal.tenant_key, target) for target in command["targets"]]
+                selected = [target_for(session.principal, _profile, token, target) for target in command["targets"]]
                 if any(target["eligibility"] != "eligible" for target in selected):
                     raise ValueError("share_target_unverified")
                 row = shares.accept(guard, session.principal, command, selected)
@@ -164,7 +169,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                             token = token_for(session.principal)
                             for attempt in failed:
                                 reference = {field: attempt["target"][field] for field in ("id", "kind")}
-                                attempt["target"] = resolve_report_target(http, token, session.principal.tenant_key, reference)
+                                attempt["target"] = target_for(session.principal, _profile, token, reference)
                             shares.save(guard, row)
                         except FeishuUsageError:
                             pass

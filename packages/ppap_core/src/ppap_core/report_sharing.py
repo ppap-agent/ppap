@@ -88,6 +88,14 @@ def report_share_profile(http, token: str, principal) -> dict:
     return profile
 
 
+def own_report_target(principal, profile: dict) -> dict:
+    # A fresh user_info response proves the caller's own organization without
+    # requiring access to the whole tenant directory merely to send to self.
+    if profile.get("tenant_key") != principal.tenant_key or profile.get("open_id") != principal.subject:
+        raise ReportSharingError("share_identity_mismatch")
+    return {"id": principal.subject, "kind": "user", "display_name": profile.get("name") or principal.display_name, "organization_id": principal.tenant_key, "eligibility": "eligible", "reason": None}
+
+
 def list_report_targets(http, user_token: str, tenant_token: str, principal, profile: dict, kind: str, query: str, page_token: str | None) -> dict:
     params: dict[str, str | int] = {"page_size": 20}
     if page_token:
@@ -97,13 +105,13 @@ def list_report_targets(http, user_token: str, tenant_token: str, principal, pro
     if kind == "user" and not query:
         # Search requires a nonempty query. Only the freshly verified caller can
         # be offered without a directory search; no guessed organization list.
-        targets = [
-            {"id": principal.subject, "kind": "user", "display_name": profile.get("name") or principal.display_name, "organization_id": principal.tenant_key, "eligibility": "eligible", "reason": None}
-        ]
+        targets = [own_report_target(principal, profile)]
         next_page = None
     else:
         path = "/search/v1/user" if kind == "user" else "/im/v1/chats/search" if query else "/im/v1/chats"
-        data = _get(http, user_token, path, params)
+        # A bot can deliver only to chats it belongs to. Do not request access
+        # to the caller's chats just to offer groups where the bot cannot send.
+        data = _get(http, user_token if kind == "user" else tenant_token, path, params)
         rows = data.get("users" if kind == "user" else "items")
         if not isinstance(rows, list) or len(rows) > 20 or type(data.get("has_more")) is not bool:
             raise ReportSharingError("share_directory_unavailable")

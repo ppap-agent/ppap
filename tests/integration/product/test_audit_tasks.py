@@ -5,22 +5,25 @@ import json
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
+import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from ppap_api import create_app
 from ppap_application import build_product_store
+from ppap_core.feishu import UserTokens
 from ppap_core.fixtures import USER_BOB
+from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_worker import process_claimed
 
 
 @pytest.fixture
 def task_system(auth_store_factory):
-    settings = Settings()
+    settings = Settings(usage_charge_enabled=False)
     store = auth_store_factory(settings)
     store.seed_isolated_dev()
     worker = build_product_store(settings, objects=store.objects, role="worker")
@@ -97,7 +100,7 @@ def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):
     assert worker.claim_job("no-second-audit") is None
 
 
-def test_confirmation_requires_current_revision_and_explicit_no_charge_configuration(matched_task):
+def test_confirmation_requires_current_revision_and_server_quota(matched_task):
     client, worker, path, body, _rule = matched_task
     assert client.get(path, params={"request_id": str(uuid.uuid4())}).json()["acceptance"]["state"] == "pending"
     revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0}
@@ -110,11 +113,218 @@ def test_confirmation_requires_current_revision_and_explicit_no_charge_configura
     worker.settings.usage_charge_enabled = True
     denied = client.post(path + "/confirm", json={**command, "expected_revision": 1})
     assert denied.status_code == 409
-    assert denied.json() == {"error": "audit_task_charging_unavailable"}
+    assert denied.json() == {"error": "usage_quota_unavailable"}
     assert client.get(path).json()["state"] == "pending_confirm"
     assert client.get("/rounds").json()["rounds"] == []
     assert client.get("/usage").json()["events"] == []
     assert worker.claim_job("no-audit") is None
+
+
+def billing_client(worker, item):
+    """Replace only the external quota service, retaining the real API/store."""
+    worker.settings.feishu_ai_item_id = "ai-item-test"
+    worker.settings.usage_charge_enabled = True
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        assert request.url.path == "/open-apis/partner_ai/v1/tenant_ai_items/ai-item-test"
+        assert request.headers["authorization"] == "Bearer quota-user"
+        return httpx.Response(200, json={"code": 0, "data": {"tenant_ai_item": item}})
+
+    http = httpx.Client(transport=httpx.MockTransport(provider))
+    api = build_product_store(worker.settings, objects=worker.objects, role="api")
+    client = TestClient(create_app(worker.settings, auth_store=api, http=http))
+    now = datetime.now(timezone.utc)
+    principal = api.principal_for_fixture("alice")
+    session = api.create_session(principal, UserTokens("quota-user", "", now + timedelta(hours=1), now + timedelta(hours=1)))
+    client.cookies.set(SESSION_COOKIE, session)
+    return client, http, calls
+
+
+def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quota(matched_task):
+    _client, worker, path, body, _rule = matched_task
+    worker.settings.feishu_free_trial_quota_points = 1
+    item = {"enabled": True, "user_quota": 0, "ai_package_purchased": False}
+    client, http, calls = billing_client(worker, item)
+    try:
+        command = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+        accepted = client.post(path + "/confirm", json=command)
+        assert accepted.status_code == 201, accepted.text
+        usage = client.get("/usage").json()["events"]
+        assert sorted((row["consumed_points"], row["is_free_trial"], row["external_status"]) for row in usage) == [(1, True, "none"), (499, False, "pending")]
+        assert {row["round_id"] for row in usage} == {accepted.json()["round_id"]}
+        assert {row["file_version_id"] for row in usage} == {body["files"][0]["file_version_id"]}
+        assert len(calls) == 1
+        item["enabled"] = False
+        assert client.post(path + "/confirm", json=command).json() == accepted.json()
+        assert len(client.get("/usage").json()["events"]) == 2
+        assert len(calls) == 1
+        job = worker.claim_job("charged-audit")
+        assert job.round_id == accepted.json()["round_id"]
+        assert worker.claim_job("no-duplicate-charged-audit") is None
+    finally:
+        client.close()
+        http.close()
+
+
+@pytest.mark.parametrize("item", [{"enabled": False, "user_quota": 1000, "ai_package_purchased": True}, {"enabled": True, "user_quota": 0, "ai_package_purchased": True}])
+def test_charging_policy_is_not_client_authority_and_rejection_preserves_task(matched_task, item):
+    _client, worker, path, body, _rule = matched_task
+    worker.settings.feishu_free_trial_quota_points = 0
+    client, http, _calls = billing_client(worker, item)
+    try:
+        blocked = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+        assert blocked.status_code == 409
+        assert blocked.json()["error"] in {"usage_ai_disabled", "usage_balance_empty"}
+        assert client.get(path).json()["state"] == "pending_confirm"
+        assert client.get("/usage").json()["events"] == []
+        assert client.get("/rounds").json()["rounds"] == []
+        new = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())})
+        assert new.status_code == 409
+        assert new.json() == blocked.json()
+        # Creation replay observes the original task even if authorization changes.
+        assert client.post("/audit-tasks", json=body).json()["id"] == body["request_id"]
+        assert worker.claim_job("no-charge-rejected-job") is None
+    finally:
+        client.close()
+        http.close()
+
+
+def test_two_confirmations_cannot_both_spend_the_last_free_allocation(matched_task):
+    client, worker, first_path, body, _rule = matched_task
+    second = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())}).json()
+    process_claimed(worker, worker.claim_job("second-recognition"), "second-recognition", rule_ai=MetadataAI())
+    worker.settings.feishu_free_trial_quota_points = 500
+    charged, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 0, "ai_package_purchased": False})
+    try:
+        paths = [first_path, f"/audit-tasks/{second['id']}"]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            replies = list(pool.map(lambda path: charged.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}), paths))
+        assert sorted(row.status_code for row in replies) == [201, 409]
+        assert next(row for row in replies if row.status_code == 409).json() == {"error": "usage_balance_empty"}
+        usage = charged.get("/usage").json()["events"]
+        assert len(usage) == 1
+        assert usage[0]["is_free_trial"] is True
+        assert usage[0]["consumed_points"] == 500
+    finally:
+        charged.close()
+        http.close()
+
+
+def test_charged_task_allocates_only_matched_selected_files_and_p8_counts_files(task_system):
+    client, worker = task_system
+    files = [checked_file(client, worker, name) for name in ("控制计划一.xlsx", "控制计划二.xlsx", "未选择.xlsx")]
+    files[-1]["selection"] = "unselected"
+    files.append(checked_file(client, worker, "过程流程图.xlsx", "过程流程图"))
+    publish_rule(client, files[0])
+    task = client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": files}).json()
+    for _ in range(3):
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    worker.settings.feishu_free_trial_quota_points = 750
+    charged, http, _calls = billing_client(worker, {"enabled": True, "user_quota": 1, "ai_package_purchased": True})
+    try:
+        accepted = charged.post(f"/audit-tasks/{task['id']}/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+        assert accepted.status_code == 201, accepted.text
+        ledger = charged.get("/usage").json()["events"]
+        assert len(ledger) == 3
+        for source in files[:2]:
+            assert sum(row["consumed_points"] for row in ledger if row["file_version_id"] == source["file_version_id"]) == 500
+        assert {row["file_version_id"] for row in ledger} == {source["file_version_id"] for source in files[:2]}
+        usage = charged.get("/audit-usage").json()
+        assert usage["total"] == 2
+        assert usage["summary"]["consumption_count"]["value"] == 2
+        assert usage["summary"]["charged_points"]["value"] == 750
+        assert usage["summary"]["pending_points"]["value"] == 250
+    finally:
+        charged.close()
+        http.close()
+
+
+def test_charged_report_and_zip_recovery_check_quota_without_new_audit_fees(matched_task):
+    client, worker, path, body, _rule = matched_task
+    second = checked_file(client, worker, "控制计划补充.xlsx")
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [second]}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    for _ in range(2):
+        process_claimed(worker, worker.claim_job("recognition"), "recognition", rule_ai=MetadataAI())
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1}).json()
+    audit_job = worker.claim_job("audit")
+    findings = [
+        {
+            "item_key": source["file"]["id"] + ":rule:1",
+            "classification": "身份",
+            "item": "必须填写零件号",
+            "priority": "P0",
+            "status": "NG",
+            "suggestions": "缺少零件号",
+            "locator": {"file_version_id": source["file"]["id"], "rule_item_id": "1"},
+        }
+        for source in accepted["files"]
+    ]
+    assert worker.complete_job(audit_job, "audit", {"findings": findings, "coverage": {}}, "succeeded")
+    failed_report = worker.claim_job("failed-pdf")
+    assert failed_report.kind == "report_pdf"
+    assert worker.complete_job(failed_report, "failed-pdf", {"error": "test-pdf-failure"}, "failed")
+    other_report = worker.claim_job("ready-pdf")
+    process_claimed(worker, other_report, "ready-pdf")
+    task = client.get(path).json()
+    source_id = failed_report.payload["source_file_version_id"]
+    original = next(source["audit"] for source in task["files"] if source["file"]["id"] == source_id)
+    reference = {
+        "task_id": task["id"],
+        "round_id": accepted["round_id"],
+        "file_version_id": source_id,
+        "result_attempt": original["result_attempt"],
+        "report_id": failed_report.id,
+    }
+    worker.settings.feishu_free_trial_quota_points = 0
+    item = {"enabled": True, "user_quota": 0, "ai_package_purchased": True}
+    charged, http, calls = billing_client(worker, item)
+    try:
+        pdf_path = path + f"/reports/{failed_report.id}"
+        request = {"request_id": str(uuid.uuid4()), "reference": reference}
+        assert original["report"]["regenerate_allowed"] is True
+        blocked = charged.post(pdf_path + "/regenerations", json=request)
+        assert blocked.status_code == 409 and blocked.json() == {"error": "usage_balance_empty"}
+        item["user_quota"] = 1
+        assert charged.post(pdf_path + "/regenerations", json=request).status_code == 201
+        count = len(calls)
+        item["user_quota"] = 0
+        assert charged.post(pdf_path + "/regenerations", json=request).status_code == 201
+        assert len(calls) == count
+        retried = worker.claim_job("retry-pdf")
+        assert retried.id == failed_report.id and retried.attempt == 2
+        process_claimed(worker, retried, "retry-pdf")
+        ready = next(source["audit"] for source in charged.get(path).json()["files"] if source["file"]["id"] == source_id)
+        assert ready["checks"] == original["checks"]
+        assert ready["conclusion"] == original["conclusion"]
+        artifact = ready["report"]["artifact"]
+        download = charged.get(pdf_path + "/pdf", params={**{key: reference[key] for key in ("round_id", "file_version_id", "result_attempt")}, "artifact_id": artifact["artifact_id"]})
+        assert download.status_code == 200 and download.content.startswith(b"%PDF-")
+        other_reference = {**reference, "file_version_id": other_report.payload["source_file_version_id"], "report_id": other_report.id}
+        package_response = charged.post("/audit-report-packages", json={"request_id": str(uuid.uuid4()), "reports": [reference, other_reference]})
+        assert package_response.status_code == 202, package_response.text
+        package = package_response.json()
+        zip_job = worker.claim_job("failed-zip")
+        assert zip_job.kind == "report_zip"
+        assert worker.complete_job(zip_job, "failed-zip", {"error": "test-zip-failure"}, "failed")
+        package_path = "/audit-report-packages/" + package["receipt"]["request_id"]
+        package = charged.get(package_path).json()
+        assert package["retry_allowed"] is True
+        retry = {"request_id": str(uuid.uuid4()), "package_id": zip_job.id, "expected_attempt": zip_job.attempt}
+        assert charged.post(package_path + "/retries", json=retry).json() == {"error": "usage_balance_empty"}
+        item["user_quota"] = 1
+        assert charged.post(package_path + "/retries", json=retry).status_code == 202
+        count = len(calls)
+        item["user_quota"] = 0
+        assert charged.post(package_path + "/retries", json=retry).status_code == 202
+        assert len(calls) == count
+        assert charged.get("/usage").json()["events"] == []
+        assert len(charged.get("/rounds").json()["rounds"]) == 1
+    finally:
+        charged.close()
+        http.close()
 
 
 def test_superseded_candidate_requires_explicit_rematching_before_confirmation(matched_task):

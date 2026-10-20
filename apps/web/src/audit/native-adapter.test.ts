@@ -280,7 +280,7 @@ test('native PDF regeneration reads the original request after a lost reply with
 
 test('native PDF regeneration treats explicit policy refusals as rejected without submitting an audit', async () => {
   const reference = {task_id: 'task-a', round_id: 'round-a', file_version_id: 'version-a', result_attempt: 2, report_id: 'report-a'}
-  for (const code of ['report_recovery_unavailable', 'audit_report_charging_unavailable']) {
+  for (const code of ['report_recovery_unavailable', 'audit_report_charging_unavailable', 'usage_quota_unavailable', 'usage_ai_disabled', 'usage_balance_empty']) {
     let calls = 0
     globalThis.fetch = async (input, init) => {
       calls += 1
@@ -335,6 +335,25 @@ test('ZIP recovery binds the failed package attempt and reads its original reque
   await assert.rejects(nativeReportAdapter.retryPackage!(failed, 'recovery-a'), /reply lost/)
   assert.deepEqual(await nativeReportAdapter.readPackage!('recovery-a'), pending)
   assert.deepEqual(calls, ['POST /audit-report-packages/original-a/retries', 'GET /audit-report-packages/recovery-a'])
+})
+
+test('server quota refusals remain explicit rejections for confirmation and ZIP recovery', async () => {
+  const failed: components['schemas']['AuditReportPackage'] = {package_id: 'package-a', reports: [], attempt: 1, receipt: {request_id: 'original-a', state: 'accepted', reason: null}, state: 'failed', artifact: null, reason: '打包失败', retry_allowed: true}
+  for (const code of ['usage_quota_unavailable', 'usage_ai_disabled', 'usage_balance_empty']) {
+    const calls: string[] = []
+    globalThis.fetch = async (input, init) => {
+      calls.push(`${init?.method} ${input}`)
+      return init?.method === 'POST' ? json({error: code}, 409) : json(task)
+    }
+    const confirmation = await createNativeAuditAdapter({deepOffered: false, customers: []}).confirm(task, 'accept-a')
+    assert.equal(confirmation.acceptance?.state, 'rejected')
+    assert.equal(confirmation.round_id, null)
+    const recovery = await nativeReportAdapter.retryPackage!(failed, 'recovery-a')
+    assert.equal(recovery.receipt.state, 'rejected')
+    assert.equal(recovery.receipt.reason, confirmation.acceptance?.reason)
+    assert.ok(recovery.receipt.reason)
+    assert.deepEqual(calls, ['POST /audit-tasks/task-a/confirm', 'GET /audit-tasks/task-a?request_id=accept-a', 'POST /audit-report-packages/original-a/retries'])
+  }
 })
 
 test('an explicit pre-acceptance ZIP size refusal is rejected, not an unknown accepted work', async () => {

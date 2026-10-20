@@ -102,14 +102,19 @@ export const nativeSupportAdapter: AuditSupportAdapter = {
 }
 
 type ValidationJob = components['schemas']['FileValidationJob']
+const usageRefusals: Record<string, string> = {
+  usage_quota_unavailable: '暂时无法确认飞书开关和额度，本次操作未受理。请恢复授权后重试。',
+  usage_ai_disabled: '飞书AI包开关已关闭，请联系管理员在飞书管理后台启用或联系我们获取免费额度',
+  usage_balance_empty: '当前没有可用额度，本次操作未受理。请联系管理员充值或联系我们获取免费额度。',
+}
 export const nativeReportAdapter: AuditReportAdapter = {
   async regenerate(reference, requestId) {
     const path = `/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/regenerations`
     try {return await request(path, 'POST', {request_id: requestId, reference})}
     catch (failure) {
       const error = failure as {status?: number; code?: string}
-      if (error.status !== 409 || !['report_recovery_unavailable', 'audit_report_charging_unavailable'].includes(error.code || '')) throw failure
-      const reason = error.code === 'audit_report_charging_unavailable' ? '当前环境尚未开放报告恢复计费，本次未重新生成。' : '这份报告当前不能重新生成，请读取最新状态。'
+      if (error.status !== 409 || !['report_recovery_unavailable', 'audit_report_charging_unavailable', ...Object.keys(usageRefusals)].includes(error.code || '')) throw failure
+      const reason = usageRefusals[error.code || ''] || (error.code === 'audit_report_charging_unavailable' ? '当前环境尚未开放报告恢复计费，本次未重新生成。' : '这份报告当前不能重新生成，请读取最新状态。')
       return {reference, receipt: {request_id: requestId, state: 'rejected', reason}, report: null}
     }
   },
@@ -135,8 +140,8 @@ export const nativeReportAdapter: AuditReportAdapter = {
     try {return await request(`/audit-report-packages/${encodeURIComponent(job.receipt.request_id)}/retries`, 'POST', {request_id: requestId, package_id: job.package_id, expected_attempt: job.attempt})}
     catch (failure) {
       const error = failure as {status?: number; code?: string}
-      if (error.status !== 409 || !['report_package_recovery_unavailable', 'audit_report_charging_unavailable'].includes(error.code || '')) throw failure
-      return rejected(error.code === 'audit_report_charging_unavailable' ? '当前环境尚未开放 ZIP 恢复计费，本次未重新打包。' : 'ZIP 已有更新，本次未重新打包，请读取最新状态。')
+      if (error.status !== 409 || !['report_package_recovery_unavailable', 'audit_report_charging_unavailable', ...Object.keys(usageRefusals)].includes(error.code || '')) throw failure
+      return rejected(usageRefusals[error.code || ''] || (error.code === 'audit_report_charging_unavailable' ? '当前环境尚未开放 ZIP 恢复计费，本次未重新打包。' : 'ZIP 已有更新，本次未重新打包，请读取最新状态。'))
     }
   },
   async readPackage(requestId) {
@@ -179,6 +184,7 @@ const encoded = encodeURIComponent
 const taskPath = (id: string) => `/audit-tasks/${encoded(id)}`
 const removals = (task: AuditTask) => task.files.filter(row => row.selection === 'removed').map(row => ({file_version_id: row.file.id, removal_reason: row.removal_reason || ''}))
 const confirmationRefusals: Record<string, string> = {
+  ...usageRefusals,
   audit_task_charging_unavailable: '当前环境尚未开放本次审核计费，审核没有开始。',
   task_revision_conflict: '任务文件已在其他页面更新。本次确认未受理，请核对当前任务。',
   task_not_ready: '文件识别尚未完成。本次确认未受理，请读取当前任务。',

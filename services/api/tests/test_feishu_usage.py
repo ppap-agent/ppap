@@ -182,9 +182,9 @@ class FeishuUsageTests(unittest.TestCase):
         self.http.close()
         self._env.stop()
 
-    def _login_feishu_user(self, subject: str = "alice") -> None:
+    def _login_feishu_user(self, subject: str = "alice", *, principal=None) -> None:
         self.client.cookies.clear()
-        principal = self.store.principal_for_fixture(subject)
+        principal = principal or self.store.principal_for_fixture(subject)
         now = datetime.now(timezone.utc)
         raw = self.store.create_session(
             principal,
@@ -192,9 +192,9 @@ class FeishuUsageTests(unittest.TestCase):
         )
         self.client.cookies.set(SESSION_COOKIE, raw)
 
-    def _seed_event(self, *, json):
+    def _seed_event(self, *, json, principal=None):
         # Test fixture only; the Product API cannot create arbitrary usage events.
-        principal = self.store.principal_for_fixture("alice")
+        principal = principal or self.store.principal_for_fixture("alice")
         row = self.seed_usage_event(
             self.store,
             principal,
@@ -378,6 +378,76 @@ class FeishuUsageTests(unittest.TestCase):
         self.assertEqual(again.status_code, 409)
         self.assertEqual(again.json()["external_status"], "unknown")
         self.assertEqual(len(self.partner.calls), count)
+
+    def test_charge_switch_blocks_external_reporting_without_changing_pending(self):
+        self._login_feishu_user()
+        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "disabled-report"}).json()
+        self.settings.usage_charge_enabled = False
+        response = self.client.post(f"/integrations/feishu/usage/events/{created['id']}/report")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json(), {"error": "usage_charging_disabled"})
+        self.assertEqual(self.partner.calls, [])
+        self.assertEqual(self.store.usage_event(self.store.principal_for_fixture("alice"), created["id"])["external_status"], "pending")
+
+    def test_pending_reporting_resumes_with_original_owner_not_a_usage_viewer(self):
+        from ppap_api.usage_reporting import dispatch_pending_usage
+
+        self._login_feishu_user("bob")
+        self.store.save_app_ticket("cli_test", "tik")
+        owner = self.store.upsert_feishu_identity("isolated-dev-a", "report-owner", "报告发起人")
+        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "owner-recovery"}, principal=owner).json()
+        self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
+        self.assertEqual(self.partner.calls, [])
+        self._login_feishu_user(principal=owner)
+        self.assertTrue(dispatch_pending_usage(self.store, self.http, self.settings))
+        row = self.store.usage_event(owner, created["id"])
+        self.assertEqual(row["external_status"], "confirmed")
+        self.assertIsNone(row["debit_order_id"])
+        self.assertIsNone(row["debited_at"])
+        before = len(self.partner.calls)
+        self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
+        self.assertEqual(before, len(self.partner.calls))
+
+    def test_pending_reporting_waits_for_recharge_and_never_retries_unknown(self):
+        from ppap_api.usage_reporting import dispatch_pending_usage
+
+        owner = self.store.upsert_feishu_identity("isolated-dev-a", "report-owner", "报告发起人")
+        self._login_feishu_user(principal=owner)
+        self.store.save_app_ticket("cli_test", "tik")
+        created = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "recharge-recovery"}, principal=owner).json()
+        self.partner.item["user_quota"] = 0
+        self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
+        self.assertFalse(any(url.endswith("/usage_records/report") for _method, url in self.partner.calls))
+        self.partner.item["user_quota"] = 1
+        self.partner.fail_report = True
+        self.assertTrue(dispatch_pending_usage(self.store, self.http, self.settings))
+        self.assertEqual(self.store.usage_event(owner, created["id"])["external_status"], "unknown")
+        before = len(self.partner.calls)
+        self.assertFalse(dispatch_pending_usage(self.store, self.http, self.settings))
+        self.assertEqual(before, len(self.partner.calls))
+
+    def test_twenty_blocked_obligations_do_not_starve_another_authorized_owner(self):
+        from ppap_api.usage_reporting import dispatch_pending_usage
+
+        blocked = self.store.upsert_feishu_identity("isolated-dev-a", "no-balance-owner", "等待充值")
+        now = datetime.now(timezone.utc)
+        self.store.create_session(blocked, UserTokens("empty-quota-user", "", now + timedelta(hours=1), now + timedelta(hours=1)))
+        for index in range(20):
+            self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": f"blocked-{index}"}, principal=blocked)
+        ready = self.store.upsert_feishu_identity("isolated-dev-a", "ready-owner", "已有余额")
+        self._login_feishu_user(principal=ready)
+        event = self._seed_event(json={"consumed_points": 500, "is_free_trial": False, "trace_id": "ready-21"}, principal=ready).json()
+        self.store.save_app_ticket("cli_test", "tik")
+
+        def provider(request):
+            if request.headers.get("authorization") == "Bearer empty-quota-user":
+                return httpx.Response(200, json={"code": 0, "data": {"tenant_ai_item": {"enabled": True, "user_quota": 0, "ai_package_purchased": True}}})
+            return self.partner.handler(request)
+
+        with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+            self.assertTrue(dispatch_pending_usage(self.store, http, self.settings))
+        self.assertEqual(self.store.usage_event(ready, event["id"])["external_status"], "confirmed")
+        self.assertEqual(len([url for _method, url in self.partner.calls if url.endswith("/usage_records/report")]), 1)
 
 
 if __name__ == "__main__":

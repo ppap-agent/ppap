@@ -15,7 +15,7 @@ def client_for(*, tenant="tenant", authenticated=True, private=False, grants=())
     store.save_review.side_effect = lambda principal, identity, *args: {"id": identity}
     principal = SimpleNamespace(user_id="reader", tenant_id=tenant) if authenticated else None
     app = FastAPI()
-    register_audit_routes(app, store, lambda request: principal)
+    register_audit_routes(app, store, lambda request: principal, Mock())
     return TestClient(app)
 
 

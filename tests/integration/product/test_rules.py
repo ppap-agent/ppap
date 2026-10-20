@@ -112,7 +112,7 @@ class RuleApiTests(unittest.TestCase):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("LLM_", "PPAP_", "OPENAI_", "MODEL_NAME", "FEISHU_"))}
         self.env = patch.dict(os.environ, env, clear=True)
         self.env.start()
-        self.settings = Settings()
+        self.settings = Settings(usage_charge_enabled=False)
         self.store = self.auth_store(self.settings)
         self.store.seed_isolated_dev()
         self.ai = FakeRuleAI()
