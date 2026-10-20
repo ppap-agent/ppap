@@ -1,4 +1,4 @@
-"""Issue #174 UI contract; controlled adapters do not prove external delivery."""
+"""Issue #174 preview contract; controlled adapters do not prove external delivery."""
 
 import os
 import unittest
@@ -13,6 +13,28 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the preview and e2e dependencies")
 class AuditIntakeClosureTests(unittest.TestCase):
+    def test_pending_uploads_keep_the_return_and_original_receipt_recovery(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            for fail_reply in (False, True):
+                page.goto(PREVIEW + "/preview/audit.html?scene=upload-loading")
+                page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "等待回执.pdf", "mimeType": "application/pdf", "buffer": b"fixture"})
+                if fail_reply:
+                    page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
+                    expect(page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True)).to_be_enabled()
+                page.get_by_role("button", name="上一步", exact=True).click()
+                expect(page.get_by_text("已选 1 个文件", exact=True)).to_be_visible()
+                expect(page.get_by_text("等待回执.pdf", exact=True)).to_have_count(0)
+                page.get_by_role("button", name="查看已选文件", exact=True).click()
+                if not fail_reply:
+                    page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                else:
+                    page.get_by_role("button", name="读取传输 等待回执.pdf", exact=True).click()
+                expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
+                expect(page.get_by_text("等待回执.pdf", exact=True)).to_be_visible()
+            browser.close()
+
     def test_steps_do_not_confuse_a_terminal_task_with_ready_reports(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
