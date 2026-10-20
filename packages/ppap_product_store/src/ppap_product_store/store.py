@@ -1419,7 +1419,11 @@ class AuthStore:
             card = task_notification_card(task, stage, self.settings.canonical_web_url(), report_package, confirmation_id=claimed.id if self.settings.feishu_verification_token.strip() else None)
             dispatch = {"receive_id": principal.subject, "card": card}
             saved = {"dispatch": dispatch}
-            if any(action.get("value", {}).get("action") == "confirm_audit_task" for action in card["elements"][1]["actions"]):
+            if any(
+                behavior.get("type") == "callback" and behavior.get("value", {}).get("action") == "confirm_audit_task"
+                for element in card["body"]["elements"]
+                for behavior in element.get("behaviors", [])
+            ):
                 saved["confirmation"] = {"request_id": str(uuid.uuid5(uuid.UUID(claimed.id), "confirm")), "expected_revision": task["input_revision"]}
             row = conn.execute(
                 """UPDATE engine.jobs SET result = '{"state":"dispatching","reason":null}'::jsonb,

@@ -456,7 +456,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         api_store = build_product_store(self.settings, objects=self.store.objects, role="api")
         intent, recipient = api_store.claim_task_notification("card-notifier")
         delivery = api_store.start_task_notification(intent, "card-notifier", recipient)
-        value = delivery["card"]["elements"][1]["actions"][0]["value"]
+        self.assertEqual(delivery["card"]["schema"], "2.0")
+        value = delivery["card"]["body"]["elements"][1]["behaviors"][0]["value"]
         self.assertEqual(value, {"action": "confirm_audit_task", "notification_id": intent.id})
         receipt = {"state": "sent", "message_id": "om_confirmation", "reason": None} if sent else {"state": "unknown", "message_id": None, "reason": "send_receipt_unknown"}
         self.assertTrue(api_store.finish_task_notification(intent, "card-notifier", receipt))
@@ -624,7 +625,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             claims.append(intent)
             delivery = api_store.start_task_notification(intent, "zip-notifier", recipient)
             package_index = next(i for i, package in enumerate(packages) if package["package_id"] == intent.payload["package_id"])
-            link = delivery["card"]["elements"][1]["actions"][0]["url"]
+            link = delivery["card"]["body"]["elements"][1]["behaviors"][0]["default_url"]
             target = parse_qs(urlsplit(link).query)["return_to"][0]
             self.assertEqual(parse_qs(urlsplit(target).query)["packageRequest"], [commands[package_index]["request_id"]])
             self.assertTrue(
@@ -670,7 +671,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual((intent.payload["stage"], intent.payload["package_id"]), ("zip_ready", package["package_id"]))
         delivery = api_store.start_task_notification(intent, "zip-notifier", recipient)
         self.assertEqual(delivery["card"]["header"]["title"]["content"], "报告 ZIP 已就绪")
-        link = delivery["card"]["elements"][1]["actions"][0]["url"]
+        link = delivery["card"]["body"]["elements"][1]["behaviors"][0]["default_url"]
         target = parse_qs(urlsplit(link).query)["return_to"][0]
         self.assertEqual(parse_qs(urlsplit(target).query)["packageRequest"], [command["request_id"]])
         self.assertTrue(api_store.finish_task_notification(intent, "zip-notifier", {"state": "sent", "message_id": "om_zip", "reason": None}))
@@ -730,7 +731,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         intent, recipient = api_store.claim_task_notification("notifier")
         self.assertEqual(intent.payload["stage"], "completed")
         delivery = api_store.start_task_notification(intent, "notifier", recipient)
-        self.assertIn("报告已就绪 1 份，报告生成失败 1 份，审核异常 0 份", delivery["card"]["elements"][0]["text"]["content"])
+        self.assertIn("**报告已就绪 1 份**<br>报告生成失败 1 份 · 审核异常 0 份", delivery["card"]["body"]["elements"][0]["content"])
         with self.assertRaisesRegex(ValueError, "notification_already_dispatched"):
             api_store.save_task_notification(self.alice, task["id"], {"enabled": False, "expected_revision": 0})
         self.assertIsNone(api_store.claim_task_notification("another-notifier"))
@@ -788,7 +789,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(sent[0]["msg_type"], "interactive")
         card = json.loads(sent[0]["content"])
         self.assertEqual(card["header"]["title"]["content"], "规则匹配结果待确认")
-        self.assertIn(task["id"], card["elements"][1]["actions"][0]["url"])
+        self.assertEqual(card["schema"], "2.0")
+        self.assertIn(task["id"], card["body"]["elements"][1]["behaviors"][0]["default_url"])
         self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
 
     def test_scoped_notifier_sends_only_the_requested_task_and_leaves_history_claimable(self):
@@ -1726,7 +1728,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                 if notification.payload["stage"] == "zip_ready":
                     card = delivery["card"]
                     notified.append(card)
-                    target = urlsplit(parse_qs(urlsplit(card["elements"][1]["actions"][0]["url"]).query)["return_to"][0])
+                    target = urlsplit(parse_qs(urlsplit(card["body"]["elements"][1]["behaviors"][0]["default_url"]).query)["return_to"][0])
                     self.assertEqual(parse_qs(target.query), {"view": ["archive"], "packageRequest": [command["request_id"]]})
                 api_store.finish_task_notification(notification, "archive-notifier", {"state": "sent", "message_id": "om_test", "reason": None})
         self.assertEqual(len(notified), 1)

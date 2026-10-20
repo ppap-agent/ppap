@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+from html import unescape
 
 import httpx
 import pytest
 from ppap_core.feishu_notifications import send_task_notification, task_notification_card
+
+
+def _text(card):
+    return unescape(card["body"]["elements"][0]["content"])
 
 
 def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_confirmation() -> None:
@@ -18,17 +23,20 @@ def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_
         ],
     }
     card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
-    text = card["elements"][0]["text"]["content"]
+    text = _text(card)
+    assert card["schema"] == "2.0" and "elements" not in card
     assert all(value in text for value in ("控制计划.xlsx", "海岸线控制计划要求", "缺少过程流程图", "未匹配.pdf", "不纳入审核", "预计点数：500"))
-    confirm, opened = card["elements"][1]["actions"]
-    assert confirm["value"] == {"action": "confirm_audit_task", "notification_id": "intent-a"}
+    confirm, opened = card["body"]["elements"][1:]
+    assert confirm["behaviors"] == [{"type": "callback", "value": {"action": "confirm_audit_task", "notification_id": "intent-a"}}]
     assert confirm["confirm"]["title"]["content"] == "开始本次审核？"
     assert "预计点数：500" in confirm["confirm"]["text"]["content"]
-    assert "url" not in confirm and "url" in opened
+    assert opened["behaviors"][0]["type"] == "open_url"
     task["files"][0]["file"]["original_filename"] = "很长的名称" * 6000
     bounded = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
     assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 26000
-    assert all("value" not in button for button in bounded["elements"][1]["actions"])
+    assert [button["behaviors"][0]["type"] for button in bounded["body"]["elements"][1:]] == ["open_url"]
+    assert bounded["body"]["elements"][1]["type"] == "primary_filled"
+    assert "完整文件与原因请打开审核查看。" in _text(bounded)
 
 
 def test_card_callback_authenticates_the_app_and_operator_without_treating_card_update_token_as_verification() -> None:
@@ -64,8 +72,8 @@ def test_confirmation_without_a_rule_or_selection_does_not_offer_a_blind_accepta
         ],
     }
     card = task_notification_card(task, "confirmation", "https://ppap.example.test", confirmation_id="intent-a")
-    assert all("value" not in button for button in card["elements"][1]["actions"])
-    assert "未选择.xlsx：不纳入审核；未选择此文件" in card["elements"][0]["text"]["content"]
+    assert [button["behaviors"][0]["type"] for button in card["body"]["elements"][1:]] == ["open_url"]
+    assert "**未选择.xlsx**<br>不纳入审核；未选择此文件" in _text(card)
 
 
 def test_incomplete_audit_is_an_exception_not_a_ready_report_or_a_raw_unknown_label() -> None:
@@ -76,9 +84,9 @@ def test_incomplete_audit_is_an_exception_not_a_ready_report_or_a_raw_unknown_la
     }
     card = task_notification_card(task, "completed", "https://ppap.example.test")
     assert card["header"]["title"]["content"] == "审核已结束，未生成正式报告"
-    content = card["elements"][0]["text"]["content"]
+    content = _text(card)
     assert "审核异常 1 份" in content
-    assert "控制计划.xlsx：无正式结论" in content
+    assert "**控制计划.xlsx**<br><text_tag color='neutral'>无正式结论</text_tag>" in content
     assert "UNKNOWN" not in content
 
 
@@ -137,24 +145,25 @@ def test_recall_card_separates_comparison_material_from_audited_files(stage) -> 
         ],
     }
     card = task_notification_card(task, stage, "https://ppap.example.test", confirmation_id="intent-a")
-    body = card["elements"][0]["text"]["content"]
-    assert "比对资料：特殊特性清单.xlsx；已固定版本，不单独审核。" in body
+    body = _text(card)
+    assert "**比对资料**<br>特殊特性清单.xlsx<br><font color='grey'>已固定版本，不单独审核。</font>" in body
     assert "审核：特殊特性清单.xlsx" not in body
     assert "特殊特性清单.xlsx：无正式结论" not in body
     if stage == "confirmation":
-        assert "已匹配 1 份，共 1 份" in body
+        assert "已匹配 **1 份**，共 1 份" in body
         assert "匹配尚未确认" not in body
-        assert card["elements"][1]["actions"][0]["value"]["notification_id"] == "intent-a"
+        assert card["body"]["elements"][1]["behaviors"][0]["value"]["notification_id"] == "intent-a"
     elif stage == "started":
-        assert "本次审核 1 份资料。" in body
+        assert "本次审核 **1 份文件**" in body
     else:
-        assert "报告已就绪 1 份，报告生成失败 0 份，审核异常 0 份。" in body
+        assert "**报告已就绪 1 份**" in body
+        assert "报告生成失败" not in body and "审核异常" not in body
 
 
 def test_zero_match_card_does_not_claim_an_audit_or_report_and_oversized_card_fails_boundedly() -> None:
     task = {"id": "task-a", "number": "001", "completion_reason": "no_matching_rules", "files": []}
     card = task_notification_card(task, "completed", "https://ppap.example.test")
-    assert "未开始审核，未生成正式报告" in card["elements"][0]["text"]["content"]
+    assert "未开始审核，未生成正式报告" in _text(card)
     with pytest.raises(ValueError, match="notification_card_too_large"):
         task_notification_card(task, "completed", "https://ppap.example.test/" + "x" * 30000)
 
@@ -169,11 +178,11 @@ def test_zip_card_names_only_the_requested_collection_and_uses_an_authenticated_
     }
     package = {"state": "ready", "reports": [{"file_version_id": "v1"}, {"file_version_id": "v3"}], "receipt": {"request_id": "zip-request-a"}}
     card = task_notification_card(task, "zip_ready", "https://ppap.example.test", package)
-    action = card["elements"][1]["actions"][0]
+    action = card["body"]["elements"][1]
     assert action["text"]["content"] == "打开本次 ZIP"
-    body = card["elements"][0]["text"]["content"]
-    assert "已打包 2 份报告" in body and "不在包内.docx" not in body
-    outer = urlsplit(action["url"])
+    body = _text(card)
+    assert "已打包 **2 份报告**" in body and "不在包内.docx" not in body
+    outer = urlsplit(action["behaviors"][0]["default_url"])
     assert outer.path == "/enter-current"
     target = urlsplit(parse_qs(outer.query)["return_to"][0])
     assert target.path == "/audit" and parse_qs(target.query) == {"task": ["task-a"], "report": ["1"], "packageRequest": ["zip-request-a"]}
@@ -191,7 +200,67 @@ def test_cross_task_zip_notification_restores_the_archive_package_and_frozen_rep
         "outcomes": [{"reference": reference, "filename": name} for reference, name in zip(references, ("控制计划-审核报告.pdf", "流程图-审核报告.pdf"), strict=True)],
     }
     card = task_notification_card(task, "zip_ready", "https://ppap.example.test", package)
-    body = card["elements"][0]["text"]["content"]
-    assert all(value in body for value in ("文件档案", "控制计划-审核报告.pdf", "流程图-审核报告.pdf"))
-    target = urlsplit(parse_qs(urlsplit(card["elements"][1]["actions"][0]["url"]).query)["return_to"][0])
+    body = _text(card)
+    assert card["header"]["subtitle"]["content"] == "文件档案"
+    assert all(value in body for value in ("控制计划-审核报告.pdf", "流程图-审核报告.pdf"))
+    target = urlsplit(parse_qs(urlsplit(card["body"]["elements"][1]["behaviors"][0]["default_url"]).query)["return_to"][0])
     assert target.path == "/audit" and parse_qs(target.query) == {"view": ["archive"], "packageRequest": ["archive-package"]}
+
+
+@pytest.mark.parametrize("stage", ["confirmation", "started", "completed", "zip_ready"])
+def test_json_v2_card_escapes_dynamic_markdown_and_keeps_one_authenticated_main_action(stage) -> None:
+    name = "[点击](https://wrong.test)<at id=all></at>_*`\\\n.xlsx"
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "files": [{"selection": "selected", "file": {"id": "file-a", "original_filename": name}, "match": {"state": "matched", "rule": {"title": name}, "gaps": [name]}}],
+    }
+    package = {"state": "ready", "reports": [{"file_version_id": "file-a"}], "receipt": {"request_id": "zip-a"}}
+    card = task_notification_card(task, stage, "https://ppap.example.test", package if stage == "zip_ready" else None)
+    body = card["body"]["elements"][0]["content"]
+    assert card["schema"] == "2.0" and card["config"]["update_multi"] is True
+    assert card["header"]["template"] == "blue" and card["header"]["subtitle"]["content"] == "001"
+    assert "elements" not in card and "wide_screen_mode" not in card["config"]
+    assert card["body"]["elements"][0]["tag"] == "markdown"
+    assert "[点击]" not in body and "<at" not in body and "_*`" not in body
+    assert name.replace("\n", " ") in _text(card)
+    button = card["body"]["elements"][1]
+    assert len(card["body"]["elements"]) == 2
+    assert button["type"] == "primary_filled" and button["width"] == "fill"
+    assert button["behaviors"][0]["type"] == "open_url"
+    assert "url" not in button and "value" not in button
+
+
+def test_completed_card_uses_actual_counts_without_changing_ng_or_inventing_pass_for_missing_results() -> None:
+    task = {
+        "id": "task-a",
+        "number": "001",
+        "files": [
+            {
+                "selection": "selected",
+                "file": {"original_filename": "控制计划.xlsx"},
+                "audit": {
+                    "execution": "completed",
+                    "conclusion": "NG",
+                    "counts": {"pass_count": 2, "ng_count": 9, "unknown_count": 0, "not_covered_count": 0, "error_count": 0},
+                    "report": {"state": "ready"},
+                },
+            },
+            {
+                "selection": "selected",
+                "file": {"original_filename": "流程图.xlsx"},
+                "audit": {
+                    "execution": "review_failed",
+                    "conclusion": None,
+                    "counts": {"pass_count": 0, "ng_count": 0, "unknown_count": 1, "not_covered_count": 2, "error_count": 3},
+                    "report": {"state": "not_eligible"},
+                },
+            },
+        ],
+    }
+    card = task_notification_card(task, "completed", "https://ppap.example.test")
+    assert "符合 2 项 · 不符合 9 项 · 无法判断 1 项 · 未覆盖 2 项 · 执行异常 3 项" in _text(card)
+    assert "<text_tag color='red'>不符合</text_tag> 符合 2 项 · 不符合 9 项" in _text(card)
+    assert "<text_tag color='neutral'>无正式结论</text_tag>" in _text(card)
+    assert "审核异常 1 份" in _text(card)
+    assert card["header"]["template"] != "green"
