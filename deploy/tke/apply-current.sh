@@ -12,11 +12,6 @@ docker info >/dev/null
 kubectl -n ppap-test get secret ppap-current >/dev/null
 kubectl -n ppap-test get secret ppap-current-office >/dev/null
 
-# The migration ConfigMap carries the canonical numbered SQL files plus
-# migrations/apply.sh. Filename order is the single migration authority.
-kubectl -n ppap-test create configmap ppap-current-migrations \
-  --from-file="$ROOT/migrations" --dry-run=client -o yaml | kubectl apply -f -
-
 RENDERED="$(mktemp)"
 trap 'rm -f "$RENDERED"' EXIT HUP INT TERM
 "$TKE/render-current.sh" > "$RENDERED"
@@ -24,6 +19,12 @@ trap 'rm -f "$RENDERED"' EXIT HUP INT TERM
 # Admission/schema smoke and the real apply consume the exact same rendered
 # object stream.
 kubectl apply --dry-run=server -f "$RENDERED" >/dev/null
+python3 "$TKE/preload-current.py" --objects "$RENDERED"
+
+# No application or migration object is changed until both nodes pass preload.
+# Numbered SQL filenames remain the only migration ordering authority.
+kubectl -n ppap-test create configmap ppap-current-migrations \
+  --from-file="$ROOT/migrations" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$RENDERED"
 
 for deployment in ppap-current-postgres ppap-current-silo; do

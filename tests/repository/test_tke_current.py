@@ -94,6 +94,10 @@ exit 2
 set -eu
 printf 'ARGS %s\\n' "$*" >> "$PPAP_KUBECTL_LOG"
 case " $* " in
+  *" --dry-run=client "*" -o json "*)
+    printf '{"items":[]}\\n'
+    exit 0
+    ;;
   *" create configmap "*)
     cat <<'EOF'
 apiVersion: v1
