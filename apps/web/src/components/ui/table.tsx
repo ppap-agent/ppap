@@ -18,11 +18,11 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   )
 }
 
-function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
+function TableHeader({ className, variant = "default", ...props }: React.ComponentProps<"thead"> & {variant?: "default" | "muted"}) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      className={cn("[&_tr]:border-b", variant === "muted" && "bg-muted/30", className)}
       {...props}
     />
   )

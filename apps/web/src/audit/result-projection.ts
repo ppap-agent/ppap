@@ -9,6 +9,18 @@ export function reconcileTaskNotification(previous: Task | null | undefined, nex
 }
 type TaskFile = components['schemas']['AuditTaskFile']
 export type ReviewFile = Pick<TaskFile, 'file' | 'audit' | 'display_info'> & Partial<Pick<TaskFile, 'match'>>
+
+/** Display totals use the same frozen projections as each file, excluding references. */
+export function taskResultCounts(task: Task) {
+  const targets = task.files.filter(row => row.selection === 'selected' && row.match?.state !== 'reference')
+  if (taskProgressError(task) || !targets.length || targets.some(row => !row.audit || resultConsistencyError(task, row))) return null
+  return targets.reduce((total, row) => {
+    const audit = row.audit!
+    total.items += audit.progress.total
+    for (const key of ['pass_count', 'ng_count', 'unknown_count', 'not_covered_count', 'error_count'] as const) total[key] += audit.counts[key]
+    return total
+  }, {items: 0, pass_count: 0, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0})
+}
 export function clauseObservation(check: components['schemas']['AuditClauseEvaluation']): string {
   if (check.execution === 'queued' || check.execution === 'running') return '本项审核中…'
   const notice = check.scope_notice === 'manual-only' || check.scope_notice === 'unsupported' ? '本条要求未完成自动检查，请核对原件并记录人工复核。' : check.scope_notice

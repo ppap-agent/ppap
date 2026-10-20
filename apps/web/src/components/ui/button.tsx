@@ -32,7 +32,8 @@ const buttonVariants = cva(
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
         profile: "h-12 w-full justify-start gap-3 rounded-xl px-2 text-left",
-        "profile-icon": "size-10 rounded-full",
+        row: "h-auto min-h-16 w-full justify-start gap-3 rounded-none px-3 py-2.5 text-left whitespace-normal aria-pressed:bg-muted/50",
+        "profile-icon": "size-8 rounded-full",
       },
     },
     defaultVariants: {
