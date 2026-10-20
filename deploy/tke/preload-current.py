@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 NAMESPACE = "ppap-test"
 NODES = ("10.3.4.3", "10.3.4.7")
 OWNERS = {"api": "ppap-current-api", "worker": "ppap-current-worker", "deep": "ppap-current-worker", "web": "ppap-current-web"}
+DISK_CHECK = "import os; s=os.statvfs('/host/var/lib/containerd'); assert s.f_bavail*s.f_frsize >= 12*1024**3, 'at least 12 GiB free required for image layers and transfer archives'"
 
 
 def command(args: list[str], *, data: bytes | None = None, timeout: int = 1800) -> bytes:
@@ -52,6 +53,22 @@ def release_images(objects: list[dict]) -> dict[str, str]:
     return images
 
 
+def native_objects(output: bytes) -> list[dict]:
+    """kubectl create prints a JSON object per YAML document, not one array."""
+    remaining = output.decode().strip()
+    objects = []
+    decoder = json.JSONDecoder()
+    while remaining:
+        obj, end = decoder.raw_decode(remaining)
+        if not isinstance(obj, dict):
+            raise ValueError("native render must contain Kubernetes objects")
+        objects.extend(obj["items"] if obj.get("kind") == "List" else [obj])
+        remaining = remaining[end:].lstrip()
+    if not objects:
+        raise ValueError("native render returned no objects")
+    return objects
+
+
 def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, credentials: str, images: dict[str, str]) -> dict:
     return {
         "apiVersion": "v1",
@@ -71,7 +88,7 @@ def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, cr
                             "name": "check-disk",
                             "image": bootstrap,
                             "imagePullPolicy": "IfNotPresent",
-                            "command": ["python", "-c", "import os; s=os.statvfs('/host/var/lib/containerd'); assert s.f_bavail*s.f_frsize >= 4*1024**3, 'at least 4 GiB free required'"],
+                            "command": ["python", "-c", DISK_CHECK],
                             "volumeMounts": [{"name": "host", "mountPath": "/host", "readOnly": True}],
                             "securityContext": {"runAsUser": 0, "readOnlyRootFilesystem": True, "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
                         }
@@ -206,6 +223,8 @@ def preload(objects: list[dict]) -> None:
         raise ValueError("node membership changed; review pre-distribution targets before rollout")
     if any(node["status"]["nodeInfo"]["architecture"] != "amd64" or not any(c["type"] == "Ready" and c["status"] == "True" for c in node["status"]["conditions"]) for node in nodes):
         raise ValueError("both amd64 nodes must be Ready")
+    if any(any(c["type"] == "DiskPressure" and c["status"] != "False" for c in node["status"]["conditions"]) for node in nodes):
+        raise ValueError("node disk pressure must clear before pre-distribution")
     pods = json.loads(kube("get", "pods", "--all-namespaces", "-o", "json"))["items"]
     for node in nodes:
         active = sum(pod.get("spec", {}).get("nodeName") == node["metadata"]["name"] and pod.get("status", {}).get("phase") not in {"Succeeded", "Failed"} for pod in pods)
@@ -264,10 +283,11 @@ def preload(objects: list[dict]) -> None:
             }
         )
         sender, receiver = run_id + "-source", run_id + "-receiver"
-        for pod, node, source in ((sender, NODES[0], True), (receiver, NODES[1], False)):
+        # Check receiver capacity before any new GHCR pull on the source.
+        for pod, node, source in ((receiver, NODES[1], False), (sender, NODES[0], True)):
             create(transfer_pod(pod, node, bootstrap, source, run_id, run_id, images))
             kube("wait", "--for=condition=Ready", "pod/" + pod, "--timeout=900s")
-            execute(pod, "python", "-c", "import os; s=os.statvfs('/host/var/lib/containerd'); assert s.f_bavail*s.f_frsize >= 4*1024**3, 'at least 4 GiB free required'")
+            execute(pod, "python", "-c", DISK_CHECK)
         address = json.loads(kube("get", "pod", sender, "-o", "json"))["status"]["podIP"]
         for name, ref in images.items():
             print(f"Exporting complete {name} image from the GHCR cache on {NODES[0]}", flush=True)
@@ -281,6 +301,7 @@ def preload(objects: list[dict]) -> None:
         delete("pod", sender)
         delete("pod", receiver)
         for node in NODES:
+            kube("wait", "--for=condition=DiskPressure=false", "node/" + node, "--timeout=300s")
             name = run_id + "-smoke-" + node.rsplit(".", 1)[1]
             create(smoke_pod(name, node, images, run_id, fixtures))
             kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=180s")
@@ -303,6 +324,20 @@ def preload(objects: list[dict]) -> None:
             print(json.dumps({"node": node, "startup": startup}), flush=True)
             delete("pod", name)
         print("Both nodes passed full-image startup; application rollout is now permitted.", flush=True)
+    except Exception:
+        for kind, name in created:
+            if kind != "pod":
+                continue
+            try:
+                status = json.loads(kube("get", "pod", name, "-o", "json"))["status"]
+                states = [
+                    {"name": item["name"], "reasons": [state.get("reason") for state in item.get("state", {}).values()]}
+                    for item in status.get("initContainerStatuses", []) + status.get("containerStatuses", [])
+                ]
+                print(json.dumps({"pod": name, "phase": status.get("phase"), "reason": status.get("reason"), "containers": states}), file=sys.stderr)
+            except (RuntimeError, KeyError, subprocess.TimeoutExpired):
+                pass
+        raise
     finally:
         for kind, name in reversed(created.copy()):
             try:
@@ -316,8 +351,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--objects", type=Path, required=True, help="Canonical render-current.sh output")
     args = parser.parse_args()
-    rendered = json.loads(kube("create", "--dry-run=client", "-f", str(args.objects), "-o", "json"))
-    preload(rendered.get("items", [rendered]))
+    preload(native_objects(kube("create", "--dry-run=client", "-f", str(args.objects), "-o", "json")))
 
 
 if __name__ == "__main__":
