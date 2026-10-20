@@ -26,7 +26,7 @@ import {reviewOf} from '../src/review-contract'
 // Explicit UI fixtures only. No production entry imports this adapter.
 const query = new URLSearchParams(location.search)
 const scene = query.get('scene') || 'populated'
-const automaticObservation = scene.startsWith('restore-observe') || scene === 'observe-matching'
+const automaticObservation = scene.startsWith('restore-observe') || ['observe-matching', 'matching', 'recognition-progress-removal'].includes(scene)
 const readHistoricalRound = async (id: string) => fixtureRound(fixtureResults(fixtureAcceptance(fixtureMatch(adapter.samples(), 'standard', null, null, 'history-input'), 'history-accept'), 'reports-none'), id)
 const delayedDisplay = scene === 'restore-display-loading' || scene === 'restore-display-denied'
 const supportAdapter = fixtureSupport(scene)
@@ -109,6 +109,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
   },
   samples: () => {
     const files = documents.map((_, index) => sample(index))
+    if (scene === 'reports-all-ready') return files.slice(0, 2)
     if (scene === 'recognition-provenance-union' || scene === 'recognition-recovery-current') return [files[0]]
     if (scene === 'checking' || scene === 'checking-loading') {
       files[1].validation = {state: 'checking', reasons: ['示例：等待预检查结果']}

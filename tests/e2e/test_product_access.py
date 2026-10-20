@@ -102,6 +102,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     page.get_by_role("option", name="新客户", exact=True).click()
+    page.get_by_role("button", name="查看已选文件", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
     expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
     assert page.url == WEB + "/audit?task=original-task"
@@ -120,7 +121,10 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
         opened.value.close()
         assert page.url == address
         expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
+        expect(customer_picker).to_have_count(0)
+        page.get_by_role("button", name="上一步", exact=True).click()
         expect(customer_picker).to_contain_text("新客户")
+        page.get_by_role("button", name="查看已选文件", exact=True).click()
     expect(page.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True)).to_have_attribute("href", "https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe")
 
 

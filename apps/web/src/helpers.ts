@@ -61,7 +61,7 @@ const analysisNotices: Record<string, string | null> = {
   document_classification_failed: '无法确定文件类型，请核对原件后重新识别。',
   rule_matching_failed: '自动匹配失败，请返回检查文件后重新识别。',
   no_available_rules: '暂无可用规则，请查看模板或通过模板文档联系我们。',
-  matching_customer_required: '文件中未识别出客户。请返回核对页面选择客户，再重新识别；不会自动采用其他客户或通用规则。',
+  matching_customer_required: '文件中未识别出客户。请返回上传页面选择客户，再核对文件并重新识别；不会自动采用其他客户或通用规则。',
   matching_document_type_required: '尚未确定文件类型。请返回核对原件，重新识别；不会仅凭现有规则推断文件类型。',
   matching_document_type_rules_missing: '本次识别的候选中没有此类文件的生效规则。请上传并核对对应规则，保存后返回本任务重新识别。',
   matching_customer_rules_missing: '本次识别的候选中没有适用于该客户和文件类型的生效规则。请核对客户或上传对应规则，保存后重新识别。',

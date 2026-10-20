@@ -71,6 +71,10 @@ export function reportReady(task: Task, row: TaskFile): boolean {
   const report = row.audit?.report
   return Boolean(reportReference(task, row) && report?.state === 'ready' && report.generated_at && report.artifact?.artifact_id && report.artifact.content_type === 'application/pdf' && report.artifact.byte_size > 0 && report.artifact.filename === auditReportFilename(row.file.original_filename))
 }
+export function allTaskReportsReady(task: Task): boolean {
+  const targets = task.files.filter(row => row.selection === 'selected' && row.match?.state !== 'reference')
+  return task.state === 'completed' && task.completion_reason === 'processed' && !taskProgressError(task) && targets.length > 0 && targets.every(row => ['completed', 'review_failed'].includes(row.audit?.execution ?? '') && reportReady(task, row))
+}
 export function auditReportFilename(source: string): string {
   const suffix = '-审核报告.pdf'
   return Array.from(source).slice(0, 255 - suffix.length).join('') + suffix

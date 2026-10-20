@@ -13,6 +13,15 @@ except ImportError:  # pragma: no cover - optional until the e2e job installs Pl
 
 WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
+
+def open_rule_library(page):
+    button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
+    if button.is_visible():
+        button.click()
+    else:
+        page.get_by_role("button", name="打开审核任务", exact=True).click()
+        page.get_by_role("dialog").get_by_role("button", name="审核规则", exact=True).click()
+
 ROOT = Path(__file__).resolve().parents[2]
 JOB = "00000000-0000-4000-8000-000000000001"
 SOURCE = "00000000-0000-4000-8000-000000000002"
@@ -344,7 +353,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.locator("a").filter(has_text="迟到规则").first.wait_for(state="attached")
             expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
             self.assertEqual(page.url, address)
-            page.get_by_role("button", name="上传规则", exact=True).click()
+            open_rule_library(page)
             expect(page.get_by_role("link", name="迟到规则", exact=True).filter(visible=True)).to_be_visible()
             self.assertEqual(state["saves"], [])
             browser.close()
@@ -366,7 +375,7 @@ class RuleInteractionTests(unittest.TestCase):
                         page.get_by_role("button", name="确认并保存版本", exact=True).click()
                     page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
                     if destination == "list":
-                        page.get_by_role("button", name="上传规则", exact=True).click()
+                        open_rule_library(page)
                     elif destination == "same-draft":
                         page.go_back()
                     address = page.url
@@ -386,7 +395,7 @@ class RuleInteractionTests(unittest.TestCase):
                         expect(page.get_by_role("heading", name="审核规则" if destination == "list" else "上传 PPAP 文件", exact=True)).to_be_visible()
                         self.assertEqual(page.url, address)
                     if destination == "audit":
-                        page.get_by_role("button", name="上传规则", exact=True).click()
+                        open_rule_library(page)
                     expect(page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True)).to_be_visible()
                     self.assertEqual(len(state["saves"]), 1)
                     page.close()
@@ -525,7 +534,7 @@ class RuleInteractionTests(unittest.TestCase):
             )
             retry = page.get_by_role("button", name="重新读取 未知回执.xlsx 检查结果", exact=True)
             expect(retry).to_be_enabled()
-            page.get_by_role("button", name="上传规则", exact=True).click()
+            open_rule_library(page)
             page.get_by_label("上传共用要求文件").set_input_files({"name": "新规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("适用资料类型").select_option("控制计划")
             page.get_by_role("button", name="提取条款", exact=True).click()
@@ -548,7 +557,7 @@ class RuleInteractionTests(unittest.TestCase):
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
             page.goto(WEB + "/audit")
-            page.get_by_role("button", name="上传规则", exact=True).click()
+            open_rule_library(page)
             expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             with page.expect_file_chooser():
                 page.get_by_role("button", name="上传规则", exact=True).click()
@@ -593,7 +602,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("button", name="打开产品导航", exact=True).click()
             page.get_by_role("dialog").get_by_role("button", name="PPAP Audit", exact=True).click()
             expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
-            page.get_by_role("button", name="上传规则", exact=True).click()
+            open_rule_library(page)
             page.get_by_role("link", name="未发布的规则草稿").filter(visible=True).click()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("未发布的规则草稿")
             page.reload()
@@ -697,7 +706,7 @@ class RuleInteractionTests(unittest.TestCase):
             selected.uncheck()
             upload_identity = page.evaluate("history.state.auditUploadDraft")
             self.assertTrue(upload_identity)
-            page.get_by_role("button", name="上传规则", exact=True).click()
+            open_rule_library(page)
             page.get_by_label("上传共用要求文件").set_input_files({"name": "新增规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("要求名称", exact=True).fill("待核对规则")
             page.get_by_role("tab", name="版本变化", exact=True).click()

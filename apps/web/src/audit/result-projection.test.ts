@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {components} from '../generated/openapi'
-import {clauseObservation, resultConsistencyError, taskProgressError, taskResultCounts, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError, reconcileTaskNotification} from './result-projection.ts'
+import {clauseObservation, resultConsistencyError, taskProgressError, taskResultCounts, sameFrozenInputs, progressRegressed, sameSnapshot, reportReady, allTaskReportsReady, reportReference, shareContentFor, packageOutcomeError, taskPackageScopeError, frozenResultError, reconcileTaskNotification} from './result-projection.ts'
 import {readReportPdf, readReportZip, readTaskReportPackage} from './report-contract.ts'
 
 type Task = components['schemas']['AuditTask']
@@ -11,6 +11,26 @@ function projection(): Task {
   return {id: 'task-1', number: '001', state: 'completed', completion_reason: 'processed', analysis_mode: 'standard', source_draft_id: null, round_id: 'round-1', customer_preference: null, created_at: '', updated_at: '', estimated_points: null, files: [{file: {id: 'file-v1', file_id: 'file-1', original_filename: '控制计划.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byte_size: 1024, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'valid', reasons: []}, match: {state: 'matched', metadata: {customer: null, model: null, part: null}, document_type: '控制计划', rule: structuredClone(rule), gaps: []}, audit: {file_version_id: 'file-v1', round_id: 'round-1', result_attempt: 1, rule, execution: 'completed', progress: {completed: 1, total: 1}, failure: null, conclusion: 'PASS', checks, counts: {pass_count: 1, ng_count: 0, unknown_count: 0, not_covered_count: 0, error_count: 0}, summary: {conclusion: 'PASS', text: '满足要求', corrective_actions: [], extended_suggestions: []}, report: {state: 'ready', report_id: 'report-1', reason: null}}}]}
 }
 const error = (task: Task) => resultConsistencyError(task, task.files[0])
+
+test('the journey is complete only when every audited file and its report are ready', () => {
+  const task = projection(), report = task.files[0].audit!.report
+  assert.equal(allTaskReportsReady(task), false)
+  report.generated_at = '2026-10-20T02:00:00Z'
+  report.artifact = {artifact_id: 'pdf-1', filename: '控制计划.xlsx-审核报告.pdf', content_type: 'application/pdf', byte_size: 9}
+  assert.equal(allTaskReportsReady(task), true)
+  const reference = structuredClone(task.files[0]); reference.match!.state = 'reference'; reference.match!.rule = null; reference.audit = null
+  task.files.push(reference)
+  assert.equal(allTaskReportsReady(task), true)
+  report.state = 'failed'
+  assert.equal(allTaskReportsReady(task), false)
+  report.state = 'generating'
+  assert.equal(allTaskReportsReady(task), false)
+  report.state = 'ready'
+  task.state = 'reviewing'
+  assert.equal(allTaskReportsReady(task), false)
+  task.state = 'completed'; task.files = [reference]
+  assert.equal(allTaskReportsReady(task), false)
+})
 
 test('workbench totals count valid audit targets, not reference or excluded files', () => {
   const task = projection(), ng = structuredClone(task.files[0])
