@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,7 @@ from ppap_core.audits import (
 from ppap_core.db import connect
 from ppap_core.feishu import CardAction, UserTokens
 from ppap_core.feishu_notifications import task_notification_card
+from ppap_core.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.files import (
     FAILED,
@@ -501,14 +503,17 @@ class AuthStore:
         file_id: str | None = None,
         request_id: str | None = None,
         expected_sha256: str | None = None,
+        feishu_folder_token: str | None = None,
     ) -> FileVersion:
         name = original_filename(filename)
         declared = int(declared_size)
         if declared < 0 or declared > MAX_UPLOAD_BYTES:
             raise ValueError("invalid_size")
         ctype = safe_content_type(content_type)
+        if feishu_folder_token is not None and (not request_id or not isinstance(feishu_folder_token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", feishu_folder_token) or declared == 0):
+            raise ValueError("invalid_drive_upload")
         if request_id is not None:
-            return self._create_requested_upload(principal, name, ctype, declared, file_id, request_id, expected_sha256)
+            return self._create_requested_upload(principal, name, ctype, declared, file_id, request_id, expected_sha256, feishu_folder_token=feishu_folder_token)
         if file_id:
             parsed = _as_uuid(file_id)
             if not parsed:
@@ -570,7 +575,7 @@ class AuthStore:
                 )
         return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
 
-    def _create_requested_upload(self, principal, name, ctype, declared, file_id, request_id, expected_sha256, source=None) -> FileVersion:
+    def _create_requested_upload(self, principal, name, ctype, declared, file_id, request_id, expected_sha256, source=None, feishu_folder_token=None) -> FileVersion:
         version_id = _as_uuid(request_id)
         fid = _as_uuid(file_id) if file_id else None
         valid_digest = isinstance(expected_sha256, str) and len(expected_sha256) == 64 and all(char in "0123456789abcdef" for char in expected_sha256)
@@ -579,6 +584,8 @@ class AuthStore:
         inputs = {"user_id": principal.user_id, "file_id": fid, "original_filename": name, "content_type": ctype, "byte_size": declared, "sha256": expected_sha256}
         if source:
             inputs["source"] = source
+        if feishu_folder_token:
+            inputs["feishu_folder_token"] = feishu_folder_token
         with self._conn() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("upload:" + version_id,))
             row = conn.execute(
@@ -592,7 +599,8 @@ class AuthStore:
                 resource = self.resource(str(row[1]))
                 if resource is None or not can_read(principal, resource, self.grants(str(row[1]), principal.user_id)):
                     raise KeyError("missing")
-                if source and row[9].get("source") != source or not source and row[9] != inputs:
+                fixed_inputs = {key: value for key, value in row[9].items() if key != "cloud_upload"}
+                if source and row[9].get("source") != source or not source and fixed_inputs != inputs:
                     raise ValueError("upload_request_conflict")
                 return self._version_from_row(row)
             if fid:
@@ -690,6 +698,75 @@ class AuthStore:
             row = conn.execute("SELECT upload_request FROM product.file_versions WHERE id = %s AND file_id = %s AND tenant_id = %s", (version.id, version.file_id, version.tenant_id)).fetchone()
             return row[0] if row else None
 
+    def upload_to_personal_drive(self, principal: Principal, request_id: str, drive: PersonalDriveClient) -> dict:
+        receipt = self.get_upload_request(principal, request_id)
+        if not receipt["resume_allowed"] or not receipt["file"] or receipt["file"]["status"] != READY:
+            return receipt
+        version = self.get_version(receipt["file"]["file_id"], receipt["file"]["id"])
+        if version is None:
+            raise KeyError("missing")
+        with self._conn() as guard:
+            key = "personal-drive:" + version.id
+            locked = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (key,)).fetchone()
+            if not locked or not locked[0]:
+                return self.get_upload_request(principal, request_id)
+            try:
+                inputs = self._upload_request(version) or {}
+                folder = inputs.get("feishu_folder_token")
+                progress = inputs.get("cloud_upload", {})
+                if not folder or progress.get("phase") in {"finishing", "ready"}:
+                    return self.get_upload_request(principal, request_id)
+
+                def save(progress):
+                    nonlocal inputs
+                    updated = {**inputs, "cloud_upload": progress}
+                    # Use the lock-owning session after every provider response.
+                    # A dead session cannot publish late state on a new connection.
+                    with guard.transaction():
+                        changed = guard.execute(
+                            "UPDATE product.file_versions SET upload_request = %s WHERE id = %s AND upload_request = %s",
+                            (Jsonb(updated), version.id, Jsonb(inputs)),
+                        )
+                        if changed.rowcount != 1:
+                            raise ValueError("upload_request_conflict")
+                    inputs = updated
+
+                try:
+                    body = self.version_bytes(version)
+                    plan = progress.get("plan")
+                    if not plan:
+                        plan = drive.prepare(version.original_filename, len(body), folder)
+                        progress = {"phase": "parts", "plan": plan, "next_part": 0}
+                        save(progress)
+                    for seq in range(progress.get("next_part", 0), plan["block_num"]):
+                        drive.part(plan, seq, body[seq * plan["block_size"] : (seq + 1) * plan["block_size"]])
+                        progress = {"phase": "parts", "plan": plan, "next_part": seq + 1}
+                        save(progress)
+                    save({"phase": "finishing", "plan": plan})
+                    token = drive.finish(plan)
+                    with guard.transaction():
+                        changed = guard.execute(
+                            "UPDATE product.file_versions SET upload_request = %s WHERE id = %s AND upload_request = %s",
+                            (Jsonb({**inputs, "cloud_upload": {"phase": "ready", "file_token": token}}), version.id, Jsonb(inputs)),
+                        )
+                        if changed.rowcount != 1:
+                            raise ValueError("upload_request_conflict")
+                        guard.execute(
+                            "INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref) VALUES (%s, 'feishu', 'file', %s)",
+                            (version.id, token),
+                        )
+                except UploadRejected:
+                    save({**progress, "reason": "飞书未接收本次上传。请核对目录权限和剩余空间，再继续原请求。"})
+                except UploadUnknown:
+                    # A published file may exist after finish. Keep the durable
+                    # intent for read-back; never repeat that non-idempotent call.
+                    if inputs.get("cloud_upload", {}).get("phase") != "finishing":
+                        save({**progress, "reason": "飞书上传尚未完成，可以继续原请求。"})
+            finally:
+                if not guard.closed:
+                    guard.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+        return self.get_upload_request(principal, request_id)
+
     def get_upload_request(self, principal: Principal, request_id: str) -> dict:
         parsed = _as_uuid(request_id)
         if not parsed:
@@ -716,6 +793,17 @@ class AuthStore:
         state = {STAGING: "uploading", READY: "ready", FAILED: "failed"}[version.status]
         reason = None if version.status == READY else "上传尚未完成，可沿用原请求继续传输。" if version.status == STAGING else "原上传已失败，不能继续写入该版本。"
         receipt.update(state=state, file=version.public(), resume_allowed=version.status == STAGING, reason=reason)
+        if row[9].get("feishu_folder_token") and version.status == READY:
+            cloud = row[9].get("cloud_upload", {})
+            source = self.file_source(version.id)
+            if cloud.get("phase") == "ready" and source and source["provider"] == "feishu" and source["object_kind"] == "file" and source["object_ref"] == cloud.get("file_token"):
+                return receipt
+            finishing = cloud.get("phase") in {"finishing", "ready"}
+            receipt.update(
+                state="unknown" if finishing else "uploading",
+                resume_allowed=not finishing,
+                reason="尚未确认飞书文件的创建结果，请核对原请求，不要重新上传。" if finishing else cloud.get("reason") or "文件已接收，正在存入所选飞书目录。",
+            )
         if row[9].get("source") and not row[9].get("sha256"):
             receipt["file"] = None
         return receipt
@@ -3172,7 +3260,11 @@ class AuthStore:
                 for row in conn.execute(
                     """SELECT f.id, f.file_id, f.tenant_id, f.status, f.original_filename, r.kind, r.tenant_id,
                 EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = f.file_id
-                    AND g.user_id = %s AND g.capability IN ('read', 'review'))
+                    AND g.user_id = %s AND g.capability IN ('read', 'review')),
+                f.upload_request->>'feishu_folder_token' IS NULL OR
+                    (f.upload_request->'cloud_upload'->>'phase' = 'ready' AND EXISTS
+                        (SELECT 1 FROM product.file_version_sources s WHERE s.file_version_id = f.id
+                         AND s.provider = 'feishu' AND s.object_ref = f.upload_request->'cloud_upload'->>'file_token'))
                 FROM product.file_versions f LEFT JOIN product.resources r ON r.id = f.file_id
                 WHERE f.id = ANY(%s::uuid[])""",
                     (principal.user_id, [vid for vid, _role in parsed]),
@@ -3185,7 +3277,7 @@ class AuthStore:
             row = rows.get(vid)
             if not row or str(row[2]) != principal.tenant_id:
                 raise KeyError("missing")
-            if row[3] != READY:
+            if row[3] != READY or not row[8]:
                 raise ValueError("file_not_ready")
             if row[5] != "file" or str(row[6]) != principal.tenant_id or not row[7]:
                 raise KeyError("missing")

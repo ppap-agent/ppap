@@ -88,6 +88,7 @@ export let apiUrl = ''
 export let profile = ''
 export let deepOffered = false
 export let feishuAppId = ''
+export let personalDriveUpload = false
 export async function connect() {
   const runtime = await fetch('/runtime-config.json').then(r => r.json())
   apiUrl = runtime.api_url
@@ -95,6 +96,7 @@ export async function connect() {
   apiUrl = runtime.api_url || config.api_url; profile = config.profile
   deepOffered = config.deep_offered === true
   feishuAppId = config.feishu_app_id || ''
+  personalDriveUpload = config.personal_drive_upload === true
   return config
 }
 const messages: Record<string,string> = {
@@ -141,10 +143,10 @@ export async function readLocalUpload(requestId: string): Promise<UploadReceipt>
   if (receipt.request_id !== requestId || receipt.file && receipt.file.id !== requestId || receipt.state === 'ready' && receipt.file?.status !== 'ready') throw new Error('上传回执与原请求不一致，请重新读取。')
   return receipt
 }
-export async function uploadLocalVersion(file: File, requestId: string, onStaged?: (version: FileVersion) => void): Promise<UploadReceipt> {
+export async function uploadLocalVersion(file: File, requestId: string, onStaged?: (version: FileVersion) => void, folderToken?: string): Promise<UploadReceipt> {
   if (file.size > 200 * 1024 * 1024) throw new Error(`${file.name} 超过 200 MB。`)
   const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
-  const input = {request_id: requestId, sha256, original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream'}
+  const input = {request_id: requestId, sha256, original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream', ...(folderToken ? {feishu_folder_token: folderToken} : {})}
   let staged: FileVersion | null = null
   function observe(version: FileVersion) {
     const next = checkLocalUpload(version, file, requestId, sha256)
@@ -154,7 +156,7 @@ export async function uploadLocalVersion(file: File, requestId: string, onStaged
   }
   try {
     const version = observe(await request<FileVersion, FileCreateRequest>('/files', 'POST', input))
-    if (version.status === 'ready') return {request_id: requestId, state: 'ready', file: version, reason: null, retry_allowed: false}
+    if (version.status === 'ready') return folderToken ? readLocalUpload(requestId) : {request_id: requestId, state: 'ready', file: version, reason: null, retry_allowed: false}
     const path = `/files/${encodeURIComponent(version.file_id)}/versions/${encodeURIComponent(version.id)}/blob`
     const response = await fetch(apiUrl + path, {method: 'PUT', credentials: 'include', headers: {'Content-Type': file.type || 'application/octet-stream'}, body: file})
     if (!response.ok) {
@@ -164,7 +166,7 @@ export async function uploadLocalVersion(file: File, requestId: string, onStaged
     }
     const ready = observe(await response.json() as FileVersion)
     if (ready.status !== 'ready') throw new Error('尚未取得文件已接收的回执，请读取原传输请求。')
-    return {request_id: requestId, state: 'ready', file: ready, reason: null, retry_allowed: false}
+    return folderToken ? readLocalUpload(requestId) : {request_id: requestId, state: 'ready', file: ready, reason: null, retry_allowed: false}
   } catch (error) {
     if (error instanceof Error && 'status' in error && [400, 401, 403, 404, 409, 413, 415, 422].includes(Number(error.status))) return {request_id: requestId, state: 'failed', file: staged, reason: error.message, retry_allowed: false}
     try {

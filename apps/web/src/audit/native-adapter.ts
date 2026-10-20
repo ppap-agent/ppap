@@ -54,7 +54,15 @@ export const nativeArchiveAdapter: AuditArchiveAdapter = {
 
 const nativeUploads: UploadAdapter = {
   async upload(input, requestId) {
-    if (input.kind === 'local') return uploadLocalVersion(input.file, requestId)
+    if (input.kind === 'local') {
+      const receipt = await uploadLocalVersion(input.file, requestId, undefined, input.destination?.token)
+      if (!input.destination || receipt.state !== 'uploading' || receipt.file?.status !== 'ready' || !receipt.resume_allowed) return receipt
+      try {return await request(`/file-uploads/${encodeURIComponent(requestId)}/feishu`, 'POST')}
+      catch {
+        try {return await readLocalUpload(requestId)}
+        catch {return {...receipt, state: 'unknown', resume_allowed: false, reason: '未确认飞书上传结果，请读取原请求，不要重新上传。'}}
+      }
+    }
     try {
       await request<components['schemas']['FileVersion'], FeishuFileImportRequest>('/integrations/feishu/files/import', 'POST', {request_id: requestId, file_token: input.file.token, doc_type: input.file.type})
     } catch (failure) {
@@ -181,7 +189,7 @@ const confirmationRefusals: Record<string, string> = {
 }
 
 /** This adapter owns transport only. Task, rules and execution remain server facts. */
-export function createNativeAuditAdapter(options: {deepOffered: boolean; customers: string[]}): AuditIntakeAdapter {
+export function createNativeAuditAdapter(options: {deepOffered: boolean; customers: string[]; personalDriveUpload?: boolean}): AuditIntakeAdapter {
   const validations = new Map<string, string>()
   function validation(job: ValidationJob, file: AuditTask['files'][number], requestId?: string) {
     if (requestId && job.id !== requestId || !job.id || job.source_file_id !== file.file.file_id || job.source_file_version_id !== file.file.id) throw new Error('预检查回执不属于这份文件版本或原请求。')
@@ -197,7 +205,7 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       save: (id, enabled, revision) => request(`${taskPath(id)}/notification`, 'PUT', {enabled, expected_revision: revision}),
     },
     customers: options.customers.map(name => ({value: name, label: name})),
-    drive: {async list({folderToken, pageToken} = {}) {
+    drive: {...options.personalDriveUpload ? {rootFolder: () => request<components['schemas']['DriveFile']>('/integrations/feishu/root-folder')} : {}, async list({folderToken, pageToken} = {}) {
       try {return await request(`/integrations/feishu/files?${new URLSearchParams({...folderToken ? {folder_token: folderToken} : {}, ...pageToken ? {page_token: pageToken} : {}})}`)}
       catch (failure) {
         if (failure instanceof Error && 'code' in failure && failure.code === 'feishu_user_token_missing') failure.message = 'authorization_required'

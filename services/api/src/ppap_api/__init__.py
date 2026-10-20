@@ -44,6 +44,7 @@ from ppap_core.feishu_drive import (
     list_doc_links,
 )
 from ppap_core.feishu_notifications import task_notification_card
+from ppap_core.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from ppap_core.feishu_usage import (
     FeishuUsageError,
     apply_report_credential,
@@ -240,6 +241,7 @@ def create_app(
     def public_config() -> dict[str, object]:
         cfg = settings.public_config()
         cfg["login"] = "feishu" if settings.feishu_app_id and settings.feishu_app_secret else "disabled"
+        cfg["personal_drive_upload"] = cfg["login"] == "feishu"
         return cfg
 
     @app.get("/capabilities")
@@ -454,6 +456,7 @@ def create_app(
                 int(body.get("byte_size") or 0),
                 request_id=body.get("request_id"),
                 expected_sha256=body.get("sha256"),
+                feishu_folder_token=body.get("feishu_folder_token"),
             )
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
@@ -478,6 +481,7 @@ def create_app(
                 file_id=file_id,
                 request_id=body.get("request_id"),
                 expected_sha256=body.get("sha256"),
+                feishu_folder_token=body.get("feishu_folder_token"),
             )
         except KeyError:
             return JSONResponse({"error": "access_denied"}, status_code=403)
@@ -675,6 +679,33 @@ def create_app(
             return JSONResponse({"error": "invalid_folder_query"}, status_code=400)
         except FeishuMetaError:
             return JSONResponse({"error": "feishu_folder_failed"}, status_code=502)
+
+    @app.get("/integrations/feishu/root-folder", response_model=wc.DriveFile)
+    def feishu_root_folder(request: Request):
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        try:
+            return PersonalDriveClient(http, session.access_token).root_folder()
+        except (UploadUnknown, UploadRejected):
+            return JSONResponse({"error": "feishu_folder_failed"}, status_code=502)
+
+    @app.post("/file-uploads/{request_id}/feishu", response_model=wc.AuditUploadItem)
+    def files_personal_upload(request_id: str, request: Request):
+        session = session_of(request)
+        if not session:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        if not session.access_token:
+            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
+        try:
+            return store.upload_to_personal_drive(session.principal, request_id, PersonalDriveClient(http, session.access_token))
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except ValueError as exc:
+            conflict = str(exc) == "upload_request_conflict"
+            return JSONResponse({"error": "upload_request_conflict" if conflict else "invalid_upload_request"}, status_code=409 if conflict else 400)
 
     @app.post("/integrations/feishu/files/import", response_model=wc.FileVersion, status_code=201, openapi_extra=wc.openapi_body(wc.FeishuFileImportRequest))
     def feishu_files_import(body: dict, request: Request) -> JSONResponse:

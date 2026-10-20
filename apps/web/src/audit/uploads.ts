@@ -3,7 +3,7 @@ import type {components} from '../generated/openapi'
 
 type Receipt = components['schemas']['AuditUploadItem']
 type FileVersion = components['schemas']['FileVersion']
-export type UploadInput = {kind: 'local'; file: File} | {kind: 'feishu'; file: components['schemas']['DriveFile']}
+export type UploadInput = {kind: 'local'; file: File; destination?: {token: string; name: string}} | {kind: 'feishu'; file: components['schemas']['DriveFile']}
 export type UploadAdapter = {upload: (input: UploadInput, requestId: string) => Promise<Receipt>; readUpload: (requestId: string) => Promise<Receipt>}
 export type UploadRow = {id: string; input: UploadInput; receipt: Receipt; removed: boolean; busy: boolean}
 export const uploadName = (input: UploadInput) => input.file.name

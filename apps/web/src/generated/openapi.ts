@@ -637,6 +637,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/file-uploads/{request_id}/feishu": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Files Personal Upload */
+        post: operations["files_personal_upload_file_uploads__request_id__feishu_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/file-validations": {
         parameters: {
             query?: never;
@@ -954,6 +971,23 @@ export interface paths {
         put?: never;
         /** Feishu Files Import */
         post: operations["feishu_files_import_integrations_feishu_files_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/feishu/root-folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Feishu Root Folder */
+        get: operations["feishu_root_folder_integrations_feishu_root_folder_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2870,6 +2904,8 @@ export interface components {
             git_sha: string;
             /** Login */
             login: string;
+            /** Personal Drive Upload */
+            personal_drive_upload: boolean;
             /** Profile */
             profile: string;
             /** Usage Charge Enabled */
@@ -4973,6 +5009,37 @@ export interface operations {
             };
         };
     };
+    files_personal_upload_file_uploads__request_id__feishu_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditUploadItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     files_validate_file_validations_post: {
         parameters: {
             query?: never;
@@ -5058,6 +5125,8 @@ export interface operations {
                     byte_size: number;
                     /** Content Type */
                     content_type: string;
+                    /** Feishu Folder Token */
+                    feishu_folder_token?: string;
                     /** Original Filename */
                     original_filename: string;
                     /** Request Id */
@@ -5104,6 +5173,8 @@ export interface operations {
                     byte_size: number;
                     /** Content Type */
                     content_type: string;
+                    /** Feishu Folder Token */
+                    feishu_folder_token?: string;
                     /** Original Filename */
                     original_filename: string;
                     /** Request Id */
@@ -5621,6 +5692,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    feishu_root_folder_integrations_feishu_root_folder_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DriveFile"];
                 };
             };
         };

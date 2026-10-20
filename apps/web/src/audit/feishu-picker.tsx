@@ -15,7 +15,7 @@ import {ScrollArea} from '../components/ui/scroll-area'
 import {FileName} from '../journey/file-name'
 
 type DriveFile = components['schemas']['DriveFile']
-export type DrivePickerSource = {list: (query?: {folderToken?: string; pageToken?: string}) => Promise<components['schemas']['DriveFilesList']>}
+export type DrivePickerSource = {list: (query?: {folderToken?: string; pageToken?: string}) => Promise<components['schemas']['DriveFilesList']>; rootFolder?: () => Promise<DriveFile>}
 type FolderState = {files: DriveFile[]; nextPage: string; loading: boolean; error: string; loaded: boolean}
 type FolderPath = {token: string; name: string}[]
 const emptyFolder: FolderState = {files: [], nextPage: '', loading: false, error: '', loaded: false}
@@ -25,6 +25,46 @@ const nativeSources = new Map<string, {format: 'excel' | 'word'; label: string}>
   ['doc', {format: 'word', label: '飞书旧版文档'}], ['docx', {format: 'word', label: '飞书文档'}],
 ])
 const supported = (file: DriveFile) => nativeSources.has(file.type) || file.type === 'file' && /\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name)
+
+export function FeishuFolderPicker({source, files, onChoose, onClose}: {source: DrivePickerSource; files: File[]; onChoose: (folder: {token: string; name: string}) => void; onClose: () => void}) {
+  const [path, setPath] = useState<FolderPath>([])
+  const [listing, setListing] = useState<FolderState>(emptyFolder)
+  const [revision, setRevision] = useState(0)
+  const epoch = useRef(0), alive = useRef(true)
+  const current = path.at(-1)
+  async function load(next: FolderPath, pageToken?: string) {
+    const started = ++epoch.current
+    setPath(next); setListing(before => ({...pageToken ? before : emptyFolder, loading: true}))
+    try {
+      const result = await source.list({folderToken: next.at(-1)!.token, pageToken})
+      if (!alive.current || started !== epoch.current) return
+      setListing(before => ({files: [...pageToken ? before.files : [], ...result.files.filter(file => file.type === 'folder')], nextPage: result.next_page_token || '', loading: false, error: '', loaded: true}))
+    } catch {
+      if (alive.current && started === epoch.current) setListing(before => ({...before, loading: false, error: '无法读取文件夹，请核对飞书权限后重试。'}))
+    }
+  }
+  useEffect(() => {
+    alive.current = true
+    const started = ++epoch.current
+    void source.rootFolder?.().then(folder => {
+      if (!alive.current || started !== epoch.current) return
+      if (folder.type !== 'folder' || !folder.token) throw new Error('invalid_root_folder')
+      void load([{token: folder.token, name: '我的文件夹'}])
+    }).catch(() => {if (alive.current && started === epoch.current) setListing({...emptyFolder, error: '无法读取个人飞书目录，请重新登录授权后重试。'})})
+    return () => {alive.current = false; epoch.current += 1}
+  }, [source, revision])
+  return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[90dvh] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden" onCloseAutoFocus={event => {event.preventDefault(); document.getElementById('audit-main')?.focus()}}>
+    <DialogHeader><DialogTitle>保存到飞书</DialogTitle><DialogDescription>选择存放位置。每次新上传都会创建独立文件，不覆盖同名文件。</DialogDescription></DialogHeader>
+    <nav aria-label="上传目录" className="flex flex-wrap items-center gap-1">{path.map((folder, index) => <Button key={folder.token} variant="ghost" size="sm" disabled={index === path.length - 1} onClick={() => void load(path.slice(0, index + 1))}>{index > 0 && <ChevronRight/>}{folder.name}</Button>)}</nav>
+    <ScrollArea className="min-h-40 max-h-[55dvh] min-w-0"><section aria-label="选择上传目录" className="space-y-4 pr-3">
+      <ItemGroup>{listing.files.map(folder => <Item key={folder.token} size="xs" asChild><Button variant="ghost" className="h-auto min-h-11 w-full justify-start whitespace-normal text-left" aria-label={`打开文件夹 ${folder.name}`} onClick={() => void load([...path, {token: folder.token, name: folder.name}])}><Folder className="shrink-0"/><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{folder.name}</span><ChevronRight className="shrink-0"/></Button></Item>)}</ItemGroup>
+      {listing.loading || !current && !listing.error ? <p role="status" className="text-sm text-muted-foreground">正在读取文件夹…</p> : listing.error ? <Alert variant="destructive"><AlertTitle>文件夹未能读取</AlertTitle><AlertDescription><p>{listing.error}</p><Button variant="outline" size="sm" onClick={() => current ? void load(path, listing.nextPage || undefined) : setRevision(value => value + 1)}>重新读取文件夹</Button></AlertDescription></Alert> : !listing.files.length && <p className="text-sm text-muted-foreground">此目录没有子文件夹，可以直接上传到这里。</p>}
+      {listing.nextPage && !listing.loading && !listing.error && <Button variant="outline" size="sm" onClick={() => void load(path, listing.nextPage)}>更多文件夹</Button>}
+      <section className="space-y-2 border-t pt-4"><h3 className="text-sm font-medium">本次上传 · {files.length} 份</h3><ItemGroup>{files.map((file, index) => <Item key={index} size="xs"><ItemContent className="min-w-0"><FileName name={file.name}/></ItemContent></Item>)}</ItemGroup></section>
+    </section></ScrollArea>
+    <DialogFooter><DialogClose asChild><Button variant="outline">取消</Button></DialogClose><Button disabled={!current || listing.loading || Boolean(listing.error)} onClick={() => current && onChoose({...current, name: path.map(folder => folder.name).join(' / ')})}>上传到此文件夹</Button></DialogFooter>
+  </DialogContent></Dialog>
+}
 
 /** Browsing and adding sources do not start an audit or validate a document. */
 export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePickerSource; onAdd: (files: DriveFile[]) => void; onClose: () => void; trigger: HTMLButtonElement | null}) {

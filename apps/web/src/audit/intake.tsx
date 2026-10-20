@@ -18,7 +18,7 @@ import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../
 import {Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '../components/ui/tooltip'
 import {FileName} from '../journey/file-name'
 import {AccountMenu, useAccess} from '../journey/access'
-import {FeishuPicker, type DrivePickerSource} from './feishu-picker'
+import {FeishuPicker, FeishuFolderPicker, type DrivePickerSource} from './feishu-picker'
 import {useTaskAcceptance, type AuditAcceptanceAdapter} from './task-acceptance'
 import {useTaskRecognition, type AuditRecognitionAdapter} from './task-recognition'
 import {AuditExcludedFiles, AuditWorkspace} from './workspace'
@@ -139,6 +139,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [error, setError] = useState(''), [dragging, setDragging] = useState(false)
   const [checking, setChecking] = useState<string[]>([])
   const [driveOpen, setDriveOpen] = useState(false)
+  const [localFiles, setLocalFiles] = useState<File[]>([])
   const [readStatus, setReadStatus] = useState<Record<string, {busy: boolean; error: string; traceId?: string}>>({})
   const [endStatus, setEndStatus] = useState<Record<string, 'sending' | 'unknown' | 'rejected'>>({})
   const endingTasks = useRef(new Set<string>())
@@ -272,7 +273,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (keepSurface) history.replaceState(state, '', url); else history.pushState(state, '', url)
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
-  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setFiles([]); setTask(null); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
+  function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); setMode('standard'); setCustomer('auto'); setError(''); setSheet(false); taskAddress(null)}
   async function recover(id: string, login = false) {
     const epoch = ++restoreEpoch.current
     acceptance.suspend(id)
@@ -303,6 +304,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     }
   }
   function restoreAddress() {
+    setLocalFiles([])
     setSupportSnapshot(null)
     const params = new URL(location.href).searchParams, view = readSurface()
     if (view !== 'audit') {
@@ -346,7 +348,12 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }, [])
   function receive(picked: File[]) {
     if (!picked.length || confirmationLocked || inputLocked || workbench) return
+    if (adapter.drive?.rootFolder) {setLocalFiles(picked); return}
     uploads.add(picked.map(file => ({kind: 'local', file}))); setStep('check'); setError('')
+  }
+  function receiveInFolder(destination: {token: string; name: string}) {
+    if (confirmationLocked || inputLocked || workbench) return
+    uploads.add(localFiles.map(file => ({kind: 'local', file, destination}))); setLocalFiles([]); setStep('check'); setError('')
   }
   function receiveDrive(picked: components['schemas']['DriveFile'][]) {
     if (confirmationLocked || inputLocked || workbench) return
@@ -582,6 +589,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       {displayEditor.dialog}
     </div>
     {driveOpen && adapter.drive && <FeishuPicker source={adapter.drive} onAdd={receiveDrive} onClose={() => setDriveOpen(false)} trigger={driveTrigger.current}/>}
+    {localFiles.length > 0 && adapter.drive && <FeishuFolderPicker source={adapter.drive} files={localFiles} onChoose={receiveInFolder} onClose={() => setLocalFiles([])}/>}
     {supportSnapshot && <AuditSupport adapter={supportAdapter} snapshot={supportSnapshot} pageReference={supportPageReference} returnTargets={supportReturnTargets.current} onClose={() => setSupportSnapshot(null)}/>}
     <Dialog open={Boolean(ruleSource)} onOpenChange={open => {if (!open) setRuleSource(null)}}><DialogContent data-rule-version={ruleSource?.rule.id} onCloseAutoFocus={event => {event.preventDefault(); ruleTrigger.current?.focus()}}><DialogHeader><DialogTitle>{ruleSource?.clause ? `${ruleSource.clause.id} · ${ruleSource.clause.category}` : '文件存在性检查'}</DialogTitle><DialogDescription><span className="block">{ruleSource?.rule.title}</span><span className="block break-words">{ruleSource?.filename}</span></DialogDescription></DialogHeader><p className="max-h-80 overflow-y-auto whitespace-pre-wrap text-sm">{ruleSource?.clause?.rule_to_check ?? '文件存在性检查。'}</p></DialogContent></Dialog>
   </div></SupportEntryContext.Provider></TooltipProvider>

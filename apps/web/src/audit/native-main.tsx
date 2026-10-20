@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import '../index.css'
-import {deepOffered, request} from '../api'
+import {deepOffered, personalDriveUpload, request} from '../api'
 import {sourceLocation} from '../helpers'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
@@ -19,7 +19,7 @@ import {AuditRules} from './rules'
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
 
 function NativeAudit() {
-  const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => createNativeAuditAdapter({deepOffered, customers: []}))
+  const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => createNativeAuditAdapter({deepOffered, personalDriveUpload, customers: []}))
   const [error, setError] = useState(''), [revision, setRevision] = useState(0)
   useEffect(() => {
     const address = new URL(location.href)

@@ -56,6 +56,7 @@ class PublicConfig(TypedDict):
     current_access: str
     usage_charge_enabled: bool
     login: str
+    personal_drive_upload: bool
 
 
 class IdentityPublic(TypedDict):
@@ -96,6 +97,7 @@ class FileCreateRequest(TypedDict):
     content_type: str
     request_id: NotRequired[str]
     sha256: NotRequired[str]
+    feishu_folder_token: NotRequired[str]
 
 
 class FileFinalizeRequest(TypedDict, total=False):
