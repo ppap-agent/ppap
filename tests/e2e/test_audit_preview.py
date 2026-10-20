@@ -46,6 +46,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取审核结果", exact=True).click()
             expect(page.get_by_text("审核已结束 · 文件已结束 2/2", exact=True)).to_be_visible()
             page.get_by_role("button", name="报告中心", exact=True).click()
+            expect(page.get_by_text("所选报告不可用，请从清单中重新选择。", exact=True)).to_have_count(0)
             expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             page.get_by_role("button", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("navigation", name="文件队列").get_by_role("button", name=re.compile("特殊特性清单.xlsx"))).to_be_visible()
