@@ -48,7 +48,7 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 }
 
 /** P5 and historical readers share the same frozen results, evidence and review actions. */
-export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay}: {file: File; roundId: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void}) {
+export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay, showFileTitle = true}: {file: File; roundId: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void; showFileTitle?: boolean}) {
   const reviewEditor = useContext(ReviewEditorContext)
   const [clause, setClause] = useState(''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
   const [open, setOpen] = useState(false), [pane, setPane] = useState('details')
@@ -93,10 +93,12 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
     {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <div className="border-t pt-4"><Button variant="outline" size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: check.rule_item.id + ' · ' + check.rule_item.category, attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮冻结原件'}))})}>记录人工复核</Button></div>}
   </article>
   return <section aria-label="审核详情" className="min-w-0">
-    <header className="min-w-0 space-y-3 border-b px-6 py-4 max-sm:px-4">
-      <h2 className="break-words text-lg font-semibold">{file.file.original_filename}</h2>
+    <header className={`min-w-0 border-b px-6 py-4 max-sm:px-4 ${showFileTitle ? 'space-y-3' : 'flex flex-wrap items-center justify-between gap-3'}`}>
+      {showFileTitle && <h2 className="break-words text-lg font-semibold">{file.file.original_filename}</h2>}
+      <div className={showFileTitle ? 'min-w-0 space-y-2' : 'flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2'}>
       {audit && <div className="flex flex-wrap items-center gap-2"><Badge shape="square" variant={!issue && audit.conclusion === 'NG' ? 'destructive' : !issue && audit.conclusion === 'PASS' ? 'success' : 'outline'}>{issue ? '结果待核对' : <>{audit.conclusion || executionLabel[audit.execution]} · 符合 {audit.counts.pass_count} / 不符合 {audit.counts.ng_count}</>}</Badge>{!issue && <><span className="text-xs text-muted-foreground">已结束 {audit.progress.completed}/{audit.progress.total} 项</span>{audit.counts.unknown_count > 0 && <span className="text-xs text-muted-foreground">无法判断 {audit.counts.unknown_count}</span>}{audit.counts.not_covered_count > 0 && <span className="text-xs text-muted-foreground">未覆盖 {audit.counts.not_covered_count}</span>}{audit.counts.error_count > 0 && <span className="text-xs text-muted-foreground">技术错误 {audit.counts.error_count}</span>}</>}</div>}
       {rule && <p className="break-words text-xs text-muted-foreground">本轮规则：{rule.title}</p>}
+      </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={showOriginal}><FileSearch/>查看原件</Button>
         <Button variant="outline" disabled={!onReport || Boolean(issue) || !audit || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}><FileText/>查看报告</Button>

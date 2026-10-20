@@ -185,7 +185,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const noMatches = Boolean(task?.state === 'pending_confirm' && !matched.length && files.every(row => row.selection !== 'selected' || row.match?.state === 'unmatched' || row.match?.state === 'reference'))
   const recognitionDirty = Boolean(task && !task.round_id && (task.analysis_mode !== mode || task.customer_preference !== (customer === 'auto' ? null : customer) || !onlyUnmatchedRemovals(task.files, files)))
   const workbench = task?.state === 'reviewing' || task?.state === 'completed' && task.completion_reason === 'processed'
-  const navigationCollapsed = navigationMode === 'collapsed' || navigationMode === 'auto' && workbench && surface === 'audit' && !wideNavigation
+  const navigationCollapsed = navigationMode === 'collapsed' || navigationMode === 'auto' && (surface === 'archive' || workbench && surface === 'audit') && !wideNavigation
   function saveTask(next: AuditTask, {activate = false, updateActive = true} = {}) {
     const listed = mergeTaskSnapshot(latestTasks.current.find(row => row.id === next.id), next)
     const combined = mergeTaskSnapshot(task?.id === next.id ? task : undefined, listed)

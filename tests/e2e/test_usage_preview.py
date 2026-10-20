@@ -10,6 +10,12 @@ if PREVIEW:
     from playwright.sync_api import expect, sync_playwright
 
 
+def expect_history(surface, sequence):
+    expect(surface.get_by_role("region", name="文档历史审核", exact=True)).to_be_visible()
+    expect(surface.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text(f"第 {sequence} 次审核")
+    expect(surface.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+
+
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class UsagePreviewTests(unittest.TestCase):
     def test_cross_month_debit_keeps_one_original_acceptance_and_a_separate_debit_time(self):
@@ -46,7 +52,7 @@ class UsagePreviewTests(unittest.TestCase):
             preview.get_by_role("button", name="打开产品导航", exact=True).click()
             preview.get_by_role("navigation", name="产品导航").get_by_role("button", name="审核文件", exact=True).click()
             preview.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
-            expect(preview.get_by_role("heading", name="第 3 次审核", exact=True)).to_be_visible()
+            expect_history(preview, 3)
             preview.get_by_role("button", name="历史审核记录", exact=True).click()
             expect(preview.get_by_role("dialog", name="历史审核记录", exact=True)).to_be_visible()
             page.frames[1].evaluate("history.go(-2)")
@@ -137,7 +143,7 @@ class UsagePreviewTests(unittest.TestCase):
                 expect(row.get_by_role("button", name="打开该次审核", exact=True)).to_be_disabled()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=usage&archiveDoc=preview-archive-A001&auditRef=broken")
             expect(page.get_by_text("这次消费的审核记录暂不可用", exact=True)).to_be_visible()
-            expect(page.get_by_role("heading", name=re.compile("第 .* 次审核"))).to_have_count(0)
+            expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_have_count(0)
             browser.close()
 
     def test_range_paging_empty_and_mobile_layout_keep_monthly_scope(self):
@@ -164,16 +170,16 @@ class UsagePreviewTests(unittest.TestCase):
             page = browser.new_page()
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=archive")
             page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
-            expect(page.get_by_role("heading", name="第 3 次审核", exact=True)).to_be_visible()
+            expect_history(page, 3)
             navigation = page.get_by_role("navigation", name="产品导航")
             navigation.get_by_role("button", name="用量记录", exact=True).click()
             expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
             page.get_by_role("row", name="消费记录 示例消费-1", exact=True).get_by_role("button", name="打开该次审核", exact=True).click()
-            expect(page.get_by_role("heading", name="第 2 次审核", exact=True)).to_be_visible()
+            expect_history(page, 2)
             navigation.get_by_role("button", name="用量记录", exact=True).click()
             expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
             page.get_by_role("row", name="消费记录 示例消费-1", exact=True).get_by_role("button", name="打开该次审核", exact=True).click()
-            expect(page.get_by_role("heading", name="第 2 次审核", exact=True)).to_be_visible()
+            expect_history(page, 2)
             navigation.get_by_role("button", name="审核文件", exact=True).click()
             expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
             self.assertNotIn("auditRef=", page.url)
@@ -253,13 +259,13 @@ class UsagePreviewTests(unittest.TestCase):
             page.reload()
             expect(preview.get_by_text("共 12 笔 · 第 2/2 页 · 每页10笔", exact=True)).to_be_visible()
             preview.get_by_role("row", name="消费记录 示例消费-11", exact=True).get_by_role("button", name="打开该次审核", exact=True).click()
-            expect(preview.get_by_role("heading", name="第 1 次审核", exact=True)).to_be_visible()
+            expect_history(preview, 1)
             page.reload()
-            expect(preview.get_by_role("heading", name="第 1 次审核", exact=True)).to_be_visible()
+            expect_history(preview, 1)
             preview.get_by_role("button", name="返回用量记录", exact=True).click()
             expect(preview.get_by_text("共 12 笔 · 第 2/2 页 · 每页10笔", exact=True)).to_be_visible()
             preview.get_by_role("row", name="消费记录 示例消费-11", exact=True).get_by_role("button", name="打开该次审核", exact=True).click()
-            expect(preview.get_by_role("heading", name="第 1 次审核", exact=True)).to_be_visible()
+            expect_history(preview, 1)
             page.frames[1].evaluate("history.back()")
             expect(preview.get_by_text("共 12 笔 · 第 2/2 页 · 每页10笔", exact=True)).to_be_visible()
             page.get_by_role("button", name="切换明暗主题", exact=True).click()
@@ -286,10 +292,10 @@ class UsagePreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=usage")
             row = page.get_by_role("row", name="消费记录 示例消费-1", exact=True)
             row.get_by_role("button", name="打开该次审核", exact=True).click()
-            expect(page.get_by_role("heading", name="第 2 次审核", exact=True)).to_be_visible()
+            expect_history(page, 2)
             self.assertIn("auditRef=", page.url)
             page.reload()
-            expect(page.get_by_role("heading", name="第 2 次审核", exact=True)).to_be_visible()
+            expect_history(page, 2)
             expect(page.get_by_role("button", name="打开来源任务", exact=True)).to_be_disabled()
             page.get_by_role("button", name="返回用量记录", exact=True).click()
             expect(row).to_contain_text("第 2 次审核")
