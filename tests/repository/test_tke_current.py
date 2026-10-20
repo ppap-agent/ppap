@@ -194,14 +194,18 @@ exit 0
         self.assertEqual(config["data"]["PPAP_DEEP_SANDBOX_PROFILE"], "off")
         self.assertEqual(config["data"]["PPAP_DEEP_CUSTOMER_ENABLED"], "true")
         images = [container["image"] for doc in docs for container in _containers(doc) if container.get("image")]
-        self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-api:") for image in images))
-        self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-worker:") for image in images))
-        self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-deep:") for image in images))
-        self.assertTrue(any(image.startswith("unregistry.xixifusi.online/ppap-web:") for image in images))
-        app_images = [image for image in images if image.startswith("unregistry.xixifusi.online/ppap-")]
+        app_containers = [container for doc in docs for container in _containers(doc) if container.get("name") in {"api", "worker", "deep", "web"}]
+        app_images = [container["image"] for container in app_containers]
         self.assertEqual(len(app_images), 4)
+        self.assertEqual({container["name"] for container in app_containers}, {"api", "worker", "deep", "web"})
         self.assertRegex(config["data"]["PPAP_BUILD_SHA"], r"^[0-9a-f]{40}$")
-        self.assertEqual({image.rsplit(":", 1)[1] for image in app_images}, {config["data"]["PPAP_BUILD_SHA"]})
+        ghcr = all(image.startswith("ghcr.io/ppap-agent/ppap/") for image in app_images)
+        for container in app_containers:
+            if ghcr:
+                self.assertRegex(container["image"], rf"^ghcr\.io/ppap-agent/ppap/{container['name']}@sha256:[0-9a-f]{{64}}$")
+                self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
+            else:
+                self.assertEqual(container["image"], f"unregistry.xixifusi.online/ppap-{container['name']}:{config['data']['PPAP_BUILD_SHA']}")
         self.assertTrue(any("postgres:" in image for image in images))
         self.assertTrue(any(image.startswith("docker.io/pgsty/silo:") for image in images))
         database_keys = {"PPAP_PG_API_PASSWORD", "PPAP_PG_WORKER_PASSWORD", "PPAP_PG_MIGRATOR_PASSWORD", "PPAP_PG_BOOTSTRAP_PASSWORD"}
