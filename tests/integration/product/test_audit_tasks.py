@@ -5,6 +5,7 @@ import json
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import psycopg
 import pytest
@@ -45,6 +46,14 @@ def checked_file(client, worker, name="控制计划.xlsx", document_type="控制
     assert client.post("/file-validations", json={"request_id": validation_id, "source_file_id": version["file_id"], "source_file_version_id": version["id"]}).status_code == 202
     process_claimed(worker, worker.claim_job("precheck"), "precheck")
     return {"file_version_id": version["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}
+
+
+def assert_task_summary(summary, task):
+    expected = {key: task[key] for key in ("id", "number", "state", "input_revision", "analysis_mode", "created_at", "round_id", "completion_reason")}
+    expected["files"] = [{"file": row["file"], "selection": row["selection"]} for row in task["files"]]
+    assert {key: value for key, value in summary.items() if key != "updated_at"} == expected
+    # The summary observes input changes; full detail also observes Worker jobs.
+    assert datetime.fromisoformat(task["created_at"]) <= datetime.fromisoformat(summary["updated_at"]) <= datetime.fromisoformat(task["updated_at"])
 
 
 class MetadataAI:
@@ -247,7 +256,9 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     assert recovered["state"] == "pending_confirm"
     assert recovered["files"][0]["match"]["state"] == "unmatched"
     assert recovered["estimated_points"] == 0
-    assert client.get("/audit-tasks").json()["tasks"] == [recovered]
+    summaries = client.get("/audit-tasks").json()["tasks"]
+    assert len(summaries) == 1
+    assert_task_summary(summaries[0], recovered)
     assert client.get("/drafts").json()["drafts"] == []
     ended = client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0})
     assert ended.status_code == 200
@@ -257,7 +268,9 @@ def test_recognition_is_persistent_and_zero_match_ends_without_an_audit(task_sys
     changed_end = client.post(f"/audit-tasks/{task['id']}/end", json={"expected_revision": 0, "removals": [{"file_version_id": file["file_version_id"], "removal_reason": "结束后修改"}]})
     assert changed_end.status_code == 409
     assert client.get(f"/audit-tasks/{task['id']}").json() == ended.json()
-    assert client.get("/audit-tasks", params={"state": "completed", "q": "控制计划"}).json()["tasks"] == [ended.json()]
+    summaries = client.get("/audit-tasks", params={"state": "completed", "q": "控制计划"}).json()["tasks"]
+    assert len(summaries) == 1
+    assert_task_summary(summaries[0], ended.json())
     assert client.get("/audit-tasks", params={"state": "matching"}).json()["tasks"] == []
     assert client.get("/audit-tasks", params={"q": "不存在的文件"}).json()["tasks"] == []
     assert client.get("/rounds").json()["rounds"] == []
@@ -737,7 +750,9 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
     assert client.get(path, params={"request_id": command["request_id"]}).json() == accepted
-    assert client.get("/audit-tasks", params={"state": "reviewing"}).json()["tasks"] == [accepted]
+    summaries = client.get("/audit-tasks", params={"state": "reviewing"}).json()["tasks"]
+    assert len(summaries) == 1
+    assert_task_summary(summaries[0], accepted)
     assert len(client.get("/rounds").json()["rounds"]) == 1
     assert client.get("/usage").json()["events"] == []
     job = worker.claim_job("one-audit")
@@ -759,7 +774,9 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert all(row["audit"]["checks"][0]["coverage"] == "executed" for row in finished["files"])
     assert [row["audit"]["conclusion"] for row in finished["files"]] == ["NG", "UNKNOWN", "NG"]
     assert [row["audit"]["report"]["state"] for row in finished["files"]] == ["ready", "not_eligible", "ready"]
-    assert client.get("/audit-tasks", params={"state": "completed"}).json()["tasks"] == [finished]
+    summaries = client.get("/audit-tasks", params={"state": "completed"}).json()["tasks"]
+    assert len(summaries) == 1
+    assert_task_summary(summaries[0], finished)
 
 
 def test_private_task_cannot_be_read_through_its_round_or_original_by_a_tenant_peer(task_system):
