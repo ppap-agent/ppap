@@ -1,8 +1,12 @@
 name: Publish private GHCR images
-run-name: Publish main ${{ github.sha }}
+run-name: Publish main ${{ github.event.workflow_run.head_sha || github.sha }}
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -10,29 +14,42 @@ permissions:
   packages: write
 
 concurrency:
-  group: ghcr-release-${{ github.sha }}
+  group: ghcr-release-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
-      PPAP_BUILD_SHA: ${{ github.sha }}
+      PPAP_BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      CI_CHECK_SUITE_ID: ${{ github.event.workflow_run.check_suite_id }}
       PPAP_IMAGE_PREFIX: ghcr.io/ppap-agent/ppap/
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.PPAP_BUILD_SHA }}
           persist-credentials: false
       - name: Require tested main and private packages
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
-          gh api "repos/$GITHUB_REPOSITORY/commits/$PPAP_BUILD_SHA/check-runs" \
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            test -n "$CI_CHECK_SUITE_ID"
+            task_checks_path="repos/$GITHUB_REPOSITORY/check-suites/$CI_CHECK_SUITE_ID/check-runs?check_name=CI%20Gate"
+          else
+            task_checks_path="repos/$GITHUB_REPOSITORY/commits/$PPAP_BUILD_SHA/check-runs?check_name=CI%20Gate"
+          fi
+          gh api "$task_checks_path" \
             --jq '.check_runs | map(select(.name == "CI Gate")) | sort_by(.started_at) | last | .conclusion' \
             | grep -qx success
           for component in api worker web deep; do
