@@ -57,6 +57,18 @@ def test_full_process_smoke_is_isolated_and_proves_cache():
         assert "preload-ready" in container["command"][-1]
 
 
+def test_only_source_kubelet_receives_private_registry_credentials():
+    for source in (True, False):
+        pod = PRELOAD["transfer_pod"]("probe", "node", "cached-bootstrap", source, "scripts", "credentials", IMAGES)
+        spec = pod["spec"]
+        assert spec.get("imagePullSecrets", []) == ([{"name": "credentials-ghcr"}] if source else [])
+        secret = next(volume["secret"] for volume in spec["volumes"] if volume["name"] == "credentials")
+        assert secret["items"] == [{"key": "transfer-token", "path": "transfer-token"}]
+        pulls = [container for container in spec.get("initContainers", []) if container["name"].startswith("pull-")]
+        assert {container["image"] for container in pulls} == (set(IMAGES.values()) if source else set())
+        assert all(container["command"] == ["true"] for container in pulls)
+
+
 def test_receiver_checks_archive_before_native_import(tmp_path):
     payload = b"bounded image archive fixture"
 
@@ -101,7 +113,7 @@ def test_receiver_checks_archive_before_native_import(tmp_path):
         server.server_close()
 
 
-def test_fetch_failure_cleans_resources_without_starting_smoke():
+def test_export_failure_cleans_resources_without_starting_smoke():
     preload = PRELOAD["preload"]
     created, deleted, executed = [], [], []
 
@@ -125,18 +137,16 @@ def test_fetch_failure_cleans_resources_without_starting_smoke():
             deleted.append((args[1], args[2]))
         if args[0] == "exec":
             executed.append(args)
-            if "fetch" in args:
-                raise RuntimeError("registry unavailable")
+            if "export" in args:
+                raise RuntimeError("native export unavailable")
         if args[:2] == ("get", "pod"):
             return b'{"status":{"podIP":"10.0.0.1"}}'
         return b""
 
-    tool = b"pinned-tool-fixture"
     config = {"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": {"PPAP_BUILD_SHA": "2" * 40}}
-    with patch.dict(preload.__globals__, {"kube": kube, "REGCTL_SHA256": hashlib.sha256(tool).hexdigest()}), patch.object(PRELOAD["urllib"].request, "urlopen") as download:
-        download.return_value.read.return_value = tool
-        with pytest.raises(RuntimeError, match="registry unavailable"):
+    with patch.dict(preload.__globals__, {"kube": kube}), patch.dict(PRELOAD["os"].environ, {"GHCR_USERNAME": "fixture", "GHCR_TOKEN": "fixture"}):
+        with pytest.raises(RuntimeError, match="native export unavailable"):
             preload([*objects(), config])
-    assert len(created) == 4
+    assert len(created) == 5
     assert {(obj["kind"].lower(), obj["metadata"]["name"]) for obj in created} == set(deleted)
     assert not any("preload-smoke.py" in args for args in executed)

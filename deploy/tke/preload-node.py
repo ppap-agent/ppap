@@ -7,7 +7,6 @@ import hmac
 import http.server
 import ipaddress
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -45,6 +44,11 @@ def import_image(path: Path, ref: str) -> dict:
     with path.open("rb") as stream:
         run(["chroot", "/host", "/usr/local/bin/ctr", "--namespace", "k8s.io", "images", "import", "--digests", "--base-name", repository, "-"], stdin=stream)
     run(["chroot", "/host", "/usr/local/bin/ctr", "--namespace", "k8s.io", "images", "label", ref, "io.cri-containerd.image=managed"])
+    return inspect_image(ref)
+
+
+def inspect_image(ref: str) -> dict:
+    repository = ref.split("@", 1)[0]
     for _ in range(30):
         result = subprocess.run(["chroot", "/host", "/usr/local/bin/crictl", "--runtime-endpoint", "unix:///run/containerd/containerd.sock", "inspecti", ref], capture_output=True, timeout=15)
         if result.returncode == 0:
@@ -106,16 +110,20 @@ def serve() -> None:
     http.server.ThreadingHTTPServer(("0.0.0.0", 18081), Handler).serve_forever()
 
 
-def fetch(name: str, ref: str) -> dict:
+def export(name: str, ref: str) -> dict:
     component(name)
     path = ROOT / f"{name}.tar"
     partial = path.with_suffix(".partial")
-    env = {**os.environ, "REGCTL_CONFIG": "/credentials/regctl.json"}
     try:
-        run([str(ROOT / "regctl"), "image", "export", "--platform", "linux/amd64", "--name", ref.split("@", 1)[0] + ":preload", ref, str(partial)], env=env)
+        status = inspect_image(ref)
+        with partial.open("wb") as output:
+            result = subprocess.run(
+                ["chroot", "/host", "/usr/local/bin/ctr", "--namespace", "k8s.io", "images", "export", "--platform", "linux/amd64", "-", ref], stdout=output, stderr=subprocess.PIPE, timeout=1800
+            )
+        if result.returncode:
+            raise RuntimeError("native image export failed")
         digest = checksum(partial)
         partial.rename(path)
-        status = import_image(path, ref)
         return {**status, "archive_sha256": digest, "archive_bytes": path.stat().st_size}
     finally:
         partial.unlink(missing_ok=True)
@@ -125,8 +133,8 @@ def main() -> None:
     action, *args = sys.argv[1:]
     if action == "serve":
         serve()
-    elif action == "fetch":
-        print(json.dumps(fetch(*args)), flush=True)
+    elif action == "export":
+        print(json.dumps(export(*args)), flush=True)
     elif action == "receive":
         print(json.dumps(receive(*args)), flush=True)
     elif action == "clean":

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 import re
@@ -12,15 +11,12 @@ import secrets
 import signal
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 NAMESPACE = "ppap-test"
 NODES = ("10.3.4.3", "10.3.4.7")
 OWNERS = {"api": "ppap-current-api", "worker": "ppap-current-worker", "deep": "ppap-current-worker", "web": "ppap-current-web"}
-REGCTL_URL = "https://github.com/regclient/regclient/releases/download/v0.11.6/regctl-linux-amd64"
-REGCTL_SHA256 = "8e0e62a497fcdb8048d18aa927a139613176ba0531f412bc541044e28f9856bd"
 
 
 def command(args: list[str], *, data: bytes | None = None, timeout: int = 1800) -> bytes:
@@ -56,7 +52,7 @@ def release_images(objects: list[dict]) -> dict[str, str]:
     return images
 
 
-def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, credentials: str) -> dict:
+def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, credentials: str, images: dict[str, str]) -> dict:
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -67,6 +63,27 @@ def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, cr
             "restartPolicy": "Never",
             "activeDeadlineSeconds": 7200,
             "terminationGracePeriodSeconds": 5,
+            **(
+                {
+                    "imagePullSecrets": [{"name": credentials + "-ghcr"}],
+                    "initContainers": [
+                        {
+                            "name": "check-disk",
+                            "image": bootstrap,
+                            "imagePullPolicy": "IfNotPresent",
+                            "command": ["python", "-c", "import os; s=os.statvfs('/host/var/lib/containerd'); assert s.f_bavail*s.f_frsize >= 4*1024**3, 'at least 4 GiB free required'"],
+                            "volumeMounts": [{"name": "host", "mountPath": "/host", "readOnly": True}],
+                            "securityContext": {"runAsUser": 0, "readOnlyRootFilesystem": True, "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+                        }
+                    ]
+                    + [
+                        {"name": "pull-" + key, "image": ref, "imagePullPolicy": "IfNotPresent", "command": ["true"], "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}}}
+                        for key, ref in images.items()
+                    ],
+                }
+                if source
+                else {}
+            ),
             "containers": [
                 {
                     "name": "transfer",
@@ -92,7 +109,7 @@ def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, cr
                     "secret": {
                         "secretName": credentials,
                         "defaultMode": 0o400,
-                        "items": [{"key": "transfer-token", "path": "transfer-token"}] + ([{"key": "regctl.json", "path": "regctl.json"}] if source else []),
+                        "items": [{"key": "transfer-token", "path": "transfer-token"}],
                     },
                 },
             ],
@@ -200,9 +217,6 @@ def preload(objects: list[dict]) -> None:
         raise ValueError("release Git SHA is invalid")
     bootstrap = json.loads(kube("get", "deployment", "ppap-current-api", "-o", "json"))["spec"]["template"]["spec"]["containers"][0]["image"]
     fixtures = {key: json.loads(kube("get", "deployment", f"ppap-current-{key}", "-o", "json"))["spec"]["template"]["spec"]["containers"][0]["image"] for key in ("postgres", "silo")}
-    tool = urllib.request.urlopen(REGCTL_URL, timeout=60).read()
-    if hashlib.sha256(tool).hexdigest() != REGCTL_SHA256:
-        raise ValueError("regctl download checksum mismatch")
     run_id = "ppap-preload-" + secrets.token_hex(4)
     created: list[tuple[str, str]] = []
 
@@ -228,33 +242,36 @@ def preload(objects: list[dict]) -> None:
             }
         )
         username, token = os.getenv("GHCR_USERNAME", ""), os.getenv("GHCR_TOKEN", "")
-        if bool(username) != bool(token):
-            raise ValueError("set both GHCR_USERNAME and GHCR_TOKEN for private images")
-        registry = {"hosts": {"ghcr.io": {"user": username, "pass": token}}} if token else {}
+        if not username or not token:
+            raise ValueError("set GHCR_USERNAME and GHCR_TOKEN for private images")
         create(
             {
                 "apiVersion": "v1",
                 "kind": "Secret",
                 "metadata": {"name": run_id, "namespace": NAMESPACE},
                 "type": "Opaque",
-                "data": {"transfer-token": base64.b64encode(secrets.token_bytes(32).hex().encode()).decode(), "regctl.json": base64.b64encode(json.dumps(registry).encode()).decode()},
+                "data": {"transfer-token": base64.b64encode(secrets.token_bytes(32).hex().encode()).decode()},
+            }
+        )
+        registry = {"auths": {"ghcr.io": {"auth": base64.b64encode(f"{username}:{token}".encode()).decode()}}}
+        create(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": run_id + "-ghcr", "namespace": NAMESPACE},
+                "type": "kubernetes.io/dockerconfigjson",
+                "data": {".dockerconfigjson": base64.b64encode(json.dumps(registry).encode()).decode()},
             }
         )
         sender, receiver = run_id + "-source", run_id + "-receiver"
         for pod, node, source in ((sender, NODES[0], True), (receiver, NODES[1], False)):
-            create(transfer_pod(pod, node, bootstrap, source, run_id, run_id))
-            kube("wait", "--for=condition=Ready", "pod/" + pod, "--timeout=180s")
+            create(transfer_pod(pod, node, bootstrap, source, run_id, run_id, images))
+            kube("wait", "--for=condition=Ready", "pod/" + pod, "--timeout=900s")
             execute(pod, "python", "-c", "import os; s=os.statvfs('/host/var/lib/containerd'); assert s.f_bavail*s.f_frsize >= 4*1024**3, 'at least 4 GiB free required'")
-        install = (
-            "import hashlib,sys; from pathlib import Path; data=sys.stdin.buffer.read(); "
-            f"assert hashlib.sha256(data).hexdigest()=='{REGCTL_SHA256}'; "
-            "p=Path('/transfer/regctl'); p.write_bytes(data); p.chmod(0o700)"
-        )
-        execute(sender, "python", "-c", install, data=tool)
         address = json.loads(kube("get", "pod", sender, "-o", "json"))["status"]["podIP"]
         for name, ref in images.items():
-            print(f"Fetching complete {name} image from GHCR on {NODES[0]}", flush=True)
-            status = json.loads(execute(sender, "python", "/scripts/preload-node.py", "fetch", name, ref))
+            print(f"Exporting complete {name} image from the GHCR cache on {NODES[0]}", flush=True)
+            status = json.loads(execute(sender, "python", "/scripts/preload-node.py", "export", name, ref))
             print(json.dumps({"node": NODES[0], **status}), flush=True)
             received = json.loads(execute(receiver, "python", "/scripts/preload-node.py", "receive", name, ref, address, status["archive_sha256"]))
             if any(item.get("image") != ref or item.get("registered") is not True for item in (status, received)):
