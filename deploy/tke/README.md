@@ -76,7 +76,7 @@ No `nodeSelector`. API, Worker, Web, and Deep images must use the same current G
 
 ## Private GHCR build
 
-`.github/workflows/publish-images.yml` is manually dispatched on `main` after that exact commit's `CI Gate` passes. It checks out the event SHA, builds all four `linux/amd64` images through the canonical Bake `release` group, and publishes private `ghcr.io/ppap-agent/ppap-<component>:<full_sha>` packages. Deep consumes the Worker target in the same build graph. The workflow records immutable image digests in its run summary; it does not deploy. Existing packages must already be private and connected to this repository's Actions access. The job uses the run's `GITHUB_TOKEN`, not a stored publishing PAT.
+`.github/workflows/publish-images.yml` is manually dispatched on `main` after that exact commit's `CI Gate` passes. It checks out the event SHA, builds all four `linux/amd64` images through the canonical Bake `release` group, and publishes private `ghcr.io/ppap-agent/ppap/<component>:<full_sha>` packages. Deep consumes the Worker target in the same build graph. The workflow records immutable image digests in its run summary; it does not deploy. Existing packages must already be private and connected to this repository's Actions access. The job uses the run's `GITHUB_TOKEN`, not a stored publishing PAT.
 
 Do not use a mutable `main`/`latest` image tag as deployment identity. Keep the previous unregistry references for rollback until the new digest-pinned release has passed node-local startup and live health checks. The following registry-host procedure remains the unregistry fallback.
 

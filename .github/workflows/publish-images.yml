@@ -21,7 +21,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PPAP_BUILD_SHA: ${{ github.sha }}
-      PPAP_IMAGE_PREFIX: ghcr.io/ppap-agent/ppap-
+      PPAP_IMAGE_PREFIX: ghcr.io/ppap-agent/ppap/
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -38,7 +38,7 @@ jobs:
           for component in api worker web deep; do
             # A first publication is private by default. Existing packages must
             # already be private; this job never changes their visibility.
-            if metadata="$(gh api "orgs/ppap-agent/packages/container/ppap-$component" 2>/dev/null)"; then
+            if metadata="$(gh api "orgs/ppap-agent/packages/container/ppap%2F$component" 2>/dev/null)"; then
               test "$(printf '%s' "$metadata" | jq -r .visibility)" = private
             fi
           done
@@ -53,7 +53,7 @@ jobs:
           docker buildx bake release --set '*.platform=linux/amd64' \
             --provenance=false --metadata-file "$RUNNER_TEMP/ppap-images.json" --push
           for component in api worker web deep; do
-            test "$(gh api "orgs/ppap-agent/packages/container/ppap-$component" --jq .visibility)" = private
+            test "$(gh api "orgs/ppap-agent/packages/container/ppap%2F$component" --jq .visibility)" = private
             digest="$(jq -er --arg component "$component" '.[$component]["containerimage.digest"]' "$RUNNER_TEMP/ppap-images.json")"
             printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
             printf '%s@%s\n' "$PPAP_IMAGE_PREFIX$component" "$digest" >> "$GITHUB_STEP_SUMMARY"
