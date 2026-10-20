@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 83b408ddf6c717875882563f8a105614ca3ef2d8
+  PPAP_BUILD_SHA: 7941290a9a43c1f91878b46f91950d56b7b1c4bd
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -411,8 +411,8 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: unregistry.xixifusi.online/ppap-api:83b408ddf6c717875882563f8a105614ca3ef2d8
-          imagePullPolicy: Always
+          image: ghcr.io/ppap-agent/ppap/api@sha256:b9f68b91e5e081b2d889ba47f160ba97d8195761efc32ff99b41cd541e954342
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           envFrom:
@@ -505,8 +505,8 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: unregistry.xixifusi.online/ppap-deep:83b408ddf6c717875882563f8a105614ca3ef2d8
-          imagePullPolicy: Always
+          image: ghcr.io/ppap-agent/ppap/deep@sha256:aa87e4d381d20d47d440abf28fb3c226b66f0fe836dc5fa6a8b5c86fc4de6a5f
+          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: ppap-current
@@ -554,8 +554,8 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: unregistry.xixifusi.online/ppap-worker:83b408ddf6c717875882563f8a105614ca3ef2d8
-          imagePullPolicy: Always
+          image: ghcr.io/ppap-agent/ppap/worker@sha256:6a61e6cb741675886c99c9f17d064f99663ee9ed65e8f62befc8ce3ffba77ec0
+          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: ppap-current
@@ -636,8 +636,8 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: unregistry.xixifusi.online/ppap-web:83b408ddf6c717875882563f8a105614ca3ef2d8
-          imagePullPolicy: Always
+          image: ghcr.io/ppap-agent/ppap/web@sha256:0a98d1b5816b23ebdf9d21b8122c90ae6f2c73b52a5ab49fefff8fa2a5ce4154
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173
           envFrom:
