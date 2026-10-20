@@ -4,7 +4,7 @@ import json
 
 import httpx
 import pytest
-from ppap_core.report_sharing import ReportSharingError, list_report_targets, resolve_report_target, send_report_message, upload_report_message_file
+from ppap_core.report_sharing import ReportSharingError, list_report_targets, own_report_target, resolve_report_target, send_report_message, upload_report_message_file
 
 
 def test_message_processing_and_lost_receipts_remain_unknown():
@@ -83,9 +83,27 @@ def test_directory_search_binds_the_user_token_and_rechecks_each_returned_user()
         assert page["organization_id"] == "tenant-one"
         assert page["next_page_token"] == "next-two"
         assert page["targets"][0]["eligibility"] == "unknown"
-        self_page = list_report_targets(http, "user-token", "", principal, {"name": "已核对的自己"}, "user", "", None)
+        self_page = list_report_targets(http, "user-token", "", principal, {"name": "已核对的自己", "open_id": "ou_self", "tenant_key": "tenant-one"}, "user", "", None)
         assert self_page["targets"][0]["id"] == "ou_self"
         assert len(calls) == 2
+
+
+def test_self_target_uses_verified_current_identity_not_an_unrelated_directory_grant():
+    from types import SimpleNamespace
+
+    principal = SimpleNamespace(tenant_key="tenant-one", subject="ou_self", display_name="自己")
+    profile = {"open_id": "ou_self", "tenant_key": "tenant-one", "name": "已核验本人"}
+    assert own_report_target(principal, profile) == {
+        "id": "ou_self",
+        "kind": "user",
+        "display_name": "已核验本人",
+        "organization_id": "tenant-one",
+        "eligibility": "eligible",
+        "reason": None,
+    }
+    for changed in ({"open_id": "ou_other"}, {"tenant_key": "tenant-other"}, {"tenant_key": None}):
+        with pytest.raises(ReportSharingError, match="share_identity_mismatch"):
+            own_report_target(principal, {**profile, **changed})
 
 
 def test_message_upload_uses_im_file_keys_and_rejects_oversize_before_any_upload():
@@ -103,3 +121,21 @@ def test_message_upload_uses_im_file_keys_and_rejects_oversize_before_any_upload
         with pytest.raises(ReportSharingError, match="share_file_too_large"):
             upload_report_message_file(http, "tenant-token", artifact, b"x" * (30 * 1024 * 1024 + 1))
         assert len(calls) == 1
+
+
+@pytest.mark.parametrize("query", ["", "验收"])
+def test_group_directory_uses_the_bot_membership_not_the_user_chat_scope(query):
+    from types import SimpleNamespace
+
+    principal = SimpleNamespace(tenant_key="tenant-one", subject="ou_self", display_name="自己")
+
+    def provider(request):
+        assert request.headers["authorization"] == "Bearer tenant-token"
+        if request.url.path in {"/open-apis/im/v1/chats", "/open-apis/im/v1/chats/search"}:
+            return httpx.Response(200, json={"code": 0, "data": {"items": [{"chat_id": "oc_test"}], "has_more": False}})
+        assert request.url.path == "/open-apis/im/v1/chats/oc_test"
+        return httpx.Response(200, json={"code": 0, "data": {"name": "隔离验收群", "external": False, "tenant_key": "tenant-one", "chat_mode": "group"}})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        page = list_report_targets(http, "user-token", "tenant-token", principal, {}, "group", query, None)
+        assert page["targets"][0]["eligibility"] == "eligible"

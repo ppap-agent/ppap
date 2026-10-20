@@ -60,7 +60,7 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
     get_settings.cache_clear()
     client = None
     try:
-        settings = Settings()
+        settings = Settings(usage_charge_enabled=False)
         store = auth_store_factory(settings)
         store.seed_isolated_dev()
         client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store))

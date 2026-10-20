@@ -93,7 +93,7 @@ def _response_json(response) -> dict:
     return {}
 
 
-def query_tenant_ai_item(http, access_token: str, ai_item_id: str) -> PartnerAiItem:
+def query_tenant_ai_item(http, access_token: str, ai_item_id: str, *, subject: str | None = None) -> PartnerAiItem:
     item_id = (ai_item_id or "").strip()
     if not item_id:
         raise FeishuUsageError("feishu_ai_item_missing")
@@ -104,6 +104,7 @@ def query_tenant_ai_item(http, access_token: str, ai_item_id: str) -> PartnerAiI
                 "Authorization": "Bearer " + access_token,
                 "Content-Type": "application/json; charset=utf-8",
             },
+            params={"user_id": subject, "user_id_type": "open_id"} if subject else None,
             timeout=20,
         )
         body = _response_json(response)
@@ -116,13 +117,9 @@ def query_tenant_ai_item(http, access_token: str, ai_item_id: str) -> PartnerAiI
     data = data_value if isinstance(data_value, dict) else {}
     item_value = data.get("tenant_ai_item")
     item = item_value if isinstance(item_value, dict) else {}
-    if not item:
+    if type(item.get("enabled")) is not bool or type(item.get("user_quota")) is not int or item["user_quota"] < 0 or type(item.get("ai_package_purchased")) is not bool:
         raise FeishuUsageError("feishu_ai_item_failed")
-    try:
-        quota = int(item.get("user_quota") or 0)
-    except (TypeError, ValueError):
-        quota = 0
-    return PartnerAiItem(bool(item.get("enabled")), quota, bool(item.get("ai_package_purchased")))
+    return PartnerAiItem(item["enabled"], item["user_quota"], item["ai_package_purchased"])
 
 
 def quota_payload(item: PartnerAiItem, remaining_trial: int) -> dict[str, object]:

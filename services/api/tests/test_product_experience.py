@@ -133,7 +133,7 @@ class ProductExperienceTests(unittest.TestCase):
         env = patch.dict(os.environ, clean, clear=True)
         env.start()
         self.addCleanup(env.stop)
-        settings = Settings()
+        settings = Settings(usage_charge_enabled=False)
         self.store = self.auth_store(settings)
         self.store.seed_isolated_dev()
         self.client = TestClient(create_app(settings, lambda _: {"state": "ok"}, lambda _: {"state": "ok"}, self.store))

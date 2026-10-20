@@ -8,7 +8,6 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -47,12 +46,10 @@ from ppap_core.feishu_notifications import task_notification_card
 from ppap_core.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from ppap_core.feishu_usage import (
     FeishuUsageError,
-    apply_report_credential,
     query_tenant_ai_item,
     quota_payload,
     quota_unavailable,
     remaining_trial_points,
-    report_usage_record,
     tenant_access_token,
 )
 from ppap_core.feishu_writeback import (
@@ -87,6 +84,7 @@ from ppap_api.report_routes import register_report_routes
 from ppap_api.rule_routes import register_rule_routes
 from ppap_api.sharing_routes import register_sharing_routes
 from ppap_api.support_routes import register_support_routes
+from ppap_api.usage_reporting import report_usage, run_pending_usage
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -135,15 +133,21 @@ def create_app(
     async def lifespan(_app):
         stop = threading.Event()
         notifier = None
+        usage_reporter = None
         if settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret:
             notifier = threading.Thread(target=run_task_notifications, args=(store, settings, stop), name="ppap-notifier", daemon=True)
             notifier.start()
+        if settings.usage_charge_enabled and settings.feishu_app_id and settings.feishu_app_secret:
+            usage_reporter = threading.Thread(target=run_pending_usage, args=(store, settings, stop), name="ppap-usage", daemon=True)
+            usage_reporter.start()
         try:
             yield
         finally:
             stop.set()
             if notifier:
                 await asyncio.to_thread(notifier.join, 1)
+            if usage_reporter:
+                await asyncio.to_thread(usage_reporter.join, 1)
 
     app = FastAPI(title="PPAP Product API", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.add_middleware(
@@ -280,14 +284,16 @@ def create_app(
             return JSONResponse({"ok": True})
         if isinstance(parsed, CardAction):
             try:
-                task = store.confirm_task_notification(parsed)
+                task = store.confirm_task_notification(parsed, usage_policy=quota_for_actor)
             except KeyError:
                 return JSONResponse({"toast": {"type": "error", "content": "无法确认此卡片。请由任务创建人打开页面核对。"}})
             except ValueError as error:
                 message = {
                     "rule_candidate_expired": "规则已更新，本次未受理。请打开页面重新识别并核对。",
                     "task_revision_conflict": "文件或审核模式已变化，本次未受理。请打开页面核对。",
-                    "audit_task_charging_unavailable": "当前无法确认用量，未开始审核。请打开页面查看。",
+                    "usage_quota_unavailable": "当前无法确认用量，未开始审核。请打开页面查看。",
+                    "usage_ai_disabled": "飞书AI包开关已关闭，未开始审核。请联系管理员。",
+                    "usage_balance_empty": "当前没有可用额度，未开始审核。请联系管理员。",
                 }.get(str(error), "本次未受理，请打开页面核对当前任务。")
                 return JSONResponse({"toast": {"type": "warning", "content": message}})
             except Exception:
@@ -798,60 +804,8 @@ def create_app(
         session = session_of(request)
         if not session:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
-        if not session.access_token:
-            return JSONResponse({"error": "feishu_user_token_missing"}, status_code=409)
-        row = store.usage_event(session.principal, event_id)
-        if row is None:
-            return JSONResponse({"error": "access_denied"}, status_code=403)
-        public = store.usage_event_public(row)
-        if str(row.get("user_id")) != session.principal.user_id:
-            return JSONResponse({"error": "usage_report_owner_required"}, status_code=409)
-        if row["is_free_trial"]:
-            public["skipped"] = True
-            public["skip_reason"] = "消费在赠送额度内"
-            return JSONResponse(public)
-        if public["external_status"] == "confirmed":
-            public["skipped"] = False
-            return JSONResponse(public)
-        if public["external_status"] != "pending":
-            return JSONResponse(public, status_code=409)
-        if not row.get("trace_id"):
-            return JSONResponse({"error": "usage_trace_missing"}, status_code=409)
-        ticket = store.app_ticket(settings.feishu_app_id)
-        if not ticket:
-            return JSONResponse({"error": "feishu_app_ticket_missing"}, status_code=409)
-        # Preparation cannot report a charge. Failure leaves the event pending.
-        try:
-            tenant_token = tenant_access_token(
-                http,
-                settings.feishu_app_id,
-                settings.feishu_app_secret,
-                ticket,
-                session.principal.tenant_key,
-            )
-            report_token = apply_report_credential(http, session.access_token, row["ai_item_id"], row["trace_id"])
-        except FeishuUsageError:
-            return JSONResponse({"error": "feishu_usage_prepare_failed"}, status_code=502)
-        claim = store.claim_usage_report(session.principal, event_id)
-        if claim is None:
-            current = store.usage_event(session.principal, event_id)
-            return JSONResponse(store.usage_event_public(cast(dict, current)), status_code=409)
-        try:
-            record_id = report_usage_record(
-                http,
-                tenant_token,
-                report_token,
-                row["ai_item_id"],
-                row["trace_id"],
-                row["consumed_points"],
-            )
-        except FeishuUsageError:
-            store.settle_usage_external(session.principal, event_id, claim, "unknown")
-            return JSONResponse({"error": "feishu_usage_report_unknown"}, status_code=502)
-        settled = store.settle_usage_external(session.principal, event_id, claim, "confirmed", record_id)
-        body = store.usage_event_public(settled)
-        body["skipped"] = False
-        return JSONResponse(body)
+        body, status = report_usage(store, http, settings, session, event_id)
+        return JSONResponse(body, status_code=status)
 
     register_report_routes(app, store, session_of, http, settings)
     register_office_routes(app, store, principal_of, settings)
@@ -915,7 +869,17 @@ def create_app(
         response.set_cookie(SESSION_COOKIE, raw, **_cookie_kwargs(settings))
         return response
 
-    register_audit_routes(app, store, principal_of)
+    def quota_for(request, principal):
+        session = session_of(request)
+        if not session or session.principal != principal or not session.access_token:
+            raise FeishuUsageError("feishu_user_token_missing")
+        return query_tenant_ai_item(http, session.access_token, settings.feishu_ai_item_id)
+
+    def quota_for_actor(principal):
+        token = tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", principal.tenant_key)
+        return query_tenant_ai_item(http, token, settings.feishu_ai_item_id, subject=principal.subject)
+
+    register_audit_routes(app, store, principal_of, quota_for)
     register_rule_routes(app, store, principal_of, require_file_read)
     register_support_routes(app, principal_of, settings)
     register_sharing_routes(app, store, session_of, http, settings)

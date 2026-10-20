@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Iterator
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -34,7 +35,7 @@ from ppap_core.db import connect
 from ppap_core.feishu import CardAction, UserTokens
 from ppap_core.feishu_notifications import task_notification_card
 from ppap_core.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
-from ppap_core.feishu_usage import audit_usage_points, remaining_trial_points, split_trial_and_partner
+from ppap_core.feishu_usage import FeishuUsageError, PartnerAiItem, audit_usage_points, remaining_trial_points, split_trial_and_partner
 from ppap_core.files import (
     FAILED,
     MAX_UPLOAD_BYTES,
@@ -1063,7 +1064,7 @@ class AuthStore:
         self._prepared_items(conn, principal, [{"file_version_id": version_id, "role": "reference"} for version_id in sources])
         return {str(row[0]): rule_parse_view(str(row[0]), row[1], row[2], row[3], bool(row[4])) for row in rows}
 
-    def create_audit_task(self, principal: Principal, body: dict) -> dict:
+    def create_audit_task(self, principal: Principal, body: dict, *, usage_policy=None) -> dict:
         request_id = _as_uuid(str(body.get("request_id") or ""))
         revising = "task_id" in body or "expected_revision" in body
         task_id = _as_uuid(str(body.get("task_id") or "")) if revising else request_id
@@ -1145,6 +1146,7 @@ class AuthStore:
                 if str(prior_job[0]) != principal.tenant_id:
                     raise KeyError("missing")
                 raise ValueError("idempotency_conflict")
+            self._check_usage_policy(conn, principal, usage_policy)
             day = cast(tuple, conn.execute("SELECT (now() AT TIME ZONE 'UTC')::date").fetchone())[0]
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"task-number:{principal.tenant_id}:{day}",))
             sequence = cast(tuple, conn.execute("SELECT COALESCE(MAX(task_sequence), 0) + 1 FROM product.audit_drafts WHERE tenant_id = %s AND task_day = %s", (principal.tenant_id, day)).fetchone())[
@@ -1436,7 +1438,7 @@ class AuthStore:
             ).fetchone()
             return dispatch if row else None
 
-    def confirm_task_notification(self, action: CardAction) -> dict:
+    def confirm_task_notification(self, action: CardAction, *, usage_policy=None) -> dict:
         notification_id = _as_uuid(action.notification_id)
         if not notification_id or not self.settings.tenant_allowed(action.tenant_key):
             raise KeyError("missing")
@@ -1460,7 +1462,9 @@ class AuthStore:
             principal = Principal(str(row[1]), str(row[2]), PROVIDER_FEISHU, self.settings.feishu_app_id, action.tenant_key, action.subject, row[3], row[4])
             task_id = row[0]["task_id"]
             try:
-                self._accept_locked(conn, principal, confirmation["request_id"], source_draft_id=task_id, predecessor_id=None, items=None, task_revision=confirmation["expected_revision"])
+                self._accept_locked(
+                    conn, principal, confirmation["request_id"], source_draft_id=task_id, predecessor_id=None, items=None, task_revision=confirmation["expected_revision"], usage_policy=usage_policy
+                )
             except ValueError as error:
                 if str(error) != "draft_already_accepted":
                     raise
@@ -1611,12 +1615,12 @@ class AuthStore:
                 "report_access": entry["report_access"],
             }
 
-    def confirm_audit_task(self, principal: Principal, task_id: str, request_id, expected_revision) -> dict:
+    def confirm_audit_task(self, principal: Principal, task_id: str, request_id, expected_revision, *, usage_policy=None) -> dict:
         parsed_task, key = _as_uuid(task_id), _as_uuid(request_id)
         if not parsed_task or not key or type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("invalid_task_confirmation")
         with self._conn() as conn, conn.transaction():
-            self._accept_locked(conn, principal, key, source_draft_id=parsed_task, predecessor_id=None, items=None, task_revision=expected_revision)
+            self._accept_locked(conn, principal, key, source_draft_id=parsed_task, predecessor_id=None, items=None, task_revision=expected_revision, usage_policy=usage_policy)
             return self._recognition_public(conn, principal, parsed_task)
 
     @staticmethod
@@ -2323,7 +2327,7 @@ class AuthStore:
                     conn.execute("UPDATE product.audit_drafts SET case_context = %s, updated_at = now() WHERE id = %s", (Jsonb(case_context), parsed))
                 return cast(dict, self._draft_public(conn, parsed))
 
-    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None) -> dict:
+    def accept_draft(self, principal: Principal, draft_id: str, idempotency_key: str, predecessor_id: str | None = None, *, usage_policy=None) -> dict:
         draft = self.get_draft(draft_id)
         if draft and draft.get("predecessor_id"):
             if predecessor_id and predecessor_id != draft["predecessor_id"]:
@@ -2339,7 +2343,7 @@ class AuthStore:
                 raise KeyError("missing")
         with self._conn() as conn:
             with conn.transaction():
-                return self._accept_locked(conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None)
+                return self._accept_locked(conn, principal, key, source_draft_id=parsed, predecessor_id=predecessor_id, items=None, usage_policy=usage_policy)
 
     def resubmit_round(
         self,
@@ -2347,6 +2351,8 @@ class AuthStore:
         round_id: str,
         idempotency_key: str,
         items: list[dict] | None,
+        *,
+        usage_policy=None,
     ) -> dict:
         key = normalize_idempotency_key(idempotency_key)
         parsed = _as_uuid(round_id)
@@ -2377,6 +2383,7 @@ class AuthStore:
                     source_draft_id=None,
                     predecessor_id=parsed,
                     items=items,
+                    usage_policy=usage_policy,
                 )
 
     def get_report(self, principal: Principal, round_id: str, fingerprint: str) -> dict | None:
@@ -2858,8 +2865,8 @@ class AuthStore:
                 "reason": "报告生成失败。审核结果已保存。" if state == "failed" else None,
                 "artifact": result.get("artifact") if state == "ready" else None,
                 "generated_at": result.get("generated_at") if state == "ready" else None,
-                "regenerate_allowed": state == "failed" and row[2] == "failed" and not self.settings.usage_charge_enabled,
-                "regenerate_reason": "当前环境尚未开放报告恢复计费。" if self.settings.usage_charge_enabled else None,
+                "regenerate_allowed": state == "failed" and row[2] == "failed",
+                "regenerate_reason": "重试前将重新检查可用额度，不产生新的审核费用。" if self.settings.usage_charge_enabled else None,
                 **({"generation_request": {"request_id": row[1]["regeneration_request_id"], "state": "accepted", "reason": None}} if row[1].get("regeneration_request_id") else {}),
             }
         return reports, max((row[4] for row in rows), default=None)
@@ -2918,17 +2925,16 @@ class AuthStore:
             raise ValueError("idempotency_conflict")
         return True
 
-    def regenerate_audit_report(self, principal: Principal, reference: dict, request_id: str) -> dict:
+    def regenerate_audit_report(self, principal: Principal, reference: dict, request_id: str, *, usage_policy=None) -> dict:
         if not isinstance(request_id, str) or _as_uuid(request_id) != request_id:
             raise ValueError("invalid_report_regeneration")
         with self._conn() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("report-recovery:" + request_id,))
             report, state = self._report_recovery_context(conn, principal, reference, lock=True)
             if not self._report_recovery_receipt(conn, principal, reference, request_id):
-                if self.settings.usage_charge_enabled:
-                    raise ValueError("audit_report_charging_unavailable")
                 if state != "failed" or report["state"] != "failed":
                     raise ValueError("report_recovery_unavailable")
+                self._check_usage_policy(conn, principal, usage_policy)
                 conn.execute(
                     """UPDATE engine.jobs SET status = 'queued', result = NULL, lease_owner = NULL, lease_until = NULL,
                     payload = payload || %s, updated_at = now() WHERE id = %s""",
@@ -3079,7 +3085,7 @@ class AuthStore:
                 raise ValueError("idempotency_conflict")
             return self._report_package_public(conn, principal, task, request_id, request)
 
-    def retry_report_package(self, principal: Principal, source_request_id: str, body: dict) -> dict:
+    def retry_report_package(self, principal: Principal, source_request_id: str, body: dict, *, usage_policy=None) -> dict:
         if (
             set(body) != {"request_id", "package_id", "expected_attempt"}
             or any(not isinstance(value, str) or _as_uuid(value) != value for value in (source_request_id, body.get("request_id"), body.get("package_id")))
@@ -3121,10 +3127,9 @@ class AuthStore:
                     raise ValueError("idempotency_conflict")
                 return self._report_package_public(conn, principal, task, request_id, request)
             self._report_package_public(conn, principal, task, source_request_id, original)
-            if self.settings.usage_charge_enabled:
-                raise ValueError("audit_report_charging_unavailable")
             if row != ("failed", body["expected_attempt"]):
                 raise ValueError("report_package_recovery_unavailable")
+            self._check_usage_policy(conn, principal, usage_policy)
             conn.execute(
                 "UPDATE engine.jobs SET status = 'queued', result = NULL, lease_owner = NULL, lease_until = NULL, updated_at = now() WHERE id = %s",
                 (body["package_id"],),
@@ -3158,8 +3163,8 @@ class AuthStore:
                 for reference in request["reports"]
             ],
             "artifact": result.get("artifact") if state == "ready" else None,
-            "reason": ("ZIP 打包失败，已就绪的 PDF 不受影响。" + ("当前环境尚未开放 ZIP 恢复计费。" if self.settings.usage_charge_enabled else "")) if state == "failed" else None,
-            "retry_allowed": status == "failed" and not self.settings.usage_charge_enabled,
+            "reason": ("ZIP 打包失败，已就绪的 PDF 不受影响。" + ("重试前将重新检查可用额度，不产生新的审核费用。" if self.settings.usage_charge_enabled else "")) if state == "failed" else None,
+            "retry_allowed": status == "failed",
         }
 
     def get_report_package(self, principal: Principal, request_id: str) -> dict | None:
@@ -3329,6 +3334,7 @@ class AuthStore:
         predecessor_id: str | None,
         items: list[dict] | None,
         task_revision: int | None = None,
+        usage_policy=None,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
@@ -3388,8 +3394,6 @@ class AuthStore:
                     current_rules = {rule["id"] for rule in latest_rule_versions(self.list_rules(principal.tenant_id))}
                     if any(item["role"] == "target" and item["rule_version_id"] not in current_rules for item in items):
                         raise ValueError("rule_candidate_expired")
-                    if self.settings.usage_charge_enabled:
-                        raise ValueError("audit_task_charging_unavailable")
                     for row in selected:
                         if row["match"]["state"] == "unmatched":
                             conn.execute(
@@ -3428,6 +3432,7 @@ class AuthStore:
         analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
+        self._check_usage_policy(conn, principal, usage_policy)
         round_id = str(uuid.uuid4())
         job_id = str(uuid.uuid4())
         conn.execute(
@@ -3511,12 +3516,33 @@ class AuthStore:
             self._queue_task_notification(conn, source_draft_id, "started", round_id)
         return cast(dict, self._round_public(conn, round_id))
 
+    def _check_usage_policy(self, conn, principal, policy) -> None:
+        if not self.settings.usage_charge_enabled:
+            return
+        item_id = self.settings.feishu_ai_item_id.strip()
+        if not item_id or principal.provider != PROVIDER_FEISHU or policy is None:
+            raise ValueError("usage_quota_unavailable")
+        # Hold the same account lock through admission, free allocation and
+        # enqueue. Replays return before this external read or any new charge.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + principal.tenant_id + ":" + item_id,))
+        try:
+            partner = policy(principal)
+        except FeishuUsageError as error:
+            raise ValueError("usage_quota_unavailable") from error
+        if not isinstance(partner, PartnerAiItem):
+            raise ValueError("usage_quota_unavailable")
+        if not partner.enabled:
+            raise ValueError("usage_ai_disabled")
+        remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, self._trial_ledger_consumed(conn, principal.tenant_id, item_id))
+        if remaining <= 0 and partner.user_quota <= 0:
+            raise ValueError("usage_balance_empty")
+
     def _record_round_usage(self, conn, principal, round_id, prepared) -> None:
         if not self.settings.usage_charge_enabled:
             return
         item_id = self.settings.feishu_ai_item_id.strip()
         if not item_id or principal.provider != PROVIDER_FEISHU:
-            return
+            raise ValueError("usage_quota_unavailable")
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("usage:" + principal.tenant_id + ":" + item_id,))
         consumed = self._trial_ledger_consumed(conn, principal.tenant_id, item_id)
         remaining = remaining_trial_points(self.settings.feishu_free_trial_quota_points, consumed)
@@ -3990,6 +4016,47 @@ class AuthStore:
                 (claim, event_id, principal.tenant_id, principal.user_id),
             ).fetchone()
         return claim if row else None
+
+    def pending_usage_sessions(self, app_id: str) -> Iterator[tuple[str, Session]]:
+        # A viewer's session is never used to pay another user's obligation.
+        # Expired/revoked authorization waits for that owner to sign in again.
+        after_time, after_id = None, None
+        while True:
+            with self._conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """SELECT u.id, u.created_at, u.user_id, u.tenant_id, s.access_token, s.expires_at,
+                    s.access_expires_at, i.tenant_key, i.subject, i.display_name, m.role
+                FROM product.usage_events u
+                JOIN product.tenants t ON t.id = u.tenant_id AND t.provider = 'feishu'
+                JOIN product.identities i ON i.user_id = u.user_id AND i.provider = t.provider
+                    AND i.tenant_key = t.external_key AND i.app_id = %s
+                JOIN product.memberships m ON m.user_id = u.user_id AND m.tenant_id = u.tenant_id
+                JOIN LATERAL (SELECT access_token, expires_at, access_expires_at FROM product.sessions
+                    WHERE user_id = u.user_id AND tenant_id = u.tenant_id AND revoked_at IS NULL
+                    AND expires_at > now() AND access_expires_at > now() AND access_token <> ''
+                    ORDER BY access_expires_at DESC LIMIT 1) s ON true
+                WHERE u.external_status = 'pending' AND NOT u.is_free_trial
+                    AND u.debit_order_id IS NULL AND u.debited_at IS NULL
+                    AND (%s::timestamptz IS NULL OR (u.created_at, u.id) > (%s::timestamptz, %s::uuid))
+                ORDER BY u.created_at, u.id LIMIT 20""",
+                    (app_id, after_time, after_time, after_id),
+                )
+                rows = cur.fetchall()
+            if not rows:
+                return
+            # Advance even when this page cannot pay, so one tenant's debt
+            # cannot permanently hide another tenant's authorized pending work.
+            after_time, after_id = rows[-1]["created_at"], rows[-1]["id"]
+            for row in rows:
+                yield (
+                    str(row["id"]),
+                    Session(
+                        Principal(str(row["user_id"]), str(row["tenant_id"]), PROVIDER_FEISHU, app_id, row["tenant_key"], row["subject"], row["role"], row["display_name"]),
+                        row["expires_at"],
+                        row["access_token"],
+                        access_expires_at=row["access_expires_at"],
+                    ),
+                )
 
     def settle_usage_external(self, principal, event_id, claim, status, record_id=None) -> dict:
         if status not in {"confirmed", "unknown"} or (status == "confirmed" and not record_id):
