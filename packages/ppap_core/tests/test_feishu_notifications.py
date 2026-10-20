@@ -18,7 +18,11 @@ def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_
         "number": "001",
         "estimated_points": 500,
         "files": [
-            {"selection": "selected", "file": {"original_filename": "控制计划.xlsx"}, "match": {"state": "matched", "rule": {"title": "海岸线控制计划要求"}, "gaps": ["缺少过程流程图"]}},
+            {
+                "selection": "selected",
+                "file": {"original_filename": "控制计划.xlsx"},
+                "match": {"state": "matched", "rule": {"title": "海岸线控制计划要求"}, "gaps": ["metadata_uses_excerpt", "缺少过程流程图"]},
+            },
             {"selection": "selected", "file": {"original_filename": "未匹配.pdf"}, "match": {"state": "unmatched", "rule": None, "gaps": []}},
         ],
     }
@@ -26,6 +30,7 @@ def test_confirmation_card_shows_the_frozen_choices_before_offering_an_explicit_
     text = _text(card)
     assert card["schema"] == "2.0" and "elements" not in card
     assert all(value in text for value in ("控制计划.xlsx", "海岸线控制计划要求", "缺少过程流程图", "未匹配.pdf", "不纳入审核", "预计点数：500"))
+    assert "metadata_uses_excerpt" not in text
     confirm, opened = card["body"]["elements"][1:]
     assert confirm["behaviors"] == [{"type": "callback", "value": {"action": "confirm_audit_task", "notification_id": "intent-a"}}]
     assert confirm["confirm"]["title"]["content"] == "开始本次审核？"
