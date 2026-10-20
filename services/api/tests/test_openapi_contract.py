@@ -22,7 +22,7 @@ REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/integrations/feishu/usage/quota"): False,
     ("POST", "/integrations/feishu/rounds/{round_id}/writeback"): False,
     ("GET", "/rules"): False,
-    ("GET", "/audit-template-catalog"): False,
+    ("GET", "/audit-customers"): False,
     ("POST", "/audit-tasks"): True,
     ("GET", "/audit-tasks"): False,
     ("GET", "/audit-tasks/{task_id}"): False,
@@ -184,95 +184,6 @@ class OpenAPIContractTests(unittest.TestCase):
         metric = schemas["AuditUsageMetric"]["properties"]
         self.assertTrue(any(option["type"] == "null" for option in metric["value"]["anyOf"]))
         self.assertEqual(schemas["AuditUsageQuery"]["properties"]["page_size"]["const"], 10)
-
-    def test_template_permission_change_has_live_routes_and_an_original_request_receipt(self):
-        spec = app.openapi()
-        schemas = spec["components"]["schemas"]
-        snapshot = schemas["AuditTemplatePermissions"]["properties"]
-        for field in ("folder", "permission_revision", "manage_access", "members", "actions", "query"):
-            self.assertIn(field, snapshot)
-        folder = schemas["AuditTemplatePermissionFolder"]
-        self.assertEqual(set(folder["required"]), {"customer_id", "folder_id"})
-        request = schemas["AuditTemplatePermissionRequest"]
-        self.assertEqual(set(request["required"]), {"request_id", "folder", "permission_revision", "action"})
-        receipt = schemas["AuditTemplatePermissionReceipt"]
-        self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "applied", "rejected", "conflict", "unknown"])
-        self.assertIn("result_revision", receipt["required"])
-        self.assertNotIn("x-contract-stage", receipt)
-        path = "/audit-template-permission-changes"
-        self.assertEqual(set(_request_schema(spec["paths"][path]["post"])["required"]), set(request["required"]))
-        for operation in (spec["paths"][path]["post"], spec["paths"][path + "/{request_id}"]["get"]):
-            self.assertEqual(_response_schema(operation)["$ref"], "#/components/schemas/AuditTemplatePermissionReceipt")
-        self.assertIn("change", snapshot)
-
-    def test_ui_template_share_freezes_customer_folder_and_template_versions_not_reports(self):
-        spec = app.openapi()
-        schemas = spec["components"]["schemas"]
-        scope = schemas["AuditTemplateShareScope"]["properties"]
-        for field in ("customer_id", "customer_name", "folder_id", "folder_revision", "templates", "link_access", "zip_access"):
-            self.assertIn(field, scope)
-        request = schemas["AuditTemplateShareRequest"]
-        self.assertEqual(set(request["required"]), {"request_id", "organization_id", "scope", "targets", "content"})
-        self.assertNotIn("reports", request["properties"])
-        self.assertEqual(schemas["AuditTemplateShareContent"]["properties"]["kind"]["enum"], ["link", "zip"])
-        job = schemas["AuditTemplateShare"]
-        self.assertEqual(job["properties"]["deliveries"]["items"]["$ref"], "#/components/schemas/AuditShareDelivery")
-        self.assertNotIn("x-contract-stage", job)
-        for path, method, schema in (
-            ("/audit-template-share-scope", "get", "AuditTemplateShareScope"),
-            ("/audit-template-shares", "post", "AuditTemplateShare"),
-            ("/audit-template-shares/{request_id}", "get", "AuditTemplateShare"),
-            ("/audit-template-shares/{request_id}/retries", "post", "AuditTemplateShare"),
-            ("/audit-template-shares/{request_id}/templates", "get", "AuditTemplateShareScope"),
-        ):
-            self.assertEqual(_response_schema(spec["paths"][path][method])["$ref"], "#/components/schemas/" + schema)
-        self.assertEqual(set(_request_schema(spec["paths"]["/audit-template-shares"]["post"])["required"]), set(request["required"]))
-        restore = _response_schema(spec["paths"]["/audit-template-share-restore"]["get"])
-        self.assertIn({"$ref": "#/components/schemas/AuditTemplateShareRecovery"}, restore["anyOf"])
-
-    def test_ui_template_feedback_separates_attachments_submission_and_attempt_receipts(self):
-        spec = app.openapi()
-        schemas = spec["components"]["schemas"]
-        request = schemas["AuditTemplateFeedbackRequest"]
-        self.assertEqual(set(request["required"]), {"request_id", "file_version_ids"})
-        self.assertNotIn("customer", request["properties"])
-        self.assertNotIn("phone", request["properties"])
-        self.assertNotIn("email", request["properties"])
-        receipt = schemas["AuditTemplateFeedbackReceipt"]
-        self.assertEqual(receipt["properties"]["state"]["enum"], ["pending", "received", "rejected", "failed", "unknown"])
-        for field in ("request", "attempt_id", "submission_id", "received_file_version_ids", "received_at", "retry_allowed"):
-            self.assertIn(field, receipt["required"])
-        self.assertNotIn("x-contract-stage", receipt)
-        path = spec["paths"]["/audit-template-feedback/{request_id}/attempts/{attempt_id}"]
-        self.assertEqual(path["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplateFeedbackRequest")
-        for method in ("post", "get"):
-            self.assertEqual(path[method]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplateFeedbackReceipt")
-        self.assertNotIn("/template-feedback", spec["paths"])
-
-    def test_ui_templates_keep_versions_coverage_and_support_outside_audit_rules(self):
-        spec = app.openapi()
-        schemas = spec["components"]["schemas"]
-        reference = schemas["AuditTemplateReference"]
-        self.assertEqual(set(reference["required"]), {"customer_id", "template_id", "file_version_id"})
-        catalog = schemas["AuditTemplateCatalog"]["properties"]
-        self.assertIn("coverage_universe", catalog)
-        customer = schemas["AuditTemplateCustomer"]["properties"]
-        self.assertIn("effective_rule_types", customer)
-        item = schemas["AuditTemplateItem"]["properties"]
-        for field in ("reference", "file", "preview_access", "download_access", "share_access"):
-            self.assertIn(field, item)
-        self.assertNotIn("rule", item)
-        self.assertNotIn("report", item)
-        self.assertEqual(schemas["AuditTemplateQuery"]["properties"]["page_size"]["const"], 10)
-        self.assertIn("complete", schemas["AuditTemplateZip"]["required"])
-        self.assertEqual(set(schemas["AuditTemplateZipEntry"]["required"]), {"reference", "filename", "byte_size"})
-        self.assertEqual(schemas["AuditSupportInfo"]["properties"]["state"]["enum"], ["configured", "unavailable"])
-        self.assertNotIn("x-contract-stage", schemas["AuditTemplateCatalog"])
-        for name in ("AuditTemplatePage", "AuditTemplateZip"):
-            self.assertNotIn("x-contract-stage", schemas[name])
-        self.assertEqual(spec["paths"]["/audit-templates"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplatePage")
-        self.assertEqual(spec["paths"]["/audit-template-packages"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/AuditTemplateZip")
-        self.assertNotIn("/templates", spec["paths"])
 
     def test_support_has_a_real_read_only_api_and_version_bound_image(self):
         from fastapi.testclient import TestClient

@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import ClassVar, Literal, Optional, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ISOLATED_DEV_SECRET = "ppap_isolated_dev"
@@ -16,19 +16,6 @@ ISOLATED_DEV_LLM_MODEL = "gpt-5.6-luna"  # pragma: allowlist secret
 
 def _held_production_secret(value: str) -> bool:
     return bool(value.strip()) and value != ISOLATED_DEV_SECRET
-
-
-class FeishuTemplateSource(BaseModel):
-    tenant_key: str = Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
-    customer_id: str = Field(min_length=1, max_length=256)
-    folder_token: str = Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9_-]+$")
-
-    @field_validator("customer_id")
-    @classmethod
-    def canonical_customer(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("empty_template_customer")
-        return value.strip().casefold()
 
 
 class Settings(BaseSettings):
@@ -44,10 +31,6 @@ class Settings(BaseSettings):
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
     feishu_notifications_enabled: bool = Field(default=False, alias="PPAP_FEISHU_NOTIFICATIONS_ENABLED")
-    feishu_feedback_base_token: str = Field(default="", alias="PPAP_FEISHU_FEEDBACK_BASE_TOKEN")
-    feishu_feedback_table_id: str = Field(default="", alias="PPAP_FEISHU_FEEDBACK_TABLE_ID")
-    feishu_feedback_tenant_key: str = Field(default="", alias="PPAP_FEISHU_FEEDBACK_TENANT_KEY")
-    feishu_template_sources: list[FeishuTemplateSource] = Field(default_factory=list, alias="PPAP_FEISHU_TEMPLATE_SOURCES")
     feishu_verification_token: str = Field(default="", alias="FEISHU_VERIFICATION_TOKEN")
     feishu_ai_item_id: str = Field(default="", alias="FEISHU_AI_ITEM_ID")
     feishu_free_trial_quota_points: int = Field(default=10000, alias="FEISHU_FREE_TRIAL_QUOTA_POINTS")

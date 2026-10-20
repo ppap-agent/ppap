@@ -4,21 +4,11 @@ import type {AuditIntakeAdapter, AuditTask} from './intake.tsx'
 import type {AuditReviewAdapter} from './review-editor'
 import type {AuditDisplayAdapter} from './display-info-editor'
 import type {AuditReportAdapter} from './report-contract'
-import type {AuditSupportAdapter, AuditTemplateAdapter} from './template-contract'
-import {feedbackUploadError, type AuditFeedbackAdapter} from './feedback-contract.ts'
+import type {AuditSupportAdapter} from './support'
 import type {UploadAdapter} from './uploads'
 import type {AuditArchiveAdapter} from './archive-contract'
 import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
-import type {AuditTemplatePermissionAdapter} from './template-permission-contract'
-import type {AuditTemplateSharingAdapter} from './template-sharing-contract'
-import {draftPrefix} from '../journey/saved-draft.ts'
-
-export const nativeTemplatePermissionAdapter: Required<AuditTemplatePermissionAdapter> = {
-  readPermissions: (folder, query) => request(`/audit-template-permissions?${new URLSearchParams({...folder, query})}`),
-  apply: command => request('/audit-template-permission-changes', 'POST', command),
-  readChange: command => request(`/audit-template-permission-changes/${encodeURIComponent(command.request_id)}`),
-}
 
 export const nativeSharingAdapter: AuditSharingAdapter = {
   listTargets: (query, kind, pageToken) => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`),
@@ -33,47 +23,6 @@ export const nativeSharingAdapter: AuditSharingAdapter = {
   },
   read: input => request(`/audit-report-shares/${encodeURIComponent(input.request_id)}?${new URLSearchParams({attempts: JSON.stringify(input.attempts)})}`),
   retryFailed: (requestId, target, attemptId) => request(`/audit-report-shares/${encodeURIComponent(requestId)}/retries`, 'POST', {target, attempt_id: attemptId}),
-}
-
-export const nativeTemplateSharingAdapter: AuditTemplateSharingAdapter = {
-  listTargets: nativeSharingAdapter.listTargets,
-  async restore(customerId) {
-    const requestId = localStorage.getItem(templateSharePointerKey(customerId))
-    const result = await request<components['schemas']['AuditTemplateShareRecovery'] | null>(`/audit-template-share-restore?${new URLSearchParams({customer_id: customerId, ...(requestId ? {request_id: requestId} : {})})}`)
-    if (requestId && (!result || result.share.request.request_id !== requestId)) throw new Error('原分享结果仍未确认，请勿重新发送。')
-    return result
-  },
-  readScope: folder => request(`/audit-template-share-scope?${new URLSearchParams(Object.entries(folder).map(([key, value]) => [key, String(value)]))}`),
-  async send(input) {
-    const key = templateSharePointerKey(input.scope.customer_id)
-    // Keep only the request identity before POST. Accepted facts stay on the server.
-    try {localStorage.setItem(key, input.request_id)}
-    catch {return rejectedTemplateShare(input, '浏览器未能保留原请求，尚未发送。请检查本机存储后重试。')}
-    try {return await request('/audit-template-shares', 'POST', input)}
-    catch (failure) {
-      const error = failure as {status?: number; code?: string}
-      if (![400, 401, 403, 409, 422].includes(error.status || 0) || error.code === 'share_request_pending') throw failure
-      const reason = error.code === 'template_folder_changed' ? '模板清单已变化，请重新读取后分享。' : '分享未受理，请核对飞书登录、模板权限及接收对象。'
-      try {if (localStorage.getItem(key) === input.request_id) localStorage.removeItem(key)} catch { /* Keep the unresolved pointer rather than claim a fresh send is safe. */ }
-      return rejectedTemplateShare(input, reason)
-    }
-  },
-  read: input => request(`/audit-template-shares/${encodeURIComponent(input.request_id)}?${new URLSearchParams({attempts: JSON.stringify(input.attempts)})}`),
-  retryFailed: (requestId, target, attemptId) => request(`/audit-template-shares/${encodeURIComponent(requestId)}/retries`, 'POST', {target, attempt_id: attemptId}),
-}
-
-const templateSharePointerKey = (customerId: string) => `${draftPrefix}template-share-request:${encodeURIComponent(customerId)}`
-function rejectedTemplateShare(input: components['schemas']['AuditTemplateShareRequest'], reason: string): components['schemas']['AuditTemplateShare'] {
-  return {request: input, receipt: {request_id: input.request_id, state: 'rejected', reason}, deliveries: input.targets.map(target => ({target: {...target, display_name: target.id, organization_id: input.organization_id, eligibility: 'unknown', reason}, attempt_id: input.request_id, state: 'failed', reason, retry_allowed: false}))}
-}
-
-export function sharedTemplateAdapter(requestId: string): Pick<AuditTemplateAdapter, 'readFile'> {
-  return {async readFile(item, purpose) {
-    const reference = item.reference
-    if (!item.file.sha256 || reference.file_version_id !== item.file.id) throw new Error('模板版本尚未就绪。')
-    const blob = await readFrozenBlob(`/audit-template-shares/${encodeURIComponent(requestId)}/files/${encodeURIComponent(reference.template_id)}/versions/${encodeURIComponent(reference.file_version_id)}?${new URLSearchParams({purpose})}`, item.file)
-    return {reference, blob}
-  }}
 }
 
 export function sharedReportAdapter(requestId: string): AuditReportAdapter {
@@ -118,7 +67,7 @@ const nativeUploads: UploadAdapter = {
   readUpload: readLocalUpload,
 }
 
-async function readFrozenBlob(path: string, expected: Pick<components['schemas']['FileVersion'], 'byte_size' | 'content_type'> & Partial<Pick<components['schemas']['FileVersion'], 'sha256'>>, label = '模板') {
+async function readFrozenBlob(path: string, expected: Pick<components['schemas']['FileVersion'], 'byte_size' | 'content_type'> & Partial<Pick<components['schemas']['FileVersion'], 'sha256'>>, label = '报告') {
   const response = await fetch(`${apiUrl}${path}`, {method: 'GET', credentials: 'include'})
   if (!response.ok) {
     if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
@@ -130,51 +79,7 @@ async function readFrozenBlob(path: string, expected: Pick<components['schemas']
   return blob
 }
 
-export const nativeTemplateAdapter: AuditTemplateAdapter = {
-  readCatalog: () => request('/audit-template-catalog'),
-  listTemplates: query => request(`/audit-templates?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
-  async readFile(item, purpose) {
-    const reference = item.reference
-    if (!item.file.sha256 || reference.file_version_id !== item.file.id) throw new Error('模板版本尚未就绪。')
-    const params = new URLSearchParams({customer_id: reference.customer_id, purpose})
-    const blob = await readFrozenBlob(`/audit-templates/${encodeURIComponent(reference.template_id)}/versions/${encodeURIComponent(reference.file_version_id)}?${params}`, item.file)
-    return {reference, blob}
-  },
-  async readZip(folder) {
-    const params = new URLSearchParams(Object.entries(folder).map(([key, value]) => [key, String(value)]))
-    const snapshot = await request<components['schemas']['AuditTemplateZip']>(`/audit-template-packages?${params}`)
-    if (snapshot.customer_id !== folder.customer_id || snapshot.folder_id !== folder.folder_id || snapshot.folder_revision !== folder.folder_revision || snapshot.templates.length !== folder.folder_template_count || !snapshot.complete || snapshot.access.state !== 'allowed') throw new Error('模板清单已变化，请重新读取。')
-    const blob = await readFrozenBlob(`/audit-template-packages/download?${params}`, {content_type: 'application/zip', byte_size: snapshot.byte_size})
-    return {snapshot, blob}
-  },
-}
-
-export const nativeFeedbackAdapter: AuditFeedbackAdapter = {
-  ...nativeUploads,
-  listHistory: page => request(`/audit-template-feedback?${new URLSearchParams({page: String(page)})}`),
-  submit: (input, attemptId) => request(`/audit-template-feedback/${encodeURIComponent(input.request_id)}/attempts/${encodeURIComponent(attemptId)}`, 'POST', input),
-  read: (input, attemptId) => request(`/audit-template-feedback/${encodeURIComponent(input.request_id)}/attempts/${encodeURIComponent(attemptId)}`),
-  upload(input, requestId) {
-    const reason = input.kind !== 'local' ? '请使用本地模板附件。' : feedbackUploadError(input.file)
-    return reason ? Promise.resolve({request_id: requestId, state: 'failed', file: null, reason, retry_allowed: false}) : nativeUploads.upload(input, requestId)
-  },
-  async readAttachment(file) {
-    if (file.status !== 'ready' || !file.file_id || !file.id || !file.sha256 || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error('附件版本尚未就绪，请读取原上传结果。')
-    const path = `/files/${encodeURIComponent(file.file_id)}/versions/${encodeURIComponent(file.id)}`
-    const stored = await request<components['schemas']['FileVersion']>(path)
-    if (stored.id !== file.id || stored.file_id !== file.file_id || stored.status !== 'ready' || stored.original_filename !== file.original_filename || stored.content_type !== file.content_type || stored.byte_size !== file.byte_size || stored.sha256 !== file.sha256) throw new Error('附件版本与上传回执不同，请重新读取。')
-    const response = await fetch(`${apiUrl}${path}/download`, {method: 'GET', credentials: 'include'})
-    if (!response.ok) {
-      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-      throw withResponseTrace(new Error('附件暂时无法读取，请重新读取。'), response)
-    }
-    const blob = await response.blob()
-    if (blob.size !== stored.byte_size || blob.type !== stored.content_type || response.headers.get('X-Content-SHA256') !== stored.sha256) throw new Error('附件内容与已上传版本不同，未打开或下载。')
-    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
-    if (sha256 !== stored.sha256) throw new Error('附件内容与已上传版本不同，未打开或下载。')
-    return {file_version_id: stored.id, blob}
-  },
-}
+export const readAuditCustomers = () => request<components['schemas']['AuditCustomerCatalog']>('/audit-customers')
 
 export const nativeSupportAdapter: AuditSupportAdapter = {
   read: () => request('/support'),

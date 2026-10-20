@@ -1,4 +1,4 @@
-"""Persistent recipient attempts shared by report and template delivery."""
+"""Persistent recipient attempts for report delivery."""
 
 import uuid
 from collections.abc import Mapping
@@ -19,7 +19,7 @@ def new_share_attempt(target: dict, request_id: str, attempt_id: str) -> dict:
 
 class ShareDeliveryStore:
     def __init__(self, store, kind):
-        if kind not in {"report_share_request", "template_share_request"}:
+        if kind != "report_share_request":
             raise ValueError("invalid_share_kind")
         self.store, self.kind = store, kind
 

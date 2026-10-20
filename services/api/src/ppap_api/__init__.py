@@ -80,14 +80,12 @@ from ppap_product_store import AuthStore
 
 from ppap_api import web_contract as wc
 from ppap_api.audit_routes import register_audit_routes
-from ppap_api.feedback_routes import register_feedback_routes
 from ppap_api.notifications import run_task_notifications
 from ppap_api.office_routes import register_office_routes
 from ppap_api.report_routes import register_report_routes
 from ppap_api.rule_routes import register_rule_routes
 from ppap_api.sharing_routes import register_sharing_routes
 from ppap_api.support_routes import register_support_routes
-from ppap_api.template_routes import register_template_routes
 
 Probe = Callable[[Settings], dict[str, str]]
 
@@ -889,9 +887,7 @@ def create_app(
     register_audit_routes(app, store, principal_of)
     register_rule_routes(app, store, principal_of, require_file_read)
     register_support_routes(app, principal_of, settings)
-    register_feedback_routes(app, store, session_of, http, settings)
     register_sharing_routes(app, store, session_of, http, settings)
-    register_template_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)
     return app
 

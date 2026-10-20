@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeFeedbackAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeTemplateAdapter, nativeTemplatePermissionAdapter, nativeTemplateSharingAdapter, nativeUsageAdapter, sharedReportAdapter} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, sharedReportAdapter, readAuditCustomers} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
-import {readTemplateZip} from './template-contract.ts'
-import {zipSync} from 'fflate'
 
 type Task = components['schemas']['AuditTask']
 const fetchBefore = globalThis.fetch
@@ -24,90 +22,11 @@ test('known ZIP rejections stay distinct from lost acceptance replies', async ()
   globalThis.fetch = async () => new Response(JSON.stringify({error: 'temporarily_unavailable'}), {status: 503, headers: {'Content-Type': 'application/json'}})
   await assert.rejects(nativeReportAdapter.createPackage!(reports, 'original-request'))
 })
-const sharePointers = new Map<string, string>()
-Object.defineProperty(globalThis, 'localStorage', {value: {getItem: (key: string) => sharePointers.get(key) ?? null, setItem: (key: string, value: string) => sharePointers.set(key, value), removeItem: (key: string) => sharePointers.delete(key)}, configurable: true})
 Object.defineProperty(globalThis, 'navigator', {value: {onLine: true}, configurable: true})
 const file: Task['files'][number] = {file: {id: 'version-a', file_id: 'file-a', original_filename: 'a.xlsx', content_type: 'application/octet-stream', byte_size: 3, status: 'ready', sha256: null}, selection: 'selected', removal_reason: null, validation: {state: 'pending', reasons: []}, match: null}
 const task: Task = {id: 'task-a', number: 'PPAP-20261016-001', state: 'pending_confirm', analysis_mode: 'standard', created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', source_draft_id: 'task-a', round_id: null, customer_preference: null, completion_reason: null, estimated_points: 0, files: [file], input_revision: 2}
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status, headers: {'Content-Type': 'application/json'}})
-afterEach(() => {globalThis.fetch = fetchBefore; sharePointers.clear()})
-
-test('native template sharing freezes the whole folder and reads original attempts without resending', async () => {
-  const calls: {method: string; path: string; params: URLSearchParams; body: unknown}[] = []
-  const folder = {customer_id: '客户 & A', folder_id: 'folder-one', folder_revision: 'revision-one', folder_template_count: 12}
-  const target = {kind: 'user' as const, id: 'reader'}
-  const input: components['schemas']['AuditTemplateShareRequest'] = {request_id: 'share-one', organization_id: 'org', scope: {...folder, templates: []}, content: {kind: 'link', package: null}, targets: [target]}
-  globalThis.fetch = async (address, init) => {
-    assert.equal(init?.credentials, 'include')
-    const url = new URL(String(address), 'https://example.test')
-    calls.push({method: init?.method || 'GET', path: url.pathname, params: url.searchParams, body: init?.body ? JSON.parse(String(init.body)) : null})
-    return json({})
-  }
-  await nativeTemplateSharingAdapter.readScope(folder)
-  await nativeTemplateSharingAdapter.send(input)
-  const attempts = [{target, attempt_id: 'original-attempt'}]
-  await nativeTemplateSharingAdapter.read({request_id: input.request_id, attempts})
-  await nativeTemplateSharingAdapter.retryFailed(input.request_id, target, 'new-attempt')
-  assert.deepEqual(calls.map(({method, path}) => [method, path]), [['GET', '/audit-template-share-scope'], ['POST', '/audit-template-shares'], ['GET', '/audit-template-shares/share-one'], ['POST', '/audit-template-shares/share-one/retries']])
-  assert.deepEqual(Object.fromEntries(calls[0].params), {...folder, folder_template_count: '12'})
-  assert.deepEqual(calls[1].body, input)
-  assert.deepEqual(JSON.parse(calls[2].params.get('attempts')!), attempts)
-  assert.deepEqual(calls[3].body, {target, attempt_id: 'new-attempt'})
-})
-
-test('a lost template acceptance reply retains only its request identity and absence never authorizes another send', async () => {
-  const input: components['schemas']['AuditTemplateShareRequest'] = {request_id: 'original-request', organization_id: 'org', scope: {customer_id: '客户 A', folder_id: 'folder', folder_revision: 'r1', templates: []}, content: {kind: 'link', package: null}, targets: [{kind: 'user', id: 'reader'}]}
-  const calls: string[] = []
-  globalThis.fetch = async (address, init) => {
-    calls.push(init?.method || 'GET')
-    if (init?.method === 'POST') throw new TypeError('lost reply')
-    assert.equal(new URL(String(address), 'https://example.test').searchParams.get('request_id'), input.request_id)
-    return json(null)
-  }
-  await assert.rejects(nativeTemplateSharingAdapter.send(input))
-  assert.deepEqual([...sharePointers.values()], [input.request_id])
-  await assert.rejects(nativeTemplateSharingAdapter.restore!('客户 A'), /原分享结果仍未确认/)
-  assert.deepEqual(calls, ['POST', 'GET'])
-})
-
-test('a template send cannot start without retaining its request identity', async () => {
-  const before = localStorage.setItem
-  let sends = 0
-  localStorage.setItem = () => {throw new Error('storage unavailable')}
-  globalThis.fetch = async () => {sends++; return json({})}
-  try {
-    const input: components['schemas']['AuditTemplateShareRequest'] = {request_id: 'not-sent', organization_id: 'org', scope: {customer_id: 'a', folder_id: 'f', folder_revision: 'r', templates: []}, content: {kind: 'link', package: null}, targets: [{kind: 'user', id: 'reader'}]}
-    assert.equal((await nativeTemplateSharingAdapter.send(input)).receipt.state, 'rejected')
-    assert.equal(sends, 0)
-  } finally {localStorage.setItem = before}
-})
-
-test('native template permissions read the selected folder with cookies', async () => {
-  let selected: URL | null = null
-  globalThis.fetch = async (address, init) => {
-    assert.equal(init?.method, 'GET')
-    assert.equal(init?.credentials, 'include')
-    selected = new URL(String(address), 'https://example.test')
-    return json({})
-  }
-  await nativeTemplatePermissionAdapter.readPermissions({customer_id: '客户 & A', folder_id: 'frozen-folder'}, '张 & 王')
-  assert.equal(selected!.pathname, '/audit-template-permissions')
-  assert.deepEqual(Object.fromEntries(selected!.searchParams), {customer_id: '客户 & A', folder_id: 'frozen-folder', query: '张 & 王'})
-})
-
-test('native template permission recovery reads the original command without replaying it', async () => {
-  const input: components['schemas']['AuditTemplatePermissionRequest'] = {request_id: 'original-request', folder: {customer_id: 'customer-a', folder_id: 'folder-a'}, permission_revision: 'acl-one', action: {id: 'change-one', target: {kind: 'user', id: 'reader'}, target_name: 'Reader', before: '可阅读', after: '可编辑', label: '设为可编辑'}}
-  const calls: string[] = []
-  globalThis.fetch = async (address, init) => {
-    assert.equal(init?.credentials, 'include')
-    calls.push(`${init?.method} ${address}`)
-    if (init?.method === 'POST') assert.deepEqual(JSON.parse(String(init.body)), input)
-    return json({})
-  }
-  await nativeTemplatePermissionAdapter.apply(input)
-  await nativeTemplatePermissionAdapter.readChange(input)
-  assert.deepEqual(calls, ['POST /audit-template-permission-changes', 'GET /audit-template-permission-changes/original-request'])
-})
+afterEach(() => {globalThis.fetch = fetchBefore})
 
 test('native report sharing reads exact recipient attempts and never turns a read into another send', async () => {
   const calls: {method: string; path: string; params: URLSearchParams; body: unknown}[] = []
@@ -171,34 +90,6 @@ test('completion notification settings use the private revisioned API and never 
   assert.deepEqual(await adapter.read(task.id), preference)
   assert.deepEqual(await adapter.save(task.id, false, 2), preference)
   assert.deepEqual(calls, [{url: '/audit-tasks/task-a/notification', method: 'GET', body: null}, {url: '/audit-tasks/task-a/notification', method: 'PUT', body: {enabled: false, expected_revision: 2}}])
-})
-
-test('native feedback submits frozen versions and reads the same attempt without a second submission', async () => {
-  const request = {request_id: 'original-request', file_version_ids: ['v1', 'v2']}
-  const receipt = {request, attempt_id: 'original-attempt', state: 'unknown', submission_id: null, received_file_version_ids: [], received_at: null, retry_allowed: false, reason: null}
-  const calls: string[] = []
-  globalThis.fetch = async (input, init) => {
-    assert.equal(init?.credentials, 'include')
-    calls.push(`${init?.method} ${input}`)
-    if (init?.method === 'POST') assert.deepEqual(JSON.parse(String(init.body)), request)
-    return json(receipt)
-  }
-  assert.deepEqual(await nativeFeedbackAdapter.submit!(request, 'original-attempt'), receipt)
-  assert.deepEqual(await nativeFeedbackAdapter.read!(request, 'original-attempt'), receipt)
-  assert.deepEqual(calls, ['POST /audit-template-feedback/original-request/attempts/original-attempt', 'GET /audit-template-feedback/original-request/attempts/original-attempt'])
-})
-
-test('native feedback history is an authenticated read and never submits or uploads', async () => {
-  const calls: string[] = []
-  globalThis.fetch = async (input, options) => {
-    assert.equal(options?.method, 'GET')
-    assert.equal(options?.credentials, 'include')
-    assert.equal(options?.body, undefined)
-    calls.push(String(input))
-    return json({page: 2, page_size: 10, total: 1, entries: []})
-  }
-  assert.deepEqual(await nativeFeedbackAdapter.listHistory!(2), {page: 2, page_size: 10, total: 1, entries: []})
-  assert.deepEqual(calls, ['/audit-template-feedback?page=2'])
 })
 
 test('native usage reads the enterprise projection with filters and never reports a charge', async () => {
@@ -302,142 +193,15 @@ test('native Drive distinguishes a missing user grant from an unclassified provi
   await assert.rejects(adapter.drive!.list(), error => error instanceof Error && error.message !== 'authorization_required')
 })
 
-test('native template coverage reads the authenticated catalog without inventing template files', async () => {
-  const result = {coverage_universe: ['控制计划'], customers: [{customer_id: 'customer a', name: 'Customer A', effective_rule_types: ['控制计划']}]}
+test('native customer choices read the authenticated tenant rule directory', async () => {
+  const original = globalThis.fetch
   globalThis.fetch = async (input, init) => {
-    assert.equal(String(input), '/audit-template-catalog')
-    assert.equal(init?.method, 'GET')
+    assert.equal(String(input), '/audit-customers')
     assert.equal(init?.credentials, 'include')
-    assert.equal(init?.body, undefined)
-    return json(result)
+    return json({customers: [{customer_id: 'customer-a', name: '客户 A'}]})
   }
-  assert.deepEqual(await nativeTemplateAdapter.readCatalog(), result)
-})
-
-test('native templates read the requested customer and frozen version with a content digest', async () => {
-  const bytes = new TextEncoder().encode('real-template')
-  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
-  const selected = {reference: {customer_id: '客户 A', template_id: 'template/a', file_version_id: 'frozen/a'}, file: {...file.file, id: 'frozen/a', file_id: 'template/a', byte_size: bytes.length, sha256: digest}, document_type: 'Excel', updated_at: '2026-10-18T00:00:00Z', preview_access: {state: 'allowed' as const, reason: null}, download_access: {state: 'allowed' as const, reason: null}, share_access: {state: 'unknown' as const, reason: null}}
-  const query = {customer_id: '客户 A', search: 'A & B', page: 2, page_size: 10 as const}
-  const calls: string[] = []
-  globalThis.fetch = async (input, init) => {
-    assert.equal(init?.credentials, 'include')
-    calls.push(String(input))
-    return String(input).includes('/versions/') ? new Response(bytes, {headers: {'Content-Type': 'application/octet-stream', 'X-Content-SHA256': digest}}) : json({query, items: []})
-  }
-  await nativeTemplateAdapter.listTemplates!(query)
-  const result = await nativeTemplateAdapter.readFile!(selected, 'preview')
-  assert.deepEqual(result.reference, selected.reference)
-  assert.equal(await result.blob.text(), 'real-template')
-  assert.equal(new URL(calls[0], 'https://example.test').searchParams.get('search'), 'A & B')
-  assert.equal(calls[1], '/audit-templates/template%2Fa/versions/frozen%2Fa?customer_id=%E5%AE%A2%E6%88%B7+A&purpose=preview')
-  globalThis.fetch = async () => new Response('wrong-content', {headers: {'Content-Type': 'application/octet-stream', 'X-Content-SHA256': digest}})
-  await assert.rejects(nativeTemplateAdapter.readFile!(selected, 'download'))
-})
-
-test('native template ZIP reads the complete frozen folder and refuses a changed scope before downloading', async () => {
-  const folder = {customer_id: '客户 A', folder_id: 'folder-a', folder_revision: 'revision-a', folder_template_count: 2}
-  const entries = ['one.xlsx', 'two.xlsx'].map((filename, index) => ({reference: {customer_id: folder.customer_id, template_id: `template-${index}`, file_version_id: `version-${index}`}, filename, byte_size: 3}))
-  const bytes = new Uint8Array(zipSync({'one.xlsx': new TextEncoder().encode('one'), 'two.xlsx': new TextEncoder().encode('two')}))
-  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
-  const snapshot = {customer_id: folder.customer_id, folder_id: folder.folder_id, folder_revision: folder.folder_revision, templates: entries, manifest_filename: null, filename: '客户模板.zip', byte_size: bytes.length, complete: true, access: {state: 'allowed', reason: null}}
-  const calls: string[] = []
-  globalThis.fetch = async (input, init) => {
-    assert.equal(init?.credentials, 'include')
-    calls.push(String(input))
-    return String(input).includes('/download?') ? new Response(bytes, {headers: {'Content-Type': 'application/zip', 'X-Content-SHA256': digest}}) : json(snapshot)
-  }
-  assert.deepEqual((await readTemplateZip(nativeTemplateAdapter, folder)).snapshot.templates, entries)
-  assert.equal(calls.length, 2)
-  assert.equal(new URL(calls[1], 'https://example.test').searchParams.get('folder_template_count'), '2')
-  calls.length = 0
-  snapshot.folder_revision = 'another-revision'
-  await assert.rejects(readTemplateZip(nativeTemplateAdapter, folder))
-  assert.equal(calls.length, 1)
-})
-
-test('native feedback keeps a local attachment request and does not claim an operator submission', async () => {
-  const adapter = nativeFeedbackAdapter
-  const id = 'ddb1466b-4a8d-422e-859f-25bf756697ae'
-  const source = new File(['abc'], 'template.zip', {type: 'application/zip'})
-  const version = {id, file_id: 'feedback-file', original_filename: source.name, content_type: source.type, byte_size: 3, status: 'staging', sha256: null}
-  const ready = {...version, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'}
-  const calls: string[] = []
-  globalThis.fetch = async (input, init) => {
-    const path = new URL(String(input), 'http://example.test').pathname
-    calls.push(`${init?.method} ${path}`)
-    assert.equal(init?.credentials, 'include')
-    if (init?.method === 'POST') {assert.equal(JSON.parse(String(init.body)).request_id, id); return json(version)}
-    if (init?.method === 'PUT') {assert.equal(init.body, source); return json(ready)}
-    if (path.endsWith('/download')) return new Response('abc', {headers: {'Content-Type': 'application/zip', 'X-Content-SHA256': ready.sha256}})
-    if (path.startsWith('/files/')) return json(ready)
-    return json({request_id: id, state: 'ready', file: ready, reason: null, retry_allowed: false})
-  }
-  assert.equal((await adapter.upload({kind: 'local', file: source}, id)).state, 'ready')
-  const received = (await adapter.readUpload(id)).file!
-  assert.equal(received.id, id)
-  const attachment = await adapter.readAttachment(received)
-  assert.equal(attachment.file_version_id, id)
-  assert.equal(await attachment.blob.text(), 'abc')
-  assert.equal(typeof adapter.submit, 'function')
-  assert.equal(typeof adapter.read, 'function')
-  assert.deepEqual(calls, ['POST /files', `PUT /files/feedback-file/versions/${id}/blob`, `GET /file-uploads/${id}`, `GET /files/feedback-file/versions/${id}`, `GET /files/feedback-file/versions/${id}/download`])
-})
-
-test('native feedback refuses invalid local attachments before any possible server effect', async () => {
-  class Oversize extends File {override get size() {return 200 * 1024 * 1024 + 1}}
-  globalThis.fetch = async () => {throw new Error('must not send')}
-  for (const source of [new File(['exe'], 'run.exe'), new File([], 'empty.zip'), new Oversize(['one'], 'huge.zip')]) {
-    const receipt = await nativeFeedbackAdapter.upload({kind: 'local', file: source}, 'local-request')
-    assert.equal(receipt.state, 'failed')
-    assert.equal(receipt.request_id, 'local-request')
-    assert.equal(receipt.retry_allowed, false)
-    assert.equal(receipt.file, null)
-    assert.ok(receipt.reason)
-  }
-})
-
-test('native feedback resumes a lost create response with the original request, version and bytes', async () => {
-  const id = '5f5fe1ad-1ad2-44b9-bae7-5effbcaaea35', source = new File(['abc'], 'photo.png', {type: 'image/png'})
-  const version = {id, file_id: 'feedback-file', original_filename: source.name, content_type: source.type, byte_size: 3, status: 'staging', sha256: null}
-  let creates = 0
-  const calls: string[] = []
-  globalThis.fetch = async (input, init) => {
-    calls.push(`${init?.method} ${new URL(String(input), 'http://example.test').pathname}`)
-    if (init?.method === 'POST') {
-      const body = JSON.parse(String(init.body))
-      assert.equal(body.request_id, id)
-      assert.equal(body.sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
-      if (++creates === 1) throw new TypeError('create reply lost after registration')
-      return json(version)
-    }
-    if (init?.method === 'GET') return json({request_id: id, state: 'uploading', file: version, resume_allowed: true, retry_allowed: false, reason: null})
-    assert.equal(init?.body, source)
-    return json({...version, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'})
-  }
-  const staged = await nativeFeedbackAdapter.upload({kind: 'local', file: source}, id)
-  assert.equal(staged.state, 'uploading')
-  assert.equal(staged.resume_allowed, true)
-  const resumed = await nativeFeedbackAdapter.upload({kind: 'local', file: source}, staged.request_id)
-  assert.equal(resumed.state, 'ready')
-  assert.equal(resumed.file?.id, staged.file?.id)
-  assert.deepEqual(calls, ['POST /files', `GET /file-uploads/${id}`, 'POST /files', `PUT /files/feedback-file/versions/${id}/blob`])
-})
-
-test('native feedback rejects mismatched server identities and bytes without relabelling another attachment', async () => {
-  const file: components['schemas']['FileVersion'] = {id: 'version-feedback', file_id: 'file-feedback', original_filename: 'template.zip', content_type: 'application/zip', byte_size: 3, status: 'ready', sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'}
-  for (const change of [{id: 'other-version'}, {file_id: 'other-file'}, {status: 'staging'}, {original_filename: 'other.zip'}, {content_type: 'text/html'}, {byte_size: 4}, {sha256: '0'.repeat(64)}]) {
-    let reads = 0
-    globalThis.fetch = async () => {reads += 1; return json({...file, ...change})}
-    await assert.rejects(nativeFeedbackAdapter.readAttachment(file))
-    assert.equal(reads, 1, 'wrong metadata must not start a byte download')
-  }
-  for (const response of [new Response('abd', {headers: {'Content-Type': file.content_type, 'X-Content-SHA256': file.sha256!}}), new Response('abc', {headers: {'Content-Type': 'text/html', 'X-Content-SHA256': file.sha256!}}), new Response('ab', {headers: {'Content-Type': file.content_type, 'X-Content-SHA256': file.sha256!}}), new Response('abc', {headers: {'Content-Type': file.content_type, 'X-Content-SHA256': '0'.repeat(64)}})]) {
-    globalThis.fetch = async input => String(input).endsWith('/download') ? response : json(file)
-    await assert.rejects(nativeFeedbackAdapter.readAttachment(file))
-  }
-  globalThis.fetch = async input => String(input).endsWith('/download') ? new Response('denied', {status: 403, headers: {'X-Request-ID': 'feedback-download-denied'}}) : json(file)
-  await assert.rejects(nativeFeedbackAdapter.readAttachment(file), cause => requestTrace(cause) === 'feedback-download-denied')
+  try {assert.deepEqual(await readAuditCustomers(), {customers: [{customer_id: 'customer-a', name: '客户 A'}]})}
+  finally {globalThis.fetch = original}
 })
 
 test('native support reads authenticated configuration and only its displayed image version', async () => {

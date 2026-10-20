@@ -1,23 +1,29 @@
-"""Real rule coverage is not proof that customer template files exist."""
+"""Rule customer choices use only the current tenant's published versions."""
 
 import uuid
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from ppap_api import app, create_app
+from ppap_api.rule_routes import customer_catalog
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 
 
-def test_template_catalog_requires_login_and_has_a_runtime_contract():
-    response = TestClient(app).get("/audit-template-catalog")
+def test_customer_catalog_requires_login_and_has_a_minimal_runtime_contract():
+    response = TestClient(app).get("/audit-customers")
     assert response.status_code == 401
     assert response.headers["cache-control"] == "private, no-store"
     spec = app.openapi()
-    operation = spec["paths"]["/audit-template-catalog"]["get"]
-    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AuditTemplateCatalog"}
-    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplateCatalog"]
-    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplatePage"]
-    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditTemplateZip"]
+    operation = spec["paths"]["/audit-customers"]["get"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AuditCustomerCatalog"}
+    assert "x-contract-stage" not in spec["components"]["schemas"]["AuditCustomerCatalog"]
+    schemas = spec["components"]["schemas"]
+    assert set(schemas["AuditCustomerCatalog"]["properties"]) == {"customers"}
+    assert set(schemas["AuditCustomer"]["properties"]) == {"customer_id", "name"}
+    assert "/audit-template-catalog" not in spec["paths"]
+    assert not any(path.startswith("/audit-template") for path in spec["paths"])
+    assert not any(name.startswith("AuditTemplate") for name in schemas)
 
 
 def test_rule_library_requires_login_and_declares_its_metadata_contract():
@@ -26,6 +32,29 @@ def test_rule_library_requires_login_and_declares_its_metadata_contract():
     assert response.headers["cache-control"] == "private, no-store"
     operation = app.openapi()["paths"]["/rule-library"]["get"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/RuleLibrary"}
+
+
+def test_customer_catalog_keeps_latest_rule_versions_tenant_scope_and_unique_names():
+    def rule(identifier, customers, *, predecessor=None, kind="engine", document_type="控制计划", created="2026-10-20"):
+        return {"id": identifier, "title": "规则", "customers": customers, "predecessor_id": predecessor, "kind": kind, "type": document_type, "created_at": created}
+
+    rules = {
+        "first": [
+            rule("old", ["旧客户"], created="2026-10-19"),
+            rule("new", ["Customer A"], predecessor="old"),
+            rule("duplicate", [" customer a ", "Customer A", "", None]),
+            rule("all-customers", []),
+            rule("invalid-customers", "非列表"),
+            rule("unknown-type", ["不应出现"], document_type="unknown"),
+            rule("other-kind", ["不应出现"], kind="other"),
+            rule("dfmea", ["DFMEA only"], document_type="设计失效模式及后果分析"),
+        ],
+        "second": [rule("separate", ["其他企业客户"])],
+    }
+    store = SimpleNamespace(list_rules=lambda tenant_id: rules[tenant_id])
+
+    assert customer_catalog(store, "first") == {"customers": [{"customer_id": "customer a", "name": "customer a"}, {"customer_id": "dfmea only", "name": "DFMEA only"}]}
+    assert customer_catalog(store, "second") == {"customers": [{"customer_id": "其他企业客户", "name": "其他企业客户"}]}
 
 
 def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(auth_store_factory):
@@ -38,10 +67,8 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
         clients.append(client)
     first, second = clients
     try:
-        empty = first.get("/audit-template-catalog").json()
-        assert len(empty["coverage_universe"]) == len(set(empty["coverage_universe"])) == 17
-        assert "设计失效模式及后果分析" not in empty["coverage_universe"]
-        assert empty["customers"] == []
+        empty = first.get("/audit-customers").json()
+        assert empty == {"customers": []}
 
         def publish(client, customers, kind, predecessor=None):
             content = b"test rule source"
@@ -56,22 +83,21 @@ def test_catalog_uses_current_tenant_published_rules_not_rule_files_or_history(a
 
         publish(second, ["其他企业客户"], "控制计划")
         old = publish(first, ["旧客户"], "控制计划")
-        assert first.get("/audit-template-catalog").json()["customers"] == [{"customer_id": "旧客户", "name": "旧客户", "effective_rule_types": ["控制计划"]}]
+        assert first.get("/audit-customers").json()["customers"] == [{"customer_id": "旧客户", "name": "旧客户"}]
         publish(first, ["Customer A"], "过程流程图", old)
         publish(first, [" customer a ", "Customer A"], "Control plan")
         publish(first, ["Customer A"], "过程流程图")
         publish(first, [], "全功能检验报告")
         publish(first, ["DFMEA only"], "设计失效模式及后果分析")
-        result = first.get("/audit-template-catalog")
+        result = first.get("/audit-customers")
         assert result.headers["cache-control"] == "private, no-store"
         customers = result.json()["customers"]
         assert len(customers) == 2
         assert customers[0]["customer_id"] == "customer a"
         assert customers[0]["name"].casefold() == "customer a"
-        assert sorted(customers[0]["effective_rule_types"]) == ["控制计划", "过程流程图"]
-        assert set(customers[0]) == {"customer_id", "name", "effective_rule_types"}
-        assert customers[1] == {"customer_id": "dfmea only", "name": "DFMEA only", "effective_rule_types": ["设计失效模式及后果分析"]}
-        assert second.get("/audit-template-catalog").json()["customers"] == [{"customer_id": "其他企业客户", "name": "其他企业客户", "effective_rule_types": ["控制计划"]}]
+        assert set(customers[0]) == {"customer_id", "name"}
+        assert customers[1] == {"customer_id": "dfmea only", "name": "DFMEA only"}
+        assert second.get("/audit-customers").json()["customers"] == [{"customer_id": "其他企业客户", "name": "其他企业客户"}]
         library = first.get("/rule-library")
         assert library.headers["cache-control"] == "private, no-store"
         versions = library.json()["versions"]

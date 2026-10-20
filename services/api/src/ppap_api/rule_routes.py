@@ -12,9 +12,8 @@ from ppap_core.types import PpapDocumentType
 from ppap_api import web_contract as wc
 
 
-def template_catalog(store, tenant_id: str):
-    universe = [kind.get_type_name() for kind in PpapDocumentType if kind not in {PpapDocumentType.UNKNOWN, PpapDocumentType.DFMEA}]
-    customers: dict[str, wc.AuditTemplateCustomer] = {}
+def customer_catalog(store, tenant_id: str) -> wc.AuditCustomerCatalog:
+    customers: dict[str, wc.AuditCustomer] = {}
     for rule in latest_rule_versions(store.list_rules(tenant_id)):
         document_type = PpapDocumentType.from_string(rule.get("type") or "").get_type_name()
         if rule.get("kind") != "engine" or document_type == PpapDocumentType.UNKNOWN.get_type_name() or not isinstance(rule.get("customers"), list):
@@ -23,10 +22,8 @@ def template_catalog(store, tenant_id: str):
             if not isinstance(value, str) or not value.strip():
                 continue
             name, key = value.strip(), value.strip().casefold()
-            customer = customers.setdefault(key, {"customer_id": key, "name": name, "effective_rule_types": []})
-            if document_type not in customer["effective_rule_types"]:
-                customer["effective_rule_types"].append(document_type)
-    return {"coverage_universe": universe, "customers": sorted(customers.values(), key=lambda item: item["customer_id"])}
+            customers.setdefault(key, {"customer_id": key, "name": name})
+    return {"customers": sorted(customers.values(), key=lambda item: item["customer_id"])}
 
 
 def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
@@ -61,13 +58,13 @@ def register_rule_routes(app: FastAPI, store, principal_of, require_file_read):
         except (ValueError, ObjectMissing):
             return JSONResponse({"error": "rule_source_unavailable"}, status_code=409)
 
-    @app.get("/audit-template-catalog", response_model=wc.AuditTemplateCatalog)
-    def read_template_catalog(request: Request):
+    @app.get("/audit-customers", response_model=wc.AuditCustomerCatalog)
+    def read_customer_catalog(request: Request):
         headers = {"Cache-Control": "private, no-store"}
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401, headers=headers)
-        return JSONResponse(template_catalog(store, principal.tenant_id), headers=headers)
+        return JSONResponse(customer_catalog(store, principal.tenant_id), headers=headers)
 
     @app.get("/rule-types", response_model=wc.RuleTypes)
     def rules_types(request: Request):

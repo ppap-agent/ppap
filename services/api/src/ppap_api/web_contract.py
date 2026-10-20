@@ -1290,202 +1290,15 @@ class AuditUsageUnattributed(TypedDict):
     reason: str | None
 
 
-class AuditTemplateReference(TypedDict):
-    """A template file version, never a rule snapshot or an audit report."""
-
-    customer_id: str
-    template_id: str
-    file_version_id: str
-
-
-class AuditTemplateCustomer(TypedDict):
+class AuditCustomer(TypedDict):
     customer_id: str
     name: str
-    effective_rule_types: list[str]
 
 
-class AuditTemplateCatalog(TypedDict):
-    """Only customers with effective rules; coverage uses this explicit dictionary."""
+class AuditCustomerCatalog(TypedDict):
+    """Customers with current published rules in the requesting tenant."""
 
-    coverage_universe: list[str]
-    customers: list[AuditTemplateCustomer]
-
-
-class AuditTemplateItem(TypedDict):
-    reference: AuditTemplateReference
-    file: FileVersion
-    document_type: str
-    updated_at: str
-    preview_access: AuditArchiveAccess
-    download_access: AuditArchiveAccess
-    share_access: AuditArchiveAccess
-
-
-class AuditTemplateQuery(TypedDict):
-    customer_id: str
-    search: str
-    page: int
-    page_size: Literal[10]
-
-
-class AuditTemplatePage(TypedDict):
-    query: AuditTemplateQuery
-    folder_id: str
-    folder_revision: str
-    folder_template_count: int
-    creator_name: str | None
-    manage_access: AuditArchiveAccess
-    zip_access: AuditArchiveAccess
-    items: list[AuditTemplateItem]
-    total: int
-
-
-class AuditTemplateZipEntry(TypedDict):
-    reference: AuditTemplateReference
-    filename: str
-    byte_size: int
-
-
-class AuditTemplateZip(TypedDict):
-    """One complete folder snapshot; partial bytes must not be called a complete ZIP."""
-
-    customer_id: str
-    folder_id: str
-    folder_revision: str
-    templates: list[AuditTemplateZipEntry]
-    manifest_filename: str | None
-    filename: str
-    byte_size: int
-    complete: bool
-    access: AuditArchiveAccess
-
-
-class AuditTemplateShareReference(TypedDict):
-    customer_id: str
-    folder_id: str
-    folder_revision: str
-    templates: list[AuditTemplateReference]
-
-
-class AuditTemplateShareScope(TypedDict):
-    """The entire customer folder, independent of list filtering and pagination."""
-
-    customer_id: str
-    customer_name: str
-    folder_id: str
-    folder_revision: str
-    templates: list[AuditTemplateItem]
-    link_access: AuditArchiveAccess
-    zip_access: AuditArchiveAccess
-
-
-class AuditTemplateShareContent(TypedDict):
-    kind: Literal["link", "zip"]
-    package: AuditTemplateZip | None
-
-
-class AuditTemplateShareRequest(TypedDict):
-    request_id: str
-    organization_id: str
-    scope: AuditTemplateShareReference
-    targets: list[AuditShareTargetReference]
-    content: AuditTemplateShareContent
-
-
-class AuditTemplateShare(TypedDict):
-    request: AuditTemplateShareRequest
-    receipt: AuditAcceptance
-    deliveries: list[AuditShareDelivery]
-
-
-class AuditTemplateShareRecovery(TypedDict):
-    scope: AuditTemplateShareScope
-    share: AuditTemplateShare
-
-
-class AuditTemplatePermissionFolder(TypedDict):
-    customer_id: str
-    folder_id: str
-
-
-class AuditTemplatePermissionMember(TypedDict):
-    target: AuditShareTargetReference
-    display_name: str
-    role: str
-    source: Literal["direct", "inherited", "owner", "unknown"]
-
-
-class AuditTemplatePermissionAction(TypedDict):
-    """One service-authorized choice, not a browser-defined ACL policy."""
-
-    id: str
-    target: AuditShareTargetReference
-    target_name: str
-    before: str | None
-    after: str | None
-    label: str
-
-
-class AuditTemplatePermissions(TypedDict):
-    folder: AuditTemplatePermissionFolder
-    permission_revision: str
-    query: str
-    creator_name: str | None
-    manage_access: AuditArchiveAccess
-    members: list[AuditTemplatePermissionMember]
-    actions: list[AuditTemplatePermissionAction]
-    change: NotRequired[AuditTemplatePermissionReceipt | None]
-
-
-class AuditTemplatePermissionRequest(TypedDict):
-    request_id: str
-    folder: AuditTemplatePermissionFolder
-    permission_revision: str
-    action: AuditTemplatePermissionAction
-
-
-class AuditTemplatePermissionReceipt(TypedDict):
-    """result_revision identifies an acknowledged change, not the latest ACL read."""
-
-    request: AuditTemplatePermissionRequest
-    state: Literal["pending", "applied", "rejected", "conflict", "unknown"]
-    result_revision: str | None
-    reason: str | None
-
-
-class AuditTemplateFeedbackRequest(TypedDict):
-    """A fixed attachment collection; profile and customer fields are service-owned."""
-
-    request_id: str
-    file_version_ids: list[str]
-
-
-class AuditTemplateFeedbackReceipt(TypedDict):
-    """Read the original attempt after an uncertain write, never blindly resubmit."""
-
-    request: AuditTemplateFeedbackRequest
-    attempt_id: str
-    state: Literal["pending", "received", "rejected", "failed", "unknown"]
-    submission_id: str | None
-    received_file_version_ids: list[str]
-    received_at: str | None
-    retry_allowed: bool
-    reason: str | None
-
-
-class AuditTemplateFeedbackEntry(TypedDict):
-    receipt: AuditTemplateFeedbackReceipt
-    files: list[FileVersion]
-    files_available: bool
-    reason: str | None
-    created_at: str
-
-
-class AuditTemplateFeedbackHistory(TypedDict):
-    page: int
-    page_size: Literal[10]
-    total: int
-    entries: list[AuditTemplateFeedbackEntry]
+    customers: list[AuditCustomer]
 
 
 class AuditSupportInfo(TypedDict):
@@ -1518,14 +1331,7 @@ def add_ui_contract(app: FastAPI) -> None:
             AuditArchivePage,
             AuditHistoryPage,
             AuditHistoryDetail,
-            AuditTemplateCatalog,
-            AuditTemplatePage,
-            AuditTemplateZip,
-            AuditTemplateShareScope,
-            AuditTemplateShare,
-            AuditTemplatePermissions,
-            AuditTemplatePermissionReceipt,
-            AuditTemplateFeedbackReceipt,
+            AuditCustomerCatalog,
             AuditSupportInfo,
             AuditUsagePage,
         ):

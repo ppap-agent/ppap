@@ -39,7 +39,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.route(page)
             pending_catalog, reads = [], []
             page.on("request", lambda request: reads.append(urlsplit(request.url).path))
-            page.route("**/api/audit-template-catalog", lambda route: pending_catalog.append(route))
+            page.route("**/api/audit-customers", lambda route: pending_catalog.append(route))
             page.route(
                 "**/api/audit-archive/history-document/history",
                 lambda route: route.fulfill(
@@ -371,7 +371,7 @@ class RuleInteractionTests(unittest.TestCase):
                         page.go_back()
                     address = page.url
                     reply, rule = state["held_saves"][0]
-                    with page.expect_response("**/api/audit-template-catalog"):
+                    with page.expect_response("**/api/audit-customers"):
                         reply.fulfill(status=201, json=rule)
                     if destination == "completed-then-back":
                         expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
@@ -530,7 +530,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_label("适用资料类型").select_option("控制计划")
             page.get_by_role("button", name="提取条款", exact=True).click()
             self.check_requirement(page)
-            with page.expect_response("**/api/audit-template-catalog"):
+            with page.expect_response("**/api/audit-customers"):
                 page.get_by_role("button", name="确认并保存版本", exact=True).click()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
             retry.click()
@@ -611,12 +611,11 @@ class RuleInteractionTests(unittest.TestCase):
             customers = sorted({customer for rule in state["rules"].values() for customer in rule["body"]["customers"]})
             route.fulfill(
                 json={
-                    "coverage_universe": ["控制计划", *[f"资料类型{index}" for index in range(16)]],
-                    "customers": [{"customer_id": name, "name": name, "effective_rule_types": ["控制计划"]} for name in customers],
+                    "customers": [{"customer_id": name, "name": name} for name in customers],
                 }
             )
 
-        page.route("**/api/audit-template-catalog", catalog)
+        page.route("**/api/audit-customers", catalog)
         page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
 
         def library(route):
@@ -1104,7 +1103,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.route(page)
             versions, reads, creates, writes = {}, [], [], []
             page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
-            page.route("**/api/audit-template-catalog", lambda route: route.fulfill(json={"coverage_universe": [f"type-{i}" for i in range(17)], "customers": []}))
+            page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
 
             def upload(route):

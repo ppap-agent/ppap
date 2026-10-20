@@ -198,7 +198,9 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 真实联调入口的“补充模板”复用既有文件上传、原请求读回和固定版本下载；ZIP、Excel、Word、图片附件只保存原字节，不解压执行、不创建审核或消费。暂存且服务明确允许继续时，用户可显式继续同一请求与原文件；关闭弹窗保留本页附件，刷新恢复未提交草稿不在此承诺内。查看／下载先读取授权的版本元信息，再核对下载内容的类型、长度、响应 SHA-256 与实际摘要。附件上传不等于运营收到：未提供真实提报与回执读取接口时禁用提交，不生成虚假未知回执或成功态。目标多维表格与真实落表、原提交读回仍待接通；`feedback-attachments`、`feedback-upload-resume` 仅验证对应界面交互。
 
-`GET /audit-template-catalog` 只读当前租户的最新发布规则链，按 engine 规则的明确客户及规范文件类型聚合；客户键与匹配器同用去空白、casefold，不是飞书身份或文件夹权限。P1 客户选项与 P0 规则覆盖共用该目录，不将历史规则的客户继续列为生效；17 类覆盖按既有字典去重，额外 DFMEA 规则仍保留客户并单独显示，不扩大分母或限制审核器。真实模板清单、权限和字节来源未配置时，P0 明确文件不可用，不伪造空文件夹或把规则原件当模板；`templates-catalog-only` 验证此交互及返回原审核选择，不证明模板下载或运营落表。
+`GET /audit-customers` 只读当前租户的最新发布规则链，按 engine 规则中的明确客户聚合上传页的客户选项。客户键与匹配器同用去空白、casefold，不是飞书身份或文件夹权限，也不从历史规则恢复已失效客户。
+
+模板入口统一打开[《PPAP Audit 模板使用说明》](https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe)，模板反馈跳到该文档的「联系我们」章节。链接由 `apps/web/src/audit/template-links.ts` 持有，在新窗口打开，不改变当前任务、客户、文件选择或审核草稿。文档的内容、附件与访问权限由飞书管理；产品不复制目录、不代理模板下载，也不自动接收反馈材料。审核规则上传与模板文档是不同入口。
 
 自动匹配分别报告客户未知、类型未知、缺少该类型规则、缺少客户对应规则、客户范围未确认及多个适用候选；多候选不按时间、顺序或模型排名静默选择。客户为空不等于“不限定客户”：只有保存版本中的明确确认使其具备不限客户的匹配资格，范围未确认的版本和草稿不参与。返回核对或保存规则后，显式重新识别同一任务才更新候选快照，不改写旧结果或已冻结轮次。打开客户下拉框会重读目录，不重建上传页面或改变勾选。特殊特性清单作为固定版本的比对资料随本轮保留，不单独审核、计费或生成报告。
 
@@ -238,34 +240,16 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 `reports-zip-foreign` 在读取报告状态时返回内部自洽但属于其他任务／轮次的 ZIP；任务页拒绝下载、读回该包或另行打包，重新读取任务可恢复正确范围。当前勾选不决定旧包范围，档案页仍可跨任务打包授权的固定历史报告。
 
-报告分享的未发送草稿在当前报告页内保留接收人与交付方式；更换冻结报告范围或选择“新的分享”才重置。重开会重新核对目录，未读到的接收人保持待核对，可单独核对或移除；目录失败不允许发送，旧读取迟到也不能恢复资格。`reports-share-directory-org-changed` 演示组织变化后重新选择，`reports-share-external` 演示关闭期间读到另一笔未决请求：原请求优先，读回成功仍保留其结果，不自动发送旧草稿。共用选择器同样用于模板分享；这不承诺刷新、跨设备保存或真实飞书授权与送达。
-
-客户模板库使用 `scene=templates-ready`。XLSX/ZIP 是明确标识的本机示例字节，不是客户飞书文件。覆盖度使用服务合同中的显式 17 类字典及生效规则类型并集，不能直接以当前 `/rule-types` 的 18 项或模板附件数代替。模板预览固定文件版本；客户 ZIP 固定文件夹修订和完整集合。全局支持未取得有效配置时显示不可用，不虚构联系方式。
-
-`templates-zip-recovery` 演示拒绝不完整模板包后，显式重读同一客户、搜索与页码，再下载新文件夹修订的完整包；重读不自动下载或重建审核任务。重选当前客户保留清单与筛选。确认审核结果未明时，可携带原确认请求、任务标识和说明进入同一支持浮层；关闭后仍只读回原请求，不重复确认。
+报告分享的未发送草稿在当前报告页内保留接收人与交付方式；更换冻结报告范围或选择“新的分享”才重置。重开会重新核对目录，未读到的接收人保持待核对，可单独核对或移除；目录失败不允许发送，旧读取迟到也不能恢复资格。`reports-share-directory-org-changed` 演示组织变化后重新选择，`reports-share-external` 演示关闭期间读到另一笔未决请求：原请求优先，读回成功仍保留其结果，不自动发送旧草稿。这不承诺刷新、跨设备保存或真实飞书授权与送达。
 
 支持浮层使用 `support-ready`、`support-error`、`support-qr-error` 和 `support-loading`，分别走查复制/邮箱链接/图片放大、读取恢复、图片失败和返回后迟到读取。电话不可拨打，邮箱是保留的 `.invalid` 地址，图片明确不是服务二维码；不代表已取得真实客服配置或完成飞书连接。Browser Back 关闭旧浮层并保留当前文件，二维码放大关闭后回到触发按钮。
 
 `restore-usage-notice` 与 `restore-usage-completed` 分别演示审核中、已结束任务的用量提示。从提示联系支持可复制当前任务、轮次和原提示；关闭后保留文件、条款与筛选，不执行扣费或重审。
 
-模板提报、报告／模板分享和权限修改的未确认或失败操作可进入同一支持浮层，复制打开时的原请求、各自尝试及固定对象信息。原业务弹窗不关闭，迟到结果继续更新；支持快照只读，不自动重发、发送附件或创建工单。关闭后优先回原按钮，按钮消失时回原弹窗；普通全局支持不保留上一次操作信息。`feedback-no-retry` 演示服务未允许再提交时的支持出口。本页 `client-` 编号仍只是参考，不冒充服务端 trace。
-
-模板分享固定完整客户集合，不受搜索和分页影响；链接不自动授权，撤权不能收回已发送的 ZIP 副本。`scene=templates-share-partial` 演示逐目标失败，未知目标只读回，明确失败且服务允许时才单独重试。文件夹权限使用独立的 `permission_revision` 和服务提供的单项动作；`templates-permissions-unknown` 演示读取当前权限不能代替原修改回执。关闭、切客户或撤权后保留原请求的读取入口；`templates-share-race` 和 `templates-permissions-race` 可手动返回迟到回执。这些预览不发送飞书消息，也不写入 Drive 权限。
-
-原生目录权限使用 `GET /audit-template-permissions` 的当次用户身份和直接管理授权，服务端提供普通直接协作者的阅读／编辑切换。`POST /audit-template-permission-changes` 再核对身份、目录、完整权限修订与所选操作；只有飞书返回相同对象和新角色的成功回执才记为已修改。`result_revision` 标识该已确认修改，不是后来读取的 ACL。恢复使用 `GET /audit-template-permission-changes/{request_id}`，不发送第二次修改；未知记录随权限读取恢复到原弹窗，预览场景 `templates-permissions-pending` 演示整页刷新后的恢复。当前不支持新增／移除协作者、管理权限变更及无法确认的继承管理权；受控测试不代替真实目录验收。
-
-`TemplatePermissionChange.tla` 是两个固定请求竞争一个目录的有限 Safety 模型，分开持久发送边界、外部效果和回执，允许外部无响应、晚到效果及发送后数据库断线。正向配置检查不重发、成功必须有原回执及发送边界的锁授权；三个故障配置分别暴露违规。模型不证明飞书授权实现、外部人工修改的原子性或最终完成。协作者读取的范围依据[飞书官方 CLI 说明](https://github.com/larksuite/cli/blob/main/skills/lark-drive/references/lark-drive-workflow-permission-governance.md)，仅当前目标的直接授权，不代表完整继承链。
-
-补充模板的三个入口共用本页附件与提报状态。`scene=feedback-unknown` 演示提交后丢失回执；`feedback-submit-loading` 和 `feedback-upload-loading` 可手动返回迟到结果。关闭后允许读取原请求，只有明确终结且允许重试才建立新尝试。此预览只保留本页内存中的附件字节，不写入飞书运营表，也不自动改变审核规则。
+报告分享、审核受理等未确认或失败操作可进入同一支持浮层，复制打开时的原请求、尝试及固定对象信息。支持快照只读，不自动重发、发送附件或创建工单。关闭后优先回原按钮，按钮消失时回原弹窗；普通全局支持不保留上一次操作信息。本页 `client-` 编号只是参考，不冒充服务端 trace。
 
 用量记录使用 `__preview?page=audit&view=usage&scene=usage-ready`。四卡读取服务提供的自然月汇总，不由明细筛选计算；每行固定一份文件的一次 500 点业务消费，免费／付费分配和技术重试不增加行数。历史入口复用冻结审核引用，不回退最新结果。`usage-quota-unknown`、`usage-revoked`、`usage-race` 分别演示未知额度、撤权和迟到读取；只读刷新不触发外部收费。这是共享 DTO 与明确样例，不是现有整轮用量账的逐文件投影，也不验证真实结算。
 
-在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_preview.py tests/e2e/test_template_feedback_preview.py tests/e2e/test_template_access_preview.py tests/e2e/test_usage_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。
+在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_links_preview.py tests/e2e/test_support_preview.py tests/e2e/test_usage_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。
 
 上述预览测试未配置 `PPAP_PREVIEW_URL` 时，可在未安装 Playwright 的环境中收集，并按原条件跳过；显式配置地址时必须安装 `e2e` group，缺少依赖会使收集失败。
-
-模板反馈的真实提交通过 Product API 的 `/audit-template-feedback/{request_id}/attempts/{attempt_id}`（POST / GET）。弹窗通过 GET `/audit-template-feedback?page=1` 找回当前提交人的最近提报，每页10次、每个请求只显示最新尝试；读取列表不调用飞书或重发。附件当前无权访问时不返回文件清单。配置 `PPAP_FEISHU_FEEDBACK_BASE_TOKEN`、`PPAP_FEISHU_FEEDBACK_TABLE_ID` 和 `PPAP_FEISHU_FEEDBACK_TENANT_KEY`，指定运营表及其所属租户；凭据仍使用现有飞书应用及其有效 app_ticket，不借客户 user token 写运营表。表字段为文本「请求编号」「提交人」「联系方式」「客户名称」、日期「提交时间」、单选「处理状态」和附件「文件附件」。只有核实完整附件的外部记录，才返回材料已收到。落表前失败保留附件；飞书明确拒绝创建的权限错误允许修复权限后重试，复用原请求和已上传素材。超时、5xx、处理中或不完整回执保持未知，只查原提交，不再次创建；搜索零条也不能据此重发。当前失败的服务端 trace 可带入支持快照，后续请求和普通支持入口不继承旧 trace。未取得回执的素材可能留在飞书，不声称已清理。配置和协议测试通过不等于真实表权限或落表已验收。
-
-运营表的最小记录权限为 Tenant Token 的 `base:record:create`（新增记录）和 `base:record:retrieve`（按条件查询原提交），不要求删除、更新记录或管理整个多维表格。接口权限与具体运营表的访问权限分别核对；附件上传另沿用实际素材接口所需权限。商店应用控制台的 `To be published` 不表示当前令牌已有权限，须完成获批的飞书应用版本发布及租户授权，再验证真实创建与原请求读回。票据交换成功、权限已申请或用户登录成功，都不能代替实际落表验收。
-
-模板文件通过 `PPAP_FEISHU_TEMPLATE_SOURCES` 配置 JSON 数组，每项为 `tenant_key`、规范化的 `customer_id` 和 `folder_token`；客户仍必须来自本租户生效规则，来源不由浏览器传入。`GET /audit-templates` 读取完整来源后搜索/分页；固定版本原件由 `/audit-templates/{template_id}/versions/{version_id}` 返回。模板 ZIP 的元信息和字节分别由 `/audit-template-packages`、`/audit-template-packages/download` 读取，两次都检查用户访问与完整集合修订，ZIP 使用确定性条目时间，不另建生成台账。每次清单读取最多1000项、总文件字节最多200 MiB；尚不递归子目录，不支持的项目会明确失败而不是被静默排除。文件夹的 `createUid` 与 `ownUid` 不等同，也不能直接当作 `open_id`：仅在同一用户令牌读取的根目录 `user_id` 与来源目录 `createUid` 相符，且当前飞书资料的租户和主体与会话一致时，显示该资料中的创建人姓名；其他情况保持未知，元信息读取失败不阻断已授权的模板读取。该姓名不授予管理或分享权限，不从缓存创建人推断飞书所有权。`TemplateSnapshotRead.tla` 是两个版本、缓存与本次读取证明的有限 Safety 检查，不证明真实平台撤权、数据库/对象存储事务或 ZIP 完整性。

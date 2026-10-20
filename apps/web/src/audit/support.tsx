@@ -5,7 +5,10 @@ import {Button} from '../components/ui/button'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger} from '../components/ui/dialog'
 import {Input} from '../components/ui/input'
 import {Label} from '../components/ui/label'
-import type {AuditSupportAdapter} from './template-contract'
+export type AuditSupportAdapter = {
+  read: () => Promise<components['schemas']['AuditSupportInfo']>
+  readQr: (configVersion: string) => Promise<Blob>
+}
 
 /** Read-only display data captured when support opens, not another operation store. */
 export type SupportSnapshot = {scenario: string; traceId?: string; facts?: readonly {label: string; value: string}[]}

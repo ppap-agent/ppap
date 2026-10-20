@@ -86,26 +86,42 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
 
     def catalog(route):
         reads.append(route.request.method)
-        customers = [] if len(reads) == 1 else [{"customer_id": "customer-new", "name": "新客户", "effective_rule_types": ["控制计划"]}]
-        route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": customers})
+        customers = [] if len(reads) == 1 else [{"customer_id": "customer-new", "name": "新客户"}]
+        route.fulfill(json={"customers": customers})
 
-    page.route("**/api/audit-template-catalog", catalog)
+    page.route("**/api/audit-customers", catalog)
     page.goto(WEB + "/audit?task=original-task")
     page.get_by_role("button", name="返回核对客户", exact=True).click()
     assert reads == []
     customer_picker = page.get_by_role("combobox", name="客户（可选）", exact=True)
-    with page.expect_response(lambda response: response.url.endswith("/api/audit-template-catalog")):
+    with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     expect(page.get_by_role("option", name="新客户", exact=True)).to_have_count(0)
     assert reads == ["GET"]
     page.keyboard.press("Escape")
-    with page.expect_response(lambda response: response.url.endswith("/api/audit-template-catalog")):
+    with page.expect_response(lambda response: response.url.endswith("/api/audit-customers")):
         customer_picker.click()
     page.get_by_role("option", name="新客户", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
     expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
     assert page.url == WEB + "/audit?task=original-task"
     assert reads == ["GET", "GET"]
+
+    address = page.url
+    page.context.route("https://icoastline.feishu.cn/wiki/**", lambda route: route.fulfill(body="<h1>模板使用说明</h1>", content_type="text/html; charset=utf-8"))
+    for name, suffix in (("查看模板", ""), ("模板反馈", "#share-Mo3QdDJbko2ZHHx9cf1c5FdZn7M")):
+        link = page.get_by_role("link", name=name, exact=True)
+        expect(link).to_have_attribute("href", "https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe" + suffix)
+        expect(link).to_have_attribute("target", "_blank")
+        expect(link).to_have_attribute("rel", "noopener noreferrer")
+        with page.expect_popup() as opened:
+            link.click()
+        expect(opened.value.get_by_role("heading", name="模板使用说明")).to_be_visible()
+        opened.value.close()
+        assert page.url == address
+        expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
+        expect(customer_picker).to_contain_text("新客户")
+    expect(page.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True)).to_have_attribute("href", "https://icoastline.feishu.cn/wiki/M5KqwJYWDiuUYNkGoiXcL1bgnbe")
 
 
 def test_disabled_login_has_no_dead_authorization_link_and_can_recheck_configuration(page):
@@ -203,7 +219,7 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
-    page.route("**/api/audit-template-catalog", lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": []}))
+    page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
     page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
     logged_out = []
 
@@ -241,136 +257,3 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     link = page.get_by_role("link", name="使用飞书登录")
     assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
     assert page.url == WEB + "/audit?task=original-task&report=frozen-report#original-clause"
-
-
-def test_native_templates_can_read_provider_permissions_without_unverified_management(page):
-    login_config(page)
-    page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
-    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
-    page.route(
-        "**/api/audit-template-catalog",
-        lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": [{"customer_id": "customer-a", "name": "客户 A", "effective_rule_types": ["1"]}]}),
-    )
-    page.route(
-        "**/api/audit-templates?*",
-        lambda route: route.fulfill(
-            json={
-                "query": {"customer_id": "customer-a", "search": "", "page": 1, "page_size": 10},
-                "folder_id": "bound-folder",
-                "folder_revision": "frozen-revision",
-                "folder_template_count": 0,
-                "creator_name": "创建人",
-                "manage_access": {"state": "unknown", "reason": "管理权限未确认"},
-                "zip_access": {"state": "allowed", "reason": None},
-                "items": [],
-                "total": 0,
-            }
-        ),
-    )
-    reads = []
-
-    def permissions(route):
-        query = parse_qs(urlsplit(route.request.url).query, keep_blank_values=True)
-        assert route.request.method == "GET"
-        assert query["customer_id"] == ["customer-a"] and query["folder_id"] == ["bound-folder"]
-        reads.append(query["query"][0])
-        route.fulfill(
-            json={
-                "folder": {"customer_id": "customer-a", "folder_id": "bound-folder"},
-                "permission_revision": "permissions-one",
-                "query": query["query"][0],
-                "creator_name": "创建人",
-                "manage_access": {"state": "unknown", "reason": "当前管理权限尚未确认。"},
-                "members": [{"target": {"kind": "user", "id": "observed-user"}, "display_name": "实际协作者", "role": "可管理", "source": "unknown"}],
-                "actions": [],
-            }
-        )
-
-    page.route("**/api/audit-template-permissions?*", permissions)
-    page.goto(WEB + "/audit?view=templates&task=original-task")
-    page.get_by_role("button", name="查看文件夹权限", exact=True).click()
-    dialog = page.get_by_role("dialog", name="文件夹权限", exact=True)
-    expect(dialog.get_by_role("listitem", name="协作者 实际协作者")).to_contain_text("可管理")
-    expect(dialog.get_by_text("来源待核对", exact=True)).to_be_visible()
-    expect(dialog.get_by_text("继承权限", exact=True)).to_have_count(0)
-    expect(dialog.get_by_role("combobox")).to_have_count(0)
-    assert reads == [""]
-    dialog.get_by_role("textbox", name="搜索协作者").fill("实际")
-    with page.expect_response("**/api/audit-template-permissions?*"):
-        dialog.get_by_role("button", name="搜索", exact=True).click()
-    expect(dialog.get_by_role("button", name="重新读取当前权限")).to_be_enabled()
-    assert reads == ["", "实际"]
-    dialog.get_by_role("button", name="关闭", exact=True).click()
-    expect(dialog).to_have_count(0)
-    assert parse_qs(urlsplit(page.url).query) == {"view": ["templates"], "task": ["original-task"]}
-
-
-def test_native_permission_change_recovers_the_original_request_after_page_reload(page):
-    login_config(page)
-    page.route("**/api/me", lambda route: route.fulfill(json=PRINCIPAL))
-    page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
-    page.route(
-        "**/api/audit-template-catalog",
-        lambda route: route.fulfill(json={"coverage_universe": [str(index) for index in range(17)], "customers": [{"customer_id": "customer-a", "name": "客户 A", "effective_rule_types": ["1"]}]}),
-    )
-    page.route(
-        "**/api/audit-templates?*",
-        lambda route: route.fulfill(
-            json={
-                "query": {"customer_id": "customer-a", "search": "", "page": 1, "page_size": 10},
-                "folder_id": "bound-folder",
-                "folder_revision": "frozen-revision",
-                "folder_template_count": 0,
-                "creator_name": None,
-                "manage_access": {"state": "allowed", "reason": None},
-                "zip_access": {"state": "allowed", "reason": None},
-                "items": [],
-                "total": 0,
-            }
-        ),
-    )
-    action = {"id": "change-reader", "target": {"kind": "user", "id": "reader"}, "target_name": "协作者", "before": "可阅读", "after": "可编辑", "label": "设为可编辑"}
-    calls, receipts = [], []
-
-    def permissions(route):
-        route.fulfill(
-            json={
-                "folder": {"customer_id": "customer-a", "folder_id": "bound-folder"},
-                "permission_revision": "acl-current" if receipts else "acl-original",
-                "query": "",
-                "creator_name": None,
-                "manage_access": {"state": "unknown" if receipts else "allowed", "reason": None},
-                "members": [{"target": action["target"], "display_name": "协作者", "role": "可编辑" if receipts else "可阅读", "source": "direct"}],
-                "actions": [] if receipts else [action],
-                "change": receipts[0] if receipts else None,
-            }
-        )
-
-    def apply(route):
-        calls.append(route.request.method)
-        receipts.append({"request": route.request.post_data_json, "state": "unknown", "result_revision": None, "reason": "未取得原修改回执。"})
-        route.fulfill(json=receipts[0])
-
-    def read(route):
-        calls.append(route.request.method)
-        assert route.request.url.endswith("/" + receipts[0]["request"]["request_id"])
-        route.fulfill(json=receipts[0])
-
-    page.route("**/api/audit-template-permissions?*", permissions)
-    page.route("**/api/audit-template-permission-changes", apply)
-    page.route("**/api/audit-template-permission-changes/*", read)
-    page.goto(WEB + "/audit?view=templates&task=original-task")
-    page.get_by_role("button", name="管理文件夹权限", exact=True).click()
-    dialog = page.get_by_role("dialog", name="文件夹权限", exact=True)
-    dialog.get_by_role("combobox", name="修改 协作者 的权限", exact=True).click()
-    page.get_by_role("option", name="设为可编辑", exact=True).click()
-    page.get_by_role("dialog", name="确认权限修改", exact=True).get_by_role("button", name="确认这项修改", exact=True).click()
-    expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
-    assert calls == ["POST"]
-    page.reload()
-    page.get_by_role("button", name="管理文件夹权限", exact=True).click()
-    expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
-    expect(dialog.get_by_role("combobox")).to_have_count(0)
-    dialog.get_by_role("button", name="读取原修改回执", exact=True).click()
-    expect(dialog.get_by_role("status", name="权限变更结果")).to_contain_text("修改结果待确认")
-    assert calls == ["POST", "GET"]

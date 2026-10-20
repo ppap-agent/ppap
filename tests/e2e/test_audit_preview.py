@@ -1183,28 +1183,6 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             browser.close()
 
-    def test_recognition_receipt_keeps_the_open_template_library_and_returns_to_the_same_task(self):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late")
-            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
-            page.get_by_role("button", name="开始识别", exact=True).click()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="模板库", exact=True).click()
-            close_workspace_panel(page)
-            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            expect(page.get_by_role("heading", name="客户模板库", exact=True)).to_be_visible()
-            self.assertEqual(parse_qs(urlparse(page.url).query)["view"], ["templates"])
-            task_id = parse_qs(urlparse(page.url).query)["task"][0]
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
-            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
-            self.assertEqual(parse_qs(urlparse(page.url).query)["task"], [task_id])
-            expect(task_list(page).get_by_role("button")).to_have_count(1)
-            close_workspace_panel(page)
-            browser.close()
-
-    def test_lost_end_reply_retains_all_unmatched_removals_and_only_reads_the_task(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -1357,16 +1335,16 @@ class AuditPreviewTests(unittest.TestCase):
             expect(expand).to_be_focused()
             self.assertLess(sidebar.bounding_box()["width"], wide)
             navigation = sidebar.get_by_role("navigation", name="产品导航", exact=True)
-            for label in ("PPAP Audit", "审核文件", "模板库", "用量记录"):
+            for label in ("PPAP Audit", "审核文件", "用量记录"):
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_be_visible()
             expect(navigation.get_by_role("button", name="PPAP Audit", exact=True)).to_have_attribute("aria-current", "page")
-            navigation.get_by_role("button", name="模板库", exact=True).hover()
+            navigation.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).hover()
             expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
             support_trigger = sidebar.get_by_role("button", name="联系我们", exact=True)
             support_trigger.click()
             page.get_by_role("dialog", name="联系我们", exact=True).get_by_role("button", name="关闭", exact=True).click()
             expect(support_trigger).to_be_focused()
-            for label, heading in (("模板库", "客户模板库"), ("审核文件", "审核文件"), ("用量记录", "用量记录")):
+            for label, heading in (("审核文件", "审核文件"), ("用量记录", "用量记录")):
                 navigation.get_by_role("button", name=label, exact=True).click()
                 expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-current", "page")
@@ -1400,7 +1378,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="审核任务", exact=True).get_by_role("navigation", name="任务列表", exact=True).get_by_role("button")).to_have_count(1)
             page.keyboard.press("Escape")
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
-            sidebar.get_by_role("button", name="模板库", exact=True).hover()
+            sidebar.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).hover()
             expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
             page.set_viewport_size({"width": 390, "height": 844})
             expect(sidebar).to_have_count(0)
@@ -1414,10 +1392,12 @@ class AuditPreviewTests(unittest.TestCase):
             expect(sheet).to_have_count(0)
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
             page.get_by_role("button", name="打开审核任务", exact=True).click()
-            sheet.get_by_role("button", name="模板库", exact=True).click()
-            expect(page.get_by_role("heading", name="客户模板库", exact=True)).to_be_visible()
-            page.get_by_role("button", name="打开产品导航", exact=True).click()
-            page.get_by_role("dialog", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.context.route("https://icoastline.feishu.cn/wiki/**", lambda route: route.fulfill(body="Template guide"))
+            with page.expect_popup() as opened:
+                sheet.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).click()
+            opened.value.close()
+            page.keyboard.press("Escape")
+            expect(sheet).to_have_count(0)
             self.assertEqual(page.url, report_address)
             expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回审核结果", exact=True).click()
@@ -1949,7 +1929,7 @@ class AuditPreviewTests(unittest.TestCase):
     def test_product_navigation_resolves_a_promoted_draft_after_other_pages_rewrite_the_address(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for view, label in (("templates", "模板库"), ("usage", "用量记录"), ("archive", "审核文件")):
+            for view, label in (("usage", "用量记录"), ("archive", "审核文件")):
                 with self.subTest(view=view):
                     page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     page.set_default_timeout(5000)
@@ -1973,7 +1953,7 @@ class AuditPreviewTests(unittest.TestCase):
                     expect(page).to_have_url(task_url)
                     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
                     # Usage and archive fixtures both expose fourteen historical source tasks.
-                    expect(task_list(page).get_by_role("button")).to_have_count(1 if view == "templates" else 15)
+                    expect(task_list(page).get_by_role("button")).to_have_count(15)
                     expect(task_list(page).get_by_role("button").filter(has_text="PPAP-示例-001")).to_have_count(1)
                     close_workspace_panel(page)
                     page.close()
@@ -2038,7 +2018,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="移除 过程流程图.pdf", exact=True).click()
             page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "草稿B.pdf", "mimeType": "application/pdf", "buffer": b"draft-b"})
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="模板库", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="用量记录", exact=True).click()
             page.go_back()
             expect(page.get_by_text("草稿B.pdf", exact=True)).to_be_visible()
             page.go_back()
@@ -2055,7 +2035,8 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
             expect(page.get_by_role("heading", name="已移除文件", exact=True)).to_have_count(0)
             expect(page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True)).to_have_count(0)
-            expect(task_list(page).get_by_role("button")).to_have_count(1)
+            # Usage also reads fourteen historical source tasks; neither upload draft creates one.
+            expect(task_list(page).get_by_role("button")).to_have_count(15)
             close_workspace_panel(page)
             browser.close()
 

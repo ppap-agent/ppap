@@ -1,4 +1,4 @@
-import type {AuditSupportAdapter} from '../src/audit/template-contract'
+import type {AuditSupportAdapter} from '../src/audit/support'
 
 /** Explicit UI samples only: no real contact, service QR, or Feishu request. */
 export function fixtureSupport(scene: string): AuditSupportAdapter | undefined {

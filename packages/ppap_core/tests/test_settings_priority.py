@@ -1,7 +1,5 @@
 """Explicit process controls must win over environment and dotenv aliases."""
 
-import json
-
 import pytest
 from ppap_core.settings import Settings
 
@@ -29,16 +27,14 @@ def test_explicit_effect_controls_win_over_lower_priority_aliases(tmp_path, monk
     assert settings.public_config()["usage_charge_enabled"] is enabled
 
 
-def test_explicit_empty_identity_sources_and_port_win_over_environment_aliases(monkeypatch):
+def test_explicit_empty_identity_and_port_win_over_environment_aliases(monkeypatch):
     monkeypatch.setenv("PPAP_PROFILE", "isolated-dev")
     monkeypatch.setenv("FEISHU_APP_ID", "environment-app")
     monkeypatch.setenv("PPAP_PG_PORT", "5432")
-    monkeypatch.setenv("PPAP_FEISHU_TEMPLATE_SOURCES", json.dumps([{"tenant_key": "test-tenant", "customer_id": "customer", "folder_token": "test-folder"}]))
+    settings = Settings(feishu_app_id="", pg_port=15432)
 
-    settings = Settings(feishu_app_id="", pg_port=15432, feishu_template_sources=[])
-
-    observed = (settings.feishu_app_id, settings.pg_port, settings.feishu_template_sources)
-    assert observed == ("", 15432, [])
+    observed = (settings.feishu_app_id, settings.pg_port)
+    assert observed == ("", 15432)
 
 
 def test_environment_still_wins_over_dotenv_when_no_explicit_value_is_given(tmp_path, monkeypatch):

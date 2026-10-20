@@ -10,10 +10,6 @@ import {fixtureReports, fixtureReport, withReportBytes} from './audit-reports'
 import reportSamples from './report-samples.json'
 import {fixtureSharing} from './audit-sharing'
 import {fixtureArchive} from './audit-archive'
-import {fixtureTemplates} from './audit-templates'
-import {fixtureFeedback} from './audit-feedback'
-import {fixtureTemplateSharing} from './audit-template-sharing'
-import {fixtureTemplatePermissions} from './audit-template-permissions'
 import {fixtureUsage} from './audit-usage'
 import {FixtureRemoteOriginal, fixtureOriginalFile} from './audit-original'
 import type {RemoteOriginalSource} from '../src/journey/remote-source'
@@ -33,8 +29,6 @@ const scene = query.get('scene') || 'populated'
 const automaticObservation = scene.startsWith('restore-observe') || scene === 'observe-matching'
 const readHistoricalRound = async (id: string) => fixtureRound(fixtureResults(fixtureAcceptance(fixtureMatch(adapter.samples(), 'standard', null, null, 'history-input'), 'history-accept'), 'reports-none'), id)
 const delayedDisplay = scene === 'restore-display-loading' || scene === 'restore-display-denied'
-const templateAdapter = fixtureTemplates(scene)
-const feedbackAdapter = fixtureFeedback(scene)
 const supportAdapter = fixtureSupport(scene)
 document.documentElement.classList.toggle('dark', query.get('theme') === 'dark')
 const documents = [
@@ -61,8 +55,6 @@ const taskStore = new Map<string, AuditTask>()
 const displayAdapter = fixtureDisplay(taskStore, scene)
 const reportAdapter = fixtureReports(taskStore, scene)
 const sharingAdapter = fixtureSharing(taskStore, scene)
-const templateSharingAdapter = fixtureTemplateSharing(templateAdapter, sharingAdapter, scene)
-const templatePermissionAdapter = fixtureTemplatePermissions(scene)
 let recoveryRead = 0
 const foreignPackageReads = new Set<string>()
 let authenticated = false
@@ -475,40 +467,6 @@ function Preview() {
       return scene === 'reports-share-race' ? defer('分享发送回执', result) : result
     },
   }), [defer])
-  const listTemplates = templateAdapter.listTemplates
-  const controlledTemplates = useMemo(() => ({...templateAdapter,
-    listTemplates: listTemplates ? async (...args: Parameters<NonNullable<typeof templateAdapter.listTemplates>>) => {
-      const result = await listTemplates(...args)
-      return scene === 'templates-race' && args[0].customer_id === 'preview-customer-a' ? defer('模板清单 · 示例客户 A', result) : result
-    } : undefined,
-  }), [defer])
-  const submitFeedback = feedbackAdapter.submit
-  const controlledFeedback = useMemo(() => ({...feedbackAdapter,
-    listHistory: feedbackAdapter.listHistory ? async (page: number) => {
-      const result = await feedbackAdapter.listHistory!(page)
-      return scene === 'feedback-history-loading' ? defer(`提报记录 · 第 ${page} 页`, result) : result
-    } : undefined,
-    upload: async (...args: Parameters<typeof feedbackAdapter.upload>) => {
-      const result = await feedbackAdapter.upload(...args)
-      return scene === 'feedback-upload-loading' ? defer(`模板附件上传 · ${args[0].file.name}`, result) : result
-    },
-    submit: submitFeedback ? async (...args: Parameters<NonNullable<typeof feedbackAdapter.submit>>) => {
-      const result = await submitFeedback(...args)
-      return scene === 'feedback-submit-loading' ? defer('材料提报回执', result) : result
-    } : undefined,
-  }), [defer])
-  const controlledTemplateSharing = useMemo(() => ({...templateSharingAdapter,
-    send: async (...args: Parameters<typeof templateSharingAdapter.send>) => {
-      const result = await templateSharingAdapter.send(...args)
-      return scene === 'templates-share-race' ? defer('模板分享回执', result) : result
-    },
-  }), [defer])
-  const controlledPermissions = useMemo(() => ({...templatePermissionAdapter,
-    apply: async (...args: Parameters<typeof templatePermissionAdapter.apply>) => {
-      const result = await templatePermissionAdapter.apply(...args)
-      return scene === 'templates-permissions-race' ? defer('权限修改回执', result) : result
-    },
-  }), [defer])
   const usageReads = useRef(0)
   const controlledUsage = useMemo(() => ({...usageAdapter,
     readUsage: async (...args: Parameters<typeof usageAdapter.readUsage>) => {
@@ -530,8 +488,8 @@ function Preview() {
       return fixtureReviewRound(task)
     },
   }), [])
-  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'templates-race', 'feedback-submit-loading', 'feedback-upload-loading', 'feedback-history-loading', 'templates-share-race', 'templates-permissions-race', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
-    <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} templateAdapter={controlledTemplates} templateSharingAdapter={controlledTemplateSharing} templatePermissionAdapter={controlledPermissions} usageAdapter={controlledUsage} supportAdapter={controlledSupport} feedbackAdapter={controlledFeedback} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
+  const content = <>{window.parent === window && <p role="note" className="border-b px-4 py-2 text-xs text-muted-foreground">模拟预览 · 不连接现网</p>}{(automaticObservation || delayedDisplay || scene.startsWith('recognition-') || scene.startsWith('restore-review-edit') || ['checking-loading', 'matching', 'drive-loading', 'confirm-loading', 'audit-loading', 'upload-loading', 'upload-resume', 'restore-loading', 'restore-race', 'reports-pdf-race', 'reports-generate-race', 'reports-share-race', 'reports-share-directory-loading', 'archive-history-race', 'archive-history-loads', 'usage-race', 'original-loading', 'support-loading'].includes(scene)) && <aside aria-label="预览事件控制" className="flex flex-wrap items-center gap-2 border-b bg-muted p-3 text-xs"><p>预览事件</p>{reads.map(read => <div key={read.id} className="flex flex-wrap items-center gap-2"><span>{read.label}</span><Button size="sm" variant="outline" onClick={() => {read.finish(); setReads(rows => rows.filter(row => row.id !== read.id))}}>返回示例读取 {read.id}</Button><Button size="sm" variant="outline" onClick={() => {read.fail(); setReads(rows => rows.filter(row => row.id !== read.id))}}>令示例读取 {read.id} 失败</Button></div>)}</aside>}
+    <AuditIntake adapter={controlled} autoObserve={automaticObservation} reportAdapter={controlledReports} sharingAdapter={controlledSharing} archiveAdapter={controlledArchive} usageAdapter={controlledUsage} supportAdapter={controlledSupport} displayAdapter={scene.startsWith('restore-display-') ? controlledDisplay : undefined} renderOriginal={(file, evidence) => scene.startsWith('original-') && file.original_filename.endsWith('.xlsx') ? <FixtureRemoteOriginal key={file.id} file={file} office={originalOffice}/> : <FixtureOriginal file={file} evidence={evidence}/>}/></>
   return scene.startsWith('restore-review-edit') ? <AuditReviewProvider adapter={reviewAdapter}>{content}</AuditReviewProvider> : content
 }
 function HistoricalPreview() {
