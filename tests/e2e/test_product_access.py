@@ -92,7 +92,15 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     page.route("**/api/audit-template-catalog", catalog)
     page.goto(WEB + "/audit?task=original-task")
     page.get_by_role("button", name="返回核对客户", exact=True).click()
-    page.get_by_role("combobox", name="客户（可选）", exact=True).click()
+    assert reads == []
+    customer_picker = page.get_by_role("combobox", name="客户（可选）", exact=True)
+    with page.expect_response(lambda response: response.url.endswith("/api/audit-template-catalog")):
+        customer_picker.click()
+    expect(page.get_by_role("option", name="新客户", exact=True)).to_have_count(0)
+    assert reads == ["GET"]
+    page.keyboard.press("Escape")
+    with page.expect_response(lambda response: response.url.endswith("/api/audit-template-catalog")):
+        customer_picker.click()
     page.get_by_role("option", name="新客户", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
     expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
