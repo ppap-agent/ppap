@@ -6,6 +6,7 @@ import json
 import runpy
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +34,37 @@ def test_requires_complete_immutable_release():
             read(invalid)
     with pytest.raises(ValueError):
         read(objects()[:-1])
+
+
+def test_native_multi_document_json_keeps_every_deployment():
+    docs = objects()
+    stream = "\n".join(json.dumps(obj) for obj in docs).encode()
+    assert PRELOAD["native_objects"](stream) == docs
+    assert PRELOAD["native_objects"](json.dumps({"kind": "List", "items": docs}).encode()) == docs
+    assert PRELOAD["release_images"](PRELOAD["native_objects"](stream)) == IMAGES
+    with pytest.raises(ValueError, match="no objects"):
+        PRELOAD["native_objects"](b"")
+
+
+def test_disk_pressure_aborts_before_allocating_resources():
+    nodes = [
+        {"metadata": {"name": node}, "status": {"nodeInfo": {"architecture": "amd64"}, "conditions": [{"type": "Ready", "status": "True"}, {"type": "DiskPressure", "status": "True"}]}}
+        for node in PRELOAD["NODES"]
+    ]
+    preload = PRELOAD["preload"]
+    with patch.dict(preload.__globals__, {"kube": lambda *args, **kwargs: json.dumps({"items": nodes}).encode()}):
+        with pytest.raises(ValueError, match="disk pressure"):
+            preload(objects())
+
+
+def test_emitted_disk_check_reserves_space_for_full_images():
+    for gib in (9, 12):
+        with patch.object(PRELOAD["os"], "statvfs", return_value=SimpleNamespace(f_bavail=gib * 1024**3, f_frsize=1)):
+            if gib < 12:
+                with pytest.raises(AssertionError, match="12 GiB"):
+                    exec(PRELOAD["DISK_CHECK"])
+            else:
+                exec(PRELOAD["DISK_CHECK"])
 
 
 def test_full_process_smoke_is_isolated_and_proves_cache():
