@@ -402,6 +402,7 @@ class ContainerCacheTests(unittest.TestCase):
         self.compile_calls = 0
         self.model_snapshots = []
         self.executions = []
+        self.evidence_mode = "located"
         owner = self
 
         class Objects:
@@ -454,7 +455,8 @@ class ContainerCacheTests(unittest.TestCase):
                 owner.model_snapshots.append(documents[owner.target])
                 checks, proofs = [], []
                 for target in owner.targets:
-                    evidence = [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A2"}}]
+                    address = "A999" if owner.evidence_mode == "unresolved" else "A2"
+                    evidence = [] if owner.evidence_mode == "missing" else [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}]
                     checks.append({"audit_id": target, "rule_id": "R1", "status": "PASS", "reason": "正文频次为每批。", "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
                     proofs.append(
                         {
@@ -540,6 +542,31 @@ class ContainerCacheTests(unittest.TestCase):
         self._run(self.spec.model_copy(update={"round_id": str(uuid4()), "job_id": "job-two"}))
         self.assertEqual(self.compile_calls, 2)
         self.assertEqual(len(self.executions), 2)
+
+    def test_completed_results_without_optional_citations_do_not_trigger_model_repair(self):
+        self._assert_optional_evidence_does_not_retry("missing")
+
+    def test_unresolvable_optional_locations_do_not_trigger_model_repair(self):
+        self._assert_optional_evidence_does_not_retry("unresolved")
+
+    def _assert_optional_evidence_does_not_retry(self, mode):
+        self.evidence_mode = mode
+        response = self.adapter.execute(self.spec, {target: self.raw for target in self.targets}, context=ExecutionContext())
+        self.assertEqual([item.status for item in response.findings], ["PASS", "PASS"])
+        self.assertEqual([item.suggestions for item in response.findings], ["正文频次为每批。"] * 2)
+        self.assertTrue(response.coverage.locator_gap)
+        self.assertIsNone(response.coverage.verification)
+        for item in response.findings:
+            self.assertEqual(item.locator["semantic"]["sources"], [])
+            self.assertTrue(item.locator["semantic"]["evidence_incomplete"])
+        self.assertEqual(self.compile_calls, 1)
+        self.assertEqual(len(self.executions), 1)
+        self.assertEqual(self.provider.request.call_count, 2, "optional evidence caused another paid-model boundary call")
+        self.assertEqual((response.usage["input_tokens"], response.usage["output_tokens"]), (6, 10))
+        original_bundle = next(json.loads(raw) for key, raw in self.stored.items() if key.endswith("/bundle.json"))
+        self.assertEqual([check["status"] for check in original_bundle["report"]["checks"]], ["PASS", "PASS"])
+        self.assertEqual(self.adapter.execute(self.spec, {target: self.raw for target in self.targets}, context=ExecutionContext()), response)
+        self.assertEqual(len(self.executions), 1, "reading the saved result started another audit")
 
 
 if __name__ == "__main__":

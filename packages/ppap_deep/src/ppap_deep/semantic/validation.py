@@ -4,33 +4,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from .evidence import EvidenceBudget, resolve
+from .evidence import EvidenceBudget, resolve, resolve_optional
 from .models import AuditReport, RulePlan
 from .protocol import ResultBundle, SubmissionSpec
 from .trace import validate_trace
 
 
-def validate_report(report: AuditReport, plans: dict[str, RulePlan], documents: dict[str, dict[str, Any]]) -> None:
+def validate_report(report: AuditReport, plans: dict[str, RulePlan], documents: dict[str, dict[str, Any]]) -> set[tuple[str, str]]:
     expected = {(audit_id, rule.id) for audit_id, plan in plans.items() for rule in plan.rules}
     actual = [(check.audit_id, check.rule_id) for check in report.checks]
     if len(actual) != len(set(actual)) or set(actual) != expected:
         raise ValueError("审核结果缺项、重复或包含未请求的规则")
     budget = EvidenceBudget()
+    evidence_gaps: set[tuple[str, str]] = set()
     for check in report.checks:
         if not check.reason.strip() or check.checked > check.total or check.unknown > check.total:
             raise ValueError("审核结果缺少原因或范围计数无效")
         if check.status == "PASS" and (check.unknown or check.total == 0 or check.checked != check.total):
             raise ValueError("PASS 缺少完整范围覆盖")
         if check.status != "UNABLE" and not check.evidence:
-            raise ValueError("审核结论缺少来源证据")
+            evidence_gaps.add((check.audit_id, check.rule_id))
         if check.status == "UNABLE" and check.diagnostic is None:
             raise ValueError("UNABLE 缺少结构化原因")
         for citation in check.evidence:
             if citation.document_id not in documents:
                 raise ValueError("证据来源不属于本次 submission")
-            observation = resolve(documents[citation.document_id], citation.locator, budget)
-            if check.status != "UNABLE" and not observation.known:
-                raise ValueError("审核结论引用了解析未知的证据")
+            if resolve_optional(documents[citation.document_id], citation.locator, budget) is None:
+                evidence_gaps.add((check.audit_id, check.rule_id))
+    return evidence_gaps
 
 
 def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -> None:
@@ -96,7 +97,7 @@ def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -
             raise ValueError("Invalid PDF blocks")
 
 
-def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> None:
+def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str, str]]:
     if bundle.execution_id != spec.execution_id or bundle.semantic_engine_revision != spec.semantic_engine_revision:
         raise ValueError("Execution identity mismatch")
     if set(bundle.documents) != {item.audit_id for item in spec.documents}:
@@ -121,5 +122,7 @@ def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> None:
             observation = resolve(snapshot, planned.source_locator, source_budget)
             if not observation.known or not any(text.strip() for text in observation.values):
                 raise ValueError("Rule plan source is empty or unknown")
-    validate_report(bundle.report, {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items()}, bundle.documents)
-    validate_trace(bundle.trace, bundle.report, bundle.documents, {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items()})
+    plans = {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items()}
+    evidence_gaps = validate_report(bundle.report, plans, bundle.documents)
+    evidence_gaps.update(validate_trace(bundle.trace, bundle.report, bundle.documents, plans))
+    return evidence_gaps

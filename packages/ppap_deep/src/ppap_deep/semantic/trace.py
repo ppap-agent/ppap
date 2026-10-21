@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, model_validator
 
 from .document_tools import col_number, effective
-from .evidence import EvidenceBudget, resolve
+from .evidence import EvidenceBudget, resolve_optional
 from .models import Artifact, AuditReport, Citation, ExcelCell, PlannedRule, Predicate, QueryProgram, RulePlan, Scalar, SemanticProgram, WordCell
 
 TableRowLocator = Annotated[ExcelCell | WordCell, Field(discriminator="kind")]
@@ -53,10 +53,10 @@ class Observation(Artifact):
 
     @model_validator(mode="after")
     def explained_role(self) -> Observation:
-        if self.role == "applicable" and (not (self.applicability_basis or "").strip() or self.exclusion_basis is not None or not self.evidence or self.status == "NA"):
-            raise ValueError("Applicable record needs its rule-trigger basis and source evidence")
-        if self.role == "excluded" and (not (self.exclusion_basis or "").strip() or self.applicability_basis is not None or not self.evidence or self.status not in {"NA", "UNABLE"}):
-            raise ValueError("Excluded record needs its non-applicability basis and source evidence")
+        if self.role == "applicable" and (not (self.applicability_basis or "").strip() or self.exclusion_basis is not None or self.status == "NA"):
+            raise ValueError("Applicable record needs its rule-trigger basis")
+        if self.role == "excluded" and (not (self.exclusion_basis or "").strip() or self.applicability_basis is not None or self.status not in {"NA", "UNABLE"}):
+            raise ValueError("Excluded record needs its non-applicability basis")
         if self.role == "prerequisite" and (self.applicability_basis is not None or self.exclusion_basis is not None):
             raise ValueError("Prerequisite cannot claim a row applicability basis")
         return self
@@ -194,7 +194,7 @@ def query_witness(citation: Citation, binding: Binding, failures: dict[int, set[
     return False
 
 
-def validate_trace(trace: AuditTrace, report: AuditReport, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan]) -> None:
+def validate_trace(trace: AuditTrace, report: AuditReport, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan]) -> set[tuple[str, str]]:
     checks = {(check.audit_id, check.rule_id): check for check in report.checks}
     identities = [(proof.audit_id, proof.rule_id) for proof in trace.proofs]
     if len(set(identities)) != len(identities) or set(identities) != set(checks):
@@ -203,8 +203,11 @@ def validate_trace(trace: AuditTrace, report: AuditReport, documents: dict[str, 
     if len(bindings) != len(trace.bindings):
         raise ValueError("Duplicate binding identity")
     budget = EvidenceBudget()
+    citation_budget = EvidenceBudget()
     used: set[str] = set()
+    evidence_gaps: set[tuple[str, str]] = set()
     for proof in trace.proofs:
+        identity = (proof.audit_id, proof.rule_id)
         check = checks[proof.audit_id, proof.rule_id]
         planned = next((item for item in plans[proof.audit_id].rules if item.id == proof.rule_id), None)
         if planned is None:
@@ -218,8 +221,12 @@ def validate_trace(trace: AuditTrace, report: AuditReport, documents: dict[str, 
             used.add(binding.id)
             status, total, checked, unknown, failures = query_counts(planned.predicate, binding, documents[binding.document_id], budget)
             if status == "NG" and planned.predicate.quantifier == "forall":
-                if not any(query_witness(citation, binding, failures, budget) for citation in check.evidence):
-                    raise ValueError("NG evidence must identify a replayed counterexample")
+                try:
+                    witness = citation_budget.remaining >= 0 and any(query_witness(citation, binding, failures, citation_budget) for citation in check.evidence)
+                except ValueError:
+                    witness = False
+                if not witness:
+                    evidence_gaps.add(identity)
         else:
             if not isinstance(planned.predicate, SemanticProgram):
                 raise ValueError("Semantic proof contradicts the planned rule program")
@@ -231,21 +238,21 @@ def validate_trace(trace: AuditTrace, report: AuditReport, documents: dict[str, 
             for record in proof.records:
                 budget.consume(1)
                 if record.status != "UNABLE" and not record.evidence:
-                    raise ValueError("Semantic observation lacks evidence")
+                    evidence_gaps.add(identity)
                 for citation in record.evidence:
                     if citation.document_id not in documents:
                         raise ValueError("Observation outside submission")
-                    observed = resolve(documents[citation.document_id], citation.locator, budget)
-                    if record.status != "UNABLE" and not observed.known:
-                        raise ValueError("Semantic observation uses unknown evidence")
+                    if resolve_optional(documents[citation.document_id], citation.locator, citation_budget) is None:
+                        evidence_gaps.add(identity)
             if check.status != "UNABLE":
                 empty_scope_result = not any(record.role == "applicable" for record in proof.records) and check.status == status and status in {"PASS", "NA"}
                 # Excluded candidates establish the empty set. Their own NA
                 # status must not override the rule's explicit PASS/NA policy.
                 supporting = {citation.model_dump_json() for record in proof.records if record.status == check.status or empty_scope_result for citation in record.evidence}
                 if not any(citation.model_dump_json() in supporting for citation in check.evidence):
-                    raise ValueError("Conclusion evidence does not support its semantic status")
+                    evidence_gaps.add(identity)
         if (check.status, check.total, check.checked, check.unknown) != (status, total, checked, unknown):
             raise ValueError("Check contradicts replayed query or record observations")
     if used != set(bindings):
         raise ValueError("Unreferenced binding")
+    return evidence_gaps

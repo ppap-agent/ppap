@@ -301,6 +301,126 @@ class SemanticProductContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "证据来源"):
             product_response(spec, bad_reference, submission)
 
+    def test_business_results_keep_their_status_when_optional_citations_are_missing(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        payload = _bundle(spec, submission).model_dump(mode="json")
+        for check in payload["report"]["checks"]:
+            check["evidence"] = []
+        for proof in payload["trace"]["proofs"]:
+            for record in proof["records"]:
+                record["evidence"] = []
+        bundle = ResultBundle.model_validate(payload)
+        original = bundle.model_dump_json()
+
+        response = product_response(spec, bundle, submission)
+
+        self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
+        self.assertEqual([row.suggestions for row in response.findings], ["record reviewed"] * 4)
+        self.assertTrue(response.coverage.locator_gap)
+        self.assertIsNone(response.coverage.verification)
+        for row in response.findings:
+            self.assertEqual(row.locator["semantic"]["sources"], [])
+        self.assertEqual(bundle.model_dump_json(), original)
+
+    def test_unavailable_optional_locations_are_not_promoted_to_source_evidence(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        for defect in ("outside", "format", "unknown", "oversized", "budget"):
+            with self.subTest(defect=defect):
+                payload = _bundle(spec, submission).model_dump(mode="json")
+                if defect == "outside":
+                    locator = {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A999"}
+                elif defect == "format":
+                    locator = {"kind": "pdf_block", "page": 1, "block": 1}
+                elif defect == "oversized":
+                    locator = {"kind": "xlsx_range", "sheet": "Sheet1", "start": "A1", "end": "XFD9999999"}
+                elif defect == "budget":
+                    locator = {"kind": "xlsx_range", "sheet": "Sheet1", "start": "A1", "end": "A250"}
+                    table = payload["documents"][TARGET]["tables"][0]
+                    table.update(rows=8192, merges=[[row, 1, row + 1, 1] for row in range(1, 8000, 2)])
+                else:
+                    locator = {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A1"}
+                    payload["documents"][TARGET]["tables"][0]["cells"]["A1"].update(value=None, state="unknown_formula_cache")
+                for check in payload["report"]["checks"][:2]:
+                    check["evidence"][0]["locator"] = locator
+                for proof in payload["trace"]["proofs"][:2]:
+                    proof["records"][0]["evidence"][0]["locator"] = locator
+                bundle = ResultBundle.model_validate(payload)
+                original = bundle.model_dump_json()
+
+                response = product_response(spec, bundle, submission)
+
+                self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
+                self.assertEqual(response.findings[0].locator["semantic"]["sources"], [])
+                known_sources = response.findings[1].locator["semantic"]["sources"]
+                self.assertEqual([source["excerpt"] for source in known_sources], [] if defect == "budget" else ["flow relation"])
+                self.assertTrue(response.coverage.locator_gap)
+                self.assertIsNone(response.coverage.verification)
+                self.assertTrue(response.findings[0].locator["semantic"]["evidence_incomplete"])
+                self.assertEqual(bundle.model_dump_json(), original)
+
+    def test_replayed_query_ng_keeps_its_result_without_a_public_counterexample_location(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        payload = _bundle(spec, submission).model_dump(mode="json")
+        payload["plans"][RULE]["rules"][0]["predicate"] = {"kind": "query", "predicates": [{"field": "frequency", "op": "not_empty"}], "quantifier": "forall"}
+        payload["documents"][TARGET]["tables"][0]["cells"]["A1"]["value"] = None
+        payload["report"]["checks"][0].update(status="NG", reason="Frequency is empty", evidence=[])
+        payload["trace"]["proofs"][0] = {"kind": "query", "audit_id": TARGET, "rule_id": "R1", "binding_id": "frequency"}
+        payload["trace"]["bindings"] = [
+            {
+                "id": "frequency",
+                "document_id": TARGET,
+                "source_sha256": spec.files[0].sha256,
+                "table": "Sheet1",
+                "header_rows": [3],
+                "first_row": 1,
+                "last_row": 1,
+                "columns": {"frequency": "A"},
+                "mapping_basis": "Frequency field in column A",
+                "boundary_basis": "One body record",
+            }
+        ]
+        bundle = ResultBundle.model_validate(payload)
+
+        response = product_response(spec, bundle, submission)
+
+        self.assertEqual(response.findings[0].status, "NG")
+        self.assertEqual(response.findings[0].suggestions, "Frequency is empty")
+        self.assertEqual(response.findings[0].locator["semantic"]["sources"], [])
+        self.assertTrue(response.coverage.locator_gap)
+        self.assertIsNone(response.coverage.verification)
+        bundle.report.checks[0].status = "PASS"
+        with self.assertRaisesRegex(ValueError, "contradicts replayed"):
+            product_response(spec, bundle, submission)
+
+    def test_optional_evidence_does_not_relax_actual_execution_or_identity_validation(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        for defect in ("missing", "duplicate", "unknown", "empty", "quote", "scope", "wrong_document", "wrong_snapshot"):
+            with self.subTest(defect=defect):
+                payload = _bundle(spec, submission).model_dump(mode="json")
+                check = payload["report"]["checks"][0]
+                if defect == "missing":
+                    payload["report"]["checks"].pop()
+                elif defect == "duplicate":
+                    payload["report"]["checks"].append(dict(check))
+                elif defect == "unknown":
+                    check.update(checked=0, unknown=1)
+                elif defect == "empty":
+                    check.update(total=0, checked=0)
+                elif defect == "scope":
+                    check["checked"] = 0
+                elif defect == "quote":
+                    check["evidence"][0]["quote"] = "invented text"
+                elif defect == "wrong_document":
+                    payload["trace"]["proofs"][0]["records"][0]["evidence"][0]["document_id"] = "outside-submission"
+                else:
+                    payload["documents"][TARGET]["source"]["sha256"] = "f" * 64
+                with self.assertRaises(ValueError):
+                    product_response(spec, ResultBundle.model_validate(payload), submission)
+
     def test_a_valid_bundle_for_another_effective_rule_cannot_gain_a_host_validation_record(self) -> None:
         spec = _spec()
         submission, _ = semantic_inputs(spec, ENGINE)
