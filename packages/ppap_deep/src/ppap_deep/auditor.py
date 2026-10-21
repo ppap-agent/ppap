@@ -16,7 +16,7 @@ from ppap_deep.client import DeepError
 from ppap_deep.controller import ExecutionContext
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import DeepCoverage, DeepFinding, DeepVerification, ExecuteRequest, ExecuteResponse
-from ppap_deep.semantic.evidence import EvidenceBudget, resolve
+from ppap_deep.semantic.evidence import EvidenceBudget, resolve_optional
 from ppap_deep.semantic.guest import Manifest
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, ResultBundle, RuleRef, SubmissionSpec
 from ppap_deep.semantic.secure_files import read_json
@@ -99,7 +99,7 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
     expected, _packets = semantic_inputs(spec, bundle.semantic_engine_revision)
     if submission != expected:
         raise ValueError("Validated bundle does not belong to the frozen request")
-    validate_bundle(bundle, submission)
+    evidence_gaps = validate_bundle(bundle, submission)
     files = {item.file_version_id: item for item in spec.files}
     proofs = {(proof.audit_id, proof.rule_id): proof.kind for proof in bundle.trace.proofs}
     findings, rule_items = [], []
@@ -110,7 +110,10 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
         sources = []
         for citation in check.evidence:
             source = files[citation.document_id]
-            observed = resolve(bundle.documents[citation.document_id], citation.locator, evidence_budget)
+            observed = resolve_optional(bundle.documents[citation.document_id], citation.locator, evidence_budget)
+            if observed is None:
+                evidence_gaps.add((check.audit_id, check.rule_id))
+                continue
             excerpt = " · ".join(observed.values)
             if len(excerpt) > 4000:
                 excerpt = excerpt[:4000] + "…"
@@ -122,6 +125,8 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
             "scope": {"total": check.total, "checked": check.checked, "unknown": check.unknown},
             "sources": sources,
         }
+        if (check.audit_id, check.rule_id) in evidence_gaps:
+            semantic["evidence_incomplete"] = True
         if check.diagnostic:
             semantic["diagnostic_code"] = check.diagnostic
             semantic["diagnostic"] = DIAGNOSTIC_LABELS[check.diagnostic]
@@ -177,9 +182,11 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
         coverage=DeepCoverage(
             checked=[item.filename for item in spec.files if item.role == "target"],
             unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"],
-            locator_gap=any(not (row.locator or {})["semantic"]["sources"] for row in findings),
+            locator_gap=bool(evidence_gaps) or any(not (row.locator or {})["semantic"]["sources"] for row in findings),
             rule_items=rule_items,
-            verification=DeepVerification(
+            verification=None
+            if evidence_gaps
+            else DeepVerification(
                 method="host_source_trace_v1",
                 round_id=spec.round_id,
                 job_id=spec.job_id,

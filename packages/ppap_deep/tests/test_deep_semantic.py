@@ -346,19 +346,20 @@ class SemanticBoundaryTests(unittest.TestCase):
                 validate_report(report, {"target-1": selected_plan}, {"target-1": DOCUMENT})
                 validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": selected_plan})
 
-    def test_applicable_record_requires_trigger_basis(self) -> None:
+    def test_applicable_record_requires_trigger_basis_not_optional_citations(self) -> None:
         record = {"record_id": "row-1", "role": "applicable", "status": "PASS", "reason": "Reviewed", "evidence": [CITATION]}
         with self.assertRaisesRegex(ValueError, "trigger basis"):
             AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [record]}]})
         record["applicability_basis"] = "This row meets the rule's stated condition"
-        no_source = {**record, "evidence": []}
-        with self.assertRaisesRegex(ValueError, "source evidence"):
-            AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [no_source]}]})
         proof = AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [record]}]})
         report = AuditReport.model_validate(
             {"checks": [{"audit_id": "target-1", "rule_id": "R1", "status": "PASS", "reason": "Reviewed", "total": 1, "checked": 1, "unknown": 0, "evidence": [CITATION]}]}
         )
         validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": plan()})
+        no_source = {**record, "evidence": []}
+        proof = AuditTrace.model_validate({"proofs": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one row", "records": [no_source]}]})
+        self.assertEqual(validate_trace(proof, report, {"target-1": DOCUMENT}, {"target-1": plan()}), {("target-1", "R1")})
+        self.assertEqual(report.checks[0].status, "PASS")
 
     def test_old_plan_cannot_silently_inherit_empty_scope_policy(self) -> None:
         prior = plan().model_dump(mode="json")
