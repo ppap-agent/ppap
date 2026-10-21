@@ -34,23 +34,43 @@ def kube(*args: str, data: bytes | None = None, timeout: int = 1800) -> bytes:
 
 def release_images(objects: list[dict]) -> dict[str, str]:
     images = {}
+    policies = {}
     for obj in objects:
         if obj.get("kind") != "Deployment":
             continue
         for item in obj["spec"]["template"]["spec"].get("containers", []):
             name = item["name"]
             if OWNERS.get(name) == obj["metadata"]["name"]:
+                if name in images:
+                    raise ValueError("duplicate application image")
                 images[name] = item["image"]
-                if item["image"].startswith("ghcr.io/") and item.get("imagePullPolicy") != "IfNotPresent":
-                    raise ValueError("preloaded images require IfNotPresent")
-    if not any(ref.startswith("ghcr.io/") for ref in images.values()):
+                policies[name] = item.get("imagePullPolicy")
+    if not images:
         return {}
     if set(images) != set(OWNERS):
         raise ValueError("release must contain all four application images")
-    for name, ref in images.items():
-        if not re.fullmatch(rf"ghcr\.io/ppap-agent/ppap/{name}@sha256:[0-9a-f]{{64}}", ref):
-            raise ValueError("release images must be immutable PPAP GHCR digests")
+    if all(re.fullmatch(rf"unregistry\.xixifusi\.online/ppap-{name}:[0-9a-f]{{40}}", ref) for name, ref in images.items()):
+        return {}  # Retain the documented legacy registry rollback path.
+    prefixes = ("ghcr.io/ppap-agent/ppap/", "icoastline.tencentcloudcr.com/ppap-feishu/current-")
+    if not any(all(re.fullmatch(re.escape(prefix + name) + r"@sha256:[0-9a-f]{64}", ref) for name, ref in images.items()) for prefix in prefixes):
+        raise ValueError("release images must be immutable PPAP digests from one owned registry")
+    if any(policy != "IfNotPresent" for policy in policies.values()):
+        raise ValueError("preloaded images require IfNotPresent")
     return images
+
+
+def tcr_pull_secret() -> str:
+    """Reuse the legacy Web pull binding without copying registry credentials."""
+    deployment = json.loads(kube("get", "deployment", "web-base", "-o", "json"))
+    refs = deployment["spec"]["template"]["spec"].get("imagePullSecrets", [])
+    for ref in refs:
+        secret = json.loads(kube("get", "secret", ref["name"], "-o", "json"))
+        if secret.get("type") != "kubernetes.io/dockerconfigjson":
+            continue
+        registry = json.loads(base64.b64decode(secret["data"][".dockerconfigjson"]))
+        if "icoastline.tencentcloudcr.com" in registry.get("auths", {}):
+            return ref["name"]
+    raise ValueError("web-base must bind an existing pull Secret for the owned TCR host")
 
 
 def native_objects(output: bytes) -> list[dict]:
@@ -130,6 +150,43 @@ def transfer_pod(name: str, node: str, bootstrap: str, source: bool, cm: str, cr
                     },
                 },
             ],
+        },
+    }
+
+
+def pull_pod(name: str, node: str, bootstrap: str, cm: str, pull_secret: str, images: dict[str, str]) -> dict:
+    security = {"runAsUser": 0, "readOnlyRootFilesystem": True, "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+    host = {"name": "host", "mountPath": "/host", "readOnly": True}
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": NAMESPACE, "labels": {"ppap-image-preload": cm}},
+        "spec": {
+            "nodeName": node,
+            "automountServiceAccountToken": False,
+            "restartPolicy": "Never",
+            "activeDeadlineSeconds": 1200,
+            "terminationGracePeriodSeconds": 5,
+            "imagePullSecrets": [{"name": pull_secret}],
+            "initContainers": [
+                {"name": "check-disk", "image": bootstrap, "imagePullPolicy": "IfNotPresent", "command": ["python", "-c", DISK_CHECK], "volumeMounts": [host], "securityContext": security},
+            ]
+            + [
+                {"name": "pull-" + key, "image": ref, "imagePullPolicy": "IfNotPresent", "command": ["true"], "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}}}
+                for key, ref in images.items()
+            ],
+            "containers": [
+                {
+                    "name": "inspect",
+                    "image": bootstrap,
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["sleep", "1200"],
+                    "securityContext": {**security, "capabilities": {"drop": ["ALL"], "add": ["SYS_CHROOT"]}},
+                    "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}},
+                    "volumeMounts": [host, {"name": "scripts", "mountPath": "/scripts", "readOnly": True}],
+                }
+            ],
+            "volumes": [{"name": "host", "hostPath": {"path": "/", "type": "Directory"}}, {"name": "scripts", "configMap": {"name": cm}}],
         },
     }
 
@@ -216,7 +273,7 @@ def smoke_pod(name: str, node: str, images: dict[str, str], cm: str, fixtures: d
 def preload(objects: list[dict]) -> None:
     images = release_images(objects)
     if not images:
-        print("No GHCR application images; pre-distribution is not required.", flush=True)
+        print("No GHCR/TCR application release; pre-distribution is not required.", flush=True)
         return
     nodes = json.loads(kube("get", "nodes", "-o", "json"))["items"]
     if {node["metadata"]["name"] for node in nodes} != set(NODES):
@@ -236,6 +293,8 @@ def preload(objects: list[dict]) -> None:
         raise ValueError("release Git SHA is invalid")
     bootstrap = json.loads(kube("get", "deployment", "ppap-current-api", "-o", "json"))["spec"]["template"]["spec"]["containers"][0]["image"]
     fixtures = {key: json.loads(kube("get", "deployment", f"ppap-current-{key}", "-o", "json"))["spec"]["template"]["spec"]["containers"][0]["image"] for key in ("postgres", "silo")}
+    is_ghcr = next(iter(images.values())).startswith("ghcr.io/")
+    pull_secret = None if is_ghcr else tcr_pull_secret()
     run_id = "ppap-preload-" + secrets.token_hex(4)
     created: list[tuple[str, str]] = []
 
@@ -260,46 +319,58 @@ def preload(objects: list[dict]) -> None:
                 | {path.name: path.read_text() for path in (HERE.parents[1] / "migrations").iterdir() if path.suffix == ".sql" or path.name == "apply.sh"},
             }
         )
-        username, token = os.getenv("GHCR_USERNAME", ""), os.getenv("GHCR_TOKEN", "")
-        if not username or not token:
-            raise ValueError("set GHCR_USERNAME and GHCR_TOKEN for private images")
-        create(
-            {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {"name": run_id, "namespace": NAMESPACE},
-                "type": "Opaque",
-                "data": {"transfer-token": base64.b64encode(secrets.token_bytes(32).hex().encode()).decode()},
-            }
-        )
-        registry = {"auths": {"ghcr.io": {"auth": base64.b64encode(f"{username}:{token}".encode()).decode()}}}
-        create(
-            {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {"name": run_id + "-ghcr", "namespace": NAMESPACE},
-                "type": "kubernetes.io/dockerconfigjson",
-                "data": {".dockerconfigjson": base64.b64encode(json.dumps(registry).encode()).decode()},
-            }
-        )
-        sender, receiver = run_id + "-source", run_id + "-receiver"
-        # Check receiver capacity before any new GHCR pull on the source.
-        for pod, node, source in ((receiver, NODES[1], False), (sender, NODES[0], True)):
-            create(transfer_pod(pod, node, bootstrap, source, run_id, run_id, images))
-            kube("wait", "--for=condition=Ready", "pod/" + pod, "--timeout=900s")
-            execute(pod, "python", "-c", DISK_CHECK)
-        address = json.loads(kube("get", "pod", sender, "-o", "json"))["status"]["podIP"]
-        for name, ref in images.items():
-            print(f"Exporting complete {name} image from the GHCR cache on {NODES[0]}", flush=True)
-            status = json.loads(execute(sender, "python", "/scripts/preload-node.py", "export", name, ref))
-            print(json.dumps({"node": NODES[0], **status}), flush=True)
-            received = json.loads(execute(receiver, "python", "/scripts/preload-node.py", "receive", name, ref, address, status["archive_sha256"]))
-            if any(item.get("image") != ref or item.get("registered") is not True for item in (status, received)):
-                raise RuntimeError("pre-distribution returned an invalid image registration")
-            print(json.dumps({"node": NODES[1], **received, "transport": "private-pod-network"}), flush=True)
-            execute(sender, "python", "/scripts/preload-node.py", "clean", name)
-        delete("pod", sender)
-        delete("pod", receiver)
+        if not is_ghcr:
+            for node in NODES:
+                name = run_id + "-pull-" + node.rsplit(".", 1)[1]
+                create(pull_pod(name, node, bootstrap, run_id, pull_secret, images))
+                kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=900s")
+                for ref in images.values():
+                    status = json.loads(execute(name, "python", "/scripts/preload-node.py", "inspect", ref, container="inspect"))
+                    if status.get("image") != ref or status.get("registered") is not True:
+                        raise RuntimeError("direct pull returned an invalid image registration")
+                    print(json.dumps({"node": node, **status, "transport": "direct-registry-pull"}), flush=True)
+                delete("pod", name)
+        else:
+            username, token = os.getenv("GHCR_USERNAME", ""), os.getenv("GHCR_TOKEN", "")
+            if not username or not token:
+                raise ValueError("set GHCR_USERNAME and GHCR_TOKEN for private images")
+            create(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {"name": run_id, "namespace": NAMESPACE},
+                    "type": "Opaque",
+                    "data": {"transfer-token": base64.b64encode(secrets.token_bytes(32).hex().encode()).decode()},
+                }
+            )
+            registry = {"auths": {"ghcr.io": {"auth": base64.b64encode(f"{username}:{token}".encode()).decode()}}}
+            create(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {"name": run_id + "-ghcr", "namespace": NAMESPACE},
+                    "type": "kubernetes.io/dockerconfigjson",
+                    "data": {".dockerconfigjson": base64.b64encode(json.dumps(registry).encode()).decode()},
+                }
+            )
+            sender, receiver = run_id + "-source", run_id + "-receiver"
+            # Check receiver capacity before any new registry pull on the source.
+            for pod, node, source in ((receiver, NODES[1], False), (sender, NODES[0], True)):
+                create(transfer_pod(pod, node, bootstrap, source, run_id, run_id, images))
+                kube("wait", "--for=condition=Ready", "pod/" + pod, "--timeout=900s")
+                execute(pod, "python", "-c", DISK_CHECK)
+            address = json.loads(kube("get", "pod", sender, "-o", "json"))["status"]["podIP"]
+            for name, ref in images.items():
+                print(f"Exporting complete {name} image from the native cache on {NODES[0]}", flush=True)
+                status = json.loads(execute(sender, "python", "/scripts/preload-node.py", "export", name, ref))
+                print(json.dumps({"node": NODES[0], **status}), flush=True)
+                received = json.loads(execute(receiver, "python", "/scripts/preload-node.py", "receive", name, ref, address, status["archive_sha256"]))
+                if any(item.get("image") != ref or item.get("registered") is not True for item in (status, received)):
+                    raise RuntimeError("pre-distribution returned an invalid image registration")
+                print(json.dumps({"node": NODES[1], **received, "transport": "private-pod-network"}), flush=True)
+                execute(sender, "python", "/scripts/preload-node.py", "clean", name)
+            delete("pod", sender)
+            delete("pod", receiver)
         for node in NODES:
             kube("wait", "--for=condition=DiskPressure=false", "node/" + node, "--timeout=300s")
             name = run_id + "-smoke-" + node.rsplit(".", 1)[1]
