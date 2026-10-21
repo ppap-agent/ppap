@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from typing import ClassVar, Literal, Optional, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from ppap_core.deep_policy import DeepExecutionPolicy
 
 ISOLATED_DEV_SECRET = "ppap_isolated_dev"
 ISOLATED_DEV_S3_ENDPOINT = "http://127.0.0.1:9000"
@@ -67,6 +70,7 @@ class Settings(BaseSettings):
     worker_id: str = Field(default="", alias="PPAP_WORKER_ID")
     deep_controller_socket: str = Field(default="", alias="PPAP_DEEP_CONTROLLER_SOCKET")
     deep_executor_revision: str = Field(default="", alias="PPAP_DEEP_EXECUTOR_REVISION")
+    deep_sandbox_profile: str = Field(default="off", alias="PPAP_DEEP_SANDBOX_PROFILE")
     deep_customer_enabled: bool = Field(default=False, alias="PPAP_DEEP_CUSTOMER_ENABLED")
     current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
     usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
@@ -152,6 +156,20 @@ class Settings(BaseSettings):
 
     def get_allowed_extensions(self) -> list[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
+
+    def deep_execution_policy(self) -> DeepExecutionPolicy:
+        return DeepExecutionPolicy.model_validate(
+            {
+                "app_revision": self.git_sha,
+                "model": self.llm_model,
+                "model_revision": hashlib.sha256((self.llm_base_url + "\n" + self.llm_model).encode()).hexdigest(),
+                "sandbox_profile": self.deep_sandbox_profile,
+                **({"executor_label": self.deep_executor_revision.strip()} if self.deep_executor_revision.strip() else {}),
+            }
+        )
+
+    def deep_execution_revision(self) -> str:
+        return self.deep_execution_policy().engine_revision()
 
     def get_ocr_languages(self) -> list[str]:
         return [lang.strip() for lang in self.OCR_LANGUAGES.split(",")]

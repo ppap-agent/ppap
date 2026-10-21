@@ -96,6 +96,8 @@ def semantic_inputs(spec: ExecuteRequest, engine_revision: str) -> tuple[Submiss
 
 
 def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: SubmissionSpec) -> ExecuteResponse:
+    if bundle.semantic_engine_revision != spec.executor_revision:
+        raise ValueError("Validated bundle does not belong to the frozen execution policy")
     expected, _packets = semantic_inputs(spec, bundle.semantic_engine_revision)
     if submission != expected:
         raise ValueError("Validated bundle does not belong to the frozen request")
@@ -252,7 +254,10 @@ class SemanticRuntime:
             raise DeepError("deep_output_invalid") from exc
 
     def _execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
-        submission, packets = semantic_inputs(spec, self.runtime.engine_revision())
+        revision = self.runtime.engine_revision()
+        if spec.executor_revision != revision:
+            raise DeepError("executor_revision_mismatch")
+        submission, packets = semantic_inputs(spec, revision)
         prefix = self._prefix(spec, submission)
         job_key = hashlib.sha256(spec.job_id.encode()).hexdigest()
         artifact_prefix = f"{prefix}/rounds/{spec.round_id}/{job_key}-{spec.attempt}"

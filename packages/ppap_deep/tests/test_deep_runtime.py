@@ -15,6 +15,7 @@ from ppap_core.settings import Settings
 from ppap_deep.auditor import SemanticRuntime, product_response, semantic_inputs
 from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
 from ppap_deep.controller import ExecutionContext
+from ppap_deep.isolation.container import RuntimeConfig
 from ppap_deep.isolation.model_gateway import Grants, local_gateway
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
@@ -63,7 +64,7 @@ def _spec(*, title: str = "客户规则", tenant: str = "tenant-a", target_bytes
         tenant_id=tenant,
         job_id="job-one",
         executor="ppap-deep",
-        executor_revision=DEEP_PROTOCOL_REVISION,
+        executor_revision=ENGINE,
         files=[target, reference],
     )
 
@@ -215,7 +216,7 @@ class SemanticProductContractTests(unittest.TestCase):
         self.assertEqual([row["rule_item_id"] for row in response.coverage.rule_items], ["R1", "R2", "R3", "R4"])
         self.assertEqual(
             response.coverage.verification.model_dump(),
-            {"method": "host_source_trace_v1", "round_id": ROUND, "job_id": "job-one", "attempt": 1, "executor_revision": DEEP_PROTOCOL_REVISION, "semantic_engine_revision": ENGINE},
+            {"method": "host_source_trace_v1", "round_id": ROUND, "job_id": "job-one", "attempt": 1, "executor_revision": ENGINE, "semantic_engine_revision": ENGINE},
         )
         self.assertEqual([row["proof_kind"] for row in response.coverage.rule_items], ["semantic"] * 4)
         self.assertEqual(response.usage, {"input_tokens": 120, "output_tokens": 30, "tool_calls": 0, "completed_tool_calls": 0, "compactions": 0})
@@ -456,6 +457,13 @@ class SemanticProductContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "frozen request"):
             product_response(changed, _bundle(spec, submission), submission)
 
+    def test_an_internally_valid_bundle_cannot_change_the_frozen_execution_policy(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, "b" * 64)
+        bundle = _bundle(spec, submission).model_copy(update={"semantic_engine_revision": "b" * 64})
+        with self.assertRaisesRegex(ValueError, "frozen execution"):
+            product_response(spec, bundle, submission)
+
     def test_renamed_rule_flows_through_semantic_adapter_without_fixed_checker(self) -> None:
         spec = _spec(title="标题不同但要求未变")
         objects = _MemoryObjects()
@@ -523,7 +531,28 @@ class _CacheRuntime:
 
 
 class SemanticCacheContractTests(unittest.TestCase):
+    def test_acceptance_and_runtime_use_the_same_effective_policy(self) -> None:
+        settings = Settings(git_sha="a" * 40, llm_base_url="https://model.example/v1", llm_model="model-a", deep_executor_revision="release-a", deep_sandbox_profile="off")
+        config = RuntimeConfig(state=Path("/unused"), gateway_socket=Path("/unused/gateway.sock"), gateway_host="127.0.0.1", **settings.deep_execution_policy().model_dump())
+        accepted = settings.deep_execution_revision()
+        self.assertEqual(config.engine_revision(), accepted)
+        for field, value in (("app_revision", "b" * 40), ("model", "model-b"), ("model_revision", "b" * 64), ("sandbox_profile", "ppap"), ("memory_mib", 2048), ("max_processes", 128)):
+            with self.subTest(field=field):
+                changed = config.model_copy(update={field: value})
+                self.assertNotEqual(changed.engine_revision(), accepted)
+
+    def test_frozen_policy_change_is_rejected_before_cache_or_model_work(self) -> None:
+        objects = _CacheObjects()
+        runtime = SemanticRuntime(_CacheRuntime("b" * 64), objects)
+        spec = _spec().model_copy(update={"executor_revision": ENGINE})
+
+        with self.assertRaisesRegex(DeepError, "executor_revision_mismatch"):
+            runtime.execute(spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext())
+
+        self.assertEqual(objects.reads, [])
+
     def _keys(self, spec: ExecuteRequest, *, revision: str = ENGINE, target_bytes: bytes = b"target") -> tuple[str, str]:
+        spec = spec.model_copy(update={"executor_revision": revision})
         objects = _CacheObjects()
         runtime = SemanticRuntime(_CacheRuntime(revision), objects)
         with self.assertRaises(_StopAfterCache):

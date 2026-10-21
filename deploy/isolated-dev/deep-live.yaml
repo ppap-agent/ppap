@@ -7,6 +7,7 @@ services:
     environment:
       PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
       PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
+      PPAP_DEEP_SANDBOX_PROFILE: "off"
     volumes:
       - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
 
@@ -14,6 +15,7 @@ services:
     environment:
       PPAP_DEEP_CONTROLLER_SOCKET: /run/ppap-deep/controller.sock
       PPAP_DEEP_EXECUTOR_REVISION: ppap-deep-v2
+      PPAP_DEEP_SANDBOX_PROFILE: "off"
     volumes:
       - ${PPAP_DEEP_SOCKET_DIR:-/tmp/ppap-deep}:/run/ppap-deep
 
