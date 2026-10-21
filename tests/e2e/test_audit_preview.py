@@ -135,7 +135,8 @@ def read_results(page):
     info = page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True).is_visible()
     notification = page.get_by_role("dialog", name="完成通知设置", exact=True, include_hidden=True).is_visible()
     close_workspace_panel(page)
-    open_task_file(page)
+    if not page.get_by_role("region", name="比对资料原件", exact=True).is_visible():
+        open_task_file(page)
     page.get_by_role("button", name="读取审核结果", exact=True, include_hidden=True).click()
     if clause:
         page.get_by_role("button", name="查看依据 " + clause, exact=True).click()
@@ -1029,6 +1030,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            task_list(page)
             expect(row).to_contain_text("已完成")
             row.click()
             expect(page.get_by_role("heading", name="任务已结束", exact=True)).to_be_visible()
@@ -2160,7 +2162,9 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True)).to_be_checked()
             expect(page.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
             expect(page.get_by_role("combobox", name="客户（可选）", exact=True)).to_have_count(0)
+            task_list(page)
             expect(tasks.get_by_role("button")).to_have_count(1)
+            close_workspace_panel(page)
             page.go_forward()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             page.go_back()
@@ -3942,16 +3946,22 @@ class AuditPreviewTests(unittest.TestCase):
     def test_fresh_recovery_rejects_an_older_acceptance_receipt(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            for action in ["返回示例读取 1", "令示例读取 1 失败"]:
-                with self.subTest(action=action):
+            for action, return_via in ((action, via) for action in ["返回示例读取 1", "令示例读取 1 失败"] for via in ["history", "resume"]):
+                with self.subTest(action=action, return_via=return_via):
                     page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     page.set_default_timeout(5000)
                     page.goto(PREVIEW + "/preview/audit.html?scene=confirm-loading")
                     page.get_by_role("button", name="使用三类文件示例").click()
                     page.get_by_role("button", name="开始识别", exact=True).click()
                     page.get_by_role("button", name="开始审核", exact=True).click()
+                    task_url = page.url
+                    self.assertIn("acceptRequest", parse_qs(urlparse(task_url).query))
                     page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
-                    page.go_back()
+                    if return_via == "history":
+                        page.go_back()
+                    else:
+                        page.get_by_role("button", name="继续当前审核", exact=True).click()
+                    expect(page).to_have_url(task_url)
                     expect(audit_details(page).get_by_text("NG · 符合 0 / 不符合 1", exact=True)).to_be_visible()
                     expect(audit_details(page).get_by_text("无法判断 1", exact=True)).to_be_visible()
                     page.get_by_role("button", name=action, exact=True).click()
