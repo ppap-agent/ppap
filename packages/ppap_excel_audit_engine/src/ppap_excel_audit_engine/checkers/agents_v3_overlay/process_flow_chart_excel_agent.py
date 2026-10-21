@@ -137,7 +137,9 @@ _RULE8_INSPECT_KEYWORDS: tuple[str, ...] = ("检验", "重检")
 
 
 def _is_start_inspection_process(value: object) -> bool:
-    return _contains_any_keyword(value, _RULE6_START_INSPECTION_KEYWORDS) or re.search(r"(?:原材料|原料|外购件|外协采购件)[^、，,；;。]*?(?:检验|检测)", _normalize_dense(value)) is not None
+    return _contains_any_keyword(value, _RULE6_START_INSPECTION_KEYWORDS) or any(
+        re.search(r"(?:原材料|原料|外购件|外协采购件).*?(?:检验|检测)", _normalize_dense(segment)) is not None for segment in re.split(r"[\r\n、，,；;。]+", str(value or ""))
+    )
 
 
 def _is_final_shipment_process(value: object) -> bool:
