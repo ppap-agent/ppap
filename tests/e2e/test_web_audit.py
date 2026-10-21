@@ -272,7 +272,7 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertEqual(expected["reviewFilter"], ["all"])
             self.assertIn(versions[1]["id"], expected["reviewFile"][0])
             page.get_by_role("link", name="工作台", exact=True).click()
-            page.get_by_role("link", name="审核规则", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
             expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.go_back()
             page.go_back()
