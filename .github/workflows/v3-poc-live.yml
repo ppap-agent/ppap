@@ -1,0 +1,69 @@
+name: V3 POC live acceptance
+
+# Paid, explicit proof. Never part of Tests / CI Gate and never auto-rerun.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 180
+    env:
+      PPAP_BUILD_SHA: ${{ github.sha }}
+      COMPOSE_PROJECT_NAME: ppap-v3-live-${{ github.run_id }}-${{ github.run_attempt }}
+      PPAP_TEST_POSTGRES_PORT: "0"
+      PPAP_API_HOST_PORT: "0"
+      LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      LLM_MODEL: ${{ secrets.MODEL_NAME }}
+      PADDLE_OCR_URL: ${{ secrets.PADDLE_OCR_URL }}
+      PADDLE_TOKEN: ${{ secrets.PADDLE_TOKEN }}
+      OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
+      OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
+      OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - uses: ./.github/actions/assert-docker
+      - name: Deterministic prerequisites and candidate images
+        run: |
+          set -euo pipefail
+          uv sync --locked
+          uv run --no-sync pytest packages/ppap_corpus_contracts/tests
+          docker buildx bake api worker --load
+          for service in api worker; do
+            revision=$(docker image inspect "ppap-$service:$PPAP_BUILD_SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+            test "$revision" = "$PPAP_BUILD_SHA"
+          done
+      - name: Start only the independent candidate API and Worker
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml up -d --no-build --wait --wait-timeout 180 api worker
+          binding=$(docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml port api 8080)
+          [[ "$binding" == 127.0.0.1:* ]]
+          echo "PPAP_LIVE_API=http://$binding" >> "$GITHUB_ENV"
+          docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml images --format json
+      - name: One complete proof invocation, eight group acceptances maximum
+        run: |
+          set -euo pipefail
+          timeout 120m uv run --no-sync python -m ppap_corpus_contracts.live_poc \
+            --api "$PPAP_LIVE_API" --candidate-sha "$PPAP_BUILD_SHA" \
+            --isolated-login --output "$RUNNER_TEMP/ppap-v3-live-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Upload JSON and Markdown, including incomplete proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: v3-poc-live-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ppap-v3-live-${{ github.run_id }}-${{ github.run_attempt }}/report.*
+          if-no-files-found: warn
+      - name: Stop this isolated stack only
+        if: always()
+        run: docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml down --remove-orphans

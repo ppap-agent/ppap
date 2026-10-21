@@ -677,6 +677,7 @@ name = "ppap-corpus-contracts"
 version = "0.1.0"
 source = { editable = "packages/ppap_corpus_contracts" }
 dependencies = [
+    { name = "httpx" },
     { name = "pandas" },
     { name = "ppap-core" },
     { name = "ppap-docops" },
@@ -685,6 +686,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pandas", specifier = ">=2.1.4" },
     { name = "ppap-core", editable = "packages/ppap_core" },
     { name = "ppap-docops", editable = "packages/ppap_docops" },

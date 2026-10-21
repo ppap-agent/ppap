@@ -8,6 +8,7 @@ dependencies = [
     "ppap-docops",
     "ppap-excel-audit-engine",
     "pandas>=2.1.4",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv.sources]

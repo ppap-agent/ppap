@@ -1,0 +1,309 @@
+"""Explicit, single-invocation V3 acceptance through the current Product API."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import httpx
+
+from ppap_corpus_contracts.acceptance_report import write_acceptance_report
+from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, REPO_ROOT, build_bundle_map, load_poc_cases
+from ppap_corpus_contracts.product_round import MATCH, compare_file
+
+RULE_DOCS = {
+    "1": "1-2规则-尺寸检验报告.docx",
+    "8": "8规则-过程流程图.docx",
+    "9": "9规则-潜在过程失效模式及后果分析（PFMEA）.docx",
+    "10": "10规则-控制计划.docx",
+    "11": "11规则-特殊特性清单.docx",
+}
+
+
+class LiveError(ValueError):
+    """Only runner-owned codes, never provider bodies or transport details."""
+
+
+def _json(client, method, path, *, expected=200, **kwargs):
+    try:
+        response = client.request(method, path, **kwargs)
+        if response.status_code != expected:
+            raise LiveError(f"http_{response.status_code}")
+        body = response.json()
+        if body is not None and not isinstance(body, dict):
+            raise LiveError("invalid_response_shape")
+        return body
+    except (httpx.HTTPError, json.JSONDecodeError):
+        raise LiveError("unreadable_response") from None
+
+
+def _submit(client, path, payload, expected, recovery):
+    try:
+        return _json(client, "POST", path, expected=expected, json=payload)
+    except LiveError:
+        # A lost response never authorizes another write, even with the same key.
+        return _json(client, "GET", recovery)
+
+
+def _poll(client, path, field, terminal, timeout, interval):
+    deadline = time.monotonic() + timeout
+    while True:
+        body = _json(client, "GET", path)
+        if body and body.get(field) in terminal:
+            return body
+        if time.monotonic() >= deadline:
+            raise LiveError("terminal_result_timeout")
+        time.sleep(interval)
+
+
+def _upload(client, path, run, save):
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    receipt = {"stage": "file_upload", "request_id": str(uuid4()), "sha256": digest}
+    run["operations"].append(receipt)
+    save()
+    version = _json(
+        client,
+        "POST",
+        "/files",
+        expected=201,
+        json={"original_filename": path.name, "content_type": "application/octet-stream", "byte_size": len(content), "sha256": digest, "request_id": receipt["request_id"]},
+    )
+    receipt.update(file_id=version["file_id"], file_version_id=version["id"])
+    save()
+    location = f"/files/{version['file_id']}/versions/{version['id']}"
+    _json(client, "PUT", location + "/blob", content=content)
+    _json(client, "POST", location + "/finalize", json={"sha256": digest})
+    loaded = _json(client, "GET", location)
+    if loaded["status"] != "ready" or loaded["sha256"] != digest:
+        raise LiveError("uploaded_file_digest_mismatch")
+    return loaded
+
+
+def _publish(client, seq, cases, run, save, timeout, interval):
+    path = REPO_ROOT / "assets" / "poc测试" / "poc规则" / RULE_DOCS[seq]
+    source = _upload(client, path, run, save)
+    request_id = str(uuid4())
+    receipt = {"stage": "rule_parse", "seq": seq, "request_id": request_id}
+    run["operations"].append(receipt)
+    save()
+    _submit(
+        client,
+        "/rules/parse",
+        {"request_id": request_id, "source_file_id": source["file_id"], "source_file_version_id": source["id"], "document_type": POC_SEQ_TO_DOC_TYPE[seq].get_type_name()},
+        202,
+        "/rules/parse/" + request_id,
+    )
+    parsed = _poll(client, "/rules/parse/" + request_id, "status", {"succeeded", "failed", "unknown"}, timeout, interval)
+    if parsed["status"] != "succeeded":
+        raise LiveError("rule_parse_not_succeeded")
+    candidate = parsed["result"]
+    body = candidate["body"]
+    expected_indices = sorted({index for case in cases if case.file_seq == seq for index in case.expected})
+    if body["rule_profile"] != "v3" or body["type"] != POC_SEQ_TO_DOC_TYPE[seq].get_type_name() or [rule["id"] for rule in body["rules"]] != [str(index) for index in expected_indices]:
+        raise LiveError("parsed_rule_contract_mismatch")
+    units = _json(client, "GET", f"/files/{source['file_id']}/versions/{source['id']}/rule-sources")["units"]
+    clauses = []
+    for rule in body["rules"]:
+        unit = next((unit for unit in units if unit["excerpt"] == rule["rule_to_check"]), None)
+        if unit is None:
+            raise LiveError("original_rule_text_mismatch")
+        clauses.append(
+            {
+                "id": rule["id"],
+                "title": rule["category"],
+                "text": rule["rule_to_check"],
+                "source": path.name,
+                "original": unit["excerpt"],
+                "location": unit["location"],
+                "checked": True,
+                "provenance": {**unit, "fileVersionId": source["id"]},
+            }
+        )
+    registration = {"basis": {"source": {"filename": path.name}, "clauses": clauses}}
+    context = {"registration": json.dumps(registration, ensure_ascii=False)}
+    if not body.get("customers"):
+        context["customer_scope"] = "all"
+    request_id = str(uuid4())
+    run["operations"].append({"stage": "rule_publish", "seq": seq, "request_id": request_id})
+    save()
+    _submit(client, "/rules", {"title": path.stem, "body": body, "source_file_version_id": source["id"], "request_id": request_id, "case_context": context}, 201, "/rules/" + request_id)
+    published = _json(client, "GET", "/rules/" + request_id)
+    if published["body"] != body or published["source_file_version_id"] != source["id"] or published["case_context"] != context:
+        raise LiveError("published_rule_readback_mismatch")
+    return published
+
+
+def _frozen_inputs(result, draft_id, items, rules):
+    if result.get("source_draft_id") != draft_id or result.get("analysis_mode") != "standard":
+        raise LiveError("round_identity_mismatch")
+    actual = result.get("inputs") or []
+    if len(actual) != len(items):
+        raise LiveError("frozen_input_mismatch")
+    by_version = {row["file_version_id"]: row for row in actual}
+    for expected in items:
+        actual = by_version.get(expected["file_version_id"], {})
+        if any(actual.get(key) != value for key, value in expected.items()) or actual.get("rule", {}).get("body") != rules[expected["rule_version_id"]]["body"]:
+            raise LiveError("frozen_input_mismatch")
+
+
+def _rows(cases, versions, result, stage, error, round_id):
+    rows = []
+    for case in cases:
+        verdicts = compare_file(file_name=case.file_name, version_id=versions.get(case.file_name, ""), expected={i: e.status for i, e in case.expected.items()}, result=result, setup_error=error)
+        coverage = [item for item in (result or {}).get("coverage", {}).get("rule_items", []) if item.get("file_version_id") == versions.get(case.file_name)]
+        findings = {item["item_key"]: item for item in (result or {}).get("findings", [])}
+        for verdict in verdicts:
+            matched = [item for item in coverage if str(item.get("id")) == str(verdict.rule_index)]
+            finding = findings.get(matched[0].get("item_key"), {}) if matched else {}
+            kind, actual = verdict.kind, verdict.actual or ""
+            if result is not None and (len(matched) != 1 or finding.get("status") != actual):
+                kind = "missing_rule"
+            rows.append(
+                {
+                    "bundle": case.bundle_id,
+                    "file_seq": case.file_seq,
+                    "file_name": case.file_name,
+                    "rule_index": verdict.rule_index,
+                    "expected_status": verdict.expected,
+                    "actual_status": actual,
+                    "kind": kind,
+                    "rule_desc": case.expected[verdict.rule_index].rule_desc,
+                    "manual_reason": case.expected[verdict.rule_index].manual_reason,
+                    "agent_suggestions": finding.get("suggestions", ""),
+                    "failure_stage": stage if error else "comparison" if kind != MATCH else "",
+                    "round_id": round_id,
+                    "job_id": (result or {}).get("result_job_id") or "",
+                }
+            )
+    return rows
+
+
+def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated_login: bool = False, timeout: float = 900, poll_interval: float = 1) -> dict:
+    """Consume at most one acceptance per canonical bundle. Existing output is refused."""
+    output.mkdir(parents=True, exist_ok=False)
+    run: dict[str, Any] = {
+        "candidate_sha": candidate_sha,
+        "boundary": "isolated Product API / Worker; not browser or production acceptance",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "outcome": "NOT_PROVEN",
+        "attribution": "inconclusive",
+        "operations": [],
+        "errors": [],
+    }
+    rows: list[dict] = []
+
+    def save():
+        write_acceptance_report(output / "report.json", rows, markdown_path=output / "report.md", run=run)
+
+    stage = "preflight"
+    save()
+    try:
+        config = _json(client, "GET", "/public-config")
+        if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha) or config.get("git_sha") != candidate_sha or config.get("usage_charge_enabled") is not False:
+            raise LiveError("candidate_or_charging_policy_mismatch")
+        if config.get("profile") != "isolated-dev":
+            raise LiveError("isolated_stack_required")
+        ready = _json(client, "GET", "/ready")
+        if ready.get("status") != "ready" or ready.get("git_sha") != candidate_sha:
+            raise LiveError("stack_not_ready")
+        if isolated_login:
+            _json(client, "POST", "/isolated-dev/sessions", json={"subject": "alice"})
+        cases = load_poc_cases()
+        bundles = build_bundle_map(cases)
+        if len(cases) != 27 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 220 or {case.file_seq for case in cases} != set(RULE_DOCS):
+            raise LiveError("canonical_universe_incomplete")
+        assets = [case.file_path for case in cases] + [REPO_ROOT / "assets" / "poc测试" / "poc规则" / name for name in RULE_DOCS.values()]
+        run["asset_digests"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets}
+        published, unavailable = {}, set()
+        stage = "rule_setup"
+        for seq in RULE_DOCS:
+            try:
+                published[seq] = _publish(client, seq, cases, run, save, timeout, poll_interval)
+            except (LiveError, KeyError, TypeError, OSError) as exc:
+                unavailable.add(seq)
+                run["errors"].append({"stage": stage, "seq": seq, "code": str(exc) if isinstance(exc, LiveError) else "invalid_rule_response"})
+                save()
+        by_rule = {rule["id"]: rule for rule in published.values()}
+        for bundle, selected in sorted(bundles.items()):
+            versions, items, result, round_id, error = {}, [], None, "", None
+            stage = "file_upload"
+            try:
+                if any(case.file_seq in unavailable for case in selected):
+                    raise LiveError("group_rule_setup_incomplete")
+                for case in selected:
+                    version = _upload(client, case.file_path, run, save)
+                    versions[case.file_name] = version["id"]
+                    items.append({"file_version_id": version["id"], "role": "target", "rule_version_id": published[case.file_seq]["id"]})
+                stage = "draft_save"
+                draft_id = str(uuid4())
+                run["operations"].append({"stage": stage, "bundle": bundle, "request_id": draft_id})
+                save()
+                _submit(client, "/drafts", {"request_id": draft_id}, 201, "/drafts/" + draft_id)
+                _json(client, "PUT", "/drafts/" + draft_id, json={"analysis_mode": "standard", "items": items})
+                stage = "accept"
+                run["operations"].append({"stage": stage, "bundle": bundle, "draft_id": draft_id, "idempotency_key": str(uuid4())})
+                save()
+                accepted = _submit(client, f"/drafts/{draft_id}/accept", {"idempotency_key": run["operations"][-1]["idempotency_key"]}, 201, f"/drafts/{draft_id}/round")
+                if not accepted:
+                    raise LiveError("acceptance_not_observed")
+                round_id = accepted["id"]
+                run["operations"][-1]["round_id"] = round_id
+                save()
+                _frozen_inputs(accepted, draft_id, items, by_rule)
+                stage = "audit"
+                result = _poll(client, "/rounds/" + round_id, "execution", {"completed", "failed"}, timeout, poll_interval)
+                run["operations"][-1]["job_id"] = result.get("result_job_id")
+                _frozen_inputs(result, draft_id, items, by_rule)
+                if result["execution"] != "completed" or not result.get("result_job_id"):
+                    raise LiveError("audit_not_completed")
+            except (LiveError, KeyError, TypeError, OSError) as exc:
+                error = str(exc) if isinstance(exc, LiveError) else "invalid_product_response"
+                run["errors"].append({"stage": stage, "bundle": bundle, "code": error, "round_id": round_id})
+                result = None
+            group_rows = _rows(selected, versions, result, stage, error, round_id)
+            if stage == "audit" and error:
+                for row in group_rows:
+                    row["kind"] = "execution_failure"
+            rows.extend(group_rows)
+            save()
+        if len(rows) == 220 and all(row["kind"] == MATCH for row in rows) and not run["errors"]:
+            run["outcome"] = "PROVEN"
+            run.pop("attribution")
+    except (LiveError, KeyError, TypeError, OSError, AssertionError, ValueError) as exc:
+        run["errors"].append({"stage": stage, "code": str(exc) if isinstance(exc, LiveError) else "invalid_setup"})
+    run["finished_at"] = datetime.now(timezone.utc).isoformat()
+    save()
+    return run
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--api", required=True)
+    parser.add_argument("--candidate-sha", required=True)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--isolated-login", action="store_true")
+    parser.add_argument("--timeout", type=float, default=900)
+    args = parser.parse_args()
+    from urllib.parse import urlsplit
+
+    url = urlsplit(args.api)
+    if url.scheme not in {"http", "https"} or not url.netloc or url.username or url.password or url.query or url.fragment or url.path.strip("/") or not 0 < args.timeout <= 1800:
+        parser.error("API must be an origin without credentials; timeout must be 0..1800 seconds")
+    headers = {"Cookie": os.environ["PPAP_LIVE_COOKIE"]} if os.environ.get("PPAP_LIVE_COOKIE") else {}
+    with httpx.Client(base_url=args.api.rstrip("/"), headers=headers, timeout=30, follow_redirects=False) as client:
+        result = run_live(client, candidate_sha=args.candidate_sha, output=args.output, isolated_login=args.isolated_login, timeout=args.timeout)
+    print(json.dumps({"outcome": result["outcome"], "candidate_sha": args.candidate_sha, "report": str(args.output / "report.json")}))
+    raise SystemExit(0 if result["outcome"] == "PROVEN" else 1)
+
+
+if __name__ == "__main__":
+    main()
