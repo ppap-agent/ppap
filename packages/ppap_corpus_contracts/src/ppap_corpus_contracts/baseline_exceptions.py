@@ -8,7 +8,7 @@ ExecutionOutcome. Suggestion text is not authority.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from ppap_corpus_contracts.execution_outcome import ExecutionOutcome, O
@@ -18,6 +18,7 @@ from ppap_corpus_contracts.execution_outcome import ExecutionOutcome, O
 class ObservedRuleOutcome:
     expected_status: str
     actual: ExecutionOutcome
+    detail: str = field(default="", compare=False)
 
     @property
     def is_mismatch(self) -> bool:

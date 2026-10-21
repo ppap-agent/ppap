@@ -7,7 +7,7 @@ import pytest
 from dotenv import load_dotenv
 from ppap_corpus_contracts.baseline_exceptions import classify_v2_baseline_outcomes
 from ppap_corpus_contracts.v2_assets_shared import APP_ROOT, FileCase, build_cases
-from ppap_corpus_contracts.v2_observe import collect_v2_rule_outcomes
+from ppap_corpus_contracts.v2_observe import collect_v2_rule_outcomes, format_v2_rule_outcome
 
 load_dotenv(APP_ROOT / ".env")
 
@@ -54,14 +54,9 @@ def mismatch_only(request: Any) -> Any:
     return request.config.getoption("--mismatch-only", default=False)
 
 
-def _format_outcome(outcome: Any) -> str:
-    extra = f" {outcome.actual.diagnostic_code}" if outcome.actual.diagnostic_code else ""
-    return f"expected {outcome.expected_status}, got {outcome.actual.status}/{outcome.actual.execution_class}{extra}"
-
-
 def collect_v2_rule_mismatches(case: FileCase, verbose_check: bool = False, mismatch_only: bool = False) -> dict[int, str]:
     outcomes = collect_v2_rule_outcomes(case, verbose_check=verbose_check, mismatch_only=mismatch_only)
-    return {rule: f"rule {rule}: {_format_outcome(outcome)}" for rule, outcome in outcomes.items() if outcome.is_mismatch}
+    return {rule: f"rule {rule}: {format_v2_rule_outcome(outcome)}" for rule, outcome in outcomes.items() if outcome.is_mismatch}
 
 
 def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: bool) -> None:
@@ -69,9 +64,9 @@ def test_v2_assets_cases(case: FileCase, verbose_check: bool, mismatch_only: boo
     new_mismatches, drifted, stale = classify_v2_baseline_outcomes(case.file_name, case.file_type, outcomes)
     parts: List[str] = []
     if new_mismatches:
-        parts.append("new mismatches:\n- " + "\n- ".join(f"rule {rule}: {_format_outcome(outcomes[rule])}" for rule in sorted(new_mismatches)))
+        parts.append("new mismatches:\n- " + "\n- ".join(f"rule {rule}: {format_v2_rule_outcome(outcomes[rule])}" for rule in sorted(new_mismatches)))
     if drifted:
-        parts.append("baseline behavior changed:\n- " + "\n- ".join(f"rule {rule}: {_format_outcome(outcomes[rule])}" for rule in sorted(drifted)))
+        parts.append("baseline behavior changed:\n- " + "\n- ".join(f"rule {rule}: {format_v2_rule_outcome(outcomes[rule])}" for rule in sorted(drifted)))
     if stale:
         parts.append("stale baseline exceptions (no longer mismatch):\n- " + "\n- ".join(f"rule {rule}" for rule in sorted(stale)))
     if parts:

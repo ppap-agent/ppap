@@ -80,6 +80,8 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 
 V2 Standard round 的失败日志保留公开 finding 的判定说明：只采用唯一 `item_key` 关联且状态一致的 finding；无法关联时不猜测原因，执行错误仍可使用原轮次说明。这只补充诊断信息，不改变逐条比对结果或验收门槛。
 
+V2 单文件回归也保留实际业务结果的公开 `suggestions`，最多 1024 字符并按单行 JSON 字符串转义，供 required corpus 的失败说明使用。说明不参与 outcome 或 baseline equality；ERR 仍只使用已有稳定 diagnostic code，不新增异常原文。未返回业务说明时不编造原因，也不据一次重跑通过认定模型判定波动已修复。
+
 ### 显式 V3 POC Live
 
 `V3 POC live acceptance` 只接受 `workflow_dispatch`，不进入默认 `CI Gate`。它用当前 SHA 的 API／Worker 镜像和独立 PostgreSQL／S3，凭 Secrets 调用真实模型／转换服务；收费和飞书通知关闭。执行前核对两个镜像的 revision，不能让现网旧 Worker 消费候选 API 创建的验收任务。
