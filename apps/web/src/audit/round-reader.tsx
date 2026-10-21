@@ -12,12 +12,12 @@ import {ReviewEditorContext} from './review-editor'
 type Round = components['schemas']['Round']
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<Round>
 
-export function AuditRoundReader({roundId, readRound, renderOriginal, returnHref = `/?round=${encodeURIComponent(roundId)}`}: {roundId: string; readRound: ReadRound; renderOriginal?: OriginalRenderer; returnHref?: string}) {
+export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit, returnHref = '/workbench'}: {roundId: string; readRound: ReadRound; renderOriginal?: OriginalRenderer; onReaudit?: () => void; returnHref?: string}) {
   const reviewEditor = useContext(ReviewEditorContext)
-  const [round, setRound] = useState<Round | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0), [selected, setSelected] = useState('')
+  const [round, setRound] = useState<Round | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0), [selected, setSelected] = useState(() => new URL(location.href).searchParams.get('file') || '')
   useEffect(() => {
     const controller = new AbortController()
-    setRound(null); setError('')
+    setRound(current => current?.id === roundId ? current : null); setError('')
     void readRound(roundId, controller.signal).then(value => {
       if (controller.signal.aborted) return
       const files = value.read_view?.files
@@ -26,20 +26,29 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, returnHref
     }).catch(cause => {if (!controller.signal.aborted) setError(message(cause))})
     return () => controller.abort()
   }, [roundId, readRound, revision, reviewEditor?.revision])
-  useEffect(() => {setSelected('')}, [roundId])
+  useEffect(() => {
+    const restore = () => setSelected(new URL(location.href).searchParams.get('file') || '')
+    restore(); window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [roundId])
+  function selectFile(id: string) {
+    setSelected(id)
+    const url = new URL(location.href); url.searchParams.set('file', id); url.searchParams.delete('clause'); url.searchParams.delete('focus')
+    history.pushState(history.state, '', url)
+  }
   const view = round?.id === roundId ? round.read_view : null
   const file = view?.files.find(row => row.file.id === selected) ?? view?.files.find(row => row.role === 'target') ?? view?.files[0]
   const versions = view?.files.map(row => row.file.id) || []
   const originals = view?.files.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed' as const, reason: null}})) || []
-  return <main className="mx-auto max-w-screen-2xl space-y-6 p-4 sm:p-6">
+  return <section aria-label="历史审核" className="mx-auto max-w-screen-2xl space-y-6">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="space-y-2"><h1 className="text-2xl font-semibold">历史审核</h1>{round?.id === roundId && round.created_at && <p className="text-sm text-muted-foreground">{new Date(round.created_at).toLocaleString()}</p>}</div>
-      <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回原审核</a></Button><Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
+      <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回工作台</a></Button>{onReaudit && round && ['completed', 'failed'].includes(round.execution) && <Button onClick={onReaudit}>补件／重新审核</Button>}<Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
     </header>
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <p role="status">正在读取本轮审核…</p> : <>
-      <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => setSelected(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>
+      <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => selectFile(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>
       {file ? file.role === 'target' ? <AuditReviewContent key={`${roundId}:${file.file.id}`} file={file} roundId={roundId} frozenRule={file.rule} frozenFileVersionIds={versions} originals={originals} renderOriginal={renderOriginal}/> : <section aria-label="本轮比对原件" className="space-y-4"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal ? renderOriginal(file.file, null, roundId) : <p>原件暂不可预览。</p>}</section> : <p>本轮没有可读取的文件。</p>}
       <HistoricalFindings findings={view.unassigned_findings} roundId={roundId} resultAttempt={round?.result_attempt ?? null} versions={versions} originals={originals} renderOriginal={renderOriginal} title="未归属文件的历史记录"/>
     </>}
-  </main>
+  </section>
 }

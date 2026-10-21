@@ -11,7 +11,7 @@ import {RemoteSourcePane} from '../journey/remote-source'
 import {AuditIntake, type AuditIntakeAdapter} from './intake'
 import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeReviewAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, readAuditCustomers} from './native-adapter'
 import type {OriginalRenderer} from './review-content'
-import {AuditRoundReader, type ReadRound} from './round-reader'
+import type {ReadRound} from './round-reader'
 import {AuditReviewProvider} from './review-editor'
 import {SharedReports} from './shared-reports'
 import {AuditRules} from './rules'
@@ -30,7 +30,7 @@ function NativeWorkbench(props: WorkbenchProps) {
 }
 
 function NativeAudit() {
-  const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => createNativeAuditAdapter({deepOffered, personalDriveUpload, customers: []}))
+  const [adapter, setAdapter] = useState<AuditIntakeAdapter>(() => ({...createNativeAuditAdapter({deepOffered, personalDriveUpload, customers: []}), readRound}))
   const [error, setError] = useState(''), [revision, setRevision] = useState(0)
   useEffect(() => {
     const address = new URL(location.href)
@@ -53,4 +53,4 @@ const roundId = new URL(location.href).searchParams.get('round')
 const shareId = new URL(location.href).searchParams.get('share')
 const legacyDraft = ['case', 'draft'].some(key => new URL(location.href).searchParams.has(key)) && !roundId && !shareId
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))
-createRoot(document.getElementById('app')!).render(legacyDraft ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : roundId ? <AuditRoundReader key={roundId} roundId={roundId} readRound={readRound} renderOriginal={renderOriginal}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)
+createRoot(document.getElementById('app')!).render(legacyDraft || roundId && new URL(location.href).searchParams.has('stage') ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)

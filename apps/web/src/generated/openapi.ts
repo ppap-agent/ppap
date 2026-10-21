@@ -3166,6 +3166,8 @@ export interface components {
             task_id?: string | null;
             /** Uncovered Count */
             uncovered_count?: number;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /** RoundSummaryInput */
         RoundSummaryInput: {

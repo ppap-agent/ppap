@@ -512,6 +512,7 @@ class RoundSummary(TypedDict):
     execution: str
     predecessor_id: str | None
     created_at: str | None
+    updated_at: NotRequired[str | None]
     analysis_mode: AnalysisMode
     inputs: list[RoundSummaryInput]
     result_counts: dict[str, int]

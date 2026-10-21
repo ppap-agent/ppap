@@ -85,8 +85,10 @@ class WebAuditLoopTests(unittest.TestCase):
             stamp = uuid.uuid4().hex[:8]
             name, context = f"report-{stamp}.xlsx", f"context-{stamp}.txt"
             target_bytes, reference_bytes = workbook_bytes("第一版"), b"frozen reference"
-            page.get_by_role("button", name="上传资料", exact=True).click()
-            page.get_by_label("上传文件", exact=True).set_input_files(
+            # Existing drafts retain their original bindings and upload recovery.
+            draft_id = page.request.post(f"{api}/drafts", data={}).json()["id"]
+            page.goto(f"{WEB}/?case={draft_id}")
+            page.get_by_label("添加审核资料", exact=True).set_input_files(
                 [
                     {"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": target_bytes},
                     {"name": context, "mimeType": "text/plain", "buffer": reference_bytes},
@@ -168,6 +170,17 @@ class WebAuditLoopTests(unittest.TestCase):
             download = page.get_by_role("dialog", name="历史原件对照", exact=True).get_by_role("link", name="下载原件", exact=True)
             self.assertEqual(page.request.get(urljoin(page.url, download.get_attribute("href"))).body(), target_bytes)
             self.assertEqual(page.request.get(f"{api}/rounds/{original['id']}").json(), saved_original)
+            page.keyboard.press("Escape")
+            writes = []
+            page.on("request", lambda request: writes.append(request.url) if request.method == "POST" and ("/audit-tasks" in request.url or request.url.endswith("/drafts")) else None)
+            page.get_by_role("button", name="补件／重新审核", exact=True).click()
+            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("region", name="重审文件与规则", exact=True)).to_contain_text(name)
+            expect(page.get_by_role("region", name="重审文件与规则", exact=True)).to_contain_text(context)
+            self.assertEqual(urlsplit(page.url).path, "/tasks/new")
+            self.assertEqual(parse_qs(urlsplit(page.url).query)["fromRound"], [original["id"]])
+            self.assertEqual(writes, [])
+            self.assertEqual(page.request.get(f"{api}/rounds/{original['id']}").json(), saved_original)
             browser.close()
 
     def test_docs_addon_entry_reports_missing_host(self):
@@ -211,17 +224,16 @@ class WebAuditLoopTests(unittest.TestCase):
             page.on("request", lambda request: requests.append((request.method, urlsplit(request.url).path)))
             page.goto(f"{WEB}/audit-files")
             expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
-            page.get_by_role("tab", name="全部记录", exact=True).click()
-            page.get_by_role("searchbox", name="搜索零件、供应商或文件", exact=True).fill(name)
-            history = page.get_by_role("table", name="全部审核记录", exact=True)
+            page.get_by_role("textbox", name="搜索审核任务", exact=True).fill(name)
+            history = page.get_by_role("table", name="全部任务审核记录", exact=True)
             row = history.get_by_role("row").filter(has_text=name)
             expect(row).to_have_count(1)
-            expect(row.get_by_role("link")).to_have_attribute("href", f"/audit-files?round={round_id}")
+            expect(row.get_by_role("link")).to_have_attribute("href", f"/audit?round={round_id}")
             expect(page.get_by_role("alert")).to_have_count(0)
             self.assertIn(("GET", urlsplit(api + "/rounds").path), requests)
             self.assertIn(("GET", urlsplit(api + "/drafts").path), requests)
             self.assertEqual([method for method, _ in requests if method in {"POST", "PUT", "PATCH", "DELETE"}], [])
-            self.assertEqual(urlsplit(page.url).path, "/audit-files")
+            self.assertEqual(urlsplit(page.url).path, "/workbench")
             browser.close()
 
     def test_return_from_requirements_restores_review_file_clause_filter_and_next_pending(self):

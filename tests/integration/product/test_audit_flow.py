@@ -303,6 +303,7 @@ class AuditFlowTests(unittest.TestCase):
         round_id = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "rev"}).json()["id"]
         self._finish_worker()
         finding = self.client.get(f"/rounds/{round_id}").json()["findings"][0]
+        before_review = self.client.get("/rounds").json()["rounds"][0]
         self.assertEqual([row["id"] for row in self.client.get("/rounds?unreviewed=true").json()["rounds"]], [round_id])
         machine = finding["status"]
         saved = self.client.put(
@@ -310,6 +311,9 @@ class AuditFlowTests(unittest.TestCase):
             json={"item_key": finding["item_key"], "judgment": "需修改", "rationale": "字段不清", "next_step": "补传", "version": 0},
         )
         self.assertEqual(saved.status_code, 200)
+        after_review = self.client.get("/rounds").json()["rounds"][0]
+        self.assertEqual(after_review["created_at"], before_review["created_at"])
+        self.assertGreater(after_review["updated_at"], before_review["updated_at"])
         self.assertEqual(self.client.get("/rounds?unreviewed=true").json()["rounds"], [])
         self.assertEqual(len(self.client.get("/rounds").json()["rounds"]), 1)
         again = saved.json()["findings"][0]
@@ -516,10 +520,12 @@ class AuditFlowTests(unittest.TestCase):
         self.assertEqual(listed[0]["inputs"][0]["original_filename"], "report.xlsx")
         self.assertTrue(listed[0]["inputs"][0]["file_version_id"])
         self.assertEqual(set(listed[0]["result_counts"]), {"PASS", "NG", "ERR", "UNABLE", "NA"})
+        self.assertGreaterEqual(listed[0]["updated_at"], listed[0]["created_at"])
         self.assertNotIn("findings", listed[0])
         self._finish_worker()
         done = self.client.get("/rounds").json()["rounds"]
         self.assertGreater(done[0]["result_counts"]["PASS"], 0)
+        self.assertGreater(done[0]["updated_at"], listed[0]["updated_at"])
         self._login("carol")
         other = self.client.get("/rounds")
         self.assertEqual(other.status_code, 200)

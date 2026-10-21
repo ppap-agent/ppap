@@ -18,3 +18,9 @@ test('next unreviewed follows rule order, wraps, and excludes the just-saved cla
   assert.equal(nextUnreviewed(rows, '3')?.rule_item.id, '10')
   assert.equal(nextUnreviewed([check('1')], '1'), undefined)
 })
+test('NA is outside optional review progress and navigation, even with a saved record', () => {
+  const rows = [check('1', 'NA'), check('2', 'NA', 'confirm'), check('3', 'NG')]
+  assert.deepEqual(filterChecks(rows, '', 'unreviewed').map(row => row.rule_item.id), ['3'])
+  assert.equal(nextUnreviewed(rows, '3'), undefined)
+  assert.equal(reviewed(rows[1]), false)
+})
