@@ -23,9 +23,9 @@ export function workbenchItems(tasks: TaskSummary[], drafts: components['schemas
       files: draft.items.map(row => ({id: row.file_version_id, name: row.original_filename, role: row.role})),
     })),
     ...rounds.filter(round => !taskRounds.has(round.id) && !('task_id' in round && round.task_id)).map(round => ({
-      id: `round:${round.id}`, href: `/?round=${encodeURIComponent(round.id)}`, title: round.case_title || '历史审核', context: round.case_scope,
+      id: `round:${round.id}`, href: `/audit?round=${encodeURIComponent(round.id)}`, title: round.case_title || '历史审核', context: round.case_scope,
       state: round.execution === 'completed' ? '已完成' : round.execution === 'failed' ? '执行失败' : '审核中',
-      next: round.execution === 'completed' ? '查看结果' : '查看进度', detail: '', received: true, updatedAt: round.created_at || '',
+      next: round.execution === 'completed' ? '查看结果' : '查看进度', detail: '', received: true, updatedAt: round.updated_at || round.created_at || '',
       task: (round.execution === 'completed' ? 'completed' : round.execution === 'failed' ? 'attention' : 'running') as WorkItem['task'],
       counts: {...round.result_counts, uncovered: round.uncovered_count},
       review: {saved: round.reviewed_count, total: Object.entries(round.result_counts).reduce((total, [status, count]) => total + (status === 'NA' ? 0 : count), round.uncovered_count || 0)},

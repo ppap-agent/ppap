@@ -18,3 +18,9 @@ test('only actual task-round identity removes duplicate history; names never ded
   assert.equal(workbenchItems([completed], [], rounds).length, 1)
   assert.equal(workbenchItems([completed, {...completed, id: 't2', round_id: 'r2'}]).length, 2)
 })
+test('legacy round activity controls workbench recency without changing its identity', () => {
+  const round = {id: 'old', execution: 'completed', inputs: [], result_counts: {}, created_at: '2026-09-01', updated_at: '2026-10-21'} as components['schemas']['RoundSummary']
+  const item = workbenchItems([], [], [round])[0]
+  assert.equal(item.updatedAt, '2026-10-21')
+  assert.equal(item.href, '/audit?round=old')
+})

@@ -42,6 +42,7 @@ import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
 import {AuditWorkbench, type WorkbenchProps} from './workbench'
 import {readAuditRoute, surfaceAddress, taskAddress as taskHref} from './routes'
+import {AuditRoundReader, type ReadRound} from './round-reader'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -57,6 +58,7 @@ export type AuditIntakeAdapter = AuditAcceptanceAdapter & AuditRecognitionAdapte
   listTasks: (query: {q: string; state: AuditTask['state'] | null; offset: number; signal?: AbortSignal}) => Promise<{tasks: TaskSummary[]; next_offset: number | null}>
   authenticate: () => Promise<void>
   prepareReaudit?: (roundId: string) => Promise<components['schemas']['AuditReauditInputs']>
+  readRound?: ReadRound
 }
 const taskLabels = {matching: '识别中', pending_confirm: '待确认', reviewing: '审核中', completed: '已完成'}
 const productLinks = [
@@ -101,6 +103,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return surface === 'templates' ? 'workbench' : surface === 'requirements' && !rules ? 'workbench' : surface
   }
   const [surface, setSurface] = useState<ProductSurface>(readSurface)
+  const [legacyRoundId, setLegacyRoundId] = useState(() => new URL(location.href).searchParams.get('round'))
   const [archiveOpened, setArchiveOpened] = useState(surface === 'archive')
   const [rulesOpened, setRulesOpened] = useState(surface === 'requirements')
   const [usageOpened, setUsageOpened] = useState(surface === 'usage')
@@ -273,13 +276,13 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   }
   function clearReads() {draftEpoch.current += 1; validationReads.current.clear(); setChecking([]); uploads.reset()}
   function taskAddress(id: string | null, keepSurface = false) {
-    if (!keepSurface) {surfaceRef.current = 'audit'; setSurface('audit'); setReportView(false)}
+    if (!keepSurface) {surfaceRef.current = 'audit'; setSurface('audit'); setReportView(false); setLegacyRoundId(null)}
     const url = new URL(location.href)
     if (id) url.searchParams.set('task', id); else url.searchParams.delete('task')
     if (!keepSurface) {
       if (!url.pathname.startsWith('/preview/') && url.pathname !== '/__preview') {url.pathname = taskHref(id); url.searchParams.delete('task')}
       url.searchParams.delete('report'); url.searchParams.delete('view'); url.searchParams.delete('packageRequest')
-      for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter']) url.searchParams.delete(key)
+      for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'case', 'draft', 'round', 'stage', 'resume']) url.searchParams.delete(key)
     }
     const state = {...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}
     if (keepSurface) history.replaceState(state, '', url); else history.pushState(state, '', url)
@@ -339,6 +342,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     setLocalFiles([])
     setSupportSnapshot(null)
     const params = new URL(location.href).searchParams, view = readSurface()
+    setLegacyRoundId(params.get('round'))
     if (view !== 'audit') {
       surfaceRef.current = view; setSurface(view)
       if (view === 'archive') setArchiveOpened(true); else if (view === 'requirements') setRulesOpened(true); else if (view === 'usage') setUsageOpened(true)
@@ -348,6 +352,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const fromOtherSurface = surfaceRef.current !== 'audit'
     surfaceRef.current = 'audit'
     setSurface('audit')
+    if (params.has('round') && adapter.readRound) return
     setReportView(new URL(location.href).searchParams.has('report'))
     const id = readAuditRoute(new URL(location.href)).taskId
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report'), packageRequest: new URL(location.href).searchParams.get('packageRequest')}, location.origin)
@@ -514,7 +519,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (value === 'requirements') setRulesOpened(true)
     if (value === 'usage') setUsageOpened(true)
     const url = new URL(location.href)
-    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'packageRequest']) url.searchParams.delete(key)
+    for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'requirement', 'reqVersion', 'reqTab', 'reqQuery', 'packageRequest', 'case', 'draft', 'round', 'stage', 'resume']) url.searchParams.delete(key)
+    setLegacyRoundId(null)
     if (value !== 'audit') url.searchParams.set('view', value); else url.searchParams.delete('view')
     if (value === 'audit' && activeTaskId.current) url.searchParams.set('task', activeTaskId.current)
     if (!url.pathname.startsWith('/preview/') && url.pathname !== '/__preview') {
@@ -572,7 +578,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
         {rulesOpened && <div hidden={surface !== 'requirements'}>{rules?.(surface === 'requirements')}</div>}
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}
-        <div hidden={surface !== 'audit'} className={workbench && !reportView ? '' : 'space-y-6'}>
+        {surface === 'audit' && legacyRoundId && adapter.readRound && <AuditRoundReader roundId={legacyRoundId} readRound={adapter.readRound} renderOriginal={renderOriginal} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(legacyRoundId) : undefined} returnHref="/workbench"/>}
+        <div hidden={surface !== 'audit' || Boolean(legacyRoundId)} className={workbench && !reportView ? '' : 'space-y-6'}>
         <div className={workbench ? 'px-6 pt-3' : ''}><Button variant="ghost" size="sm" onClick={() => showSurface('workbench')}><ArrowLeft/>工作台</Button></div>
         {!reportView && <ol aria-label="审核步骤" className={workbench ? 'flex flex-wrap gap-3 px-6 pt-3 text-sm max-sm:px-4' : 'flex flex-wrap gap-4 border-b pb-4 text-sm'}>{['上传与检查', '确认规则', 'AI审核'].map((label, index) => {
           const current = workbench ? 2 : step === 'match' ? 1 : 0

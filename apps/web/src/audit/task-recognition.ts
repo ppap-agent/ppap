@@ -16,7 +16,7 @@ const unknownMessage = '识别请求结果尚未确认。文件与选择已保�
 
 function acceptedInput(input: RecognitionInput, next: Task, requestId: string, taskId: string) {
   const revision = input.previous ? (input.previous.input_revision ?? 0) + 1 : 0
-  return next.id === taskId && next.recognition_request_id === requestId && next.input_revision === revision && next.analysis_mode === input.mode && next.customer_preference === input.customer && !next.round_id && ['matching', 'pending_confirm'].includes(next.state) && next.files.length === input.files.length && input.files.every(file => next.files.some(row => sameSnapshot(row.file, file.file) && row.selection === file.selection && row.removal_reason === file.removal_reason && row.validation_id === file.validation_id))
+  return next.id === taskId && next.recognition_request_id === requestId && next.input_revision === revision && next.analysis_mode === input.mode && next.customer_preference === input.customer && (next.predecessor_id || null) === (input.predecessorId || null) && !next.round_id && ['matching', 'pending_confirm'].includes(next.state) && next.files.length === input.files.length && input.files.every(file => next.files.some(row => sameSnapshot(row.file, file.file) && row.selection === file.selection && row.removal_reason === file.removal_reason && row.validation_id === file.validation_id && row.preferred_rule_version_id === file.preferred_rule_version_id && Boolean(row.reference_only) === Boolean(file.reference_only) && (file.selection !== 'selected' || row.replacement_of_file_version_id === file.replacement_of_file_version_id)))
 }
 
 /** Keeps each recognition command and its immutable input until its receipt is known. */

@@ -8,7 +8,7 @@ import {Button} from '../components/ui/button'
 import {Badge} from '../components/ui/badge'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {taskAddress} from './routes'
-import {reviewed as hasReview} from './review-navigation'
+import {reviewed as hasReview, reviewable} from './review-navigation'
 import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
 import {FileName} from '../journey/file-name'
@@ -65,9 +65,9 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">全部文件</h2>{task.predecessor_id && <Button variant="link" asChild><a href={task.predecessor_task_id ? taskAddress(task.predecessor_task_id) : `/?round=${encodeURIComponent(task.predecessor_id)}`}>查看前次审核与人工记录</a></Button>}{task.successor_tasks?.map(next => <Button key={next.id} variant="link" asChild><a href={taskAddress(next.id)}>关联重审 {next.number}</a></Button>)}</div>
     <div className="rounded-lg border"><Table className="min-w-xl table-fixed"><TableHeader><TableRow><TableHead>文件与规则</TableHead><TableHead className="w-28">审核状态</TableHead><TableHead className="w-32">人工复核（选做）</TableHead><TableHead className="w-28 text-right">操作</TableHead></TableRow></TableHeader><TableBody>{queue.map(row => {
       const invalid = resultConsistencyError(task, row), reference = row.match?.state === 'reference'
-      const checks = row.audit?.checks || [], reviewed = checks.filter(hasReview).length
+      const checks = (row.audit?.checks || []).filter(reviewable), reviewed = checks.filter(hasReview).length
       return <TableRow key={row.file.id}><TableCell className="whitespace-normal"><FileName colored name={row.file.original_filename}/><p className="mt-2 text-xs text-muted-foreground">{reference ? '比对资料 · 已固定版本' : row.audit?.rule.title || row.match?.rule?.title}</p></TableCell><TableCell><Badge variant={!invalid && row.audit?.conclusion === 'NG' ? 'destructive' : 'outline'}>{invalid ? '结果待核对' : reference ? '比对资料' : row.audit?.conclusion || (row.audit ? executionLabel[row.audit.execution] : '等待读取')}</Badge>{row.audit && <p className="mt-2 text-xs text-muted-foreground">{row.audit.progress.completed}/{row.audit.progress.total} 项<br/>{reportLabel[row.audit.report.state]}</p>}</TableCell><TableCell><span className="text-xs tabular-nums text-muted-foreground">{reference ? '—' : `${reviewed}/${checks.length}`}</span></TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" className="whitespace-nowrap" onClick={() => chooseFile(row.file.id)}>{reference ? '查看资料' : '查看结果'}</Button></TableCell></TableRow>
-    })}</TableBody></Table></div><AuditExcludedFiles files={task.files}/>
+    })}</TableBody></Table></div>
   </section>
   const fileQueue = <div><Button variant={selected ? "ghost" : "secondary"} className="w-full justify-start" onClick={() => chooseFile("")}>全部文件概览</Button><nav aria-label="文件队列">{[{title: '审核文件', rows: targets}, {title: '比对资料', rows: references}].filter(group => group.rows.length).map(group => <section key={group.title} className="min-w-0"><h2 className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">{group.title} ({group.rows.length})</h2><div>{group.rows.map(row => {
     const invalid = resultConsistencyError(task, row)

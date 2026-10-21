@@ -2624,7 +2624,10 @@ class AuthStore:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT r.id FROM product.audit_rounds r
+                """SELECT r.id, GREATEST(r.created_at,
+                     (SELECT max(j.updated_at) FROM engine.jobs j WHERE j.audit_round_id = r.id),
+                     (SELECT max(v.updated_at) FROM product.reviews v WHERE v.round_id = r.id)) AS activity_at
+                   FROM product.audit_rounds r
                    LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id
                    WHERE r.tenant_id = %s
                      AND (d.task_fingerprint IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g
@@ -2636,7 +2639,7 @@ class AuthStore:
                      AND (%s = '' OR r.case_context::text ILIKE %s OR EXISTS (
                          SELECT 1 FROM product.round_inputs i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.round_id = r.id AND (f.original_filename ILIKE %s OR i.rule_title ILIKE %s)))
-                   ORDER BY r.created_at DESC, r.id DESC LIMIT %s OFFSET %s""",
+                   ORDER BY activity_at DESC, r.id DESC LIMIT %s OFFSET %s""",
                 (principal.tenant_id, principal.user_id, execution, execution, unreviewed, q, needle, needle, needle, limit, offset),
             ).fetchall()
             return self._round_histories(conn, [str(row[0]) for row in rows])
@@ -3829,7 +3832,10 @@ class AuthStore:
         with conn.pipeline():
             rounds = conn.execute(
                 """SELECT r.id, r.execution, r.predecessor_id, r.created_at, r.analysis_mode, r.case_context, r.coverage,
-                r.source_draft_id, CASE WHEN d.task_fingerprint IS NOT NULL THEN d.id END
+                r.source_draft_id, CASE WHEN d.task_fingerprint IS NOT NULL THEN d.id END,
+                GREATEST(r.created_at,
+                    (SELECT max(j.updated_at) FROM engine.jobs j WHERE j.audit_round_id = r.id),
+                    (SELECT max(v.updated_at) FROM product.reviews v WHERE v.round_id = r.id))
                 FROM product.audit_rounds r LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id WHERE r.id = ANY(%s::uuid[])""",
                 (round_ids,),
             )
@@ -3893,6 +3899,7 @@ class AuthStore:
             "execution": row[1],
             "source_draft_id": str(row[7]) if row[7] else None,
             "task_id": str(row[8]) if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] is not None else None,
             "predecessor_id": str(row[2]) if row[2] else None,
             "created_at": row[3].isoformat() if row[3] is not None else None,
             "analysis_mode": normalize_analysis_mode(row[4]),

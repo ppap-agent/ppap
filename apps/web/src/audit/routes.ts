@@ -28,7 +28,7 @@ export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: stri
   const natural = (Object.entries(paths) as [ProductSurface, string][]).find(([, value]) => value === path)
   if (natural) return {surface: natural[0], taskId: null}
   const view = url.searchParams.get('view')
-  const surface = view && Object.hasOwn(paths, view) ? view as ProductSurface : url.searchParams.has('task') || ['/audit', '/__audit-native', '/audit.html', '/preview/audit.html'].includes(path) ? 'audit' : 'workbench'
+  const surface = view && Object.hasOwn(paths, view) ? view as ProductSurface : url.searchParams.has('task') || url.searchParams.has('round') || ['/audit', '/__audit-native', '/audit.html', '/preview/audit.html'].includes(path) ? 'audit' : 'workbench'
   return {surface, taskId: url.searchParams.get('task')}
 }
 
