@@ -23,7 +23,7 @@
 
 `tests/e2e/test_ui_a11y.py` 从当前工作台与审核要求入口验证键盘导航、单一主标题、窄屏，以及原件侧栏和草稿确认弹窗的焦点约束与取消返回；API fixtures 只用于受控 UI 验证，不证明真实登录、发布或数据持久化。
 
-规则导入的出处来自固定文件版本的原文字段，不从“待核对”等展示文案推断。`test_rule_sources.py` 与 Product `test_rules.py` 验证真实位置、摘录和发布校验；`test_rule_interactions.py` 验证旧草稿仅补充可唯一匹配的出处、不重新提取或发布，以及原文选择、核对计数和保存门槛一致。`test_web_rules.py` 通过真实 API、PostgreSQL、对象存储与 Worker 验证上传、核对、保存及重新打开；JSON 路径不调用模型。
+规则导入的出处来自固定文件版本的原文字段，不从“待核对”等展示文案推断。`test_rule_sources.py` 与 Product `test_rules.py` 验证真实位置、摘录和发布校验；`test_rule_interactions.py` 验证旧草稿仅补充可唯一匹配的出处、不重新提取或发布，以及原文选择、核对计数和保存门槛一致。`test_web_rules.py` 通过真实 API、PostgreSQL、对象存储与 Worker 验证 JSON 及三份 POC 原始 DOCX 的上传、核对、保存和全新会话重开，检查用户确认的 9／7／11 条原文与顺序、核对状态、来源版本及下载字节。结构清晰的 DOCX 规则表直接提取原文，不要求模型调用；`test_control_plan_rule_assets.py` 保护控制计划原始资产及本地 11 条解析。上述隔离栈测试不证明真实飞书登录或全部 POC 在线审核质量。
 
 失败轮次的新轮准备由 `test_rule_interactions.py` 覆盖正常、丢失／无效回执、错身份、刷新恢复与离开后的晚到响应，以及多类型／同类型不同规则在编辑和重新读取后的绑定保留；迟到响应先等待响应完成与渲染边界，再检查未发生导航。`test_audit_flow.py` 使用独立 PostgreSQL 验证草稿初始输入、并发同身份重放、撤权、事务回滚及不新增工作／用量；`test_audit_tasks.py` 验证 V3 终态不能绕入旧式重审入口。`RoundPreparation` 是单次准备、两个请求身份、三个导航代次的有限安全模型；数据库去重与授权是外部假设，不证明完整审核、跨窗口原子性或最终网络恢复。准备步骤不改变 `GreenfieldCheckStart` 中的受理计数。
 
