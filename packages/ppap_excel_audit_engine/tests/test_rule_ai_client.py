@@ -4,6 +4,21 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from ppap_core.contracts import AuditInput, RuleInput, RuleItem
+from ppap_excel_audit_engine.checkers.prompts import PromptManager
+
+
+def test_rule_prompt_remains_usable_without_extracted_file_content():
+    prompt = PromptManager.get_audit_prompt(
+        AuditInput(audit_id="version-one", file_url="/tmp/original.xlsx", content=None),
+        RuleInput(rule_id="confirmed-rules", type="控制计划"),
+        RuleItem(id="1", category="任务项", priority="P1", rule_to_check="检查工序", type_of_rule="text"),
+        agentic_prompt="",
+    )
+
+    assert "规则编号：1" in prompt
+    assert "文件内容" in prompt
+
 
 class SDK:
     def __init__(self, response=None, error=None):

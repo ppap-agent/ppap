@@ -62,13 +62,39 @@ def test_embedded_images_and_authorized_signature_preserve_existing_excel_decisi
         assert signature.status == signature_status
         if seal_status == "PASS":
             assert seal.suggestions == ""
+            assert seal.evidence.used == "visual"
+            assert [(source.kind, source.locator) for source in seal.evidence.sources] == [("visual", "workbook://embedded-images")]
         else:
             assert "未检测到有效印章" in seal.suggestions
         if signature_status == "PASS":
             assert signature.suggestions == ""
+            assert signature.evidence.used == "both"
+            assert [(source.kind, source.locator) for source in signature.evidence.sources] == [("structure", "workbook://structured-cells"), ("visual", "workbook://embedded-images")]
         elif image_kind == "corner-stamp":
             assert "缺少有效经授权签字" in signature.suggestions
         else:
             assert "盖章" in signature.suggestions
+    finally:
+        agent.close()
+
+
+@pytest.mark.parametrize(("profile", "agent_type"), [("v2", V2PswAgent), ("v3", V3PswAgent)], ids=["v2", "v3"])
+def test_corrupt_native_psw_workbook_is_an_execution_error_without_invented_evidence(tmp_path, profile, agent_type):
+    path = tmp_path / "broken.xlsx"
+    original = b"not a readable workbook"
+    path.write_bytes(original)
+    agent = agent_type(
+        AuditInput(audit_id="psw-corrupt", file_url=str(path)),
+        RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type="零件提交保证书", rules=[]),
+    )
+
+    try:
+        with bind_runtime(None):
+            result = agent.check(2)
+        assert result.status == "ERR"
+        assert result.evidence.used == "none"
+        assert result.evidence.sources == ()
+        assert [(row.code, row.stage, row.severity) for row in result.evidence.diagnostics] == [("psw.evaluation.runtime_error", "evaluation", "error")]
+        assert path.read_bytes() == original
     finally:
         agent.close()
