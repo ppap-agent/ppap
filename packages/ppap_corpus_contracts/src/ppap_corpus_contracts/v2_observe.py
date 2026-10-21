@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from ppap_core.contracts import AuditInput
 
 from ppap_corpus_contracts.baseline_exceptions import ObservedRuleOutcome
-from ppap_corpus_contracts.execution_outcome import outcome_from_agent_rule
+from ppap_corpus_contracts.execution_outcome import EXECUTION_RESULT, outcome_from_agent_rule
 from ppap_corpus_contracts.v2_assets_shared import FileCase, make_dummy_rule
 
 
@@ -27,14 +29,20 @@ def observe_v2_rule_outcome(case: FileCase, rule_index: int, agent: object, agen
                 raised=exc,
             ),
         )
+    actual = outcome_from_agent_rule(rule_index=rule_index, agent_rule_count=agent_rule_count, result=result)
+    detail = getattr(result, "suggestions", "") if actual.execution_class == EXECUTION_RESULT else ""
     return ObservedRuleOutcome(
         expected_status=expected_status,
-        actual=outcome_from_agent_rule(
-            rule_index=rule_index,
-            agent_rule_count=agent_rule_count,
-            result=result,
-        ),
+        actual=actual,
+        detail=detail[:1024] if isinstance(detail, str) else "",
     )
+
+
+def format_v2_rule_outcome(outcome: ObservedRuleOutcome) -> str:
+    extra = f" {outcome.actual.diagnostic_code}" if outcome.actual.diagnostic_code else ""
+    detail = " ".join(outcome.detail[:1024].split())
+    explanation = f"; reason={json.dumps(detail, ensure_ascii=False)}" if detail else ""
+    return f"expected {outcome.expected_status}, got {outcome.actual.status}/{outcome.actual.execution_class}{extra}{explanation}"
 
 
 def collect_v2_rule_outcomes(
@@ -75,6 +83,8 @@ def collect_v2_rule_outcomes(
                 print(f"      📝 人工判定依据: {expectation.manual_reason}")
             if outcome.actual.diagnostic_code:
                 print(f"      ⚙ diagnostic: {outcome.actual.diagnostic_code}")
+            if outcome.detail:
+                print(f"      🔎 {format_v2_rule_outcome(outcome)}")
 
     if verbose_check:
         mismatches = [rule for rule, outcome in outcomes.items() if outcome.is_mismatch]
@@ -82,7 +92,6 @@ def collect_v2_rule_outcomes(
             print("------ Mismatch Summary ------")
             for rule in mismatches:
                 outcome = outcomes[rule]
-                extra = f" {outcome.actual.diagnostic_code}" if outcome.actual.diagnostic_code else ""
-                print(f"  - rule {rule}: expected {outcome.expected_status}, got {outcome.actual.status}/{outcome.actual.execution_class}{extra}")
+                print(f"  - rule {rule}: {format_v2_rule_outcome(outcome)}")
             print("------------------------------")
     return outcomes
