@@ -246,7 +246,8 @@ class WebAuditLoopTests(unittest.TestCase):
             names = [f"alpha-{stamp}.xlsx", f"beta-{stamp}.xlsx"]
             versions = [upload_version(page, api, name, workbook_bytes(name)) for name in names]
             original = accept_round(page, api, [{"file_version_id": row["id"], "role": "target", "rule_version_id": RULE_A} for row in versions])
-            page.goto(f"{WEB}/?round={original['id']}")
+            # Existing stage deep links retain their legacy review context.
+            page.goto(f"{WEB}/?round={original['id']}&stage=decision")
             expect(page.get_by_role("heading", name="人工复核", exact=True)).to_be_visible()
             page.get_by_role("button", name=re.compile("^条款目录")).click()
             directory = page.get_by_role("dialog", name="审核条款", exact=True)
@@ -271,8 +272,8 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertEqual(expected["reviewFilter"], ["all"])
             self.assertIn(versions[1]["id"], expected["reviewFile"][0])
             page.get_by_role("link", name="工作台", exact=True).click()
-            page.get_by_role("link", name="审核要求", exact=True).click()
-            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            page.get_by_role("link", name="审核规则", exact=True).click()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.go_back()
             page.go_back()
             expect(page.get_by_role("heading", name="人工复核", exact=True)).to_be_visible()
