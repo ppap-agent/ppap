@@ -161,14 +161,17 @@ def test_pfmea_special_characteristic_is_checked_against_the_actual_flow_file(tm
     related = saved_file(tmp_path, "flow.xlsx", flow)
     if reference_format == "pdf":
         converted = related.file_url
+        source_pdf = str(tmp_path / "flow.pdf")
 
         def convert(file_ref, *, enable_cache=True):
+            assert file_ref.location == source_pdf
+            assert enable_cache is True
             return ConversionArtifact(success=True, xlsx_path=converted, temp_files=[converted])
 
         # Only the external converter is replaced; native loading, extraction,
         # cross-file matching and the PFMEA decision all run unchanged.
         monkeypatch.setattr("ppap_pdf_to_excel.pipeline.convert_pdf_to_excel_auto", convert)
-        related = AuditInput(audit_id=related.audit_id, file_url=str(tmp_path / "flow.pdf"))
+        related = AuditInput(audit_id=related.audit_id, file_url=source_pdf)
     group = GroupContextInput(by_doc_type={"过程流程图": [related]}, by_audit_id={related.audit_id: related})
 
     with bind_runtime(None):
