@@ -517,7 +517,8 @@ def load_workbook_auto(
     if not artifact.success or not artifact.xlsx_path:
         raise RuntimeError(f"PDF->Excel conversion failed: {artifact.diagnostics}")
 
-    workbook = load_excel_workbook(artifact.xlsx_path)
-    if cleanup:
-        _cleanup(artifact.temp_files)
-    return workbook
+    try:
+        return load_excel_workbook(artifact.xlsx_path)
+    finally:
+        if cleanup:
+            _cleanup(artifact.temp_files)
