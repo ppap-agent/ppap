@@ -496,7 +496,7 @@ class HttpAuthTests(unittest.TestCase):
         cookie = denied_host.cookies.get("ppap_session")
         allowed = client.get("/enter-current", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(allowed.status_code, 302)
-        self.assertEqual(allowed.headers["location"], "http://127.0.0.1:4173/audit")
+        self.assertEqual(allowed.headers["location"], "http://127.0.0.1:4173/workbench")
         self.assertEqual(allowed.cookies.get("ppap_edition"), "current")
         legacy = client.get("/enter-legacy", cookies={"ppap_session": cookie}, follow_redirects=False)
         self.assertEqual(legacy.status_code, 302)
@@ -522,6 +522,8 @@ class HttpAuthTests(unittest.TestCase):
             "http://127.0.0.1:4173/audit?task=frozen-task&report=frozen-report#clause-2",
             "http://127.0.0.1:4173/audit?share=frozen-share",
             "http://127.0.0.1:4173/?round=frozen-round&clause=rule-2",
+            "http://127.0.0.1:4173/tasks/frozen-task?file=frozen-file&report=frozen-report#clause-2",
+            "http://127.0.0.1:4173/files?archiveDoc=frozen-document&auditRef=frozen-round",
         ):
             with self.subTest(target=target):
                 client = self._oauth_client(_TokenHttp(), settings)
@@ -538,7 +540,7 @@ class HttpAuthTests(unittest.TestCase):
                 entry = urlsplit(done.headers["location"])
                 landed = client.get(entry.path + ("?" + entry.query if entry.query else ""), cookies={"ppap_session": raw}, follow_redirects=False)
                 self.assertEqual(landed.status_code, 302)
-                self.assertEqual(landed.headers["location"], target or "http://127.0.0.1:4173/audit")
+                self.assertEqual(landed.headers["location"], target or "http://127.0.0.1:4173/workbench")
                 self.assertEqual(landed.cookies.get("ppap_edition"), "current")
 
     def test_enter_current_rejects_foreign_and_recursive_destinations(self):
@@ -562,7 +564,7 @@ class HttpAuthTests(unittest.TestCase):
             with self.subTest(target=target):
                 result = client.get("/enter-current", params={"return_to": target}, follow_redirects=False)
                 self.assertEqual(result.status_code, 302)
-                self.assertEqual(result.headers["location"], "http://127.0.0.1:4173/audit")
+                self.assertEqual(result.headers["location"], "http://127.0.0.1:4173/workbench")
 
     def test_enter_edition_hides_route_from_other_tenants(self):
         with _clean_env(
