@@ -12,6 +12,8 @@ from PIL import Image
 from ppap_core.contracts import AuditInput, RuleInput
 from ppap_core.types import PpapDocumentType
 from ppap_excel_audit_engine import run_audit
+from ppap_excel_audit_engine.app_runtime import run_audit_engine
+from ppap_excel_audit_engine.checkers.client import AIClient
 
 
 def submission_control(*, generic=False):
@@ -172,6 +174,23 @@ def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_p
     assert [results[index].status for index in (2, 4, 6, 7)] == ["NG"] * 4
     assert runtime.calls == []
     assert results[2].evidence.diagnostics[0].code == "psw.visual.missing"
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3"])
+def test_invalid_model_response_keeps_word_field_decisions_and_reports_visual_errors(tmp_path, monkeypatch, profile):
+    path = tmp_path / "psw.docx"
+    psw_document().save(path)
+    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: "not-json")
+
+    results = run_audit_engine(
+        AuditInput(audit_id="psw-word-model-error", file_url=str(path)),
+        RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
+    )
+
+    assert [result.status for result in results] == ["PASS", "PASS", "ERR", "PASS", "ERR", "PASS", "PASS", "PASS", "PASS", "PASS"]
+    for index in (2, 4):
+        assert results[index].evidence.used == "none"
+        assert results[index].evidence.diagnostics[0].code == "psw.visual.unverifiable"
 
 
 @pytest.mark.parametrize("control", ["nested-checkbox", "generic-checkbox-character"])

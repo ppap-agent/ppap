@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from datetime import date, datetime
-from typing import Protocol, Sequence
+from typing import Literal, Protocol, Sequence
 
 from ppap_core.contracts import AuditResultItem as AuditResult
 
@@ -24,7 +24,8 @@ _SUBMISSION_CHECKBOX_FIELDS = (
 )
 # Same window as the structured PSW rule 9: 0 through 92 days is inside 3 months.
 _CONDITIONAL_APPROVAL_WINDOW_DAYS = 92
-_UNVERIFIABLE = "视觉证据识别失败，无法验证必需证据。"
+_UNVERIFIABLE = "视觉模型未返回有效的审核数据。"
+_UNDECIDABLE = "视觉信息不足，无法判断所需事实。"
 _SELECTION_NG = "“认可情况”需且仅需勾选一个选项。"
 _MISSING_FIELD_NG = "未找到“认可情况”字段。"
 _DATE_MISSING_NG = "无法识别条件批准日期。"
@@ -139,7 +140,7 @@ def decide_disposition_visual_rule(
 ) -> tuple[str, str]:
     """Apply the structured PSW rule 8/9/10 order to reported checkbox facts.
 
-    The model does not choose PASS or NG. A missing or unreadable fact fails closed.
+    The model does not choose PASS or NG. Missing or unreadable facts are UNABLE.
     """
 
     if rule_no not in _DISPOSITION_VISUAL_RULES:
@@ -149,12 +150,16 @@ def decide_disposition_visual_rule(
     approved = _as_bool(observation.get("approved_checked"))
     conditional = _as_bool(observation.get("conditional_checked"))
     rejected = _as_bool(observation.get("rejected_checked"))
-    if visible is None or approved is None or conditional is None or rejected is None:
-        return "NG", _UNVERIFIABLE
+    if visible is None:
+        return "UNABLE", _UNDECIDABLE
     if not visible:
         return "NG", _MISSING_FIELD_NG
 
     checked = [name for name, selected in (("approved", approved), ("conditional", conditional), ("rejected", rejected)) if selected]
+    if len(checked) > 1:
+        return "NG", _SELECTION_NG
+    if approved is None or conditional is None or rejected is None:
+        return "UNABLE", _UNDECIDABLE
     if len(checked) != 1:
         return "NG", _SELECTION_NG
 
@@ -162,18 +167,18 @@ def decide_disposition_visual_rule(
         if not approved:
             return "PASS", ""
         submission = [_as_bool(observation.get(field)) for field in _SUBMISSION_CHECKBOX_FIELDS]
+        if any(value is False for value in submission):
+            return "NG", _SUBMISSION_NG
         if any(value is None for value in submission):
-            return "NG", _UNVERIFIABLE
-        if all(submission):
-            return "PASS", ""
-        return "NG", _SUBMISSION_NG
+            return "UNABLE", _UNDECIDABLE
+        return "PASS", ""
 
     if checked[0] != "conditional":
         return "PASS", ""
 
     if rule_no == 9:
-        if "approval_date" not in observation:
-            return "NG", _UNVERIFIABLE
+        if observation.get("approval_date") is None:
+            return "UNABLE", _UNDECIDABLE
         approval_date = _parse_approval_date(observation.get("approval_date"))
         if approval_date is None:
             return "NG", _DATE_MISSING_NG
@@ -184,7 +189,7 @@ def decide_disposition_visual_rule(
 
     comments_present = _as_bool(observation.get("comments_present"))
     if comments_present is None:
-        return "NG", _UNVERIFIABLE
+        return "UNABLE", _UNDECIDABLE
     if comments_present:
         return "PASS", ""
     return "NG", _COMMENTS_NG
@@ -212,13 +217,13 @@ class PswVisualRuleEvaluator:
             raise ValueError("visual response must be a JSON object")
         return result
 
-    def _unverifiable(self, config: dict[str, str]) -> AuditResult:
+    def _unverifiable(self, config: dict[str, str], *, status: Literal["ERR", "UNABLE"] = "ERR") -> AuditResult:
         return AuditResult(
             classification=config["classification"],
             item=config["item"],
             priority="P0",
-            status="NG",
-            suggestions=_UNVERIFIABLE,
+            status=status,
+            suggestions=_UNVERIFIABLE if status == "ERR" else _UNDECIDABLE,
         )
 
     def evaluate(
@@ -275,7 +280,7 @@ class PswVisualRuleEvaluator:
         elif company_stamp is False and (authorization is False or authorization_stamp is False):
             status, suggestions = "NG", "保证书印章文字未以“公司”结尾，且没有盖有公司章的部门章授权声明。"
         else:
-            return self._unverifiable(config)
+            return self._unverifiable(config, status="ERR" if str(observation.get("status", "")).upper() == "ERR" else "UNABLE")
         return AuditResult(
             classification=config["classification"],
             item=config["item"],
@@ -293,22 +298,22 @@ class PswVisualRuleEvaluator:
         today: date,
     ) -> AuditResult:
         fields: dict[str, object] = {
-            "disposition_visible": True,
-            "approved_checked": False,
-            "conditional_checked": False,
-            "rejected_checked": False,
+            "disposition_visible": None,
+            "approved_checked": None,
+            "conditional_checked": None,
+            "rejected_checked": None,
         }
         if rule_no == 8:
-            fields.update({field: False for field in _SUBMISSION_CHECKBOX_FIELDS})
+            fields.update({field: None for field in _SUBMISSION_CHECKBOX_FIELDS})
             field_note = "提交结果的四项与满足要求的“是”分别对应 dimensional、appearance、material_functional、statistical、requirements_yes。"
         else:
-            fields.update(approval_date="", comments_present=False)
-            field_note = "approval_date 使用 YYYY-MM-DD；没有日期时为空字符串。补充评论有非空内容时 comments_present 为 true。"
+            fields.update(approval_date=None, comments_present=None)
+            field_note = "approval_date 使用 YYYY-MM-DD；明确没有日期时为空字符串，无法辨认时为 null。补充评论有非空内容时 comments_present 为 true，明确为空时为 false，无法辨认时为 null。"
         user_prompt = (
             f"{config['user_prompt']}{source_note}\n\n"
             "请只返回以下 JSON，不要添加解释：\n"
             f"{json.dumps(fields, ensure_ascii=False, indent=4)}\n"
-            "空框为 false。看不清“认可情况”时 disposition_visible 为 false。"
+            "明确的空框为 false。明确不存在“认可情况”区域时 disposition_visible 为 false；无法辨认该区域时为 null。"
             "无法辨认的勾选状态返回 null，不得猜测。"
             f"{field_note}"
         )
@@ -321,6 +326,8 @@ class PswVisualRuleEvaluator:
         try:
             observation = self._load_json_object(response)
             status, suggestions = decide_disposition_visual_rule(rule_no, observation, today=today)
+            if status == "UNABLE" and str(observation.get("status", "")).upper() == "ERR":
+                return self._unverifiable(config)
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("PSW rule %s visual evidence could not be verified: %s", rule_no, exc)
             return self._unverifiable(config)
@@ -348,9 +355,9 @@ class PswVisualRuleEvaluator:
             f'    "classification": "{config["classification"]}",\n'
             f'    "item": "{config["item"]}",\n'
             '    "priority": "P0",\n'
-            '    "status": "Pass/NG/ERR",\n'
+            '    "status": "Pass/NG/UNABLE/ERR",\n'
             '    "suggestions": "修改意见"\n'
-            "}"
+            "}\n无法辨认判断所需内容时返回 UNABLE，不要猜测通过或不通过。"
         )
         response = self._analyze(
             system_prompt=config["system_prompt"],
@@ -362,10 +369,8 @@ class PswVisualRuleEvaluator:
             result_dict = self._load_json_object(response)
             status = str(result_dict.get("status", "") or "").upper()
             if status not in {"PASS", "NG"}:
-                result_dict["status"] = "NG"
-                result_dict["suggestions"] = _UNVERIFIABLE
-            else:
-                result_dict["status"] = status
+                return self._unverifiable(config, status="UNABLE" if status == "UNABLE" else "ERR")
+            result_dict["status"] = status
             if not str(result_dict.get("suggestions", "") or "").strip():
                 result_dict["suggestions"] = self._default_suggestions(rule_no, result_dict.get("status"))
             return AuditResult(

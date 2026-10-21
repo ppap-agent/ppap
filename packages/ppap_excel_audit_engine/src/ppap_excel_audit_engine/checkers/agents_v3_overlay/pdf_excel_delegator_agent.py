@@ -120,6 +120,15 @@ class PdfExcelDelegatorAgent(PDFAgent):
             group_context=self.group_context,
         )
 
+    def close(self) -> None:
+        """Close the delegated workbook before removing conversion files."""
+        try:
+            close = getattr(self.excel_agent, "close", None)
+            if callable(close):
+                close()
+        finally:
+            self._cleanup_temp_files()
+
     def _resolve_success_slots(self, excel_rule_count: int) -> int:
         rules = getattr(self.rule, "rules", [])
         if isinstance(rules, list):

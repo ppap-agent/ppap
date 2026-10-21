@@ -138,11 +138,11 @@ class PswDocxEvidenceMixin:
                     source_locations=[f"{item.evidence.source.part}:{item.evidence.source.path}" for item in evidence],
                 )
                 diagnostic = None
-                if result.status == "NG" and "视觉证据识别失败" in result.suggestions:
+                if result.status in {"ERR", "UNABLE"}:
                     diagnostic = EvidenceDiagnostic(
                         code=DIAGNOSTIC_VISUAL_UNVERIFIABLE,
                         stage="visual",
-                        severity="error",
+                        severity="error" if result.status == "ERR" else "warning",
                         message="视觉模型返回结果不可验证。",
                     )
                 sources = tuple(
