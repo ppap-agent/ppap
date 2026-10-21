@@ -391,7 +391,13 @@ class ContainerRuntime:
         cancelled: threading.Event,
         on_progress: Callable[[Progress], None] | None = None,
     ) -> None:
-        with self.slot:
+        while True:
+            remaining = deadline - time.monotonic()
+            if cancelled.is_set() or remaining <= 0:
+                raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
+            if self.slot.acquire(timeout=min(0.1, remaining)):
+                break
+        try:
             if self.degraded:
                 raise ControllerFault("ISOLATION_UNAVAILABLE")
             if cancelled.is_set() or time.monotonic() >= deadline:
@@ -432,6 +438,8 @@ class ContainerRuntime:
                     except (OSError, ValueError):
                         self.degraded = True
                 shutil.rmtree(run)
+        finally:
+            self.slot.release()
 
     @staticmethod
     def _diagnostic(run: Path, destination: Path, code: str, *, usage: dict | None = None) -> None:

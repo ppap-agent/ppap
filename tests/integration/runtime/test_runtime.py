@@ -36,6 +36,30 @@ def _page(path: str) -> tuple[int, str]:
 
 
 class DeployRuntimeTests(unittest.TestCase):
+    def test_deep_container_runtime_contracts(self):
+        checks = Path(__file__).with_name("deep_container_cases.py")
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--user",
+                "0",
+                "--entrypoint",
+                "/app/.venv/bin/python",
+                "--mount",
+                f"type=bind,source={checks},target=/checks.py,readonly",
+                f"ppap-worker:{_sha()}",
+                "/checks.py",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_api_health_version_and_ready_use_the_image_sha(self):
         sha = _sha()
         status, health = _get("/health")
