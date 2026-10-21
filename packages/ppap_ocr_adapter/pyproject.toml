@@ -5,7 +5,7 @@ description = "PPAP OCR Adapter - pluggable OCR providers and artifacts"
 requires-python = "==3.12.*"
 dependencies = [
     "openai>=1.95.0",
-    "pillow>=10.1.0",
+    "pillow>=10.2.0",
     "ppap-core",
     "ppap-docops",
     "openpyxl>=3.1.2",

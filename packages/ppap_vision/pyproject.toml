@@ -5,7 +5,7 @@ description = "PPAP Vision - image processing, seal and signature detection"
 requires-python = "==3.12.*"
 dependencies = [
     "ppap-core",
-    "Pillow>=10.1.0",
+    "Pillow>=10.2.0",
     "opencv-python-headless>=4.9.0.80",
     "numpy>=1.24.0",
     "PyMuPDF>=1.26.0",
