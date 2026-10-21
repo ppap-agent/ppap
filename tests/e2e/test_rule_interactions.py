@@ -552,7 +552,7 @@ class RuleInteractionTests(unittest.TestCase):
                         page.keyboard.press("Escape")
                     else:
                         dialog.get_by_role("button", name="重新打开工作台", exact=True).click()
-                    expect(page).to_have_url(WEB + "/audit?view=requirements")
+                    expect(page).to_have_url(WEB + "/requirements")
                     expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
                     expect(dialog).to_have_count(0)
                     page.close()
