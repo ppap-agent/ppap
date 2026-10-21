@@ -119,15 +119,25 @@ class ContainerQueueTests(unittest.TestCase):
                         self.assertFalse(first.done(), "running guest was released before the waiting request returned")
                         self.assertEqual(spawn.call_count, 1)
                         self.assertFalse((second_work / "result").exists())
+                        third_work = root / "third-work"
+                        third_work.mkdir()
+                        third_spec = first_spec.model_copy(update={"execution_id": uuid4()})
+                        third = pool.submit(runtime.run, third_spec, inputs, third_work, time.monotonic() + 0.15, threading.Event())
+                        with self.assertRaises(ControllerFault) as still_held:
+                            third.result(timeout=3)
+                        self.assertEqual(still_held.exception.code, "MODEL_TIMEOUT")
+                        self.assertEqual(spawn.call_count, 1, "a waiting caller released another guest's slot")
+                        self.assertFalse(first.done())
+                        self.assertFalse((third_work / "result").exists())
                     finally:
                         release.set()
                     first.result(timeout=5)
-                third_work = root / "third-work"
-                third_work.mkdir()
-                runtime.run(first_spec.model_copy(update={"execution_id": uuid4()}), inputs, third_work, time.monotonic() + 2, threading.Event())
+                fourth_work = root / "fourth-work"
+                fourth_work.mkdir()
+                runtime.run(first_spec.model_copy(update={"execution_id": uuid4()}), inputs, fourth_work, time.monotonic() + 2, threading.Event())
                 self.assertEqual(spawn.call_count, 2)
             self.assertEqual(json.loads((first_work / "result" / "bundle.json").read_text()), {"snapshot": "external guest result"})
-            self.assertEqual(json.loads((third_work / "result" / "bundle.json").read_text()), {"snapshot": "external guest result"})
+            self.assertEqual(json.loads((fourth_work / "result" / "bundle.json").read_text()), {"snapshot": "external guest result"})
             self.assertEqual(list(config.state.glob("run-*")), [])
 
 
