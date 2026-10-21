@@ -411,7 +411,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: ghcr.io/ppap-agent/ppap/api@sha256:6937cf77d6d6e9d7ebc64f6a41578577e25889e4d334bf54fb4bc9e994b0e87c
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-api@sha256:845674f6d5a03e37d906fa2dd000ff745057824c6afc545071c29aa7c31798d3
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -505,7 +505,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: ghcr.io/ppap-agent/ppap/deep@sha256:95076236e21ed14ac2b3b0d03d47e1a027f066799e91e287fb59d6d669cdcd88
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-deep@sha256:6c0e3e9baccfae3c06a721eb3c444805f2be0ae24feef020c2f11315965ed8f5
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -554,7 +554,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: ghcr.io/ppap-agent/ppap/worker@sha256:59e669cfaddb95d7a9b59e17fd2eb5c93e95451bc1d2ee51d66b26e0625fe4fd
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-worker@sha256:31316ffee425f017fcd7b54a2147c19c1629277f7ff1a77691963c9f2d0f0d59
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -636,7 +636,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: ghcr.io/ppap-agent/ppap/web@sha256:24c520bfb2c4c01ead7761eeb113d60120e71b37377d76c02a8350e2e2695431
+          image: icoastline.tencentcloudcr.com/ppap-feishu/current-web@sha256:af3c6967b2db6e058de3a892a2967bdceea8a5b78251dbab7476519a00b1db15
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173

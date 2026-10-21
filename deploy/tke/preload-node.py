@@ -133,6 +133,8 @@ def main() -> None:
     action, *args = sys.argv[1:]
     if action == "serve":
         serve()
+    elif action == "inspect":
+        print(json.dumps(inspect_image(*args)), flush=True)
     elif action == "export":
         print(json.dumps(export(*args)), flush=True)
     elif action == "receive":

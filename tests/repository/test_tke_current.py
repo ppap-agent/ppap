@@ -200,9 +200,13 @@ exit 0
         self.assertEqual({container["name"] for container in app_containers}, {"api", "worker", "deep", "web"})
         self.assertRegex(config["data"]["PPAP_BUILD_SHA"], r"^[0-9a-f]{40}$")
         ghcr = all(image.startswith("ghcr.io/ppap-agent/ppap/") for image in app_images)
+        tcr = all(image.startswith("icoastline.tencentcloudcr.com/ppap-feishu/current-") for image in app_images)
         for container in app_containers:
             if ghcr:
                 self.assertRegex(container["image"], rf"^ghcr\.io/ppap-agent/ppap/{container['name']}@sha256:[0-9a-f]{{64}}$")
+                self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
+            elif tcr:
+                self.assertRegex(container["image"], rf"^icoastline\.tencentcloudcr\.com/ppap-feishu/current-{container['name']}@sha256:[0-9a-f]{{64}}$")
                 self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
             else:
                 self.assertEqual(container["image"], f"unregistry.xixifusi.online/ppap-{container['name']}:{config['data']['PPAP_BUILD_SHA']}")
