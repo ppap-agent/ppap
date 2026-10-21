@@ -1296,7 +1296,7 @@ class AuthStore:
             if reference_only and (not inherited or inherited["role"] != "reference" or preferred):
                 raise ValueError("invalid_reference_binding")
             reuse = bool(inherited and (reference_only or preferred and preferred == inherited["rule_id"]))
-            if row["selection"] == "selected" and reuse and not reference_only and customer != predecessor["customer_preference"]:
+            if row["selection"] == "selected" and reuse and not reference_only and predecessor is not None and customer != predecessor["customer_preference"]:
                 raise ValueError("reaudit_scope_changed")
             chosen = next((rule for rule in all_rules if rule["id"] == preferred), None) if preferred else None
             if row["selection"] == "selected" and preferred and (not chosen or not reuse and not any(rule["id"] == preferred for rule in candidates)):
@@ -1315,7 +1315,7 @@ class AuthStore:
                 }
                 if replacement:
                     payload["replacement_of_file_version_id"] = replacement
-                if reuse and (not replacement or reference_only):
+                if inherited is not None and reuse and (not replacement or reference_only):
                     payload["confirmed_match"] = {
                         "matching_status": "reference" if reference_only else "matched",
                         "matched_rule_id": preferred,
