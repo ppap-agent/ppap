@@ -112,7 +112,7 @@ def test_incoming_inspection_is_found_after_earlier_process_rows(tmp_path, incom
     assert result.status == "PASS"
 
 
-@pytest.mark.parametrize("process", ["原材料入库", "成品粒子检测", "装配质量检验", "原材料入库；成品尺寸检测", "原材料入库，成品质量检验"])
+@pytest.mark.parametrize("process", ["原材料入库", "成品粒子检测", "装配质量检验", "原材料入库；成品尺寸检测", "原材料入库，成品质量检验", "原材料入库\n成品尺寸检测", "原材料入库\r\n成品质量检验"])
 def test_material_storage_or_generic_inspection_is_not_incoming_inspection(tmp_path, process):
     workbook = flow_workbook()
     workbook.active.append([process])
