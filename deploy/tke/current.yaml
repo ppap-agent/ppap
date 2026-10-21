@@ -7,7 +7,7 @@ metadata:
     k8s-app: ppap-current
 data:
   PPAP_PROFILE: production
-  PPAP_BUILD_SHA: 7941290a9a43c1f91878b46f91950d56b7b1c4bd
+  PPAP_BUILD_SHA: e16b6d7edefd91ee2ad30dad2103afe8dc58f330
   PPAP_WEB_URL: https://ppap.icoastline.com
   PPAP_PUBLIC_API_URL: https://ppap.icoastline.com/ppap
   PPAP_ONLYOFFICE_URL: https://ppap.icoastline.com/office
@@ -411,7 +411,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: api
-          image: ghcr.io/ppap-agent/ppap/api@sha256:b9f68b91e5e081b2d889ba47f160ba97d8195761efc32ff99b41cd541e954342
+          image: ghcr.io/ppap-agent/ppap/api@sha256:6937cf77d6d6e9d7ebc64f6a41578577e25889e4d334bf54fb4bc9e994b0e87c
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -505,7 +505,7 @@ spec:
           emptyDir: {}
       containers:
         - name: deep
-          image: ghcr.io/ppap-agent/ppap/deep@sha256:aa87e4d381d20d47d440abf28fb3c226b66f0fe836dc5fa6a8b5c86fc4de6a5f
+          image: ghcr.io/ppap-agent/ppap/deep@sha256:95076236e21ed14ac2b3b0d03d47e1a027f066799e91e287fb59d6d669cdcd88
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -554,7 +554,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
-          image: ghcr.io/ppap-agent/ppap/worker@sha256:6a61e6cb741675886c99c9f17d064f99663ee9ed65e8f62befc8ce3ffba77ec0
+          image: ghcr.io/ppap-agent/ppap/worker@sha256:59e669cfaddb95d7a9b59e17fd2eb5c93e95451bc1d2ee51d66b26e0625fe4fd
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -636,7 +636,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: web
-          image: ghcr.io/ppap-agent/ppap/web@sha256:0a98d1b5816b23ebdf9d21b8122c90ae6f2c73b52a5ab49fefff8fa2a5ce4154
+          image: ghcr.io/ppap-agent/ppap/web@sha256:24c520bfb2c4c01ead7761eeb113d60120e71b37377d76c02a8350e2e2695431
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4173
