@@ -12,6 +12,8 @@
 
 原件视觉回归须检查解码后的图像内容及所选页面，不能只检查 data URL 前缀或审核状态。图像依赖最低为 Pillow 10.2.0：10.1.0 的 Mac ARM wheel 存在 JPEG 编码损坏，上游已在 10.2.0 修复（[Pillow #7628](https://github.com/python-pillow/Pillow/issues/7628)）；原件测试允许正常 JPEG 有损压缩误差，不要求输出字节与原件相同。
 
+检具 PDF 的转换失败回退由 `test_checking_fixture_pdf.py` 经公开 `.check()` 验证：可读文件缺少必需部分是 NG，无法读取、空文件或解析损坏是执行错误；不将解析失败吞成“未找到内容”，也不使用模型替代这些文件边界检查。
+
 ## 测试层级
 
 - **logic / unit**：稳定规则和数据不变量。

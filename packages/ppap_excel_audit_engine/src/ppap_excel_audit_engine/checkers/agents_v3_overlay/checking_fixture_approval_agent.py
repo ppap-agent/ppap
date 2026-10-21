@@ -77,7 +77,9 @@ class CheckingFixtureApprovalAgent(PdfExcelDelegatorAgent):
         try:
             file_content = self._get_pdf_file_content()
             if not file_content:
-                return {}
+                raise OSError("无法读取检具认可报告原件")
+            # Keyword search suppresses parser failures; validate the source first.
+            self.pdf_extractor.extract_text_boxes(file_content)
 
             # 搜索关键术语
             key_terms = [
@@ -173,7 +175,7 @@ class CheckingFixtureApprovalAgent(PdfExcelDelegatorAgent):
 
         except Exception as e:
             logger.error(f"文档结构分析失败: {e}")
-            return {}
+            raise
 
     def _analyze_fixture_list_completeness(self, structure: Dict[str, Any]) -> Tuple[bool, List[str]]:
         """
