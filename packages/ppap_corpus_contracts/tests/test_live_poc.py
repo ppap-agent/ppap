@@ -123,6 +123,9 @@ class ProductAPI:
                     result["findings"].insert(0, {**result["findings"][0], "status": "ERR"})
                 if self.failure == "wrong_coverage_binding":
                     result["coverage"]["rule_items"][0]["rule_version_id"] = "another-rule-version"
+                if self.failure == "no_inline_rule_version":
+                    for row in result["coverage"]["rule_items"]:
+                        row.pop("rule_version_id")
                 if self.failure == "wrong_binding":
                     result["inputs"][0]["rule_version_id"] = "different"
                 if self.failure == "missing":
@@ -156,6 +159,7 @@ class ProductAPI:
         ("timeout", "NOT_PROVEN"),
         ("duplicate_finding", "NOT_PROVEN"),
         ("wrong_coverage_binding", "NOT_PROVEN"),
+        ("no_inline_rule_version", "PROVEN"),
     ],
 )
 def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure, outcome):

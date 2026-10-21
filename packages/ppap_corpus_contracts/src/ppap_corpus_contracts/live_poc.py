@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -165,7 +166,8 @@ def _rows(cases, versions, rule_versions, result, stage, error, round_id):
             findings = [item for item in (result or {}).get("findings", []) if matched and item["item_key"] == matched[0].get("item_key")]
             finding = findings[0] if len(findings) == 1 else {}
             kind, actual = verdict.kind, verdict.actual or ""
-            if result is not None and (len(matched) != 1 or matched[0].get("rule_version_id") != rule_versions.get(versions.get(case.file_name)) or finding.get("status") != actual):
+            frozen_rule = rule_versions.get(versions.get(case.file_name))
+            if result is not None and (len(matched) != 1 or matched[0].get("rule_version_id", frozen_rule) != frozen_rule or finding.get("status") != actual):
                 kind = "missing_rule"
             rows.append(
                 {
@@ -286,6 +288,7 @@ def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated
 
 
 def main():
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api", required=True)
     parser.add_argument("--candidate-sha", required=True)
