@@ -130,6 +130,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [supportPageReference] = useState(() => `client-${crypto.randomUUID()}`)
   const surfaceRef = useRef(surface)
   const auditReturn = useRef<{url: string; state: unknown} | null>(null)
+  function retainAuditAddress() {auditReturn.current = {url: location.href, state: history.state}}
   const [files, setFiles] = useState<AuditTaskFile[]>([])
   const [step, setStepState] = useState<'upload' | 'check' | 'match'>('upload')
   const stepRef = useRef(step)
@@ -287,6 +288,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     }
     const state = {...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}
     if (keepSurface) history.replaceState(state, '', url); else history.pushState(state, '', url)
+    if (!keepSurface) retainAuditAddress()
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
   function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); setMode('standard'); setCustomer('auto'); setPredecessorId(undefined); setError(''); setSheet(false); taskAddress(null)}
@@ -353,16 +355,18 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     const fromOtherSurface = surfaceRef.current !== 'audit'
     surfaceRef.current = 'audit'
     setSurface('audit')
-    if (params.has('round') && adapter.readRound) return
+    if (params.has('round') && adapter.readRound) {retainAuditAddress(); return}
     setReportView(new URL(location.href).searchParams.has('report'))
     const id = readAuditRoute(new URL(location.href)).taskId
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report'), packageRequest: new URL(location.href).searchParams.get('packageRequest')}, location.origin)
     const localId = typeof history.state?.auditUploadDraft === 'string' ? history.state.auditUploadDraft : null
+    retainAuditAddress()
     if (id ? fromOtherSurface && id === activeTaskId.current : localId && localId === activeUploadDraftId.current) return
     if (id) void recover(id)
     else {
       const draftId = localId || crypto.randomUUID()
       history.replaceState({...history.state, auditUploadDraft: draftId}, '')
+      retainAuditAddress()
       const saved = uploadDrafts.current.get(draftId)
       if (!saved && params.get('fromRound') && adapter.prepareReaudit) {void prepareReaudit(params.get('fromRound')!); return}
       if (saved && 'taskId' in saved) {
@@ -516,7 +520,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const shownTasks = summaries.filter(row => (surface === 'workbench' || filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: ProductSurface) {
     setSheet(false)
-    if (surfaceRef.current === 'audit' && value !== 'audit') auditReturn.current = {url: location.href, state: history.state}
+    if (surfaceRef.current === 'audit' && value !== 'audit') retainAuditAddress()
     if (value === 'audit' && auditReturn.current) {
       history.pushState(auditReturn.current.state, '', auditReturn.current.url)
       restoreAddress()
