@@ -65,13 +65,14 @@ class UiA11yTests(unittest.TestCase):
             )
             page.route("**/api/drafts?*", lambda route: route.fulfill(json={"drafts": [], "next_offset": None}))
             page.route("**/api/rounds?*", lambda route: route.fulfill(json={"rounds": [], "next_offset": None}))
+            page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
             page.route("**/api/rules", lambda route: route.fulfill(json={"rules": []}))
             page.route("**/api/rule-types", lambda route: route.fulfill(json={"types": ["控制计划"]}))
             session = context.new_cdp_session(page)
             session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
             page.goto(WEB)
             expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
-            expect(page.locator("aside").get_by_role("navigation", name="主要导航", exact=True)).to_be_visible()
+            expect(page.locator("aside").get_by_role("navigation", name="产品导航", exact=True)).to_be_visible()
             page.keyboard.press("Tab")
             focused = page.evaluate(
                 """() => {
@@ -94,11 +95,17 @@ class UiA11yTests(unittest.TestCase):
             self.assertTrue(media["motion"])
             page.set_viewport_size({"width": 390, "height": 844})
             expect(page.locator("aside")).to_be_hidden()
-            navigation = page.get_by_role("navigation", name="主要导航", exact=True)
+            trigger = page.get_by_role("button", name="打开产品导航", exact=True)
+            trigger.focus()
+            page.keyboard.press("Enter")
+            navigation = page.get_by_role("dialog").get_by_role("navigation", name="产品导航", exact=True)
             expect(navigation).to_be_visible()
-            box = navigation.get_by_role("link", name="工作台", exact=True).bounding_box()
+            box = navigation.get_by_role("button", name="工作台", exact=True).bounding_box()
             self.assertIsNotNone(box)
             self.assertGreaterEqual(box["height"], 44)
+            page.keyboard.press("Escape")
+            expect(page.get_by_role("dialog")).to_have_count(0)
+            expect(trigger).to_be_focused()
             self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             self.assertEqual(page.locator("h1").count(), 1)
             context.close()
@@ -172,6 +179,17 @@ class UiA11yTests(unittest.TestCase):
                     route.fulfill(json={"file_version_id": VERSION, "units": [{"id": "json:0", "location": "rules[0].rule_to_check", "excerpt": BODY["rules"][0]["rule_to_check"]}]}, headers=cors)
                 elif path == "/rule-types":
                     route.fulfill(json={"types": ["控制计划"]}, headers=cors)
+                elif path == "/rule-library":
+                    route.fulfill(
+                        json={
+                            "versions": [{
+                                "id": RULE, "title": rule["title"], "created_at": rule["created_at"], "version": "v1",
+                                "scope": {"customer": "", "part": "", "revision": "", "allCustomers": False, "allParts": True, "allRevisions": True},
+                                "reason": "", "predecessor_id": None, "clause_count": len(BODY["rules"]),
+                            }],
+                        },
+                        headers=cors,
+                    )
                 elif path == "/rules":
                     route.fulfill(
                         json={
