@@ -8,6 +8,7 @@ import {AuditReviewContent, type OriginalRenderer} from './review-content'
 import {HistoricalFindings} from './historical-findings'
 import {sameSnapshot} from './result-projection'
 import {ReviewEditorContext} from './review-editor'
+import {writeAuditAddress} from './routes'
 
 type Round = components['schemas']['Round']
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<Round>
@@ -34,7 +35,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
   function selectFile(id: string) {
     setSelected(id)
     const url = new URL(location.href); url.searchParams.set('file', id); url.searchParams.delete('clause'); url.searchParams.delete('focus')
-    history.pushState(history.state, '', url)
+    writeAuditAddress(url, 'push')
   }
   const view = round?.id === roundId ? round.read_view : null
   const file = view?.files.find(row => row.file.id === selected) ?? view?.files.find(row => row.role === 'target') ?? view?.files[0]

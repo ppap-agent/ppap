@@ -41,7 +41,7 @@ import {useDisplayEditor, type AuditDisplayAdapter} from './display-info-editor'
 import {ReviewEditorContext} from './review-editor'
 import {reconcileTaskSummary, summarizeTask, taskIsBehindSummary, type TaskSummary} from './task-summary'
 import {AuditWorkbench, type WorkbenchProps} from './workbench'
-import {readAuditRoute, surfaceAddress, taskAddress as taskHref} from './routes'
+import {auditAddressChanged, readAuditRoute, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
 import {AuditRoundReader, type ReadRound} from './round-reader'
 
 export type AuditTask = components['schemas']['AuditTask']
@@ -287,7 +287,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       for (const key of ['archiveDoc', 'auditRef', 'archiveReport', 'fromRound', 'file', 'clause', 'focus', 'recognitionRequest', 'acceptRequest', 'checkFilter', 'case', 'draft', 'round', 'stage', 'resume']) url.searchParams.delete(key)
     }
     const state = {...history.state, auditUploadDraft: id ? null : activeUploadDraftId.current}
-    if (keepSurface) history.replaceState(state, '', url); else history.pushState(state, '', url)
+    writeAuditAddress(url, keepSurface ? 'replace' : 'push', state)
     if (!keepSurface) retainAuditAddress()
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
@@ -296,7 +296,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (!adapter.prepareReaudit || preparingReaudit) return
     newTask(); setPreparingReaudit(true)
     const epoch = draftEpoch.current
-    const address = new URL(location.href); address.searchParams.set('fromRound', roundId); history.replaceState(history.state, '', address)
+    const address = new URL(location.href); address.searchParams.set('fromRound', roundId); writeAuditAddress(address)
     try {
       const prepared = await adapter.prepareReaudit(roundId)
       if (epoch !== draftEpoch.current) return
@@ -386,8 +386,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   addressCurrent.current = restoreAddress
   useEffect(() => {
     const changed = () => addressCurrent.current()
-    changed(); window.addEventListener('popstate', changed)
-    return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed)}
+    const remember = () => {if (readAuditRoute(new URL(location.href)).surface === 'audit') retainAuditAddress()}
+    changed(); window.addEventListener('popstate', changed); window.addEventListener(auditAddressChanged, remember)
+    return () => {restoreEpoch.current += 1; window.removeEventListener('popstate', changed); window.removeEventListener(auditAddressChanged, remember)}
   }, [])
   function receive(picked: File[]) {
     if (!picked.length || confirmationLocked || inputLocked || workbench) return

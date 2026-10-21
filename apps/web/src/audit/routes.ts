@@ -6,6 +6,14 @@ const paths: Record<ProductSurface, string> = {
 
 export const taskAddress = (id: string | null) => id ? `/tasks/${encodeURIComponent(id)}` : paths.audit
 export const surfaceAddress = (surface: ProductSurface) => paths[surface]
+export const auditAddressChanged = 'ppap-audit-address-changed'
+
+/** Observe local address edits without treating them as browser back/forward or rereading a task. */
+export function writeAuditAddress(url: URL | string, mode: 'push' | 'replace' = 'replace', state: unknown = history.state) {
+  if (mode === 'push') history.pushState(state, '', url)
+  else history.replaceState(state, '', url)
+  window.dispatchEvent(new Event(auditAddressChanged))
+}
 
 /** Keep saved draft/stage consumers; a bare Round opens the shared historical reader. */
 export function usesLegacyJourney(url: URL): boolean {
@@ -26,7 +34,7 @@ export function requestAddress(url: URL, taskId: string, kind: 'recognitionReque
 export function rememberRequest(taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string) {
   if (typeof window === 'undefined') return
   const url = new URL(location.href), route = readAuditRoute(url)
-  if (route.surface === 'audit' && (!route.taskId || route.taskId === taskId)) history.replaceState(history.state, '', requestAddress(url, taskId, kind, requestId))
+  if (route.surface === 'audit' && (!route.taskId || route.taskId === taskId)) writeAuditAddress(requestAddress(url, taskId, kind, requestId))
 }
 
 export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: string | null} {
