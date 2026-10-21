@@ -243,10 +243,11 @@ class DeepModeTests(unittest.TestCase):
         with (
             patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")),
             patch("ppap_worker.engine_runner", side_effect=AssertionError("standard engine")),
-            patch("subprocess.Popen", side_effect=AssertionError("local runtime")),
+            patch("subprocess.Popen", side_effect=AssertionError("local runtime")) as start_process,
         ):
             claimed = self.store.claim_job("deep-worker")
             result = process_claimed(self.store, claimed, "deep-worker")
+        start_process.assert_not_called()
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["failure"]["code"], "deep_runtime_unavailable")
         self.assertTrue(result["failure"]["retryable"])
