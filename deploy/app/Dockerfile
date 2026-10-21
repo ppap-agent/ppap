@@ -25,13 +25,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.26@sha256:9a23023be68b2ed09750ae636228e903a
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
-COPY pyproject.toml uv.lock /app/
-COPY packages /app/packages
-COPY services /app/services
-COPY deploy/app/entrypoint.sh /app/entrypoint.sh
-
 ARG PPAP_DEBIAN_MIRROR=
-ARG PPAP_PIP_INDEX_URL=
 RUN set -eux; \
     if [ -n "$PPAP_DEBIAN_MIRROR" ]; then \
       sed -i "s#^URIs: http://deb.debian.org/debian#URIs: $PPAP_DEBIAN_MIRROR#" /etc/apt/sources.list.d/debian.sources; \
@@ -48,7 +42,15 @@ RUN set -eux; \
       sleep $((i * 3)); \
       i=$((i + 1)); \
     done; \
-    rm -rf /var/lib/apt/lists/*; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock /app/
+COPY packages /app/packages
+COPY services /app/services
+COPY deploy/app/entrypoint.sh /app/entrypoint.sh
+
+ARG PPAP_PIP_INDEX_URL=
+RUN set -eux; \
     chmod +x /app/entrypoint.sh; \
     if [ -n "$PPAP_PIP_INDEX_URL" ]; then \
       export UV_DEFAULT_INDEX="$PPAP_PIP_INDEX_URL"; \
