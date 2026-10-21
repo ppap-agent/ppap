@@ -39,11 +39,16 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const targets = queue.filter(row => row.match?.state !== 'reference'), references = queue.filter(row => row.match?.state === 'reference')
   const counts = taskResultCounts(task), readyReports = targets.filter(row => reportReady(task, row)).length
   const [selected, setSelected] = useState(() => new URL(location.href).searchParams.get('file') || '')
+  const [report, setReport] = useState<string | null>(() => {const id = new URL(location.href).searchParams.get('report'); return id === '1' ? queue[0]?.file.id || '' : id})
   useEffect(() => {
-    const restore = () => setSelected(new URL(location.href).searchParams.get('file') || '')
+    const restore = () => {
+      const params = new URL(location.href).searchParams
+      setSelected(params.get('file') || '')
+      const id = params.get('report'); setReport(id === '1' ? task.files.find(row => row.selection === 'selected')?.file.id || '' : id)
+    }
     window.addEventListener('popstate', restore)
     return () => window.removeEventListener('popstate', restore)
-  }, [])
+  }, [task.files])
   function chooseFile(id: string) {
     setSelected(id)
     const url = new URL(location.href)
@@ -51,7 +56,6 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     url.searchParams.delete('clause'); url.searchParams.delete('focus')
     writeAuditAddress(url, 'push')
   }
-  const [report, setReport] = useState<string | null>(() => {const id = new URL(location.href).searchParams.get('report'); return id === '1' ? queue[0]?.file.id || '' : id})
   function showReport(id: string | null) {
     setReport(id); onReportView(id !== null)
     const url = new URL(location.href)
