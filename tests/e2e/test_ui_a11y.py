@@ -182,11 +182,18 @@ class UiA11yTests(unittest.TestCase):
                 elif path == "/rule-library":
                     route.fulfill(
                         json={
-                            "versions": [{
-                                "id": RULE, "title": rule["title"], "created_at": rule["created_at"], "version": "v1",
-                                "scope": {"customer": "", "part": "", "revision": "", "allCustomers": False, "allParts": True, "allRevisions": True},
-                                "reason": "", "predecessor_id": None, "clause_count": len(BODY["rules"]),
-                            }],
+                            "versions": [
+                                {
+                                    "id": RULE,
+                                    "title": rule["title"],
+                                    "created_at": rule["created_at"],
+                                    "version": "v1",
+                                    "scope": {"customer": "", "part": "", "revision": "", "allCustomers": False, "allParts": True, "allRevisions": True},
+                                    "reason": "",
+                                    "predecessor_id": None,
+                                    "clause_count": len(BODY["rules"]),
+                                }
+                            ],
                         },
                         headers=cors,
                     )
