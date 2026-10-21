@@ -1335,6 +1335,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rounds/{round_id}/reaudit-inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reaudit Inputs */
+        get: operations["reaudit_inputs_rounds__round_id__reaudit_inputs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rounds/{round_id}/resubmit": {
         parameters: {
             query?: never;
@@ -1963,6 +1980,43 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** AuditReauditInputs */
+        AuditReauditInputs: {
+            /**
+             * Analysis Mode
+             * @enum {string}
+             */
+            analysis_mode: "standard" | "deep";
+            /** Customer Preference */
+            customer_preference: string | null;
+            /** Files */
+            files: components["schemas"]["AuditRecognitionFile"][];
+            /** Predecessor Id */
+            predecessor_id: string;
+        };
+        /** AuditRecognitionFile */
+        AuditRecognitionFile: {
+            file: components["schemas"]["FileVersion"];
+            match: components["schemas"]["AuditRuleMatch"] | null;
+            /** Preferred Rule Version Id */
+            preferred_rule_version_id?: string;
+            /** Reference Only */
+            reference_only?: boolean;
+            /** Removal Reason */
+            removal_reason: string | null;
+            /** Replacement Of File Version Id */
+            replacement_of_file_version_id?: string;
+            /** Rule Options */
+            rule_options?: components["schemas"]["MatchingCandidate"][];
+            /**
+             * Selection
+             * @enum {string}
+             */
+            selection: "selected" | "unselected" | "removed";
+            validation: components["schemas"]["AuditFileValidation"];
+            /** Validation Id */
+            validation_id?: string;
+        };
         /** AuditRecognitionRead */
         AuditRecognitionRead: {
             /** Input Revision */
@@ -2300,6 +2354,10 @@ export interface components {
             notification_revision?: number;
             /** Number */
             number: string;
+            /** Predecessor Id */
+            predecessor_id?: string;
+            /** Predecessor Task Id */
+            predecessor_task_id?: string;
             progress?: components["schemas"]["AuditProgress"];
             /** Recognition Request Id */
             recognition_request_id?: string;
@@ -2314,6 +2372,8 @@ export interface components {
              * @enum {string}
              */
             state: "matching" | "pending_confirm" | "reviewing" | "completed";
+            /** Successor Tasks */
+            successor_tasks?: components["schemas"]["RelatedAuditTask"][];
             /** Updated At */
             updated_at: string;
             /** Usage Notice */
@@ -2326,8 +2386,16 @@ export interface components {
             display_info?: components["schemas"]["AuditFileDisplayInfo"] | null;
             file: components["schemas"]["FileVersion"];
             match: components["schemas"]["AuditRuleMatch"] | null;
+            /** Preferred Rule Version Id */
+            preferred_rule_version_id?: string;
+            /** Reference Only */
+            reference_only?: boolean;
             /** Removal Reason */
             removal_reason: string | null;
+            /** Replacement Of File Version Id */
+            replacement_of_file_version_id?: string;
+            /** Rule Options */
+            rule_options?: components["schemas"]["MatchingCandidate"][];
             /**
              * Selection
              * @enum {string}
@@ -2348,6 +2416,11 @@ export interface components {
             completion_reason: ("no_matching_rules" | "processed") | null;
             /** Created At */
             created_at: string;
+            /**
+             * Execution
+             * @enum {string}
+             */
+            execution?: "queued" | "running" | "completed" | "failed";
             /** Files */
             files: components["schemas"]["AuditTaskSummaryFile"][];
             /** Id */
@@ -2356,6 +2429,12 @@ export interface components {
             input_revision: number;
             /** Number */
             number: string;
+            /** Result Counts */
+            result_counts?: {
+                [key: string]: number;
+            };
+            /** Reviewed Count */
+            reviewed_count?: number;
             /** Round Id */
             round_id: string | null;
             /**
@@ -2363,6 +2442,8 @@ export interface components {
              * @enum {string}
              */
             state: "matching" | "pending_confirm" | "reviewing" | "completed";
+            /** Uncovered Count */
+            uncovered_count?: number;
             /** Updated At */
             updated_at: string;
         };
@@ -2940,6 +3021,13 @@ export interface components {
             /** User Quota */
             user_quota?: number;
         };
+        /** RelatedAuditTask */
+        RelatedAuditTask: {
+            /** Id */
+            id: string;
+            /** Number */
+            number: string;
+        };
         /** ReportEnvelope */
         ReportEnvelope: {
             report: components["schemas"]["ReportExport"] | null;
@@ -3072,6 +3160,10 @@ export interface components {
             };
             /** Reviewed Count */
             reviewed_count: number;
+            /** Source Draft Id */
+            source_draft_id?: string | null;
+            /** Task Id */
+            task_id?: string | null;
             /** Uncovered Count */
             uncovered_count?: number;
         };
@@ -4049,8 +4141,14 @@ export interface operations {
                     files: {
                         /** File Version Id */
                         file_version_id: string;
+                        /** Preferred Rule Version Id */
+                        preferred_rule_version_id?: string | null;
+                        /** Reference Only */
+                        reference_only?: boolean;
                         /** Removal Reason */
                         removal_reason: string | null;
+                        /** Replacement Of File Version Id */
+                        replacement_of_file_version_id?: string | null;
                         /**
                          * Selection
                          * @enum {string}
@@ -4059,6 +4157,8 @@ export interface operations {
                         /** Validation Id */
                         validation_id: string | null;
                     }[];
+                    /** Predecessor Id */
+                    predecessor_id?: string;
                     /** Request Id */
                     request_id: string;
                     /** Task Id */
@@ -6338,6 +6438,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reaudit_inputs_rounds__round_id__reaudit_inputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditReauditInputs"];
                 };
             };
             /** @description Validation Error */

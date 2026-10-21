@@ -507,6 +507,8 @@ class RoundSummaryInput(TypedDict):
 
 class RoundSummary(TypedDict):
     id: str
+    source_draft_id: NotRequired[str | None]
+    task_id: NotRequired[str | None]
     execution: str
     predecessor_id: str | None
     created_at: str | None
@@ -894,6 +896,10 @@ class AuditRecognitionFile(TypedDict):
     validation: AuditFileValidation
     validation_id: NotRequired[str]
     match: AuditRuleMatch | None
+    preferred_rule_version_id: NotRequired[str]
+    replacement_of_file_version_id: NotRequired[str]
+    reference_only: NotRequired[bool]
+    rule_options: NotRequired[list[MatchingCandidate]]
 
 
 class AuditTaskFile(AuditRecognitionFile):
@@ -981,6 +987,11 @@ class AuditSharedReports(TypedDict):
     archive: AuditReportArtifact | None
 
 
+class RelatedAuditTask(TypedDict):
+    id: str
+    number: str
+
+
 class AuditTaskIdentity(TypedDict):
     id: str
     number: str
@@ -995,6 +1006,9 @@ class AuditTaskIdentity(TypedDict):
     estimated_points: int | None
     input_revision: NotRequired[int]
     recognition_request_id: NotRequired[str]
+    predecessor_id: NotRequired[str]
+    predecessor_task_id: NotRequired[str]
+    successor_tasks: NotRequired[list[RelatedAuditTask]]
 
 
 class AuditRecognitionInput(TypedDict):
@@ -1002,6 +1016,9 @@ class AuditRecognitionInput(TypedDict):
     validation_id: str | None
     selection: Literal["selected", "unselected", "removed"]
     removal_reason: str | None
+    preferred_rule_version_id: NotRequired[str | None]
+    replacement_of_file_version_id: NotRequired[str | None]
+    reference_only: NotRequired[bool]
 
 
 class AuditRecognitionRequest(TypedDict):
@@ -1011,6 +1028,14 @@ class AuditRecognitionRequest(TypedDict):
     files: list[AuditRecognitionInput]
     task_id: NotRequired[str]
     expected_revision: NotRequired[int]
+    predecessor_id: NotRequired[str]
+
+
+class AuditReauditInputs(TypedDict):
+    predecessor_id: str
+    analysis_mode: AnalysisMode
+    customer_preference: str | None
+    files: list[AuditRecognitionFile]
 
 
 class AuditRecognitionRead(TypedDict):
@@ -1057,6 +1082,10 @@ class AuditTaskSummary(TypedDict):
     round_id: str | None
     completion_reason: Literal["no_matching_rules", "processed"] | None
     files: list[AuditTaskSummaryFile]
+    execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
+    result_counts: NotRequired[dict[str, int]]
+    reviewed_count: NotRequired[int]
+    uncovered_count: NotRequired[int]
 
 
 class AuditNotificationDelivery(TypedDict):

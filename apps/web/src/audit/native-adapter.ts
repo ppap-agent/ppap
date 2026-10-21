@@ -230,12 +230,14 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       validations.set(file.file.id, id)
       return validation(await request<ValidationJob>('/file-validations', 'POST', {request_id: id, source_file_id: file.file.file_id, source_file_version_id: file.file.id}), file, id)
     },
-    match: (files, mode, customer, previous, requestId) => request<AuditTask>('/audit-tasks', 'POST', {
+    prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
+    match: (files, mode, customer, previous, requestId, predecessorId) => request<AuditTask>('/audit-tasks', 'POST', {
       request_id: requestId,
       analysis_mode: mode,
       customer_preference: customer,
       ...(previous ? {task_id: previous.id, expected_revision: previous.input_revision ?? 0} : {}),
-      files: files.map(row => ({file_version_id: row.file.id, validation_id: row.validation_id ?? null, selection: row.selection, removal_reason: row.removal_reason})),
+      ...((previous?.predecessor_id || predecessorId) ? {predecessor_id: previous?.predecessor_id || predecessorId} : {}),
+      files: files.map(row => ({file_version_id: row.file.id, validation_id: row.validation_id ?? null, selection: row.selection, removal_reason: row.removal_reason, preferred_rule_version_id: row.preferred_rule_version_id, reference_only: row.reference_only, replacement_of_file_version_id: row.replacement_of_file_version_id})),
     }),
     readRecognition: (id, requestId) => request(`${taskPath(id)}/recognitions/${encoded(requestId)}`),
     readTask: (id, requestId) => request<AuditTask>(`${taskPath(id)}${requestId ? `?request_id=${encoded(requestId)}` : ''}`),

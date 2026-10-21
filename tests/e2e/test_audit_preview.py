@@ -43,6 +43,7 @@ def close_workspace_panel(page):
 
 
 def open_basis(page):
+    open_task_file(page)
     panel = evidence_sheet(page)
     if not panel.is_visible():
         page.get_by_role("button", name=re.compile("^查看依据 ")).first.click()
@@ -50,17 +51,25 @@ def open_basis(page):
 
 
 def select_clause(page, clause):
+    open_task_file(page)
     close_workspace_panel(page)
     page.get_by_role("button", name="查看依据 " + clause, exact=True).click()
     return evidence_sheet(page)
 
 
 def file_information(page):
+    open_task_file(page)
     panel = page.get_by_role("dialog", name="文件信息", exact=True, include_hidden=True).and_(page.locator('[data-state="open"]'))
     if not panel.is_visible():
         close_workspace_panel(page)
         page.get_by_role("button", name="文件信息", exact=True).click()
     return panel
+
+
+def open_task_file(page):
+    overview = page.get_by_role("region", name="全部文件概览", exact=True)
+    if overview.is_visible():
+        page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
 
 
 def history_records(page):

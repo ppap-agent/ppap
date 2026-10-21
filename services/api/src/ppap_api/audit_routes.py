@@ -56,6 +56,8 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 "task_not_ready",
                 "target_required",
                 "rule_candidate_expired",
+                "reaudit_source_not_finished",
+                "reaudit_scope_changed",
                 "report_not_ready",
                 "report_artifact_conflict",
                 "report_package_too_large",
@@ -158,6 +160,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             return denied
         try:
             return JSONResponse(store.get_audit_task(principal, task_id, request_id))
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
+
+    @app.get("/rounds/{round_id}/reaudit-inputs", response_model=wc.AuditReauditInputs)
+    def reaudit_inputs(round_id: str, request: Request) -> JSONResponse:
+        principal, denied = require_object(request, round_id)
+        if denied:
+            return denied
+        try:
+            return JSONResponse(store.reaudit_inputs(principal, round_id))
         except (KeyError, ValueError) as exc:
             return fail(exc)
 

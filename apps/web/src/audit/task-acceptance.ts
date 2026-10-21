@@ -2,6 +2,7 @@ import {useRef, useState} from 'react'
 import {requestTrace} from '../api'
 import type {components} from '../generated/openapi'
 import {sameFrozenFileInfo, sameSnapshot} from './result-projection'
+import {rememberRequest} from './routes'
 
 type Task = components['schemas']['AuditTask']
 export type AuditAcceptanceAdapter = {
@@ -31,6 +32,7 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
     const current = operations.current.get(task.id)
     if (readOnly ? current?.phase !== 'unknown' : Boolean(current && current.phase !== 'rejected')) return
     const requestId = readOnly ? current!.requestId : crypto.randomUUID()
+    if (!readOnly) rememberRequest(task.id, 'acceptRequest', requestId)
     const trace = readOnly && current!.traceId ? {traceId: current!.traceId} : {}
     if (!readOnly) inputs.current.set(requestId, structuredClone(task))
     const input = inputs.current.get(requestId)!

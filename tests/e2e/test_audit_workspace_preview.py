@@ -15,11 +15,37 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditWorkspacePreviewTests(unittest.TestCase):
+    def test_complete_task_starts_with_every_file_then_restores_focused_review(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 960})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            overview = page.get_by_role("region", name="全部文件概览", exact=True)
+            expect(overview.get_by_role("row")).to_have_count(4)
+            expect(page.get_by_role("region", name="审核详情", exact=True)).to_have_count(0)
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
+            page.get_by_role("button", name="专注复核（选做）", exact=True).click()
+            focus = page.get_by_role("region", name="专注复核", exact=True)
+            expect(focus.get_by_role("combobox", name="条款目录", exact=True)).to_be_visible()
+            focus.get_by_role("button", name="下一待复核", exact=True).click()
+            expect(focus.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
+            address = page.url
+            page.reload()
+            expect(page).to_have_url(address)
+            expect(focus.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
+            focus.get_by_role("combobox", name="选择对照原件", exact=True).click()
+            page.get_by_role("option", name="控制计划.xlsx", exact=True).click()
+            expect(focus.get_by_role("region", name="原件预览", exact=True)).to_contain_text("控制计划.xlsx")
+            page.get_by_role("button", name="返回审核项", exact=True).click()
+            expect(page.get_by_role("region", name="审核详情", exact=True).get_by_role("table")).to_be_visible()
+            browser.close()
+
     def test_escape_closes_only_the_display_editor_and_returns_focus_to_file_info(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-display-ready&task=preview-recovery-task")
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("button", name="文件信息", exact=True).click()
             info = page.get_by_role("dialog", name="文件信息", exact=True)
             edit = info.get_by_role("button", name="更正显示信息", exact=True)
@@ -38,6 +64,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1079, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-review-edit&task=preview-recovery-task")
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("button", name="查看依据 1.1", exact=True).click()
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             trigger = basis.get_by_role("button", name="记录人工复核", exact=True)
@@ -62,6 +89,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
                     expect(queue.get_by_role("button")).to_have_count(3)
                     for name in ("PFMEA.xlsx", "控制计划.xlsx", "过程流程图.pdf"):
                         expect(queue.get_by_text(name, exact=True)).to_be_visible()
+                    queue.get_by_role("button").first.click()
                     actions = page.get_by_role("button", name=re.compile("^查看依据 "))
                     expect(actions).to_have_count(2)
                     for action in actions.all():
@@ -91,6 +119,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1079, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
             first = page.get_by_role("button", name="查看依据 1.1", exact=True)
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             first.click()
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             expect(basis.get_by_role("heading", name="1.1 · 频次一致性", exact=True)).to_be_visible()
@@ -112,6 +141,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1079, "height": 853})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
             page.get_by_role("button", name="查看依据 1.1", exact=True).click()
             basis = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="核对原件", exact=True))
             basis.get_by_role("button", name="核对 控制计划.xlsx", exact=True).click()
