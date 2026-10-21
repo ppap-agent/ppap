@@ -64,6 +64,8 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 
 `tests/integration/product/test_v3_worker_oracle.py` 在 pytest 的临时输出目录写入 `v3_worker_oracle.json` 和 `.md`，可用 `--basetemp` 指定本次独立临时目录。报告保留逐规则预期／实际、人工原因、审核说明及 Round／Job 引用，分别汇总设置失败、执行失败、缺规则和状态不符。`passed_rules`／严格匹配率包括“实际 NG 与预期 NG 相符”，不是客户文件通过率，也不是验收门禁；原有逐规则断言不变。该集成测试仍用受控对象存储和检查器声明规则，不证明原始 DOCX 的完整在线链路。完整 Live 另由 #152 验收，不能只靠报告汇总宣称完成。
 
+V2 Standard round 的失败日志保留公开 finding 的判定说明：只采用唯一 `item_key` 关联且状态一致的 finding；无法关联时不猜测原因，执行错误仍可使用原轮次说明。这只补充诊断信息，不改变逐条比对结果或验收门槛。
+
 ### 显式 V3 POC Live
 
 `V3 POC live acceptance` 只接受 `workflow_dispatch`，不进入默认 `CI Gate`。它用当前 SHA 的 API／Worker 镜像和独立 PostgreSQL／S3，凭 Secrets 调用真实模型／转换服务；收费和飞书通知关闭。执行前核对两个镜像的 revision，不能让现网旧 Worker 消费候选 API 创建的验收任务。
