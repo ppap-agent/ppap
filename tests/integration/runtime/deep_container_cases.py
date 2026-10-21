@@ -1,11 +1,12 @@
 """Run public Deep runtime contracts inside the Linux delivery image.
 
-The external guest process is controlled; no model is called and this does not
-test the guest's semantic output or its isolation from hostile code.
+The external guest process and model responses are controlled. Cache cases run
+real guest parsing and validation, not model judgment or hostile-code isolation.
 """
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import io
 import json
@@ -20,11 +21,42 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from openpyxl import Workbook
+from ppap_core.audits import DEEP_PROTOCOL_REVISION
+from ppap_core.files import ObjectExists, ObjectMissing
+from ppap_deep.auditor import SemanticRuntime
+from ppap_deep.controller import ExecutionContext
 from ppap_deep.isolation.container import ContainerRuntime, RuntimeConfig
 from ppap_deep.isolation.model_gateway import local_gateway
+from ppap_deep.protocol import ExecuteRequest, FrozenFile
+from ppap_deep.semantic.guest import Manifest, execute
+from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
+from ppap_deep.semantic.trace import AuditExecution
 
 COMPLETED_EVENT = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5}}}\n\n'
+
+
+def request_model(work: Path, *, incomplete_response: bool = False, request_input: str = "stand-in guest") -> None:
+    grant = json.loads((work.parent / "grant" / "model.json").read_text())
+    connection = http.client.HTTPConnection("127.0.0.1", urlsplit(grant["base_url"]).port, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            "/v1/responses",
+            body=json.dumps({"model": "test-model", "input": request_input, "stream": True}),
+            headers={"Authorization": "Bearer " + grant["token"]},
+        )
+        response = connection.getresponse()
+        if response.status != 200:
+            raise AssertionError(f"test guest could not use its execution grant: HTTP {response.status}")
+        try:
+            response.read()
+        except http.client.IncompleteRead:
+            if not incomplete_response:
+                raise
+    finally:
+        connection.close()
 
 
 def make_runtime(root: Path) -> ContainerRuntime:
@@ -198,25 +230,7 @@ class ContainerJournalTests(unittest.TestCase):
             def poll(self):
                 if release is not None and not release.is_set():
                     return None
-                grant = json.loads((self.work.parent / "grant" / "model.json").read_text())
-                connection = http.client.HTTPConnection("127.0.0.1", urlsplit(grant["base_url"]).port, timeout=5)
-                try:
-                    connection.request(
-                        "POST",
-                        "/v1/responses",
-                        body=json.dumps({"model": "test-model", "input": "stand-in guest", "stream": True}),
-                        headers={"Authorization": "Bearer " + grant["token"]},
-                    )
-                    response = connection.getresponse()
-                    if response.status != 200:
-                        raise AssertionError("test guest could not use its execution grant")
-                    try:
-                        response.read()
-                    except http.client.IncompleteRead:
-                        if not incomplete_response:
-                            raise
-                finally:
-                    connection.close()
+                request_model(self.work, incomplete_response=incomplete_response)
                 result = self.work / "result"
                 result.mkdir()
                 filename = "fault.json" if fault else "bundle.json"
@@ -342,6 +356,190 @@ class ContainerJournalTests(unittest.TestCase):
             self.assertEqual(still_failed.exception.code, "MODEL_PROTOCOL_ERROR")
             spawn.assert_not_called()
         self.assertEqual(self.provider.request.call_count, 2)
+
+
+class ContainerCacheTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.runtime = make_runtime(self.root)
+        self.enterContext(local_gateway(self.root / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key"))
+        self.provider = self.enterContext(patch("http.client.HTTPSConnection")).return_value
+        self.provider.getresponse.side_effect = lambda: SimpleNamespace(status=200, read1=io.BytesIO(COMPLETED_EVENT).read1)
+        book = Workbook()
+        book.active.title = "Sheet1"
+        book.active.append(["频次"])
+        book.active.append(["每批"])
+        stream = io.BytesIO()
+        book.save(stream)
+        book.close()
+        self.raw = stream.getvalue()
+        self.target, self.rule = str(uuid4()), str(uuid4())
+        self.spec = ExecuteRequest(
+            protocol_revision=DEEP_PROTOCOL_REVISION,
+            round_id=str(uuid4()),
+            tenant_id="test-tenant",
+            job_id="job-one",
+            executor="ppap-deep",
+            executor_revision=DEEP_PROTOCOL_REVISION,
+            files=[
+                FrozenFile(
+                    file_version_id=self.target,
+                    file_id="file-one",
+                    role="target",
+                    filename="plan.xlsx",
+                    sha256=hashlib.sha256(self.raw).hexdigest(),
+                    rule_version_id=self.rule,
+                    rule_body={"kind": "engine", "rules": [{"id": "R1", "rule_to_check": "正文频次非空"}]},
+                )
+            ],
+        )
+        second = self.spec.files[0].model_copy(update={"file_version_id": str(uuid4()), "file_id": "file-two"})
+        self.spec.files.append(second)
+        self.targets = (self.target, second.file_version_id)
+        self.stored = {}
+        self.compile_calls = 0
+        self.model_snapshots = []
+        self.executions = []
+        owner = self
+
+        class Objects:
+            def get(self, key):
+                if key not in owner.stored:
+                    raise ObjectMissing()
+                return owner.stored[key]
+
+            def put_exclusive(self, key, body, _content_type):
+                if key in owner.stored:
+                    raise ObjectExists()
+                owner.stored[key] = body
+
+        self.adapter = SemanticRuntime(self.runtime, Objects())
+
+        class Model:
+            input_tokens = 0
+            output_tokens = 0
+
+            def __init__(self, manifest):
+                self.manifest = manifest
+
+            def run(self, work, _prompt, schema, _deadline, *, reasoning_effort):
+                owner.assertEqual(reasoning_effort, "xhigh")
+                request_model(work.parent, request_input=schema.__name__)
+                if schema is RulePlan:
+                    owner.compile_calls += 1
+                    rule = self.manifest.spec.rules[0]
+                    return RulePlan.model_validate(
+                        {
+                            "source_sha256": rule.sha256,
+                            "plan_revision": rule.plan_revision,
+                            "rules": [
+                                {
+                                    "id": "R1",
+                                    "description": "正文频次非空",
+                                    "source_locator": {"kind": "published_clause", "clause_id": "R1"},
+                                    "scope": "正文第 2 行",
+                                    "predicate": {"kind": "semantic", "question": "正文频次非空"},
+                                    "missing_evidence": "UNABLE",
+                                    "ambiguities": [],
+                                    "empty_scope_status": "UNABLE",
+                                    "empty_scope_basis": "未读取到正文时不能判断频次。",
+                                }
+                            ],
+                        }
+                    )
+                owner.assertIs(schema, AuditExecution)
+                documents = json.loads((work / "documents.json").read_text())
+                owner.model_snapshots.append(documents[owner.target])
+                checks, proofs = [], []
+                for target in owner.targets:
+                    evidence = [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A2"}}]
+                    checks.append({"audit_id": target, "rule_id": "R1", "status": "PASS", "reason": "正文频次为每批。", "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
+                    proofs.append(
+                        {
+                            "kind": "semantic",
+                            "audit_id": target,
+                            "rule_id": "R1",
+                            "scope_basis": "正文第 2 行",
+                            "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "正文频次记录", "status": "PASS", "reason": "频次为每批。", "evidence": evidence}],
+                        }
+                    )
+                return AuditExecution.model_validate({"report": {"checks": checks}, "trace": {"proofs": proofs}})
+
+        class Guest:
+            pid = 99_999_999
+            returncode = None
+
+            def __init__(self, *, cwd, **_kwargs):
+                self.stderr = tempfile.TemporaryFile()
+                self.work = Path(cwd)
+
+            def poll(self):
+                if self.returncode is None:
+                    inputs = self.work.parent / "inputs"
+                    manifest = Manifest.model_validate_json((inputs / "manifest.json").read_bytes())
+                    owner.executions.append(manifest.spec.execution_id)
+                    execute(inputs, self.work, Model(manifest), time.monotonic() + 10)
+                    self.returncode = 0
+                return self.returncode
+
+            def wait(self):
+                self.returncode = 0
+                return 0
+
+        self.enterContext(patch("subprocess.Popen", side_effect=lambda _args, **kwargs: Guest(**kwargs)))
+
+    def _run(self, spec):
+        result = self.adapter.execute(spec, {target: self.raw for target in self.targets}, context=ExecutionContext())
+        self.assertEqual([item.status for item in result.findings], ["PASS", "PASS"])
+        for item in result.findings:
+            self.assertEqual(item.locator["semantic"]["sources"][0]["excerpt"], "每批")
+        return result
+
+    def _cached(self, field):
+        return next((key, json.loads(raw)) for key, raw in self.stored.items() if field in json.loads(raw))
+
+    def test_new_submission_reuses_validated_snapshot_and_plan_but_runs_a_new_audit(self):
+        first = self._run(self.spec)
+        self.assertEqual(self.compile_calls, 1)
+        key, snapshot = self._cached("tables")
+        # An external cache retains parser metadata. Observing this harmless
+        # note at the model boundary distinguishes reuse from a fresh parse.
+        snapshot["limitations"].append("retained parser note")
+        self.stored[key] = json.dumps(snapshot).encode()
+        new_spec = self.spec.model_copy(update={"round_id": str(uuid4()), "job_id": "job-two"})
+        second = self._run(new_spec)
+        self.assertEqual(self.compile_calls, 1, "a valid plan was compiled again")
+        self.assertEqual(len(self.executions), 2)
+        self.assertNotEqual(*self.executions)
+        self.assertNotIn("retained parser note", self.model_snapshots[0]["limitations"])
+        self.assertIn("retained parser note", self.model_snapshots[-1]["limitations"])
+        self.assertEqual((first.usage["input_tokens"], first.usage["output_tokens"]), (6, 10))
+        self.assertEqual((second.usage["input_tokens"], second.usage["output_tokens"]), (3, 5))
+        self.assertEqual(self.provider.request.call_count, 3)
+        self.assertEqual(first.findings, second.findings)
+        self.assertEqual(self._run(self.spec), first)
+        self.assertEqual(len(self.executions), 2, "reading the original execution started another audit")
+
+    def test_wrong_snapshot_digest_is_reparsed_without_reusing_wrong_observations(self):
+        self._run(self.spec)
+        key, snapshot = self._cached("tables")
+        snapshot["source"]["sha256"] = "f" * 64
+        snapshot["tables"][0]["cells"]["A2"]["value"] = "wrong cached value"
+        self.stored[key] = json.dumps(snapshot).encode()
+        self._run(self.spec.model_copy(update={"round_id": str(uuid4()), "job_id": "job-two"}))
+        self.assertEqual(self.model_snapshots[-1]["tables"][0]["cells"]["A2"]["value"], "每批")
+        self.assertEqual(self.compile_calls, 1)
+
+    def test_wrong_plan_revision_is_recompiled_for_the_frozen_rule(self):
+        self._run(self.spec)
+        key, plan = self._cached("source_sha256")
+        plan["plan_revision"] = "f" * 64
+        self.stored[key] = json.dumps(plan).encode()
+        self._run(self.spec.model_copy(update={"round_id": str(uuid4()), "job_id": "job-two"}))
+        self.assertEqual(self.compile_calls, 2)
+        self.assertEqual(len(self.executions), 2)
 
 
 if __name__ == "__main__":
