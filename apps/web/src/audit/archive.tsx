@@ -20,6 +20,7 @@ import {ReportPackage} from './report-package'
 import {historyReportReady, historyReportReference, resultKey, readArchiveAddress, writeArchiveAddress, writeArchivePackageAddress, type HistoryEntry} from './archive-contract'
 import type {OriginalRenderer} from './review-content'
 import {sameSnapshot} from './result-projection'
+import {readAuditRoute} from './routes'
 import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive-contract'
 
 const initialQuery: ArchiveQuery = {search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, page: 1, page_size: 10}
@@ -38,7 +39,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
     if (!active) return
     const changed = () => {
       const params = new URLSearchParams(location.search)
-      if (params.get('view') !== 'archive') return
+      if (readAuditRoute(new URL(location.href)).surface !== 'archive') return
       const requestId = params.get('packageRequest')
       if (requestId !== packageRequestRef.current) {packageEpoch.current += 1; packageRequestRef.current = requestId; setPackageRequest(requestId); setJob(null); setPackageError(''); setPackageReading(false)}
       setAddress(readArchiveAddress(location.search)); setRestore(value => value + 1)
@@ -60,7 +61,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
     const requestId = next.receipt.state === 'rejected' && !next.package_id ? null : next.receipt.request_id
     packageEpoch.current += 1; packageRequestRef.current = requestId
     setPackageRequest(requestId); setJob(next); setPackageError(''); setPackageReading(false)
-    if (activeRef.current && new URLSearchParams(location.search).get('view') === 'archive') writeArchivePackageAddress(requestId)
+    if (activeRef.current && readAuditRoute(new URL(location.href)).surface === 'archive') writeArchivePackageAddress(requestId)
   }
   const packaging = useReportPackage(job, commitPackage, reference => {
     const item = known.current.get(resultKey(reference))
