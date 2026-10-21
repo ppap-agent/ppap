@@ -281,7 +281,15 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn(export, app)
         self.assertIn(prefetch, app)
         self.assertLess(app.index(export), app.index(prefetch))
-        self.assertLess(app.index(prefetch), app.index("uv sync --frozen --no-dev --no-editable"))
+        dependencies = "uv sync --frozen --no-dev --no-editable --no-install-workspace"
+        workspace = "uv sync --frozen --no-dev --no-editable;"
+        self.assertLess(app.index(prefetch), app.index(dependencies))
+        self.assertLess(app.index(dependencies), app.index("COPY packages /app/packages"))
+        self.assertLess(app.index("COPY services"), app.index(workspace))
+        # Both install layers must keep downloaded archives outside the image.
+        installs = [step for step in app.split("\nRUN ")[1:] if "uv sync" in step]
+        self.assertTrue(installs)
+        self.assertTrue(all(step.startswith("--mount=type=cache,target=/root/.cache/uv") for step in installs))
         self.assertNotIn("pip install", app.replace(prefetch, ""))
         self.assertNotIn("PYTHONPATH", app)
         psw = (ROOT / "tests/corpus/Dockerfile.psw").read_text()

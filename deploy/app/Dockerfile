@@ -45,19 +45,25 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock /app/
-COPY packages /app/packages
-COPY services /app/services
-COPY deploy/app/entrypoint.sh /app/entrypoint.sh
-
 ARG PPAP_PIP_INDEX_URL=
-RUN set -eux; \
-    chmod +x /app/entrypoint.sh; \
+# Keep third-party dependencies independent of workspace source changes.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eux; \
     if [ -n "$PPAP_PIP_INDEX_URL" ]; then \
       export UV_DEFAULT_INDEX="$PPAP_PIP_INDEX_URL"; \
       uv venv /app/.venv; \
       uv export --quiet --frozen --no-dev --no-editable --no-emit-workspace --format requirements-txt -o /tmp/ppap-requirements.txt; \
       UV_LINK_MODE=copy uv pip install --python /app/.venv/bin/python --require-hashes --no-deps -r /tmp/ppap-requirements.txt; \
     fi; \
+    UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable --no-install-workspace; \
+    rm -f /tmp/ppap-requirements.txt
+
+COPY packages /app/packages
+COPY services /app/services
+COPY deploy/app/entrypoint.sh /app/entrypoint.sh
+RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eux; \
+    chmod +x /app/entrypoint.sh; \
     UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 uv sync --frozen --no-dev --no-editable; \
     uv pip check --python /app/.venv/bin/python; \
     cd /; \
