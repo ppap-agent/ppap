@@ -15,8 +15,15 @@ x-provider: &provider
   FEISHU_APP_SECRET: ""
   PPAP_FEISHU_NOTIFICATIONS_ENABLED: "false"
   PPAP_USAGE_CHARGE_ENABLED: "false"
+  LOG_FORMAT: json
+
+volumes:
+  v3-live-postgres:
 
 services:
+  postgres:
+    volumes:
+      - v3-live-postgres:/var/lib/postgresql/data
   api:
     environment: *provider
   worker:

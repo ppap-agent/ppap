@@ -47,7 +47,7 @@ class ProductAPI:
         path, method = request.url.path, request.method
         if method != "GET":
             self.writes.append((method, path))
-        data = json.loads(request.content) if request.content and method != "PUT" or method == "PUT" and not path.endswith("/blob") else {}
+        data = json.loads(request.content) if request.content and not path.endswith("/blob") else {}
         config = {"git_sha": "a" * 40, "profile": "isolated-dev", "usage_charge_enabled": False}
         if path in {"/public-config", "/version"}:
             return httpx.Response(200, json=config)
@@ -119,6 +119,10 @@ class ProductAPI:
                         result["findings"].append({"item_key": key, "status": expected.status, "suggestions": "真实结果的 HTTP 样例"})
                 if self.failure == "duplicate":
                     result["coverage"]["rule_items"].append(result["coverage"]["rule_items"][0].copy())
+                if self.failure == "duplicate_finding":
+                    result["findings"].insert(0, {**result["findings"][0], "status": "ERR"})
+                if self.failure == "wrong_coverage_binding":
+                    result["coverage"]["rule_items"][0]["rule_version_id"] = "another-rule-version"
                 if self.failure == "wrong_binding":
                     result["inputs"][0]["rule_version_id"] = "different"
                 if self.failure == "missing":
@@ -142,7 +146,17 @@ class ProductAPI:
 
 @pytest.mark.parametrize(
     "failure, outcome",
-    [("", "PROVEN"), ("lost_accept_response", "PROVEN"), ("duplicate", "NOT_PROVEN"), ("wrong_binding", "NOT_PROVEN"), ("missing", "NOT_PROVEN"), ("failed", "NOT_PROVEN"), ("timeout", "NOT_PROVEN")],
+    [
+        ("", "PROVEN"),
+        ("lost_accept_response", "PROVEN"),
+        ("duplicate", "NOT_PROVEN"),
+        ("wrong_binding", "NOT_PROVEN"),
+        ("missing", "NOT_PROVEN"),
+        ("failed", "NOT_PROVEN"),
+        ("timeout", "NOT_PROVEN"),
+        ("duplicate_finding", "NOT_PROVEN"),
+        ("wrong_coverage_binding", "NOT_PROVEN"),
+    ],
 )
 def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure, outcome):
     api = ProductAPI(failure)
