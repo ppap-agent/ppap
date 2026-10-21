@@ -1945,6 +1945,31 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_have_count(0)
             browser.close()
 
+    def test_workbench_resume_after_browser_back_preserves_report_file_clause_and_filter(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
+            page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
+            page.get_by_role("option", name="不符合", exact=True).click()
+            open_basis(page)
+            close_workspace_panel(page)
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            address = page.url
+            query = parse_qs(urlparse(address).query)
+            for key in ("task", "file", "clause", "checkFilter", "report"):
+                self.assertIn(key, query)
+            # Clause, filter and report edits replace the current task entry.
+            page.go_back()
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
+            expect(page).to_have_url(address)
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_workbench_resume_after_browser_back_keeps_the_new_draft_not_the_previous_task(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

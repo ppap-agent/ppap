@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress, usesLegacyJourney} from './routes.ts'
+import {auditAddressChanged, canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress, usesLegacyJourney, writeAuditAddress} from './routes.ts'
+
+test('local address edits retain history identity and notify without a synthetic back/forward event', () => {
+  const descriptors = ['window', 'history'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const)
+  const writes: unknown[][] = [], events: string[] = [], draft = {auditUploadDraft: 'draft-b'}
+  Object.defineProperty(globalThis, 'history', {configurable: true, value: {state: draft, pushState: (...args: unknown[]) => writes.push(['push', ...args]), replaceState: (...args: unknown[]) => writes.push(['replace', ...args])}})
+  Object.defineProperty(globalThis, 'window', {configurable: true, value: {dispatchEvent: (event: Event) => {events.push(event.type); assert.equal(writes.length, events.length)}}})
+  try {
+    writeAuditAddress('/tasks/new', 'push')
+    writeAuditAddress('/tasks/a?file=f&clause=c&report=r&packageRequest=p')
+    assert.deepEqual(writes, [['push', draft, '', '/tasks/new'], ['replace', draft, '', '/tasks/a?file=f&clause=c&report=r&packageRequest=p']])
+    assert.deepEqual(events, [auditAddressChanged, auditAddressChanged])
+  } finally {
+    for (const [key, descriptor] of descriptors) {if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key)}
+  }
+})
 
 test('natural task address retains file, clause and report context', () => {
   const url = new URL('https://ppap.test/audit?task=abc&file=f1&clause=c1&report=r1')

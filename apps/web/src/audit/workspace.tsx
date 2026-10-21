@@ -7,7 +7,7 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Badge} from '../components/ui/badge'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
-import {taskAddress} from './routes'
+import {taskAddress, writeAuditAddress} from './routes'
 import {reviewed as hasReview, reviewable} from './review-navigation'
 import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
@@ -49,7 +49,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     const url = new URL(location.href)
     if (id) url.searchParams.set('file', id); else url.searchParams.delete('file')
     url.searchParams.delete('clause'); url.searchParams.delete('focus')
-    history.pushState(history.state, '', url)
+    writeAuditAddress(url, 'push')
   }
   const [report, setReport] = useState<string | null>(() => {const id = new URL(location.href).searchParams.get('report'); return id === '1' ? queue[0]?.file.id || '' : id})
   function showReport(id: string | null) {
@@ -57,7 +57,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
     const url = new URL(location.href)
     if (id !== null) url.searchParams.set('report', id); else url.searchParams.delete('report')
     if (id === null) url.searchParams.delete('packageRequest')
-    history.replaceState(null, '', url)
+    writeAuditAddress(url)
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: task.id, report: id, packageRequest: url.searchParams.get('packageRequest')}, location.origin)
   }
   const file = selected ? queue.find(row => row.file.id === selected) : undefined

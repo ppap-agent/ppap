@@ -8,6 +8,7 @@ import {FileName} from '../journey/file-name'
 import {sameSnapshot, packageOutcomeError, taskPackageScopeError, reportReference} from './result-projection'
 import {readTaskReportPackage, type AuditReportAdapter} from './report-contract'
 import {useReportPackage} from './report-actions'
+import {writeAuditAddress} from './routes'
 
 type Job = components['schemas']['AuditReportPackage']
 type Reference = components['schemas']['AuditReportReference']
@@ -16,7 +17,7 @@ type Task = components['schemas']['AuditTask']
 export function reportPackageAddress(taskId: string, requestId: string | null) {
   const url = new URL(location.href)
   if (requestId) url.searchParams.set('packageRequest', requestId); else url.searchParams.delete('packageRequest')
-  history.replaceState(history.state, '', url)
+  writeAuditAddress(url)
   if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: taskId, report: url.searchParams.get('report'), packageRequest: requestId}, location.origin)
 }
 

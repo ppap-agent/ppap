@@ -19,6 +19,7 @@ import {HistoricalFindings} from './historical-findings'
 import {ReviewEditorContext} from './review-editor'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
 import {filterChecks, nextUnreviewed, reviewable, reviewed} from './review-navigation'
+import {writeAuditAddress} from './routes'
 
 type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
@@ -75,7 +76,7 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
     setClause(id); setSource(null); setFocus(focused)
     const url = new URL(location.href); url.searchParams.set('clause', id)
     if (focused) url.searchParams.set('focus', 'review'); else url.searchParams.delete('focus')
-    history.replaceState(history.state, '', url)
+    writeAuditAddress(url)
   }
   useEffect(() => {
     const itemKey = check?.review_item_key
@@ -133,7 +134,7 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
       {audit.execution === 'review_failed' && <Alert variant="destructive"><AlertTitle>本文件审核异常，未取得完整结果。</AlertTitle><AlertDescription>{audit.failure?.message || '没有可用结果。'}</AlertDescription></Alert>}
       <Tabs hidden={focus} value={section} onValueChange={setSection}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><TabsList variant="line"><TabsTrigger value="checks">审核项 ({audit.checks.length})</TabsTrigger><TabsTrigger value="summary">审核总结</TabsTrigger></TabsList>
-          {section === 'checks' && <div className="flex min-w-0 flex-wrap items-center gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search className="size-3.5"/></span><Input aria-label="搜索审核项" placeholder="搜索审核项或要求" value={query} onChange={event => setQuery(event.target.value)} iconStart/></div><Select value={filter} onValueChange={value => {setFilter(value); const url = new URL(location.href); if (value === "all") url.searchParams.delete("checkFilter"); else url.searchParams.set("checkFilter", value); history.replaceState(history.state, "", url)}}><SelectTrigger aria-label="审核结果筛选"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部审核项</SelectItem><SelectItem value="ng">不符合</SelectItem><SelectItem value="unable">无法判断</SelectItem><SelectItem value="unreviewed">未复核</SelectItem><SelectItem value="attention">需关注</SelectItem><SelectItem value="pass">满足</SelectItem></SelectContent></Select></div>}
+          {section === 'checks' && <div className="flex min-w-0 flex-wrap items-center gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search className="size-3.5"/></span><Input aria-label="搜索审核项" placeholder="搜索审核项或要求" value={query} onChange={event => setQuery(event.target.value)} iconStart/></div><Select value={filter} onValueChange={value => {setFilter(value); const url = new URL(location.href); if (value === "all") url.searchParams.delete("checkFilter"); else url.searchParams.set("checkFilter", value); writeAuditAddress(url)}}><SelectTrigger aria-label="审核结果筛选"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部审核项</SelectItem><SelectItem value="ng">不符合</SelectItem><SelectItem value="unable">无法判断</SelectItem><SelectItem value="unreviewed">未复核</SelectItem><SelectItem value="attention">需关注</SelectItem><SelectItem value="pass">满足</SelectItem></SelectContent></Select></div>}
         </div>
         <TabsContent value="checks"><div className="space-y-4 px-6 pt-2 pb-6 max-sm:px-4">
           <div className="min-w-0 overflow-hidden rounded-md border"><Table className="min-w-xl table-fixed">
