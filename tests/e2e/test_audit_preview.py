@@ -3962,6 +3962,11 @@ class AuditPreviewTests(unittest.TestCase):
                     else:
                         page.get_by_role("button", name="继续当前审核", exact=True).click()
                     expect(page).to_have_url(task_url)
+                    # Restoring acceptRequest reads the original acceptance receipt,
+                    # not a later audit result. The held send must remain outstanding.
+                    expect(audit_details(page).get_by_text("排队中 · 符合 0 / 不符合 0", exact=False)).to_be_visible()
+                    expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+                    read_results(page)
                     expect(audit_details(page).get_by_text("NG · 符合 0 / 不符合 1", exact=True)).to_be_visible()
                     expect(audit_details(page).get_by_text("无法判断 1", exact=True)).to_be_visible()
                     page.get_by_role("button", name=action, exact=True).click()
