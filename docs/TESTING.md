@@ -78,7 +78,11 @@ uv run --no-sync python -m ppap_corpus_contracts.live_poc \
 
 已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先检查候选、收费策略及完整 27 样例／8 组／220 预期。5 份原始 DOCX 经上传、解析、真实出处核对和发布后，逐组明确绑定并受理；不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑。
 
+完整 canonical suite 含需要 OCR 回退的控制计划 PDF。使用本 Live overlay 的 in-process OCR 路径时，执行前须提供真实 `PADDLE_OCR_URL` 及该服务需要的授权；LLM 配置或离线 OCR cache 不能证明此能力可用。workflow 在任何业务写入前检查地址已配置，但配置存在不代表外部服务验收通过。
+
 每次写操作前保存安全回执，JSON／Markdown 保留逐条结果和失败阶段；只读到终态、冻结输入一致且 220 项逐一匹配才返回 `PROVEN`。缺项、重复项、ERR、状态不符或未完成均为 `NOT_PROVEN`，归因默认 `inconclusive`。不要仅凭退出码推断缺陷归属或自动重跑。可选证据位置不参与 PASS/NG 门槛。这里证明 Product API／Worker 能力，包含显式 SCL 审核；不改变 Native 客户流程中 SCL 仅为比对资料的政策，也不证明浏览器、飞书登录、PDF/ZIP、收费或生产放行。运行授权、预算和真实结果只记在 owning Issue，不新增运行台账或提交报告文件。
+
+规则结果通过同一 Round 中冻结的 FileVersion → RuleVersion、coverage 的文件／规则索引及唯一 finding 关联。coverage 的 inline `rule_version_id` 是可选字段，不能把缺省当作缺项；若返回该字段，必须与冻结绑定一致。错误绑定和重复 finding 均拒绝，但不要求一个可选表示成为唯一证明。失败后的只读诊断报告须保留原始报告，并明确未重新受理或调用模型／转换服务，不能冒充新候选的一次成功验收。
 
 Live 工作流失败时先保留本项目容器状态及 allowlist 字段的结构化服务日志，不输出原始模型／HTTP 日志。结束时仅停止本次 project；其 PostgreSQL／S3 命名卷保留新验收记录，不使用 `down -v`。完成必要读回并确认不再需要这些测试记录后，才对该明确 project 清理卷；不得清理共享开发栈或其他 project。
 

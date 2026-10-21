@@ -36,6 +36,7 @@ jobs:
       - name: Deterministic prerequisites and candidate images
         run: |
           set -euo pipefail
+          : "${PADDLE_OCR_URL:?canonical PDF sample needs a real Paddle endpoint, not only cached OCR}"
           uv sync --locked
           uv run --no-sync pytest packages/ppap_corpus_contracts/tests
           docker buildx bake api worker --load
