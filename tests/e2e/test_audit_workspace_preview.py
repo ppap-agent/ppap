@@ -57,6 +57,30 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="审核详情", exact=True).get_by_role("table")).to_be_visible()
             browser.close()
 
+    def test_workbench_back_and_resume_preserve_visible_clause_filter_and_focus(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 960})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").first.click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
+            page.get_by_role("combobox", name="审核结果筛选", exact=True).click()
+            page.get_by_role("option", name="不符合", exact=True).click()
+            page.get_by_role("button", name="专注复核（选做）", exact=True).click()
+            focus = page.get_by_role("region", name="专注复核", exact=True)
+            focus.get_by_role("button", name="下一待复核", exact=True).click()
+            expect(focus.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
+            address = page.url
+            page.go_back()
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
+            expect(page).to_have_url(address)
+            expect(focus.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回审核项", exact=True).click()
+            expect(page.get_by_role("combobox", name="审核结果筛选", exact=True)).to_contain_text("不符合")
+            browser.close()
+
     def test_escape_closes_only_the_display_editor_and_returns_focus_to_file_info(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

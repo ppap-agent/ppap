@@ -19,7 +19,7 @@ import {HistoricalFindings} from './historical-findings'
 import {ReviewEditorContext} from './review-editor'
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
 import {filterChecks, nextUnreviewed, reviewable, reviewed} from './review-navigation'
-import {writeAuditAddress} from './routes'
+import {readAuditRoute, writeAuditAddress} from './routes'
 
 type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
@@ -51,7 +51,7 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 }
 
 /** P5 and historical readers share the same frozen results, evidence and review actions. */
-export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay, showFileTitle = true}: {file: File; roundId: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void; showFileTitle?: boolean}) {
+export function AuditReviewContent({file, roundId, taskId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay, showFileTitle = true}: {file: File; roundId: string; taskId?: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void; showFileTitle?: boolean}) {
   const reviewEditor = useContext(ReviewEditorContext)
   const [clause, setClause] = useState(() => new URL(location.href).searchParams.get('clause') || ''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
   const [focus, setFocus] = useState(() => new URL(location.href).searchParams.get('focus') === 'review')
@@ -83,9 +83,13 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
     return () => {if (itemKey) currentEditor.current?.release(roundId, itemKey)}
   }, [focus, check?.review_item_key, roundId])
   useEffect(() => {
-    const restore = () => {const url = new URL(location.href); setClause(url.searchParams.get('clause') || ''); setFocus(url.searchParams.get('focus') === 'review'); setFilter(url.searchParams.get('checkFilter') || 'all')}
+    const restore = () => {
+      const url = new URL(location.href), route = readAuditRoute(url)
+      if (taskId && (route.surface !== 'audit' || route.taskId !== taskId || url.searchParams.get('file') !== file.file.id)) return
+      setClause(url.searchParams.get('clause') || ''); setFocus(url.searchParams.get('focus') === 'review'); setFilter(url.searchParams.get('checkFilter') || 'all')
+    }
     window.addEventListener('popstate', restore); return () => window.removeEventListener('popstate', restore)
-  }, [])
+  }, [taskId, file.file.id])
   function showEvidence(row: Evaluation) {
     trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     navigateClause(row.rule_item.id); setPane('details'); setOpen(true)
