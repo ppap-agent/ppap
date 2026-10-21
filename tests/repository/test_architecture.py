@@ -10,6 +10,7 @@ it does not parse workflow/config source to proxy native behavior.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -168,6 +169,19 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("ppap_api", worker_source)
         self.assertNotIn("ppap_excel_audit_engine", store_source)
         self.assertNotIn("ppap_deep", store_source)
+
+        legacy_orm_imports = []
+        for path in (ROOT / "packages/ppap_excel_audit_engine/src").rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    modules = [node.module or ""]
+                else:
+                    continue
+                if any(module.split(".")[0] == "ppap_db" for module in modules):
+                    legacy_orm_imports.append(str(path.relative_to(ROOT)))
+        self.assertEqual(legacy_orm_imports, [])
 
     def test_pytest_importlib_is_the_only_import_authority(self):
         options = _pyproject(ROOT / "pyproject.toml")["tool"]["pytest"]["ini_options"]

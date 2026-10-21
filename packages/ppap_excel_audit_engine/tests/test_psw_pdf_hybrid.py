@@ -279,12 +279,15 @@ def test_unreadable_original_pages_are_execution_errors_without_model_calls(orig
     assert original_pdf.read_bytes() == original_bytes
 
 
-def test_model_service_exception_preserves_structured_results_and_releases_converted_files(original_pdf, converted_table, monkeypatch, profile):
+@pytest.mark.parametrize("failure", [RuntimeError, TypeError], ids=["runtime-error", "type-error"])
+def test_model_service_exception_preserves_structured_results_and_releases_converted_files(original_pdf, converted_table, monkeypatch, profile, failure):
     original_bytes = original_pdf.read_bytes()
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
+    attempted_prompts = []
 
     def unavailable(self, **kwargs):
-        raise RuntimeError("model service unavailable")
+        attempted_prompts.append(kwargs["user_text"])
+        raise failure("model service unavailable")
 
     monkeypatch.setattr(AIClient, "image_analysis_completion", unavailable)
 
@@ -294,6 +297,8 @@ def test_model_service_exception_preserves_structured_results_and_releases_conve
     assert results[1].status == "PASS"
     assert [results[index].status for index in (2, 4)] == ["ERR", "ERR"]
     assert all(results[index].evidence.diagnostics[0].code == "psw.evaluation.runtime_error" for index in (2, 4))
+    assert len(attempted_prompts) == 2
+    assert len(set(attempted_prompts)) == 2
     assert not converted_table.exists()
     assert original_pdf.read_bytes() == original_bytes
 
