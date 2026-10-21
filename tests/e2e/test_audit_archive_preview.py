@@ -65,7 +65,7 @@ class AuditArchivePreviewTests(unittest.TestCase):
             expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(1)
             events.get_by_role("button", name=re.compile("返回示例读取 ")).click()
             expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             expect(events.get_by_text("审核任务清单", exact=True)).to_have_count(1)
             expect(events.get_by_text("文件档案清单", exact=True)).to_have_count(0)
             browser.close()

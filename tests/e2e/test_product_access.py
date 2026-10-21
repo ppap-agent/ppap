@@ -105,7 +105,7 @@ def test_customer_catalog_refresh_keeps_the_restored_task_and_file_selection(pag
     page.get_by_role("button", name="查看已选文件", exact=True).click()
     expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).to_be_checked()
     expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
-    assert page.url == WEB + "/audit?task=original-task"
+    assert page.url == WEB + "/tasks/original-task"
     assert reads == ["GET", "GET"]
 
     address = page.url
@@ -178,7 +178,7 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
     page.route("**/api/login/feishu/host", lambda route: (host_posts.append(route.request.url), route.fulfill(json=PRINCIPAL)))
     page.goto(WEB + "/?view=workbench")
     expect(page.get_by_role("button", name="登录恢复测试，账号菜单")).to_be_visible()
-    refresh = page.get_by_role("button", name="刷新审核记录")
+    refresh = page.get_by_role("button", name="刷新任务列表")
     expect(refresh).to_be_enabled()
     before = page.url
     page.route("**/api/drafts?*", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
@@ -200,8 +200,11 @@ def test_a_business_401_still_hides_the_authenticated_product_without_restarting
         ("__proto__", "飞书登录未完成，请重新登录。"),
     ],
 )
-@pytest.mark.parametrize("path", ["/?view=workbench", "/audit?report=frozen-report"])
-def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(page, reason, message, path):
+@pytest.mark.parametrize(
+    "path,canonical",
+    [("/?view=workbench", "/workbench?task=original-task#original-clause"), ("/audit?report=frozen-report", "/tasks/original-task?report=frozen-report#original-clause")],
+)
+def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(page, reason, message, path, canonical):
     login_config(page)
     page.route("**/api/me", lambda route: route.fulfill(status=401, json={"error": "unauthenticated"}))
     page.add_init_script("window.__PPAP_FEISHU_HOST__ = {login: async () => 'must-not-request'}")
@@ -209,7 +212,7 @@ def test_authorization_failure_keeps_task_and_requires_an_explicit_new_login(pag
     page.route("**/api/login/feishu/host", lambda route: (host_posts.append(route.request.url), route.fulfill(json=PRINCIPAL)))
     page.goto(WEB + path + "&task=original-task&auth_error=" + reason + "#original-clause")
     expect(page.get_by_role("alert")).to_contain_text(message)
-    assert page.url == WEB + path + "&task=original-task#original-clause"
+    assert page.url == WEB + canonical
     link = page.get_by_role("link", name="使用飞书登录")
     expect(link).to_be_visible()
     assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
@@ -241,18 +244,19 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     expect(records).to_be_visible()
     page.keyboard.press("Escape")
     expect(records).to_have_count(0)
-    assert page.url == WEB + "/audit?task=original-task&report=frozen-report#original-clause"
+    assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
     account.click()
     page.get_by_role("menuitem", name="用量记录").click()
     expect(page.get_by_role("heading", name="用量记录", exact=True)).to_be_visible()
     address = urlsplit(page.url)
-    assert address.path == "/audit"
-    assert parse_qs(address.query) == {"task": ["original-task"], "report": ["frozen-report"], "view": ["usage"]}
+    assert address.path == "/usage"
+    assert parse_qs(address.query) == {}
     assert address.fragment == "original-clause"
     if viewport[0] < 1024:
         page.get_by_role("button", name="打开产品导航").click()
-    page.get_by_role("button", name="PPAP Audit", exact=True).click()
-    assert page.url == WEB + "/audit?task=original-task&report=frozen-report#original-clause"
+    page.get_by_role("button", name="工作台", exact=True).click()
+    page.get_by_role("button", name="继续当前审核", exact=True).click()
+    assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"
     account.click()
     page.get_by_role("menuitem", name="退出登录").click()
     expect(page.get_by_role("heading", name="登录审核工作台")).to_be_visible()
@@ -260,4 +264,4 @@ def test_native_account_usage_and_logout_keep_the_task_report_address(page, view
     expect(account).to_have_count(0)
     link = page.get_by_role("link", name="使用飞书登录")
     assert parse_qs(urlsplit(link.get_attribute("href")).query)["return_to"] == [page.url]
-    assert page.url == WEB + "/audit?task=original-task&report=frozen-report#original-clause"
+    assert page.url == WEB + "/tasks/original-task?report=frozen-report#original-clause"

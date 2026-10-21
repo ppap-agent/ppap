@@ -118,7 +118,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         with page.expect_response(lambda response: urlsplit(response.url).path.endswith("/audit-report-packages/original-request")):
             held.pop().fulfill(json=job)
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-        assert parse_qs(urlsplit(page.url).query)["view"] == ["usage"]
+        assert urlsplit(page.url).path == "/usage"
         expect(package).to_have_count(0)
         page.go_back()
         expect(package.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
