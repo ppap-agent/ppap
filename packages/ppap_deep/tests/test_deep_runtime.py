@@ -261,6 +261,17 @@ class SemanticProductContractTests(unittest.TestCase):
                     semantic_inputs(changed, ENGINE)
                 self.assertEqual(error.exception.code, "deep_integrity_mismatch")
 
+    def test_reference_requires_a_valid_frozen_source_digest(self) -> None:
+        for digest in (None, "", "not-a-sha256"):
+            with self.subTest(digest=digest):
+                payload = _spec().model_dump(mode="json")
+                if digest is None:
+                    del payload["files"][1]["sha256"]
+                else:
+                    payload["files"][1]["sha256"] = digest
+                with self.assertRaises(ValueError):
+                    semantic_inputs(ExecuteRequest.model_validate(payload), ENGINE)
+
     def test_missing_clause_and_wrong_evidence_version_are_rejected(self) -> None:
         spec = _spec()
         submission, _ = semantic_inputs(spec, ENGINE)
