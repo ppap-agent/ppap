@@ -1,9 +1,12 @@
 """Current V3 reference extraction uses real files and preserves source identity."""
 
+from types import SimpleNamespace
+
 import fitz
 import pytest
 from openpyxl import Workbook
 from ppap_core.contracts import AuditInput, ConversionArtifact, GroupContextInput, RuleInput
+from ppap_core.types import PpapDocumentType
 from ppap_excel_audit_engine.app_runtime import run_audit_engine
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.cross_file_extractors import extract_rows_from_file
 from ppap_excel_audit_engine.runtime import bind_runtime
@@ -117,7 +120,8 @@ def test_two_level_characteristic_headers_preserve_only_data_and_original_row_nu
     [("valid", 10, "PASS"), ("valid", 99, "NG"), ("rejected", 10, "NG"), ("corrupt", 10, "NG")],
     ids=["matching-process", "different-process", "conversion-rejected", "corrupt-workbook"],
 )
-def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversion_files(tmp_path, monkeypatch, conversion_state, operation, expected):
+@pytest.mark.parametrize("context_form", ["typed", "attributes"])
+def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversion_files(tmp_path, monkeypatch, conversion_state, operation, expected, context_form):
     plan_path = tmp_path / "plan.xlsx"
     workbook = Workbook()
     workbook.active.title = "控制计划"
@@ -130,6 +134,9 @@ def test_app_runtime_compares_actual_pdf_reference_rows_and_cleans_all_conversio
     original_bytes = source.read_bytes()
     flow = AuditInput(audit_id="flow", file_url=str(source))
     group = GroupContextInput(task_group_id="submitted-group", by_doc_type={"过程流程图": [flow]}, by_audit_id={"flow": flow})
+    if context_form == "attributes":
+        flow = SimpleNamespace(audit_id="flow", file_url=str(source))
+        group = SimpleNamespace(task_group_id="submitted-group", by_doc_type={PpapDocumentType.PROCESS_FLOW_CHART: [flow]}, by_audit_id={"flow": flow})
     converted_paths = []
     seen_sources = []
 
