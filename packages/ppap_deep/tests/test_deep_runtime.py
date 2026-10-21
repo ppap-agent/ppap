@@ -13,7 +13,7 @@ from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.files import ObjectMissing
 from ppap_core.settings import Settings
 from ppap_deep.auditor import SemanticRuntime, product_response, semantic_inputs
-from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient
+from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
 from ppap_deep.controller import ExecutionContext
 from ppap_deep.isolation.model_gateway import Grants, local_gateway
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
@@ -218,6 +218,48 @@ class SemanticProductContractTests(unittest.TestCase):
             },
         )
         self.assertTrue(response.coverage.locator_gap)  # Explicit UNABLE has no source.
+
+    def test_frozen_context_keeps_each_target_rule_and_explicit_reference(self) -> None:
+        spec = _spec()
+        second_id = "00000000-0000-4000-8000-000000000004"
+        second_rule = "00000000-0000-4000-8000-000000000005"
+        second = spec.files[0].model_copy(deep=True, update={"file_version_id": second_id, "file_id": "file-second", "filename": "pfmea.xlsx", "rule_version_id": second_rule})
+        second.rule_body["rules"] = [{"id": "F1", "rule_to_check": "过程与控制计划一致"}]
+        spec.files.append(second)
+        submission, packets = semantic_inputs(spec, ENGINE)
+
+        self.assertEqual(submission.targets, {TARGET: RULE, second_id: second_rule})
+        self.assertEqual([(item.audit_id, item.role) for item in submission.documents], [(TARGET, "target"), (REFERENCE, "context"), (second_id, "target")])
+        self.assertEqual({item.rule_id: item.clauses for item in submission.rules}, {RULE: _clauses(), second_rule: [{"id": "F1", "rule_to_check": "过程与控制计划一致"}]})
+        self.assertEqual(set(packets), {RULE, second_rule})
+        original = submission.model_dump_json()
+        spec.files[0].rule_body["rules"][0]["rule_to_check"] = "已改变的要求"
+        spec.files[1].sha256 = "c" * 64
+        second.rule_body["rules"][0]["id"] = "changed"
+        self.assertEqual(submission.model_dump_json(), original)
+        self.assertEqual(json.loads(packets[RULE])["clauses"], _clauses())
+        self.assertEqual(json.loads(packets[second_rule])["clauses"], [{"id": "F1", "rule_to_check": "过程与控制计划一致"}])
+
+    def test_shared_rule_version_requires_identical_effective_source(self) -> None:
+        spec = _spec()
+        second_id = "00000000-0000-4000-8000-000000000004"
+        second = spec.files[0].model_copy(deep=True, update={"file_version_id": second_id, "file_id": "file-second", "rule_title": "同一版本的另一显示标题"})
+        spec.files.append(second)
+        submission, packets = semantic_inputs(spec, ENGINE)
+        self.assertEqual(submission.targets, {TARGET: RULE, second_id: RULE})
+        self.assertEqual(len(submission.rules), 1)
+        self.assertEqual(set(packets), {RULE})
+
+        for changed_field in ("rule_body", "rule_source_file_version_id"):
+            with self.subTest(changed_field=changed_field):
+                changed = spec.model_copy(deep=True)
+                if changed_field == "rule_body":
+                    changed.files[-1].rule_body["rules"][0]["rule_to_check"] = "另一份要求"
+                else:
+                    changed.files[-1].rule_source_file_version_id = "another-rule-source-version"
+                with self.assertRaises(DeepError) as error:
+                    semantic_inputs(changed, ENGINE)
+                self.assertEqual(error.exception.code, "deep_integrity_mismatch")
 
     def test_missing_clause_and_wrong_evidence_version_are_rejected(self) -> None:
         spec = _spec()
