@@ -88,12 +88,20 @@ class WebAuditLoopTests(unittest.TestCase):
             # Existing drafts retain their original bindings and upload recovery.
             draft_id = page.request.post(f"{api}/drafts", data={}).json()["id"]
             page.goto(f"{WEB}/?case={draft_id}")
-            page.get_by_label("添加审核资料", exact=True).set_input_files(
-                [
-                    {"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": target_bytes},
-                    {"name": context, "mimeType": "text/plain", "buffer": reference_bytes},
-                ]
-            )
+            # The existing draft must finish its read before accepting user input.
+            # set_input_files alone can dispatch change on the disabled hidden input.
+            with page.expect_file_chooser() as chooser:
+                page.get_by_role("button", name="添加文件", exact=True).click()
+            with page.expect_response(
+                lambda reply: reply.request.method == "PUT" and reply.url.endswith(f"/drafts/{draft_id}") and len(reply.request.post_data_json.get("items", [])) == 2
+            ) as uploaded:
+                chooser.value.set_files(
+                    [
+                        {"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": target_bytes},
+                        {"name": context, "mimeType": "text/plain", "buffer": reference_bytes},
+                    ]
+                )
+            self.assertEqual(uploaded.value.status, 200)
             table = page.get_by_role("table", name="审核资料", exact=True)
             expect(table.get_by_role("button", name="阅读 " + name, exact=True)).to_be_visible()
             expect(table.get_by_role("button", name="阅读 " + context, exact=True)).to_be_visible()

@@ -39,7 +39,8 @@ function reviewedBasisContent(basis: RequirementBasis) {
 }
 function requirementHref(id = '', version = '') {
   const url = new URL(location.href)
-  url.searchParams.set('view', 'requirements')
+  if (url.pathname.replace(/\/$/, '') === '/requirements') url.searchParams.delete('view')
+  else url.searchParams.set('view', 'requirements')
   for (const [key, value] of [['requirement', id], ['reqVersion', version]]) {
     if (value) url.searchParams.set(key, value); else url.searchParams.delete(key)
   }

@@ -23,7 +23,8 @@ def open_rule_library(page):
     if button.is_visible():
         button.click()
     else:
-        page.get_by_role("button", name="打开审核任务", exact=True).click()
+        navigation = page.get_by_role("button", name="打开产品导航", exact=True)
+        (navigation if navigation.is_visible() else page.get_by_role("button", name="打开审核任务", exact=True)).click()
         page.get_by_role("dialog").get_by_role("button", name="审核规则", exact=True).click()
 
 
@@ -1821,8 +1822,8 @@ class RuleInteractionTests(unittest.TestCase):
             expect(page.get_by_label("要求名称", exact=True)).to_be_visible()
             first = state["parses"][0]
             self.assertEqual(len(state["held"]), 1)
-            page.get_by_role("link", name="返回审核要求", exact=True).click()
-            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            page.get_by_role("link", name="返回审核规则", exact=True).click()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             page.get_by_label("上传共用要求文件").set_input_files({"name": "B.json", "mimeType": "application/json", "buffer": b"second"})
             state["status"] = "succeeded"
             page.get_by_label("适用资料类型").select_option("控制计划")
@@ -2157,6 +2158,7 @@ class RuleInteractionTests(unittest.TestCase):
         page.route("**/api/rules/*", rule)
         page.route("**/api/rules/parse", parse)
         page.route("**/api/rules/parse/*", read_parse)
+        self.native_rule_routes(page, state)
         return state
 
     def open_requirement(self, page, path="/?view=requirements", *, document_type="控制计划"):
@@ -2233,7 +2235,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("button", name="放弃草稿", exact=True).click()
             dialog.get_by_role("button", name="放弃此草稿", exact=True).click()
             expect(dialog).to_have_count(0)
-            expect(page.get_by_role("heading", name="审核要求", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核规则", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="还没有审核要求", exact=True)).to_be_visible()
             page.reload()
             expect(page.get_by_role("heading", name="还没有审核要求", exact=True)).to_be_visible()

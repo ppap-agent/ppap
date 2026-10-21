@@ -678,7 +678,7 @@ export function JourneyApp() {
     open(prepared.id)
   }
   function home() {
-    if (!preview) {location.assign('/workbench'); return}
+    if (!preview && location.pathname !== '/dev') {location.assign('/workbench'); return}
     caseGeneration.current++; setCaseReadError('')
     setActive(null)
     const url = new URL(workbenchReturn.current || location.href)
