@@ -7,7 +7,7 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Badge} from '../components/ui/badge'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
-import {taskAddress, writeAuditAddress} from './routes'
+import {readAuditRoute, taskAddress, writeAuditAddress} from './routes'
 import {reviewed as hasReview, reviewable} from './review-navigation'
 import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
@@ -42,13 +42,15 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const [report, setReport] = useState<string | null>(() => {const id = new URL(location.href).searchParams.get('report'); return id === '1' ? queue[0]?.file.id || '' : id})
   useEffect(() => {
     const restore = () => {
-      const params = new URL(location.href).searchParams
+      const url = new URL(location.href), route = readAuditRoute(url)
+      if (route.surface !== 'audit' || route.taskId !== task.id) return
+      const params = url.searchParams
       setSelected(params.get('file') || '')
       const id = params.get('report'); setReport(id === '1' ? task.files.find(row => row.selection === 'selected')?.file.id || '' : id)
     }
     window.addEventListener('popstate', restore)
     return () => window.removeEventListener('popstate', restore)
-  }, [task.files])
+  }, [task.id, task.files])
   function chooseFile(id: string) {
     setSelected(id)
     const url = new URL(location.href)
