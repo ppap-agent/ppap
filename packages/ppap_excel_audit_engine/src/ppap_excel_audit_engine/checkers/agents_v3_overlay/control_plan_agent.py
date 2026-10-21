@@ -1924,7 +1924,7 @@ class ControlPlanAgent(ExcelAgent):
                 if stage_cells:
                     return "NG", "未勾选任何控制计划类型"
 
-            return "ERR", "未检测到任何适用阶段信息"
+            return "NG", "未检测到任何适用阶段信息"
 
         except Exception as exc:
             logger.exception("rule1 error")
