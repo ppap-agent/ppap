@@ -2,10 +2,11 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
-from ppap_core.contracts import AuditInput, AuditResultItem, GroupContextInput, RuleInput
+from ppap_core.contracts import AuditInput, AuditResultItem, ConversionArtifact, GroupContextInput, RuleInput
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.pfmea_agent import PfmeaAgent
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
+from ppap_excel_audit_engine.runtime import bind_runtime
 
 
 def saved_file(tmp_path: Path, name: str, workbook: Workbook) -> AuditInput:
@@ -147,7 +148,8 @@ def test_rework_requires_inspection_in_the_next_row(tmp_path, next_process, expe
 
 
 @pytest.mark.parametrize(("flow_special", "expected"), [(None, "NG"), ("SC", "PASS")])
-def test_pfmea_special_characteristic_is_checked_against_the_actual_flow_file(tmp_path, flow_special, expected):
+@pytest.mark.parametrize("reference_format", ["xlsx", "pdf"])
+def test_pfmea_special_characteristic_is_checked_against_the_actual_flow_file(tmp_path, monkeypatch, flow_special, expected, reference_format):
     workbook = Workbook()
     workbook.active.title = "PFMEA"
     workbook.active.append(["过程步骤", "特殊特性"])
@@ -157,14 +159,27 @@ def test_pfmea_special_characteristic_is_checked_against_the_actual_flow_file(tm
     flow.active.append(["工序名称", "产品特性类别", "过程特性类别"])
     flow.active.append(["10 注塑", None, flow_special])
     related = saved_file(tmp_path, "flow.xlsx", flow)
+    if reference_format == "pdf":
+        converted = related.file_url
+
+        def convert(file_ref, *, enable_cache=True):
+            return ConversionArtifact(success=True, xlsx_path=converted, temp_files=[converted])
+
+        # Only the external converter is replaced; native loading, extraction,
+        # cross-file matching and the PFMEA decision all run unchanged.
+        monkeypatch.setattr("ppap_pdf_to_excel.pipeline.convert_pdf_to_excel_auto", convert)
+        related = AuditInput(audit_id=related.audit_id, file_url=str(tmp_path / "flow.pdf"))
     group = GroupContextInput(by_doc_type={"过程流程图": [related]}, by_audit_id={related.audit_id: related})
 
-    result = check_workbook(tmp_path, PfmeaAgent, workbook, 7, group)
+    with bind_runtime(None):
+        result = check_workbook(tmp_path, PfmeaAgent, workbook, 7, group)
 
     assert result.status == expected
     if expected == "NG":
         assert "PFMEA过程步骤存在特殊特性" in result.suggestions
         assert "PFD对应工序未标注CC/SC" in result.suggestions
+    if reference_format == "pdf":
+        assert not (tmp_path / "flow.xlsx").exists()
 
 
 def test_flow_cross_file_check_uses_current_file_and_ignores_characteristic_headers(tmp_path):
