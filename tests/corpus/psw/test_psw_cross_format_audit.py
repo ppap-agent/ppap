@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import gc
 import json
 import re
 import shutil
+import tempfile
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 import pytest
@@ -29,6 +34,7 @@ from ppap_docops.word import (
 from ppap_excel_audit_engine import run_audit
 from ppap_excel_audit_engine.app_runtime import _AppAuditRuntime, run_audit_engine
 from ppap_excel_audit_engine.checkers.agents.psw_excel_agent import PswExcelAgent
+from ppap_excel_audit_engine.checkers.client import AIClient
 from ppap_excel_audit_engine.rule_engine import Table
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -190,35 +196,70 @@ def test_real_xlsx_pdf_pair_runs_extraction_and_audit_before_comparison() -> Non
     assert all(result.evidence is not None for result in xlsx_results + pdf_results)
 
 
-def test_real_local_doc_and_its_converted_docx_have_equivalent_results(
+@pytest.fixture(params=["local", "http"])
+def legacy_doc_source(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
+    if request.param == "local":
+        yield str(_LEGACY_DOC)
+        return
+
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    handler = partial(SimpleHTTPRequestHandler, directory=str(_LEGACY_DOC.parent))
+    with ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}/psw.doc?sig=test"
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3"])
+def test_real_doc_and_its_converted_docx_have_equivalent_results_and_release_temporary_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    legacy_doc_source: str,
+    profile: str,
 ) -> None:
     executable = shutil.which("soffice") or shutil.which("libreoffice")
     assert executable is not None, "required PSW runtime must provide LibreOffice"
     monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", executable)
     monkeypatch.setattr(
-        _AppAuditRuntime,
-        "run_image_prompt",
+        AIClient,
+        "image_analysis_completion",
         _DeterministicRuntime.run_image_prompt,
     )
+    runtime_temp = tmp_path / "conversion-temporary"
+    runtime_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(runtime_temp))
+    original_bytes = _LEGACY_DOC.read_bytes()
 
     converted = convert_legacy_doc_to_docx(
-        _LEGACY_DOC.read_bytes(),
+        original_bytes,
         _LEGACY_DOC.name,
     )
     docx_path = tmp_path / "psw-converted.docx"
     docx_path.write_bytes(converted)
-    rules = _psw_rules()
+    rules = _psw_rules().model_copy(update={"rule_profile": profile})
 
-    doc_results = run_audit_engine(
-        AuditInput(audit_id="customer-doc", file_url=str(_LEGACY_DOC)),
-        rules,
-    )
-    docx_results = run_audit_engine(
-        AuditInput(audit_id="converted-docx", file_url=str(docx_path)),
-        rules,
-    )
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        doc_results = run_audit_engine(
+            AuditInput(audit_id="customer-doc", file_url=legacy_doc_source),
+            rules,
+        )
+        assert list(runtime_temp.iterdir()) == []
+        monkeypatch.setenv("LEGACY_DOC_CONVERTER_EXECUTABLE", str(tmp_path / "unavailable-converter"))
+        docx_results = run_audit_engine(
+            AuditInput(audit_id="converted-docx", file_url=str(docx_path)),
+            rules,
+        )
+        assert list(runtime_temp.iterdir()) == []
+    finally:
+        if was_enabled:
+            gc.enable()
+        gc.collect()
     key_fields = _word_key_fields(converted)
     reference = PswAuditSnapshot(
         source_format="docx",
@@ -238,6 +279,8 @@ def test_real_local_doc_and_its_converted_docx_have_equivalent_results(
     assert all(result.evidence is not None for result in doc_results + docx_results)
     assert {result.evidence.source_format for result in doc_results if result.evidence} == {"doc"}
     assert {result.evidence.source_format for result in docx_results if result.evidence} == {"docx"}
+    assert _LEGACY_DOC.read_bytes() == original_bytes
+    assert docx_path.read_bytes() == converted
 
 
 def test_psw_xlsx_product_round_keeps_engine_statuses() -> None:
