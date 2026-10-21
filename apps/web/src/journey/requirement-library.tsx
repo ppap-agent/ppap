@@ -14,7 +14,7 @@ import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHea
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {Textarea} from '../components/ui/textarea'
-import {clauseSourceReady, type RequirementClause} from './requirements-state'
+import {clauseSourceReady, type RequirementBasis, type RequirementClause} from './requirements-state'
 import {verifiedClauseCount} from './requirement-sources'
 import {RequirementSourceSelect} from './requirement-source-select'
 import {clauseContent, libraryDraftIssues, scopeFields, scopeLabel, type RequirementCollection, type RequirementDraft, type RequirementScope, type RequirementUse, type RequirementVersion} from './requirement-library-state'
@@ -30,6 +30,13 @@ const routeSelection = () => ({id: new URLSearchParams(location.search).get('req
 const routeQuery = () => (new URLSearchParams(location.search).get('reqQuery') ?? '').slice(0, 200)
 const routeContent = () => new URLSearchParams(location.search).get('reqTab') === 'changes' ? 'changes' : 'clauses'
 const listScope = (scope: RequirementScope) => scopeFields.every(({flag}) => scope[flag]) ? '不限定客户、零件与修订' : scopeLabel(scope)
+function reviewedBasisContent(basis: RequirementBasis) {
+  return canonical({
+    ...basis,
+    server: basis.server ? {...basis.server, sources: undefined} : undefined,
+    clauses: basis.clauses.map(clause => [clause, clauseSourceReady(clause, basis)]),
+  })
+}
 function requirementHref(id = '', version = '') {
   const url = new URL(location.href)
   url.searchParams.set('view', 'requirements')
@@ -147,9 +154,10 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     window.addEventListener('popstate', sync)
     return () => {mounted.current = false; window.removeEventListener('popstate', sync)}
   }, [])
-  function edit(update: (draft: RequirementDraft) => RequirementDraft) {
+  function edit(update: (draft: RequirementDraft) => RequirementDraft, invalidateAcknowledgement = true) {
     if (working.current || loading || !collection?.draft || !draftSelected) return
-    setAck(false); setFeedback(null)
+    if (invalidateAcknowledgement) setAck(false)
+    setFeedback(null)
     onChange(items => items.map(item => item.id === collection.id && item.draft ? {...item, draft: update(item.draft)} : item))
   }
   function patchClause(id: string, patch: Partial<RequirementClause>) {
@@ -241,7 +249,7 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
         </div>
       </header>
       {draftSelected ? <fieldset disabled={locked} className="min-w-0 space-y-4">
-        <RuleExtraction basis={current.basis} readonly={locked} onChange={basis => edit(draft => ({...draft, basis}))}/>
+        <RuleExtraction basis={current.basis} readonly={locked} onChange={basis => edit(draft => ({...draft, basis}), reviewedBasisContent(current.basis) !== reviewedBasisContent(basis))}/>
         <div className="grid gap-4 md:grid-cols-2"><label className="grid gap-1.5">要求名称<Input value={current.basis.source.title} onChange={event => edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, title: event.target.value}}}))}/></label><label className="grid gap-1.5">版本号<Input value={current.basis.source.version} onChange={event => edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, version: event.target.value}}}))}/></label></div>
         <div className="grid gap-4 lg:grid-cols-3">{scopeFields.map(({key, flag, label}) => <div className="min-w-0 space-y-1.5" key={key}><label className="grid gap-1.5">适用{label}<Input disabled={locked || current.scope[flag] === true} value={current.scope[key]} onChange={event => edit(draft => ({...draft, scope: {...draft.scope, [key]: event.target.value}}))}/></label><label className="flex min-h-9 items-center gap-2 text-muted-foreground max-md:min-h-11"><Checkbox disabled={locked} checked={current.scope[flag] === true} onCheckedChange={value => edit(draft => ({...draft, scope: {...draft.scope, [flag]: value === true}}))}/>不限定{label}</label></div>)}</div>
         <label className="grid gap-1.5">来源说明／变更原因<Textarea value={current.reason} onChange={event => edit(draft => ({...draft, reason: event.target.value}))}/></label>

@@ -431,6 +431,65 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(state["saves"]), 2)
             browser.close()
 
+    def test_identical_source_read_after_version_confirmation_keeps_the_save_action_available(self):
+        self.check_source_reply_after_version_confirmation(matching=True)
+
+    def test_changed_source_validity_after_version_confirmation_still_blocks_publication(self):
+        self.check_source_reply_after_version_confirmation(matching=False)
+
+    def check_source_reply_after_version_confirmation(self, *, matching):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            state = self.requirement_routes(page)
+            self.native_rule_routes(page, state)
+            self.open_requirement(page, "/audit?view=requirements")
+            self.check_requirement(page)
+            page.get_by_role("button", name="确认并保存版本", exact=True).click()
+            expect(page.get_by_role("button", name="创建新版本", exact=True)).to_be_visible()
+            held = []
+            page.route("**/api/files/*/versions/*/rule-sources", lambda route: held.append(route))
+            with page.expect_request("**/api/files/*/versions/*/rule-sources"):
+                page.get_by_role("button", name="创建新版本", exact=True).click()
+            page.get_by_label("版本号", exact=True).fill("v2")
+            reason = page.get_by_role("textbox", name="来源说明／变更原因", exact=True)
+            reason.fill("第二次核对")
+            page.get_by_role("checkbox", name="1 已核对来源", exact=True).check()
+            acknowledgement = page.get_by_label("已核对本版本的来源、范围和变更", exact=True)
+            acknowledgement.check()
+            save = page.get_by_role("button", name="确认并保存版本", exact=True)
+            expect(save).to_be_enabled()
+            self.assertEqual(len(held), 1)
+            units = [{"id": "json:0", "location": "rules[0].rule_to_check", "excerpt": "检查 A"}] if matching else []
+            with page.expect_response("**/api/files/*/versions/*/rule-sources") as response:
+                held[0].fulfill(json={"file_version_id": state["source"]["id"], "units": units})
+            response.value.finished()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
+            expect(reason).to_have_value("第二次核对")
+            if not matching:
+                expect(save).to_be_disabled()
+                expect(acknowledgement).not_to_be_checked()
+                expect(page.get_by_label("1 已核对来源", exact=True)).to_be_disabled()
+                expect(page.get_by_text("1：选择可定位的原文出处。", exact=True)).to_be_visible()
+                self.assertEqual(len(state["saves"]), 1)
+                browser.close()
+                return
+            expect(save).to_be_enabled()
+            expect(acknowledgement).to_be_checked()
+            expect(page.get_by_label("1 已核对来源", exact=True)).to_be_checked()
+            reason.fill("用户补充版本说明")
+            expect(save).to_be_disabled()
+            expect(acknowledgement).not_to_be_checked()
+            acknowledgement.check()
+            save.click()
+            expect(page.get_by_role("button", name="创建新版本", exact=True)).to_be_visible()
+            self.assertEqual(len(state["saves"]), 2)
+            self.assertNotEqual(state["saves"][0]["request_id"], state["saves"][1]["request_id"])
+            browser.close()
+
     def test_late_published_version_read_does_not_replace_current_draft_edits(self):
         from playwright.sync_api import expect
 
