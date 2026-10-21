@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,12 +30,14 @@ from ppap_core.audits import (
 )
 from ppap_core.capabilities import report
 from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import RULE_A
+from ppap_core.fixtures import RULE_A, RULE_B
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
+from ppap_deep.client import DeepClient, DeepError
 from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
-from ppap_deep.mapping import passing_response
+from ppap_deep.mapping import passing_response, spec_from_work
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
+from ppap_deep.source import authorize_execution, object_file_source
 from ppap_worker import process_claimed
 from pydantic import ValidationError
 
@@ -147,14 +150,14 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(ready.status_code, 200)
         return ready.json()
 
-    def _accept_deep(self, *uploads: dict, key: str = "deep-1", mode: str = ANALYSIS_DEEP) -> str:
+    def _accept_deep(self, *uploads: dict, key: str = "deep-1", mode: str = ANALYSIS_DEEP, rule_version_id: str = RULE_A) -> str:
         draft = self.client.post("/drafts").json()["id"]
         items = []
         for index, row in enumerate(uploads):
             if len(uploads) > 1 and index == len(uploads) - 1:
                 items.append({"file_version_id": row["id"], "role": "reference"})
             else:
-                items.append({"file_version_id": row["id"], "role": "target", "rule_version_id": RULE_A})
+                items.append({"file_version_id": row["id"], "role": "target", "rule_version_id": rule_version_id})
         saved = self.client.put(f"/drafts/{draft}", json={"items": items, "analysis_mode": mode})
         self.assertEqual(saved.status_code, 200, saved.text)
         self.assertEqual(saved.json()["analysis_mode"], mode)
@@ -167,28 +170,35 @@ class DeepModeTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
         path = str(Path(tmp) / "c.sock")
 
-        def source(file_version_id: str) -> bytes:
-            file_id = str(
-                self._scalar(
-                    "SELECT file_id FROM product.file_versions WHERE id = %s",
-                    (file_version_id,),
-                )
-            )
-            version = self.store.get_version(file_id, file_version_id)
-            self.assertIsNotNone(version)
-            return self.store.version_bytes(version)
+        # Substitute only the external S3 SDK. Authorization and object lookup use
+        # production callbacks with the real database and Worker role.
+        sdk_patch = patch("ppap_core.storage.s3_client")
+        self.s3 = sdk_patch.start().return_value
+        self.addCleanup(sdk_patch.stop)
+        self.s3.get_object.side_effect = lambda **kwargs: {"Body": BytesIO(self.store.objects.get(kwargs["Key"]))}
+        self.runtime_calls: list[ExecuteRequest] = []
+
+        def execute(spec: ExecuteRequest, _blobs: dict[str, bytes]):
+            self.runtime_calls.append(spec)
+            return passing_response(spec)
 
         server = UnixControllerServer(
             path,
             Controller(
-                ScriptedRuntime(lambda spec, _blobs: passing_response(spec)),
-                source,
+                ScriptedRuntime(execute),
+                object_file_source(self.settings),
                 executor_revision=revision,
+                authorize=authorize_execution(self.settings),
             ),
         )
         server.start()
         self._servers.append(server)
         return path
+
+    def _claimed_spec(self, claimed: ClaimedJob) -> ExecuteRequest:
+        work = self.store.round_work(claimed.round_id)
+        self.assertIsNotNone(work)
+        return spec_from_work(work, EXECUTOR_DEEP, DEEP_PROTOCOL_REVISION, DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
 
     def test_default_draft_is_standard(self):
         self._login()
@@ -230,10 +240,13 @@ class DeepModeTests(unittest.TestCase):
         self._login()
         target = self._upload("report.xlsx", b"target-bytes")
         round_id = self._accept_deep(target, key="deep-unavailable")
-        with patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")):
-            with patch("ppap_worker.engine_runner", side_effect=AssertionError("standard engine")):
-                claimed = self.store.claim_job("deep-worker")
-                result = process_claimed(self.store, claimed, "deep-worker")
+        with (
+            patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")),
+            patch("ppap_worker.engine_runner", side_effect=AssertionError("standard engine")),
+            patch("subprocess.Popen", side_effect=AssertionError("local runtime")),
+        ):
+            claimed = self.store.claim_job("deep-worker")
+            result = process_claimed(self.store, claimed, "deep-worker")
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["failure"]["code"], "deep_runtime_unavailable")
         self.assertTrue(result["failure"]["retryable"])
@@ -242,6 +255,82 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(loaded["analysis_mode"], ANALYSIS_DEEP)
         self.assertEqual(loaded["findings"], [])
         self.assertEqual(loaded["failure"], result["failure"])
+
+    def test_controller_rejects_changed_identity_and_frozen_inputs_before_object_reads(self):
+        self._login()
+        target = self._upload("report.xlsx", b"target-bytes")
+        reference = self._upload("context.pdf", b"reference-bytes")
+        round_id = self._accept_deep(target, reference, key="deep-authorized")
+        claimed = self.store.claim_job("deep-worker")
+        spec = self._claimed_spec(claimed)
+        original = spec.model_dump()
+
+        self.assertEqual(self.client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code, 200)
+        other_file = self._upload("other-tenant.xlsx", b"other-tenant-bytes")
+        other_round = self._accept_deep(other_file, key="deep-other-tenant", rule_version_id=RULE_B)
+        other_claimed = self.store.claim_job("other-worker")
+        other_spec = self._claimed_spec(other_claimed)
+        client = DeepClient(self._start_controller())
+        target_spec = next(row for row in spec.files if row.role == "target")
+        reference_spec = next(row for row in spec.files if row.role == "reference")
+
+        changed_targets = {
+            "other tenant file": {"file_version_id": other_file["id"], "file_id": other_file["file_id"]},
+            "digest": {"sha256": "0" * 64},
+            "role": {"role": "reference"},
+            "rule version": {"rule_version_id": other_file["id"]},
+            "rule body": {"rule_body": {"kind": "other"}},
+            "rule execution": {"rule_execution": {"profile": "other"}},
+            "rule source": {"rule_source_file_version_id": reference["id"]},
+        }
+        requests = {
+            "tenant": spec.model_copy(update={"tenant_id": other_spec.tenant_id}),
+            "invalid identity": spec.model_copy(update={"tenant_id": "not-a-uuid"}),
+            "round": spec.model_copy(update={"round_id": other_round}),
+            "job": spec.model_copy(update={"job_id": other_claimed.id}),
+            "attempt": spec.model_copy(update={"attempt": claimed.attempt + 1}),
+            "missing reference": spec.model_copy(update={"files": [target_spec]}),
+            "extra file": spec.model_copy(update={"files": [*spec.files, other_spec.files[0]]}),
+            "reference identity": spec.model_copy(update={"files": [target_spec, reference_spec.model_copy(update={"file_version_id": other_file["id"]})]}),
+        }
+        for name, changes in changed_targets.items():
+            files = [row.model_copy(update=changes) if row.role == "target" else row for row in spec.files]
+            requests[name] = spec.model_copy(update={"files": files})
+        for name, changed in requests.items():
+            with self.subTest(name=name):
+                with self.assertRaises(DeepError) as caught:
+                    client.execute(changed)
+                self.assertEqual(caught.exception.code, "deep_input_unauthorized")
+                self.s3.get_object.assert_not_called()
+                self.assertEqual(self.runtime_calls, [])
+
+        self.assertEqual(spec.model_dump(), original)
+        result = client.execute(spec)
+        self.assertEqual(result.round_id, round_id)
+        self.assertEqual(result.files, spec.files)
+        self.assertEqual({row.status for row in result.findings}, {"PASS"})
+        self.assertEqual(self.s3.get_object.call_count, 2)
+        self.assertEqual(self.runtime_calls, [spec])
+
+    def test_controller_checks_stored_bytes_against_the_authorized_frozen_digest(self):
+        self._login()
+        target = self._upload("report.xlsx", b"target-bytes")
+        self._accept_deep(target, key="deep-corrupted-object")
+        claimed = self.store.claim_job("deep-worker")
+        spec = self._claimed_spec(claimed)
+        client = DeepClient(self._start_controller())
+        original_get = self.s3.get_object.side_effect
+        self.s3.get_object.side_effect = lambda **_kwargs: {"Body": BytesIO(b"changed-object-bytes")}
+        with self.assertRaises(DeepError) as caught:
+            client.execute(spec)
+        self.assertEqual(caught.exception.code, "deep_integrity_mismatch")
+        self.s3.get_object.assert_called_once()
+        self.assertEqual(self.runtime_calls, [])
+
+        self.s3.get_object.side_effect = original_get
+        result = client.execute(spec)
+        self.assertEqual(result.files, spec.files)
+        self.assertEqual(self.runtime_calls, [spec])
 
     def test_executor_revision_mismatch_requires_resubmit(self):
         self._login()
@@ -271,9 +360,21 @@ class DeepModeTests(unittest.TestCase):
             "UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s",
             (first.id,),
         )
+        controller = DeepClient(self.settings.deep_controller_socket)
+        first_spec = self._claimed_spec(first)
+        with self.assertRaises(DeepError) as expired:
+            controller.execute(first_spec)
+        self.assertEqual(expired.exception.code, "deep_input_unauthorized")
+        self.s3.get_object.assert_not_called()
+        self.assertEqual(self.runtime_calls, [])
         second = self.store.claim_job("w2")
         self.assertIsNotNone(second)
         self.assertEqual(second.attempt, 2)
+        with self.assertRaises(DeepError) as stale_attempt:
+            controller.execute(first_spec)
+        self.assertEqual(stale_attempt.exception.code, "deep_input_unauthorized")
+        self.s3.get_object.assert_not_called()
+        self.assertEqual(self.runtime_calls, [])
         rejected = self.store.complete_job(
             first,
             "w1",
