@@ -397,11 +397,7 @@ class PfmeaAgent(ExcelAgent):
         if not file_url:
             return None, None, "缺少过程流程图，请补充"
 
-        try:
-            pfd_workbook = _load_workbook_auto(file_url)
-        except Exception as exc:
-            logger.warning("无法加载过程流程图文件 %s: %s", file_url, exc)
-            return None, None, "缺少过程流程图，请补充"
+        pfd_workbook = _load_workbook_auto(file_url)
 
         pfd_ws = self._find_process_flow_chart_worksheet(pfd_workbook)
         if pfd_ws is None:
