@@ -44,6 +44,7 @@ class AuditDatabaseCase(unittest.TestCase):
             self.schema.require(self.schema.apply(self.database), "apply audit schema")
         self.settings = Settings(
             usage_charge_enabled=False,
+            git_sha="a" * 40,
             pg_database=self.database,
             pg_host=os.environ.get("PGHOST", "127.0.0.1"),
             pg_port=int(os.environ.get("PGPORT", "5432")),
@@ -1434,6 +1435,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         from tempfile import TemporaryDirectory
 
         from openpyxl import Workbook
+        from ppap_core.audits import DEEP_PROTOCOL_REVISION
         from ppap_deep.auditor import product_response, semantic_inputs
         from ppap_deep.mapping import product_result, spec_from_work
         from ppap_deep.semantic.document_tools import snapshot
@@ -1454,8 +1456,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         _files, task, worker = self.prepared_display_task(versions, analysis_mode="deep", complete_audit=False, per_file_rules=len(versions) > 1)
         job = worker.claim_job("verified-query")
         work = worker.round_work(task["round_id"])
-        spec = spec_from_work(work, job.payload["executor"], job.payload["executor_revision"], job.payload["executor_revision"]).model_copy(update={"job_id": job.id, "attempt": job.attempt})
-        submission, packets = semantic_inputs(spec, "a" * 64)
+        spec = spec_from_work(work, job.payload["executor"], job.payload["executor_revision"], DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": job.id, "attempt": job.attempt})
+        submission, packets = semantic_inputs(spec, spec.executor_revision)
         with TemporaryDirectory() as directory:
             sources, rule_sources = {}, {}
             for version in versions:
@@ -1469,7 +1471,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         bundle = ResultBundle.model_validate(
             {
                 "execution_id": str(submission.execution_id),
-                "semantic_engine_revision": "a" * 64,
+                "semantic_engine_revision": spec.executor_revision,
                 "documents": sources,
                 "rule_sources": rule_sources,
                 "plans": {

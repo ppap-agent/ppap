@@ -382,7 +382,7 @@ class ContainerCacheTests(unittest.TestCase):
             tenant_id="test-tenant",
             job_id="job-one",
             executor="ppap-deep",
-            executor_revision=DEEP_PROTOCOL_REVISION,
+            executor_revision=self.runtime.engine_revision(),
             files=[
                 FrozenFile(
                     file_version_id=self.target,

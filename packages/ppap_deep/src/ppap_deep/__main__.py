@@ -6,7 +6,6 @@ import signal
 import sys
 import threading
 
-from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.settings import load_settings
 
 from ppap_deep.client import DEEP_REQUEST_TIMEOUT
@@ -27,7 +26,7 @@ def main() -> int:
     if not socket_path:
         print("PPAP_DEEP_CONTROLLER_SOCKET is required", file=sys.stderr)
         return 2
-    revision = settings.deep_executor_revision.strip() or DEEP_PROTOCOL_REVISION
+    revision = settings.deep_execution_revision()
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     with runtime_from_env(settings) as runtime:

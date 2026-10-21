@@ -235,10 +235,10 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
     payload = claimed.payload if isinstance(claimed.payload, dict) else {}
     executor = payload.get("executor")
     revision = payload.get("executor_revision")
-    _expected_executor, expected_revision = frozen_executor(
-        ANALYSIS_DEEP,
-        getattr(settings, "deep_executor_revision", "") if settings else "",
-    )
+    try:
+        _expected_executor, expected_revision = frozen_executor(ANALYSIS_DEEP, settings.deep_execution_revision() if settings else "")
+    except ValueError:
+        return failure_result("executor_revision_mismatch"), "failed"
     if work.analysis_mode != ANALYSIS_DEEP or executor != EXECUTOR_DEEP:
         return failure_result("deep_executor_mismatch"), "failed"
     if revision != expected_revision:

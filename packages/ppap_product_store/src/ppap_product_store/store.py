@@ -3432,6 +3432,7 @@ class AuthStore:
         analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
+        executor_revision = self.settings.deep_execution_revision() if analysis_mode == ANALYSIS_DEEP else self.settings.deep_executor_revision
         self._check_usage_policy(conn, principal, usage_policy)
         round_id = str(uuid.uuid4())
         job_id = str(uuid.uuid4())
@@ -3499,7 +3500,7 @@ class AuthStore:
                 job_id,
                 principal.tenant_id,
                 round_id,
-                Jsonb(job_payload(round_id, analysis_mode, self.settings.deep_executor_revision)),
+                Jsonb(job_payload(round_id, analysis_mode, executor_revision)),
             ),
         )
         if source_draft_id:

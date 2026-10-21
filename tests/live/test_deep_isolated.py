@@ -148,7 +148,8 @@ class LiveDeepRoundTests(unittest.TestCase):
             time.sleep(1)
         self.assertEqual(body.get("analysis_mode"), "deep")
         self.assertEqual(body.get("executor"), "ppap-deep")
-        self.assertEqual(body.get("executor_revision"), "ppap-deep-v2")
+        self.assertRegex(body.get("executor_revision", ""), r"^[a-f0-9]{64}$")
+        self.assertEqual(body.get("executor_revision"), accepted.get("executor_revision"))
         self.assertEqual(body.get("execution"), "completed", body)
         self.assertEqual(len(body.get("findings", [])), 1)
         finding = body["findings"][0]

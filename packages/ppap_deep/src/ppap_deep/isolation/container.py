@@ -7,7 +7,6 @@ not promise a separate filesystem or network namespace for terminal tools.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -23,54 +22,32 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from ppap_core.deep_policy import GUEST_UID, DeepExecutionPolicy
 from pydantic import Field
 
 from ppap_deep.semantic.guest_model import ModelGrant
-from ppap_deep.semantic.models import Artifact
-from ppap_deep.semantic.protocol import CompileSpec, ControllerFault, GuestFault, Sha256, SnapshotSpec, SubmissionSpec
+from ppap_deep.semantic.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpec, SubmissionSpec
 from ppap_deep.semantic.secure_files import read_json, read_regular
 
 from .model_gateway import grant_request
 from .progress import Progress
 from .storage import write_json
 
-GUEST_UID = 10001
 MAX_OUTPUT = 16 * 1024 * 1024
 MAX_INPUT_TOTAL = 128 * 1024 * 1024
 MAX_INPUT_FILES = 256
 MAX_OUTER_STDERR = 4096
 
 
-class RuntimeConfig(Artifact):
+class RuntimeConfig(DeepExecutionPolicy):
     state: Path
     gateway_socket: Path
     gateway_host: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$")
-    model: str = Field(min_length=1, max_length=128)
-    model_revision: Sha256
-    app_revision: str = Field(pattern=r"^[a-f0-9]{40}$")
-    # Explicit deployment decision. `off` is needed on the current TKE kernel.
-    sandbox_profile: str = Field(pattern=r"^(off|ppap)$")
     python_executable: Path = Path("/app/.venv/bin/python")
     pythonpath: Path = Path("/app/.venv/lib/python3.12/site-packages")
     grok_executable: Path = Path("/usr/local/bin/grok")
     setpriv_executable: Path = Path("/usr/bin/setpriv")
     prlimit_executable: Path = Path("/usr/bin/prlimit")
-    memory_mib: int = Field(default=1536, ge=512, le=4096, strict=True)
-    max_processes: int = Field(default=256, ge=16, le=1024, strict=True)
-
-    def engine_revision(self) -> str:
-        manifest = {
-            "adapter": "container-only-v1",
-            "app_revision": self.app_revision,
-            "model": self.model,
-            "model_revision": self.model_revision,
-            "sandbox": self.sandbox_profile,
-            "memory_mib": self.memory_mib,
-            "max_processes": self.max_processes,
-            "uid": GUEST_UID,
-            "grok_version": "1.0.40",
-        }
-        return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _running_in_container() -> bool:

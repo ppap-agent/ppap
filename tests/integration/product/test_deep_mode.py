@@ -165,7 +165,7 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 201, accepted.text)
         return accepted.json()["id"]
 
-    def _start_controller(self, revision: str = DEEP_PROTOCOL_REVISION) -> str:
+    def _start_controller(self, revision: str | None = None) -> str:
         tmp = tempfile.mkdtemp(prefix="ppap-deep-")
         self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
         path = str(Path(tmp) / "c.sock")
@@ -187,7 +187,7 @@ class DeepModeTests(unittest.TestCase):
             Controller(
                 ScriptedRuntime(execute),
                 object_file_source(self.settings),
-                executor_revision=revision,
+                executor_revision=revision or self.settings.deep_execution_revision(),
                 authorize=authorize_execution(self.settings),
             ),
         )
@@ -198,7 +198,7 @@ class DeepModeTests(unittest.TestCase):
     def _claimed_spec(self, claimed: ClaimedJob) -> ExecuteRequest:
         work = self.store.round_work(claimed.round_id)
         self.assertIsNotNone(work)
-        return spec_from_work(work, EXECUTOR_DEEP, DEEP_PROTOCOL_REVISION, DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
+        return spec_from_work(work, EXECUTOR_DEEP, claimed.payload["executor_revision"], DEEP_PROTOCOL_REVISION).model_copy(update={"job_id": claimed.id, "attempt": claimed.attempt})
 
     def test_default_draft_is_standard(self):
         self._login()
@@ -216,7 +216,7 @@ class DeepModeTests(unittest.TestCase):
         body = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(body["analysis_mode"], ANALYSIS_DEEP)
         self.assertEqual(body["executor"], EXECUTOR_DEEP)
-        self.assertEqual(body["executor_revision"], DEEP_PROTOCOL_REVISION)
+        self.assertEqual(body["executor_revision"], self.settings.deep_execution_revision())
         work = self.store.round_work(round_id)
         self.assertEqual(work.analysis_mode, ANALYSIS_DEEP)
         self.assertTrue(work.inputs[0].sha256)
@@ -338,6 +338,7 @@ class DeepModeTests(unittest.TestCase):
         target = self._upload("report.xlsx", b"target-bytes")
         self.settings.deep_controller_socket = self._start_controller()
         round_id = self._accept_deep(target, key="deep-revision")
+        frozen = self.settings.deep_execution_revision()
         self.settings.deep_executor_revision = "ppap-deep-v999"
         with patch("ppap_worker.evaluate_round", side_effect=AssertionError("standard path")):
             claimed = self.store.claim_job("deep-worker")
@@ -346,8 +347,58 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(result["failure"]["code"], "executor_revision_mismatch")
         loaded = self.client.get(f"/rounds/{round_id}").json()
         self.assertEqual(loaded["execution"], "failed")
-        self.assertEqual(loaded["executor_revision"], DEEP_PROTOCOL_REVISION)
+        self.assertEqual(loaded["executor_revision"], frozen)
         self.assertEqual(loaded["failure"], result["failure"])
+
+    def test_policy_change_needs_a_new_round_and_keeps_completed_history(self):
+        self._login()
+        target = self._upload("report.xlsx", b"target-bytes")
+        self.settings.deep_controller_socket = self._start_controller()
+        first_id = self._accept_deep(target, key="policy-a")
+        process_claimed(self.store, self.store.claim_job("policy-worker"), "policy-worker")
+        first = self.client.get(f"/rounds/{first_id}").json()
+        self.assertEqual(first["execution"], "completed")
+        old_revision = first["executor_revision"]
+
+        waiting_id = self._accept_deep(target, key="policy-a-waiting")
+        self.settings.llm_model = "changed-model-with-the-same-version-label"
+        self.settings.deep_controller_socket = self._start_controller()
+        result = process_claimed(self.store, self.store.claim_job("policy-worker"), "policy-worker")
+        self.assertEqual(result["failure"]["code"], "executor_revision_mismatch")
+        waiting = self.client.get(f"/rounds/{waiting_id}").json()
+        self.assertEqual(waiting["executor_revision"], old_revision)
+        self.assertEqual(waiting["execution"], "failed")
+
+        new_id = self._accept_deep(target, key="policy-b")
+        process_claimed(self.store, self.store.claim_job("policy-worker"), "policy-worker")
+        current = self.client.get(f"/rounds/{new_id}").json()
+        self.assertEqual(current["execution"], "completed")
+        self.assertNotEqual(current["executor_revision"], old_revision)
+        historical = self.client.get(f"/rounds/{first_id}").json()
+        self.assertEqual(historical["executor_revision"], old_revision)
+        self.assertEqual(historical["findings"], first["findings"])
+        self.assertEqual(historical["execution"], "completed")
+
+    def test_acceptance_replay_keeps_the_original_policy_when_current_config_is_invalid(self):
+        self._login()
+        target = self._upload("report.xlsx", b"target-bytes")
+        draft_id = self.client.post("/drafts").json()["id"]
+        saved = self.client.put(f"/drafts/{draft_id}", json={"analysis_mode": "deep", "items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        command = {"idempotency_key": "frozen-policy-replay"}
+        accepted = self.client.post(f"/drafts/{draft_id}/accept", json=command)
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        original = accepted.json()
+
+        self.settings.git_sha = ""
+        replayed = self.client.post(f"/drafts/{draft_id}/accept", json=command)
+
+        self.assertEqual(replayed.status_code, 201, replayed.text)
+        self.assertEqual(replayed.json()["id"], original["id"])
+        self.assertEqual(replayed.json()["executor_revision"], original["executor_revision"])
+        claimed = self.store.claim_job("replay-reader")
+        self.assertEqual(claimed.round_id, original["id"])
+        self.assertIsNone(self.store.claim_job("second-reader"))
 
     def test_technical_retry_fencing_rejects_stale_attempt(self):
         self._login()
