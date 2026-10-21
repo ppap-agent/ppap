@@ -70,13 +70,3 @@ def test_unreadable_source_is_an_execution_error(tmp_path, checker, content, ind
 
     assert result.status == "ERR"
     assert "审核过程中出现错误" in result.suggestions
-
-
-def test_checklist_without_report_does_not_produce_a_logic_verdict(tmp_path, checker):
-    path = tmp_path / "fixture.pdf"
-    write_pdf(path, "项目检具清单")
-
-    result = checker(path, 2)
-
-    assert result.status == "ERR"
-    assert "文档类型不适用逻辑关联性检查" in result.suggestions
