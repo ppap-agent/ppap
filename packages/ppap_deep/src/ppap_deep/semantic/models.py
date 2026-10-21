@@ -103,7 +103,7 @@ class RulePlan(Artifact):
 
 class Citation(Artifact):
     document_id: str
-    locator: Locator
+    locator: Locator | None = None
 
 
 class Check(Artifact):
@@ -114,7 +114,7 @@ class Check(Artifact):
     total: int = Field(ge=0, strict=True)
     checked: int = Field(ge=0, strict=True)
     unknown: int = Field(ge=0, strict=True)
-    evidence: list[Citation] = Field(max_length=64)
+    evidence: list[Citation] = Field(default_factory=list, max_length=64)
     diagnostic: Literal["parser_unknown", "unresolved_relation", "visual_only_evidence", "budget_exhausted", "unsupported_structure", "rule_ambiguity"] | None = None
 
 

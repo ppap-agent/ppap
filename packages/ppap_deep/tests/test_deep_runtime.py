@@ -360,6 +360,33 @@ class SemanticProductContractTests(unittest.TestCase):
                 self.assertTrue(response.findings[0].locator["semantic"]["evidence_incomplete"])
                 self.assertEqual(bundle.model_dump_json(), original)
 
+    def test_omitted_optional_evidence_fields_and_coordinates_keep_business_results(self) -> None:
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        for omitted in ("check_evidence", "record_evidence", "locator"):
+            with self.subTest(omitted=omitted):
+                payload = _bundle(spec, submission).model_dump(mode="json")
+                if omitted == "check_evidence":
+                    for check in payload["report"]["checks"]:
+                        del check["evidence"]
+                for proof in payload["trace"]["proofs"]:
+                    for record in proof["records"]:
+                        if omitted == "record_evidence":
+                            del record["evidence"]
+                        elif omitted == "locator":
+                            for citation in record["evidence"]:
+                                del citation["locator"]
+                if omitted == "locator":
+                    for check in payload["report"]["checks"]:
+                        for citation in check["evidence"]:
+                            del citation["locator"]
+                bundle = ResultBundle.model_validate(payload)
+                response = product_response(spec, bundle, submission)
+                self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
+                self.assertEqual([row.suggestions for row in response.findings], ["record reviewed"] * 4)
+                self.assertTrue(response.coverage.locator_gap)
+                self.assertIsNone(response.coverage.verification)
+
     def test_replayed_query_ng_keeps_its_result_without_a_public_counterexample_location(self) -> None:
         spec = _spec()
         submission, _ = semantic_inputs(spec, ENGINE)

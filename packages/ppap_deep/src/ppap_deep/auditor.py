@@ -111,7 +111,7 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
         for citation in check.evidence:
             source = files[citation.document_id]
             observed = resolve_optional(bundle.documents[citation.document_id], citation.locator, evidence_budget)
-            if observed is None:
+            if observed is None or citation.locator is None:
                 evidence_gaps.add((check.audit_id, check.rule_id))
                 continue
             excerpt = " · ".join(observed.values)

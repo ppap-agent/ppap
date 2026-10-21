@@ -457,6 +457,8 @@ class ContainerCacheTests(unittest.TestCase):
                 for target in owner.targets:
                     address = "A999" if owner.evidence_mode == "unresolved" else "A2"
                     evidence = [] if owner.evidence_mode == "missing" else [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}]
+                    if owner.evidence_mode == "unlocated":
+                        evidence = [{"document_id": target}]
                     checks.append({"audit_id": target, "rule_id": "R1", "status": "PASS", "reason": "正文频次为每批。", "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
                     proofs.append(
                         {
@@ -467,6 +469,9 @@ class ContainerCacheTests(unittest.TestCase):
                             "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "正文频次记录", "status": "PASS", "reason": "频次为每批。", "evidence": evidence}],
                         }
                     )
+                    if owner.evidence_mode == "omitted":
+                        del checks[-1]["evidence"]
+                        del proofs[-1]["records"][0]["evidence"]
                 return AuditExecution.model_validate({"report": {"checks": checks}, "trace": {"proofs": proofs}})
 
         class Guest:
@@ -548,6 +553,12 @@ class ContainerCacheTests(unittest.TestCase):
 
     def test_unresolvable_optional_locations_do_not_trigger_model_repair(self):
         self._assert_optional_evidence_does_not_retry("unresolved")
+
+    def test_omitted_optional_evidence_fields_do_not_trigger_model_repair(self):
+        self._assert_optional_evidence_does_not_retry("omitted")
+
+    def test_missing_optional_coordinate_fields_do_not_trigger_model_repair(self):
+        self._assert_optional_evidence_does_not_retry("unlocated")
 
     def _assert_optional_evidence_does_not_retry(self, mode):
         self.evidence_mode = mode
