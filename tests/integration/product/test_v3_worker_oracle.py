@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -105,6 +106,7 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
             result = client.get(f"/rounds/{round_id}")
             assert result.status_code == 200, result.text
             payload = result.json()
+            suggestions = {row["item_key"]: row["suggestions"] for row in payload.get("findings", [])}
             for case in cases:
                 expected = {index: item.status for index, item in case.expected.items()}
                 verdicts = compare_file(
@@ -122,14 +124,26 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
                         "expected_status": item.expected,
                         "actual_status": item.actual or "",
                         "kind": item.kind,
+                        "bundle": bundle_id,
+                        "file_seq": case.file_seq,
+                        "rule_desc": case.expected[item.rule_index].rule_desc,
+                        "manual_reason": case.expected[item.rule_index].manual_reason,
+                        "agent_suggestions": suggestions.get(f"{versions[case.file_name]}:rule:{item.rule_index}", ""),
+                        "failure_stage": "audit" if item.kind == "execution_failure" else "comparison" if item.kind != MATCH else "",
+                        "round_id": round_id,
+                        "job_id": claimed.id,
                     }
                     for item in verdicts
                 )
         report = tmp_path / "v3_worker_oracle.json"
-        write_acceptance_report(report, rows)
+        write_acceptance_report(report, rows, markdown_path=report.with_suffix(".md"), run={"boundary": "Product API / Worker integration; controlled object storage"})
         loaded = load_acceptance_report(report)
         assert len(loaded) == len(rows)
         assert rows, "POC oracle produced no rule rows"
+        summary = json.loads(report.read_text(encoding="utf-8"))["summary"]
+        assert summary["selected_cases"] == 27
+        assert summary["total_rules"] == 220
+        assert report.with_suffix(".md").is_file()
         if failures:
             pytest.fail(format_verdicts(failures))
         assert all(row["kind"] == MATCH for row in rows)
