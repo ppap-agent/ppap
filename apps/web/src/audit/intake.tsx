@@ -361,7 +361,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: new URL(location.href).searchParams.get('report'), packageRequest: new URL(location.href).searchParams.get('packageRequest')}, location.origin)
     const localId = typeof history.state?.auditUploadDraft === 'string' ? history.state.auditUploadDraft : null
     retainAuditAddress()
-    if (id ? fromOtherSurface && id === activeTaskId.current : localId && localId === activeUploadDraftId.current) return
+    const unresolvedAcceptance = !task?.round_id && confirmationLocked
+    if (id ? fromOtherSurface && id === activeTaskId.current && !unresolvedAcceptance : localId && localId === activeUploadDraftId.current) return
     if (id) void recover(id)
     else {
       const draftId = localId || crypto.randomUUID()
