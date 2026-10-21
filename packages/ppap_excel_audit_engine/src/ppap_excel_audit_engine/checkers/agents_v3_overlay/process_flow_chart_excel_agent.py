@@ -219,11 +219,7 @@ class ProcessFlowChartExcelAgent(ExcelAgent):
             file_url = str(getattr(related, "file_url", "") or "")
             if not file_url:
                 return [], "特殊特性清单文件无法读取"
-            try:
-                workbook = _load_workbook_auto(file_url)
-            except Exception as exc:
-                logger.warning("无法加载特殊特性清单文件 %s: %s", file_url, exc)
-                return [], "特殊特性清单文件无法读取"
+            workbook = _load_workbook_auto(file_url)
 
             if self._find_special_characteristic_list_worksheet(workbook) is None:
                 return [], "未找到特殊特性清单表"

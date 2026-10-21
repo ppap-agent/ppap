@@ -350,11 +350,7 @@ class ControlPlanAgent(ExcelAgent):
             file_name = Path(file_url).name if file_url else "特殊特性清单"
             if not file_url:
                 continue
-            try:
-                workbook = _load_workbook_auto(file_url)
-            except Exception as exc:
-                logger.warning("无法加载特殊特性清单文件 %s: %s", file_url, exc)
-                continue
+            workbook = _load_workbook_auto(file_url)
 
             ws = self._find_special_characteristic_list_worksheet(workbook)
             if ws is None:
@@ -530,11 +526,7 @@ class ControlPlanAgent(ExcelAgent):
         if not file_url:
             return None, None, "缺少PFMEA，请补充"
 
-        try:
-            pfmea_workbook = _load_workbook_auto(file_url)
-        except Exception as exc:
-            logger.warning("无法加载PFMEA文件 %s: %s", file_url, exc)
-            return None, None, "缺少PFMEA，请补充"
+        pfmea_workbook = _load_workbook_auto(file_url)
 
         pfmea_ws = self._find_pfmea_worksheet(pfmea_workbook)
         if pfmea_ws is None:
@@ -558,11 +550,7 @@ class ControlPlanAgent(ExcelAgent):
         if not file_url:
             return None, None, "缺少过程流程图，请补充"
 
-        try:
-            pfd_workbook = _load_workbook_auto(file_url)
-        except Exception as exc:
-            logger.warning("无法加载过程流程图文件 %s: %s", file_url, exc)
-            return None, None, "缺少过程流程图，请补充"
+        pfd_workbook = _load_workbook_auto(file_url)
 
         pfd_ws = self._find_process_flow_chart_worksheet(pfd_workbook)
         if pfd_ws is None:

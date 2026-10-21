@@ -28,29 +28,69 @@ class DeepUnavailable(DeepError):
         super().__init__(code)
 
 
-def write_frame(sock: socket.socket, payload: dict) -> None:
+def write_frame(sock: socket.socket, payload: dict, *, deadline: float | None = None, cancelled: threading.Event | None = None) -> None:
     data = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+    _check_active(deadline, cancelled)
     if len(data) > MAX_FRAME:
         raise DeepError("deep_payload_too_large")
-    sock.sendall(len(data).to_bytes(4, "big") + data)
+    frame = memoryview(len(data).to_bytes(4, "big") + data)
+    if deadline is None and cancelled is None:
+        sock.sendall(frame)
+        return
+    timeout = sock.gettimeout()
+    try:
+        sock.setblocking(False)
+        offset = 0
+        while offset < len(frame):
+            _check_active(deadline, cancelled)
+            wait = min(0.25, max(0, deadline - time.monotonic())) if deadline is not None else 0.25
+            _, writable, _ = select.select([], [sock], [], wait)
+            if not writable:
+                continue
+            try:
+                sent = sock.send(frame[offset:])
+            except BlockingIOError:
+                continue
+            _check_active(deadline, cancelled)
+            if not sent:
+                raise DeepUnavailable()
+            offset += sent
+    finally:
+        sock.settimeout(timeout)
 
 
-def read_exact(sock: socket.socket, size: int) -> bytes:
+def _check_active(deadline: float | None, cancelled: threading.Event | None) -> None:
+    if cancelled is not None and cancelled.is_set():
+        raise DeepError("deep_lease_lost")
+    if deadline is not None and time.monotonic() >= deadline:
+        raise DeepError("deep_timeout")
+
+
+def read_exact(sock: socket.socket, size: int, *, deadline: float | None = None, cancelled: threading.Event | None = None) -> bytes:
     chunks = bytearray()
     while len(chunks) < size:
+        if deadline is not None or cancelled is not None:
+            _check_active(deadline, cancelled)
+            wait = min(0.25, max(0, deadline - time.monotonic())) if deadline is not None else 0.25
+            readable, _, _ = select.select([sock], [], [], wait)
+            if not readable:
+                continue
         piece = sock.recv(size - len(chunks))
+        _check_active(deadline, cancelled)
         if not piece:
             raise DeepUnavailable("deep_runtime_unavailable")
         chunks.extend(piece)
     return bytes(chunks)
 
 
-def read_frame(sock: socket.socket) -> dict:
-    header = read_exact(sock, 4)
+def read_frame(sock: socket.socket, *, deadline: float | None = None, cancelled: threading.Event | None = None) -> dict:
+    header = read_exact(sock, 4, deadline=deadline, cancelled=cancelled)
     length = int.from_bytes(header, "big")
     if length <= 0 or length > MAX_FRAME:
         raise DeepError("deep_payload_too_large")
-    return json.loads(read_exact(sock, length))
+    raw = json.loads(read_exact(sock, length, deadline=deadline, cancelled=cancelled))
+    _check_active(deadline, cancelled)
+    return raw
 
 
 class DeepClient:
@@ -59,6 +99,8 @@ class DeepClient:
         self.timeout = timeout
 
     def execute(self, spec: ExecuteRequest, *, cancelled: threading.Event | None = None, on_progress: Callable[[dict], None] | None = None) -> ExecuteResponse:
+        deadline = time.monotonic() + self.timeout
+        _check_active(deadline, cancelled)
         if not self.socket_path:
             raise DeepUnavailable()
         path = Path(self.socket_path)
@@ -66,29 +108,27 @@ class DeepClient:
             raise DeepUnavailable()
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(self.timeout)
+                sock.settimeout(max(0, deadline - time.monotonic()))
                 sock.connect(self.socket_path)
-                write_frame(sock, RequestEnvelope(op="execute", spec=spec).model_dump())
-                deadline = time.monotonic() + self.timeout
+                write_frame(sock, RequestEnvelope(op="execute", spec=spec).model_dump(), deadline=deadline, cancelled=cancelled)
                 while True:
-                    if cancelled is not None and cancelled.is_set():
-                        raise DeepError("deep_lease_lost")
-                    if time.monotonic() >= deadline:
-                        raise DeepError("deep_timeout")
-                    readable, _, _ = select.select([sock], [], [], min(0.25, max(0, deadline - time.monotonic())))
-                    if not readable:
-                        continue
-                    sock.settimeout(min(10, max(0.01, deadline - time.monotonic())))
-                    raw = read_frame(sock)
+                    raw = read_frame(sock, deadline=deadline, cancelled=cancelled)
                     if raw.get("op") != "progress":
                         break
                     progress = ProgressEnvelope.model_validate(raw).progress
+                    _check_active(deadline, cancelled)
                     if on_progress:
                         on_progress(progress.model_dump(exclude_none=True))
         except DeepError:
             raise
         except (OSError, TimeoutError, json.JSONDecodeError) as exc:
+            _check_active(deadline, cancelled)
             raise DeepUnavailable() from exc
+        _check_active(deadline, cancelled)
         if raw.get("op") == "error":
-            raise DeepError(ErrorEnvelope.model_validate(raw).code)
-        return ResultEnvelope.model_validate(raw).result
+            code = ErrorEnvelope.model_validate(raw).code
+            _check_active(deadline, cancelled)
+            raise DeepError(code)
+        result = ResultEnvelope.model_validate(raw).result
+        _check_active(deadline, cancelled)
+        return result

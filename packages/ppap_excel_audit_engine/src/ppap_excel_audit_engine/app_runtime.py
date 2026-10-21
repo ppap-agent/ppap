@@ -134,6 +134,7 @@ def _build_group_context_input(group_context: Any) -> Optional[GroupContextInput
         by_doc_type=by_doc_type,
         by_audit_id=by_audit_id,
         rules_by_id=rules_by_id,
+        unavailable_files=getattr(group_context, "unavailable_files", {}) or {},
     )
 
 

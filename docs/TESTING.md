@@ -16,7 +16,7 @@ PSW 混合审核分别验证三类结果：有效业务事实不满足规则为 
 
 检具 PDF 的转换失败回退由 `test_checking_fixture_pdf.py` 经公开 `.check()` 验证：可读文件缺少必需部分是 NG，无法读取、空文件或解析损坏是执行错误；不将解析失败吞成“未找到内容”，也不使用模型替代这些文件边界检查。第三项检查附件与结论的关系；缺少报告或附件部分为业务 NG，实际调用／输出协议失败保留 ERR。
 
-关联 PDF 的提取回归只在外部转换边界提供受控产物，真实工作簿加载、行提取与跨文件判定保持运行。共享 `load_workbook_auto(cleanup=True)` 在加载成功或异常时都清理转换临时产物；`cleanup=False` 将清理责任留给调用方，原始输入文件不属于临时产物。两种清理模式均由转换管道自己的 owner tests 验证，不复制旧 V2 私有 loader 的调用约束。
+关联 PDF 的提取回归只在外部转换边界提供受控产物，真实工作簿加载、行提取与跨文件判定保持运行。`test_cross_file_references.py` 经公开 `run_audit_engine` 验证：已提供的关联资料因转换或读取失败而不能使用时，受影响规则为脱敏 ERR；可读文件缺列或未提供业务资料仍由审核器判 NG，不改独立规则的结果。类型化和属性式上下文均须保留 `unavailable_files`。共享 `load_workbook_auto(cleanup=True)` 在加载成功或异常时都清理转换临时产物；`cleanup=False` 将清理责任留给调用方，原始输入文件不属于临时产物。两种清理模式均由转换管道自己的 owner tests 验证，不复制旧 V2 私有 loader 的调用约束。
 
 PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理转换临时文件，不依赖析构或循环 GC。异常分支也须在返回前完成清理；原件字节保持不变。
 
@@ -25,6 +25,8 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
 - **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/ppap_deep/tests/test_deep_runtime.py`、`packages/ppap_deep/tests/test_deep_semantic.py`、`packages/ppap_deep/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
+
+`packages/ppap_deep/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
 
 `tests/integration/runtime/test_runtime.py` 在同 SHA 的交付 Worker 镜像中运行 `deep_container_cases.py`，验证公开 `ContainerRuntime.run` 的排队超时、取消和执行位释放。真实 Linux、构造器、锁及文件准备/清理不替换；外部 guest 进程受控，版本探针使用测试程序，不调用 Grok 或模型，不证明语义质量或强隔离。`DeepExecutionQueue.tla` 只检查一个占用者与一个等待者：即使占用者不结束，到期/取消仍能响应；正向配置检查允许时钟和等待线程持续获得调度时的终结性质，`-unbounded` 配置保留响应依赖占用者释放的反例。它不证明毫秒级时限、运行中取消、整个进程树清理或完整系统 refinement。
 
