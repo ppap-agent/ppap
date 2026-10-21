@@ -1945,6 +1945,31 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_have_count(0)
             browser.close()
 
+    def test_workbench_resume_after_browser_back_keeps_the_new_draft_not_the_previous_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
+            expect(page.get_by_role("button", name="返回审核结果", exact=True)).to_be_visible()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="新建审核", exact=True).click()
+            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+            page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+            draft_url = page.url
+            draft_id = page.evaluate("history.state.auditUploadDraft")
+            self.assertIsNotNone(draft_id)
+            page.go_back()
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
+            expect(page).to_have_url(draft_url)
+            self.assertEqual(page.evaluate("history.state.auditUploadDraft"), draft_id)
+            expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True)).not_to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
+            expect(page.get_by_role("checkbox", name="选择 过程流程图.pdf", exact=True)).to_be_checked()
+            self.assertNotIn("task=preview-report-task", page.url)
+            browser.close()
+
     def test_product_navigation_resolves_a_promoted_draft_after_other_pages_rewrite_the_address(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
