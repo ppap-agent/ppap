@@ -1,0 +1,72 @@
+defaultWorkspace: current_repo
+sources:
+  current_repo:
+    type: codeup
+    name: PPAP current release source
+    endpoint: https://codeup.aliyun.com/icoastline/integration/4.0/ppap-web.git
+    branch: codex/ppap-current-release-__SOURCE_SHA__
+    triggerEvents: []
+    certificate:
+      type: serviceConnection
+      serviceConnection: dhoheqfj7wrmhhxg
+stages:
+  build:
+    name: Build tested PPAP source and push private TCR images
+    jobs:
+      release_images:
+        name: Build four images only
+        runsOn:
+          group: public/cn-hongkong
+          container: build-steps-public-registry.cn-beijing.cr.aliyuncs.com/build-steps/alinux3:latest
+        steps:
+          preflight:
+            name: Check exact source and canonical build graph
+            step: Command
+            with:
+              run: |
+                set -eu
+                export PPAP_BUILD_SHA=__SOURCE_SHA__
+                export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
+                test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
+                test "$(uname -m)" = x86_64
+                docker info --format 'Docker Engine server: {{.ServerVersion}}'
+                docker buildx version
+                docker buildx bake release --set '*.platform=linux/amd64' --print > /tmp/ppap-current-bake.json
+                python3 - <<'PY'
+                import json, os
+                graph = json.load(open('/tmp/ppap-current-bake.json'))
+                assert set(graph['group']['release']['targets']) == {'api', 'worker', 'web', 'deep'}
+                for component in ('api', 'worker', 'web', 'deep'):
+                    target = graph['target'][component]
+                    assert target['platforms'] == ['linux/amd64']
+                    assert target['tags'] == [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + os.environ['PPAP_BUILD_SHA']]
+                assert graph['target']['deep']['contexts']['ppap-worker'] == 'target:worker'
+                print('Exact source, all four targets and Deep/Worker build dependency verified')
+                PY
+          tcr_login:
+            name: Login existing TCR registry
+            step: DockerLogin
+            with:
+              dockerRepository: icoastline.tencentcloudcr.com
+              serviceConnection: wrd9tunqmazf1pk5
+          build_push:
+            name: Build and push fixed source
+            step: Command
+            with:
+              run: |
+                set -eu
+                export PPAP_BUILD_SHA=__SOURCE_SHA__
+                export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
+                test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
+                git diff --exit-code
+                docker buildx bake release --set '*.platform=linux/amd64' \
+                  --provenance=false --metadata-file /tmp/ppap-current-images.json --push
+                python3 - <<'PY'
+                import json, os, re
+                metadata = json.load(open('/tmp/ppap-current-images.json'))
+                for component in ('api', 'worker', 'web', 'deep'):
+                    digest = metadata[component]['containerimage.digest']
+                    assert re.fullmatch(r'sha256:[0-9a-f]{64}', digest)
+                    print('PPAP_RELEASE_IMAGE ' + component + ' ' + os.environ['PPAP_IMAGE_PREFIX'] + component + '@' + digest)
+                print('PPAP_RELEASE_SOURCE ' + os.environ['PPAP_BUILD_SHA'])
+                PY

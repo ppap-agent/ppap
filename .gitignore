@@ -21,3 +21,5 @@ playwright/.auth/
 test-results/
 .insforge/
 .cache/
+
+/deploy/tke/.release.lock

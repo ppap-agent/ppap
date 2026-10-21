@@ -1,10 +1,8 @@
 """Preload transport and the boundary before any production apply."""
 
-import hashlib
-import http.server
 import json
+import os
 import runpy
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PRELOAD = runpy.run_path(str(ROOT / "deploy/tke/preload-current.py"))
 NODE = runpy.run_path(str(ROOT / "deploy/tke/preload-node.py"))
-IMAGES = {name: f"ghcr.io/ppap-agent/ppap/{name}@sha256:{'1' * 64}" for name in PRELOAD["OWNERS"]}
+IMAGES = {name: f"icoastline.tencentcloudcr.com/ppap-feishu/current-{name}@sha256:{'1' * 64}" for name in PRELOAD["OWNERS"]}
 
 
 def objects():
@@ -44,7 +42,7 @@ def test_tcr_release_cannot_skip_preload_or_mix_registries():
         container = doc["spec"]["template"]["spec"]["containers"][0]
         container["image"] = expected[container["name"]]
     assert read(docs) == expected
-    for image in (IMAGES["api"], expected["api"].replace("ppap-feishu", "foreign"), expected["api"].split("@")[0] + ":main"):
+    for image in ("ghcr.io/ppap-agent/ppap/api@sha256:" + "1" * 64, expected["api"].replace("ppap-feishu", "foreign"), expected["api"].split("@")[0] + ":main"):
         docs[0]["spec"]["template"]["spec"]["containers"][0]["image"] = image
         with pytest.raises(ValueError, match="one owned registry"):
             read(docs)
@@ -61,7 +59,13 @@ def test_only_complete_legacy_release_retains_rollback_path():
     for doc in docs:
         container = doc["spec"]["template"]["spec"]["containers"][0]
         container["image"] = f"unregistry.xixifusi.online/ppap-{container['name']}:{'3' * 40}"
-    assert PRELOAD["release_images"](docs) == {}
+    assert len(PRELOAD["release_images"](docs)) == 4
+    mixed = objects()
+    for doc in mixed:
+        c = doc["spec"]["template"]["spec"]["containers"][0]
+        c["image"] = f"unregistry.xixifusi.online/ppap-{c['name']}:{'4' * 40 if c['name'] == 'api' else '3' * 40}"
+    with pytest.raises(ValueError, match="one source SHA"):
+        PRELOAD["release_images"](mixed)
     docs[0]["spec"]["template"]["spec"]["containers"][0]["image"] = "foreign.example/api:old"
     with pytest.raises(ValueError):
         PRELOAD["release_images"](docs)
@@ -104,12 +108,12 @@ def test_disk_pressure_aborts_before_allocating_resources():
     preload = PRELOAD["preload"]
     with patch.dict(preload.__globals__, {"kube": lambda *args, **kwargs: json.dumps({"items": nodes}).encode()}):
         with pytest.raises(ValueError, match="disk pressure"):
-            preload(objects())
+            preload(objects(), {c: "sha256:" + "a" * 64 for c in IMAGES})
 
 
 def test_emitted_disk_check_reserves_space_for_full_images():
     for gib in (9, 12):
-        with patch.object(PRELOAD["os"], "statvfs", return_value=SimpleNamespace(f_bavail=gib * 1024**3, f_frsize=1)):
+        with patch.object(os, "statvfs", return_value=SimpleNamespace(f_bavail=gib * 1024**3, f_frsize=1)):
             if gib < 12:
                 with pytest.raises(AssertionError, match="12 GiB"):
                     exec(PRELOAD["DISK_CHECK"])
@@ -139,106 +143,14 @@ def test_full_process_smoke_is_isolated_and_proves_cache():
         assert "preload-ready" in container["command"][-1]
 
 
-def test_only_source_kubelet_receives_private_registry_credentials():
-    for source in (True, False):
-        pod = PRELOAD["transfer_pod"]("probe", "node", "cached-bootstrap", source, "scripts", "credentials", IMAGES)
-        spec = pod["spec"]
-        assert spec.get("imagePullSecrets", []) == ([{"name": "credentials-ghcr"}] if source else [])
-        secret = next(volume["secret"] for volume in spec["volumes"] if volume["name"] == "credentials")
-        assert secret["items"] == [{"key": "transfer-token", "path": "transfer-token"}]
-        pulls = [container for container in spec.get("initContainers", []) if container["name"].startswith("pull-")]
-        assert {container["image"] for container in pulls} == (set(IMAGES.values()) if source else set())
-        assert all(container["command"] == ["true"] for container in pulls)
-
-
-def test_receiver_checks_archive_before_native_import(tmp_path):
-    payload = b"bounded image archive fixture"
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            assert self.headers["Authorization"] == "Bearer fixture"
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, *_args):
-            pass
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    token = tmp_path / "token"
-    token.write_text("fixture")
-    receive = NODE["receive"]
-    # Same production receiver; only network address, filesystem and native CRI
-    # boundary differ. A bad archive must never reach that CRI boundary.
-    original_request = NODE["urllib"].request.Request
-
-    def request(url, **kwargs):
-        return original_request(url.replace(":18081/", f":{server.server_port}/"), **kwargs)
-
-    try:
-        with (
-            patch.dict(receive.__globals__, {"ROOT": tmp_path, "TOKEN_FILE": token}),
-            patch.object(NODE["urllib"].request, "Request", side_effect=request),
-            patch.dict(receive.__globals__, {"import_image": lambda path, ref: {"image": ref, "digest": NODE["checksum"](path)}}),
-        ):
-            with pytest.raises(ValueError, match="checksum mismatch"):
-                receive("api", IMAGES["api"], "127.0.0.1", "wrong")
-            result = receive("api", IMAGES["api"], "127.0.0.1", hashlib.sha256(payload).hexdigest())
-            assert result["image"] == IMAGES["api"]
-            assert result["digest"] == hashlib.sha256(payload).hexdigest()
-            assert not (tmp_path / "api.tar").exists()
-    finally:
-        server.shutdown()
-        thread.join(timeout=2)
-        server.server_close()
-
-
-def test_export_failure_cleans_resources_without_starting_smoke():
-    preload = PRELOAD["preload"]
-    created, deleted, executed = [], [], []
-
-    def kube(*args, **kwargs):
-        if args[:2] == ("get", "nodes"):
-            return json.dumps(
-                {
-                    "items": [
-                        {"metadata": {"name": node}, "status": {"allocatable": {"pods": "61"}, "nodeInfo": {"architecture": "amd64"}, "conditions": [{"type": "Ready", "status": "True"}]}}
-                        for node in PRELOAD["NODES"]
-                    ]
-                }
-            ).encode()
-        if args[:2] == ("get", "pods"):
-            return b'{"items":[]}'
-        if args[:2] == ("get", "deployment"):
-            return b'{"spec":{"template":{"spec":{"containers":[{"image":"cached-fixture"}]}}}}'
-        if args[0] == "create":
-            created.append(json.loads(kwargs["data"]))
-        if args[0] == "delete":
-            deleted.append((args[1], args[2]))
-        if args[0] == "exec":
-            executed.append(args)
-            if "export" in args:
-                raise RuntimeError("native export unavailable")
-        if args[:2] == ("get", "pod"):
-            return b'{"status":{"podIP":"10.0.0.1"}}'
-        return b""
-
-    config = {"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": {"PPAP_BUILD_SHA": "2" * 40}}
-    with patch.dict(preload.__globals__, {"kube": kube}), patch.dict(PRELOAD["os"].environ, {"GHCR_USERNAME": "fixture", "GHCR_TOKEN": "fixture"}):
-        with pytest.raises(RuntimeError, match="native export unavailable"):
-            preload([*objects(), config])
-    assert len(created) == 5
-    assert {(obj["kind"].lower(), obj["metadata"]["name"]) for obj in created} == set(deleted)
-    assert not any("preload-smoke.py" in args for args in executed)
-
-
-@pytest.mark.parametrize("failed_inspection", [False, True])
-def test_tcr_pulls_each_node_directly_and_requires_both_startup_checks(failed_inspection):
+@pytest.mark.parametrize("provider", ["tcr", "unregistry", "rollback"])
+@pytest.mark.parametrize("failure", [None, "config", "startup", "cleanup"])
+def test_each_node_direct_pull_and_startup_with_failure_cleanup(provider, failure):
     preload = PRELOAD["preload"]
     created, deleted, executed = [], [], []
     images = {name: f"icoastline.tencentcloudcr.com/ppap-feishu/current-{name}@sha256:{'2' * 64}" for name in IMAGES}
+    if provider != "tcr":
+        images = {c: "unregistry.xixifusi.online/ppap-" + c + (":" + "2" * 40 if provider == "rollback" else "@sha256:" + "2" * 64) for c in IMAGES}
     docs = objects()
     for doc in docs:
         container = doc["spec"]["template"]["spec"]["containers"][0]
@@ -270,33 +182,46 @@ def test_tcr_pulls_each_node_directly_and_requires_both_startup_checks(failed_in
         if args[0] == "create":
             created.append(json.loads(kwargs["data"]))
         if args[0] == "delete":
+            if failure == "cleanup" and args[1] == "configmap":
+                raise RuntimeError("cleanup failed")
             deleted.append((args[1], args[2]))
         if args[0] == "exec":
             executed.append(args)
             if "inspect" in args:
-                return json.dumps({"image": args[-1], "registered": not failed_inspection}).encode()
+                return json.dumps({"image": args[-1], "registered": True, "config_digest": "sha256:" + ("b" if failure == "config" else "a") * 64}).encode()
             if "/scripts/preload-smoke.py" in args:
-                return json.dumps({"git_sha": "2" * 40, "api_ready": True, "web_ready": True, "worker_heartbeat": True, "deep_socket_response": True}).encode()
+                return json.dumps(
+                    {
+                        "git_sha": "2" * 40,
+                        "api_ready": failure != "startup",
+                        "web_ready": True,
+                        "worker_heartbeat": True,
+                        "deep_socket_response": True,
+                        "model_called": False,
+                        "production_data_accessed": False,
+                    }
+                ).encode()
         return b""
 
     config = {"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": {"PPAP_BUILD_SHA": "2" * 40}}
-    with patch.dict(preload.__globals__, {"kube": kube, "tcr_pull_secret": lambda: "existing-tcr"}), patch.dict(PRELOAD["os"].environ, {}, clear=True):
-        if failed_inspection:
-            with pytest.raises(RuntimeError, match="invalid image registration"):
-                preload([*docs, config])
+    with patch.dict(preload.__globals__, {"kube": kube, "tcr_pull_secret": lambda: "existing-tcr"}):
+        if failure:
+            with pytest.raises(RuntimeError):
+                preload([*docs, config], {c: "sha256:" + "a" * 64 for c in IMAGES})
         else:
-            preload([*docs, config])
-    assert {(obj["kind"].lower(), obj["metadata"]["name"]) for obj in created} == set(deleted)
+            preload([*docs, config], {c: "sha256:" + "a" * 64 for c in IMAGES})
+    assert {(obj["kind"].lower(), obj["metadata"]["name"]) for obj in created if failure != "cleanup" or obj["kind"] != "ConfigMap"} == set(deleted)
     assert not any(obj["kind"] == "Secret" for obj in created)
     assert not any(action in args for args in executed for action in ("export", "receive", "serve", "clean"))
-    pulls = [obj for obj in created if obj["kind"] == "Pod" and "imagePullSecrets" in obj["spec"]]
-    assert {obj["spec"]["nodeName"] for obj in pulls} == ({PRELOAD["NODES"][0]} if failed_inspection else set(PRELOAD["NODES"]))
+    pulls = [obj for obj in created if obj["kind"] == "Pod" and "initContainers" in obj["spec"]]
+    assert {obj["spec"]["nodeName"] for obj in pulls} == set(PRELOAD["NODES"])
     for obj in pulls:
         spec = obj["spec"]
-        assert spec["imagePullSecrets"] == [{"name": "existing-tcr"}]
+        assert spec.get("imagePullSecrets", []) == ([{"name": "existing-tcr"}] if provider == "tcr" else [])
         assert not any("secret" in volume or "emptyDir" in volume for volume in spec["volumes"])
         assert {c["image"] for c in spec["initContainers"] if c["name"].startswith("pull-")} == set(images.values())
         assert all(c["command"] == ["true"] for c in spec["initContainers"] if c["name"].startswith("pull-"))
     smokes = [obj for obj in created if obj["kind"] == "Pod" and "smoke" in obj["metadata"]["name"]]
-    assert len(smokes) == (0 if failed_inspection else 2)
-    assert sum("/scripts/preload-smoke.py" in args for args in executed) == len(smokes)
+    assert len(smokes) == (0 if failure == "config" else 2)
+    checked = sum("/scripts/preload-smoke.py" in args for args in executed)
+    assert 1 <= checked <= 2 if failure == "startup" else checked == len(smokes)
