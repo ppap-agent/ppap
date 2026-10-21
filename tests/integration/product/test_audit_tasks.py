@@ -660,7 +660,8 @@ def test_reaudit_replacement_is_explicit_and_matches_the_original_published_rule
     assert client.get(path).json()["files"][0]["file"]["id"] == original["file_version_id"]
 
 
-def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task):
+@pytest.mark.parametrize("subject", ["bob", "carol"])
+def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task, subject):
     client, worker, path, body, old = matched_task
     accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
     worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
@@ -675,9 +676,16 @@ def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task)
     }
     assert client.post("/audit-tasks", json=command).status_code == 409
     assert client.get(path).json() == original
-    client.post("/isolated-dev/sessions", json={"subject": "bob"})
-    assert client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs").status_code == 404
-    assert client.post("/audit-tasks", json=command).status_code == 404
+    assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
+    denied_read = client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs")
+    denied_create = client.post("/audit-tasks", json=command)
+    for response in (denied_read, denied_create):
+        assert response.status_code == 403
+        assert response.json() == {"error": "access_denied"}
+    assert client.get("/audit-tasks").json()["tasks"] == []
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    assert client.get(path).json() == original
+    assert [row["id"] for row in client.get("/audit-tasks").json()["tasks"]] == [original["id"]]
 
 
 def test_unrelated_task_cannot_pin_a_superseded_rule(matched_task):
