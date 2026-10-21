@@ -127,10 +127,12 @@ def compare_file(
             verdicts.append(RuleVerdict(file_name, index, MISSING_RULE, status, detail=note))
             continue
         actual = str(row.get("status") or "").upper()
+        findings = [item for item in result.get("findings") or [] if row.get("item_key") and item.get("item_key") == row["item_key"]]
+        detail = str(findings[0].get("suggestions") or "") if len(findings) == 1 and str(findings[0].get("status") or "").upper() == actual else ""
         if actual == ERR:
-            verdicts.append(RuleVerdict(file_name, index, EXECUTION_FAILURE, status, actual, note))
+            verdicts.append(RuleVerdict(file_name, index, EXECUTION_FAILURE, status, actual, detail or note))
         elif actual != status:
-            verdicts.append(RuleVerdict(file_name, index, STATUS_MISMATCH, status, actual))
+            verdicts.append(RuleVerdict(file_name, index, STATUS_MISMATCH, status, actual, detail))
         else:
             verdicts.append(RuleVerdict(file_name, index, MATCH, status, actual))
     return verdicts
