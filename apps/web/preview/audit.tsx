@@ -168,7 +168,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
     if (result) {
       const reads = (acceptanceReads.get(id) || 0) + 1
       acceptanceReads.set(id, reads)
-      if (['confirm-unknown', 'restore-unknown'].includes(scene) && reads === 1) return {...(confirmationInputs.get(id) || task), acceptance: {request_id: requestId || task.acceptance!.request_id, state: 'pending', reason: null}}
+      if (['confirm-unknown', 'restore-unknown', 'restore-card-pending'].includes(scene) && reads === 1) return {...(confirmationInputs.get(id) || task), acceptance: {request_id: requestId || task.acceptance!.request_id, state: 'pending', reason: scene === 'restore-card-pending' ? '已收到卡片确认，正在核对用量，尚未受理。' : null}}
       if (requestId) return result
       const next = await withReportBytes(fixtureResults(result, scene)); taskStore.set(id, next); return next
     }
@@ -308,7 +308,8 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   const matched = fixtureMatch(files, 'standard', null, null, crypto.randomUUID())
   const seed: AuditTask = {...matched, id: scene.startsWith('reports-') ? 'preview-report-task' : 'preview-recovery-task', number: scene.startsWith('reports-') ? 'PPAP-报告示例' : 'PPAP-恢复示例', created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z'}
   const frozen = fixtureAcceptance(seed, 'preview-recovery-request')
-  const snapshot = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  let snapshot: AuditTask = scene === 'restore-pending' || scene === 'recognition-recovery-current' ? seed : scene === 'restore-matching' ? {...seed, state: 'matching' as const} : scene === 'restore-unknown' ? {...seed, acceptance: {request_id: 'preview-recovery-request', state: 'pending' as const, reason: null}} : (['restore-progress', 'restore-task-conflict', 'restore-usage-notice'].includes(scene) || automaticObservation || scene.startsWith('restore-estimate')) ? fixtureProgress(frozen) : scene === 'restore-report-conflict' ? fixtureResults(frozen, 'reports-generating') : scene === 'restore-completed' || scene === 'restore-usage-completed' || scene.startsWith('reports-') || scene.startsWith('restore-display-') ? fixtureResults(frozen, scene) : frozen
+  if (scene === 'restore-card-pending' || scene === 'restore-card-rejected') snapshot = {...seed, acceptance: {request_id: 'preview-recovery-request', state: scene === 'restore-card-pending' ? 'pending' : 'rejected', reason: scene === 'restore-card-pending' ? '已收到卡片确认，正在核对用量，尚未受理。' : '文件或审核模式已变化，请打开页面核对。'}}
   if (scene === 'restore-without-notification') delete snapshot.notification_enabled
   if (scene === 'reports-zip-link') {
     const later = structuredClone(snapshot.files[0])
@@ -343,7 +344,7 @@ if (scene.startsWith('restore-') && scene !== 'restore-missing' || scene.startsW
   }
   taskStore.set(seed.id, snapshot)
   if (scene === 'restore-notification-tasks') taskStore.set('preview-second-task', {...structuredClone(snapshot), id: 'preview-second-task', number: 'PPAP-第二个任务'})
-  if (scene === 'restore-unknown') accepted.set(seed.id, frozen)
+  if (scene === 'restore-unknown' || scene === 'restore-card-pending') accepted.set(seed.id, frozen)
 }
 
 function Preview() {

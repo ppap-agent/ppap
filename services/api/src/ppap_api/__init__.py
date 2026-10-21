@@ -42,7 +42,6 @@ from ppap_core.feishu_drive import (
     import_drive_material,
     list_doc_links,
 )
-from ppap_core.feishu_notifications import task_notification_card
 from ppap_core.feishu_personal_upload import PersonalDriveClient, UploadRejected, UploadUnknown
 from ppap_core.feishu_usage import (
     FeishuUsageError,
@@ -50,7 +49,6 @@ from ppap_core.feishu_usage import (
     quota_payload,
     quota_unavailable,
     remaining_trial_points,
-    tenant_access_token,
 )
 from ppap_core.feishu_writeback import (
     FeishuWritebackError,
@@ -134,7 +132,7 @@ def create_app(
         stop = threading.Event()
         notifier = None
         usage_reporter = None
-        if settings.feishu_notifications_enabled and settings.feishu_app_id and settings.feishu_app_secret:
+        if settings.feishu_app_id and settings.feishu_app_secret:
             notifier = threading.Thread(target=run_task_notifications, args=(store, settings, stop), name="ppap-notifier", daemon=True)
             notifier.start()
         if settings.usage_charge_enabled and settings.feishu_app_id and settings.feishu_app_secret:
@@ -284,7 +282,14 @@ def create_app(
             return JSONResponse({"ok": True})
         if isinstance(parsed, CardAction):
             try:
-                task = store.confirm_task_notification(parsed, usage_policy=quota_for_actor)
+                receipt = store.enqueue_task_confirmation(parsed)
+                if (
+                    not isinstance(receipt, dict)
+                    or not isinstance(receipt.get("request_id"), str)
+                    or not receipt["request_id"].strip()
+                    or receipt.get("state") not in {"pending", "accepted", "rejected"}
+                ):
+                    raise RuntimeError("invalid_confirmation_receipt")
             except KeyError:
                 return JSONResponse({"toast": {"type": "error", "content": "无法确认此卡片。请由任务创建人打开页面核对。"}})
             except ValueError as error:
@@ -299,8 +304,20 @@ def create_app(
             except Exception:
                 emit("card_confirmation_unavailable", level=logging.WARNING)
                 return JSONResponse({"toast": {"type": "warning", "content": "受理结果尚未确认。请打开页面读取任务，不要重复新建审核。"}})
-            card = task_notification_card(task, "completed" if task["state"] == "completed" else "started", settings.canonical_web_url())
-            return JSONResponse({"toast": {"type": "success", "content": "本任务已受理，请打开审核查看进度。"}, "card": {"type": "raw", "data": card}})
+            if receipt["state"] == "pending":
+                return JSONResponse({"toast": {"type": "info", "content": "已收到确认，正在核对。请打开审核查看结果。"}})
+            if receipt["state"] == "rejected":
+                reason = receipt.get("reason")
+                safe_reasons = (
+                    "规则已更新，请打开页面重新识别并核对。",
+                    "文件或审核模式已变化，请打开页面核对。",
+                    "当前无法确认用量，请打开页面核对后重新确认。",
+                    "飞书AI包开关已关闭，请联系管理员。",
+                    "当前没有可用额度，请联系管理员。",
+                    "本次未受理，请由任务创建人打开页面核对权限和当前任务。",
+                )
+                return JSONResponse({"toast": {"type": "warning", "content": reason if reason in safe_reasons else "本次未受理，请打开页面核对当前任务。"}})
+            return JSONResponse({"toast": {"type": "success", "content": "本任务已受理，请打开审核查看进度。"}})
         if isinstance(parsed, UnauthenticatedEvent):
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         if isinstance(parsed, AppMismatch):
@@ -874,10 +891,6 @@ def create_app(
         if not session or session.principal != principal or not session.access_token:
             raise FeishuUsageError("feishu_user_token_missing")
         return query_tenant_ai_item(http, session.access_token, settings.feishu_ai_item_id)
-
-    def quota_for_actor(principal):
-        token = tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", principal.tenant_key)
-        return query_tenant_ai_item(http, token, settings.feishu_ai_item_id, subject=principal.subject)
 
     register_audit_routes(app, store, principal_of, quota_for)
     register_rule_routes(app, store, principal_of, require_file_read)

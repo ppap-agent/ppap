@@ -447,6 +447,18 @@ class AuditBindingUpgradeTests(AuditDatabaseCase):
 
 
 class AuditDisplayDatabaseTests(AuditDatabaseCase):
+    @staticmethod
+    def card_action(body):
+        from ppap_core.feishu import CardAction
+
+        event = body["event"]
+        return CardAction(event["operator"]["tenant_key"], event["operator"]["open_id"], event["action"]["value"]["notification_id"], event["context"]["open_message_id"])
+
+    def process_card_confirmation(self, store, *, usage_policy=None):
+        claimed = store.claim_task_confirmation("card-confirmer")
+        self.assertIsNotNone(claimed)
+        return store.process_task_confirmation(claimed, "card-confirmer", usage_policy=usage_policy)
+
     def prepared_card_confirmation(self, *, sent=True):
         from fastapi.testclient import TestClient
         from ppap_api import create_app
@@ -480,7 +492,12 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         files, task, api_store, client, body = self.prepared_card_confirmation()
         response = client.post("/integrations/feishu/events", json=body)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["toast"]["type"], "success")
+        self.assertEqual(response.json()["toast"]["type"], "info")
+        pending = api_store.get_audit_task(self.alice, task["id"])
+        self.assertEqual(pending["acceptance"]["state"], "pending")
+        self.assertIsNone(pending["round_id"])
+        receipt = self.process_card_confirmation(api_store)
+        self.assertEqual(receipt["state"], "accepted")
         accepted = api_store.get_audit_task(self.alice, task["id"])
         self.assertEqual(accepted["state"], "reviewing")
         inputs = api_store.get_round(accepted["round_id"])["inputs"]
@@ -540,7 +557,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         rule_id = task["files"][0]["match"]["rule"]["id"]
         self.store.publish_rule(self.alice, "新规则版本", self.rule_body(), files[0].id, predecessor_id=rule_id)
         expired = client.post("/integrations/feishu/events", json=body)
-        self.assertEqual(expired.json()["toast"]["type"], "warning")
+        self.assertEqual(expired.json()["toast"]["type"], "info")
+        self.assertEqual(self.process_card_confirmation(api_store)["state"], "rejected")
         self.assertEqual(api_store.get_audit_task(self.alice, task["id"])["input_revision"], 0)
         revised = api_store.create_audit_task(
             self.alice,
@@ -556,6 +574,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(revised["input_revision"], 1)
         stale = client.post("/integrations/feishu/events", json=body)
         self.assertEqual(stale.json()["toast"]["type"], "warning")
+        self.assertIsNone(api_store.claim_task_confirmation("rejected-is-not-restarted"))
         self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
         self.assertEqual(api_store.list_rounds(self.alice), [])
 
@@ -582,8 +601,11 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
             card, browser = pool.submit(card_confirm), pool.submit(web_confirm)
             card, browser = card.result(timeout=20), browser.result(timeout=20)
         self.assertEqual(card.status_code, 200)
-        self.assertEqual(card.json()["toast"]["type"], "success")
+        self.assertIn(card.json()["toast"]["type"], ("info", "success"))
         self.assertIn(browser.status_code, (201, 409))
+        claimed = api_store.claim_task_confirmation("competing-card")
+        if claimed:
+            self.assertEqual(api_store.process_task_confirmation(claimed, "competing-card")["state"], "accepted")
         current = api_store.get_audit_task(self.alice, task["id"])
         self.assertEqual(current["state"], "reviewing")
         self.assertEqual([row["id"] for row in api_store.list_rounds(self.alice)], [current["round_id"]])
@@ -595,6 +617,206 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual(response.json()["toast"]["type"], "error")
         self.assertIsNone(api_store.get_audit_task(self.alice, task["id"])["round_id"])
         self.assertIsNone(api_store.claim_task_notification("must-not-resend"))
+
+    def test_card_confirmation_queue_survives_store_recreation_and_fences_an_expired_claim(self):
+        from ppap_application import build_product_store
+        from ppap_core.db import connect
+
+        _, task, store, _, body = self.prepared_card_confirmation()
+        action = self.card_action(body)
+        pending = store.enqueue_task_confirmation(action)
+        self.assertEqual(pending["state"], "pending")
+        self.assertIsNone(build_product_store(self.settings, objects=store.objects, role="worker").claim_job("audit-does-not-consume-confirmations"))
+        recreated = build_product_store(self.settings, objects=store.objects, role="api")
+        self.assertEqual(recreated.enqueue_task_confirmation(action), pending)
+        self.assertEqual(recreated.get_audit_task(self.alice, task["id"])["acceptance"], pending)
+        self.assertEqual(recreated.get_audit_task(self.alice, task["id"], request_id=pending["request_id"])["acceptance"], pending)
+        stale = recreated.claim_task_confirmation("lost-process")
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("UPDATE engine.jobs SET lease_until = now() - interval '1 second' WHERE id = %s", (stale.id,))
+        current = recreated.claim_task_confirmation("recovered-process")
+        self.assertEqual(current.id, stale.id)
+        self.assertEqual(current.attempt, stale.attempt + 1)
+        self.assertIsNone(recreated.process_task_confirmation(stale, "lost-process"))
+        self.assertEqual(recreated.process_task_confirmation(current, "recovered-process")["state"], "accepted")
+        self.assertEqual(recreated.enqueue_task_confirmation(action)["state"], "accepted")
+        self.assertIsNone(recreated.process_task_confirmation(stale, "lost-process"))
+        self.assertIsNone(recreated.claim_task_confirmation("no-duplicate"))
+        loaded = recreated.get_audit_task(self.alice, task["id"], request_id=str(uuid.uuid4()))
+        self.assertEqual(loaded["acceptance"]["state"], "pending")
+        self.assertEqual(recreated.get_audit_task(self.alice, task["id"], request_id=pending["request_id"])["acceptance"]["state"], "accepted")
+        self.assertEqual(len(recreated.list_rounds(self.alice)), 1)
+        self.assertEqual(recreated.list_usage_events(self.alice), [])
+
+    def test_concurrent_card_clicks_share_one_durable_confirmation_or_report_database_unknown(self):
+        import psycopg
+        from ppap_core.db import connect
+
+        _, task, store, _, body = self.prepared_card_confirmation()
+        action = self.card_action(body)
+        barrier = threading.Barrier(2)
+
+        def enqueue():
+            barrier.wait(timeout=5)
+            try:
+                return store.enqueue_task_confirmation(action)
+            except psycopg.Error:
+                # A bounded database wait can be unknown, never an auth refusal.
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = pool.submit(enqueue), pool.submit(enqueue)
+            receipts = [first.result(timeout=5), second.result(timeout=5)]
+        known = [receipt for receipt in receipts if receipt is not None]
+        self.assertTrue(known)
+        pending = store.enqueue_task_confirmation(action)
+        self.assertEqual(pending["state"], "pending")
+        self.assertEqual(pending["reason"], "已收到卡片确认，正在核对用量，尚未受理。")
+        for receipt in known:
+            self.assertEqual(receipt, pending)
+        with connect(self.settings, "migrator") as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM engine.jobs WHERE kind = 'task_confirmation' AND payload->>'task_id' = %s", (task["id"],)).fetchone()[0], 1)
+        self.assertIsNone(store.get_audit_task(self.alice, task["id"])["round_id"])
+
+    def test_slow_quota_does_not_hold_card_callback_and_repeated_clicks_do_not_duplicate_usage(self):
+        from unittest.mock import patch
+
+        from ppap_api.notifications import dispatch_task_confirmation
+        from ppap_core.feishu_usage import PartnerAiItem
+
+        _, task, store, client, body = self.prepared_card_confirmation()
+        self.settings.usage_charge_enabled = True
+        self.settings.feishu_ai_item_id = "card-quota-test"
+        self.settings.feishu_app_secret = "test-secret"
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_quota(_actor):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError("quota test did not release")
+            return PartnerAiItem(True, 100, True)
+
+        first = client.post("/integrations/feishu/events", json=body)
+        self.assertEqual(first.json()["toast"]["type"], "info")
+        with (
+            patch("ppap_api.notifications.tenant_access_token", return_value="test-token"),
+            patch("ppap_api.notifications.query_tenant_ai_item", side_effect=lambda *_args, **_kwargs: slow_quota(None)),
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                processing = pool.submit(dispatch_task_confirmation, store, Mock(), self.settings, "slow-card")
+                try:
+                    self.assertTrue(entered.wait(5))
+                    callback = pool.submit(client.post, "/integrations/feishu/events", json=body)
+                    self.assertEqual(callback.result(timeout=3).json()["toast"]["type"], "info")
+                    self.assertFalse(processing.done())
+                    self.assertIsNone(store.get_audit_task(self.alice, task["id"])["round_id"])
+                finally:
+                    release.set()
+                self.assertTrue(processing.result(timeout=10))
+        self.assertEqual(store.enqueue_task_confirmation(self.card_action(body))["state"], "accepted")
+        self.assertEqual(len(store.list_rounds(self.alice)), 1)
+        events = store.list_usage_events(self.alice)
+        self.assertEqual(sum(event["consumed_points"] for event in events), len(task["files"]) * 500)
+        self.assertIsNone(store.claim_task_confirmation("no-second-charge"))
+
+    def test_explicit_quota_rejection_is_durable_and_does_not_requeue_on_another_click(self):
+        from ppap_core.feishu_usage import PartnerAiItem
+
+        _, task, store, _, body = self.prepared_card_confirmation()
+        self.settings.usage_charge_enabled = True
+        self.settings.feishu_ai_item_id = "card-quota-test"
+        self.settings.feishu_free_trial_quota_points = 0
+        action = self.card_action(body)
+        pending = store.enqueue_task_confirmation(action)
+        receipt = self.process_card_confirmation(store, usage_policy=lambda _actor: PartnerAiItem(True, 0, True))
+        self.assertEqual(receipt["state"], "rejected")
+        self.assertTrue(receipt["reason"])
+        self.assertEqual(store.enqueue_task_confirmation(action), receipt)
+        self.assertEqual(store.get_audit_task(self.alice, task["id"], request_id=pending["request_id"])["acceptance"], receipt)
+        self.assertIsNone(store.get_audit_task(self.alice, task["id"])["round_id"])
+        self.assertIsNone(store.claim_task_confirmation("no-automatic-reconfirmation"))
+        self.assertEqual(store.list_usage_events(self.alice), [])
+
+    def test_card_after_web_acceptance_keeps_its_own_pending_receipt_until_validated_processing(self):
+        _, task, store, _, body = self.prepared_card_confirmation()
+        accepted = store.confirm_audit_task(self.alice, task["id"], str(uuid.uuid4()), task["input_revision"])
+        self.settings.usage_charge_enabled = True
+        self.settings.feishu_ai_item_id = "card-quota-test"
+        action = self.card_action(body)
+        pending = store.enqueue_task_confirmation(action)
+        self.assertEqual(pending["state"], "pending")
+        self.assertEqual(store.enqueue_task_confirmation(action), pending)
+        self.assertEqual(store.get_audit_task(self.alice, task["id"])["acceptance"]["state"], "accepted")
+        self.assertEqual(store.get_audit_task(self.alice, task["id"], request_id=pending["request_id"])["acceptance"], pending)
+        receipt = self.process_card_confirmation(store, usage_policy=lambda _actor: self.fail("An existing Round must not query quota again"))
+        self.assertEqual(receipt["state"], "accepted")
+        self.assertEqual(store.enqueue_task_confirmation(action), receipt)
+        current = store.get_audit_task(self.alice, task["id"], request_id=pending["request_id"])
+        self.assertEqual(current["acceptance"], receipt)
+        self.assertEqual(current["round_id"], accepted["round_id"])
+        self.assertEqual(len(store.list_rounds(self.alice)), 1)
+        self.assertEqual(store.list_usage_events(self.alice), [])
+
+    def test_card_confirmation_rechecks_resource_permission_after_queue_commit(self):
+        from ppap_core.db import connect
+
+        files, task, store, _, body = self.prepared_card_confirmation()
+        store.enqueue_task_confirmation(self.card_action(body))
+        with connect(self.settings, "migrator") as conn:
+            conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (files[0].file_id, self.alice.user_id))
+        receipt = self.process_card_confirmation(store)
+        self.assertEqual(receipt["state"], "rejected")
+        self.assertTrue(receipt["reason"])
+        with connect(self.settings, "migrator") as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM product.audit_rounds WHERE source_draft_id = %s", (task["id"],)).fetchone()[0], 0)
+        self.assertEqual(store.list_usage_events(self.alice), [])
+
+    def test_unexpected_confirmation_failure_preserves_the_original_pending_request_for_recovery(self):
+        _, task, store, _, body = self.prepared_card_confirmation()
+        self.settings.usage_charge_enabled = True
+        self.settings.feishu_ai_item_id = "card-quota-test"
+        pending = store.enqueue_task_confirmation(self.card_action(body))
+        claimed = store.claim_task_confirmation("interrupted-card")
+
+        def unavailable(_actor):
+            raise RuntimeError("unconfirmed external read")
+
+        with self.assertRaises(RuntimeError):
+            store.process_task_confirmation(claimed, "interrupted-card", usage_policy=unavailable)
+        self.assertEqual(store.get_audit_task(self.alice, task["id"])["acceptance"], pending)
+        self.assertIsNone(store.get_audit_task(self.alice, task["id"])["round_id"])
+        self.assertEqual(store.list_usage_events(self.alice), [])
+
+    def test_lost_confirmation_commit_reply_reads_back_the_same_accepted_request(self):
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        import psycopg
+        from ppap_application import build_product_store
+
+        _, task, store, _, body = self.prepared_card_confirmation()
+        pending = store.enqueue_task_confirmation(self.card_action(body))
+        claimed = store.claim_task_confirmation("commit-reply-lost")
+        connection = store._conn
+
+        @contextmanager
+        def lose_reply_after_commit():
+            # Real PostgreSQL commits the admission and receipt together. Only
+            # delivery of that known commit reply to this caller is interrupted.
+            with connection() as conn:
+                yield conn
+            raise psycopg.OperationalError("test-only lost commit reply")
+
+        with patch.object(store, "_conn", side_effect=lose_reply_after_commit):
+            with self.assertRaises(psycopg.OperationalError):
+                store.process_task_confirmation(claimed, "commit-reply-lost")
+        restored = build_product_store(self.settings, objects=store.objects, role="api")
+        loaded = restored.get_audit_task(self.alice, task["id"], request_id=pending["request_id"])
+        self.assertEqual(loaded["acceptance"], {**pending, "state": "accepted", "reason": None})
+        self.assertIsNone(restored.process_task_confirmation(claimed, "commit-reply-lost"))
+        self.assertEqual(restored.enqueue_task_confirmation(self.card_action(body)), loaded["acceptance"])
+        self.assertEqual(len(restored.list_rounds(self.alice)), 1)
+        self.assertEqual(restored.list_usage_events(self.alice), [])
 
     def test_distinct_zip_collections_keep_separate_intents_and_unknown_does_not_block_the_other(self):
         from urllib.parse import parse_qs, urlsplit
