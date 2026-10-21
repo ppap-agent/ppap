@@ -18,6 +18,7 @@ from ppap_deep.controller import ExecutionContext
 from ppap_deep.isolation.model_gateway import Grants, local_gateway
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
+from ppap_deep.runtime import runtime_from_env
 from ppap_deep.semantic.protocol import ResultBundle
 from ppap_deep.source import authorize_execution
 
@@ -171,6 +172,22 @@ class SemanticProductContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with local_gateway(Path(temporary) / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key") as gateway:
                 self.assertEqual(gateway.http.grants.ttl, DEEP_TOTAL_SECONDS)
+
+    def test_runtime_requires_explicit_supported_isolation_before_startup(self) -> None:
+        settings = Settings(llm_base_url="https://provider.example/v1", llm_model="test-model", llm_api_key="test-provider-key")
+        for runtime, profile, message in (
+            ("", "off", "container-only"),
+            ("process", "off", "container-only"),
+            ("grok", "off", "container-only"),
+            ("auto", "off", "container-only"),
+            ("container-only", "", "off or ppap"),
+            ("container-only", "gvisor", "off or ppap"),
+        ):
+            with self.subTest(runtime=runtime, profile=profile):
+                with patch.dict("os.environ", {"PPAP_DEEP_RUNTIME": runtime, "PPAP_DEEP_SANDBOX_PROFILE": profile}):
+                    with self.assertRaisesRegex(ValueError, message):
+                        with runtime_from_env(settings):
+                            self.fail("Unsupported runtime must not start")
 
     def test_effective_published_rule_source_and_title_independence(self) -> None:
         first, packets = semantic_inputs(_spec(), ENGINE)
