@@ -2,6 +2,7 @@
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
@@ -159,6 +160,22 @@ def test_remote_docx_is_downloaded_once_and_parsed_as_a_real_word_grid(tmp_path,
 
     assert [result.status for result in results] == ["PASS", "PASS"]
     assert calls == ["/equipment.docx?sig=test"]
+
+
+def test_remote_docx_over_the_existing_size_limit_is_rejected_before_parsing(audit, monkeypatch):
+    calls = []
+
+    def get(url, *, timeout):
+        calls.append(url)
+        return SimpleNamespace(headers={"content-length": "104857601"}, content=b"not-a-docx", raise_for_status=lambda: None)
+
+    monkeypatch.setattr("requests.get", get)
+
+    results = audit("https://example.test/oversized.docx")
+
+    assert [result.status for result in results] == ["ERR", "ERR"]
+    assert all("文件太大" in result.suggestions for result in results)
+    assert calls == ["https://example.test/oversized.docx"]
 
 
 @pytest.mark.parametrize("failure", ["http-error", "corrupt-package"])

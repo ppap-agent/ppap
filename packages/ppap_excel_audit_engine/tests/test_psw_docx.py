@@ -1,6 +1,7 @@
 """PSW DOCX rules consume real Word structures and embedded image inputs."""
 
 import json
+from base64 import b64decode
 from copy import deepcopy
 from io import BytesIO
 from zipfile import ZIP_STORED, ZipFile
@@ -24,8 +25,8 @@ def submission_control(*, generic=False):
     </w:sdt>""")
 
 
-def image_payload():
-    image = Image.new("RGB", (48, 48), color=(220, 0, 0))
+def image_payload(size, color):
+    image = Image.new("RGB", size, color=color)
     payload = BytesIO()
     image.save(payload, format="PNG")
     image.close()
@@ -89,9 +90,9 @@ def psw_document(*, images=True, checkboxes=True, nested_submission=False, gener
     main.cell(54, 0).text = "这些结果均满足所有图纸和规范要求"
     main.cell(54, 1).text = "☒ 是" if checkboxes else "是"
     if images:
-        for row in (56, 57):
+        for row, size, color in ((56, (48, 48), (220, 0, 0)), (57, (32, 40), (0, 0, 180))):
             paragraph = document.add_paragraph() if images_outside else main.cell(row, 4).paragraphs[0]
-            paragraph.add_run().add_picture(image_payload())
+            paragraph.add_run().add_picture(image_payload(size, color))
     if duplicate:
         document.element.body.append(deepcopy(main._tbl))
     return document
@@ -118,6 +119,17 @@ class WordVisualRuntime:
     def __getattr__(self, name):
         self.unexpected_calls.append(name)
         raise AssertionError(f"Native DOCX must not use external conversion or rendering: {name}")
+
+
+def assert_original_images_reach_visual_rules(calls):
+    assert len(calls) == 2
+    for call in calls:
+        images = []
+        for data_url in call["image_base64_list"]:
+            with Image.open(BytesIO(b64decode(data_url.split(",", 1)[1]))) as image:
+                images.append((image.size, image.getextrema()))
+        assert images == [((48, 48), ((220, 220), (0, 0), (0, 0))), ((32, 40), ((0, 0), (0, 0), (180, 180)))]
+        assert "word/document.xml" in call["user_text"]
 
 
 @pytest.fixture(params=["v2", "v3"])
@@ -147,9 +159,7 @@ def test_word_fields_controls_and_images_reach_the_existing_rules_without_render
     assert results[0].evidence.source_format == "docx"
     assert results[2].evidence.used == "visual"
     assert results[2].evidence.sources[0].locator.startswith("docx://word/document.xml#")
-    assert len(runtime.calls) == 2
-    assert all(call["image_base64_list"] for call in runtime.calls)
-    assert all("word/document.xml" in call["user_text"] for call in runtime.calls)
+    assert_original_images_reach_visual_rules(runtime.calls)
 
 
 def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_path, audit):
@@ -183,7 +193,7 @@ def test_visual_rules_can_use_embedded_images_outside_the_main_table(tmp_path, a
 
     assert results[2].status == "PASS"
     assert results[4].status == "PASS"
-    assert len(runtime.calls) == 2
+    assert_original_images_reach_visual_rules(runtime.calls)
 
 
 def test_a_corrupt_embedded_image_package_is_an_execution_error(tmp_path, audit):
