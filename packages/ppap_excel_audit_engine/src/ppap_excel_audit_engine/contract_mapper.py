@@ -1,14 +1,11 @@
-"""Canonical mapping between persistence objects and audit contracts."""
+"""Normalize engine inputs at the runtime boundary."""
 
 from __future__ import annotations
 
-import os
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from ppap_core.contracts import AuditInput, RuleInput
 from ppap_core.rule_profile import normalize_rule_profile
-from ppap_core.types import PpapDocumentType
 
 
 def to_audit_input(value: Any) -> AuditInput:
@@ -38,41 +35,3 @@ def to_rule_input(value: Any) -> RuleInput:
         models=list(getattr(value, "models", []) or []),
         parts=list(getattr(value, "parts", []) or []),
     )
-
-
-def dump_audit_snapshot(value: Any) -> dict[str, Any]:
-    return to_audit_input(value).model_dump()
-
-
-def dump_rule_snapshot(value: Any) -> dict[str, Any]:
-    return to_rule_input(value).model_dump()
-
-
-def load_audit_snapshot(snapshot: Any) -> AuditInput | None:
-    if not isinstance(snapshot, dict):
-        return None
-    try:
-        return AuditInput.model_validate(snapshot)
-    except Exception:
-        return None
-
-
-def load_rule_snapshot(snapshot: Any) -> RuleInput | None:
-    if not isinstance(snapshot, dict):
-        return None
-    try:
-        return RuleInput.model_validate(snapshot)
-    except Exception:
-        return None
-
-
-def infer_document_type(value: Any) -> PpapDocumentType | None:
-    audit_input = to_audit_input(value)
-    filename = unquote(os.path.basename(urlparse(audit_input.file_url).path)) if audit_input.file_url else ""
-    doc_type = PpapDocumentType.infer_from_signals(
-        filename=filename,
-        content=audit_input.content or "",
-        minimum_score=8,
-        min_margin=4,
-    )
-    return None if doc_type == PpapDocumentType.UNKNOWN else doc_type

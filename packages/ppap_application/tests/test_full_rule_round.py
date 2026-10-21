@@ -120,3 +120,36 @@ def test_existing_frozen_unsupported_rule_is_not_remapped_by_new_checker_support
 
     assert result["findings"] == []
     assert result["coverage"]["rule_items"][0]["coverage"] == "unsupported"
+
+
+def test_same_named_files_use_their_own_frozen_bytes_and_keep_distinct_result_sources():
+    inputs, blobs = [], {}
+    for version_id, process in [("version-first", "IQC"), ("version-second", "包装")]:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "过程流程图"
+        sheet.append(["工序名称"])
+        sheet.append([process])
+        buffer = BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+        blobs[version_id] = buffer.getvalue()
+        inputs.append(
+            RoundInput(
+                "target",
+                "file-" + version_id,
+                version_id,
+                "process.xlsx",
+                "ready",
+                rule_version_id="rules-v1",
+                rule_body={"kind": "engine", "type": "过程流程图", "rule_profile": "v3", "rules": [{"id": "start", "rule_to_check": START_REQUIREMENT}]},
+                rule_execution={"mode": "rule_items", "items": [{"id": "start", "rule_to_check": START_REQUIREMENT, "coverage": "mapped", "checker_index": 5}]},
+            )
+        )
+
+    result = run_round_from_bytes(RoundWork("frozen-round", "tenant", inputs), blobs)
+
+    assert [(row["item_key"], row["status"], row["locator"]["file_id"], row["locator"]["file_version_id"], row["locator"]["filename"]) for row in result["findings"]] == [
+        ("version-first:rule:start", "PASS", "file-version-first", "version-first", "process.xlsx"),
+        ("version-second:rule:start", "NG", "file-version-second", "version-second", "process.xlsx"),
+    ]
