@@ -134,3 +134,36 @@ def test_keyword_selection_reads_matching_original_pages_or_all_pages(original_p
     for encoded, expected_color in zip(images, expected_colors):
         with Image.open(io.BytesIO(base64.b64decode(encoded.split(",", 1)[1]))) as image:
             assert all(abs(actual - expected) <= 3 for actual, expected in zip(image.getpixel((100, 100)), expected_color))
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected_colors"),
+    [([2], [(51, 77, 204)]), ([1], [(51, 179, 77)]), ([], [(255, 255, 255), (51, 179, 77), (51, 77, 204)])],
+    ids=["custom-appendix-page", "custom-authorization-page", "empty-selection-falls-back-to-all-pages"],
+)
+def test_custom_page_selector_controls_actual_original_pages(original_pdf, monkeypatch, agent_profile, selection, expected_colors):
+    profile, agent_class, pdf_module = agent_profile
+    original_bytes = original_pdf.read_bytes()
+
+    class SelectedPagesAgent(agent_class):
+        def target_page_selector(self, target_keywords):
+            assert target_keywords == ["Authorization"]
+            return selection
+
+    def convert(file_ref, *, enable_cache=True, doc_type=None):
+        assert file_ref.location == str(original_pdf)
+        return ConversionArtifact(success=False)
+
+    monkeypatch.setattr(pdf_module, "convert_pdf_to_excel_auto", convert)
+    with bind_runtime(None):
+        agent = SelectedPagesAgent(AuditInput(audit_id="custom-pages", file_url=str(original_pdf)), stamp_rules(profile))
+        try:
+            images = agent.get_images_for_keywords(["Authorization"])
+        finally:
+            agent.close()
+
+    assert len(images) == len(expected_colors)
+    for encoded, expected_color in zip(images, expected_colors):
+        with Image.open(io.BytesIO(base64.b64decode(encoded.split(",", 1)[1]))) as image:
+            assert all(abs(actual - expected) <= 3 for actual, expected in zip(image.getpixel((100, 100)), expected_color))
+    assert original_pdf.read_bytes() == original_bytes

@@ -1,9 +1,48 @@
 import unittest
+from copy import deepcopy
 from types import SimpleNamespace
 
+import pytest
 from ppap_application import builtin_rule_input
 from ppap_core.audits import RoundInput, findings_from_rule_execution
 from ppap_core.rule_coverage import COVERAGE_UNSUPPORTED, MODE_RULE_ITEMS
+
+
+@pytest.mark.parametrize(("profile", "expected"), [(None, "v2"), ("v2", "v2"), ("v3", "v3")])
+def test_frozen_rule_identity_profile_and_scope_reach_the_checker_without_changing_the_snapshot(profile, expected):
+    body = {
+        "kind": "engine",
+        "type": "PFMEA",
+        "rules": [{"id": "customer-rule", "category": "客户要求", "rule_to_check": "检查原件"}],
+        "customers": ["客户甲", "客户乙"],
+        "models": ["车型甲"],
+        "parts": ["P-001", "P-002"],
+    }
+    if profile is not None:
+        body["rule_profile"] = profile
+    snapshot = deepcopy(body)
+    item = RoundInput("target", "file", "file-v2", "PFMEA.xlsx", "ready", rule_version_id="confirmed-rules-v4", rule_body=body)
+
+    checker_input = builtin_rule_input(item)
+
+    assert checker_input.model_dump(exclude={"rules"}) == {
+        "rule_id": "confirmed-rules-v4",
+        "rule_profile": expected,
+        "type": "PFMEA",
+        "customers": ["客户甲", "客户乙"],
+        "models": ["车型甲"],
+        "parts": ["P-001", "P-002"],
+    }
+    assert checker_input.rules
+    assert item.rule_body == snapshot
+
+
+@pytest.mark.parametrize(("rule_version", "body"), [(None, {"kind": "engine", "type": "PFMEA"}), ("confirmed-rules-v4", None)])
+def test_a_checker_input_requires_both_a_frozen_rule_version_and_its_snapshot(rule_version, body):
+    item = RoundInput("target", "file", "file-v2", "PFMEA.xlsx", "ready", rule_version_id=rule_version, rule_body=body)
+
+    with pytest.raises(ValueError, match="^rule_required$"):
+        builtin_rule_input(item)
 
 
 class BuiltinBindingTests(unittest.TestCase):
