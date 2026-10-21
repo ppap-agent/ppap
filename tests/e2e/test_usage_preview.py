@@ -18,6 +18,32 @@ def expect_history(surface, sequence):
 
 @unittest.skipUnless(PREVIEW, "requires PPAP_PREVIEW_URL (preview-only UI)")
 class UsagePreviewTests(unittest.TestCase):
+    def test_natural_usage_route_restores_filters_and_exact_history_on_back_and_forward(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            for path in ("/usage", "/usage/"):
+                with self.subTest(path=path):
+                    page.goto(PREVIEW + "/preview/audit.html?scene=usage-ready&view=usage&usageRange=all&usagePage=2&usageSearch=示例")
+                    row = page.get_by_role("row", name="消费记录 示例消费-11", exact=True)
+                    expect(row).to_be_visible()
+                    # Keep the controlled adapter, but exercise the public address without a legacy view query.
+                    address = path + "?usageRange=all&usagePage=2&usageSearch=示例"
+                    page.evaluate("address => history.replaceState(history.state, '', address)", address)
+                    row.get_by_role("button", name="打开该次审核", exact=True).click()
+                    expect_history(page, 1)
+                    reference = page.url
+                    page.go_back()
+                    expect(row).to_be_visible()
+                    expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("combobox", name="用量时间范围", exact=True)).to_have_text("全部")
+                    expect(page.get_by_role("textbox", name="搜索文件名或发起人", exact=True)).to_have_value("示例")
+                    expect(page.get_by_text("共 12 笔 · 第 2/2 页 · 每页10笔", exact=True)).to_be_visible()
+                    page.go_forward()
+                    expect_history(page, 1)
+                    self.assertEqual(page.url, reference)
+            browser.close()
+
     def test_cross_month_debit_keeps_one_original_acceptance_and_a_separate_debit_time(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

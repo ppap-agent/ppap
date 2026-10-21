@@ -15,6 +15,7 @@ import type {OriginalRenderer} from './review-content'
 import type {AuditReportAdapter} from './report-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 import {sameSnapshot} from './result-projection'
+import {readAuditRoute} from './routes'
 import {readUsageQuery, writeUsageQuery, usageNotices, validUsagePage, type AuditUsageAdapter, type UsagePage, type UsageMetric, type UsageQuery} from './usage-contract'
 
 const states = {charged: '已扣', pending: '待扣', processing: '扣费处理中', unknown: '待核对', trial: '免费额度已扣'}
@@ -27,7 +28,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
   useEffect(() => {
     if (!active) return
     const changed = () => {
-      if (new URLSearchParams(location.search).get('view') !== 'usage') return
+      if (readAuditRoute(new URL(location.href)).surface !== 'usage') return
       const nextAddress = readArchiveAddress(location.search), next = readUsageQuery(location.search)
       setAddress(nextAddress); setRoute(value => value + 1)
       setQuery(current => sameSnapshot(current, next) ? current : next); setSearch(next.search)

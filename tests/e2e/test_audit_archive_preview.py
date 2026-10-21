@@ -19,6 +19,50 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditArchivePreviewTests(unittest.TestCase):
+    def test_natural_file_route_restores_list_and_exact_history_on_back_and_forward(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            for path in ("/files", "/files/"):
+                with self.subTest(path=path):
+                    page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+                    table = page.get_by_role("table", name="审核文件档案", exact=True)
+                    expect(table).to_be_visible()
+                    # Keep the controlled adapter, but exercise the public address without a legacy view query.
+                    page.evaluate("path => history.replaceState(history.state, '', path)", path)
+                    page.get_by_role("checkbox", name="选择 控制计划.xlsx 档案 A001", exact=True).check()
+                    table.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+                    expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+                    reference = parse_qs(urlparse(page.url).query)["auditRef"]
+                    page.go_back()
+                    expect(page).to_have_url(PREVIEW + path)
+                    expect(table).to_be_visible()
+                    expect(page.get_by_role("region", name="文档历史审核", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("region", name="已选固定报告", exact=True)).to_contain_text("控制计划.xlsx · 第 3 次审核")
+                    page.go_forward()
+                    expect(page.get_by_role("region", name="审核详情", exact=True)).to_be_visible()
+                    self.assertEqual(parse_qs(urlparse(page.url).query)["auditRef"], reference)
+            browser.close()
+
+    def test_natural_file_route_remembers_the_zip_request_without_a_legacy_view_query(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=archive-ready&view=archive")
+            expect(page.get_by_role("table", name="审核文件档案", exact=True)).to_be_visible()
+            page.evaluate("history.replaceState(history.state, '', '/files')")
+            for archive in ("A001", "A002"):
+                page.get_by_role("checkbox", name=f"选择 控制计划.xlsx 档案 {archive}", exact=True).check()
+            page.get_by_role("button", name="打包所选 2 份历史报告", exact=True).click()
+            expect(page.get_by_role("region", name="ZIP 工作", exact=True)).to_be_visible()
+            expect(page).to_have_url(re.compile(r"/files\?packageRequest=[^&]+$"))
+            request = parse_qs(urlparse(page.url).query)["packageRequest"]
+            page.get_by_role("button", name="清空选择", exact=True).click()
+            page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], request)
+            browser.close()
+
     def test_explicit_history_reads_start_together_but_wait_for_selection_before_display(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
