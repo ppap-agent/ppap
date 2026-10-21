@@ -18,6 +18,7 @@ from ppap_excel_audit_engine.checkers.agents_v3_overlay.psw_excel_agent import P
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.sub_supplier_list_excel_agent import SubSupplierListExcelAgent
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.tooling_approval_agent import ToolingApprovalAgent
 from ppap_excel_audit_engine.checkers.agents_v3_overlay.xir_assembly_issue_agent import XirAssemblyIssueAgent
+from ppap_excel_audit_engine.engine import run_audit
 
 # Golden contracts from the frozen source inventory in #152, not model output.
 CONTRACTS = [
@@ -169,3 +170,21 @@ def test_dimension_internal_rule_id_order_mismatch_is_rejected(tmp_path):
             AuditInput(audit_id="target", file_url=str(tmp_path / "target.xlsx")),
             input_rules(DimensionMeasurementExcelAgent, expected, ids=rule_ids),
         )
+
+
+def test_public_engine_reports_the_rule_contract_initialization_error(tmp_path):
+    path = tmp_path / "target.xlsx"
+    workbook = Workbook()
+    workbook.save(path)
+    workbook.close()
+    expected = next(names for agent, names in CONTRACTS if agent is DimensionMeasurementExcelAgent)
+    rule_ids = ["2", "1", *[str(index) for index in range(3, len(expected) + 1)]]
+    rules = input_rules(DimensionMeasurementExcelAgent, expected, ids=rule_ids)
+
+    results = run_audit(AuditInput(audit_id="target", file_url=str(path)), rules)
+
+    assert len(results) == 1
+    assert results[0].status == "ERR"
+    assert results[0].item == rules.type
+    assert "Audit engine execution failed:" in results[0].suggestions
+    assert "rule contract id/order mismatch" in results[0].suggestions
