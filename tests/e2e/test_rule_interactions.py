@@ -1,4 +1,8 @@
-"""Deterministic browser/API interleavings; no live backend or model calls."""
+"""Deterministic browser/API interleavings; no live backend or model calls.
+
+The retained Draft upload/receipt consumer is exercised at /dev. Customer home
+and Task navigation use the unified workbench; these are separate contracts.
+"""
 
 import os
 import time
@@ -196,7 +200,7 @@ class RuleInteractionTests(unittest.TestCase):
             }
             page.route("**/api/rules/version-b", lambda route: route.fulfill(json=rule))
             page.route("**/api/rounds/" + JOB, lambda route: route.fulfill(json=round))
-            page.goto(WEB + "/?round=" + JOB)
+            page.goto(WEB + "/dev?round=" + JOB)
             expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
             page.get_by_role("button", name="本轮资料与依据", exact=True).click()
             page.get_by_role("button", name="查看本轮条款", exact=True).click()
@@ -348,11 +352,11 @@ class RuleInteractionTests(unittest.TestCase):
             page.goto(WEB + "/audit?view=requirements")
             with page.expect_request(lambda request: request.method == "PUT" and request.url.endswith("/blob")):
                 page.get_by_label("上传共用要求文件").set_input_files({"name": "迟到规则.json", "mimeType": "application/json", "buffer": b"{}"})
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             address = page.url
             held[0].fulfill(json={**state["source"], "status": "ready"})
             page.locator("a").filter(has_text="迟到规则").first.wait_for(state="attached")
-            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
             self.assertEqual(page.url, address)
             open_rule_library(page)
             expect(page.get_by_role("link", name="迟到规则", exact=True).filter(visible=True)).to_be_visible()
@@ -374,7 +378,7 @@ class RuleInteractionTests(unittest.TestCase):
                     state["hold_save_reply"] = True
                     with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/rules")):
                         page.get_by_role("button", name="确认并保存版本", exact=True).click()
-                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+                    page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
                     if destination == "list":
                         open_rule_library(page)
                     elif destination == "same-draft":
@@ -384,7 +388,7 @@ class RuleInteractionTests(unittest.TestCase):
                     with page.expect_response("**/api/audit-customers"):
                         reply.fulfill(status=201, json=rule)
                     if destination == "completed-then-back":
-                        expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
                         self.assertEqual(page.url, address)
                         page.go_back()
                     if destination in {"same-draft", "completed-then-back"}:
@@ -393,7 +397,7 @@ class RuleInteractionTests(unittest.TestCase):
                         self.assertIn("reqVersion=" + rule["id"], page.url)
                         page.get_by_role("link", name="返回审核规则", exact=True).click()
                     else:
-                        expect(page.get_by_role("heading", name="审核规则" if destination == "list" else "上传 PPAP 文件", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="审核规则" if destination == "list" else "工作台", exact=True)).to_be_visible()
                         self.assertEqual(page.url, address)
                     if destination == "audit":
                         open_rule_library(page)
@@ -424,7 +428,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("button", name="创建新版本", exact=True).click()
             page.get_by_label("版本号", exact=True).fill("v3")
             address = page.url
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.go_back()
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v3")
             self.assertEqual(page.url, address)
@@ -601,7 +605,8 @@ class RuleInteractionTests(unittest.TestCase):
             self.check_requirement(page)
             with page.expect_response("**/api/audit-customers"):
                 page.get_by_role("button", name="确认并保存版本", exact=True).click()
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
             retry.click()
             expect(page.get_by_role("checkbox", name="选择 未知回执.xlsx", exact=True)).to_be_checked()
             self.assertEqual(len(created), 1)
@@ -634,7 +639,8 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(state["saves"]), 1)
             self.assertEqual(state["saves"][0]["body"]["customers"], ["测试客户"])
             self.assertEqual(state["saves"][0]["source_file_version_id"], state["source"]["id"])
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
             page.get_by_role("combobox", name="客户（可选）", exact=True).click()
             expect(page.get_by_role("option", name="测试客户", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
@@ -660,8 +666,8 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_label("上传共用要求文件").set_input_files({"name": "草稿规则.json", "mimeType": "application/json", "buffer": b"{}"})
             page.get_by_label("要求名称", exact=True).fill("未发布的规则草稿")
             page.get_by_role("button", name="打开产品导航", exact=True).click()
-            page.get_by_role("dialog").get_by_role("button", name="PPAP Audit", exact=True).click()
-            expect(page.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_be_visible()
+            page.get_by_role("dialog").get_by_role("button", name="工作台", exact=True).click()
+            expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
             open_rule_library(page)
             page.get_by_role("link", name="未发布的规则草稿").filter(visible=True).click()
             expect(page.get_by_label("要求名称", exact=True)).to_have_value("未发布的规则草稿")
@@ -772,7 +778,8 @@ class RuleInteractionTests(unittest.TestCase):
             page.get_by_role("tab", name="版本变化", exact=True).click()
             page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("searchbox", name="搜索审核要求", exact=True).fill("待核对")
-            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="PPAP Audit", exact=True).click()
+            page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(selected).not_to_be_checked()
             self.assertEqual(page.evaluate("history.state.auditUploadDraft"), upload_identity)
@@ -791,7 +798,7 @@ class RuleInteractionTests(unittest.TestCase):
             held, transmissions = [], []
             page.route("**/api/drafts", lambda route: held.append(route))
             page.route("**/api/files", lambda route: (transmissions.append(route.request.post_data_json), route.fulfill(status=500, json={"error": "unexpected_upload"})))
-            page.goto(WEB)
+            page.goto(WEB + "/dev")
             page.evaluate("history.pushState(null, '', '?view=workbench&queue=all')")
             page.get_by_role("button", name="上传资料", exact=True).click()
             with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/drafts")):
@@ -915,7 +922,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.route("**/api/file-uploads/*", read_receipt)
             page.route("**/api/drafts", lambda route: route.fulfill(status=201, json={**draft_fields, "id": "batch-draft"}))
             page.route("**/api/drafts/batch-draft", draft)
-            page.goto(WEB)
+            page.goto(WEB + "/dev")
             page.get_by_role("button", name="上传资料", exact=True).click()
             page.get_by_label("上传文件", exact=True).set_input_files(
                 [{"name": name, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": b"fixture"} for name in names]
@@ -1068,15 +1075,15 @@ class RuleInteractionTests(unittest.TestCase):
             }
             page.route("**/api/rounds?*", lambda route: pending.append((route, {"rounds": [summary], "next_offset": None})))
             page.goto(WEB)
-            selected = page.get_by_role("tab", name="全部记录", exact=True)
+            selected = page.get_by_role("tab", name="全部任务", exact=False)
             expect(selected).to_have_attribute("aria-selected", "true")
             selected.click()
             self.assertEqual(len(pending), 2)
             for route, body in pending:
                 route.fulfill(json=body)
-            expect(page.get_by_role("button", name="刷新审核记录", exact=True)).to_be_enabled()
+            expect(page.get_by_role("button", name="刷新任务列表", exact=True)).to_be_enabled()
             expect(selected).to_have_attribute("aria-selected", "true")
-            expect(page.get_by_role("table", name="全部审核记录", exact=True)).to_contain_text("history.xlsx")
+            expect(page.get_by_role("table", name="全部任务审核记录", exact=True)).to_contain_text("history.xlsx")
             self.assertEqual(writes, [])
             browser.close()
 
@@ -1151,11 +1158,11 @@ class RuleInteractionTests(unittest.TestCase):
             expect(alert).to_be_visible()
             self.assertNotIn("Failed to fetch", alert.inner_text())
             self.assertNotIn("unexpected_test_request", alert.inner_text())
-            table = page.get_by_role("table", name="需要处理审核记录", exact=True)
+            table = page.get_by_role("table", name="全部任务审核记录", exact=True)
             expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_text("已读取的记录仍可打开；状态可能已变化。", exact=True)).to_be_visible()
             drafts_failed = False
-            alert.get_by_role("button", name="重新读取", exact=True).click()
+            page.get_by_role("button", name="刷新任务列表", exact=True).click()
             expect(alert).to_have_count(0)
             expect(table.get_by_text("恢复的准备.xlsx", exact=True)).to_be_visible()
             expect(table.get_by_text("已读取的审核.xlsx", exact=True)).to_be_visible()
@@ -1312,7 +1319,7 @@ class RuleInteractionTests(unittest.TestCase):
                     page.route("**/api/file-uploads/*", read_receipt)
                     page.route("**/api/drafts", lambda route: route.fulfill(status=201, json=draft_body))
                     page.route("**/api/drafts/" + JOB, save_draft)
-                    page.goto(WEB)
+                    page.goto(WEB + "/dev")
                     page.get_by_role("button", name="上传资料", exact=True).click()
                     page.get_by_label("上传文件", exact=True).set_input_files({"name": "尺寸检验报告-example.xlsm", "mimeType": "application/vnd.ms-excel.sheet.macroEnabled.12", "buffer": b"fixture"})
                     table = page.get_by_role("table", name="审核资料", exact=True)
@@ -1481,7 +1488,7 @@ class RuleInteractionTests(unittest.TestCase):
                     held.clear()
                     prepared.clear()
                     response.update(mode=mode, read_fails=mode == "read_failure")
-                    page.goto(WEB + "/?round=" + JOB)
+                    page.goto(WEB + "/dev?round=" + JOB)
                     expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
                     with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/drafts")):
                         page.get_by_role("button", name="准备新一轮审核", exact=True).click()
@@ -1507,7 +1514,7 @@ class RuleInteractionTests(unittest.TestCase):
                         expect(page.get_by_role("heading", name="工作台", exact=True)).to_be_visible()
                         expect(page.get_by_role("heading", name="审核准备", exact=True)).to_have_count(0)
                         self.assertNotIn("case=", page.url)
-                        page.goto(WEB + "/?round=" + JOB, wait_until="domcontentloaded")
+                        page.goto(WEB + "/dev?round=" + JOB, wait_until="domcontentloaded")
                         page.get_by_role("button", name="准备新一轮审核", exact=True).click()
                     expect(page.get_by_role("heading", name="审核准备", exact=True)).to_be_visible()
                     table = page.get_by_role("table", name="审核资料", exact=True)
@@ -1534,7 +1541,7 @@ class RuleInteractionTests(unittest.TestCase):
                         self.assertEqual(accepted, [])
             response["task"] = True
             posts.clear()
-            page.goto(WEB + "/?round=" + JOB)
+            page.goto(WEB + "/dev?round=" + JOB)
             expect(page.get_by_role("heading", name="审核未能完成", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="准备新一轮审核", exact=True)).to_have_count(0)
             self.assertEqual(posts, [])
@@ -1657,7 +1664,7 @@ class RuleInteractionTests(unittest.TestCase):
                 page.route("**/api/drafts/" + draft_id + "/round", lambda route: route.fulfill(json=accepted if posts else None))
                 page.route("**/api/drafts/" + draft_id + "/accept", accept)
                 page.route("**/api/rounds/" + JOB, read_round)
-                page.goto(WEB + ("/?draft=" + draft_id if entry == "submit" else "/?round=" + JOB))
+                page.goto(WEB + ("/?draft=" + draft_id if entry == "submit" else "/dev?round=" + JOB))
                 if entry == "submit":
                     for label, value in (("客户", "测试客户"), ("供应商", "测试供应商"), ("零件与编号", "P-001"), ("图纸修订", "B"), ("生产地点", "测试工厂")):
                         page.get_by_label(label, exact=True).fill(value)
@@ -1736,6 +1743,9 @@ class RuleInteractionTests(unittest.TestCase):
                 )
             elif path == "/rule-types":
                 route.fulfill(json={"types": ["控制计划"]}, headers=cors)
+            elif path in {"/audit-tasks", "/drafts", "/rounds"} and request.method == "GET":
+                key = {"/audit-tasks": "tasks", "/drafts": "drafts", "/rounds": "rounds"}[path]
+                route.fulfill(json={key: [], "next_offset": None}, headers=cors)
             elif path == "/rules" and request.method == "POST":
                 if publish_status >= 400:
                     route.fulfill(status=publish_status, json={"error": "save_failed"}, headers=cors)
