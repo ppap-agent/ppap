@@ -49,7 +49,7 @@ class Observation(Artifact):
     exclusion_basis: str | None = None
     status: Literal["PASS", "NG", "UNABLE", "NA"]
     reason: str = Field(min_length=1)
-    evidence: list[Citation] = Field(max_length=64)
+    evidence: list[Citation] = Field(default_factory=list, max_length=64)
 
     @model_validator(mode="after")
     def explained_role(self) -> Observation:
@@ -175,7 +175,7 @@ def query_counts(program: QueryProgram, binding: Binding, document: dict[str, An
 
 
 def query_witness(citation: Citation, binding: Binding, failures: dict[int, set[int]], budget: EvidenceBudget) -> bool:
-    if citation.document_id != binding.document_id:
+    if citation.document_id != binding.document_id or citation.locator is None:
         return False
     locator = citation.locator.model_dump()
     if locator["kind"] == "docx_cell":

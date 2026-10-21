@@ -112,13 +112,13 @@ def resolve(snapshot: dict[str, Any], locator: Locator, budget: EvidenceBudget |
     raise ValueError("Unsupported evidence locator")
 
 
-def resolve_optional(snapshot: dict[str, Any], locator: Locator, budget: EvidenceBudget) -> Observation | None:
+def resolve_optional(snapshot: dict[str, Any], locator: Locator | None, budget: EvidenceBudget) -> Observation | None:
     """Unusable optional citations are gaps, not changes to a business verdict.
 
     Callers must first check the authorized document identity. Required rule
     sources and query execution continue to use strict validation.
     """
-    if budget.remaining < 0:
+    if locator is None or budget.remaining < 0:
         return None
     try:
         observed = resolve(snapshot, locator, budget)
