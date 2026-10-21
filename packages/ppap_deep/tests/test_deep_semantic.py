@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ppap_deep.semantic.checker_tools import CheckRequest, check_fields
-from ppap_deep.semantic.document_tools import snapshot
+from ppap_deep.semantic.document_tools import bind, run_queries, snapshot
 from ppap_deep.semantic.evidence import EvidenceBudget
 from ppap_deep.semantic.guest import _compile_prompt, audit_prompt, validate_plan
 from ppap_deep.semantic.guest_model import GrokRunner, ModelProtocolError, sandbox_profile
@@ -170,6 +170,43 @@ class SemanticBoundaryTests(unittest.TestCase):
         self.assertEqual(cells["A1"], {"value": "09:15:30.125000", "state": "known"})
         self.assertEqual(cells["B1"]["value"], "2026-09-26T00:00:00")
         self.assertEqual(cells["C1"]["value"], "2026-09-26T09:15:00")
+
+    def test_real_excel_binding_preserves_merges_unknown_formulas_and_read_only_queries(self) -> None:
+        from openpyxl import Workbook
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["工序", "频次", "计算"])
+            sheet.append([1, "每批", "=1+1"])
+            sheet.append([2, None, None])
+            sheet.append([3, None, None])
+            sheet.merge_cells("B2:B3")
+            workbook.save(path)
+            workbook.close()
+            original = path.read_bytes()
+            observed = snapshot(path)
+            bound = bind(observed, {"table": "Sheet", "header_rows": "1", "body_rows": "2:4", "columns": {"step": "A", "frequency": "B", "computed": "C"}})
+            self.assertEqual([row["values"]["frequency"] for row in bound["records"]], ["每批", "每批", None])
+            self.assertEqual(bound["records"][1]["evidence"]["frequency"]["anchor"], "B2")
+            self.assertEqual(bound["unknown_cells"], [{"row_id": 2, "field": "computed", "state": "unknown_formula_cache"}])
+            result = run_queries(
+                {"cp": bound},
+                [
+                    {"id": "empty", "sql": "SELECT row_id FROM cp WHERE empty(frequency)"},
+                    {"id": "invalid", "sql": "SELECT nonexistent FROM cp"},
+                    {"id": "write", "sql": "DELETE FROM cp"},
+                    {"id": "unchanged", "sql": "SELECT row_id FROM cp ORDER BY row_id"},
+                ],
+            )
+            self.assertEqual(result["queries"][0]["rows"], [{"row_id": 4}])
+            for query in result["queries"][1:3]:
+                self.assertIsNone(query["rows"])
+                self.assertTrue(query["error"])
+            self.assertEqual(result["queries"][3]["rows"], [{"row_id": 2}, {"row_id": 3}, {"row_id": 4}])
+            self.assertEqual(result["tables"]["cp"]["unknown_cells"], bound["unknown_cells"])
+            self.assertEqual(path.read_bytes(), original)
 
     def test_prerequisite_only_pass_cannot_hide_empty_applicable_scope(self) -> None:
         proof = AuditTrace.model_validate(
