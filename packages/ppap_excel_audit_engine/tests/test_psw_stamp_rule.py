@@ -87,22 +87,22 @@ def test_either_accepted_stamp_branch_is_sufficient(check_stamp, observation):
 
 
 @pytest.mark.parametrize(
-    "observation",
+    ("observation", "expected"),
     [
-        {"psw_stamp_ends_with_company": False, "authorization_table_present": False},
-        {"psw_stamp_ends_with_company": False, "authorization_company_stamp_present": False},
-        {"psw_stamp_ends_with_company": False, "authorization_table_present": True},
-        {"psw_stamp_ends_with_company": "unreadable", "authorization_table_present": False},
-        {"status": "PASS"},
-        "not json",
-        "[]",
+        ({"psw_stamp_ends_with_company": False, "authorization_table_present": False}, "NG"),
+        ({"psw_stamp_ends_with_company": False, "authorization_company_stamp_present": False}, "NG"),
+        ({"psw_stamp_ends_with_company": False, "authorization_table_present": True}, "UNABLE"),
+        ({"psw_stamp_ends_with_company": "unreadable", "authorization_table_present": False}, "UNABLE"),
+        ({"status": "PASS"}, "UNABLE"),
+        ("not json", "ERR"),
+        ("[]", "ERR"),
     ],
     ids=["no-authorization", "no-authorization-seal", "unreadable-authorization-seal", "unreadable-stamp", "verdict-without-facts", "invalid-json", "non-object"],
 )
-def test_missing_or_unreadable_required_stamp_facts_do_not_pass(check_stamp, observation):
+def test_stamp_facts_distinguish_business_ng_from_unavailable_recognition(check_stamp, observation, expected):
     result = check_stamp(observation)
 
-    assert result.status == "NG"
+    assert result.status == expected
 
 
 def test_model_service_failure_remains_an_execution_error(check_stamp):

@@ -5,11 +5,16 @@ import unittest
 from datetime import date
 
 from ppap_excel_audit_engine.checkers.psw_visual_evidence import (
+    PSW_RULE_PROMPTS,
     PswVisualRuleEvaluator,
     decide_disposition_visual_rule,
 )
 
 _TODAY = date(2026, 10, 2)
+
+
+def test_only_visual_psw_rules_have_visual_prompts() -> None:
+    assert set(PSW_RULE_PROMPTS) == {3, 5, 7, 8, 9, 10}
 
 
 def _observation(**overrides: object) -> dict[str, object]:
@@ -81,12 +86,38 @@ class ConditionalVisualDecisionTests(unittest.TestCase):
         self.assertEqual(status, "NG")
         self.assertIn("补充评论", suggestions)
 
-    def test_unreadable_checkbox_fails_closed(self) -> None:
+    def test_unreadable_checkbox_is_unable_not_a_business_ng(self) -> None:
         payload = _observation()
         del payload["rejected_checked"]
         status, suggestions = decide_disposition_visual_rule(9, payload, today=_TODAY)
-        self.assertEqual(status, "NG")
-        self.assertIn("无法验证", suggestions)
+        self.assertEqual(status, "UNABLE")
+        self.assertIn("无法判断", suggestions)
+
+    def test_missing_conditional_date_observation_is_not_a_missing_document_date(self) -> None:
+        payload = _observation(conditional_checked=True)
+        del payload["approval_date"]
+        self.assertEqual(decide_disposition_visual_rule(9, payload, today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(9, _observation(conditional_checked=True, approval_date=None), today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(9, _observation(conditional_checked=True), today=_TODAY)[0], "NG")
+
+    def test_missing_conditional_comments_observation_is_not_an_empty_comment(self) -> None:
+        payload = _observation(conditional_checked=True)
+        del payload["comments_present"]
+        self.assertEqual(decide_disposition_visual_rule(10, payload, today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(10, _observation(conditional_checked=True), today=_TODAY)[0], "NG")
+
+    def test_known_nonconformity_is_decisive_without_unrelated_unknown_facts(self) -> None:
+        for payload in (
+            _observation(disposition_visible=False, approved_checked=None, conditional_checked=None, rejected_checked=None),
+            _observation(approved_checked=True, conditional_checked=True, rejected_checked=None),
+            _observation(approved_checked=True, dimensional_checked=False),
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(decide_disposition_visual_rule(8, payload, today=_TODAY)[0], "NG")
+
+    def test_unreadable_disposition_is_not_a_known_missing_field(self) -> None:
+        self.assertEqual(decide_disposition_visual_rule(8, _observation(disposition_visible=None), today=_TODAY)[0], "UNABLE")
+        self.assertEqual(decide_disposition_visual_rule(8, _observation(disposition_visible=False), today=_TODAY)[0], "NG")
 
 
 class DispositionVisualEvaluatorTests(unittest.TestCase):
@@ -119,8 +150,8 @@ class DispositionVisualEvaluatorTests(unittest.TestCase):
             return json.dumps({"classification": "认可情况检查", "item": "认可情况检查", "priority": "P0", "status": "PASS", "suggestions": ""})
 
         result = PswVisualRuleEvaluator(analyze).evaluate(8, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "NG")
-        self.assertIn("无法验证", result.suggestions)
+        self.assertEqual(result.status, "UNABLE")
+        self.assertIn("无法判断", result.suggestions)
 
     def test_rule_8_approved_requires_each_submission_checkbox(self) -> None:
         fields = ("dimensional_checked", "appearance_checked", "material_functional_checked", "statistical_checked", "requirements_yes_checked")
@@ -133,8 +164,8 @@ class DispositionVisualEvaluatorTests(unittest.TestCase):
                 self.assertIn("提交结果勾选不完整", suggestions)
                 missing = dict(complete)
                 del missing[field]
-                self.assertEqual(decide_disposition_visual_rule(8, missing, today=_TODAY)[0], "NG")
-                self.assertEqual(decide_disposition_visual_rule(8, {**complete, field: None}, today=_TODAY)[0], "NG")
+                self.assertEqual(decide_disposition_visual_rule(8, missing, today=_TODAY)[0], "UNABLE")
+                self.assertEqual(decide_disposition_visual_rule(8, {**complete, field: None}, today=_TODAY)[0], "UNABLE")
 
     def test_rule_8_conditional_and_rejected_defer_to_their_own_rules(self) -> None:
         for field in ("conditional_checked", "rejected_checked"):
@@ -142,13 +173,13 @@ class DispositionVisualEvaluatorTests(unittest.TestCase):
                 self.assertEqual(decide_disposition_visual_rule(8, _observation(**{field: True}), today=_TODAY)[0], "PASS")
 
     def test_rule_8_missing_unreadable_or_multiple_dispositions_cannot_pass(self) -> None:
-        for payload in (
-            _observation(disposition_visible=False),
-            _observation(approved_checked=None),
-            _observation(approved_checked=True, conditional_checked=True),
+        for payload, expected in (
+            (_observation(disposition_visible=False), "NG"),
+            (_observation(approved_checked=None), "UNABLE"),
+            (_observation(approved_checked=True, conditional_checked=True), "NG"),
         ):
             with self.subTest(payload=payload):
-                self.assertEqual(decide_disposition_visual_rule(8, payload, today=_TODAY)[0], "NG")
+                self.assertEqual(decide_disposition_visual_rule(8, payload, today=_TODAY)[0], expected)
 
     def test_rule_8_uses_complete_observations_even_if_model_says_ng(self) -> None:
         seen: dict[str, str] = {}
@@ -178,8 +209,8 @@ class DispositionVisualEvaluatorTests(unittest.TestCase):
             return json.dumps({"status": "PASS", "suggestions": "未勾选条件批准，所以通过"})
 
         result = PswVisualRuleEvaluator(analyze).evaluate(9, ["image"], today=_TODAY)
-        self.assertEqual(result.status, "NG")
-        self.assertIn("无法验证", result.suggestions)
+        self.assertEqual(result.status, "UNABLE")
+        self.assertIn("无法判断", result.suggestions)
 
     def test_model_pass_with_empty_checks_is_overridden(self) -> None:
         seen: dict[str, str] = {}

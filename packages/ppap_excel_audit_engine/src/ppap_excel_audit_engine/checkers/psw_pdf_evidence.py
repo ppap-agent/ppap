@@ -17,7 +17,6 @@ from .psw_evidence_trace import (
     DIAGNOSTIC_EVALUATION_RULE_UNAVAILABLE,
     DIAGNOSTIC_EVALUATION_RUNTIME_ERROR,
     DIAGNOSTIC_PDF_CONVERSION_FAILED,
-    DIAGNOSTIC_STRUCTURE_INSUFFICIENT,
     DIAGNOSTIC_VISUAL_RUNTIME_ERROR,
     DIAGNOSTIC_VISUAL_UNVERIFIABLE,
     EvidenceUse,
@@ -39,14 +38,6 @@ _STRUCTURED_ANCHORS = (
     "认可情况",
 )
 _VISUAL_RULES = PSW_ALWAYS_VISUAL_RULES | PSW_CHECKBOX_DEPENDENT_RULES
-_SYSTEM_CONVERSION_ERRORS = frozenset(
-    {
-        "download_failed",
-        "invalid_input",
-        "manual_linegrid_exception",
-        "ocr_exception",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,34 +253,18 @@ class PswPdfEvidenceMixin:
             )
         diagnostics = getattr(artifact, "diagnostics", {}) if artifact is not None else {}
         error_code = str(diagnostics.get("error_code", "") or "")
-        if error_code in _SYSTEM_CONVERSION_ERRORS:
-            result = host.create_error_result(f"PDF 转换运行异常，未产出结构证据（{error_code}）。", ith)
-            return self._trace_result(
-                result,
-                rule_no=ith + 1,
-                used="none",
-                diagnostic=EvidenceDiagnostic(
-                    code=DIAGNOSTIC_PDF_CONVERSION_FAILED,
-                    stage="conversion",
-                    severity="error",
-                    message=f"PDF 转换运行异常（{error_code}）。",
-                ),
-            )
+        message = "PDF 转换未产出可读取的表格，无法执行结构检查。"
+        if error_code:
+            message += f"转换错误：{error_code}。"
         return self._trace_result(
-            AuditResult(
-                classification="结构证据",
-                item=f"{host.document_type_name} - 规则{ith + 1}",
-                priority="P0",
-                status="NG",
-                suggestions="PDF 转换未产出可验证的结构证据，无法执行确定性检查。",
-            ),
+            host.create_error_result(message, ith),
             rule_no=ith + 1,
             used="none",
             diagnostic=EvidenceDiagnostic(
-                code=DIAGNOSTIC_STRUCTURE_INSUFFICIENT,
-                stage="structure",
+                code=DIAGNOSTIC_PDF_CONVERSION_FAILED,
+                stage="conversion",
                 severity="error",
-                message="PDF 转换结果缺少可验证的 PSW 结构证据。",
+                message=message,
             ),
         )
 
@@ -423,11 +398,11 @@ class PswPdfEvidenceMixin:
             )
         result = PswVisualRuleEvaluator(host._analyze_images_with_prompt).evaluate(rule_no, images)
         diagnostic = None
-        if result.status == "NG" and "视觉证据识别失败" in result.suggestions:
+        if result.status in {"ERR", "UNABLE"}:
             diagnostic = EvidenceDiagnostic(
                 code=DIAGNOSTIC_VISUAL_UNVERIFIABLE,
                 stage="visual",
-                severity="error",
+                severity="error" if result.status == "ERR" else "warning",
                 message="视觉模型返回结果不可验证。",
             )
         return self._trace_result(
