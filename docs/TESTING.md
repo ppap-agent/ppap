@@ -64,6 +64,22 @@ Single-owner Python tests 与 production owner co-locate：`packages/*/tests` �
 
 `tests/integration/product/test_v3_worker_oracle.py` 在 pytest 的临时输出目录写入 `v3_worker_oracle.json` 和 `.md`，可用 `--basetemp` 指定本次独立临时目录。报告保留逐规则预期／实际、人工原因、审核说明及 Round／Job 引用，分别汇总设置失败、执行失败、缺规则和状态不符。`passed_rules`／严格匹配率包括“实际 NG 与预期 NG 相符”，不是客户文件通过率，也不是验收门禁；原有逐规则断言不变。该集成测试仍用受控对象存储和检查器声明规则，不证明原始 DOCX 的完整在线链路。完整 Live 另由 #152 验收，不能只靠报告汇总宣称完成。
 
+### 显式 V3 POC Live
+
+`V3 POC live acceptance` 只接受 `workflow_dispatch`，不进入默认 `CI Gate`。它用当前 SHA 的 API／Worker 镜像和独立 PostgreSQL／S3，凭 Secrets 调用真实模型／转换服务；收费和飞书通知关闭。执行前核对两个镜像的 revision，不能让现网旧 Worker 消费候选 API 创建的验收任务。
+
+独立栈可通过 `deploy/isolated-dev/compose.yaml` 加 `v3-live.yaml` 启动；沿用 Bake，不改生产入口。确认 API／Worker 均为本次固定 SHA 后，显式调用：
+
+```sh
+uv run --no-sync python -m ppap_corpus_contracts.live_poc \
+  --api http://127.0.0.1:8080 --candidate-sha <full-candidate-sha> \
+  --isolated-login --output /tmp/ppap-v3-live-new-run
+```
+
+已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先检查候选、收费策略及完整 27 样例／8 组／220 预期。5 份原始 DOCX 经上传、解析、真实出处核对和发布后，逐组明确绑定并受理；不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑。
+
+每次写操作前保存安全回执，JSON／Markdown 保留逐条结果和失败阶段；只读到终态、冻结输入一致且 220 项逐一匹配才返回 `PROVEN`。缺项、重复项、ERR、状态不符或未完成均为 `NOT_PROVEN`，归因默认 `inconclusive`。不要仅凭退出码推断缺陷归属或自动重跑。可选证据位置不参与 PASS/NG 门槛。这里证明 Product API／Worker 能力，包含显式 SCL 审核；不改变 Native 客户流程中 SCL 仅为比对资料的政策，也不证明浏览器、飞书登录、PDF/ZIP、收费或生产放行。运行授权、预算和真实结果只记在 owning Issue，不新增运行台账或提交报告文件。
+
 Repository contract：
 
 ```sh
