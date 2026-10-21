@@ -72,7 +72,7 @@ export function WorkItemsTable({items, onOpen, label, loading, readFailed, hasMo
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
       event.preventDefault(); openItem.current(item.href)
     }
-    return <Button variant="ghost" size="sm" asChild className="-mr-2 shrink-0"><a href={item.href} onClick={open}>{item.next}<ArrowRight className="size-4"/></a></Button>
+    return <Button variant="ghost" size="sm" asChild className="-mr-2 shrink-0 whitespace-nowrap"><a href={item.href} onClick={open}>{item.next}<ArrowRight className="size-4"/></a></Button>
   }
   const columns = useMemo(() => helper.columns([
     helper.accessor('title', {

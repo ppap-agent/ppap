@@ -85,13 +85,17 @@ def process_file_job(store, claimed, ident, ai=None) -> dict:
             elif claimed.kind == "file_analysis":
                 scoped = payload.get("matching_scope") == "customer_document_type"
                 candidates = payload["candidate_rules"] if scoped else store.list_rules(claimed.tenant_id)
-                result = analyze_file(
-                    version.original_filename,
-                    store.version_bytes(version),
-                    candidates,
-                    ai=ai,
-                    customer_preference=payload.get("customer_preference"),
-                    scoped=scoped,
+                result = (
+                    dict(payload["confirmed_match"])
+                    if payload.get("confirmed_match") and scoped
+                    else analyze_file(
+                        version.original_filename,
+                        store.version_bytes(version),
+                        candidates,
+                        ai=ai,
+                        customer_preference=payload.get("customer_preference"),
+                        scoped=scoped,
+                    )
                 )
                 result["source_file_version_id"] = version.id
             else:

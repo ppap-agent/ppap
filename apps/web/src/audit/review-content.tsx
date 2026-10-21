@@ -1,4 +1,4 @@
-import {useContext, useRef, useState, type ReactNode} from 'react'
+import {useContext, useEffect, useRef, useState, type ReactNode} from 'react'
 import {ArrowRight, BookOpen, FileSearch, FileText, Info, Search} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {sourceLocation} from '../helpers'
@@ -17,6 +17,8 @@ import {displayFields, fileDisplayValues, validDisplayInfo} from './display-info
 import {RecordedReview, frozenOriginal} from './recorded-review'
 import {HistoricalFindings} from './historical-findings'
 import {ReviewEditorContext} from './review-editor'
+import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../components/ui/resizable'
+import {filterChecks, nextUnreviewed, reviewed} from './review-navigation'
 
 type File = ReviewFile
 type Evaluation = components['schemas']['AuditClauseEvaluation']
@@ -50,9 +52,12 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 /** P5 and historical readers share the same frozen results, evidence and review actions. */
 export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay, showFileTitle = true}: {file: File; roundId: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void; showFileTitle?: boolean}) {
   const reviewEditor = useContext(ReviewEditorContext)
-  const [clause, setClause] = useState(''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
+  const [clause, setClause] = useState(() => new URL(location.href).searchParams.get('clause') || ''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
+  const [focus, setFocus] = useState(() => new URL(location.href).searchParams.get('focus') === 'review')
+  const [originalId, setOriginalId] = useState(file.file.id)
+  const editorHost = useRef<HTMLDivElement>(null), currentEditor = useRef(reviewEditor); currentEditor.current = reviewEditor
   const [open, setOpen] = useState(false), [pane, setPane] = useState('details')
-  const [query, setQuery] = useState(''), [filter, setFilter] = useState('all'), [section, setSection] = useState('checks')
+  const [query, setQuery] = useState(''), [filter, setFilter] = useState(() => new URL(location.href).searchParams.get('checkFilter') || 'all'), [section, setSection] = useState('checks')
   const trigger = useRef<HTMLElement | null>(null)
   const audit = file.audit, check = audit?.checks.find(row => row.rule_item.id === clause) ?? audit?.checks[0]
   const issue = frozenResultError(roundId, file, frozenFileVersionIds, frozenRule)
@@ -61,12 +66,28 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
   const source = chosen?.kind === 'machine' ? chosen.reference : null
   const citation = chosen?.kind === 'review' ? chosen.reference : null
   const authorizedOriginal = (id: string) => frozenOriginal(originals, frozenFileVersionIds, id)
-  const original = authorizedOriginal(chosen?.reference.file_version_id || file.file.id)
+  const original = authorizedOriginal(chosen?.reference.file_version_id || originalId)
   const rule = audit?.rule || frozenRule
-  const filtered = audit?.checks.filter(row => (row.rule_item.id + ' ' + row.rule_item.category + ' ' + row.rule_item.rule_to_check).toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || filter === 'attention' && !['满足', '不适用'].includes(checkLabel(row)) || filter === 'pass' && checkLabel(row) === '满足')) ?? []
+  const filtered = filterChecks(audit?.checks || [], query, filter)
+  const at = audit?.checks.findIndex(row => row.rule_item.id === check?.rule_item.id) ?? -1
+  const next = nextUnreviewed(audit?.checks || [], check?.rule_item.id || '')
+  function navigateClause(id: string, focused = focus) {
+    setClause(id); setSource(null); setFocus(focused)
+    const url = new URL(location.href); url.searchParams.set('clause', id)
+    if (focused) url.searchParams.set('focus', 'review'); else url.searchParams.delete('focus')
+    history.replaceState(history.state, '', url)
+  }
+  useEffect(() => {
+    const itemKey = check?.review_item_key
+    return () => {if (itemKey) currentEditor.current?.release(roundId, itemKey)}
+  }, [focus, check?.review_item_key, roundId])
+  useEffect(() => {
+    const restore = () => {const url = new URL(location.href); setClause(url.searchParams.get('clause') || ''); setFocus(url.searchParams.get('focus') === 'review'); setFilter(url.searchParams.get('checkFilter') || 'all')}
+    window.addEventListener('popstate', restore); return () => window.removeEventListener('popstate', restore)
+  }, [])
   function showEvidence(row: Evaluation) {
     trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    setClause(row.rule_item.id); setSource(null); setPane('details'); setOpen(true)
+    navigateClause(row.rule_item.id); setPane('details'); setOpen(true)
   }
   function showOriginal() {
     trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -90,7 +111,7 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
       </div>
     }) : <div className="space-y-3"><p className="text-sm text-muted-foreground">未提供来源证据，请核对原件。</p><Button variant="outline" size="sm" onClick={() => {setSource(null); setPane('original')}}>打开原件</Button></div>}</section>
     {review && <RecordedReview review={review} originalFor={authorizedOriginal} onCitation={cite => {setSource({kind: 'review', reference: cite}); setPane('original')}}/>}
-    {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <div className="border-t pt-4"><Button variant="outline" size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: check.rule_item.id + ' · ' + check.rule_item.category, attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮冻结原件'}))})}>记录人工复核</Button></div>}
+    {reviewEditor && !issue && check.review_item_key && ['completed', 'failed'].includes(check.execution) && <div className="border-t pt-4"><Button variant="outline" size="sm" onClick={() => reviewEditor.open({roundId, itemKey: check.review_item_key!, title: check.rule_item.id + ' · ' + check.rule_item.category, attempt: audit!.result_attempt, files: originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => ({id: row.file_version_id, name: row.file?.original_filename || '本轮冻结原件'}))}, focus ? {container: editorHost.current || undefined, onContinue: next ? () => navigateClause(next.rule_item.id, true) : undefined} : undefined)}>记录人工复核</Button></div>}
   </article>
   return <section aria-label="审核详情" className="min-w-0">
     <header className={`min-w-0 border-b px-6 py-4 max-sm:px-4 ${showFileTitle ? 'space-y-3' : 'flex flex-wrap items-center justify-between gap-3'}`}>
@@ -101,6 +122,7 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={showOriginal}><FileSearch/>查看原件</Button>
+        {audit && <Button variant={focus ? "secondary" : "outline"} onClick={() => navigateClause(check?.rule_item.id || "", !focus)}>{focus ? "返回审核项" : "专注复核（选做）"}</Button>}
         <Button variant="outline" disabled={!onReport || Boolean(issue) || !audit || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}><FileText/>查看报告</Button>
         <Sheet><SheetTrigger asChild><Button variant="outline"><Info/>文件信息</Button></SheetTrigger><SheetContent onEscapeKeyDown={event => {if (event.target instanceof Element && event.target.closest('[data-slot="dialog-content"]')) event.preventDefault()}} className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-2xl"><SheetHeader><SheetTitle>文件信息</SheetTitle><SheetDescription className="sr-only">查看文件显示信息与本轮确认的规则</SheetDescription></SheetHeader><FileName name={file.file.original_filename}/><DisplayInformation file={file} onEdit={onEditDisplay}/>{rule && <section aria-label="本轮审核规则" data-rule-version={rule.id} className="space-y-4 border-t pt-4"><h3 className="flex items-center gap-2 font-semibold"><BookOpen className="size-4"/>本轮审核规则</h3><p className="text-sm">{rule.title}</p>{rule.body.kind === 'engine' ? rule.body.rules.map(item => <article key={item.id} className="space-y-2 border-t pt-3"><h4 className="font-medium">{item.id} · {item.category}</h4><p className="whitespace-pre-wrap text-sm">{item.rule_to_check}</p></article>) : <p className="text-sm">文件存在性检查。</p>}</section>}</SheetContent></Sheet>
       </div>
@@ -109,9 +131,9 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
     {issue && <div className="px-6 pt-4"><Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert></div>}
     {!audit ? <p role="status">审核结果尚未取得，请读取当前记录。</p> : <>
       {audit.execution === 'review_failed' && <Alert variant="destructive"><AlertTitle>本文件审核异常，未取得完整结果。</AlertTitle><AlertDescription>{audit.failure?.message || '没有可用结果。'}</AlertDescription></Alert>}
-      <Tabs value={section} onValueChange={setSection}>
+      <Tabs hidden={focus} value={section} onValueChange={setSection}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 max-sm:px-4"><TabsList variant="line"><TabsTrigger value="checks">审核项 ({audit.checks.length})</TabsTrigger><TabsTrigger value="summary">审核总结</TabsTrigger></TabsList>
-          {section === 'checks' && <div className="flex min-w-0 flex-wrap items-center gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search className="size-3.5"/></span><Input aria-label="搜索审核项" placeholder="搜索审核项或要求" value={query} onChange={event => setQuery(event.target.value)} iconStart/></div><Select value={filter} onValueChange={setFilter}><SelectTrigger aria-label="审核结果筛选"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部审核项</SelectItem><SelectItem value="attention">需关注</SelectItem><SelectItem value="pass">满足</SelectItem></SelectContent></Select></div>}
+          {section === 'checks' && <div className="flex min-w-0 flex-wrap items-center gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search className="size-3.5"/></span><Input aria-label="搜索审核项" placeholder="搜索审核项或要求" value={query} onChange={event => setQuery(event.target.value)} iconStart/></div><Select value={filter} onValueChange={value => {setFilter(value); const url = new URL(location.href); if (value === "all") url.searchParams.delete("checkFilter"); else url.searchParams.set("checkFilter", value); history.replaceState(history.state, "", url)}}><SelectTrigger aria-label="审核结果筛选"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部审核项</SelectItem><SelectItem value="ng">不符合</SelectItem><SelectItem value="unable">无法判断</SelectItem><SelectItem value="unreviewed">未复核</SelectItem><SelectItem value="attention">需关注</SelectItem><SelectItem value="pass">满足</SelectItem></SelectContent></Select></div>}
         </div>
         <TabsContent value="checks"><div className="space-y-4 px-6 pt-2 pb-6 max-sm:px-4">
           <div className="min-w-0 overflow-hidden rounded-md border"><Table className="min-w-xl table-fixed">
@@ -128,6 +150,10 @@ export function AuditReviewContent({file, roundId, frozenRule = file.match?.rule
         <TabsContent value="summary"><div className="space-y-4 px-6 pt-2 pb-6 max-sm:px-4"><h3 className="font-semibold">审核总结</h3>{issue ? <p role="alert">{issue}</p> : audit.summary ? <><p>{audit.summary.text}</p>{audit.summary.corrective_actions.length > 0 && <section className="space-y-2"><h4 className="font-medium">核心整改建议</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.corrective_actions.map(text => <li key={text}>{text}</li>)}</ul></section>}{audit.summary.extended_suggestions.length > 0 && <section className="space-y-2"><h4 className="font-medium">AI 延伸建议（不是客户要求）</h4><ul className="list-disc space-y-1 pl-5">{audit.summary.extended_suggestions.map(text => <li key={text}>{text}</li>)}</ul></section>}</> : <p className="text-muted-foreground">{audit.execution === 'review_failed' ? '审核异常，没有通过总结。' : '总结尚未生成。'}</p>}</div></TabsContent>
       </Tabs>
     </>}
+    {focus && audit && <section aria-label="专注复核" className="p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">人工已复核 {audit.checks.filter(reviewed).length}/{audit.checks.length} · 不改变机器结果</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={at <= 0} onClick={() => navigateClause(audit.checks[at - 1].rule_item.id)}>上一条</Button><Select value={check?.rule_item.id} onValueChange={navigateClause}><SelectTrigger aria-label="条款目录" className="max-w-80"><SelectValue/></SelectTrigger><SelectContent>{audit.checks.map(row => <SelectItem key={row.rule_item.id} value={row.rule_item.id}>{row.rule_item.id} · {row.rule_item.category}</SelectItem>)}</SelectContent></Select><Button variant="outline" disabled={!next} onClick={() => next && navigateClause(next.rule_item.id)}>下一待复核</Button></div></div>
+      <ResizablePanelGroup orientation="horizontal" className="min-h-[65dvh]"><ResizablePanel defaultSize="45%" minSize="25%"><div className="min-w-0 space-y-4 pr-4"><h2 className="text-lg font-semibold">{check?.rule_item.id} · {check?.rule_item.category}</h2>{basis}<div ref={editorHost}/></div></ResizablePanel><ResizableHandle withHandle/><ResizablePanel defaultSize="55%" minSize="25%"><div className="min-w-0 space-y-4 pl-4"><Select value={chosen?.reference.file_version_id || originalId} onValueChange={id => {setOriginalId(id); setSource(null)}}><SelectTrigger aria-label="选择对照原件"><SelectValue/></SelectTrigger><SelectContent>{originals.filter(row => frozenFileVersionIds.includes(row.file_version_id)).map(row => <SelectItem key={row.file_version_id} value={row.file_version_id}>{row.file?.original_filename || '冻结原件'}</SelectItem>)}</SelectContent></Select>{originalPanel}</div></ResizablePanel></ResizablePanelGroup>
+    </section>}
     <HistoricalFindings findings={audit?.unmapped_findings || []} roundId={roundId} resultAttempt={audit?.result_attempt ?? null} versions={frozenFileVersionIds} originals={originals} renderOriginal={renderOriginal} fileVersionId={file.file.id}/>
     <Sheet open={open} onOpenChange={setOpen}><SheetContent className={pane === 'original' ? 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-6xl' : 'overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-[38.75rem]'} onCloseAutoFocus={event => {event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus()}}>
       <div className="pr-8"><SheetHeader><SheetTitle>{check ? check.rule_item.id + ' · ' + check.rule_item.category : file.file.original_filename}</SheetTitle><SheetDescription className="sr-only">查看本轮审核依据与冻结原件</SheetDescription></SheetHeader></div>

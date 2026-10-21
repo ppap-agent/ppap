@@ -61,7 +61,7 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           const url = new URL(req.url || '/', 'http://127.0.0.1')
-          if (!preview && ['/audit', '/audit/', '/__audit-native'].includes(url.pathname)) {
+          if (!preview && (/^\/(workbench|files|requirements|templates|usage)\/?$/.test(url.pathname) || /^\/tasks\/[^/]+\/?$/.test(url.pathname) || ['/audit', '/audit/', '/__audit-native'].includes(url.pathname))) {
             req.url = '/audit.html' + url.search
           }
           if (url.pathname !== '/runtime-config.json') {

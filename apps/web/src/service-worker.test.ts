@@ -13,7 +13,7 @@ test('native audit navigation never replaces or falls back to the legacy offline
     fetch: async () => {if (offline) throw new Error('offline'); return new Response('native audit shell')},
     caches: {open: async () => ({put: async (key: string, response: Response) => {cache.set(key, response)}}), match: async (key: string) => cache.get(key)?.clone()},
   })
-  for (const path of ['/audit?task=a', '/audit/', '/audit.html?report=pdf', '/__audit-native?view=usage', '/enter-current?return_to=%2Faudit', '/enter-legacy']) {
+  for (const path of ['/audit?task=a', '/audit/', '/audit.html?report=pdf', '/__audit-native?view=usage', '/enter-current?return_to=%2Faudit', '/enter-legacy', '/workbench', '/workbench/', '/tasks/new', '/tasks/a?file=b', '/files', '/files/', '/requirements', '/templates', '/usage']) {
     for (offline of [false, true]) {
       const request = new Request('https://ppap.example' + path, {headers: {accept: 'text/html'}})
       Object.defineProperties(request, {mode: {value: 'navigate'}, destination: {value: 'document'}})

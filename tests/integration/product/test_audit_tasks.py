@@ -54,8 +54,12 @@ def checked_file(client, worker, name="控制计划.xlsx", document_type="控制
 def assert_task_summary(summary, task):
     expected = {key: task[key] for key in ("id", "number", "state", "input_revision", "analysis_mode", "created_at", "round_id", "completion_reason")}
     expected["files"] = [{"file": row["file"], "selection": row["selection"]} for row in task["files"]]
-    assert {key: value for key, value in summary.items() if key != "updated_at"} == expected
-    # The summary observes input changes; full detail also observes Worker jobs.
+    assert {key: summary[key] for key in expected} == expected
+    if task["round_id"]:
+        assert summary["execution"] in {"queued", "running", "completed", "failed"}
+        assert all(value >= 0 for value in summary["result_counts"].values())
+        assert summary["reviewed_count"] >= 0
+    # Both projections observe input, execution and optional manual-review activity.
     assert datetime.fromisoformat(task["created_at"]) <= datetime.fromisoformat(summary["updated_at"]) <= datetime.fromisoformat(task["updated_at"])
 
 
@@ -64,6 +68,11 @@ class MetadataAI:
         if request["operation"] == "document_classification":
             return "控制计划"
         return json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"}, ensure_ascii=False)
+
+
+class NoRecognitionAI:
+    def structured_completion(self, **request):
+        raise AssertionError("an unchanged, explicitly inherited binding must not invoke AI")
 
 
 @pytest.fixture
@@ -578,6 +587,120 @@ def test_task_round_cannot_prepare_a_legacy_retry(matched_task):
     assert client.get(f"/drafts/{manual['id']}").json()["status"] == "open"
     assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [original["id"]]
     assert client.get("/usage").json() == usage
+
+
+def test_linked_reaudit_keeps_original_rule_version_and_does_not_copy_results(matched_task):
+    client, worker, path, body, old = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    job = worker.claim_job("original")
+    assert worker.complete_job(job, "original", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, outcome="failed")
+    original = client.get(f"/rounds/{accepted['round_id']}").json()
+    newer = publish_rule(client, body["files"][0], predecessor=old["id"], title="修订要求")
+    preparation = client.get(f"/rounds/{original['id']}/reaudit-inputs")
+    assert preparation.status_code == 200, preparation.text
+    prepared = preparation.json()
+    assert prepared["predecessor_id"] == original["id"]
+    assert prepared["files"][0]["preferred_rule_version_id"] == old["id"]
+    assert {row["id"] for row in prepared["files"][0]["rule_options"]} == {old["id"], newer["id"]}
+    command = {**body, "request_id": str(uuid.uuid4()), "predecessor_id": original["id"], "files": [{**body["files"][0], "preferred_rule_version_id": old["id"]}]}
+    next_task = client.post("/audit-tasks", json=command)
+    assert next_task.status_code == 202, next_task.text
+    next_path = f"/audit-tasks/{next_task.json()['id']}"
+    # An unchanged frozen file and its explicit original binding need no new AI guess.
+    process_claimed(worker, worker.claim_job("reuse-binding"), "reuse-binding", rule_ai=NoRecognitionAI())
+    current = client.get(next_path).json()
+    assert current["id"] != accepted["id"]
+    assert current["predecessor_id"] == original["id"]
+    assert current["files"][0]["match"]["rule"]["id"] == old["id"]
+    assert {row["id"] for row in current["files"][0]["rule_options"]} == {old["id"], newer["id"]}
+    confirmation = {"request_id": str(uuid.uuid4()), "expected_revision": 0}
+    new_round = client.post(next_path + "/confirm", json=confirmation)
+    assert new_round.status_code == 201, new_round.text
+    assert client.post(next_path + "/confirm", json=confirmation).json() == new_round.json()
+    frozen = client.get(f"/rounds/{new_round.json()['round_id']}").json()
+    assert frozen["predecessor_id"] == original["id"]
+    assert frozen["inputs"] == original["inputs"]
+    assert frozen["findings"] == []
+    assert client.get(f"/rounds/{original['id']}").json() == original
+
+
+def test_reaudit_replacement_is_explicit_and_matches_the_original_published_rule(matched_task):
+    client, worker, path, body, old = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    assert client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs").status_code == 409
+    job = worker.claim_job("old")
+    worker.complete_job(job, "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
+    newer = publish_rule(client, body["files"][0], predecessor=old["id"])
+    replacement = checked_file(client, worker, "补件.xlsx")
+    original = body["files"][0]
+    command = {
+        **body,
+        "request_id": str(uuid.uuid4()),
+        "predecessor_id": accepted["round_id"],
+        "files": [
+            {**original, "selection": "removed", "removal_reason": "本次补件替换"},
+            {**replacement, "replacement_of_file_version_id": original["file_version_id"], "preferred_rule_version_id": old["id"]},
+        ],
+    }
+    # A fabricated relation is not authority to select an old version.
+    forged = {**command, "files": [command["files"][0], {**command["files"][1], "replacement_of_file_version_id": str(uuid.uuid4())}]}
+    assert client.post("/audit-tasks", json=forged).status_code == 400
+    task = client.post("/audit-tasks", json=command)
+    assert task.status_code == 202, task.text
+    process_claimed(worker, worker.claim_job("replacement"), "replacement", rule_ai=MetadataAI())
+    next_path = f"/audit-tasks/{task.json()['id']}"
+    current = client.get(next_path).json()
+    actual = current["files"][1]
+    assert actual["replacement_of_file_version_id"] == original["file_version_id"]
+    assert actual["match"]["rule"]["id"] == old["id"]
+    assert {row["id"] for row in actual["rule_options"]} == {old["id"], newer["id"]}
+    result = client.post(next_path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert result.status_code == 201, result.text
+    assert [row["file_version_id"] for row in client.get(f"/rounds/{result.json()['round_id']}").json()["inputs"]] == [replacement["file_version_id"]]
+    assert client.get(path).json()["files"][0]["file"]["id"] == original["file_version_id"]
+
+
+def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task):
+    client, worker, path, body, old = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
+    original = client.get(path).json()
+    publish_rule(client, body["files"][0], predecessor=old["id"])
+    command = {
+        **body,
+        "request_id": str(uuid.uuid4()),
+        "predecessor_id": accepted["round_id"],
+        "customer_preference": "另一个客户",
+        "files": [{**body["files"][0], "preferred_rule_version_id": old["id"]}],
+    }
+    assert client.post("/audit-tasks", json=command).status_code == 409
+    assert client.get(path).json() == original
+    client.post("/isolated-dev/sessions", json={"subject": "bob"})
+    assert client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs").status_code == 404
+    assert client.post("/audit-tasks", json=command).status_code == 404
+
+
+def test_unrelated_task_cannot_pin_a_superseded_rule(matched_task):
+    client, _worker, _path, body, old = matched_task
+    publish_rule(client, body["files"][0], predecessor=old["id"])
+    command = {**body, "request_id": str(uuid.uuid4()), "files": [{**body["files"][0], "preferred_rule_version_id": old["id"]}]}
+    denied = client.post("/audit-tasks", json=command)
+    assert denied.status_code == 409
+    assert denied.json() == {"error": "rule_candidate_expired"}
+    assert client.get("/rounds").json()["rounds"] == []
+
+
+def test_explicit_candidate_resolves_ambiguity_without_selecting_the_first_rule(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    publish_rule(client, file, title="规则 A")
+    chosen = publish_rule(client, file, title="规则 B")
+    body = {"request_id": str(uuid.uuid4()), "analysis_mode": "standard", "customer_preference": None, "files": [{**file, "preferred_rule_version_id": chosen["id"]}]}
+    task = client.post("/audit-tasks", json=body)
+    assert task.status_code == 202
+    process_claimed(worker, worker.claim_job("explicit"), "explicit", rule_ai=MetadataAI())
+    current = client.get(f"/audit-tasks/{task.json()['id']}").json()
+    assert current["files"][0]["match"]["rule"]["id"] == chosen["id"]
 
 
 def test_concurrent_creation_coalesces_and_changed_inputs_cannot_replace_it(task_system):

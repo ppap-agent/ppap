@@ -39,7 +39,7 @@ self.addEventListener('fetch', event => {
 
   // API calls, uploads, runtime configuration, and third-party resources must always remain network-only.
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || isJsonRequest(request, url)) return
-  if (['/audit', '/audit/', '/audit.html', '/__audit-native', '/enter-current', '/enter-legacy'].includes(url.pathname)) return
+  if (['/audit', '/audit.html', '/__audit-native', '/enter-current', '/enter-legacy', '/workbench', '/files', '/requirements', '/templates', '/usage'].includes(url.pathname.replace(/\/$/, '')) || url.pathname.startsWith('/tasks/')) return
 
   if (isStaticAsset(request, url)) {
     event.respondWith(
