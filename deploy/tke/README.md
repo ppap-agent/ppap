@@ -63,47 +63,74 @@ downloads exact originals from `http://ppap-current-api:8080/office/content` usi
 short-lived signed tickets. No Mac, port-forward, new DNS name or TLS certificate
 is needed. Only preview caches are ephemeral; originals remain in PPAP storage.
 
+## Authoritative release procedure
+
+This page and `release-current.py` own the existing-stack release procedure. Platform access facts remain in hax `runtime/tke-cls-6e71r2cz/YUNXIAO-FACTS.md`; do not copy this procedure there. Source/build authority is `docker-bake.hcl`; Kubernetes authority is `kustomization.yaml` through `render-current.sh`. The procedure does not initialize a new cluster or authorize a customer-entry/callback switch.
+
+| Route | Build | Image repository | Priority |
+|---|---|---|---|
+| Yunxiao | Versioned `yunxiao.yaml`, Flow 5339663, Hong Kong runner | private TCR `ppap-feishu/current-{api,worker,web,deep}` | Default |
+| unregistry | Same Bake `release` graph on the registry build host | `unregistry.xixifusi.online/ppap-{api,worker,web,deep}` | Explicit backup |
+
+There is no automatic route switch after failure. Both routes build the four `linux/amd64` targets in one Bake graph; Deep consumes that graph's Worker target. GHCR application publishing and node-to-node archive transfer are removed. GHCR tool dependencies such as uv and kubeconform remain.
+
+### Build and review
+
+Use a clean checkout containing the selected full commit and Python 3.12+, Git, `gh`, Docker/Buildx and `kubectl`. Set `KUBECONFIG` for this cluster. `gh` must read the PPAP repository and its Actions runs. The selected commit needs a successful latest `Tests` run for that exact SHA, with a successful push/manual run; a PR merge-ref test alone is insufficient. Do not substitute the current branch HEAD or a configuration commit for the selected application source.
+
+For the default route, supply `ALIYUN_DEV_OPS_TOKEN` only in the operator process. The hax environment file owns that credential. The script never prints it or stores it in Git. TCR verification reuses the existing `web-base` pull Secret binding. Flow uses its existing Codeup and TCR service connections, not the operator PAT in build logs.
+
 ```sh
-export KUBECONFIG="$HOME/Projects/work/hax/runtime/tke-cls-6e71r2cz/headscale-ipv6.kubeconfig"
-./deploy/tke/apply-current.sh
+python3 deploy/tke/release-current.py build <full-source-sha>
 ```
 
-`apply-current.sh` packages the numbered migration files plus the canonical `migrations/apply.sh` runner into the migration ConfigMap. The filenames are the only migration ordering authority. All workload objects, Services, PVCs, application ConfigMap, and edition-proxy objects are rendered from the canonical Kustomize target. The script performs `kubectl apply --dry-run=server` before the real apply, then waits for the existing Deployments and init Jobs and verifies the expected Services.
+The build operation pushes only a new `codex/ppap-current-release-<full-sha>` ref in the private Codeup `ppap-web` repository; it never forces a ref or changes `master`. Existing history makes later pushes incremental. The script updates only the dedicated build-only Flow from `yunxiao.yaml`, with manual triggers and a source identity check. Do not run two operators against this pipeline concurrently. Existing matching successful/running builds are reused; a failed build never permits deployment. Resume a known run without reconfiguration or dispatch:
 
-Completed Jobs do not run again when the migration ConfigMap changes, and their Pod templates are immutable. For an existing-stack upgrade, stop current application writes and retain database/object backups plus the previous Job definitions and logs. Confirm the initialization Jobs have no active execution before replacing completed Jobs that must run again. Run initialization from the same rendered objects, verify the actual database migration versions, then apply the application stack. Waiting on an old `Complete` condition does not prove that new migrations ran. Never delete data PVCs as part of this rotation.
+```sh
+python3 deploy/tke/release-current.py build <full-source-sha> --run-id <run-id>
+```
 
-No `nodeSelector`. API, Worker, Web, and Deep images must use the same current Git SHA; do not apply the manifest while any referenced image tag is missing. A Deep-only change does not require deleting or re-running the DB/bucket init Jobs.
+The script verifies the successful run's actual source, four emitted digests, private TCR access, manifest/config hashes, platform, revision label and baked SHA. Only then does it update the four immutable image pins and `PPAP_BUILD_SHA` in `current.yaml`. Review and commit that diff in the authorized PR. A later configuration commit does not change the application source identity. Build never applies Kubernetes objects.
 
-## Private GHCR build
+For backup, run the same entrypoint **on the unregistry build host** with the selected commit and existing local Docker registry access:
 
-`.github/workflows/publish-images.yml` runs automatically after the `Tests` workflow succeeds on `main` for a push or a manual test run; PR, failed and cancelled runs cannot publish. It checks out the triggering run's exact `head_sha`, not the newer default-branch SHA, and verifies `CI Gate` in that run's check suite. Manual dispatch on `main` remains available and requires that exact commit's latest `CI Gate` to pass. Both paths share a concurrency group keyed by the source SHA, build all four `linux/amd64` images through the canonical Bake `release` group, and publish private `ghcr.io/ppap-agent/ppap/<component>:<full_sha>` packages. Deep consumes the Worker target in the same build graph. The workflow records immutable image digests in its run summary; it does not deploy or update the deployment manifest. Deployment remains a separate explicit operation, with the digest pins and dual-node preload/startup gate below. Existing packages must already be private and connected to this repository's Actions access. The job uses the run's `GITHUB_TOKEN`, not a stored publishing PAT. The automatic trigger becomes active only after this workflow change reaches `main`.
+```sh
+python3 deploy/tke/release-current.py build <full-source-sha> --provider unregistry
+```
 
-Do not use a mutable `main`/`latest` image tag as deployment identity. Keep the previous unregistry references for rollback until the new digest-pinned release has passed node-local startup and live health checks. The following registry-host procedure remains the unregistry fallback.
+It archives tracked source only, builds the canonical four-target graph and pushes through `localhost:5001`. It verifies the public registry and writes immutable public digest pins. Do not add a developer-machine image relay. Existing full-SHA unregistry tags remain accepted for rollback, but must pass the same registry identity, CRI config and complete startup checks; they cannot skip the gate. Keep previous images and configuration until rollback responsibility ends.
 
-For GHCR releases, `apply-current.sh` calls `preload-current.py` on the exact dry-run render before applying application or migration objects. All four refs must be `ghcr.io/ppap-agent/ppap/<component>@sha256:<digest>` with `IfNotPresent`. Supply `GHCR_USERNAME` and `GHCR_TOKEN` through the operator environment; package read access is sufficient. A short-lived pull Secret is referenced only by the source Pod on `.3`, so its Kubelet pulls the four images through init containers that execute only `true`. No registry credential is mounted in the transfer containers or referenced on `.7` or in application Pods. No token value belongs in source or logs.
+### Deploy and read back
 
-Yunxiao builds may use the same canonical Bake release graph to publish private
-`icoastline.tencentcloudcr.com/ppap-feishu/current-<component>@sha256:<digest>`
-images. Pin all four images from one registry, keep `IfNotPresent`, and retain the
-exact tested source SHA in `PPAP_BUILD_SHA`. Each node pulls all four TCR images
-directly through its Kubelet. The temporary pull Pods reference the existing
-`web-base` pull Secret whose Docker config names that TCR host; registry
-credentials are not copied or mounted in containers. CRI must expose each exact
-repo digest on both nodes before the same isolated full-image startup gate runs.
-There is no archive export, import, or node-to-node transfer for TCR releases.
-TCR releases do not require GHCR environment credentials. Build success alone
-does not permit application rollout.
+Deploy only with explicit release authorization and reviewed `current.yaml` pins:
 
-For GHCR releases, the following transport remains available.
-The source exports complete images from native containerd after all four pulls finish, reusing common layers instead of downloading them again for each archive. It serves one archive at a time over the private Pod network. The receiver checks its SHA-256 before native import. Both nodes must expose the exact repo digest through CRI. The scripts do not change containerd, firewall, DNS, or networking services. Each node needs a free Pod slot and at least 12 GiB free in the containerd filesystem for compressed archives and unpacked layers. Check receiver capacity before pulling and require `DiskPressure=False` before startup verification. A cached manifest alone does not prove enough space to unpack and start containers. Do not evict existing workloads or manually prune rollback images to make this pass.
+```sh
+./deploy/tke/apply-current.sh
+# Same operation: python3 deploy/tke/release-current.py deploy
+```
 
-After transfer Pods are removed, one temporary full-image smoke Pod runs on each node in sequence with `imagePullPolicy: Never`. API, Web, Worker and Deep use Pod-local PostgreSQL/Silo fixtures, current numbered migrations and an empty queue, with notifications and charging disabled. Checks cover baked Git SHA, API readiness, Web identity, Worker heartbeat and a Controller protocol response without a model call. This proves cached-image startup, not a real Deep audit or production data compatibility. Failure stops the apply; temporary resources are removed. For live rollout, first check in-flight jobs and schema compatibility, then verify actual image IDs, health, restarts and public routing. Keep legacy as the default and do not rotate completed initialization Jobs when no migration is needed. An unregistry rollback render follows the same apply path without GHCR preload.
+The entrypoint owns this sequence:
 
-Images can be built on the host serving `unregistry.xixifusi.online`. Transfer a fixed Git commit's build sources without private environment files, then use the same `docker-bake.hcl` graph. The optional `PPAP_DEBIAN_MIRROR` build argument applies to both application and converter stages and replaces the Debian URI prefix, including its sibling `-security` repository; the mirror must serve both. On that host, tag and push through `localhost:5001/ppap-<component>:<git_sha>` to avoid sending application layers from a developer machine. Verify each image through the public `unregistry.xixifusi.online` manifest endpoint before applying the cluster objects. Do not edit source only on the build host or prune registry images needed for rollback.
+1. Check exact-source Tests and registry identities; render once and server-dry-run that object stream. Only the application ConfigMap and API/Web/Worker Deployments may change; other resource changes stop before apply.
+2. Require the live migration payload/schema to match the numbered files. Schema changes require a separate reviewed #15 migration operation with backups and stopped writes. Completed init Jobs are never deleted or treated as proof that new migrations ran.
+3. Require both Ready amd64 nodes to have a free Pod slot, no disk pressure and 12 GiB free. Both nodes pull directly from the chosen registry in parallel. TCR credentials are referenced only by Kubelet through the existing Secret; no credential is copied or mounted in helper containers.
+4. Check all eight CRI image/config identities. Delete pull Pods, then run full-image `Never` startup checks on both nodes in parallel, using Pod-local PostgreSQL/Silo, current migrations and an empty queue. No production data, model, notification or charge probe is used. Both nodes must pass; cleanup must complete before apply.
+5. Refresh the read-only database/in-flight-job baseline immediately before apply. Active business jobs block release. Existing notification jobs are neither reset nor resent. Save the legacy default-page hash and non-target resource UID/spec hashes, dry-run again, and apply the exact saved render once.
+6. Wait for application rollouts and verify desired/actual image IDs, all replicas Ready, zero new-container restarts, public `/ppap/version`, current-cookie `/build-identity.json`, `/ppap/ready`, fresh Worker SHA heartbeat and the Deep protocol socket. Compare history/queue summaries, legacy default HTML and non-target resources. Concurrent legitimate writes require reconciliation; the script does not call them deployment corruption or silently accept them.
 
-When `PPAP_PIP_INDEX_URL` is set, the app build exports production registry requirements from the frozen lockfile and prefetches them through that index with `--require-hashes --no-deps`, then runs the original frozen workspace sync and `uv pip check`. This changes transport, not locked versions or hashes; `uv.lock` is not rewritten. Setting an index alone does not redirect artifact URLs already recorded in a frozen lockfile.
+No nodeSelector, node service/network reconfiguration, workload eviction or image pruning is part of release. The procedure keeps existing Secrets, PVCs, TLS/LB, default legacy route, Office and old UAC/Feishu callbacks. A healthy socket proves startup only, not a real Deep audit or stronger isolation.
 
-Build the existing `ppap-worker:<git_sha>` image from this source, then build `ppap-deep:<git_sha>` with `--platform linux/amd64 --build-arg PPAP_APP_IMAGE=ppap-worker:<git_sha> -f deploy/deep/Dockerfile`. Push the Deep image to `unregistry.xixifusi.online/ppap-deep:<git_sha>`, update the four app image tags and `PPAP_BUILD_SHA` in `current.yaml` together, then apply. Preserve the existing Secret, PostgreSQL, Silo, queue, and shared UDS; this is not a new platform or data migration.
+Each invocation prints a private temporary operation directory. It contains only recovery identity, hashes, the fixed render and readback results, not credentials or full environment/Secret dumps. If dispatch/apply response is lost, **do not rerun the mutation blindly**. Inspect Flow runs and resume the exact run, or read back the saved deployment attempt:
+
+```sh
+python3 deploy/tke/release-current.py verify --attempt <printed-operation-directory>
+```
+
+A failed preload cleans up its own temporary resources and prevents apply. Cleanup failure prints the exact resource name and blocks rollout. A partial apply is not rolled back automatically: inspect live state, reconcile writes and schema compatibility, then explicitly authorize any correction/rollback. Use the previous reviewed config through this same deploy path, never delete/recreate PVCs or completed init Jobs to force progress. Remove operation directories only after reconciliation is complete.
+
+When `PPAP_PIP_INDEX_URL` is set, builds retain the frozen lockfile, package hashes and dependency checks. Optional Debian mirrors must serve both Debian and its `-security` sibling. These are transport settings, not permission to change locked dependencies.
+
+## Deep runtime boundary
 
 The Worker Pod has a dedicated `ppap-deep` sidecar (`PPAP_SERVICE=deep` → `python -m ppap_deep`) and the existing `ppap-worker` container. They share only `emptyDir` `/run/ppap-deep` for the Controller socket. The root Controller reads authorized DB/S3 input and owns a loopback Responses gateway. Each semantic guest drops to UID/GID 10001 with a fresh environment; the provider key is not passed to it. `PPAP_DEEP_EXECUTOR_REVISION=ppap-deep-v2`, `PPAP_DEEP_RUNTIME=container-only`, and `PPAP_DEEP_SANDBOX_PROFILE=off` are explicit. On this kernel, `off` means container-level isolation only: it does not give strong guest filesystem or egress isolation. There is no Docker socket or gVisor dependency. Worker waits up to 60 seconds for the UDS; if unavailable, it logs a warning and still starts so Standard jobs continue. Deep jobs fail explicitly when the Controller is unavailable; they never fall back to Standard.
 
