@@ -39,11 +39,13 @@ PSW_RULE_PROMPTS: dict[int, dict[str, str]] = {
         "label": "印章检查",
         "classification": "印章信息检查",
         "item": "印章信息检查",
-        "system_prompt": "你是一个专业的图片审核员，擅长识别图片中的印章。",
+        "system_prompt": "你是一个专业的图片审核员，擅长识别图片中的印章。只报告可见事实，不要判断通过或不通过。",
         "user_prompt": (
-            "识别“零件提交保证书”中是否包含印章，如果印章中文字的最后两个字为“公司”，则直接通过；"
-            "否则继续识别文件中是否包含“部门章授权声明”表格，如果不包含则不通过，否则继续识别；"
-            "当“部门章授权声明”表格中有公司章则通过，否则不通过。"
+            "查看“零件提交保证书”中的实际印章，识别印章完整文字的最后两个字是否为“公司”。"
+            "不能只读印章外圈的公司名称而忽略内部文字。"
+            "另行查看文件中是否包含“部门章授权声明”表格，以及该表格中是否有实际盖上的公司章。"
+            "预印的“公司名称（公司章）”等标签、空白盖章栏或公司章位置不表示已盖章。"
+            "只报告可见事实，不要判断通过或不通过。"
         ),
     },
     5: {
@@ -231,9 +233,56 @@ class PswVisualRuleEvaluator:
         source_note = ""
         if source_locations:
             source_note = "\n\n视觉证据来源：\n- " + "\n- ".join(source_locations)
+        if rule_no == 3:
+            return self._evaluate_stamp_rule(config, list(images), source_note)
         if rule_no in _DISPOSITION_VISUAL_RULES:
             return self._evaluate_disposition_rule(rule_no, config, list(images), source_note, today or date.today())
         return self._evaluate_status_rule(rule_no, config, list(images), source_note)
+
+    def _evaluate_stamp_rule(self, config: dict[str, str], images: list[str], source_note: str) -> AuditResult:
+        fields = {
+            "psw_stamp_ends_with_company": None,
+            "authorization_table_present": None,
+            "authorization_company_stamp_present": None,
+        }
+        response = self._analyze(
+            system_prompt=config["system_prompt"],
+            user_prompt=(
+                f"{config['user_prompt']}{source_note}\n\n"
+                "请只返回以下 JSON，不要添加解释：\n"
+                f"{json.dumps(fields, ensure_ascii=False, indent=4)}\n"
+                "psw_stamp_ends_with_company：保证书中实际印章文字最后两字为“公司”时为 true；"
+                "没有印章或最后两字不是“公司”时为 false。"
+                "authorization_table_present：存在“部门章授权声明”表格时为 true，否则为 false。"
+                "authorization_company_stamp_present：该授权表格中实际盖有公司章时为 true；"
+                "只有空白盖章栏、标签或没有授权表格时为 false。"
+                "无法辨认的事实返回 null，不得猜测。"
+            ),
+            images=images,
+            json_format=True,
+        )
+        try:
+            observation = self._load_json_object(response)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("PSW rule 3 stamp facts could not be verified: %s", exc)
+            return self._unverifiable(config)
+        company_stamp = _as_bool(observation.get("psw_stamp_ends_with_company"))
+        authorization = _as_bool(observation.get("authorization_table_present"))
+        authorization_stamp = _as_bool(observation.get("authorization_company_stamp_present"))
+        # Original rule: company stamp on PSW OR a company-stamped authorization.
+        if company_stamp is True or (authorization is True and authorization_stamp is True):
+            status, suggestions = "PASS", self._default_suggestions(3, "PASS")
+        elif company_stamp is False and (authorization is False or authorization_stamp is False):
+            status, suggestions = "NG", "保证书印章文字未以“公司”结尾，且没有盖有公司章的部门章授权声明。"
+        else:
+            return self._unverifiable(config)
+        return AuditResult(
+            classification=config["classification"],
+            item=config["item"],
+            priority="P0",
+            status=status,
+            suggestions=suggestions,
+        )
 
     def _evaluate_disposition_rule(
         self,
