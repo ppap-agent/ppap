@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -40,6 +41,10 @@ native_objects = PRELOAD["native_objects"]
 
 class ReleaseError(ValueError):
     """An operator-safe blocker, without remote output or credentials."""
+
+
+class RegistryImageMissing(ReleaseError):
+    """The registry confirmed that a selected image is absent."""
 
 
 def require(condition: bool, message: str) -> None:
@@ -112,13 +117,27 @@ def run_source(observation: dict, sha: str) -> bool:
 def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
     expected_config_id = None
     if resume_run is None:
-        existing = cloud("GET", FLOW + "/runs", query={"page": 1})
-        for row in existing:
-            rid = row.get("pipelineRunId", row.get("id"))
-            previous = cloud("GET", FLOW + f"/runs/{rid}")
-            if run_source(previous, sha) and previous["status"] not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}:
-                return yunxiao(sha, attempt, int(rid))
-        require(all(r["status"] in {"SUCCESS", "FAIL", "FAILED", "CANCELED", "CANCELLED"} for r in existing), "release pipeline has an active run; do not reconfigure it")
+        # Search existing runs before building, including older pages. Never rebuild
+        # a source just because its successful run fell off the first page.
+        seen = set()
+        active = False
+        for page in range(1, 101):
+            rows = cloud("GET", FLOW + "/runs", query={"page": page})
+            if not rows:
+                break
+            ids = {row.get("pipelineRunId", row.get("id")) for row in rows}
+            require(not ids & seen, "Flow pagination repeated; use --run-id instead of rebuilding blindly")
+            seen.update(ids)
+            active |= any(row["status"] not in {"SUCCESS", "FAIL", "FAILED", "CANCELED", "CANCELLED"} for row in rows)
+            candidates = [row.get("pipelineRunId", row.get("id")) for row in rows if row["status"] not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}]
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                observations = list(pool.map(lambda rid: cloud("GET", FLOW + f"/runs/{rid}"), candidates))
+            for rid, previous in zip(candidates, observations, strict=True):
+                if run_source(previous, sha) and previous["status"] not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}:
+                    return yunxiao(sha, attempt, int(rid))
+        else:
+            raise ReleaseError("Flow history search limit reached; select --run-id instead of duplicating a build")
+        require(not active, "release pipeline has an active run; do not reconfigure it")
         branch = source_branch(sha, attempt)
         config = (HERE / "yunxiao.yaml").read_text().replace("__SOURCE_SHA__", sha)
         readback = cloud("GET", FLOW)
@@ -143,10 +162,12 @@ def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:
     deadline = time.monotonic() + 7200
     while True:
         observation = cloud("GET", FLOW + f"/runs/{resume_run}")
-        require(run_source(observation, sha), "Flow run source differs from selected source")
+        status = observation["status"]
+        source_known = any(source.get("data", {}).get("commit") for source in observation.get("sources", []))
+        if source_known or status == "SUCCESS":
+            require(run_source(observation, sha), "Flow run source differs from selected source")
         if expected_config_id is not None:
             require(observation["pipelineConfigId"] == expected_config_id, "Flow used another pipeline configuration; do not deploy")
-        status = observation["status"]
         if status == "SUCCESS":
             break
         require(status not in {"FAIL", "FAILED", "CANCELED", "CANCELLED"}, "Yunxiao build failed; deployment is forbidden")
@@ -202,7 +223,9 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
         secret = json.loads(kube("get", "secret", name, "-o", "json"))
         cred = json.loads(base64.b64decode(secret["data"][".dockerconfigjson"]))["auths"]["icoastline.tencentcloudcr.com"]
         auth = cred.get("auth") or base64.b64encode((cred["username"] + ":" + cred["password"]).encode()).decode()
-    for component, ref in images.items():
+
+    def check(item: tuple[str, str]) -> tuple[str, str, str]:
+        component, ref = item
         repository = ref.split("@", 1)[0].rsplit(":", 1)[0]
         host, path = repository.split("/", 1)
         selected = ref.split("@", 1)[1] if "@" in ref else ref.rsplit(":", 1)[1]
@@ -226,6 +249,8 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
             bearer = json.loads(body)
             headers["Authorization"] = "Bearer " + (bearer.get("token") or bearer["access_token"])
             code, response_headers, raw = registry_get(url, headers)
+        if code == 404:
+            raise RegistryImageMissing("registry image is absent: " + component)
         require(code == 200, "registry manifest is unavailable")
         manifest_digest = digest(raw)
         require("@" not in ref or manifest_digest == selected, "manifest digest differs from selected image")
@@ -246,8 +271,20 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
             and labels.get("org.opencontainers.image.source", "https://github.com/ppap-agent/ppap" if legacy else None) == "https://github.com/ppap-agent/ppap",
             "image source labels differ from the selected source",
         )
-        pins[component] = repository + "@" + manifest_digest
-        configs[component] = config["digest"]
+        return component, repository + "@" + manifest_digest, config["digest"]
+
+    missing = False
+    with ThreadPoolExecutor(max_workers=len(COMPONENTS)) as pool:
+        futures = [pool.submit(check, item) for item in images.items()]
+        for future in futures:
+            try:
+                component, pin, config_digest = future.result()
+                pins[component] = pin
+                configs[component] = config_digest
+            except RegistryImageMissing:
+                missing = True
+    if missing:
+        raise RegistryImageMissing("one or more selected images are absent")
     return pins, configs
 
 
@@ -255,31 +292,38 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
     tested_source(sha)
     require(not run(["git", "status", "--porcelain", "--", "deploy/tke/current.yaml"]).strip(), "current.yaml has local edits; review/commit them before updating pins")
     prefix = PREFIXES[provider]
+    pins = None
     if provider == "yunxiao":
         images = yunxiao(sha, attempt, run_id)
     else:
         require(run_id is None, "--run-id applies only to Yunxiao")
-        # Run this fallback on the unregistry build host with its existing Docker login.
-        # Only tracked files from the selected commit enter the build context.
-        archive = attempt / "source.tar"
-        archive.write_bytes(run(["git", "archive", sha]))
-        source = attempt / "source"
-        source.mkdir()
-        with tarfile.open(archive) as stream:
-            stream.extractall(source, filter="data")
-        archive.unlink()
-        env = {**os.environ, "PPAP_BUILD_SHA": sha, "PPAP_IMAGE_PREFIX": "localhost:5001/ppap-"}
-        result = subprocess.run(
-            ["docker", "buildx", "bake", "release", "--set", "*.platform=linux/amd64", "--provenance=false", "--push"],
-            cwd=source,
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=7200,
-        )
-        require(result.returncode == 0, "unregistry build failed; do not deploy")
         images = {c: prefix + c + ":" + sha for c in COMPONENTS}
-    pins, _ = registry_images(sha, images)
+        try:
+            pins, _ = registry_images(sha, images)
+        except RegistryImageMissing:
+            # Run this fallback on the unregistry build host with its existing Docker login.
+            # Only tracked files from the selected commit enter the build context.
+            archive = attempt / "source.tar"
+            archive.write_bytes(run(["git", "archive", sha]))
+            source = attempt / "source"
+            source.mkdir()
+            with tarfile.open(archive) as stream:
+                stream.extractall(source, filter="data")
+            archive.unlink()
+            env = {**os.environ, "PPAP_BUILD_SHA": sha, "PPAP_IMAGE_PREFIX": "localhost:5001/ppap-"}
+            result = subprocess.run(
+                ["docker", "buildx", "bake", "release", "--set", "*.platform=linux/amd64", "--provenance=false", "--push"],
+                cwd=source,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=7200,
+            )
+            require(result.returncode == 0, "unregistry build failed; do not deploy")
+        else:
+            print("Reusing four verified unregistry images; build skipped.", flush=True)
+    if pins is None:
+        pins, _ = registry_images(sha, images)
     config = HERE / "current.yaml"
     text = config.read_text()
     text, count = re.subn(r"(?m)^(  PPAP_BUILD_SHA: ).+$", lambda m: m[1] + sha, text)
@@ -293,7 +337,7 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
 
 # The deploy operation is below; it consumes only reviewed configuration.
 DB_SNAPSHOT = """
-import json
+import json,sys
 from ppap_core.settings import load_settings
 from ppap_core.db import connect
 with connect(load_settings(), 'api') as c:
@@ -301,10 +345,11 @@ with connect(load_settings(), 'api') as c:
     with c.transaction():
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         result = {}
-        for name in ('file_versions','rule_versions','audit_drafts','audit_rounds','findings','report_exports','usage_events'):
-            query = 'SELECT count(*),md5(string_agg(fingerprint,chr(44) ORDER BY fingerprint)) '
-            query += 'FROM (SELECT md5(to_jsonb(t)::text) AS fingerprint FROM product.'+name+' t) rows'
-            result[name] = c.execute(query).fetchone()
+        if sys.argv[1] == 'full':
+            for name in ('file_versions','rule_versions','audit_drafts','audit_rounds','findings','report_exports','usage_events'):
+                query = 'SELECT count(*),md5(string_agg(fingerprint,chr(44) ORDER BY fingerprint)) '
+                query += 'FROM (SELECT md5(to_jsonb(t)::text) AS fingerprint FROM product.'+name+' t) rows'
+                result[name] = c.execute(query).fetchone()
         result['migrations'] = [r[0] for r in c.execute('SELECT version FROM product.schema_migrations ORDER BY version').fetchall()]
         result['active_jobs'] = c.execute("SELECT kind,status,count(*) FROM engine.jobs WHERE status IN ('queued','leased') GROUP BY kind,status ORDER BY kind,status").fetchall()
     print(json.dumps(result))
@@ -331,8 +376,8 @@ print(json.dumps({'deep_socket':True,'model_called':False}))
 """
 
 
-def database() -> dict:
-    return json.loads(kube("exec", "-i", "deployment/ppap-current-api", "--", "python", "-", data=DB_SNAPSHOT.encode()))
+def database(*, full: bool = False) -> dict:
+    return json.loads(kube("exec", "-i", "deployment/ppap-current-api", "--", "python", "-", "full" if full else "routine", data=DB_SNAPSHOT.encode()))
 
 
 def public(base: str, path: str, *, current: bool = False) -> bytes:
@@ -386,15 +431,18 @@ def verify(attempt: Path) -> None:
     require(digest(public(base, "/")) == expected["legacy_html"], "default legacy page changed")
     require(json.loads(kube("exec", "-i", "deployment/ppap-current-api", "--", "python", "-", sha, data=LIVE_PROBE.encode()))["worker_heartbeat"], "fresh Worker heartbeat missing")
     require(json.loads(kube("exec", "-i", "deployment/ppap-current-worker", "-c", "worker", "--", "python", "-", data=DEEP_PROBE.encode()))["deep_socket"], "Deep socket unavailable")
-    after = database()
-    # Concurrent legitimate writes are not attributed to the release. Reconcile them.
-    require(after == expected["database"], "database/queue changed during rollout; reconcile before claiming preservation")
-    require(stable_resources() == expected["resources"], "non-target resources changed; reconcile before completion")
-    (attempt / "verified.json").write_text(json.dumps({"sha": sha, "images": images, "verified": True}, indent=2))
-    print(f"Live API/Web/Worker/Deep verified at {sha}; default legacy, history and non-target resources preserved.", flush=True)
+    full = expected["full_check"]
+    after = database(full=full)
+    require(after["migrations"] == expected["database"]["migrations"], "schema changed during rollout")
+    if full:
+        # Concurrent legitimate writes require reconciliation, not a corruption claim.
+        require(after == expected["database"], "database/queue changed during full checks; reconcile before claiming preservation")
+        require(stable_resources() == expected["resources"], "non-target resources changed; reconcile before completion")
+    (attempt / "verified.json").write_text(json.dumps({"sha": sha, "images": images, "verified": True, "full_check": full}, indent=2))
+    print(f"Live API/Web/Worker/Deep, schema and default legacy verified at {sha}; full checks: {full}.", flush=True)
 
 
-def dry_run(path: Path, objects: list[dict]) -> None:
+def dry_run(path: Path, objects: list[dict]) -> bool:
     output = kube("apply", "--dry-run=server", "-f", str(path)).decode().splitlines()
     allowed = {"configmap/ppap-current"} | {"deployment.apps/" + name for name in PRELOAD["OWNERS"].values()}
     require(len(output) == len(objects), "server dry-run did not report every object")
@@ -403,9 +451,66 @@ def dry_run(path: Path, objects: list[dict]) -> None:
         require(
             len(fields) >= 2 and (fields[1] == "unchanged" or fields[1] == "configured" and fields[0] in allowed), "release would change non-application resources; review that operation separately"
         )
+    return any(line.split()[1] == "configured" for line in output)
 
 
-def deploy(attempt: Path) -> None:
+def full_check_reason(objects: list[dict], sha: str, forced: bool) -> str | None:
+    """Only source/test/doc changes with unchanged runtime configuration are routine."""
+    if forced:
+        return "requested"
+    live = json.loads(kube("get", "configmap", "ppap-current", "-o", "json"))["data"]
+    desired = next(obj["data"] for obj in objects if obj.get("kind") == "ConfigMap" and obj["metadata"]["name"] == "ppap-current")
+    if {k: v for k, v in live.items() if k != "PPAP_BUILD_SHA"} != {k: v for k, v in desired.items() if k != "PPAP_BUILD_SHA"}:
+        return "application configuration changed"
+    previous = live.get("PPAP_BUILD_SHA", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", previous):
+        return "live source unknown"
+    try:
+        changed = run(["git", "diff", "--name-only", "--no-renames", previous, sha, "--"]).decode().splitlines()
+    except (RuntimeError, subprocess.SubprocessError):
+        return "source comparison unavailable"
+    for name in changed:
+        parts = Path(name).parts
+        source = len(parts) > 3 and parts[0] in {"packages", "services"} and parts[2] in {"src", "tests"}
+        web = name.startswith(("apps/web/src/", "apps/web/public/"))
+        reference = name.startswith(("tests/", "docs/")) or Path(name).name in {"README.md", "AGENTS.md"}
+        # Release pins are derived configuration. Compare the actual live/desired
+        # runtime below; a pin-record commit alone must not force every later release full.
+        rendered_config = name == "deploy/tke/current.yaml"
+        if not (source or web or reference or rendered_config):
+            return "runtime, build or dependency files changed"
+    for obj in objects:
+        if obj.get("kind") != "Deployment" or obj["metadata"]["name"] not in set(PRELOAD["OWNERS"].values()):
+            continue
+        current = json.loads(kube("get", "deployment", obj["metadata"]["name"], "-o", "json"))
+        status = current.get("status", {})
+        if status.get("observedGeneration") != current["metadata"]["generation"] or any(
+            status.get(key, 0) != current["spec"].get("replicas", 1) for key in ("replicas", "readyReplicas", "updatedReplicas")
+        ):
+            return "live deployment is not ready"
+        prior = current["metadata"].get("annotations", {}).get("kubectl.kubernetes.io/last-applied-configuration")
+        if not prior:
+            return "previous deployment configuration unavailable"
+        try:
+            previous_spec = json.loads(prior)["spec"]
+            previous_spec["template"]["spec"]["containers"]
+        except (ValueError, KeyError, TypeError):
+            return "previous deployment configuration unavailable"
+        if previous == sha:
+            old_images = {c["name"]: c["image"] for c in previous_spec["template"]["spec"]["containers"] if c["name"] in COMPONENTS}
+            if any(old_images.get(c["name"]) != c["image"] for c in obj["spec"]["template"]["spec"]["containers"] if c["name"] in COMPONENTS):
+                return "image changed without a source change"
+        target_spec = json.loads(json.dumps(obj["spec"]))
+        for spec in (previous_spec, target_spec):
+            for container in spec["template"]["spec"]["containers"]:
+                if container["name"] in COMPONENTS:
+                    container["image"] = container["image"].split("/", 1)[0]  # Registry changes still require full checks.
+        if previous_spec != target_spec:
+            return "deployment runtime or registry changed"
+    return None
+
+
+def deploy(attempt: Path, *, full_check: bool = False) -> None:
     rendered = run([str(HERE / "render-current.sh")])
     objects = native_objects(kube("create", "--dry-run=client", "-f", "-", "-o", "json", data=rendered))
     images = require_images(objects)
@@ -423,12 +528,22 @@ def deploy(attempt: Path) -> None:
     )
     render_path = attempt / "rendered.yaml"
     render_path.write_bytes(rendered)
-    dry_run(render_path, objects)
-    PRELOAD["preload"](objects, configs)
-    # Refresh business state after slow image pulls, immediately before apply.
-    before = database()
-    require(before["migrations"] == sorted(p.name for p in (ROOT / "migrations").glob("[0-9][0-9][0-9][0-9]_*.sql")), "live schema does not match numbered migrations")
-    require(all(row[0] == "feishu_notification" for row in before["active_jobs"]), "in-flight business jobs block rollout; never reset or replay them")
+    reason = full_check_reason(objects, sha, full_check)
+    full = reason is not None
+    print("Full checks: " + reason if full else "Routine deployment: direct IfNotPresent rollout; no isolated startup or history scan.", flush=True)
+
+    def preflight(state: dict) -> None:
+        require(state["migrations"] == sorted(p.name for p in (ROOT / "migrations").glob("[0-9][0-9][0-9][0-9]_*.sql")), "live schema does not match numbered migrations")
+        require(all(row[0] == "feishu_notification" for row in state["active_jobs"]), "in-flight business jobs block rollout; never reset or replay them")
+
+    before = database(full=False)
+    preflight(before)
+    if full:
+        dry_run(render_path, objects)
+        PRELOAD["preload"](objects, configs)
+        # Refresh state after slow startup checks, immediately before apply.
+        before = database(full=True)
+        preflight(before)
     target = {
         "sha": sha,
         "images": images,
@@ -436,17 +551,21 @@ def deploy(attempt: Path) -> None:
         "base": config["PPAP_WEB_URL"],
         "legacy_html": digest(public(config["PPAP_WEB_URL"], "/")),
         "database": before,
-        "resources": stable_resources(),
+        "full_check": full,
+        "resources": stable_resources() if full else None,
         "render_digest": digest(rendered),
     }
     (attempt / "target.json").write_text(json.dumps(target, indent=2))
-    dry_run(render_path, objects)
+    if not dry_run(render_path, objects):
+        verify(attempt)
+        print("Already current; no apply or rollout wait required.", flush=True)
+        return
     # The intent precedes the mutation. An interrupted/failed apply may be partial.
     (attempt / "apply-intent").write_text(target["render_digest"])
     try:
         kube("apply", "-f", str(render_path))
-        for owner in sorted(set(PRELOAD["OWNERS"].values())):
-            kube("rollout", "status", "deployment/" + owner, "--timeout=300s")
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            list(pool.map(lambda owner: kube("rollout", "status", "deployment/" + owner, "--timeout=300s"), set(PRELOAD["OWNERS"].values())))
         verify(attempt)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         raise RuntimeError(f"apply/readback incomplete; do not repeat automatically. Run verify --attempt {attempt} and reconcile the observed state") from None
@@ -460,7 +579,8 @@ def main() -> None:
     build_parser.add_argument("source")
     build_parser.add_argument("--provider", choices=tuple(PREFIXES), default="yunxiao")
     build_parser.add_argument("--run-id", type=int, help="resume/reconcile an existing Yunxiao run; never dispatch")
-    commands.add_parser("deploy", help="deploy reviewed current.yaml; no build or migration rotation")
+    deploy_parser = commands.add_parser("deploy", help="deploy reviewed current.yaml; no build or migration rotation")
+    deploy_parser.add_argument("--full-check", action="store_true", help="force isolated dual-node startup and history/resource snapshots")
     verify_parser = commands.add_parser("verify", help="read back an interrupted deployment; no mutations")
     verify_parser.add_argument("--attempt", required=True, type=Path)
     args = parser.parse_args()
@@ -480,7 +600,7 @@ def main() -> None:
     if args.action == "build":
         build(args.source, args.provider, attempt, args.run_id)
     else:
-        deploy(attempt)
+        deploy(attempt, full_check=args.full_check)
 
 
 if __name__ == "__main__":

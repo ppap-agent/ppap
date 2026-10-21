@@ -59,7 +59,13 @@ stages:
                 export PPAP_IMAGE_PREFIX=icoastline.tencentcloudcr.com/ppap-feishu/current-
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 git diff --exit-code
-                docker buildx bake release --set '*.platform=linux/amd64' \
+                # Same image blobs, reusable inline cache; cache tags are never deployment pins.
+                set -- --set '*.platform=linux/amd64' --set '*.cache-to=type=inline'
+                for component in api worker web deep; do
+                  set -- "$@" --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache" \
+                    --set "$component.tags+=${PPAP_IMAGE_PREFIX}${component}:build-cache"
+                done
+                docker buildx bake release "$@" \
                   --provenance=false --metadata-file /tmp/ppap-current-images.json --push
                 python3 - <<'PY'
                 import json, os, re

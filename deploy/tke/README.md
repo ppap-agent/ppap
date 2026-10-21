@@ -84,7 +84,9 @@ For the default route, supply `ALIYUN_DEV_OPS_TOKEN` only in the operator proces
 python3 deploy/tke/release-current.py build <full-source-sha>
 ```
 
-The build operation pushes only a new `codex/ppap-current-release-<full-sha>` ref in the private Codeup `ppap-web` repository; it never forces a ref or changes `master`. Existing history makes later pushes incremental. The script updates only the dedicated build-only Flow from `yunxiao.yaml`, with manual triggers and a source identity check. Do not run two operators against this pipeline concurrently. Existing matching successful/running builds are reused; a failed build never permits deployment. Resume a known run without reconfiguration or dispatch:
+Routine use is **build the selected SHA, then deploy the reviewed pins**. Both operations reuse existing successful CI; neither launches another test workflow.
+
+The build operation pushes only a new `codex/ppap-current-release-<full-sha>` ref in the private Codeup `ppap-web` repository; it never forces a ref or changes `master`. Existing history makes later pushes incremental. The script updates only the dedicated build-only Flow from `yunxiao.yaml`, with manual triggers and a source identity check. Do not run two operators against this pipeline concurrently. Matching successful/running builds are reused across Flow history pages; a failed build never permits deployment. New Yunxiao builds import/export [inline cache](https://docs.docker.com/build/cache/backends/inline/) through each component’s separate `build-cache` tag. That tag uses the same image blobs and is never a deployment pin. A first-build cache miss is allowed. The application Dockerfile installs OS packages before copying source, so source edits do not invalidate that layer. Registry manifest/config checks run in parallel and do not download application layers. Resume a known run without reconfiguration or dispatch:
 
 ```sh
 python3 deploy/tke/release-current.py build <full-source-sha> --run-id <run-id>
@@ -98,7 +100,7 @@ For backup, run the same entrypoint **on the unregistry build host** with the se
 python3 deploy/tke/release-current.py build <full-source-sha> --provider unregistry
 ```
 
-It archives tracked source only, builds the canonical four-target graph and pushes through `localhost:5001`. It verifies the public registry and writes immutable public digest pins. Do not add a developer-machine image relay. Existing full-SHA unregistry tags remain accepted for rollback, but must pass the same registry identity, CRI config and complete startup checks; they cannot skip the gate. Keep previous images and configuration until rollback responsibility ends.
+It first reuses the four images if their existing SHA tags verify. Only confirmed missing images cause a build; an authentication, transport or identity error stops. A build archives tracked source only, uses the canonical four-target graph and pushes through `localhost:5001`. It verifies the public registry and writes immutable public digest pins. Do not add a developer-machine image relay. Existing full-SHA unregistry tags remain accepted for rollback, with the same source/image identity checks and automatic full-check selection. A registry switch requires full checks. Keep previous images and configuration until rollback responsibility ends.
 
 ### Deploy and read back
 
@@ -109,14 +111,21 @@ Deploy only with explicit release authorization and reviewed `current.yaml` pins
 # Same operation: python3 deploy/tke/release-current.py deploy
 ```
 
-The entrypoint owns this sequence:
+The default routine path is short:
 
-1. Check exact-source Tests and registry identities; render once and server-dry-run that object stream. Only the application ConfigMap and API/Web/Worker Deployments may change; other resource changes stop before apply.
-2. Require the live migration payload/schema to match the numbered files. Schema changes require a separate reviewed #15 migration operation with backups and stopped writes. Completed init Jobs are never deleted or treated as proof that new migrations ran.
-3. Require both Ready amd64 nodes to have a free Pod slot, no disk pressure and 12 GiB free. Both nodes pull directly from the chosen registry in parallel. TCR credentials are referenced only by Kubelet through the existing Secret; no credential is copied or mounted in helper containers.
-4. Check all eight CRI image/config identities. Delete pull Pods, then run full-image `Never` startup checks on both nodes in parallel, using Pod-local PostgreSQL/Silo, current migrations and an empty queue. No production data, model, notification or charge probe is used. Both nodes must pass; cleanup must complete before apply.
-5. Refresh the read-only database/in-flight-job baseline immediately before apply. Active business jobs block release. Existing notification jobs are neither reset nor resent. Save the legacy default-page hash and non-target resource UID/spec hashes, dry-run again, and apply the exact saved render once.
-6. Wait for application rollouts and verify desired/actual image IDs, all replicas Ready, zero new-container restarts, public `/ppap/version`, current-cookie `/build-identity.json`, `/ppap/ready`, fresh Worker SHA heartbeat and the Deep protocol socket. Compare history/queue summaries, legacy default HTML and non-target resources. Concurrent legitimate writes require reconciliation; the script does not call them deployment corruption or silently accept them.
+1. Reuse exact-SHA Tests, verify four registry identities in parallel, and check schema/in-flight jobs. No test workflow or build is started.
+2. Render once and server-dry-run once. Only the application ConfigMap and API/Web/Worker Deployments may change. Apply that fixed render; each scheduled Kubelet pulls directly with `IfNotPresent` and reuses existing layers. If nothing changes, skip apply and rollout waiting.
+3. Wait for application rollouts in parallel, then verify actual image IDs, Ready/restarts, public API/Web SHA, readiness, fresh Worker heartbeat, Deep socket, schema and the unchanged default legacy page. Routine checks do not claim a full historical-data comparison.
+
+Full checks run automatically when the live-to-target diff is unknown, runtime/configuration/registry changes, a live Deployment is not ready, or a same-source image is replaced. A proven source/test/doc-only diff with unchanged deployment runtime uses the routine path. A pin-record commit in `current.yaml` does not force full checks by itself: actual rendered configuration is compared with the live runtime. Dockerfiles, lockfiles, dependency manifests and unfamiliar paths require full checks. To force them for an environment investigation:
+
+```sh
+./deploy/tke/apply-current.sh --full-check
+```
+
+Full checks add direct pulls/CRI identities and isolated `Never` startup on both nodes in parallel, followed by fresh read-only history/queue and non-target resource baselines. Both nodes need a free Pod slot, no disk pressure and 12 GiB free. Temporary Pod-local PostgreSQL/Silo and an empty queue prevent production data, model, notification or charge probes. Cleanup must succeed before apply. After slow checks the script dry-runs again and compares full baselines after rollout; concurrent legitimate writes require reconciliation.
+
+Every path requires the migration payload/schema to match the numbered files. Schema upgrades remain a separately reviewed #15 operation with backups and stopped writes; completed init Jobs are not deleted or treated as proof that new migrations ran. Active business jobs block rollout. Notification jobs are never reset or resent.
 
 No nodeSelector, node service/network reconfiguration, workload eviction or image pruning is part of release. The procedure keeps existing Secrets, PVCs, TLS/LB, default legacy route, Office and old UAC/Feishu callbacks. A healthy socket proves startup only, not a real Deep audit or stronger isolation.
 
