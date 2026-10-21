@@ -39,6 +39,9 @@ class ProductAPI:
 
     def __init__(self, failure=""):
         self.failure = failure
+        self.changed_round_id = None
+        self.changed_file_name = None
+        self.changed_rule_index = None
         self.files, self.parses, self.rules, self.drafts, self.rounds = {}, {}, {}, {}, {}
         self.cases = {case.file_name: case for case in load_poc_cases()}
         self.writes = []
@@ -134,6 +137,46 @@ class ProductAPI:
                     result["execution"] = "failed"
                 if self.failure == "timeout":
                     result["execution"] = "queued"
+                if (
+                    self.failure
+                    in {
+                        "missing_frozen_file",
+                        "extra_frozen_file",
+                        "substituted_frozen_file",
+                        "frozen_profile_drift",
+                        "frozen_rule_text_drift",
+                        "profile_drift_readback",
+                        "reordered_inputs",
+                        "one_status_mismatch",
+                        "different_explanation",
+                    }
+                    and self.changed_round_id is None
+                    and (self.failure != "reordered_inputs" or len(result["inputs"]) > 1)
+                ):
+                    self.changed_round_id = result["id"]
+                    if self.failure == "missing_frozen_file":
+                        result["inputs"] = result["inputs"][1:]
+                    elif self.failure == "extra_frozen_file":
+                        result["inputs"] = [*result["inputs"], {**result["inputs"][0], "file_version_id": str(uuid4())}]
+                    elif self.failure == "substituted_frozen_file":
+                        result["inputs"][0]["file_version_id"] = str(uuid4())
+                    elif self.failure == "frozen_profile_drift":
+                        body = result["inputs"][0]["rule"]["body"]
+                        result["inputs"][0]["rule"]["body"] = {**body, "rule_profile": "v2"}
+                    elif self.failure == "frozen_rule_text_drift":
+                        body = result["inputs"][0]["rule"]["body"]
+                        result["inputs"][0]["rule"]["body"] = {**body, "rules": [{**body["rules"][0], "rule_to_check": "已改变的冻结规则正文"}, *body["rules"][1:]]}
+                    elif self.failure == "reordered_inputs":
+                        result["inputs"] = list(reversed(result["inputs"]))
+                    elif self.failure in {"one_status_mismatch", "different_explanation"}:
+                        row = result["coverage"]["rule_items"][0]
+                        finding = next(item for item in result["findings"] if item["item_key"] == row["item_key"])
+                        self.changed_file_name = self.files[row["file_version_id"]]["original_filename"]
+                        self.changed_rule_index = int(row["id"])
+                        if self.failure == "one_status_mismatch":
+                            row["status"] = finding["status"] = "NG" if row["status"] == "PASS" else "PASS"
+                        else:
+                            finding["suggestions"] = "说明文字已更新\n  审核结果未改变"
                 self.rounds[result["id"]] = result
                 draft["round"] = result
                 if self.failure == "lost_accept_response":
@@ -143,7 +186,11 @@ class ProductAPI:
                 draft.update(data)
             return httpx.Response(200, json=draft.get("round") if path.endswith("/round") else draft)
         if path.startswith("/rounds/"):
-            return httpx.Response(200, json=self.rounds[path.rsplit("/", 1)[1]])
+            result = self.rounds[path.rsplit("/", 1)[1]]
+            if self.failure == "profile_drift_readback" and result["id"] == self.changed_round_id:
+                body = result["inputs"][0]["rule"]["body"]
+                result["inputs"][0]["rule"]["body"] = {**body, "rule_profile": "v2"}
+            return httpx.Response(200, json=result)
         raise AssertionError(f"Unexpected external API request: {method} {path}")
 
 
@@ -160,6 +207,9 @@ class ProductAPI:
         ("duplicate_finding", "NOT_PROVEN"),
         ("wrong_coverage_binding", "NOT_PROVEN"),
         ("no_inline_rule_version", "PROVEN"),
+        ("reordered_inputs", "PROVEN"),
+        ("different_explanation", "PROVEN"),
+        ("one_status_mismatch", "NOT_PROVEN"),
     ],
 )
 def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure, outcome):
@@ -175,3 +225,66 @@ def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure,
     assert report["summary"]["total_rules"] == 220
     assert "private transport" not in (output / "report.json").read_text()
     assert (output / "report.md").is_file()
+    if failure == "reordered_inputs":
+        changed = api.rounds[api.changed_round_id]
+        original = api.drafts[changed["source_draft_id"]]["items"]
+        assert len(changed["inputs"]) > 1
+        assert changed["inputs"] != original
+    if failure == "one_status_mismatch":
+        assert result["errors"] == []
+        assert result["attribution"] == "inconclusive"
+        assert report["summary"]["mismatches"] == 1
+        mismatches = [row for row in report["rule_results"] if row["kind"] != "match"]
+        assert len(mismatches) == 1
+        row = mismatches[0]
+        assert row["round_id"] == api.changed_round_id
+        assert row["file_name"] == api.changed_file_name
+        assert row["rule_index"] == api.changed_rule_index
+        expected = api.cases[api.changed_file_name].expected[api.changed_rule_index].status
+        assert row["expected_status"] == expected
+        assert row["actual_status"] == ("NG" if expected == "PASS" else "PASS")
+        assert row["kind"] == "status_mismatch"
+        assert row["failure_stage"] == "comparison"
+    if failure == "different_explanation":
+        assert report["summary"]["mismatches"] == 0
+        assert all(row["kind"] == "match" for row in report["rule_results"])
+        changed = [row for row in report["rule_results"] if row["round_id"] == api.changed_round_id and row["file_name"] == api.changed_file_name and row["rule_index"] == api.changed_rule_index]
+        assert len(changed) == 1
+        assert changed[0]["agent_suggestions"] == "说明文字已更新\n  审核结果未改变"
+
+
+@pytest.mark.parametrize(
+    "failure, stage, kind",
+    [
+        ("missing_frozen_file", "accept", "setup_failure"),
+        ("extra_frozen_file", "accept", "setup_failure"),
+        ("substituted_frozen_file", "accept", "setup_failure"),
+        ("frozen_profile_drift", "accept", "setup_failure"),
+        ("frozen_rule_text_drift", "accept", "setup_failure"),
+        ("profile_drift_readback", "audit", "execution_failure"),
+    ],
+)
+def test_changed_frozen_inputs_reject_only_the_affected_group_without_reaccepting(tmp_path, failure, stage, kind):
+    api = ProductAPI(failure)
+    output = tmp_path / "run"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, isolated_login=True, timeout=0.001, poll_interval=0)
+
+    assert result["outcome"] == "NOT_PROVEN"
+    assert result["attribution"] == "inconclusive"
+    assert len(result["errors"]) == 1
+    error = result["errors"][0]
+    assert error["stage"] == stage
+    assert error["code"] == "frozen_input_mismatch"
+    assert error["round_id"] == api.changed_round_id
+    accept_paths = [path for method, path in api.writes if path.endswith("/accept")]
+    assert len(accept_paths) == len(set(accept_paths)) == 8
+    assert sum(path == "/rules/parse" for method, path in api.writes) == 5
+    report = json.loads((output / "report.json").read_text())
+    assert report["summary"]["selected_cases"] == 27
+    assert report["summary"]["total_rules"] == 220
+    affected = [row for row in report["rule_results"] if row["round_id"] == api.changed_round_id]
+    assert {row["bundle"] for row in affected} == {error["bundle"]}
+    assert {row["failure_stage"] for row in affected} == {stage}
+    assert {row["kind"] for row in affected} == {kind}
+    assert all(row["kind"] == "match" for row in report["rule_results"] if row["round_id"] != api.changed_round_id)
