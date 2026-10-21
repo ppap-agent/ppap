@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress} from './routes.ts'
+import {canonicalAddress, readAuditRoute, requestAddress, surfaceAddress, taskAddress, usesLegacyJourney} from './routes.ts'
 
 test('natural task address retains file, clause and report context', () => {
   const url = new URL('https://ppap.test/audit?task=abc&file=f1&clause=c1&report=r1')
@@ -17,6 +17,13 @@ test('old draft, round, review and share addresses are not rewritten as new task
   for (const search of ['?case=draft&stage=decision&clause=c', '?round=r&resume=changes', '?draft=d', '?share=s&report=p']) {
     assert.equal(canonicalAddress(new URL('https://ppap.test/' + search)), '/' + search)
   }
+})
+
+test('old round links enter the unified reader unless they carry legacy stage context', () => {
+  for (const path of ['/?round=r', '/audit?round=r', '/?case=d&round=r', '/audit?round=r&clause=c', '/?round=r&clause=c&focus=review']) assert.equal(usesLegacyJourney(new URL(path, 'https://ppap.test')), false)
+  for (const path of ['/?case=d', '/?draft=d', '/?round=r&stage=decision', '/?round=r&resume=changes', '/?round=r&clause=c', '/dev']) assert.equal(usesLegacyJourney(new URL(path, 'https://ppap.test')), true)
+  assert.equal(usesLegacyJourney(new URL('https://ppap.test/?share=s&case=d')), false)
+  assert.equal(canonicalAddress(new URL('https://ppap.test/?round=r')), '/audit?round=r')
 })
 
 test('home and new task are distinct; navigation does not carry unrelated detail', () => {

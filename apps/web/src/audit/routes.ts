@@ -7,6 +7,14 @@ const paths: Record<ProductSurface, string> = {
 export const taskAddress = (id: string | null) => id ? `/tasks/${encodeURIComponent(id)}` : paths.audit
 export const surfaceAddress = (surface: ProductSurface) => paths[surface]
 
+/** Keep saved draft/stage consumers; a bare Round opens the shared historical reader. */
+export function usesLegacyJourney(url: URL): boolean {
+  if (url.searchParams.has('share')) return false
+  if (['/dev', '/rules'].includes(url.pathname)) return true
+  if (url.searchParams.has('round')) return ['stage', 'resume'].some(key => url.searchParams.has(key)) || url.pathname === '/' && url.searchParams.has('clause') && !url.searchParams.has('focus')
+  return ['case', 'draft'].some(key => url.searchParams.has(key))
+}
+
 /** A refresh must read the original command receipt, never create another command. */
 export function requestAddress(url: URL, taskId: string, kind: 'recognitionRequest' | 'acceptRequest', requestId: string): string {
   const next = new URL(url)
@@ -35,6 +43,10 @@ export function readAuditRoute(url: URL): {surface: ProductSurface; taskId: stri
 /** Preserve legacy identities; a Round is not a Task and a share is not a task grant. */
 export function canonicalAddress(url: URL): string {
   const next = new URL(url)
+  if (next.searchParams.has('round') && !next.searchParams.has('share') && !usesLegacyJourney(next)) {
+    next.pathname = '/audit'
+    return next.pathname + next.search + next.hash
+  }
   if (['case', 'draft', 'round', 'share'].some(key => next.searchParams.has(key))) return next.pathname + next.search + next.hash
   const {surface, taskId} = readAuditRoute(next)
   next.pathname = surface === 'audit' ? taskAddress(taskId) : surfaceAddress(surface)

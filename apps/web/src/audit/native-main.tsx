@@ -17,10 +17,10 @@ import {SharedReports} from './shared-reports'
 import {AuditRules} from './rules'
 import {AuditWorkbench, type WorkbenchProps} from './workbench'
 import {workbenchItems} from './workbench-items'
-import {canonicalAddress} from './routes'
-import {readAuditRoute} from './routes'
+import {canonicalAddress, readAuditRoute, usesLegacyJourney} from './routes'
 import LegacyJourney from '../journey/intake'
 import {useWorkbenchData} from '../journey/workbench-data'
+import {TEMPLATE_GUIDE_URL} from './template-links'
 
 const renderOriginal: OriginalRenderer = (file, evidence, roundId) => <div className="flex h-[65dvh] min-h-96 min-w-0"><RemoteSourcePane file={{file_id: file.file_id, file_version_id: file.id, original_filename: file.original_filename, role: 'target', rule_version_id: null}} roundId={roundId} focus={evidence?.locator ? {location: sourceLocation({locator: evidence.locator}), requestId: 0} : undefined}/></div>
 
@@ -35,7 +35,7 @@ function NativeAudit() {
   useEffect(() => {
     const address = new URL(location.href)
     const route = readAuditRoute(address)
-    if (!revision && (route.taskId || route.surface !== 'audit')) return
+    if (!revision && (route.taskId || address.searchParams.has('round') || route.surface !== 'audit')) return
     let active = true
     void readAuditCustomers().then(result => {
       if (!active) return
@@ -49,8 +49,7 @@ function NativeAudit() {
 }
 
 const readRound: ReadRound = (id, signal) => request(`/rounds/${encodeURIComponent(id)}?read_view=true`, 'GET', undefined, signal)
-const roundId = new URL(location.href).searchParams.get('round')
 const shareId = new URL(location.href).searchParams.get('share')
-const legacyDraft = ['case', 'draft'].some(key => new URL(location.href).searchParams.has(key)) && !roundId && !shareId
 history.replaceState(history.state, '', canonicalAddress(new URL(location.href)))
-createRoot(document.getElementById('app')!).render(legacyDraft || roundId && new URL(location.href).searchParams.has('stage') ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)
+if (readAuditRoute(new URL(location.href)).surface === 'templates') location.replace(TEMPLATE_GUIDE_URL)
+else createRoot(document.getElementById('app')!).render(usesLegacyJourney(new URL(location.href)) ? <LegacyJourney/> : <ProductAccess recordValidators={{'requirement-library': isRequirementLibrary}} recordsReturnTo="/requirements"><AuditReviewProvider adapter={nativeReviewAdapter}>{shareId ? <SharedReports key={shareId} requestId={shareId}/> : <NativeAudit/>}</AuditReviewProvider></ProductAccess>)

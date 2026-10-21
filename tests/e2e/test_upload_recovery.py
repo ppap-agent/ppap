@@ -62,6 +62,8 @@ def test_received_batch_survives_lost_receipts_and_browser_record_removal(lost_r
         page.route(api + "/files/*/versions/*/blob", lose_blob_reply)
         page.route(api + "/file-uploads/*", read_receipt)
         page.route(api + "/drafts/*", lambda route: lose_draft_reply(route) if route.request.method == "PUT" else route.continue_())
+        # Compatibility consumer: the public home now creates native Tasks.
+        page.goto(WEB + "/dev")
         page.get_by_role("button", name="上传资料", exact=True).click()
         page.get_by_label("上传文件", exact=True).set_input_files(
             [{"name": f"recovery-{number}.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": payload} for number in range(1, 4)]

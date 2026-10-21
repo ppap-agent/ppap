@@ -1345,9 +1345,9 @@ class AuditPreviewTests(unittest.TestCase):
             expect(expand).to_be_focused()
             self.assertLess(sidebar.bounding_box()["width"], wide)
             navigation = sidebar.get_by_role("navigation", name="产品导航", exact=True)
-            for label in ("PPAP Audit", "审核文件", "用量记录"):
+            for label in ("工作台", "审核文件", "用量记录"):
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_be_visible()
-            expect(navigation.get_by_role("button", name="PPAP Audit", exact=True)).to_have_attribute("aria-current", "page")
+            expect(navigation.get_by_role("button", name="工作台", exact=True)).to_have_attribute("aria-current", "page")
             navigation.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).hover()
             expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_be_visible()
             support_trigger = sidebar.get_by_role("button", name="联系我们", exact=True)
@@ -1358,7 +1358,8 @@ class AuditPreviewTests(unittest.TestCase):
                 navigation.get_by_role("button", name=label, exact=True).click()
                 expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
                 expect(navigation.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-current", "page")
-            navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
+            navigation.get_by_role("button", name="工作台", exact=True).click()
+            page.get_by_role("button", name="继续当前审核", exact=True).click()
             self.assertEqual(page.url, address)
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             page.get_by_role("button", name="上一步", exact=True).click()
@@ -1395,7 +1396,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_have_count(0)
             page.get_by_role("button", name="打开审核任务", exact=True).click()
             sheet = page.get_by_role("dialog", name="审核任务", exact=True)
-            for label in ("PPAP Audit", "审核文件", "模板库", "用量记录"):
+            for label in ("工作台", "审核文件", "模板库", "用量记录"):
                 expect(sheet.get_by_role("navigation", name="产品导航", exact=True).get_by_text(label, exact=True)).to_be_visible()
             expect(sheet.get_by_role("button", name="联系我们", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
@@ -1952,14 +1953,16 @@ class AuditPreviewTests(unittest.TestCase):
                     elif view == "archive":
                         page.get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
                         expect(page.get_by_role("button", name="历史审核记录", exact=True)).to_contain_text("第 3 次审核")
-                    navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
+                    navigation.get_by_role("button", name="工作台", exact=True).click()
+                    page.get_by_role("button", name="继续当前审核", exact=True).click()
                     page.get_by_role("button", name="开始识别", exact=True).click()
                     task_url = page.url
                     page.go_back()
                     expect(page).to_have_url(task_url)
                     page.go_back()
                     expect(page).to_have_url(re.compile(f"[?&]view={view}"))
-                    navigation.get_by_role("button", name="PPAP Audit", exact=True).click()
+                    navigation.get_by_role("button", name="工作台", exact=True).click()
+                    page.get_by_role("button", name="继续当前审核", exact=True).click()
                     expect(page).to_have_url(task_url)
                     expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
                     # Usage and archive fixtures both expose fourteen historical source tasks.
@@ -3857,7 +3860,7 @@ class AuditPreviewTests(unittest.TestCase):
                     page.get_by_role("button", name="使用三类文件示例").click()
                     page.get_by_role("button", name="开始识别", exact=True).click()
                     page.get_by_role("button", name="开始审核", exact=True).click()
-                    page.get_by_role("button", name="PPAP Audit", exact=True).click()
+                    page.get_by_role("button", name="工作台", exact=True).click()
                     page.go_back()
                     expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("NG · 符合 0 / 不符合 1", exact=True)).to_be_visible()
                     expect(page.get_by_role("region", name="审核详情", exact=True).get_by_text("无法判断 1", exact=True)).to_be_visible()
