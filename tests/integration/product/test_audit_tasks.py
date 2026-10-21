@@ -524,8 +524,16 @@ def test_customer_recovery_rematches_and_finishes_the_original_task_without_chan
     process_claimed(worker, worker.claim_job("audit"), "audit")
     client.cookies.clear()
     assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    reporting = client.get(path).json()
+    assert reporting["state"] == "reviewing"
+    assert reporting["files"][0]["audit"]["checks"][0]["finding"]["status"] == "NG"
+    assert reporting["files"][0]["audit"]["report"]["state"] == "pending"
+    report_job = worker.claim_job("file-report")
+    assert report_job.kind == "report_pdf"
+    process_claimed(worker, report_job, "file-report")
     finished = client.get(path).json()
     assert (finished["id"], finished["round_id"], finished["state"], finished["completion_reason"]) == (task["id"], round_id, "completed", "processed")
+    assert finished["files"][0]["audit"]["report"]["state"] == "ready"
     assert finished["files"][0]["file"]["id"] == file["file_version_id"]
     assert len(client.get("/rounds").json()["rounds"]) == 1
     assert client.get("/usage").json()["events"] == []
@@ -931,7 +939,8 @@ def test_three_document_types_match_their_own_rules_without_accepting_an_audit(t
     assert client.get("/usage").json()["events"] == []
 
 
-def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_round(task_system):
+@pytest.mark.parametrize("source_missing", [False, True], ids=["readable-ng", "source-read-error"])
+def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_round(task_system, source_missing):
     client, worker = task_system
     worker.settings.usage_charge_enabled = False
     files, rules = [], []
@@ -968,11 +977,15 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     job = worker.claim_job("one-audit")
     assert job.round_id == accepted["round_id"]
     assert worker.claim_job("no-second-audit") is None
+    if source_missing:
+        # Fail the existing object-storage boundary, not an internal checker.
+        key = next(key for key in worker.objects.data if key.endswith("/versions/" + files[1]["file_version_id"]))
+        worker.objects.delete(key)
     process_claimed(worker, job, "one-audit")
     reporting = client.get(path).json()
     assert reporting["state"] == "reviewing"
-    assert [row["audit"]["report"]["state"] for row in reporting["files"]] == ["pending", "not_eligible", "pending"]
-    for _ in range(2):
+    assert [row["audit"]["report"]["state"] for row in reporting["files"]] == (["pending", "not_eligible", "pending"] if source_missing else ["pending", "pending", "pending"])
+    for _ in range(2 if source_missing else 3):
         report_job = worker.claim_job("file-report")
         assert report_job.kind == "report_pdf"
         process_claimed(worker, report_job, "file-report")
@@ -980,10 +993,10 @@ def test_confirmation_freezes_three_matched_targets_once_and_restores_the_same_r
     assert finished["state"] == "completed"
     assert finished["completion_reason"] == "processed"
     assert finished["progress"] == {"completed": 3, "total": 3}
-    assert [row["audit"]["execution"] for row in finished["files"]] == ["completed", "review_failed", "completed"]
-    assert all(row["audit"]["checks"][0]["coverage"] == "executed" for row in finished["files"])
-    assert [row["audit"]["conclusion"] for row in finished["files"]] == ["NG", "UNKNOWN", "NG"]
-    assert [row["audit"]["report"]["state"] for row in finished["files"]] == ["ready", "not_eligible", "ready"]
+    assert [row["audit"]["execution"] for row in finished["files"]] == (["completed", "review_failed", "completed"] if source_missing else ["completed", "completed", "completed"])
+    assert [row["audit"]["checks"][0]["coverage"] for row in finished["files"]] == (["executed", "unsupported", "executed"] if source_missing else ["executed", "executed", "executed"])
+    assert [row["audit"]["conclusion"] for row in finished["files"]] == (["NG", "UNKNOWN", "NG"] if source_missing else ["NG", "NG", "NG"])
+    assert [row["audit"]["report"]["state"] for row in finished["files"]] == (["ready", "not_eligible", "ready"] if source_missing else ["ready", "ready", "ready"])
     summaries = client.get("/audit-tasks", params={"state": "completed"}).json()["tasks"]
     assert len(summaries) == 1
     assert_task_summary(summaries[0], finished)
