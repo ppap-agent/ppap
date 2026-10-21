@@ -15,6 +15,23 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class AuditWorkspacePreviewTests(unittest.TestCase):
+    def test_browser_back_and_forward_restore_overview_and_exact_file_report(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 960})
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task")
+            page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button").nth(1).click()
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            report_address = page.url
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            page.go_back()
+            expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_have_count(0)
+            page.go_forward()
+            expect(page).to_have_url(report_address)
+            expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_complete_task_starts_with_every_file_then_restores_focused_review(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
