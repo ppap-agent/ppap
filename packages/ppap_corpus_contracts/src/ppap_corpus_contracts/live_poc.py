@@ -155,17 +155,17 @@ def _frozen_inputs(result, draft_id, items, rules):
             raise LiveError("frozen_input_mismatch")
 
 
-def _rows(cases, versions, result, stage, error, round_id):
+def _rows(cases, versions, rule_versions, result, stage, error, round_id):
     rows = []
     for case in cases:
         verdicts = compare_file(file_name=case.file_name, version_id=versions.get(case.file_name, ""), expected={i: e.status for i, e in case.expected.items()}, result=result, setup_error=error)
         coverage = [item for item in (result or {}).get("coverage", {}).get("rule_items", []) if item.get("file_version_id") == versions.get(case.file_name)]
-        findings = {item["item_key"]: item for item in (result or {}).get("findings", [])}
         for verdict in verdicts:
             matched = [item for item in coverage if str(item.get("id")) == str(verdict.rule_index)]
-            finding = findings.get(matched[0].get("item_key"), {}) if matched else {}
+            findings = [item for item in (result or {}).get("findings", []) if matched and item["item_key"] == matched[0].get("item_key")]
+            finding = findings[0] if len(findings) == 1 else {}
             kind, actual = verdict.kind, verdict.actual or ""
-            if result is not None and (len(matched) != 1 or finding.get("status") != actual):
+            if result is not None and (len(matched) != 1 or matched[0].get("rule_version_id") != rule_versions.get(versions.get(case.file_name)) or finding.get("status") != actual):
                 kind = "missing_rule"
             rows.append(
                 {
@@ -217,11 +217,12 @@ def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated
             raise LiveError("stack_not_ready")
         if isolated_login:
             _json(client, "POST", "/isolated-dev/sessions", json={"subject": "alice"})
-        cases = load_poc_cases()
+        oracle_path = REPO_ROOT / "assets" / "poc测试" / "poc-测试数据统计表.xlsx"
+        cases = load_poc_cases(dataset_root=REPO_ROOT / "assets" / "poc测试" / "POC测试样本", expected_xlsx=oracle_path)
         bundles = build_bundle_map(cases)
         if len(cases) != 27 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 220 or {case.file_seq for case in cases} != set(RULE_DOCS):
             raise LiveError("canonical_universe_incomplete")
-        assets = [case.file_path for case in cases] + [REPO_ROOT / "assets" / "poc测试" / "poc规则" / name for name in RULE_DOCS.values()]
+        assets = [oracle_path, *[case.file_path for case in cases], *[REPO_ROOT / "assets" / "poc测试" / "poc规则" / name for name in RULE_DOCS.values()]]
         run["asset_digests"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets}
         published, unavailable = {}, set()
         stage = "rule_setup"
@@ -268,8 +269,7 @@ def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated
             except (LiveError, KeyError, TypeError, OSError) as exc:
                 error = str(exc) if isinstance(exc, LiveError) else "invalid_product_response"
                 run["errors"].append({"stage": stage, "bundle": bundle, "code": error, "round_id": round_id})
-                result = None
-            group_rows = _rows(selected, versions, result, stage, error, round_id)
+            group_rows = _rows(selected, versions, {item["file_version_id"]: item["rule_version_id"] for item in items}, result, stage, error, round_id)
             if stage == "audit" and error:
                 for row in group_rows:
                     row["kind"] = "execution_failure"

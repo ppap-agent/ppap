@@ -64,6 +64,14 @@ jobs:
           name: v3-poc-live-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ppap-v3-live-${{ github.run_id }}-${{ github.run_attempt }}/report.*
           if-no-files-found: warn
-      - name: Stop this isolated stack only
+      - name: Safe diagnostics before stopping a failed stack
+        if: failure()
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml ps -a
+          # Do not upload raw access logs, model responses, or provider bodies.
+          docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml logs --no-color --no-log-prefix --tail 100 api worker 2>&1 \
+            | jq -Rc 'fromjson? | select(.event == "job_claimed" or .event == "job_completed" or .event == "job_result_discarded" or .event == "audit_lease_unknown") | {ts,level,event,git_sha,kind,outcome,error_type,round_id,job_id}'
+      - name: Stop this isolated stack, retain its named test-data volumes
         if: always()
         run: docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml down --remove-orphans
