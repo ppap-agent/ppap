@@ -365,27 +365,37 @@ class AuthStore:
             )
 
     def resource(self, resource_id: str) -> Resource | None:
+        if not _as_uuid(resource_id):
+            return None
+        with self._conn() as conn:
+            return self._resource(conn, resource_id)
+
+    @staticmethod
+    def _resource(conn, resource_id: str) -> Resource | None:
         parsed = _as_uuid(resource_id)
         if not parsed:
             return None
-        with self._conn() as conn:
-            row = conn.execute(
-                """SELECT r.id, r.tenant_id, r.kind, EXISTS (
+        row = conn.execute(
+            """SELECT r.id, r.tenant_id, r.kind, EXISTS (
                     SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
                     WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
                 FROM product.resources r WHERE r.id = %s""",
-                (parsed,),
-            ).fetchone()
+            (parsed,),
+        ).fetchone()
         if not row:
             return None
         return Resource(str(row[0]), str(row[1]), row[2], row[3])
 
     def grants(self, resource_id: str, user_id: str) -> set[str]:
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT capability FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
-                (resource_id, user_id),
-            ).fetchall()
+            return self._grants(conn, resource_id, user_id)
+
+    @staticmethod
+    def _grants(conn, resource_id: str, user_id: str) -> set[str]:
+        rows = conn.execute(
+            "SELECT capability FROM product.resource_grants WHERE resource_id = %s AND user_id = %s",
+            (resource_id, user_id),
+        ).fetchall()
         return {row[0] for row in rows}
 
     def seed_isolated_dev(self) -> None:
@@ -1065,8 +1075,8 @@ class AuthStore:
         return {str(row[0]): rule_parse_view(str(row[0]), row[1], row[2], row[3], bool(row[4])) for row in rows}
 
     def _reaudit_source(self, conn, principal: Principal, predecessor_id: str) -> dict:
-        resource = self.resource(predecessor_id)
-        if not resource or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
+        resource = self._resource(conn, predecessor_id)
+        if not resource or resource.kind != "audit_round" or not can_read(principal, resource, self._grants(conn, predecessor_id, principal.user_id)):
             raise KeyError("missing")
         row = conn.execute(
             """SELECT r.execution, r.analysis_mode, d.customer_preference,
@@ -1358,7 +1368,8 @@ class AuthStore:
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             task = self._recognition_public(conn, principal, task_id)
             if request_id and task.get("acceptance", {}).get("request_id") != _as_uuid(request_id):
-                task["acceptance"] = {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
+                queued = self._task_confirmation_receipt(conn, principal, task_id, request_id=_as_uuid(request_id))
+                task["acceptance"] = queued or {"request_id": _as_uuid(request_id), "state": "pending", "reason": None}
             return task
 
     def _notification_preference(self, conn, draft: dict) -> dict:
@@ -1573,13 +1584,12 @@ class AuthStore:
             ).fetchone()
             return dispatch if row else None
 
-    def confirm_task_notification(self, action: CardAction, *, usage_policy=None) -> dict:
+    def _confirm_task_notification(self, conn, action: CardAction, *, expected_confirmation: dict, usage_policy=None) -> dict:
         notification_id = _as_uuid(action.notification_id)
         if not notification_id or not self.settings.tenant_allowed(action.tenant_key):
             raise KeyError("missing")
-        with self._conn() as conn, conn.transaction():
-            row = conn.execute(
-                """SELECT j.payload, i.user_id, j.tenant_id, m.role, i.display_name
+        row = conn.execute(
+            """SELECT j.payload, i.user_id, j.tenant_id, m.role, i.display_name
                 FROM engine.jobs j JOIN product.audit_drafts d ON d.id::text = j.payload->>'task_id' AND d.tenant_id = j.tenant_id
                 JOIN product.tenants t ON t.id = d.tenant_id
                 JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
@@ -1587,23 +1597,160 @@ class AuthStore:
                 WHERE j.id = %s AND j.kind = 'feishu_notification' AND j.payload->>'stage' = 'confirmation'
                 AND j.result->>'state' = 'sent' AND j.result->>'message_id' = %s
                 AND i.provider = 'feishu' AND i.app_id = %s AND i.tenant_key = %s AND i.subject = %s""",
-                (notification_id, action.message_id, self.settings.feishu_app_id, action.tenant_key, action.subject),
+            (notification_id, action.message_id, self.settings.feishu_app_id, action.tenant_key, action.subject),
+        ).fetchone()
+        if not row:
+            raise KeyError("missing")
+        confirmation = row[0].get("confirmation")
+        if not isinstance(confirmation, dict):
+            raise KeyError("missing")
+        principal = Principal(str(row[1]), str(row[2]), PROVIDER_FEISHU, self.settings.feishu_app_id, action.tenant_key, action.subject, row[3], row[4])
+        task_id = row[0]["task_id"]
+        if (
+            task_id != expected_confirmation.get("task_id")
+            or principal.user_id != expected_confirmation.get("created_by")
+            or confirmation.get("request_id") != expected_confirmation.get("request_id")
+            or confirmation.get("expected_revision") != expected_confirmation.get("expected_revision")
+        ):
+            raise ValueError("task_revision_conflict")
+        try:
+            self._accept_locked(
+                conn, principal, confirmation["request_id"], source_draft_id=task_id, predecessor_id=None, items=None, task_revision=confirmation["expected_revision"], usage_policy=usage_policy
+            )
+        except ValueError as error:
+            if str(error) != "draft_already_accepted":
+                raise
+        return self._recognition_public(conn, principal, task_id)
+
+    @staticmethod
+    def _task_confirmation_receipt(conn, principal: Principal, task_id: str, *, request_id: str | None = None) -> dict | None:
+        row = conn.execute(
+            """SELECT j.id, j.result FROM engine.jobs j JOIN product.audit_drafts d ON d.id::text = j.payload->>'task_id'
+            WHERE j.kind = 'task_confirmation' AND j.tenant_id = %s AND d.tenant_id = j.tenant_id
+            AND d.id = %s AND d.created_by = %s AND j.payload->>'created_by' = %s
+            AND (%s::uuid IS NULL AND (j.payload->>'expected_revision')::bigint = d.input_revision OR j.id = %s::uuid)
+            ORDER BY j.created_at DESC, j.id DESC LIMIT 1""",
+            (principal.tenant_id, task_id, principal.user_id, principal.user_id, request_id, request_id),
+        ).fetchone()
+        return {"request_id": str(row[0]), "state": (row[1] or {}).get("state", "pending"), "reason": (row[1] or {}).get("reason")} if row else None
+
+    def enqueue_task_confirmation(self, action: CardAction) -> dict:
+        """Acknowledge only a committed, authorized intent; never perform quota I/O here."""
+        notification_id = _as_uuid(action.notification_id)
+        if not notification_id or not self.settings.tenant_allowed(action.tenant_key):
+            raise KeyError("missing")
+        # Override the ordinary 15-second connect timeout only for this callback.
+        # A failed or unconfirmed commit propagates; it is not a pending receipt.
+        with psycopg.connect(self.settings.dsn("api"), autocommit=True, connect_timeout=1, options="-c statement_timeout=500 -c lock_timeout=200") as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            query = """WITH source AS (
+                    SELECT j.tenant_id, d.id AS task_id, d.created_by, j.payload->'confirmation' AS confirmation,
+                        r.id AS round_id
+                    FROM engine.jobs j JOIN product.audit_drafts d ON d.id::text = j.payload->>'task_id' AND d.tenant_id = j.tenant_id
+                    JOIN product.tenants t ON t.id = d.tenant_id
+                    JOIN product.identities i ON i.user_id = d.created_by AND i.provider = t.provider AND i.tenant_key = t.external_key
+                    JOIN product.memberships m ON m.user_id = i.user_id AND m.tenant_id = d.tenant_id
+                    LEFT JOIN product.audit_rounds r ON r.source_draft_id = d.id AND r.tenant_id = d.tenant_id
+                    WHERE j.id = %s AND j.kind = 'feishu_notification' AND j.payload->>'stage' = 'confirmation'
+                    AND j.result->>'state' = 'sent' AND j.result->>'message_id' = %s
+                    AND i.provider = 'feishu' AND i.app_id = %s AND i.tenant_key = %s AND i.subject = %s
+                    AND jsonb_typeof(j.payload->'confirmation') = 'object' AND d.task_fingerprint IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review'))
+                    AND (r.id IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
+                    AND NOT EXISTS (SELECT 1 FROM product.draft_items di JOIN product.file_versions f ON f.id = di.file_version_id
+                        WHERE di.draft_id = d.id AND NOT EXISTS (SELECT 1 FROM product.resource_grants g
+                            WHERE g.resource_id = f.file_id AND g.user_id = d.created_by AND g.capability IN ('read', 'review')))
+                ), queued AS (
+                    INSERT INTO engine.jobs (id, tenant_id, kind, payload, status, result)
+                    SELECT (confirmation->>'request_id')::uuid, tenant_id, 'task_confirmation',
+                        jsonb_build_object('task_id', task_id::text, 'created_by', created_by::text,
+                            'request_id', confirmation->>'request_id', 'expected_revision', confirmation->'expected_revision',
+                            'notification_id', %s::text, 'message_id', %s::text, 'tenant_key', %s::text, 'subject', %s::text),
+                        'queued', jsonb_build_object('state', 'pending', 'reason', '已收到卡片确认，正在核对用量，尚未受理。')
+                    FROM source WHERE true ON CONFLICT (id) DO NOTHING
+                    RETURNING id, tenant_id, kind, payload, result
+                ), receipt AS (
+                    SELECT * FROM queued UNION ALL
+                    SELECT j.id, j.tenant_id, j.kind, j.payload, j.result FROM engine.jobs j JOIN source s
+                        ON j.id = (s.confirmation->>'request_id')::uuid WHERE NOT EXISTS (SELECT 1 FROM queued)
+                ) SELECT q.id, q.tenant_id, q.kind, q.payload, q.result FROM receipt q JOIN source s ON s.tenant_id = q.tenant_id
+                    AND s.task_id::text = q.payload->>'task_id' AND s.created_by::text = q.payload->>'created_by'"""
+            params = (notification_id, action.message_id, self.settings.feishu_app_id, action.tenant_key, action.subject, notification_id, action.message_id, action.tenant_key, action.subject)
+            row = conn.execute(query, params).fetchone()
+            if row is None:
+                # ON CONFLICT can see a concurrently committed unique key that
+                # the same statement's READ COMMITTED snapshot cannot read yet.
+                # One fresh, bounded statement reads that exact authorized ID;
+                # a database wait/commit failure still propagates as unknown.
+                row = conn.execute(query, params).fetchone()
+            if not row or row[2] != "task_confirmation" or row[3].get("notification_id") != notification_id:
+                raise KeyError("missing")
+            receipt = {"request_id": str(row[0]), "state": row[4]["state"], "reason": row[4].get("reason")}
+        return receipt
+
+    def claim_task_confirmation(self, worker_ident: str) -> ClaimedJob | None:
+        with self._conn() as conn, conn.transaction():
+            row = conn.execute(
+                """SELECT id, tenant_id, payload FROM engine.jobs WHERE kind = 'task_confirmation'
+                AND (status = 'queued' OR status = 'leased' AND lease_until < now())
+                ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1"""
             ).fetchone()
             if not row:
-                raise KeyError("missing")
-            confirmation = row[0].get("confirmation")
-            if not isinstance(confirmation, dict):
-                raise KeyError("missing")
-            principal = Principal(str(row[1]), str(row[2]), PROVIDER_FEISHU, self.settings.feishu_app_id, action.tenant_key, action.subject, row[3], row[4])
-            task_id = row[0]["task_id"]
+                return None
+            attempt = cast(
+                tuple,
+                conn.execute(
+                    """UPDATE engine.jobs SET status = 'leased', attempt = attempt + 1, lease_owner = %s,
+                lease_until = now() + interval '90 seconds', updated_at = now() WHERE id = %s RETURNING attempt""",
+                    (worker_ident, row[0]),
+                ).fetchone(),
+            )[0]
+            conn.execute("INSERT INTO engine.attempts (id, job_id, attempt, worker_id) VALUES (gen_random_uuid(), %s, %s, %s)", (row[0], attempt, worker_ident))
+            return ClaimedJob(str(row[0]), "task_confirmation", row[2], attempt, tenant_id=str(row[1]))
+
+    def process_task_confirmation(self, claimed: ClaimedJob, worker_ident: str, *, usage_policy=None) -> dict | None:
+        if claimed.kind != "task_confirmation":
+            return None
+        with self._conn() as conn, conn.transaction():
+            row = conn.execute(
+                """SELECT payload FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'task_confirmation'
+                AND status = 'leased' AND attempt = %s AND lease_owner = %s AND lease_until > clock_timestamp() FOR UPDATE""",
+                (claimed.id, claimed.tenant_id, claimed.attempt, worker_ident),
+            ).fetchone()
+            if not row:
+                return None
+            payload = row[0]
+            receipt = {"request_id": claimed.id, "state": "accepted", "reason": None}
             try:
-                self._accept_locked(
-                    conn, principal, confirmation["request_id"], source_draft_id=task_id, predecessor_id=None, items=None, task_revision=confirmation["expected_revision"], usage_policy=usage_policy
-                )
-            except ValueError as error:
-                if str(error) != "draft_already_accepted":
-                    raise
-            return self._recognition_public(conn, principal, task_id)
+                # Roll back all admission writes before recording a definite rejection.
+                with conn.transaction():
+                    self._confirm_task_notification(
+                        conn,
+                        CardAction(payload["tenant_key"], payload["subject"], payload["notification_id"], payload["message_id"]),
+                        usage_policy=usage_policy,
+                        expected_confirmation=payload,
+                    )
+            except (ValueError, KeyError) as error:
+                reason = {
+                    "rule_candidate_expired": "规则已更新，请打开页面重新识别并核对。",
+                    "task_revision_conflict": "文件或审核模式已变化，请打开页面核对。",
+                    "usage_quota_unavailable": "当前无法确认用量，请打开页面核对后重新确认。",
+                    "usage_ai_disabled": "飞书AI包开关已关闭，请联系管理员。",
+                    "usage_balance_empty": "当前没有可用额度，请联系管理员。",
+                }.get(str(error), "本次未受理，请由任务创建人打开页面核对权限和当前任务。")
+                receipt.update(state="rejected", reason=reason)
+            updated = conn.execute(
+                """UPDATE engine.jobs SET status = %s, result = %s, lease_until = NULL, updated_at = now()
+                WHERE id = %s AND attempt = %s AND lease_owner = %s AND lease_until > clock_timestamp() RETURNING id""",
+                ("succeeded" if receipt["state"] == "accepted" else "failed", Jsonb(receipt), claimed.id, claimed.attempt, worker_ident),
+            ).fetchone()
+            if not updated:
+                raise TimeoutError("task_confirmation_lease_expired")
+            conn.execute(
+                "UPDATE engine.attempts SET finished_at = now(), outcome = %s, diagnostic = %s WHERE job_id = %s AND attempt = %s",
+                ("succeeded" if receipt["state"] == "accepted" else "failed", Jsonb(receipt), claimed.id, claimed.attempt),
+            )
+        return receipt
 
     def _archive_rows(self, conn, principal: Principal) -> list:
         return conn.execute(
@@ -1923,7 +2070,7 @@ class AuthStore:
                     (draft["predecessor_id"], principal.tenant_id, principal.user_id),
                 ).fetchall()
             }
-        available_rules = self.list_rules(principal.tenant_id) if original_rules else []
+        available_rules = self._list_rules(conn, principal.tenant_id) if original_rules else []
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT i.*, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
@@ -2061,6 +2208,10 @@ class AuthStore:
             WHERE a.source_draft_id = %s AND a.tenant_id = %s ORDER BY a.created_at LIMIT 1""",
             (principal.user_id, task_id, principal.tenant_id),
         ).fetchone()
+        if not accepted:
+            confirmation = self._task_confirmation_receipt(conn, principal, task_id)
+            if confirmation:
+                task["acceptance"] = confirmation
         if accepted:
             if not accepted[3]:
                 raise KeyError("missing")
@@ -2208,10 +2359,14 @@ class AuthStore:
 
     def list_rules(self, tenant_id: str) -> list[dict]:
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT id, title, body, created_at, predecessor_id, case_context FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
-                (tenant_id,),
-            ).fetchall()
+            return self._list_rules(conn, tenant_id)
+
+    @staticmethod
+    def _list_rules(conn, tenant_id: str) -> list[dict]:
+        rows = conn.execute(
+            "SELECT id, title, body, created_at, predecessor_id, case_context FROM product.rule_versions WHERE tenant_id = %s ORDER BY created_at DESC, id DESC",
+            (tenant_id,),
+        ).fetchall()
         out = []
         for row in rows:
             body = row[2] or {}
@@ -2814,7 +2969,7 @@ class AuthStore:
                 row = conn.execute(
                     """
                     SELECT id, kind, payload, tenant_id FROM engine.jobs
-                    WHERE kind <> 'feishu_notification' AND (
+                    WHERE kind <> ALL(%s) AND (
                         (status = 'queued' AND (lease_until IS NULL OR lease_until < now()))
                         OR (status = 'leased' AND kind <> ALL(%s) AND lease_until IS NOT NULL AND lease_until < now())
                     )
@@ -2822,7 +2977,7 @@ class AuthStore:
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """,
-                    (list(FILE_PREPARATION_KINDS),),
+                    (["feishu_notification", "task_confirmation"], list(FILE_PREPARATION_KINDS)),
                 ).fetchone()
                 if not row:
                     return None
@@ -3592,7 +3747,7 @@ class AuthStore:
                     if (row["match"] or {}).get("state") == "reference" or (row["match"] or {}).get("state") == "matched" and row["match"]["rule"]
                 ]
                 if not existing:
-                    current_rules = {rule["id"] for rule in latest_rule_versions(self.list_rules(principal.tenant_id))}
+                    current_rules = {rule["id"] for rule in latest_rule_versions(self._list_rules(conn, principal.tenant_id))}
                     source = self._reaudit_source(conn, principal, predecessor_id) if predecessor_id else None
                     inherited = {
                         (file["file"]["id"], file.get("preferred_rule_version_id"))
@@ -3632,8 +3787,8 @@ class AuthStore:
         require_targets(prepared)
         fingerprint = request_fingerprint(prepared)
         if existing:
-            resource = self.resource(str(existing[0]))
-            if resource is None or not can_read(principal, resource, self.grants(str(existing[0]), principal.user_id)):
+            resource = self._resource(conn, str(existing[0]))
+            if resource is None or not can_read(principal, resource, self._grants(conn, str(existing[0]), principal.user_id)):
                 raise KeyError("missing")
             if existing[1] != fingerprint or (str(existing[2]) if existing[2] else None) != predecessor_id or existing[3] != analysis_mode:
                 raise ValueError("idempotency_conflict")

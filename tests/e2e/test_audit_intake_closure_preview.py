@@ -13,6 +13,41 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the preview and e2e dependencies")
 class AuditIntakeClosureTests(unittest.TestCase):
+    def test_card_confirmation_recovery_keeps_the_pending_receipt_and_only_reads_it(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-pending&task=preview-recovery-task")
+            reason = "已收到卡片确认，正在核对用量，尚未受理。"
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("alert")).to_have_attribute("data-request-id", "preview-recovery-request")
+            expect(page.get_by_role("alert")).to_contain_text(reason)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+            page.reload()
+            expect(page.get_by_role("alert")).to_contain_text(reason)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取受理结果", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text(reason)
+            expect(page.get_by_role("alert")).to_have_attribute("data-request-id", "preview-recovery-request")
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+            page.get_by_role("button", name="读取受理结果", exact=True).click()
+            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
+            browser.close()
+
+    def test_card_confirmation_rejection_restores_the_reason_and_allows_explicit_confirmation(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-card-rejected&task=preview-recovery-task")
+            expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+            expect(page.get_by_role("alert")).to_contain_text("本次未受理")
+            expect(page.get_by_role("alert")).to_contain_text("文件或审核模式已变化，请打开页面核对。")
+            expect(page.get_by_role("button", name="读取受理结果", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="开始审核", exact=True).click()
+            expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
+            browser.close()
+
     def test_pending_uploads_keep_the_return_and_original_receipt_recovery(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

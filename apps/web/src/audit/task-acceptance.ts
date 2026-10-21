@@ -46,7 +46,8 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
       } else if (next.id === task.id && next.state === 'pending_confirm' && !next.round_id && next.acceptance?.request_id === requestId && next.acceptance.state === 'rejected') {
         remember(task.id, {requestId, phase: 'rejected', message: next.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
       } else {
-        remember(task.id, {requestId, ...trace, phase: 'unknown', message: '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
+        const reason = next.id === task.id && next.acceptance?.request_id === requestId && next.acceptance.state === 'pending' ? next.acceptance.reason : null
+        remember(task.id, {requestId, ...trace, phase: 'unknown', message: reason || '受理结果尚未确认。请读取同一请求的回执，不要重复开始审核。'})
       }
     } catch (failure) {
       const traceId = requestTrace(failure) || trace.traceId
@@ -64,10 +65,15 @@ export function useTaskAcceptance(adapter: AuditAcceptanceAdapter, onAccepted: (
       remember(task.id, {requestId, phase: 'accepted', message: ''})
       return true
     }
-    if (task.acceptance?.state !== 'pending' || operations.current.has(task.id)) return true
+    if (!task.acceptance || operations.current.has(task.id)) return true
+    if (task.acceptance.state === 'rejected' && task.state === 'pending_confirm' && !task.round_id) {
+      remember(task.id, {requestId: task.acceptance.request_id, phase: 'rejected', message: task.acceptance.reason || '本次请求明确未受理，可以重新确认。'})
+      return true
+    }
+    if (task.acceptance.state !== 'pending') return true
     const requestId = task.acceptance.request_id
     inputs.current.set(requestId, structuredClone(task))
-    remember(task.id, {requestId, phase: 'unknown', message: '恢复到尚未取得回执的确认请求。请读取原请求结果，不要重复开始审核。'})
+    remember(task.id, {requestId, phase: 'unknown', message: task.acceptance.reason || '恢复到尚未取得回执的确认请求。请读取原请求结果，不要重复开始审核。'})
     return true
   }
   return {observations, restore, suspend, confirm: (task: Task) => run(task, false), reconcile: (task: Task) => run(task, true)}
