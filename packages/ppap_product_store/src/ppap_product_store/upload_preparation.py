@@ -74,7 +74,7 @@ def normalize_preparation(value) -> dict:
             raise ValueError("invalid_upload_preparation")
         reason = raw.get("removal_reason")
         if raw["selection"] == "removed":
-            reason = _text(reason)
+            reason = _text(reason).strip()
         elif reason is not None:
             raise ValueError("invalid_upload_preparation")
         row = {

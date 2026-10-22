@@ -83,6 +83,16 @@ def test_explicit_removal_and_later_validation_preserve_the_rest_of_the_batch():
     assert normalized["uploads"][0]["request_id"] == previous["uploads"][0]["request_id"]
 
 
+@pytest.mark.parametrize("reason", ["用户移除", " 用户移除 \t"])
+def test_removal_reason_has_the_same_canonical_form_as_recognition(reason):
+    raw = preparation()
+    raw["files"][0].update(selection="removed", removal_reason=reason)
+    saved = normalize_preparation(raw)
+    assert saved["files"][0]["removal_reason"] == "用户移除"
+    assert preparation_inputs(saved)["files"][0]["removal_reason"] == "用户移除"
+    assert raw["files"][0]["removal_reason"] == reason
+
+
 def test_feishu_intent_preserves_source_and_same_request_without_claiming_it_was_imported():
     raw = preparation()
     raw["uploads"] = [{"request_id": str(uuid4()), "kind": "feishu", "name": "云端控制计划", "drive_file": {"token": "original-doc", "name": "云端控制计划", "type": "sheet"}, "removed": False}]
