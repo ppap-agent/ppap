@@ -183,3 +183,183 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         assert all(method == "GET" for method, _path in calls)
         assert not any(path.startswith(("/audit-tasks", "/files", "/rounds")) for _method, path in calls)
         browser.close()
+
+
+def test_directory_timeout_retries_the_same_page_and_ignores_its_late_reply():
+    """Only control the public directory HTTP edge; never create or send a share."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1057, "height": 853})
+        page.set_default_timeout(5000)
+        import fitz
+
+        task_id, round_id, version_id, report_id = ("00000000-0000-4000-8000-00000000000" + str(n) for n in range(1, 5))
+        with fitz.open() as document:
+            document.new_page().insert_text((72, 72), "Frozen directory test report")
+            pdf = document.tobytes()
+        clause = {"id": "1", "category": "签字", "priority": None, "rule_to_check": "原件必须有签字", "type_of_rule": "text"}
+        rule = {"id": "frozen-rule", "title": "控制计划规则", "body": {"kind": "engine", "type": "控制计划", "rule_profile": "v3", "customers": [], "models": [], "parts": [], "rules": [clause]}}
+        version = {"id": version_id, "file_id": "original-file", "original_filename": "控制计划.xlsx", "status": "ready", "content_type": "application/octet-stream", "byte_size": 8, "sha256": None}
+        audit = {
+            "round_id": round_id,
+            "file_version_id": version_id,
+            "result_attempt": 1,
+            "rule": rule,
+            "execution": "completed",
+            "progress": {"completed": 1, "total": 1},
+            "failure": None,
+            "conclusion": "NG",
+            "counts": {"pass_count": 0, "ng_count": 1, "unknown_count": 0, "not_covered_count": 0, "error_count": 0},
+            "checks": [
+                {
+                    "rule_item": clause,
+                    "execution": "completed",
+                    "coverage": "executed",
+                    "finding": {"item_key": "1", "status": "NG", "item": "签字为空", "classification": "签字", "suggestions": "", "priority": None, "locator": None, "review": None},
+                    "evidence": [],
+                    "scope": None,
+                    "evidence_verified": False,
+                    "review": None,
+                }
+            ],
+            "unmapped_findings": [],
+            "summary": {"conclusion": "NG", "text": "不符合 1 项。", "corrective_actions": [], "extended_suggestions": []},
+            "report": {
+                "state": "ready",
+                "report_id": report_id,
+                "reason": None,
+                "generated_at": "2026-10-20T00:00:00Z",
+                "artifact": {"artifact_id": report_id + ":1", "filename": "控制计划.xlsx-审核报告.pdf", "content_type": "application/pdf", "byte_size": len(pdf)},
+                "regenerate_allowed": False,
+            },
+        }
+        task = {
+            "id": task_id,
+            "number": "PPAP-目录读取测试",
+            "state": "completed",
+            "analysis_mode": "standard",
+            "created_at": "2026-10-20T00:00:00Z",
+            "updated_at": "2026-10-20T00:00:00Z",
+            "source_draft_id": task_id,
+            "input_revision": 0,
+            "round_id": round_id,
+            "customer_preference": None,
+            "completion_reason": "processed",
+            "estimated_points": 500,
+            "acceptance": {"request_id": "original-confirmation", "state": "accepted", "reason": None},
+            "progress": {"completed": 1, "total": 1},
+            "files": [
+                {
+                    "file": version,
+                    "selection": "selected",
+                    "removal_reason": None,
+                    "validation": {"state": "valid", "reasons": []},
+                    "match": {"state": "matched", "document_type": "控制计划", "metadata": {"customer": None, "model": None, "part": None, "part_number": None}, "rule": rule, "gaps": []},
+                    "audit": audit,
+                }
+            ],
+        }
+        calls = []
+        page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
+
+        def api(route):
+            path = urlsplit(route.request.url).path.removeprefix("/api")
+            calls.append((route.request.method, path))
+            if route.request.method != "GET":
+                route.fulfill(status=405, json={"error": "read_only_test"})
+            elif path == "/public-config":
+                route.fulfill(
+                    json={
+                        "git_sha": "controlled-directory",
+                        "api_url": WEB + "/api",
+                        "profile": "isolated-dev",
+                        "login": "feishu",
+                        "feishu_app_id": "test-app",
+                        "deep_offered": False,
+                        "current_access": "allowed",
+                        "usage_charge_enabled": False,
+                    }
+                )
+            elif path == "/me":
+                route.fulfill(
+                    json={
+                        "display_name": "测试用户",
+                        "tenant_id": "test-tenant",
+                        "user_id": "test-user",
+                        "membership": "member",
+                        "identity": {"provider": "feishu", "app_id": "test-app", "tenant_key": "test-tenant", "subject": "test-user"},
+                    }
+                )
+            elif path in {"/drafts", "/rounds", "/audit-tasks"}:
+                route.fulfill(json={"tasks" if path == "/audit-tasks" else path.removeprefix("/"): [], "next_offset": None})
+            elif path == "/audit-tasks/" + task_id:
+                route.fulfill(json=task)
+            elif path == f"/audit-tasks/{task_id}/reports/{report_id}/pdf":
+                route.fulfill(body=pdf, content_type="application/pdf")
+            else:
+                route.fulfill(status=404, json={"error": "unexpected_request"})
+
+        page.route("**/api/**", api)
+        queries, pending = [], []
+        alice = {"kind": "user", "id": "alice", "display_name": "质量王工", "organization_id": "test-tenant", "eligibility": "eligible", "reason": ""}
+
+        def directory(route):
+            assert route.request.method == "GET"
+            params = parse_qs(urlsplit(route.request.url).query)
+            queries.append(params)
+            if params.get("page_token"):
+                pending.append(route)
+            else:
+                route.fulfill(json={"organization_id": "test-tenant", "organization_name": "测试组织", "targets": [alice], "next_page_token": "page-two" if params.get("query") else None})
+
+        page.route("**/api/audit-share-targets?*", directory)
+        # A transport may ignore AbortSignal; the native adapter must still settle.
+        page.add_init_script("""
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = (input, init) => String(input).includes('/audit-share-targets?')
+            ? originalFetch(input, {...init, signal: undefined}) : originalFetch(input, init);
+        """)
+        page.goto(WEB + f"/tasks/{task_id}?report={version_id}")
+        expect(page.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
+        page.clock.install()
+        page.get_by_role("button", name="分享", exact=True).click()
+        panel = page.get_by_role("dialog", name="分享审核报告", exact=True)
+        search = panel.get_by_role("button", name="搜索", exact=True)
+        expect(search).to_be_enabled()
+        field = panel.get_by_role("textbox", name="搜索人员或群组", exact=True)
+        field.fill("质量 & 王工")
+        search.click()
+        selected = panel.get_by_role("checkbox", name="选择人员 质量王工", exact=True)
+        expect(selected).to_be_enabled()
+        selected.check()
+        send = panel.get_by_role("button", name="发送给 1 个目标", exact=True)
+        expect(send).to_be_enabled()
+        panel.get_by_role("button", name="加载更多目标", exact=True).click()
+        expect(send).to_be_disabled()
+        expect(panel.get_by_text("正在读取组织目录…", exact=True)).to_be_visible()
+        page.clock.fast_forward(45_001)
+        expect(panel.get_by_role("alert")).to_contain_text("读取组织目录超时，请重新读取目标。")
+        expect(search).to_be_enabled()
+        expect(selected).to_be_checked()
+        assert len(pending) == 1 and len(queries) == 3
+        original_query = {"query": ["质量 & 王工"], "kind": ["user"], "page_token": ["page-two"]}
+        assert queries[-1] == original_query
+        field.fill("尚未提交的新搜索")
+        with page.expect_request(lambda request: parse_qs(urlsplit(request.url).query) == original_query):
+            panel.get_by_role("button", name="重新读取目标", exact=True).click()
+        expect(panel.get_by_text("正在读取组织目录…", exact=True)).to_be_visible()
+        assert len(pending) == 2 and queries[-1] == original_query
+        ghost = {**alice, "id": "late", "display_name": "过期响应人员"}
+        with page.expect_response(lambda response: "/audit-share-targets?" in response.url):
+            pending[0].fulfill(json={"organization_id": "test-tenant", "organization_name": "测试组织", "targets": [ghost], "next_page_token": None})
+        page.clock.run_for(1)
+        expect(panel.get_by_text("过期响应人员", exact=True)).to_have_count(0)
+        expect(send).to_be_disabled()
+        bob = {**alice, "id": "bob", "display_name": "质量李工"}
+        pending[1].fulfill(json={"organization_id": "test-tenant", "organization_name": "测试组织", "targets": [bob], "next_page_token": None})
+        expect(panel.get_by_role("checkbox", name="选择人员 质量李工", exact=True)).to_be_visible()
+        expect(selected).to_be_checked()
+        expect(send).to_be_enabled()
+        assert len(queries) == 4
+        assert all(method == "GET" for method, _path in calls)
+        browser.close()

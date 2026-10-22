@@ -11,7 +11,7 @@ import type {AuditUsageAdapter} from './usage-contract'
 import type {AuditSharingAdapter} from './sharing-contract'
 
 export const nativeSharingAdapter: AuditSharingAdapter = {
-  listTargets: (query, kind, pageToken) => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`),
+  listTargets: (query, kind, pageToken) => readWithDeadline(signal => request(`/audit-share-targets?${new URLSearchParams({query, kind, ...(pageToken ? {page_token: pageToken} : {})})}`, 'GET', undefined, signal), '读取组织目录超时，请重新读取目标。'),
   async send(input) {
     try {return await request('/audit-report-shares', 'POST', input)}
     catch (failure) {

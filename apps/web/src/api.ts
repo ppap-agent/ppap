@@ -108,6 +108,7 @@ const messages: Record<string,string> = {
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
   share_directory_permission_missing: '当前组织尚未授权所需的飞书目录权限，请联系管理员完成授权。',
+  share_directory_timeout: '读取组织目录超时，请重新读取目标。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
 }
 const safeRequestTrace = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(value) ? value : undefined
