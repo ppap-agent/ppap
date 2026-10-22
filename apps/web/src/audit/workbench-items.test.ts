@@ -30,9 +30,11 @@ test('execution faults use an independent queue flag without reclassifying NG or
     const item = workbenchItems([task])[0]
     assert.equal(item.task, 'attention')
     assert.equal(item.state, '存在执行异常')
+    assert.equal(item.next, '查看异常')
     assert.equal(task.execution, 'completed')
     const round = {id: 'old', execution: 'completed', has_execution_error: true, inputs: [], result_counts: {}, created_at: '2026-09-01'} as components['schemas']['RoundSummary']
     assert.equal(workbenchItems([], [], [round])[0].task, 'attention')
+    assert.equal(workbenchItems([], [], [round])[0].next, '查看异常')
     assert.equal(round.execution, 'completed')
   }
   assert.equal(workbenchItems([{...completed, has_execution_error: false, result_counts: {NG: 2, UNABLE: 1}, uncovered_count: 3}])[0].task, 'completed')
@@ -40,5 +42,7 @@ test('execution faults use an independent queue flag without reclassifying NG or
   assert.equal(workbenchItems([{...completed, state: 'reviewing', execution: 'running', result_counts: {ERR: 1}}])[0].task, 'running')
   const running = {id: 'old', execution: 'running', inputs: [], result_counts: {ERR: 1}, created_at: '2026-09-01'} as components['schemas']['RoundSummary']
   assert.equal(workbenchItems([], [], [running])[0].task, 'running')
+  assert.equal(workbenchItems([], [], [running])[0].next, '查看进度')
   assert.equal(workbenchItems([], [], [{...running, execution: 'failed'}])[0].task, 'attention')
+  assert.equal(workbenchItems([], [], [{...running, execution: 'failed'}])[0].next, '查看异常')
 })

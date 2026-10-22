@@ -142,7 +142,7 @@ def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error,
                 expect(row).to_contain_text("读取失败的控制计划.xlsx")
             return row
 
-        check_selected().get_by_role("link", name="查看结果", exact=True).click()
+        check_selected().get_by_role("link", name="查看异常" if partial_error else "查看结果", exact=True).click()
         expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
         # Hold the list response so the detail-derived summary cannot be masked
         # by a second server summary. No component state or audit result is mocked.
