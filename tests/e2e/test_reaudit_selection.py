@@ -110,6 +110,8 @@ def reaudit_routes(page, *, accept=False):
             for choice in body["files"]:
                 source = next((file for file in files if file["file"]["id"] == choice["file_version_id"]), None)
                 row = {**source} if source else {"file": dict(uploaded), "validation": {"state": "valid", "reasons": []}, "rule_options": files[0]["rule_options"]}
+                for field in ("preferred_rule_version_id", "reference_only", "replacement_of_file_version_id"):
+                    row.pop(field, None)
                 row.update({key: value for key, value in choice.items() if key != "file_version_id"})
                 row["match"] = (
                     {
@@ -188,6 +190,36 @@ def test_changing_and_clearing_a_replacement_restores_the_previously_selected_or
     files = recognition_command(page, commands)
     assert [file["selection"] for file in files] == ["selected", "selected", "selected"]
     assert all(not file.get("replacement_of_file_version_id") for file in files)
+
+
+def test_replacement_inherits_the_explicit_choice_to_match_current_rules(reaudit_page):
+    page, commands = reaudit_page
+    page.get_by_role("combobox", name="原文件A.xlsx 的重审规则", exact=True).click()
+    page.get_by_role("option", name="重新匹配当前规则", exact=True).click()
+    expect(page.get_by_role("combobox", name="原文件A.xlsx 的重审规则", exact=True)).to_have_text("重新匹配当前规则")
+    choose_replacement(page, "替换：原文件A.xlsx")
+    files = recognition_command(page, commands)
+    assert files[2]["replacement_of_file_version_id"] == "A"
+    assert not files[2].get("preferred_rule_version_id")
+    expect(page.get_by_role("combobox", name="补件C.xlsx 的重审规则", exact=True)).to_have_text("重新匹配当前规则")
+
+
+@pytest.mark.parametrize("reaudit_page", [True], indirect=True)
+def test_current_rule_matching_choice_survives_readback_and_releasing_the_replacement(reaudit_page):
+    page, commands = reaudit_page
+    page.get_by_role("combobox", name="原文件A.xlsx 的重审规则", exact=True).click()
+    page.get_by_role("option", name="重新匹配当前规则", exact=True).click()
+    choose_replacement(page, "替换：原文件A.xlsx")
+    files = recognition_command(page, commands)
+    assert not files[2].get("preferred_rule_version_id")
+    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    page.reload()
+    expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
+    page.get_by_role("button", name="上一步", exact=True).click()
+    expect(page.get_by_role("combobox", name="补件C.xlsx 的重审规则", exact=True)).to_have_text("重新匹配当前规则")
+    choose_replacement(page, "新增文件 · 重新匹配")
+    expect(page.get_by_role("combobox", name="原文件A.xlsx 的重审规则", exact=True)).to_have_text("重新匹配当前规则")
+    assert len(commands) == 1
 
 
 @pytest.mark.parametrize("action", ["uncheck", "remove"])

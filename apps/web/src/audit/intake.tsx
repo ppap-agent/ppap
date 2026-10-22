@@ -154,7 +154,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   function chooseReplacement(fileId: string, originalId: string) {
     setFiles(rows => {
       const original = rows.find(row => row.file.id === originalId && !row.replacement_of_file_version_id)
-      return reconcileReplacements(rows.map(row => row.file.id === fileId ? {...row, replacement_of_file_version_id: original?.file.id, preferred_rule_version_id: original?.preferred_rule_version_id || original?.rule_options?.[0]?.id, reference_only: original?.reference_only, rule_options: original?.rule_options} : row))
+      return reconcileReplacements(rows.map(row => row.file.id === fileId ? {...row, replacement_of_file_version_id: original?.file.id, preferred_rule_version_id: original?.preferred_rule_version_id, reference_only: original?.reference_only, rule_options: original?.rule_options} : row))
     })
   }
   const [preparingReaudit, setPreparingReaudit] = useState(false)
