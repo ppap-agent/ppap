@@ -15,13 +15,13 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
-from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
+from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_deep.auditor import SemanticRuntime, product_response
 from ppap_deep.client import DeepError
 from ppap_deep.controller import Controller, ExecutionContext
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.guest import Manifest, execute
-from ppap_deep.semantic.guest_model import ModelBudgetError
+from ppap_deep.semantic.guest_model import ModelBudgetError, ModelProtocolError
 from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ResultBundle, SubmissionSpec
 from ppap_deep.semantic.trace import AuditExecution
@@ -49,13 +49,10 @@ class MemoryObjects:
     def __init__(self):
         self.values = {}
 
-    def get(self, key, *, max_bytes=None):
+    def get(self, key):
         if key not in self.values:
             raise ObjectMissing()
-        data = self.values[key]
-        if max_bytes is not None and len(data) > max_bytes:
-            raise ObjectTooLarge()
-        return data
+        return self.values[key]
 
     def put_exclusive(self, key, body, _content_type):
         if key in self.values:
@@ -68,6 +65,7 @@ class ModelResponses:
 
     def __init__(self, broken_first_plan):
         self.failed_plan_versions = {BAD_RULE} if broken_first_plan else set()
+        self.invalid_schema_attempts = {}
         self.invalid_source_locator = False
         self.global_fault = None
         self.input_tokens = 0
@@ -113,10 +111,11 @@ class ModelResponses:
                     digest = "0" * 64
                 else:
                     planned.pop()
-            plan = RulePlan.model_validate({"source_sha256": digest, "plan_revision": rule.plan_revision, "rules": planned})
+            if self.plan_attempts[version] in self.invalid_schema_attempts.get(version, set()):
+                planned[0]["predicate"] = {"kind": "private-invalid-model-output", "question": "private rejected plan text"}
             if self.after_plan is not None:
                 self.after_plan(version, self.plan_attempts[version], _deadline)
-            return plan
+            return RulePlan.model_validate({"source_sha256": digest, "plan_revision": rule.plan_revision, "rules": planned})
 
         assert schema is AuditExecution
         self.audit_calls += 1
@@ -211,12 +210,9 @@ def frozen_case(broken_first_plan=True, *, shared_bad_rule=False, bad_clause_id=
         assert request.model_dump(mode="json") == original
         authorized.append(request.job_id)
 
-    def read(version_id, max_bytes=None):
+    def read(version_id):
         reads.append(version_id)
-        data = blobs[version_id]
-        if max_bytes is not None and len(data) > max_bytes:
-            raise DeepError("deep_budget_exhausted")
-        return data
+        return blobs[version_id]
 
     model = ModelResponses(broken_first_plan)
     guest = InProcessGuest(model)
@@ -272,6 +268,42 @@ def test_controller_keeps_all_frozen_clauses_when_one_rule_plan_fails(broken_fir
         assert finding.locator["file_version_id"] == GOOD_TARGET
         assert finding.locator["semantic"]["rule_version_id"] == GOOD_RULE
         assert finding.locator["semantic"]["sources"][0]["excerpt"] == excerpt
+
+
+@pytest.mark.parametrize(
+    "invalid_attempts,invalid_coverage_first,expected_bad",
+    [({1}, False, "PASS"), ({1, 2}, False, "ERR"), ({2}, True, "ERR")],
+    ids=["malformed-plan-repaired", "malformed-plan-still-invalid", "coverage-repair-has-invalid-schema"],
+)
+def test_malformed_plan_output_is_repaired_within_the_same_frozen_rule(invalid_attempts, invalid_coverage_first, expected_bad):
+    case = frozen_case(broken_first_plan=invalid_coverage_first)
+    case.model.invalid_schema_attempts = {BAD_RULE: invalid_attempts}
+
+    result = handle_case(case)
+
+    assert result.files == case.spec.files
+    assert [(row.item_key, row.status) for row in result.findings] == [
+        (f"{BAD_TARGET}:rule:B1", expected_bad),
+        (f"{BAD_TARGET}:rule:B2", expected_bad),
+        (f"{GOOD_TARGET}:rule:G1", "PASS"),
+        (f"{GOOD_TARGET}:rule:G2", "NG"),
+    ]
+    assert case.authorized == ["frozen-job"]
+    assert case.reads == [BAD_TARGET, GOOD_TARGET]
+    assert case.guest.calls == 1
+    assert case.model.plan_attempts == {BAD_RULE: 2, GOOD_RULE: 1}
+    assert case.model.audit_calls == 1
+    assert case.model.audit_targets == [{BAD_TARGET: BAD_RULE, GOOD_TARGET: GOOD_RULE} if expected_bad == "PASS" else {GOOD_TARGET: GOOD_RULE}]
+    assert (result.usage["input_tokens"], result.usage["output_tokens"]) == (40, 8)
+    bundle, submission = persisted_bundle(case)
+    assert set(bundle.failed_rules) == ({BAD_RULE} if expected_bad == "ERR" else set())
+    assert set(bundle.plans) == ({GOOD_RULE} if expected_bad == "ERR" else {BAD_RULE, GOOD_RULE})
+    if expected_bad == "ERR":
+        assert bundle.failed_rules[BAD_RULE].reason == "plan_schema_invalid"
+    for artifact in case.objects.values.values():
+        assert b"private-invalid-model-output" not in artifact
+        assert b"private rejected plan text" not in artifact
+    assert product_response(case.spec, bundle, submission) == result
 
 
 def test_shared_failed_rule_marks_both_targets_err_and_caches_only_the_independent_plan():
@@ -420,14 +452,19 @@ def test_product_response_rejects_tampered_failed_rule_identity_or_result_partit
     assert case.guest.calls == 1
 
 
-@pytest.mark.parametrize("fault", ["budget", "timeout", "cancel"])
+@pytest.mark.parametrize("fault", ["budget", "timeout", "protocol", "unclassified", "cancel"])
 def test_global_model_faults_and_controller_cancellation_do_not_become_partial_results(fault):
     case = frozen_case()
     context = ExecutionContext()
     if fault == "cancel":
         context.cancelled.set()
     else:
-        case.model.global_fault = ModelBudgetError("external budget exhausted") if fault == "budget" else TimeoutError("external timeout")
+        case.model.global_fault = {
+            "budget": ModelBudgetError("external budget exhausted"),
+            "timeout": TimeoutError("external timeout"),
+            "protocol": ModelProtocolError("external model protocol failed"),
+            "unclassified": ValueError("unclassified external failure"),
+        }[fault]
 
     # This in-process adapter proves only that guest does not swallow a global
     # fault. ContainerRuntime's production fault-code mapping has its own owner.
@@ -440,8 +477,11 @@ def test_global_model_faults_and_controller_cancellation_do_not_become_partial_r
     assert case.objects.values == {}
 
 
-def test_compile_repair_that_returns_at_deadline_cannot_start_an_independent_rule(monkeypatch):
+@pytest.mark.parametrize("invalid_schema_repair", [False, True], ids=["coverage-error", "schema-error"])
+def test_compile_repair_that_returns_at_deadline_cannot_start_an_independent_rule(monkeypatch, invalid_schema_repair):
     case = frozen_case()
+    if invalid_schema_repair:
+        case.model.invalid_schema_attempts = {BAD_RULE: {2}}
     clock = [100.0]
     monkeypatch.setattr("ppap_deep.semantic.guest.time.monotonic", lambda: clock[0])
 

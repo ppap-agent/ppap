@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .document_tools import ParserLimitError, ReadLimits, save, snapshot
 from .evidence import EvidenceBudget, resolve
@@ -255,6 +255,15 @@ def _compile_review_prompt(requests: list[dict[str, Any]]) -> str:
     )
 
 
+def _run_plan(runner: StageRunner, stage: Path, prompt: str, rule: RuleRef, deadline: float) -> RulePlan:
+    try:
+        return runner.run(stage, prompt, RulePlan, deadline, reasoning_effort="xhigh")
+    except ValidationError:
+        # A structurally invalid plan is a known output rejection, not a
+        # provider/usage failure. Never include the rejected output in feedback.
+        raise PlanValidationError("plan_schema_invalid", rule.rule_id, None, "Compiled plan schema mismatch") from None
+
+
 def compile_plans(
     inputs: Path,
     work: Path,
@@ -276,12 +285,12 @@ def compile_plans(
         cached_plan = cached_plans.get(rule.rule_id)
         if cached_plan:
             try:
-                plan = RulePlan.model_validate(read_json(inputs, (cached_plan,), limits.output_bytes))
-                validate_plan(plan, rule, rule_sources[rule.rule_id], budget)
+                cached = RulePlan.model_validate(read_json(inputs, (cached_plan,), limits.output_bytes))
+                validate_plan(cached, rule, rule_sources[rule.rule_id], budget)
             except ValueError:
                 pass
             else:
-                plans[rule.rule_id] = plan
+                plans[rule.rule_id] = cached
                 continue
         stage = work / f"compile-{index}"
         stage.mkdir()
@@ -298,17 +307,21 @@ def compile_plans(
                 "unverified_outputs": ["working-state.json"],
             },
         )  # noqa: E501
-        plan = runner.run(stage, _compile_prompt(rule, ids), RulePlan, deadline, reasoning_effort="xhigh")
+        plan: RulePlan | None = None
         try:
+            plan = _run_plan(runner, stage, _compile_prompt(rule, ids), rule, deadline)
             validate_plan(plan, rule, rule_sources[rule.rule_id], budget)
-        except ValueError as error:
+        except PlanValidationError as error:
             if time.monotonic() >= deadline:
                 raise TimeoutError("Guest compilation recovery deadline exceeded") from error
             repair = work / f"compile-repair-{index}"
             repair.mkdir()
             save(repair / "rule-source.json", rule_sources[rule.rule_id])
             save(repair / "clauses.json", rule.clauses)
-            save(repair / "invalid-plan.json", plan.model_dump(mode="json"))
+            save(
+                repair / "invalid-plan.json",
+                plan.model_dump(mode="json") if plan is not None else {"unavailable": "The rejected output did not form a RulePlan. Recompile from the frozen source and clauses."},
+            )
             save(repair / "validation-feedback.json", {"code": "OUTPUT_VALIDATION_ERROR", "message": str(error)[:1024]})
             save(repair / "working-state.json", {"assumptions": [], "missing_evidence": [], "remaining_obligations_file": "clauses.json"})
             save(
@@ -321,8 +334,8 @@ def compile_plans(
                     "unverified_outputs": ["working-state.json", "invalid-plan.json"],
                 },
             )  # noqa: E501
-            plan = runner.run(repair, _compile_prompt(rule, ids, repair=True), RulePlan, deadline, reasoning_effort="xhigh")
             try:
+                plan = _run_plan(runner, repair, _compile_prompt(rule, ids, repair=True), rule, deadline)
                 validate_plan(plan, rule, rule_sources[rule.rule_id], budget)
             except PlanValidationError as repaired:
                 repaired.repair_failed = True
