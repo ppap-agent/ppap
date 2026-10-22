@@ -243,9 +243,9 @@ class AIClient:
                 output_tokens = getattr(usage, "output_tokens", None)
                 if type(input_tokens) is int and input_tokens >= 0 and type(output_tokens) is int and output_tokens >= 0:
                     details = getattr(usage, "output_tokens_details", None)
-                    thinking_tokens = getattr(details, "reasoning_tokens", 0)
-                    if type(thinking_tokens) is not int or thinking_tokens < 0:
-                        thinking_tokens = 0
+                    thinking_tokens = getattr(details, "reasoning_tokens", None)
+                    if type(thinking_tokens) is not int or not 0 <= thinking_tokens <= output_tokens:
+                        thinking_tokens = None
                     record_token_usage(
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,

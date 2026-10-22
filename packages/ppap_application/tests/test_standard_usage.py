@@ -43,8 +43,9 @@ def psw_input():
 
 
 @pytest.fixture
-def provider(monkeypatch):
+def provider(request, monkeypatch):
     calls = []
+    receipt = getattr(request, "param", {"input_tokens": 9, "output_tokens": 5, "total_tokens": 14, "output_tokens_details": {"reasoning_tokens": 2}})
 
     def send(_client, request, **_kwargs):
         calls.append(request)
@@ -59,7 +60,7 @@ def provider(monkeypatch):
                 "model": "usage-test",
                 "status": "completed",
                 "output": [{"type": "message", "id": "message-test", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": json.dumps(payload), "annotations": []}]}],
-                "usage": {"input_tokens": 9, "output_tokens": 5, "total_tokens": 14, "output_tokens_details": {"reasoning_tokens": 2}},
+                "usage": receipt,
             },
         )
 
@@ -95,6 +96,8 @@ def test_standard_round_keeps_real_provider_receipts_and_releases_the_tracking_s
     assert all(call["operation"] == "image_analysis" for call in usage["llm_calls"])
     assert get_current_request_id() == previous
     assert get_token_tracker().get_request_summary(usage["request_id"]) is None
+    assert "模型返回的不符合结论" not in json.dumps(usage, ensure_ascii=False)
+    assert "test-only" not in json.dumps(usage)
 
     second = run_round_from_bytes(work, blobs)
     assert len(provider) == 4
@@ -104,6 +107,21 @@ def test_standard_round_keeps_real_provider_receipts_and_releases_the_tracking_s
     assert second["usage"]["llm_calls_count"] == 2
     assert get_current_request_id() == previous
     assert get_token_tracker().get_request_summary(second["usage"]["request_id"]) is None
+
+
+@pytest.mark.parametrize("provider", [None], indirect=True)
+def test_missing_usage_receipts_do_not_change_actual_audit_results(provider):
+    work, blobs = psw_input()
+
+    result = run_round_from_bytes(work, blobs)
+
+    assert len(provider) == 2
+    assert [row["status"] for row in result["findings"]] == ["PASS", "NG"]
+    usage = result["usage"]
+    assert usage["llm_calls_count"] == usage["unreported_calls_count"] == 2
+    assert usage["usage_complete"] is False
+    assert usage["total_tokens"] is None
+    assert usage["llm_calls"] == []
 
 
 def test_failed_standard_input_restores_an_existing_tracking_scope():
