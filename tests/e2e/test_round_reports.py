@@ -1,6 +1,7 @@
 """Read a frozen Round's existing report through the authorized native Task UI."""
 
 import copy
+import json
 import os
 from urllib.parse import parse_qs, urlsplit
 
@@ -197,6 +198,40 @@ def test_round_opens_its_frozen_existing_report_and_back_preserves_historical_co
         expect(page.get_by_role("heading", name="原控制计划.xlsx", exact=True)).to_be_visible()
         expect(page.get_by_role("region", name="专注复核", exact=True)).to_be_visible()
         expect(page.get_by_role("heading", name="1 · 原签字要求", exact=True)).to_be_visible()
+        assert all(method == "GET" for method, _path in calls)
+        browser.close()
+
+
+def test_embedded_native_round_report_keeps_the_selected_report_when_its_host_reloads():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.set_default_timeout(5000)
+        calls, _content = round_report_routes(page)
+        initial = f"/audit?round={ROUND}&file={VERSION}"
+        # The external host only carries the existing public navigation message.
+        host = """<iframe title="原生客户端" id="product" style="width:100%;height:90vh"></iframe><script>
+        const frame = document.getElementById('product');
+        const address = new URL(location.href);
+        frame.src = address.searchParams.has('task')
+          ? '/tasks/' + encodeURIComponent(address.searchParams.get('task')) + '?report=' + encodeURIComponent(address.searchParams.get('report') || '')
+          : INITIAL;
+        addEventListener('message', event => {
+          if (event.origin !== location.origin || event.source !== frame.contentWindow || event.data?.type !== 'ppap-audit-task') return;
+          const next = new URL(location.href);
+          next.searchParams.set('task', event.data.task || '');
+          next.searchParams.set('report', event.data.report || '');
+          history.replaceState(null, '', next);
+        });</script>""".replace("INITIAL", json.dumps(initial))
+        page.route(WEB + "/round-report-host.html*", lambda route: route.fulfill(body=host, content_type="text/html"))
+        page.goto(WEB + "/round-report-host.html")
+        product = page.frame_locator("#product")
+        product.get_by_role("button", name="查看报告", exact=True).click()
+        expect(product.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
+        expect(page).to_have_url(WEB + f"/round-report-host.html?task={TASK}&report={VERSION}")
+        page.reload()
+        expect(product.get_by_role("heading", name="原控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+        expect(product.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
         assert all(method == "GET" for method, _path in calls)
         browser.close()
 
