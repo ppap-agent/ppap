@@ -1770,7 +1770,7 @@ class AuthStore:
                 ORDER BY expected_revision DESC LIMIT 1) display ON true
             WHERE d.tenant_id = %s AND d.created_by = %s AND d.task_fingerprint IS NOT NULL)
             SELECT id, file_version_id, object_kind, object_ref, created_at, sequence,
-                original_filename, metadata, document_type, display_values, archive_updated_at FROM history h
+                original_filename, metadata, document_type, display_values, archive_updated_at, round_id FROM history h
             WHERE NOT EXISTS (SELECT 1 FROM unnest(ARRAY[h.id, h.round_id, h.file_id]) wanted(resource_id)
                 WHERE NOT EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = wanted.resource_id
                     AND g.user_id = %s AND g.capability IN ('read', 'review')))
@@ -1786,14 +1786,66 @@ class AuthStore:
     def _archive_document_id(principal: Principal, row) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([principal.tenant_id, "feishu", row[2], row[3]])))
 
-    def _archive_records(self, conn, principal: Principal, rows: list) -> dict:
+    def _archive_task_summary(self, conn, principal: Principal, task_id: str, round_id: str) -> dict:
+        """Read only archive fields, retaining the full task's ownership/readiness checks."""
+        draft = self._recognition_owner(conn, principal, task_id)
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """SELECT i.file_version_id, i.selection, i.validation_job_id, f.original_filename,
+                    j.status AS analysis_status, j.payload AS analysis_payload, j.result AS analysis_result
+                FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
+                LEFT JOIN engine.jobs j ON j.id = i.analysis_job_id
+                WHERE i.draft_id = %s ORDER BY i.position""",
+                (task_id,),
+            )
+            files = cur.fetchall()
+        self._prepared_items(conn, principal, [{"file_version_id": str(file["file_version_id"]), "role": "reference"} for file in files])
+        self._file_jobs(conn, principal, [str(file["validation_job_id"]) for file in files if file["validation_job_id"]], "file_validation")
+        round = self._round_public(conn, round_id)
+        if round is None or round["source_draft_id"] != task_id:
+            raise KeyError("missing")
+        reports, _updated = self._task_file_reports(conn, principal.tenant_id, task_id, round_id, round["result_attempt"])
+        projected = []
+        for file in files:
+            vid = str(file["file_version_id"])
+            frozen = next((item for item in round["inputs"] if item["file_version_id"] == vid and item["role"] == "target"), None)
+            if file["selection"] != "selected" or frozen is None:
+                continue
+            audit = file_round_audit(round, frozen)
+            if vid in reports:
+                audit["report"] = reports[vid]
+            metadata = {"customer": None, "model": None, "part": None, "part_number": None}
+            result = file["analysis_result"] or {}
+            bound = self._analysis_snapshot_bound(file["analysis_payload"] or {}, result, task_id, draft["input_revision"], vid)
+            terminal = file["analysis_status"] in {"succeeded", "failed", "cancelled"}
+            match: dict[str, Any] = {"metadata": (result.get("metadata") or metadata) if bound and terminal else metadata, "document_type": result.get("document_type") if bound and terminal else None}
+            projected.append(
+                {
+                    "file": {"id": vid, "original_filename": file["original_filename"]},
+                    "audit": audit,
+                    "match": match,
+                    "display_info": {"values": {key: match["metadata"].get(key) for key in ("customer", "model", "part_number", "part")}},
+                }
+            )
+        return {"round_id": round_id, "files": projected}
+
+    @staticmethod
+    def _analysis_snapshot_bound(payload: dict, result: dict, task_id: str, revision: int, version_id: str) -> bool:
+        return (
+            payload.get("task_id") == task_id
+            and payload.get("task_revision", 0) == revision
+            and payload.get("source_file_version_id") == version_id
+            and result.get("source_file_version_id") == version_id
+        )
+
+    def _archive_records(self, conn, principal: Principal, rows: list, *, details: bool = False) -> dict:
         tasks: dict[str, dict] = {}
         records: dict[str, dict] = {}
         for row in rows:
             task_id, version_id, _kind, _source, accepted_at, sequence = row[:6]
             tid, vid = str(task_id), str(version_id)
             if tid not in tasks:
-                tasks[tid] = self._recognition_public(conn, principal, tid)
+                tasks[tid] = self._recognition_public(conn, principal, tid) if details else self._archive_task_summary(conn, principal, tid, str(row[11]))
             task = tasks[tid]
             file = next((item for item in task["files"] if item["file"]["id"] == vid and item.get("audit")), None)
             if file is None:
@@ -1817,6 +1869,8 @@ class AuthStore:
             record["details"].append((entry, task, file))
             metadata = (file.get("match") or {}).get("metadata") or {"customer": None, "model": None, "part": None}
             metadata = {**metadata, **((file.get("display_info") or {}).get("values") or {})}
+            if not details:
+                metadata = {**metadata, **(row[9] or {})}
             completed = next((row for row in reversed(record["entries"]) if row["execution"] == "completed" and row["conclusion"] in {"PASS", "NG"}), None)
             record["document"] = {
                 "document_id": document_id,
@@ -1860,7 +1914,7 @@ class AuthStore:
             rows = [row for row in self._archive_rows(conn, principal) if self._archive_document_id(principal, row) == document_id]
             if reference is not None:
                 rows = [row for row in rows if str(row[0]) == reference.get("task_id") and str(row[1]) == reference.get("file_version_id")]
-            record = self._archive_records(conn, principal, rows).get(document_id)
+            record = self._archive_records(conn, principal, rows, details=reference is not None).get(document_id)
             if record is None:
                 raise KeyError("missing")
             if reference is None:
@@ -2119,12 +2173,7 @@ class AuthStore:
                     "gaps": [],
                 }
                 if status in {"succeeded", "failed", "cancelled"}:
-                    bound = (
-                        payload.get("task_id") == task_id
-                        and payload.get("task_revision", 0) == draft["input_revision"]
-                        and payload.get("source_file_version_id") == vid
-                        and result.get("source_file_version_id") == vid
-                    )
+                    bound = self._analysis_snapshot_bound(payload, result, task_id, draft["input_revision"], vid)
                     state = result.get("matching_status") if status == "succeeded" and bound else "failed"
                     if not bound:
                         result = {"notices": ["matching_snapshot_invalid"]}

@@ -88,6 +88,109 @@ def matched_task(task_system):
     return client, worker, f"/audit-tasks/{task['id']}", body, rule
 
 
+def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocation(matched_task, auth_store_factory):
+    client, worker, path, body, rule = matched_task
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    version = body["files"][0]["file_version_id"]
+    migrator.save_file_source(version, "file", "archive-summary-source")
+    tasks = []
+    for index in range(3):
+        if index:
+            created = client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())})
+            assert created.status_code == 202, created.text
+            path = f"/audit-tasks/{created.json()['id']}"
+            process_claimed(worker, worker.claim_job("archive-recognition"), "archive-recognition", rule_ai=MetadataAI())
+        accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+        assert accepted.status_code == 201, accepted.text
+        if index < 2:
+            job = worker.claim_job("archive-audit")
+            if index == 0:
+                result = {
+                    "findings": [
+                        {
+                            "item_key": f"{version}:rule:1",
+                            "classification": "身份",
+                            "item": "必须填写零件号",
+                            "priority": "P0",
+                            "status": "NG",
+                            "suggestions": "缺少零件号",
+                            "locator": {"file_version_id": version, "rule_item_id": "1"},
+                        }
+                    ],
+                    "coverage": {"rule_items": [{"file_version_id": version, "id": "1", "rule_version_id": rule["id"], "item_key": f"{version}:rule:1", "coverage": "executed"}]},
+                }
+                assert worker.complete_job(job, "archive-audit", result, "succeeded")
+                report_job = worker.claim_job("archive-pdf")
+                assert report_job is not None and report_job.kind == "report_pdf"
+                process_claimed(worker, report_job, "archive-pdf")
+            else:
+                assert worker.complete_job(job, "archive-audit", {"failure": {"code": "test_failure", "message": "受控执行失败", "retryable": False}}, "failed")
+        tasks.append(client.get(path).json())
+    response = client.get("/audit-archive")
+    assert response.status_code == 200, response.text
+    document = next(item for item in response.json()["documents"] if item["title"] == "控制计划.xlsx")
+    history_path = f"/audit-archive/{document['document_id']}/history"
+    history = client.get(history_path).json()
+    assert [entry["sequence"] for entry in history["entries"]] == [3, 2, 1]
+    assert history["document"] == document
+    assert history["default_reference"]["task_id"] == tasks[0]["id"]
+    assert document["latest_completed"]["reference"] == history["default_reference"]
+    for entry, task in zip(history["entries"], reversed(tasks)):
+        detail = client.get(history_path + "/result", params=entry["reference"])
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["entry"] == entry
+        audit = task["files"][0]["audit"]
+        assert {key: entry[key] for key in ("execution", "conclusion", "report")} == {key: audit[key] for key in ("execution", "conclusion", "report")}
+        assert entry["conclusion"] != "PASS"
+    frozen = history["entries"][-1]["reference"]
+    with migrator._conn() as conn:
+        conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (tasks[0]["id"], USER_ALICE))
+    remaining = client.get(history_path).json()
+    assert [entry["sequence"] for entry in remaining["entries"]] == [3, 2]
+    assert remaining["default_reference"] is None
+    assert client.get(history_path + "/result", params=frozen).status_code == 403
+
+
+@pytest.mark.parametrize("invalid", ["not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation", "stale_analysis"])
+def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, auth_store_factory, invalid):
+    client, worker, path, body, _rule = matched_task
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    version = body["files"][0]["file_version_id"]
+    migrator.save_file_source(version, "file", "archive-bound-source")
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert accepted.status_code == 201, accepted.text
+    file = accepted.json()["files"][0]["file"]
+    with migrator._conn() as conn:
+        if invalid == "not_ready":
+            conn.execute("UPDATE product.file_versions SET status = 'staging' WHERE id = %s", (version,))
+        elif invalid == "unmapped_cloud_file":
+            conn.execute(
+                "UPDATE product.file_versions SET upload_request = %s WHERE id = %s",
+                (Jsonb({"feishu_folder_token": "folder", "cloud_upload": {"phase": "ready", "file_token": "different-source"}}), version),
+            )
+        elif invalid == "foreign_resource":
+            conn.execute("UPDATE product.resources SET kind = 'audit_draft' WHERE id = %s", (file["file_id"],))
+        elif invalid == "invalid_validation":
+            conn.execute("UPDATE engine.jobs SET kind = 'file_analysis' WHERE id = %s", (body["files"][0]["validation_id"],))
+        else:
+            conn.execute(
+                """UPDATE engine.jobs SET payload = jsonb_set(payload, '{task_revision}', '999')
+                WHERE id = (SELECT analysis_job_id FROM product.draft_items WHERE draft_id = %s AND file_version_id = %s)""",
+                (accepted.json()["id"], version),
+            )
+    task = client.get(path)
+    archive = client.get("/audit-archive")
+    if invalid != "stale_analysis":
+        assert archive.status_code == task.status_code
+        assert archive.status_code in {400, 403, 404, 409, 422}
+    else:
+        assert task.status_code == archive.status_code == 200
+        document = archive.json()["documents"][0]
+        expected = task.json()["files"][0]
+        assert document["metadata"] == expected["display_info"]["values"]
+        assert document["document_type"] == expected["match"]["document_type"] is None
+
+
 def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):
     client, worker, path, body, _rule = matched_task
     commands = [{"request_id": str(uuid.uuid4()), "expected_revision": 0} for _ in range(2)]
