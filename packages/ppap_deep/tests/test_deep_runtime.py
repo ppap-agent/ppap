@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from unittest.mock import patch
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.files import ObjectMissing
 from ppap_core.settings import Settings
+from ppap_core.storage import S3Objects
 from ppap_deep.auditor import SemanticRuntime, product_response, semantic_inputs
 from ppap_deep.client import DEEP_REQUEST_TIMEOUT, DeepClient, DeepError
 from ppap_deep.controller import ExecutionContext
@@ -489,7 +491,7 @@ class _CacheObjects:
     def __init__(self) -> None:
         self.reads: list[str] = []
 
-    def get(self, key: str) -> bytes:
+    def get(self, key: str, *, max_bytes: int | None = None) -> bytes:
         self.reads.append(key)
         raise ObjectMissing()
 
@@ -573,6 +575,23 @@ class SemanticCacheContractTests(unittest.TestCase):
         changed[0] = {**changed[0], "rule_to_check": "每项频次至少每日一次"}
         self.assertNotEqual(plan, self._keys(_spec(clauses=changed))[1])
         self.assertNotEqual(plan, self._keys(_spec(), revision="b" * 64)[1])
+
+    def test_oversized_cache_is_a_bounded_miss_before_runtime(self) -> None:
+        bodies = []
+
+        def response(**_kwargs):
+            body = io.BytesIO(b"oversized")
+            bodies.append(body)
+            return {"Body": body, "ContentLength": 9}
+
+        spec = _spec().model_copy(update={"executor_revision": ENGINE})
+        runtime = SemanticRuntime(_CacheRuntime(ENGINE), S3Objects(Settings()))
+        with patch("ppap_core.storage.s3_client") as client, patch("ppap_deep.auditor.MAX_BUNDLE_BYTES", 8):
+            client.return_value.get_object.side_effect = response
+            with self.assertRaises(_StopAfterCache):
+                runtime.execute(spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext())
+        self.assertTrue(bodies)
+        self.assertTrue(all(body.closed for body in bodies))
 
 
 if __name__ == "__main__":
