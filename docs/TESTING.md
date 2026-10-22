@@ -26,7 +26,7 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
-- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/ppap_deep/tests/test_deep_runtime.py`、`packages/ppap_deep/tests/test_deep_semantic.py`、`packages/ppap_deep/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
+- **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/ppap_deep/tests/test_deep_runtime.py`、`packages/ppap_deep/tests/test_deep_semantic.py`、`packages/ppap_deep/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。同文件的局部计划失败用例使用实际 semantic guest，经 Product API／Worker／真实 PostgreSQL 与 UDS，核对当前任务和冻结历史的逐条结果、原件及独立文件的报告入队；模型、S3 边界受控，薄进程内适配不证明容器隔离、模型质量、飞书档案身份或 PDF 生成完成。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。
 
 `packages/ppap_deep/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
 

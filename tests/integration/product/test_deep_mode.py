@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import tempfile
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +18,9 @@ import ppap_deep
 import ppap_worker
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from ppap_api import create_app
+from ppap_application import build_product_store
 from ppap_core.audits import (
     ANALYSIS_DEEP,
     ANALYSIS_STANDARD,
@@ -33,10 +38,15 @@ from ppap_core.feishu import UserTokens
 from ppap_core.fixtures import RULE_A, RULE_B
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
+from ppap_deep.auditor import SemanticRuntime
 from ppap_deep.client import DeepClient, DeepError
 from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
 from ppap_deep.mapping import passing_response, spec_from_work
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
+from ppap_deep.semantic.guest import Manifest
+from ppap_deep.semantic.guest import execute as execute_guest
+from ppap_deep.semantic.models import RulePlan
+from ppap_deep.semantic.trace import AuditExecution
 from ppap_deep.source import authorize_execution, object_file_source
 from ppap_worker import process_claimed
 from pydantic import ValidationError
@@ -165,7 +175,7 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 201, accepted.text)
         return accepted.json()["id"]
 
-    def _start_controller(self, revision: str | None = None) -> str:
+    def _start_controller(self, revision: str | None = None, *, runtime=None) -> str:
         tmp = tempfile.mkdtemp(prefix="ppap-deep-")
         self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
         path = str(Path(tmp) / "c.sock")
@@ -185,7 +195,7 @@ class DeepModeTests(unittest.TestCase):
         server = UnixControllerServer(
             path,
             Controller(
-                ScriptedRuntime(execute),
+                runtime if runtime is not None else ScriptedRuntime(execute),
                 object_file_source(self.settings),
                 executor_revision=revision or self.settings.deep_execution_revision(),
                 authorize=authorize_execution(self.settings),
@@ -235,6 +245,224 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(diagnostic["executor"], EXECUTOR_DEEP)
         self.assertIsNone(loaded["failure"])
         self.assertEqual(diagnostic["usage"], {})
+
+    def test_local_plan_failure_preserves_independent_results_through_worker_and_public_readback(self):
+        # JSON publication and real XLSX exercise the product/PG/UDS chain.
+        # The model and S3 boundaries are controlled; this is not DOCX parsing,
+        # real-provider quality, container isolation, or Feishu archive identity.
+        self._login()
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        uploads, rules, original_bytes, selected = [], [], {}, []
+        for prefix, filename, document_type, sample_count in [
+            ("B", "控制计划.xlsx", "控制计划", 3),
+            ("G", "PFMEA.xlsx", "潜在过程失效模式及后果分析", 1),
+        ]:
+            clauses = [
+                {"id": prefix + "1", "category": "频次", "priority": "P1", "rule_to_check": "正文每行频次非空，否则不通过。", "type_of_rule": "table"},
+                {"id": prefix + "2", "category": "样本数", "priority": "P1", "rule_to_check": "正文每行样本数至少为 2，否则不通过。", "type_of_rule": "table"},
+            ]
+            body = {"kind": "engine", "type": document_type, "rule_profile": "v3", "customers": ["测试客户"], "models": [], "parts": [], "rules": clauses}
+            source = self._upload(prefix + "-rules.json", json.dumps(body, ensure_ascii=False).encode())
+            published = self.client.post("/rules", json={"title": document_type + "客户规则", "body": body, "source_file_version_id": source["id"]})
+            self.assertEqual(published.status_code, 201, published.text)
+            rules.append(published.json())
+            workbook = Workbook()
+            workbook.active.title = "数据"
+            workbook.active.append(["频次", "样本数", "文件类型"])
+            workbook.active.append(["每批", sample_count, document_type])
+            stream = BytesIO()
+            workbook.save(stream)
+            workbook.close()
+            content = stream.getvalue()
+            uploaded = self._upload(filename, content)
+            uploads.append(uploaded)
+            original_bytes[uploaded["id"]] = content
+            validation_id = str(uuid.uuid4())
+            queued = self.client.post("/file-validations", json={"request_id": validation_id, "source_file_id": uploaded["file_id"], "source_file_version_id": uploaded["id"]})
+            self.assertEqual(queued.status_code, 202, queued.text)
+            checked = worker.claim_job("partial-precheck")
+            self.assertIsNotNone(checked)
+            self.assertEqual(checked.kind, "file_validation")
+            process_claimed(worker, checked, "partial-precheck")
+            selected.append({"file_version_id": uploaded["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None})
+        bad_target, good_target = [row["id"] for row in uploads]
+        bad_rule, good_rule = [row["id"] for row in rules]
+        owner = self
+
+        class MetadataModel:
+            def structured_completion(self, **request):
+                if request["operation"] == "document_classification":
+                    return "潜在过程失效模式及后果分析" if "潜在过程失效模式" in request["user_prompt"] else "控制计划"
+                owner.assertEqual(request["operation"], "document_metadata_extraction")
+                return json.dumps({"customer": "测试客户", "model": None, "part": None, "part_number": None}, ensure_ascii=False)
+
+        class Model:
+            def __init__(self):
+                self.input_tokens = 0
+                self.output_tokens = 0
+                self.plan_calls = {bad_rule: 0, good_rule: 0}
+                self.audit_targets = []
+                self.rules = {}
+
+            def run(self, work, _prompt, schema, _deadline, *, reasoning_effort):
+                owner.assertEqual(reasoning_effort, "xhigh")
+                self.input_tokens += 10
+                self.output_tokens += 2
+                if schema is RulePlan:
+                    source = json.loads((work / "rule-source.json").read_text())
+                    clauses = json.loads((work / "clauses.json").read_text())
+                    rule_id = source["rule_version_id"]
+                    rule = self.rules[rule_id]
+                    self.plan_calls[rule_id] += 1
+                    planned = [
+                        {
+                            "id": clause["id"],
+                            "description": clause["rule_to_check"],
+                            "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
+                            "scope": "数据工作表第 2 行",
+                            "predicate": {"kind": "semantic", "question": clause["rule_to_check"]},
+                            "missing_evidence": "UNABLE",
+                            "ambiguities": [],
+                            "empty_scope_status": "UNABLE",
+                            "empty_scope_basis": "规则未规定空正文的结论。",
+                        }
+                        for clause in clauses
+                    ]
+                    digest = rule.sha256
+                    if rule_id == bad_rule:
+                        if self.plan_calls[rule_id] == 1:
+                            digest = "0" * 64
+                        else:
+                            planned.pop()
+                    return RulePlan.model_validate({"source_sha256": digest, "plan_revision": rule.plan_revision, "rules": planned})
+                owner.assertIs(schema, AuditExecution)
+                targets = json.loads((work / "targets.json").read_text())
+                self.audit_targets.append(targets)
+                owner.assertEqual(targets, {good_target: good_rule})
+                checks, proofs = [], []
+                for clause_id, cell, status, reason in [("G1", "A2", "PASS", "正文频次为每批。"), ("G2", "B2", "NG", "正文样本数为 1，小于 2。")]:
+                    evidence = [{"document_id": good_target, "locator": {"kind": "xlsx_cell", "sheet": "数据", "cell": cell}}]
+                    checks.append({"audit_id": good_target, "rule_id": clause_id, "status": status, "reason": reason, "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
+                    proofs.append(
+                        {
+                            "kind": "semantic",
+                            "audit_id": good_target,
+                            "rule_id": clause_id,
+                            "scope_basis": "数据工作表仅第 2 行正文",
+                            "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "已读取正文记录", "status": status, "reason": reason, "evidence": evidence}],
+                        }
+                    )
+                return AuditExecution.model_validate({"report": {"checks": checks}, "trace": {"proofs": proofs}})
+
+        model = Model()
+        frozen_revision = self.settings.deep_execution_revision()
+
+        class InProcessGuest:
+            calls = 0
+            submission = None
+
+            def engine_revision(self):
+                return frozen_revision
+
+            def run(self, submission, inputs, work, deadline, cancelled, *, on_progress):
+                owner.assertFalse(cancelled.is_set())
+                manifest = Manifest.model_validate_json((inputs / "manifest.json").read_bytes())
+                owner.assertEqual(manifest.spec, submission)
+                self.calls += 1
+                self.submission = submission.model_dump(mode="json")
+                model.rules = {rule.rule_id: rule for rule in submission.rules}
+                execute_guest(inputs, work, model, deadline)
+
+        guest = InProcessGuest()
+        self.settings.deep_controller_socket = self._start_controller(runtime=SemanticRuntime(guest, self.store.objects))
+        created = self.client.post("/audit-tasks", json={"request_id": str(uuid.uuid4()), "analysis_mode": "deep", "customer_preference": None, "files": selected})
+        self.assertEqual(created.status_code, 202, created.text)
+        task_path = "/audit-tasks/" + created.json()["id"]
+        for _ in uploads:
+            job = worker.claim_job("partial-recognition")
+            self.assertIsNotNone(job)
+            self.assertEqual(job.kind, "file_analysis")
+            process_claimed(worker, job, "partial-recognition", rule_ai=MetadataModel())
+        matched = self.client.get(task_path).json()
+        self.assertEqual([row["match"]["state"] for row in matched["files"]], ["matched", "matched"])
+        self.assertEqual([row["match"]["rule"]["id"] for row in matched["files"]], [bad_rule, good_rule])
+        confirmed = self.client.post(task_path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": matched["input_revision"]})
+        self.assertEqual(confirmed.status_code, 201, confirmed.text)
+        round_path = "/rounds/" + confirmed.json()["round_id"]
+        frozen = self.client.get(round_path, params={"read_view": "true"}).json()
+        self.assertEqual({row["file_version_id"]: row["rule_version_id"] for row in frozen["inputs"]}, {bad_target: bad_rule, good_target: good_rule})
+        self.assertEqual(
+            {row["file"]["id"]: row["file"]["sha256"] for row in frozen["read_view"]["files"]},
+            {row["id"]: hashlib.sha256(original_bytes[row["id"]]).hexdigest() for row in uploads},
+        )
+        self.assertEqual([row["status"] for row in frozen["inputs"]], ["ready", "ready"])
+        job = worker.claim_job("partial-audit")
+        self.assertIsNotNone(job)
+        self.assertEqual(job.kind, "audit")
+        self.assertEqual(job.round_id, frozen["id"])
+        result = process_claimed(worker, job, "partial-audit")
+        self.assertIsNone(result.get("failure"))
+        self.assertEqual(result["usage"]["input_tokens"], 40)
+        self.assertEqual(result["usage"]["output_tokens"], 8)
+
+        loaded = self.client.get(round_path, params={"read_view": "true"}).json()
+        self.assertEqual(loaded["execution"], "completed")
+        self.assertEqual(loaded["inputs"], frozen["inputs"])
+        self.assertEqual(loaded["executor_revision"], frozen_revision)
+        self.assertEqual(loaded["result_job_id"], job.id)
+        self.assertEqual(loaded["result_attempt"], job.attempt)
+        self.assertIsNone(loaded["failure"])
+        self.assertEqual(
+            {(row["locator"]["file_version_id"], row["locator"]["rule_item_id"]): row["status"] for row in loaded["findings"]},
+            {(bad_target, "B1"): "ERR", (bad_target, "B2"): "ERR", (good_target, "G1"): "PASS", (good_target, "G2"): "NG"},
+        )
+        for finding in loaded["findings"]:
+            if finding["locator"]["file_version_id"] == good_target:
+                semantic = finding["locator"]["semantic"]
+                self.assertEqual(semantic["rule_version_id"], good_rule)
+                self.assertEqual(semantic["sources"][0]["excerpt"], "每批" if finding["locator"]["rule_item_id"] == "G1" else "1")
+        self.assertEqual(
+            {(row["file_version_id"], row["id"]): row["coverage"] for row in loaded["coverage"]["rule_items"]},
+            {(bad_target, "B1"): "execution_error", (bad_target, "B2"): "execution_error", (good_target, "G1"): "executed", (good_target, "G2"): "executed"},
+        )
+        self.assertEqual(loaded["read_view"]["unassigned_findings"], [])
+        current = self.client.get(task_path).json()
+        by_version = {row["file"]["id"]: row["audit"] for row in current["files"]}
+        failed, healthy = by_version[bad_target], by_version[good_target]
+        self.assertEqual(failed["execution"], "review_failed")
+        self.assertEqual([row["rule_item"]["id"] for row in failed["checks"]], ["B1", "B2"])
+        self.assertEqual([row["finding"]["status"] for row in failed["checks"]], ["ERR", "ERR"])
+        self.assertEqual(failed["report"]["state"], "not_eligible")
+        self.assertEqual(healthy["execution"], "completed")
+        self.assertEqual([row["rule_item"]["id"] for row in healthy["checks"]], ["G1", "G2"])
+        self.assertEqual(healthy["conclusion"], "NG")
+        self.assertEqual(healthy["counts"], {"pass_count": 1, "ng_count": 1, "unknown_count": 0, "not_covered_count": 0, "error_count": 0})
+        self.assertEqual([row["finding"]["status"] for row in healthy["checks"]], ["PASS", "NG"])
+        # Only an eligible frozen result obtains a real queued PDF report.
+        self.assertEqual(healthy["report"]["state"], "pending")
+        self.assertIsNotNone(healthy["report"]["report_id"])
+        historical = {row["file"]["id"]: row["audit"] for row in loaded["read_view"]["files"]}
+        for version in (bad_target, good_target):
+            for field in ("rule", "execution", "conclusion", "counts", "checks"):
+                self.assertEqual(historical[version][field], by_version[version][field])
+        for upload, published in zip(uploads, rules):
+            downloaded = self.client.get(f"{round_path}/files/{upload['file_id']}/versions/{upload['id']}/download")
+            self.assertEqual(downloaded.status_code, 200)
+            self.assertEqual(downloaded.content, original_bytes[upload["id"]])
+            self.assertEqual(self.client.get("/rules/" + published["id"]).json()["body"], published["body"])
+        self.assertEqual(guest.calls, 1)
+        self.assertEqual(model.plan_calls, {bad_rule: 2, good_rule: 1})
+        self.assertEqual(model.audit_targets, [{good_target: good_rule}])
+        submission = guest.submission
+        self.assertEqual(submission["targets"], {bad_target: bad_rule, good_target: good_rule})
+        self.assertEqual(submission["semantic_engine_revision"], frozen_revision)
+        for _ in range(2):
+            self.assertEqual(self.client.get(round_path, params={"read_view": "true"}).json(), loaded)
+            self.assertEqual(self.client.get(task_path).json(), current)
+        self.assertEqual(guest.calls, 1)
+        self.assertEqual(guest.submission, submission)
+        self.assertEqual(model.plan_calls, {bad_rule: 2, good_rule: 1})
+        self.assertEqual(model.audit_targets, [{good_target: good_rule}])
 
     def test_runtime_unavailable_does_not_fall_back_to_standard(self):
         self._login()
