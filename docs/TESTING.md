@@ -61,6 +61,8 @@ Controller 原件读取与 guest 暂存复用 `ppap_deep.limits` 中的文件数
 
 `test_audit_flow.py` 的 Standard 结果写回故障用例通过公开受理、真实 Worker／PostgreSQL 和公开 Round 读回验证：首次 findings 写入事务回滚不能被误归为审核器异常，再提交伪 ERR。完成事务在审核器异常捕获之外；保存失败向调用者传播，原未完成 attempt 不被伪造终结，不自动创建新轮次或消费。此用例不证明持久模型结果缓存、provider 去重或完整技术恢复。
 
+原生关联重审的补件选择由 `test_reaudit_selection.py` 经界面和受控 HTTP 验证：改选／取消替换、取消勾选／移除补件时，只恢复明确记录为此前已选的自动排除原件；用户主动取消或移除的文件不恢复。旧草稿仅有自动移除原因、未保留此前选择时，解除替换后显示为未选，不猜测丢失的意图。“全不选”包含新自动排除项，刷新读回后仍可解除替换或重选补件。`test_audit_tasks.py` 的数据库回归验证未选／已移除补件的绑定保存在当前 revision 的既有关联 job 回执中；不为这些文件创建识别 job，不依赖回执所在文件仍 selected，也不读取旧 revision 的孤立 job。不新增数据库迁移、历史改写或浏览器账本。`ReauditReplacementSelection` 是两个冻结原件与一个补件、已知选择的有限 Safety 检查，覆盖重绑定、单选、移除和批量选择；三个故障配置保留不释放旧原件、单选不协调和批量取消遗漏的反例。旧格式的保守处理另由界面回归验证；模型不证明真实审核、持久化、收费或整系统 refinement。
+
 ## Runner capability
 
 CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
@@ -317,6 +319,8 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 `test_audit_preview.py` 的历史返回回归要求：旧 Round 可见时，缓存 Task 的定时观察、聚焦和网络恢复不能发起后台读取；浏览器前进回 Task 后仍读取当前结果。测试使用受控读取与浏览器时钟，不推进真实审核或证明服务端执行进度。原单请求、失败退避及迟到读取保护继续由相邻观察回归覆盖。
 
 `test_round_reports.py` 使用原生页面与受控 HTTP，核对历史 Round 从已授权的真实 Task 关联打开原 PDF、下载固定字节，返回保留文件、条款、筛选与专注复核；生成中、失败、无来源 Task 及报告权限拒绝分开表达，读取不创建或恢复工作。受控同源宿主只承载已有导航消息，核对内嵌原生页面打开报告后，宿主刷新仍恢复同一报告；不据此声称当前预览宿主已有该历史入口。`tests/integration/product/test_audit_tasks.py` 在隔离 PostgreSQL/Worker 中核对同一 Round 与 Task 的报告投影、冻结结果不变、撤权及跨身份拒绝；原 Round 可读不等于私有 Task/PDF 可读，缺少 Task 关联不伪造任务或报告。浏览器受控响应不代替这些持久化与授权检查。
+
+公开 `FindingLocator` 保留已有可选 `kind` 字段；`test_openapi_contract.py` 验证 `file_version` 定位经类型校验后不丢字段，同时兼容未带该字段的旧记录。历史与 Task 投影的完整比较不应靠两边同时过滤字段来通过。
 
 其中的未知提取恢复用例从当前审核要求上传入口进入：刷新和核对只读原请求，记录 HTTP 方法以拒绝恢复期间的写操作；重新提取需确认可能的模型费用并创建新请求。原请求的迟到读取不能替换新请求；挂起的提交响应晚于人工录入返回时不能覆盖人工内容。`RuleExtractionRecovery.tla` 是一份冻结来源、两个请求及延迟响应的有限 Safety 检查；正向配置检查未知不冒充运行中、只读不重提、当前请求及人工录入边界，四个故障配置保留对应反例。它不证明 SQL 持久化、跨标签页恢复、授权、模型质量、真实收费或最终完成。
 

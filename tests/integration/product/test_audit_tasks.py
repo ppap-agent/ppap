@@ -1060,6 +1060,78 @@ def test_reaudit_replacement_is_explicit_and_matches_the_original_published_rule
     assert client.get(path).json()["files"][0]["file"]["id"] == original["file_version_id"]
 
 
+@pytest.mark.parametrize("selection", ["unselected", "removed"])
+def test_excluded_reaudit_replacement_retains_its_binding_across_readback_and_rematching(matched_task, selection):
+    client, worker, path, body, old = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
+    original_round = client.get(f"/rounds/{accepted['round_id']}").json()
+    usage = client.get("/usage").json()
+    newer = publish_rule(client, body["files"][0], predecessor=old["id"])
+    replacement = checked_file(client, worker, "暂不选择的补件.xlsx")
+    original = {**body["files"][0], "preferred_rule_version_id": old["id"]}
+    excluded = {
+        **replacement,
+        "selection": selection,
+        "removal_reason": "本次手动移除" if selection == "removed" else None,
+        "replacement_of_file_version_id": original["file_version_id"],
+        "preferred_rule_version_id": old["id"],
+    }
+    command = {**body, "request_id": str(uuid.uuid4()), "predecessor_id": accepted["round_id"], "files": [excluded, original]}
+    forged = {**command, "files": [{**excluded, "replacement_of_file_version_id": str(uuid.uuid4())}, original]}
+    assert client.post("/audit-tasks", json=forged).status_code == 400
+    response = client.post("/audit-tasks", json=command)
+    assert response.status_code == 202, response.text
+    next_path = f"/audit-tasks/{response.json()['id']}"
+    # Exclusion is not authority to create another classification job.
+    process_claimed(worker, worker.claim_job("unchanged-original"), "unchanged-original", rule_ai=NoRecognitionAI())
+    assert worker.claim_job("no-excluded-analysis") is None
+    current = client.get(next_path).json()
+    assert current["files"][0]["replacement_of_file_version_id"] == original["file_version_id"]
+    assert current["files"][0]["selection"] == selection
+    assert current["files"][0]["removal_reason"] == excluded["removal_reason"]
+    assert {rule["id"] for rule in current["files"][0]["rule_options"]} == {old["id"], newer["id"]}
+    selected = {**excluded, "selection": "selected", "removal_reason": None}
+    removed = {**original, "selection": "removed", "removal_reason": "本次使用补件替换"}
+    revise = {**command, "request_id": str(uuid.uuid4()), "task_id": current["id"], "expected_revision": 0, "files": [removed, selected]}
+    changed = client.post("/audit-tasks", json=revise)
+    assert changed.status_code == 202, changed.text
+    process_claimed(worker, worker.claim_job("selected-replacement"), "selected-replacement", rule_ai=MetadataAI())
+    actual = client.get(next_path).json()["files"][1]
+    assert actual["replacement_of_file_version_id"] == original["file_version_id"]
+    assert actual["match"]["rule"]["id"] == old["id"]
+    assert client.get(f"/rounds/{accepted['round_id']}").json() == original_round
+    assert client.get("/usage").json() == usage
+
+
+def test_excluded_replacement_survives_removal_of_its_receipt_anchor_at_acceptance(matched_task):
+    client, worker, path, body, old = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    worker.complete_job(worker.claim_job("old"), "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
+    original_round = client.get(f"/rounds/{accepted['round_id']}").json()
+    anchor = checked_file(client, worker, "未匹配文件.xlsx")
+    replacement = checked_file(client, worker, "未选补件.xlsx")
+    original = {**body["files"][0], "preferred_rule_version_id": old["id"]}
+    excluded = {**replacement, "selection": "unselected", "replacement_of_file_version_id": original["file_version_id"], "preferred_rule_version_id": old["id"]}
+    command = {**body, "request_id": str(uuid.uuid4()), "predecessor_id": accepted["round_id"], "files": [anchor, original, excluded]}
+    response = client.post("/audit-tasks", json=command)
+    assert response.status_code == 202, response.text
+    next_path = f"/audit-tasks/{response.json()['id']}"
+    job = worker.claim_job("unmatched-anchor")
+    assert job.payload["source_file_version_id"] == anchor["file_version_id"]
+    assert worker.complete_job(job, "unmatched-anchor", {"source_file_version_id": anchor["file_version_id"], "matching_status": "unmatched"})
+    process_claimed(worker, worker.claim_job("original"), "original", rule_ai=NoRecognitionAI())
+    assert worker.claim_job("no-excluded-analysis") is None
+    next_round = client.post(next_path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert next_round.status_code == 201, next_round.text
+    current = client.get(next_path).json()
+    assert current["files"][0]["selection"] == "removed"
+    assert current["files"][2]["selection"] == "unselected"
+    assert current["files"][2]["replacement_of_file_version_id"] == original["file_version_id"]
+    assert [item["file_version_id"] for item in client.get(f"/rounds/{next_round.json()['round_id']}").json()["inputs"]] == [original["file_version_id"]]
+    assert client.get(f"/rounds/{accepted['round_id']}").json() == original_round
+
+
 @pytest.mark.parametrize("subject", ["bob", "carol"])
 def test_reaudit_source_authorization_and_scope_cannot_be_bypassed(matched_task, subject):
     client, worker, path, body, old = matched_task

@@ -73,6 +73,17 @@ const productLinks = [
 type ProductSurface = Exclude<typeof productLinks[number]['view'], 'templates'> | 'audit'
 const sizeLabel = (bytes: number) => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 type IntakeDraft = {files: AuditTaskFile[]; uploads: UploadRow[]; mode: AuditTask['analysis_mode']; customer: string; step: 'upload' | 'check' | 'match'; predecessorId?: string}
+const replacementRemovalReason = '本次使用补件替换；原件此前已选中'
+const legacyReplacementRemovalReason = '本次使用补件替换'
+function reconcileReplacements(files: AuditTaskFile[]): AuditTaskFile[] {
+  const replaced = new Set(files.filter(file => file.selection === 'selected' && file.replacement_of_file_version_id).map(file => file.replacement_of_file_version_id))
+  return files.map(file => {
+    if (replaced.has(file.file.id)) return file.selection === 'selected' ? {...file, selection: 'removed', removal_reason: replacementRemovalReason} : file
+    if (file.selection === 'removed' && file.removal_reason === replacementRemovalReason) return {...file, selection: 'selected', removal_reason: null}
+    // Older drafts did not retain the original choice. Never guess it was selected.
+    return file.selection === 'removed' && file.removal_reason === legacyReplacementRemovalReason ? {...file, selection: 'unselected', removal_reason: null} : file
+  })
+}
 const sameRuleIntent = (a: AuditTaskFile, b: AuditTaskFile) => a.preferred_rule_version_id === b.preferred_rule_version_id && Boolean(a.reference_only) === Boolean(b.reference_only) && a.replacement_of_file_version_id === b.replacement_of_file_version_id
 const sameSelections = (before: AuditTaskFile[], after: AuditTaskFile[]) => before.length === after.length && before.every(file => after.some(row => sameSnapshot(row.file, file.file) && sameRuleIntent(row, file) && row.selection === file.selection && row.removal_reason === file.removal_reason && row.validation_id === file.validation_id))
 const onlyUnmatchedRemovals = (before: AuditTaskFile[], after: AuditTaskFile[]) => before.length === after.length && before.every(file => after.some(row => sameSnapshot(row.file, file.file) && sameRuleIntent(row, file) && row.validation_id === file.validation_id && (row.selection === file.selection && row.removal_reason === file.removal_reason || file.selection === 'selected' && file.match?.state === 'unmatched' && row.selection === 'removed' && Boolean(row.removal_reason?.trim()))))
@@ -141,9 +152,10 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const [customer, setCustomer] = useState('auto')
   const [predecessorId, setPredecessorId] = useState<string>()
   function chooseReplacement(fileId: string, originalId: string) {
-    const original = files.find(row => row.file.id === originalId && !row.replacement_of_file_version_id)
-    setFiles(rows => rows.map(row => row.file.id === fileId ? {...row, replacement_of_file_version_id: original?.file.id, preferred_rule_version_id: original?.preferred_rule_version_id || original?.rule_options?.[0]?.id, reference_only: original?.reference_only, rule_options: original?.rule_options}
-      : original && row.file.id === original.file.id ? {...row, selection: 'removed', removal_reason: '本次使用补件替换'} : row))
+    setFiles(rows => {
+      const original = rows.find(row => row.file.id === originalId && !row.replacement_of_file_version_id)
+      return reconcileReplacements(rows.map(row => row.file.id === fileId ? {...row, replacement_of_file_version_id: original?.file.id, preferred_rule_version_id: original?.preferred_rule_version_id || original?.rule_options?.[0]?.id, reference_only: original?.reference_only, rule_options: original?.rule_options} : row))
+    })
   }
   const [preparingReaudit, setPreparingReaudit] = useState(false)
   const [task, setTask] = useState<AuditTask | null>(null)
@@ -428,10 +440,14 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   function remove(id: string) {
     if (confirmationLocked || inputLocked || workbench) return
     uploads.rows.filter(row => row.receipt.file?.id === id).forEach(row => uploads.remove(row.id))
-    const update = (rows: AuditTaskFile[]) => rows.map(row => row.file.id === id ? {...row, selection: 'removed' as const, removal_reason: row.validation.reasons[0] || (step === 'match' ? '未匹配到规则' : '识别前移除')} : row)
-    setFiles(update)
+    setFiles(rows => reconcileReplacements(rows.map(row => row.file.id === id ? {...row, selection: 'removed', removal_reason: row.validation.reasons[0] || (step === 'match' ? '未匹配到规则' : '识别前移除')} : row)))
   }
-  function toggle(id: string, checked: boolean) {if (!confirmationLocked && !inputLocked && !workbench) setFiles(rows => rows.map(row => row.file.id === id ? {...row, selection: checked ? 'selected' : 'unselected'} : row))}
+  function toggle(id: string, checked: boolean) {if (!confirmationLocked && !inputLocked && !workbench) setFiles(rows => reconcileReplacements(rows.map(row => row.file.id === id ? {...row, selection: checked ? 'selected' : 'unselected', removal_reason: null} : row)))}
+  function toggleAll(checked: boolean) {
+    if (confirmationLocked || inputLocked || workbench) return
+    // Bulk intent includes originals hidden only by an active replacement.
+    setFiles(rows => reconcileReplacements(rows.map(row => row.validation.state === 'valid' && (row.selection !== 'removed' || row.removal_reason === replacementRemovalReason) ? {...row, selection: checked ? 'selected' : 'unselected', removal_reason: null} : row)))
+  }
   async function readValidation(row: AuditTaskFile) {
     if (inputLocked || validationReads.current.has(row.file.id)) return
     const epoch = draftEpoch.current
@@ -582,7 +598,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   </nav>
   const taskSwitcher = surface === 'audit' && <TaskSwitcher open={sheet} onOpenChange={setSheet} currentId={legacyRoundId ? undefined : task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={taskList.busy} error={taskList.error} hasMore={taskList.next !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(taskList.error ? 0 : taskList.next!)} onNew={newTask} onOpen={id => {setSheet(false); taskAddress(id); void recover(id)}}/>
   const table = (rows: AuditTaskFile[], selectable: boolean) => <Table className="table-fixed">
-    <TableHeader><TableRow>{selectable && <TableHead className="w-12"><Checkbox aria-label="全选可审核文件" checked={selected.length === valid.length && valid.length > 0 ? true : selected.length ? 'indeterminate' : false} onCheckedChange={value => setFiles(items => items.map(row => row.validation.state === 'valid' && row.selection !== 'removed' ? {...row, selection: value === true ? 'selected' : 'unselected'} : row))}/></TableHead>}<TableHead>文件</TableHead><TableHead className="w-24 max-md:hidden">大小</TableHead><TableHead className="w-28 max-md:hidden">预检查</TableHead><TableHead className={selectable ? 'w-16' : 'w-36'}><span className="sr-only">操作</span></TableHead></TableRow></TableHeader>
+    <TableHeader><TableRow>{selectable && <TableHead className="w-12"><Checkbox aria-label="全选可审核文件" checked={selected.length === valid.length && valid.length > 0 ? true : selected.length ? 'indeterminate' : false} onCheckedChange={value => toggleAll(value === true)}/></TableHead>}<TableHead>文件</TableHead><TableHead className="w-24 max-md:hidden">大小</TableHead><TableHead className="w-28 max-md:hidden">预检查</TableHead><TableHead className={selectable ? 'w-16' : 'w-36'}><span className="sr-only">操作</span></TableHead></TableRow></TableHeader>
     <TableBody>{rows.map(row => <TableRow key={row.file.id}>{selectable && <TableCell><Checkbox aria-label={`选择 ${row.file.original_filename}`} checked={row.selection === 'selected'} onCheckedChange={value => toggle(row.file.id, value === true)}/></TableCell>}<TableCell className="whitespace-normal"><FileName name={row.file.original_filename}/>{!selectable && <p className="mt-2 text-sm text-muted-foreground">{row.validation.reasons.join('；') || '暂未完成检查'}</p>}<span className="mt-1 block text-xs text-muted-foreground md:hidden">{sizeLabel(row.file.byte_size)} · {row.validation.state === 'valid' ? '可审核' : '待处理'}</span></TableCell><TableCell className="max-md:hidden"><span className="text-muted-foreground">{sizeLabel(row.file.byte_size)}</span></TableCell><TableCell className="max-md:hidden"><Badge variant="outline">{{valid: '可审核', pending: '待预检查', checking: '检查中', invalid: '文件异常', error: '读取失败'}[row.validation.state]}</Badge></TableCell><TableCell><div className="flex flex-wrap items-center justify-end gap-1">{!selectable && row.validation.state !== 'invalid' && <Button variant="outline" size="sm" disabled={checking.includes(row.file.id)} aria-label={`${row.validation.state === 'error' ? '重新读取' : '读取'} ${row.file.original_filename} 检查结果`} onClick={() => void readValidation(row)}>{checking.includes(row.file.id) ? '读取中…' : row.validation.state === 'error' ? '重新读取' : '读取结果'}</Button>}<Button variant="ghost" size="icon" aria-label={`移除 ${row.file.original_filename}`} onClick={() => remove(row.file.id)}><X/></Button></div></TableCell></TableRow>)}</TableBody>
   </Table>
   const supportScenario = surface === 'archive' ? '文件档案' : surface === 'requirements' ? '审核规则' : surface === 'usage' ? '用量记录' : workbench ? '审核结果' : '上传与文件核对'
