@@ -32,7 +32,7 @@ def main() -> int:
     with runtime_from_env(settings) as runtime:
         server = UnixControllerServer(
             socket_path,
-            Controller(runtime, object_file_source(settings), executor_revision=revision, authorize=authorize_execution(settings)),
+            Controller(runtime, object_file_source(settings), executor_revision=revision, authorize=authorize_execution(settings), readiness=runtime.ready),
             request_timeout=DEEP_REQUEST_TIMEOUT,
         )
         server.start()

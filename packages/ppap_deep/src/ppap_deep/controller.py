@@ -68,12 +68,14 @@ class Controller:
         executor_revision: str = DEEP_PROTOCOL_REVISION,
         protocol_revision: str = DEEP_PROTOCOL_REVISION,
         authorize: Callable[[ExecuteRequest], None] | None = None,
+        readiness: Callable[[], bool] | None = None,
     ):
         self.runtime = runtime
         self.file_source = file_source
         self.executor_revision = str(executor_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.protocol_revision = str(protocol_revision or "").strip() or DEEP_PROTOCOL_REVISION
         self.authorize = authorize
+        self.readiness = readiness
 
     def handle(self, spec: ExecuteRequest, context: ExecutionContext | None = None) -> ExecuteResponse:
         context = context or ExecutionContext()
@@ -131,6 +133,13 @@ class Controller:
         return result
 
     def handle_raw(self, payload: dict, context: ExecutionContext | None = None) -> dict:
+        if payload == {"op": "ready"}:
+            # Local observation only: never authorize, read files, or execute work.
+            try:
+                ready = self.readiness is not None and self.readiness() is True
+            except Exception:
+                ready = False
+            return {"op": "ready", "ready": ready}
         try:
             envelope = RequestEnvelope.model_validate(payload)
             result = self.handle(envelope.spec, context)
