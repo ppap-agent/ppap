@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional, Protocol, cast
+from typing import Optional, Protocol, Sequence, cast
 
 from openpyxl import Workbook
 from ppap_core.contracts import AuditInput, EvidenceDiagnostic, EvidenceSource
 from ppap_core.contracts import AuditResultItem as AuditResult
-from ppap_docops.word import WordDocument
+from ppap_docops.word import WordBlock, WordDocument, WordParagraphBlock, WordTableBlock
 
 from ppap_excel_audit_engine.rule_engine import GuardStop, RuleContext
 from ppap_excel_audit_engine.runtime import get_runtime
@@ -92,6 +92,23 @@ class PswDocxEvidenceMixin:
             ),
         )
 
+    def _word_text_evidence(self) -> list[WordParagraphBlock]:
+        sources: list[WordParagraphBlock] = []
+
+        def visit(blocks: Sequence[WordBlock]) -> None:
+            for block in blocks:
+                if isinstance(block, WordParagraphBlock):
+                    if block.text.strip():
+                        sources.append(block)
+                elif isinstance(block, WordTableBlock):
+                    for cell in block.cells:
+                        if cell.origin:
+                            visit(cell.blocks)
+
+        document = self._host().word_document
+        visit((*document.blocks, *document.headers, *document.footers))
+        return sources
+
     def _missing_visual_result(self, rule_no: int) -> AuditResult:
         document = getattr(self, "word_document", None)
         sources = []
@@ -132,10 +149,12 @@ class PswDocxEvidenceMixin:
             if not evidence:
                 result = self._missing_visual_result(rule_no)
             else:
+                text_evidence = self._word_text_evidence() if rule_no == 5 else []
                 result = PswVisualRuleEvaluator(self._analyze_docx_images).evaluate(
                     rule_no,
                     [item.data_url for item in evidence],
                     source_locations=[f"{item.evidence.source.part}:{item.evidence.source.path}" for item in evidence],
+                    source_text=[f"{block.source.part}:{block.source.path}: {block.text}" for block in text_evidence],
                 )
                 diagnostic = None
                 if result.status in {"ERR", "UNABLE"}:
@@ -152,10 +171,11 @@ class PswDocxEvidenceMixin:
                     )
                     for item in evidence
                 )
+                sources += tuple(EvidenceSource(kind="structure", locator=f"docx://{part}") for part in dict.fromkeys(block.source.part for block in text_evidence))
                 result = self._trace_result(
                     result,
                     rule_no=rule_no,
-                    used="visual" if diagnostic is None else "none",
+                    used=("both" if text_evidence else "visual") if diagnostic is None else "none",
                     diagnostic=diagnostic,
                     sources=sources if diagnostic is None else (),
                 )

@@ -67,6 +67,8 @@ class _DeterministicRuntime(_AppAuditRuntime):
                 "classification": "视觉证据",
                 "item": "PSW 视觉规则",
                 "priority": "P0",
+                "authorized_signature_present": True,
+                "psw_stamp_present": True,
                 "status": "PASS",
                 "suggestions": "确定性回归视觉结果",
             }

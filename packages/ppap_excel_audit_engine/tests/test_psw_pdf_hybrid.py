@@ -124,6 +124,82 @@ def test_invalid_model_response_does_not_become_a_business_ng(original_pdf, conv
     assert not converted_table.exists()
 
 
+def test_rule_five_requires_the_reported_signature_even_when_the_model_claims_pass(original_pdf, converted_table, monkeypatch, profile):
+    original = original_pdf.read_bytes()
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
+    calls = []
+
+    def analyze(self, **kwargs):
+        calls.append(kwargs)
+        return json.dumps(
+            {
+                "classification": "视觉检查",
+                "item": "经授权签字和盖章",
+                "priority": "P0",
+                "status": "PASS",
+                "suggestions": "印刷姓名存在，签字栏为空",
+                "psw_stamp_ends_with_company": True,
+                "authorized_signature_present": False,
+                "psw_stamp_present": True,
+            }
+        )
+
+    monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
+    results = run_audit_engine(AuditInput(audit_id="psw-signature-facts", file_url=str(original_pdf)), psw_rules(profile, count=5))
+
+    assert results[4].status == "NG"
+    assert "签字" in results[4].suggestions
+    assert [results[index].status for index in (1, 2, 3)] == ["PASS"] * 3
+    assert len(calls) == 2
+    signature_call = next(call for call in calls if "经授权的供方代表签字" in call["user_text"])
+    assert '"status"' not in signature_call["user_text"]
+    assert "印刷姓名" in signature_call["user_text"]
+    assert original_pdf.read_bytes() == original
+    assert not converted_table.exists()
+
+
+@pytest.mark.parametrize(
+    ("signature", "stamp", "expected"),
+    [
+        (True, True, "PASS"),
+        (False, True, "NG"),
+        (True, False, "NG"),
+        (False, False, "NG"),
+        (None, True, "UNABLE"),
+        (True, None, "UNABLE"),
+        (None, None, "UNABLE"),
+        (False, None, "NG"),
+        (None, False, "NG"),
+    ],
+)
+def test_rule_five_uses_both_signature_facts_without_turning_unknown_into_ng(original_pdf, converted_table, monkeypatch, profile, signature, stamp, expected):
+    use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
+    response = {
+        "psw_stamp_ends_with_company": True,
+        "authorized_signature_present": signature,
+        "psw_stamp_present": stamp,
+        "classification": "不能覆盖冻结规则的分类",
+        "item": "不能覆盖冻结规则的名称",
+        "priority": "P0",
+        "status": "NG" if expected == "PASS" else "PASS",
+        "suggestions": "模型结论不能代替两项事实",
+    }
+    monkeypatch.setattr(AIClient, "image_analysis_completion", lambda self, **kwargs: json.dumps(response))
+
+    results = run_audit_engine(AuditInput(audit_id="psw-signature-fact-matrix", file_url=str(original_pdf)), psw_rules(profile, count=5))
+
+    assert results[4].status == expected
+    assert results[4].classification == "经授权签字和盖章检查"
+    assert results[4].item == "经授权签字和盖章检查"
+    assert [results[index].status for index in (1, 2, 3)] == ["PASS"] * 3
+    assert results[4].evidence.used == ("none" if expected == "UNABLE" else "visual")
+    if signature is False:
+        assert "签字" in results[4].suggestions
+    if stamp is False:
+        assert "盖章" in results[4].suggestions
+    assert not converted_table.exists()
+
+
 def test_missing_required_model_facts_are_not_a_document_nonconformity(original_pdf, converted_table, monkeypatch, profile):
     use_external_conversion(monkeypatch, original_pdf, ConversionArtifact(success=True, xlsx_path=str(converted_table)))
     response = {"classification": "视觉检查", "item": "视觉检查", "priority": "P0", "status": "PASS", "suggestions": "已完成检查"}
@@ -133,8 +209,7 @@ def test_missing_required_model_facts_are_not_a_document_nonconformity(original_
 
     assert len(results) == 10
     assert results[1].status == "PASS"
-    assert results[4].status == "PASS"
-    assert [results[index].status for index in (2, 7, 8, 9)] == ["UNABLE"] * 4
+    assert [results[index].status for index in (2, 4, 7, 8, 9)] == ["UNABLE"] * 5
 
 
 def test_explicit_model_inability_is_not_a_system_failure(original_pdf, converted_table, monkeypatch, profile):
@@ -177,6 +252,8 @@ def test_complete_pdf_keeps_structured_decisions_and_original_visual_results(
                 "status": visual_status,
                 "suggestions": "视觉检查完成",
                 "psw_stamp_ends_with_company": company_stamp,
+                "authorized_signature_present": company_stamp,
+                "psw_stamp_present": company_stamp,
                 "authorization_table_present": False,
                 "authorization_company_stamp_present": False,
                 "disposition_visible": True,

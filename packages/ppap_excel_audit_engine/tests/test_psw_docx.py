@@ -110,6 +110,8 @@ class WordVisualRuntime:
         return json.dumps(
             {
                 "psw_stamp_ends_with_company": True,
+                "authorized_signature_present": True,
+                "psw_stamp_present": True,
                 "classification": "视觉检查",
                 "item": "PSW 视觉检查",
                 "priority": "P0",
@@ -174,6 +176,48 @@ def test_missing_stamp_images_and_required_checkmarks_do_not_invent_passes(tmp_p
     assert [results[index].status for index in (2, 4, 6, 7)] == ["NG"] * 4
     assert runtime.calls == []
     assert results[2].evidence.diagnostics[0].code == "psw.visual.missing"
+
+
+@pytest.mark.parametrize("profile", ["v2", "v3"])
+def test_signature_rule_receives_native_word_text_and_the_original_images(tmp_path, monkeypatch, profile):
+    path = tmp_path / "psw.docx"
+    document = psw_document()
+    document.tables[1].cell(20, 0).text = "代表（印刷姓名）"
+    document.tables[1].cell(20, 1).text = "孙七"
+    document.save(path)
+    original = path.read_bytes()
+    calls = []
+
+    def analyze(self, **kwargs):
+        calls.append(kwargs)
+        return json.dumps(
+            {
+                "psw_stamp_ends_with_company": True,
+                "authorized_signature_present": True,
+                "psw_stamp_present": True,
+                "classification": "视觉检查",
+                "item": "PSW 视觉检查",
+                "priority": "P0",
+                "status": "PASS",
+                "suggestions": "已识别印章与签字",
+            }
+        )
+
+    monkeypatch.setattr(AIClient, "image_analysis_completion", analyze)
+    results = run_audit_engine(
+        AuditInput(audit_id="psw-word-signature-context", file_url=str(path)),
+        RuleInput(rule_id="confirmed-psw-rules", rule_profile=profile, type=PpapDocumentType.PSW.get_type_name(), rules=[{"id": str(index)} for index in range(1, 11)]),
+    )
+
+    signature_call = next(call for call in calls if "经授权的供方代表签字" in call["user_text"])
+    assert "赵六" in signature_call["user_text"]
+    assert "代表（印刷姓名）" in signature_call["user_text"]
+    assert "孙七" in signature_call["user_text"]
+    assert [result.status for result in results] == ["PASS"] * 10
+    assert results[4].evidence.used == "both"
+    assert {source.kind for source in results[4].evidence.sources} == {"structure", "visual"}
+    assert_original_images_reach_visual_rules(calls)
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize("profile", ["v2", "v3"])
