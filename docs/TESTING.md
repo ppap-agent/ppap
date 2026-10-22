@@ -306,7 +306,7 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 
 `tests/e2e/test_web_audit.py::WebAuditLoopTests::test_audit_files_path_loads_history_after_login` 从现有 `/audit-files` 深链读取服务器轮次，验证当前工作台搜索、冻结轮次入口和列表只读回访；隔离 fixture 的 presence 规则不证明真实 PPAP 审核质量。工作台初次读取期间，用户显式选择的队列优先于数据返回后计算的默认队列；`test_explicit_all_records_selection_survives_initial_history_read` 控制响应顺序验证此边界。
 
-`test_workbench_task_state.py` 使用原生 Web 与公开 HTTP 回包，分别验证正常 NG 和局部执行失败：列表、详情、返回及刷新保持相同分类；先暂缓返回后的列表响应，避免后续服务端摘要掩盖详情投影的差异。桌面及窄屏都保留用户显式选择的队列，首次入口仍默认全部。队列仅是当前浏览器历史项的界面状态，不是业务记录；测试拒绝所有写请求，不证明真实审核质量或数据库持久化。历史报告测试不再承担这项任务分类回归。
+`test_workbench_task_state.py` 使用原生 Web 与公开 HTTP 回包，分别验证正常 NG 和局部执行失败：列表、详情、返回及刷新保持相同分类；先暂缓返回后的列表响应，避免后续服务端摘要掩盖详情投影的差异。桌面及窄屏都保留用户显式选择的队列，首次入口仍默认全部；同页导航后的前进与后退也恢复各历史项的队列。队列仅是当前浏览器历史项的界面状态，不是业务记录；测试拒绝所有写请求，不证明真实审核质量或数据库持久化。历史报告测试不再承担这项任务分类回归。
 
 `tests/e2e/test_report_sharing.py` 验证固定 PDF/ZIP、中文字符映射、报告切换和撤权后拒绝访问，不读取私有任务或原件。读取停滞场景在 45 秒客户端截止后只允许显式重读同一冻结产物；旧响应不能替换当前 PDF 或追加 ZIP 下载，不重新生成或重审。适配器测试另覆盖 fetch／响应体停滞及忽略 Abort 的外部边界；客户端结束不证明服务端工作已取消，也不是既有报告生成／恢复模型的完整 refinement 证明。静态构建将已安装 PDF.js 的 `cmaps`、`standard_fonts`、`wasm` 资源及许可证放入 `dist/pdfjs`；开发环境继续使用本机依赖。Nginx 必须以 JavaScript MIME 提供 `.mjs` worker；`tests/repository/test_web_server.py` 通过实际 Nginx 请求检查该响应和不存在文件的 404。
 

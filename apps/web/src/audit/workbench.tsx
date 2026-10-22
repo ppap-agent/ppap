@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useEffect, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Plus, RefreshCw, Search} from 'lucide-react'
 import {Button} from '../components/ui/button'
@@ -15,10 +15,16 @@ export type WorkbenchProps = {
   headerActions?: HTMLElement | null
 }
 const queues = [{id: 'all', label: '全部任务'}, {id: 'attention', label: '需要处理'}, {id: 'running', label: '进行中'}, {id: 'completed', label: '已完成'}] as const
+const storedQueue = () => queues.find(row => row.id === history.state?.workbenchQueue)?.id || 'all'
 
 /** Uses the original workbench table, file list, responsive cards and column controls. */
 export function AuditWorkbench(props: WorkbenchProps) {
-  const [queue, setQueue] = useState(() => queues.find(row => row.id === history.state?.workbenchQueue)?.id || 'all')
+  const [queue, setQueue] = useState(storedQueue)
+  useEffect(() => {
+    const restoreQueue = () => setQueue(storedQueue())
+    window.addEventListener('popstate', restoreQueue)
+    return () => window.removeEventListener('popstate', restoreQueue)
+  }, [])
   function chooseQueue(value: string) {
     const selected = queues.find(row => row.id === value)
     if (!selected) return
