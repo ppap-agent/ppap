@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
-from ppap_core.files import ObjectExists, ObjectMissing
+from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
 from ppap_deep.auditor import SemanticRuntime, product_response
 from ppap_deep.client import DeepError
 from ppap_deep.controller import Controller, ExecutionContext
@@ -49,10 +49,13 @@ class MemoryObjects:
     def __init__(self):
         self.values = {}
 
-    def get(self, key):
+    def get(self, key, *, max_bytes=None):
         if key not in self.values:
             raise ObjectMissing()
-        return self.values[key]
+        data = self.values[key]
+        if max_bytes is not None and len(data) > max_bytes:
+            raise ObjectTooLarge()
+        return data
 
     def put_exclusive(self, key, body, _content_type):
         if key in self.values:
