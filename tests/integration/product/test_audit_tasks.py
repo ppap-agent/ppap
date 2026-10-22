@@ -15,10 +15,11 @@ from openpyxl import Workbook
 from ppap_api import create_app
 from ppap_application import build_product_store
 from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import USER_BOB
+from ppap_core.fixtures import USER_ALICE, USER_BOB
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_worker import process_claimed
+from psycopg.types.json import Jsonb
 
 
 @pytest.fixture
@@ -149,6 +150,114 @@ def billing_client(worker, item):
     session = api.create_session(principal, UserTokens("quota-user", "", now + timedelta(hours=1), now + timedelta(hours=1)))
     client.cookies.set(SESSION_COOKIE, session)
     return client, http, calls
+
+
+@pytest.mark.parametrize("fault", ["round_grant", "unselected_file_grant", "unselected_not_ready", "unselected_cloud_source", "target_unselected", "result_attempt"])
+def test_pdf_download_keeps_complete_task_authority_without_building_the_task_projection(matched_task, auth_store_factory, monkeypatch, fault):
+    client, worker, path, body, _rule = matched_task
+    unselected = {**checked_file(client, worker, "未选择的补充.xlsx"), "selection": "unselected"}
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [unselected]}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    process_claimed(worker, worker.claim_job("download-recognition"), "download-recognition", rule_ai=MetadataAI())
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1})
+    assert accepted.status_code == 201, accepted.text
+    process_claimed(worker, worker.claim_job("download-audit"), "download-audit")
+    process_claimed(worker, worker.claim_job("download-pdf"), "download-pdf")
+    task = client.get(path).json()
+    target = next(file for file in task["files"] if file["audit"])
+    report = target["audit"]["report"]
+    assert report["state"] == "ready"
+    download_path = path + f"/reports/{report['report_id']}/pdf"
+    reference = {"round_id": task["round_id"], "file_version_id": target["file"]["id"], "result_attempt": target["audit"]["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
+    frozen = client.get(f"/rounds/{task['round_id']}").json()
+    usage = client.get("/usage").json()
+    # Instrument the actual projection without replacing its authorization or results.
+    projection_calls = []
+    original_projection = type(worker)._recognition_public
+
+    def record_projection(store, *args, **kwargs):
+        projection_calls.append(True)
+        return original_projection(store, *args, **kwargs)
+
+    monkeypatch.setattr(type(worker), "_recognition_public", record_projection)
+    original_pdf = client.get(download_path, params=reference)
+    assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF-")
+    assert projection_calls == []
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    with migrator._conn() as conn:
+        if fault in {"round_grant", "unselected_file_grant"}:
+            resource = task["round_id"] if fault == "round_grant" else next(file["file"]["file_id"] for file in task["files"] if file["file"]["id"] == unselected["file_version_id"])
+            capabilities = conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s RETURNING capability", (resource, USER_ALICE)).fetchall()
+            assert capabilities
+        elif fault == "unselected_not_ready":
+            conn.execute("UPDATE product.file_versions SET status = 'failed' WHERE id = %s", (unselected["file_version_id"],))
+        elif fault == "unselected_cloud_source":
+            upload_request = conn.execute("SELECT upload_request FROM product.file_versions WHERE id = %s", (unselected["file_version_id"],)).fetchone()[0]
+            conn.execute(
+                """UPDATE product.file_versions SET upload_request = jsonb_build_object(
+                'feishu_folder_token', 'test-folder', 'cloud_upload', jsonb_build_object('phase', 'ready', 'file_token', 'unmapped-token'))
+                WHERE id = %s""",
+                (unselected["file_version_id"],),
+            )
+        elif fault == "target_unselected":
+            conn.execute("UPDATE product.draft_items SET selection = 'unselected' WHERE draft_id = %s AND file_version_id = %s", (task["id"], target["file"]["id"]))
+        else:
+            conn.execute("UPDATE product.audit_rounds SET result_attempt = result_attempt + 1 WHERE id = %s", (task["round_id"],))
+    try:
+        response = client.get(download_path, params=reference)
+        expected = "file_not_ready" if fault in {"unselected_not_ready", "unselected_cloud_source"} else "access_denied"
+        assert response.status_code == (409 if expected == "file_not_ready" else 403), response.text
+        assert response.json() == {"error": expected}
+        assert projection_calls == []
+    finally:
+        with migrator._conn() as conn:
+            if fault in {"round_grant", "unselected_file_grant"}:
+                for (capability,) in capabilities:
+                    conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, %s)", (resource, USER_ALICE, capability))
+            elif fault == "unselected_not_ready":
+                conn.execute("UPDATE product.file_versions SET status = 'ready' WHERE id = %s", (unselected["file_version_id"],))
+            elif fault == "unselected_cloud_source":
+                conn.execute("UPDATE product.file_versions SET upload_request = %s WHERE id = %s", (Jsonb(upload_request) if upload_request is not None else None, unselected["file_version_id"]))
+            elif fault == "target_unselected":
+                conn.execute("UPDATE product.draft_items SET selection = 'selected' WHERE draft_id = %s AND file_version_id = %s", (task["id"], target["file"]["id"]))
+            else:
+                conn.execute("UPDATE product.audit_rounds SET result_attempt = %s WHERE id = %s", (reference["result_attempt"], task["round_id"]))
+    assert client.get(download_path, params=reference).content == original_pdf.content
+    assert projection_calls == []
+    assert client.get(f"/rounds/{task['round_id']}").json() == frozen
+    assert client.get("/usage").json() == usage
+    assert client.get(path).json() == task
+    assert worker.claim_job("download-no-new-work") is None
+
+
+@pytest.mark.parametrize("corruption", ["magic", "length", "digest"])
+def test_pdf_download_still_verifies_the_frozen_object_bytes(matched_task, auth_store_factory, corruption):
+    client, worker, path, _body, _rule = matched_task
+    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 201
+    process_claimed(worker, worker.claim_job("integrity-audit"), "integrity-audit")
+    process_claimed(worker, worker.claim_job("integrity-pdf"), "integrity-pdf")
+    task = client.get(path).json()
+    audit = task["files"][0]["audit"]
+    report = audit["report"]
+    assert report["state"] == "ready"
+    download_path = path + f"/reports/{report['report_id']}/pdf"
+    reference = {"round_id": task["round_id"], "file_version_id": audit["file_version_id"], "result_attempt": audit["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
+    original = client.get(download_path, params=reference)
+    assert original.status_code == 200 and original.content.startswith(b"%PDF-")
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    with migrator._conn() as conn:
+        key = conn.execute("SELECT result->>'object_key' FROM engine.jobs WHERE id = %s", (report["report_id"],)).fetchone()[0]
+    content = original.content
+    worker.objects.data[key] = b"-----" + content[5:] if corruption == "magic" else content + b"\n" if corruption == "length" else content[:-1] + bytes([content[-1] ^ 1])
+    try:
+        rejected = client.get(download_path, params=reference)
+        assert rejected.status_code == 409
+        assert rejected.json() == {"error": "report_artifact_conflict"}
+    finally:
+        worker.objects.data[key] = content
+    assert client.get(download_path, params=reference).content == content
+    assert client.get(path).json() == task
+    assert worker.claim_job("integrity-no-new-work") is None
 
 
 def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quota(matched_task):
