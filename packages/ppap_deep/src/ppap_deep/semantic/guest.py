@@ -13,10 +13,10 @@ from pydantic import BaseModel, Field
 from .document_tools import ParserLimitError, ReadLimits, save, snapshot
 from .evidence import EvidenceBudget, resolve
 from .guest_model import ModelBudgetError, ModelProtocolError, ReasoningEffort
-from .models import Artifact, PlannedRule, RulePlan
-from .protocol import CompileBundle, CompileDiagnostic, CompileSpec, CompileValidationReason, GuestFault, ResultBundle, RuleRef, SnapshotBundle, SnapshotSpec, SubmissionSpec
+from .models import Artifact, AuditReport, PlannedRule, RulePlan
+from .protocol import CompileBundle, CompileDiagnostic, CompileFailureRecord, CompileSpec, CompileValidationReason, GuestFault, ResultBundle, RuleRef, SnapshotBundle, SnapshotSpec, SubmissionSpec
 from .secure_files import read_json, read_regular
-from .trace import AuditExecution
+from .trace import AuditExecution, AuditTrace
 from .validation import validate_bundle, validate_snapshot
 
 T = TypeVar("T", bound=BaseModel)
@@ -134,7 +134,7 @@ def write_context_index(stage: Path, *, source_files: list[str], obligations: in
         "rule-sources.json": "effective rule hash and snapshot structure verified",
         "clauses.json": "frozen clause identities; published JSON clauses verified against effective body",
         "plans.json": "plan identity, coverage and source locators verified; semantic interpretation unverified",
-        "targets.json": "frozen target-to-rule identity",
+        "targets.json": "frozen target-to-rule identity for available plans",
     }
     save(stage / "working-state.json", {"assumptions": [], "missing_evidence": [], "remaining_obligations_file": "obligations.json"})
     save(
@@ -264,10 +264,14 @@ def compile_plans(
     runner: StageRunner,
     deadline: float,
     limits: ReadLimits,
+    *,
+    failures: dict[str, CompileDiagnostic] | None = None,
 ) -> dict[str, RulePlan]:
     plans: dict[str, RulePlan] = {}
     budget = EvidenceBudget()
     for index, rule in enumerate(rules):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Guest compilation deadline exceeded")
         ids = [str(clause.get("id") or i) for i, clause in enumerate(rule.clauses, 1)]
         cached_plan = cached_plans.get(rule.rule_id)
         if cached_plan:
@@ -322,7 +326,12 @@ def compile_plans(
                 validate_plan(plan, rule, rule_sources[rule.rule_id], budget)
             except PlanValidationError as repaired:
                 repaired.repair_failed = True
-                raise
+                if failures is None:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Guest compilation recovery deadline exceeded") from repaired
+                failures[rule.rule_id] = CompileDiagnostic(stage="compile_repair_validation", reason=repaired.reason, rule_id=rule.rule_id, clause_id=repaired.clause_id)
+                continue
         plans[rule.rule_id] = plan
     return plans
 
@@ -342,7 +351,7 @@ def validate_or_repair(bundle: ResultBundle, spec: SubmissionSpec, work: Path, r
     mismatches: set[tuple[str, str]] = set()
     for proof in bundle.trace.proofs:
         rule_file_id = spec.targets.get(proof.audit_id)
-        if rule_file_id is None:
+        if rule_file_id is None or rule_file_id not in bundle.plans:
             continue
         planned = next((item for item in bundle.plans[rule_file_id].rules if item.id == proof.rule_id), None)
         if planned is not None and proof.kind != planned.predicate.kind:
@@ -383,6 +392,8 @@ def validate_or_repair(bundle: ResultBundle, spec: SubmissionSpec, work: Path, r
             plan.rules = [item.clause if clause.id == item.clause.id else clause for clause in plan.rules]
         budget = EvidenceBudget()
         for rule in spec.rules:
+            if rule.rule_id not in plans:
+                continue
             validate_plan(plans[rule.rule_id], rule, bundle.rule_sources[rule.rule_id], budget)
     if time.monotonic() >= deadline:
         raise TimeoutError("Guest recovery deadline exceeded")
@@ -391,22 +402,23 @@ def validate_or_repair(bundle: ResultBundle, spec: SubmissionSpec, work: Path, r
     save(stage / "documents.json", bundle.documents)
     save(stage / "document-index.json", [item.model_dump(mode="json") for item in spec.documents])
     save(stage / "rule-sources.json", bundle.rule_sources)
-    save(stage / "clauses.json", {rule.rule_id: rule.clauses for rule in spec.rules})
+    save(stage / "clauses.json", {rule.rule_id: rule.clauses for rule in spec.rules if rule.rule_id in plans})
     save(stage / "plans.json", {key: value.model_dump(mode="json") for key, value in plans.items()})
-    save(stage / "targets.json", spec.targets)
-    save(stage / "obligations.json", [{"audit_id": audit_id, "rule_id": item.id} for audit_id, rule_id in spec.targets.items() for item in plans[rule_id].rules])
+    targets = {audit_id: rule_id for audit_id, rule_id in spec.targets.items() if rule_id in plans}
+    save(stage / "targets.json", targets)
+    save(stage / "obligations.json", [{"audit_id": audit_id, "rule_id": item.id} for audit_id, rule_id in targets.items() for item in plans[rule_id].rules])
     save(stage / "previous-execution.json", execution.model_dump(mode="json"))
     save(stage / "validation-feedback.json", feedback)
     write_context_index(
         stage,
         source_files=["documents.json", "document-index.json", "rule-sources.json", "clauses.json", "plans.json", "targets.json"],
-        obligations=sum(len(plans[rule_id].rules) for rule_id in spec.targets.values()),
+        obligations=sum(len(plans[rule_id].rules) for rule_id in targets.values()),
         previous_unverified=True,
     )  # noqa: E501
     repaired = run_audit_stage(
         runner,
         stage,
-        audit_prompt(plans, spec.targets) + " This is the single repair attempt. Read validation-feedback.json and previous-execution.json. "
+        audit_prompt(plans, targets) + " This is the single repair attempt. Read validation-feedback.json and previous-execution.json. "
         "Reuse observations that remain valid under plans.json; correct only what is needed for faithful execution and complete coverage. "
         "plans.json is authoritative and may contain reviewed clauses. Recheck every changed clause against the document evidence. "
         "Return the complete corrected execution. A validation error is not evidence of PASS or NG.",
@@ -464,34 +476,38 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float) -> R
     validate_published_rules(spec.rules, rules)
     clauses_by_rule = {rule.rule_id: len(rule.clauses) for rule in spec.rules}
     write_progress(work, "planning", total=sum(clauses_by_rule[rule_id] for rule_id in spec.targets.values()))
-    plans = compile_plans(inputs, work, spec.rules, rules, manifest.cached_plans, runner, deadline, limits)
+    failures: dict[str, CompileDiagnostic] = {}
+    plans = compile_plans(inputs, work, spec.rules, rules, manifest.cached_plans, runner, deadline, limits, failures=failures)
+    failed_rules = {
+        rule.rule_id: CompileFailureRecord(**failures[rule.rule_id].model_dump(), source_sha256=rule.sha256, plan_revision=rule.plan_revision, engine_revision=spec.semantic_engine_revision)
+        for rule in spec.rules
+        if rule.rule_id in failures
+    }
+    targets = {audit_id: rule_id for audit_id, rule_id in spec.targets.items() if rule_id in plans}
+    total = sum(clauses_by_rule[rule_id] for rule_id in spec.targets.values())
     stage = work / "audit"
     stage.mkdir()
     save(stage / "documents.json", snapshots)
     save(stage / "document-index.json", [item.model_dump(mode="json") for item in spec.documents])
     save(stage / "rule-sources.json", rules)
-    save(stage / "clauses.json", {rule.rule_id: rule.clauses for rule in spec.rules})
+    save(stage / "clauses.json", {rule.rule_id: rule.clauses for rule in spec.rules if rule.rule_id in plans})
     save(stage / "plans.json", {key: value.model_dump(mode="json") for key, value in plans.items()})
-    save(stage / "targets.json", spec.targets)
-    save(stage / "obligations.json", [{"audit_id": audit_id, "rule_id": item.id} for audit_id, rule_id in spec.targets.items() for item in plans[rule_id].rules])
+    save(stage / "targets.json", targets)
+    save(stage / "obligations.json", [{"audit_id": audit_id, "rule_id": item.id} for audit_id, rule_id in targets.items() for item in plans[rule_id].rules])
     write_context_index(
         stage,
         source_files=["documents.json", "document-index.json", "rule-sources.json", "clauses.json", "plans.json", "targets.json"],
-        obligations=sum(len(plans[rule_id].rules) for rule_id in spec.targets.values()),
+        obligations=sum(len(plans[rule_id].rules) for rule_id in targets.values()),
     )  # noqa: E501
-    write_progress(work, "checking", total=sum(len(plans[rule_id].rules) for rule_id in spec.targets.values()))
-    execution = run_audit_stage(
-        runner,
-        stage,
-        audit_prompt(plans, spec.targets),
-        deadline,
-    )
+    write_progress(work, "checking", total=total)
+    execution = run_audit_stage(runner, stage, audit_prompt(plans, targets), deadline) if targets else AuditExecution(report=AuditReport(checks=[]), trace=AuditTrace(proofs=[]))
     bundle = ResultBundle(
         execution_id=spec.execution_id,
         semantic_engine_revision=spec.semantic_engine_revision,
         documents=snapshots,
         rule_sources=rules,
         plans=plans,
+        failed_rules=failed_rules,
         report=execution.report,
         trace=execution.trace,
         input_tokens=runner.input_tokens,
@@ -500,7 +516,7 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float) -> R
         completed_tool_calls=getattr(runner, "completed_tool_calls", 0),
         compactions=getattr(runner, "compactions", 0),
     )
-    write_progress(work, "validating", total=sum(len(plans[rule_id].rules) for rule_id in spec.targets.values()))
+    write_progress(work, "validating", total=total)
     bundle = validate_or_repair(bundle, spec, work, runner, deadline)
     encoded = bundle.model_dump_json().encode()
     if len(encoded) > limits.output_bytes:
@@ -509,7 +525,7 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float) -> R
     output.mkdir()
     with (output / "bundle.json").open("xb") as stream:
         stream.write(encoded)
-    write_progress(work, "validating", total=len(bundle.report.checks), verified=len(bundle.report.checks))
+    write_progress(work, "validating", total=total, verified=len(bundle.report.checks))
     return bundle
 
 

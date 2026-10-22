@@ -75,7 +75,7 @@ Proof = Annotated[QueryProof | SemanticProof, Field(discriminator="kind")]
 
 class AuditTrace(Artifact):
     bindings: list[Binding] = Field(default_factory=list, max_length=256)
-    proofs: list[Proof] = Field(min_length=1, max_length=16384)
+    proofs: list[Proof] = Field(max_length=16384)
 
 
 class AuditExecution(Artifact):

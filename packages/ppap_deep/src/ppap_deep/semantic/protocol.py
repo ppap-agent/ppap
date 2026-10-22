@@ -147,11 +147,11 @@ class CompileDiagnostic(Artifact):
     stage: Literal["compile_repair_validation"]
     reason: CompileValidationReason
     rule_id: BusinessId
-    clause_id: str | None = Field(default=None, max_length=128)
+    clause_id: str | None = Field(default=None, max_length=256)
 
 
 class CompileFailureRecord(Artifact):
-    """Host-side copy that survives guest cleanup."""
+    """A compile-repair failure bound to one frozen rule and execution policy."""
 
     rule_id: BusinessId
     source_sha256: Sha256
@@ -159,7 +159,7 @@ class CompileFailureRecord(Artifact):
     engine_revision: Sha256
     stage: Literal["compile_repair_validation"]
     reason: CompileValidationReason
-    clause_id: str | None = Field(default=None, max_length=128)
+    clause_id: str | None = Field(default=None, max_length=256)
 
 
 class GuestFault(Artifact):
@@ -183,6 +183,7 @@ class ResultBundle(Artifact):
     documents: dict[str, dict[str, Any]]
     rule_sources: dict[str, dict[str, Any]]
     plans: dict[str, RulePlan]
+    failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
     report: AuditReport
     trace: AuditTrace
     input_tokens: int = Field(default=0, ge=0, strict=True)

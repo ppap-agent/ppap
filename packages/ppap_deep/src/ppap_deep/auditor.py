@@ -103,18 +103,22 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
         raise ValueError("Validated bundle does not belong to the frozen request")
     evidence_gaps = validate_bundle(bundle, submission)
     files = {item.file_version_id: item for item in spec.files}
+    checks = {(check.audit_id, check.rule_id): check for check in bundle.report.checks}
     proofs = {(proof.audit_id, proof.rule_id): proof.kind for proof in bundle.trace.proofs}
     findings, rule_items = [], []
     evidence_budget = EvidenceBudget()
-    for check in bundle.report.checks:
-        target = files[check.audit_id]
-        clause = next(row for row in (target.rule_body or {})["rules"] if row["id"] == check.rule_id)
+    for target, clause in ((target, clause) for target in spec.files if target.role == "target" for clause in (target.rule_body or {})["rules"]):
+        clause_id = clause["id"]
+        failed = target.rule_version_id in bundle.failed_rules
+        check = None if failed else checks[target.file_version_id, clause_id]
+        status: Literal["PASS", "NG", "ERR", "UNABLE", "NA"] = check.status if check else "ERR"
+        reason = check.reason if check else "审核计划生成失败，本项未执行。原文件与已确认规则未变。"
         sources = []
-        for citation in check.evidence:
+        for citation in check.evidence if check else []:
             source = files[citation.document_id]
             observed = resolve_optional(bundle.documents[citation.document_id], citation.locator, evidence_budget)
             if observed is None or citation.locator is None:
-                evidence_gaps.add((check.audit_id, check.rule_id))
+                evidence_gaps.add((target.file_version_id, clause_id))
                 continue
             excerpt = " · ".join(observed.values)
             if len(excerpt) > 4000:
@@ -122,33 +126,36 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
             sources.append({"file_version_id": source.file_version_id, "filename": source.filename, "role": source.role, "locator": citation.locator.model_dump(), "excerpt": excerpt})
         semantic = {
             "rule_version_id": target.rule_version_id,
-            "clause_id": check.rule_id,
+            "clause_id": clause_id,
             "rule_text": clause["rule_to_check"],
-            "scope": {"total": check.total, "checked": check.checked, "unknown": check.unknown},
+            "scope": {"total": check.total, "checked": check.checked, "unknown": check.unknown} if check else {"total": 0, "checked": 0, "unknown": 0},
             "sources": sources,
         }
-        if (check.audit_id, check.rule_id) in evidence_gaps:
+        if (target.file_version_id, clause_id) in evidence_gaps:
             semantic["evidence_incomplete"] = True
-        if check.diagnostic:
+        if failed:
+            semantic["diagnostic_code"] = "deep_output_invalid"
+            semantic["diagnostic"] = reason
+        elif check and check.diagnostic:
             semantic["diagnostic_code"] = check.diagnostic
             semantic["diagnostic"] = DIAGNOSTIC_LABELS[check.diagnostic]
         if target.rule_source_file_version_id:
             semantic["rule_source_file_version_id"] = target.rule_source_file_version_id
-        item_key = f"{target.file_version_id}:rule:{check.rule_id}"
+        item_key = f"{target.file_version_id}:rule:{clause_id}"
         findings.append(
             DeepFinding(
                 item_key=item_key,
                 classification=str(clause.get("category") or "客户规则"),
                 item=clause["rule_to_check"],
                 priority=str(clause.get("priority") or "P1"),
-                status=check.status,
-                suggestions=check.reason,
+                status=status,
+                suggestions=reason,
                 locator={
                     "kind": "file_version",
                     "file_id": target.file_id,
                     "file_version_id": target.file_version_id,
                     "filename": target.filename,
-                    "rule_item_id": check.rule_id,
+                    "rule_item_id": clause_id,
                     "semantic": semantic,
                 },
             )
@@ -158,14 +165,14 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
                 "file_version_id": target.file_version_id,
                 "filename": target.filename,
                 "rule_version_id": target.rule_version_id,
-                "rule_item_id": check.rule_id,
-                "id": check.rule_id,
+                "rule_item_id": clause_id,
+                "id": clause_id,
                 "category": str(clause.get("category") or "客户规则"),
                 "rule_to_check": clause["rule_to_check"],
                 "item_key": item_key,
-                "coverage": "executed",
-                "status": check.status,
-                "proof_kind": proofs[check.audit_id, check.rule_id],
+                "coverage": "execution_error" if failed else "executed",
+                "status": status,
+                **({"reason": reason} if failed else {"proof_kind": proofs[target.file_version_id, clause_id]}),
             }
         )
     return ExecuteResponse(
@@ -182,12 +189,13 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
             "compactions": bundle.compactions,
         },
         coverage=DeepCoverage(
-            checked=[item.filename for item in spec.files if item.role == "target"],
-            unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"],
+            checked=[item.filename for item in spec.files if item.role == "target" and item.rule_version_id not in bundle.failed_rules],
+            unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"]
+            + [f"{item.filename}（审核计划生成失败，未执行）" for item in spec.files if item.role == "target" and item.rule_version_id in bundle.failed_rules],
             locator_gap=bool(evidence_gaps) or any(not (row.locator or {})["semantic"]["sources"] for row in findings),
             rule_items=rule_items,
             verification=None
-            if evidence_gaps
+            if evidence_gaps or not bundle.plans
             else DeepVerification(
                 method="host_source_trace_v1",
                 round_id=spec.round_id,
@@ -320,7 +328,8 @@ class SemanticRuntime:
             for doc in submission.documents:
                 self._put(f"{prefix}/snapshots/{doc.sha256}{doc.format}.json", bundle.documents[doc.audit_id])
             for rule in submission.rules:
-                self._put(f"{prefix}/plans/{scope}/{rule.plan_revision}.json", bundle.plans[rule.rule_id].model_dump())
+                if rule.rule_id in bundle.plans:
+                    self._put(f"{prefix}/plans/{scope}/{rule.plan_revision}.json", bundle.plans[rule.rule_id].model_dump())
             self._put(artifact_prefix + "/bundle.json", bundle.model_dump(mode="json"))
             self._put(artifact_prefix + "/inputs.json", submission.model_dump(mode="json"))
             return response
