@@ -7,6 +7,7 @@ import os
 import select
 import socket
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,9 +35,12 @@ class ExecutionContext:
     cancelled: threading.Event = field(default_factory=threading.Event)
     on_progress: Callable[[dict], None] = lambda _state: None
 
-    def progress(self, state: dict) -> None:
+    def raise_if_cancelled(self) -> None:
         if self.cancelled.is_set():
             raise DeepError("deep_cancelled")
+
+    def progress(self, state: dict) -> None:
+        self.raise_if_cancelled()
         self.on_progress(DeepProgress.model_validate(state).model_dump(exclude_none=True))
 
 
@@ -91,6 +95,7 @@ class Controller:
         blobs: dict[str, bytes] = {}
         try:
             for item in spec.files:
+                context.raise_if_cancelled()
                 if not item.sha256:
                     raise DeepError("deep_integrity_mismatch")
                 try:
@@ -99,13 +104,14 @@ class Controller:
                     raise
                 except Exception as exc:
                     raise DeepError("deep_input_missing") from exc
+                context.raise_if_cancelled()
                 digest = hashlib.sha256(data).hexdigest()
                 if digest != item.sha256:
                     raise DeepError("deep_integrity_mismatch")
                 blobs[item.file_version_id] = data
+            context.raise_if_cancelled()
             result = self.runtime.execute(spec, blobs, context=context)
-            if context.cancelled.is_set():
-                raise DeepError("deep_cancelled")
+            context.raise_if_cancelled()
             return self._validate(spec, ExecuteResponse.model_validate(result.model_dump()))
         finally:
             blobs.clear()
@@ -207,6 +213,7 @@ class UnixControllerServer:
         while not self._stop.is_set():
             try:
                 conn, _unused = self._sock.accept()
+                read_deadline = time.monotonic() + self.request_timeout
             except TimeoutError:
                 continue
             except OSError:
@@ -216,9 +223,9 @@ class UnixControllerServer:
             if not self._slots.acquire(blocking=False):
                 conn.close()
                 continue
-            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+            threading.Thread(target=self._serve, args=(conn, read_deadline), daemon=True).start()
 
-    def _serve(self, conn: socket.socket) -> None:
+    def _serve(self, conn: socket.socket, read_deadline: float) -> None:
         context = ExecutionContext()
         finished = threading.Event()
         with self._contexts_lock:
@@ -226,7 +233,7 @@ class UnixControllerServer:
         try:
             with conn:
                 conn.settimeout(10)
-                payload = read_frame(conn)
+                payload = read_frame(conn, deadline=read_deadline, cancelled=context.cancelled)
 
                 def watch_disconnect():
                     while not finished.wait(0.25):
