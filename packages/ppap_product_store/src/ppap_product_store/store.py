@@ -1768,6 +1768,7 @@ class AuthStore:
             LEFT JOIN LATERAL (SELECT j.result->'metadata' AS metadata, j.result->>'document_type' AS document_type
                 WHERE j.status IN ('succeeded', 'failed', 'cancelled')
                 AND j.payload->>'task_id' = d.id::text
+                AND COALESCE(jsonb_typeof(j.payload->'task_revision'), 'number') = 'number'
                 AND COALESCE(j.payload->>'task_revision', '0') = d.input_revision::text
                 AND j.payload->>'source_file_version_id' = i.file_version_id::text
                 AND j.result->>'source_file_version_id' = i.file_version_id::text) matched ON true
@@ -1837,9 +1838,11 @@ class AuthStore:
 
     @staticmethod
     def _analysis_snapshot_bound(payload: dict, result: dict, task_id: str, revision: int, version_id: str) -> bool:
+        snapshot_revision = payload.get("task_revision", 0)
         return (
             payload.get("task_id") == task_id
-            and payload.get("task_revision", 0) == revision
+            and type(snapshot_revision) is int
+            and snapshot_revision == revision
             and payload.get("source_file_version_id") == version_id
             and result.get("source_file_version_id") == version_id
         )
