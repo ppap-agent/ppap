@@ -375,3 +375,67 @@ def test_one_unreadable_local_file_does_not_block_the_other_files_before_transfe
         expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
         assert http.task_commands == []
         browser.close()
+
+
+def test_prepared_ordinary_task_resolves_an_explicit_candidate_in_the_same_task():
+    """UI request binding only; actual matching/freeze is owned by PG tests."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        http = PreparationHTTP()
+        http.allow_receipts = True
+        http.install(page)
+        rules = [{"id": "rule-" + key, "title": "规则 " + key.upper(), "body": {"kind": "presence"}} for key in ("a", "b")]
+        confirms, errors = [], []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+        def rematch(route):
+            if route.request.method != "POST" or not http.task:
+                route.fallback()
+                return
+            value = route.request.post_data_json
+            assert value["task_id"] == http.task["id"] and value["expected_revision"] == 0
+            assert value["files"][0]["preferred_rule_version_id"] == rules[1]["id"]
+            assert "source_draft_id" not in value
+            http.task_commands.append(value)
+            http.task.update(state="matching", input_revision=1, recognition_request_id=value["request_id"])
+            http.task["files"][0].update(preferred_rule_version_id=rules[1]["id"], match=None)
+            route.fulfill(status=202, json=http.task)
+
+        def confirm(route):
+            value = route.request.post_data_json
+            assert value["expected_revision"] == 1
+            assert http.task["files"][0]["match"]["rule"]["id"] == rules[1]["id"]
+            confirms.append(value)
+            http.task.update(state="reviewing", round_id="accepted-round", acceptance={"request_id": value["request_id"], "state": "accepted"}, progress={"completed": 0, "total": 1})
+            route.fulfill(json=http.task)
+
+        page.route("**/api/audit-tasks", rematch)
+        page.route("**/api/audit-tasks/*/confirm", confirm)
+        page.goto(WEB + "/tasks/new")
+        page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "已接收.xlsx", "mimeType": "application/octet-stream", "buffer": b"original"})
+        expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
+        page.get_by_role("button", name="开始识别", exact=True).click()
+        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        original_id = http.task["id"]
+        metadata = {"customer": None, "model": None, "part": None, "part_number": None}
+        http.task.update(state="pending_confirm")
+        http.task["files"][0]["match"] = {"state": "failed", "metadata": metadata, "document_type": "控制计划", "rule": None, "candidates": rules, "gaps": ["ambiguous_available_rules"]}
+        page.reload()
+        expect(page.get_by_role("button", name="开始审核", exact=True)).to_be_disabled()
+        page.get_by_role("combobox", name="已接收.xlsx 的适用规则", exact=True).click()
+        page.get_by_role("option", name="规则 B", exact=True).click()
+        expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
+        page.get_by_role("button", name="开始识别", exact=True).click()
+        expect(page.get_by_role("heading", name="正在识别文件与匹配规则", exact=True)).to_be_visible()
+        http.task.update(state="pending_confirm", estimated_points=500)
+        http.task["files"][0]["match"] = {"state": "matched", "metadata": metadata, "document_type": "控制计划", "rule": rules[1], "gaps": []}
+        page.reload()
+        expect(page.get_by_text("规则 B", exact=True)).to_be_visible()
+        page.get_by_role("button", name="开始审核", exact=True).click()
+        expect(page.get_by_role("button", name="开始审核", exact=True)).to_have_count(0)
+        assert http.task["id"] == original_id and len(confirms) == 1
+        assert len(http.task_commands) == 2 and len(http.preparation_creates) == 1
+        assert http.task_commands[0]["request_id"] != http.task_commands[1]["request_id"]
+        assert len(http.creates) == len(http.blobs) == 1 and errors == []
+        browser.close()
