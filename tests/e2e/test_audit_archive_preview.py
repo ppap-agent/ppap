@@ -6,6 +6,7 @@ These checks do not prove live audit execution, persistence or billing.
 import os
 import re
 import unittest
+import zipfile
 from urllib.parse import parse_qs, urlparse
 
 try:
@@ -59,7 +60,17 @@ class AuditArchivePreviewTests(unittest.TestCase):
             request = parse_qs(urlparse(page.url).query)["packageRequest"]
             page.get_by_role("button", name="清空选择", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            page.get_by_role("region", name="ZIP 工作", exact=True).get_by_role("button", name="打包记录", exact=True).click()
+            record = page.get_by_role("dialog", name="打包记录", exact=True)
+            expect(record.get_by_role("table", name="固定打包报告", exact=True).get_by_role("row")).to_have_count(3)
+            with page.expect_download() as download:
+                record.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+            with zipfile.ZipFile(download.value.path()) as package:
+                self.assertEqual(len([name for name in package.namelist() if name.endswith(".pdf")]), 2)
+                manifest = package.read("报告清单.txt").decode("utf-8")
+                self.assertIn("preview-archive-task-A001-3", manifest)
+                self.assertIn("preview-archive-task-A002-1", manifest)
+                self.assertNotIn("preview-archive-task-A001-4", manifest)
             self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], request)
             browser.close()
 
