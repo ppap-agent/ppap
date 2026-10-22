@@ -154,20 +154,22 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
         def runner(current):
             return engine_runner(current, store)
 
+        error_type = None
         try:
             result = evaluate_round(work, engine_runner=runner)
-            result["note"] = result.get("note") or "round_audit"
-            store.complete_job(claimed, ident, result, "succeeded")
-            emit("job_completed", outcome="succeeded", note=result.get("note"))
-            return result
         except Exception:
             from ppap_core.audits import execution_error_result
 
             result = execution_error_result("engine_error")
             result["note"] = "round_audit_error"
-            store.complete_job(claimed, ident, result, "succeeded")
-            emit("job_completed", outcome="succeeded", note="round_audit_error", error_type="engine_error")
-            return result
+            error_type = "engine_error"
+        else:
+            result["note"] = result.get("note") or "round_audit"
+        # A failed result transaction is not an engine failure. Let the caller
+        # retain the unfinished attempt instead of writing a fabricated ERR.
+        store.complete_job(claimed, ident, result, "succeeded")
+        emit("job_completed", outcome="succeeded", note=result.get("note"), error_type=error_type)
+        return result
     finally:
         reset(tokens)
 
