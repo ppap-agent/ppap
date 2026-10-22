@@ -73,6 +73,48 @@ test('an ungranted directory reports organization authorization instead of a tra
   })
 })
 
+test('directory fetch and body stalls expire without replay and keep the exact query for explicit recovery', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']})
+  const page = {organization_id: 'tenant-one', organization_name: '当前组织', targets: [], next_page_token: null}
+  for (const phase of ['fetch', 'body']) {
+    const calls: string[] = [], signals: AbortSignal[] = []
+    let finish!: (response: Response) => void
+    const late = new Promise<Response>(resolve => {finish = resolve})
+    globalThis.fetch = async (input, init) => {
+      assert.equal(init?.method, 'GET'); assert.equal(init?.credentials, 'include')
+      assert.ok(init?.signal); signals.push(init.signal); calls.push(String(input))
+      return phase === 'fetch' ? late : {ok: true, json: () => late.then(response => response.json())} as unknown as Response
+    }
+    const first = nativeSharingAdapter.listTargets('质量 & 王工', 'group', 'page / two')
+    const expired = assert.rejects(first, {name: 'TimeoutError', message: '读取组织目录超时，请重新读取目标。'})
+    await Promise.resolve()
+    context.mock.timers.tick(45_000)
+    await expired
+    assert.equal(calls.length, 1); assert.equal(signals[0].aborted, true)
+    const original = calls[0]
+    const params = new URL(original, 'https://example.test').searchParams
+    assert.equal(params.get('query'), '质量 & 王工')
+    assert.equal(params.get('kind'), 'group')
+    assert.equal(params.get('page_token'), 'page / two')
+    globalThis.fetch = async (input, init) => {
+      assert.equal(String(input), original); assert.ok(init?.signal)
+      signals.push(init.signal); calls.push(String(input)); return json(page)
+    }
+    assert.deepEqual(await nativeSharingAdapter.listTargets('质量 & 王工', 'group', 'page / two'), page)
+    finish(json({...page, organization_id: 'late-organization'}))
+    await assert.rejects(first, {name: 'TimeoutError'})
+    context.mock.timers.tick(45_000)
+    assert.equal(calls.length, 2); assert.equal(signals[1].aborted, false)
+  }
+})
+
+test('a service directory deadline stays distinct from missing organization authorization', async () => {
+  globalThis.fetch = async () => json({error: 'share_directory_timeout'}, 503)
+  await assert.rejects(nativeSharingAdapter.listTargets('质量', 'user'), {
+    code: 'share_directory_timeout', status: 503, message: '读取组织目录超时，请重新读取目标。',
+  })
+})
+
 test('a shared report is read only from its frozen artifact and checked against its response digest', async () => {
   const body = new TextEncoder().encode('%PDF-frozen-report')
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', body)), byte => byte.toString(16).padStart(2, '0')).join('')
