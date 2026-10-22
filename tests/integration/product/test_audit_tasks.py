@@ -15,10 +15,11 @@ from openpyxl import Workbook
 from ppap_api import create_app
 from ppap_application import build_product_store
 from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import USER_BOB
+from ppap_core.fixtures import USER_ALICE, USER_BOB
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_worker import process_claimed
+from psycopg.types.json import Jsonb
 
 
 @pytest.fixture
