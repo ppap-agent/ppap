@@ -30,10 +30,13 @@ class PageHeaderPreviewTests(unittest.TestCase):
             expect(page).to_have_url(address)
             expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
             expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_have_count(0)
+            expect(bar.get_by_text("PPAP Audit / 历史审核", exact=True)).to_be_visible()
+            expect(bar.get_by_role("link", name="返回审核结果", exact=True)).to_have_count(0)
             page.set_viewport_size({"width": 390, "height": 844})
             expect(bar.get_by_role("button", name="文件报告 · 3 份", exact=True)).to_have_count(0)
             page.go_forward()
             expect(page.get_by_role("region", name="当前报告", exact=True)).to_be_visible()
+            expect(bar.get_by_role("link", name="返回审核结果", exact=True)).to_have_text("PPAP-报告示例")
             expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_be_visible()
             browser.close()
 
