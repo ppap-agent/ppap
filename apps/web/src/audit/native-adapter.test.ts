@@ -133,6 +133,34 @@ test('native archive preserves filters and the exact selected historical result'
   assert.equal(calls[2], '/audit-archive/document%2Fa/history/result?task_id=old-task&round_id=old-round&file_version_id=old-version&result_attempt=2')
 })
 
+test('archive reads time out without replay and allow an explicit read of the same reference', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']})
+  const calls: {url: string; method: string}[] = []
+  const reference = {task_id: 'old-task', round_id: 'old-round', file_version_id: 'old-version', result_attempt: 2}
+  const reads = [
+    () => nativeArchiveAdapter.listDocuments({search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, page: 1, page_size: 10}),
+    () => nativeArchiveAdapter.listHistory('document/a'),
+    () => nativeArchiveAdapter.readHistory('document/a', reference),
+  ]
+  for (const phase of ['fetch', 'body']) for (const read of reads) {
+    globalThis.fetch = async (input, init) => {
+      calls.push({url: String(input), method: init?.method || 'GET'})
+      const stalled = new Promise<never>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true}))
+      return phase === 'fetch' ? stalled : {ok: true, json: () => stalled} as unknown as Response
+    }
+    const before = calls.length
+    const pending = assert.rejects(read(), /读取审核档案超时，请重新读取/)
+    await Promise.resolve()
+    context.mock.timers.tick(45_000)
+    await pending
+    assert.equal(calls.length, before + 1)
+  }
+  assert.ok(calls.every(call => call.method === 'GET'))
+  const frozenUrl = calls.at(-1)!.url
+  globalThis.fetch = async input => {assert.equal(String(input), frozenUrl); return json({reference})}
+  assert.deepEqual(await nativeArchiveAdapter.readHistory('document/a', reference), {reference})
+})
+
 test('Deep selection reaches task recognition and survives readback without starting an audit', async () => {
   const adapter = createNativeAuditAdapter({deepOffered: true, customers: []})
   const deepTask = {...task, analysis_mode: 'deep' as const}

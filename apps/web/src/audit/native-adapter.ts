@@ -38,17 +38,30 @@ export const nativeUsageAdapter: AuditUsageAdapter = {
   readUsage: query => request(`/audit-usage?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
 }
 
+async function readArchive<T>(path: string): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 45_000)
+  try {
+    return await request<T>(path, 'GET', undefined, controller.signal)
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('读取审核档案超时，请重新读取。')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export const nativeArchiveAdapter: AuditArchiveAdapter = {
   listDocuments(query) {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(query)) if (value !== null) params.set(key, String(value))
-    return request(`/audit-archive?${params}`)
+    return readArchive(`/audit-archive?${params}`)
   },
-  listHistory: documentId => request(`/audit-archive/${encodeURIComponent(documentId)}/history`),
+  listHistory: documentId => readArchive(`/audit-archive/${encodeURIComponent(documentId)}/history`),
   readHistory(documentId, reference) {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(reference)) if (value !== null) params.set(key, String(value))
-    return request(`/audit-archive/${encodeURIComponent(documentId)}/history/result?${params}`)
+    return readArchive(`/audit-archive/${encodeURIComponent(documentId)}/history/result?${params}`)
   },
 }
 
