@@ -330,6 +330,8 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 
 批量上传恢复从当前“上传资料”和草稿内“添加审核资料”进入。`test_rule_interactions.py` 控制逐文件回执、保存拒绝和迟到读取，要求已收到文件保留、未发送与未知分开、查询不新建传输，以及离开后的结果不写入另一草稿。`test_upload_recovery.py` 通过真实 Product API/数据库上传三份 XLSX，分别中断第三份已完成传输的回执、或传输前已完成草稿保存的回执；清除本机记录后读回同一草稿，查询或显式继续原请求完成关联。继续操作固定原请求 ID 和文件摘要，复用现有幂等创建，不把“未查到”当作新建身份的许可。测试不启动审核或扣费；对象存储的实际持久性另由运行环境验证。`UploadBatchRecovery.tla` 是两个页面 owner、三份文件的有限 Safety 检查，保留丢失成功文件、新建未知请求及迟到提交的故障配置；同身份创建/写入的幂等性由 API/存储边界验证，模型不证明完整系统 refinement、跨标签页并发、SQL/对象存储持久性或最终完成。
 
+新版首次上传使用已有服务端 Draft 保存准备资料，随后以 revision 比较提升为同一 Task；准备不创建 Round 或审核工作。`test_native_upload_preparation.py` 经原生页面与受控公开 HTTP 检查保存先于传输、刷新后读原请求、混合成功／未知、原件内容核对和提升后恢复；不证明真实飞书、数据库耐久性或审核质量。`test_audit_tasks.py` 的对应 PostgreSQL 场景验证实际 Draft 保存、授权、冲突和提升，须在具备数据库的环境执行。`NativeUploadPreparation.tla` 仅检查两个页面、两个选择、revision 0～2 的有限 Safety：保存先于外部效果、原身份保留、单次提升和冻结集合；两个故障配置保留未保存即传输和提升后晚到写入的反例。数据库锁与持久性是模型假设，不是完整系统 refinement 或最终恢复证明。
+
 ## Web OpenAPI contract
 
 报告分享的物理连接失效回归仍由 `tests/schema/test_audit_bindings.py` 拥有。共用发送生命周期沿用 `ReportShareDispatch.tla`：两个接收人、各两次尝试的有限 Safety 检查；无公平性、状态约束、对称缩减或覆盖，静止终态不按死锁处理，不证明权限、文件内容、无限重试或最终送达。

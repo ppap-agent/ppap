@@ -145,9 +145,18 @@ export async function readLocalUpload(requestId: string): Promise<UploadReceipt>
   if (receipt.request_id !== requestId || receipt.file && receipt.file.id !== requestId || receipt.state === 'ready' && receipt.file?.status !== 'ready') throw new Error('上传回执与原请求不一致，请重新读取。')
   return receipt
 }
+const fileDigests = new WeakMap<File, Promise<string>>()
+export function localFileDigest(file: File): Promise<string> {
+  const known = fileDigests.get(file)
+  if (known) return known
+  const digest = file.arrayBuffer().then(bytes => crypto.subtle.digest('SHA-256', bytes)).then(bytes => Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join(''))
+  fileDigests.set(file, digest)
+  void digest.catch(() => fileDigests.delete(file))
+  return digest
+}
 export async function uploadLocalVersion(file: File, requestId: string, onStaged?: (version: FileVersion) => void, folderToken?: string): Promise<UploadReceipt> {
   if (file.size > 200 * 1024 * 1024) throw new Error(`${file.name} 超过 200 MB。`)
-  const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
+  const sha256 = await localFileDigest(file)
   const input = {request_id: requestId, sha256, original_filename: file.name, byte_size: file.size, content_type: file.type || 'application/octet-stream', ...(folderToken ? {feishu_folder_token: folderToken} : {})}
   let staged: FileVersion | null = null
   function observe(version: FileVersion) {

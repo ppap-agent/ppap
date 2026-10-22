@@ -801,6 +801,31 @@ class RuleInteractionTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
+            preparation = {}
+
+            def save_preparation(route):
+                value = route.request.post_data_json
+                if route.request.method == "POST":
+                    preparation.update(
+                        id=value["request_id"],
+                        task_id=None,
+                        status="open",
+                        preparation_revision=0,
+                        items=[],
+                        analysis_mode="standard",
+                        predecessor_id=None,
+                        case_context={},
+                        writeback={"available": False},
+                        updated_at="2026-10-22T00:00:00Z",
+                    )
+                else:
+                    self.assertEqual(value["expected_revision"], preparation["preparation_revision"])
+                    preparation["preparation_revision"] += 1
+                preparation["upload_preparation"] = value["upload_preparation"]
+                route.fulfill(json=preparation)
+
+            page.route("**/api/drafts", save_preparation)
+            page.route("**/api/drafts/*", save_preparation)
 
             def validation(route):
                 version = state["source"]
@@ -839,7 +864,9 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(page.evaluate("history.state.auditUploadDraft"), upload_identity)
             self.assertEqual(state["parses"], [])
             self.assertEqual(state["saves"], [])
-            self.assertFalse(any(path.startswith(("/audit-tasks", "/drafts", "/rounds")) for method, path in state["writes"]))
+            self.assertFalse(any(path.startswith(("/audit-tasks", "/rounds")) for method, path in state["writes"]))
+            self.assertEqual(preparation["id"], upload_identity)
+            self.assertEqual(preparation["upload_preparation"]["files"][0]["selection"], "unselected")
             browser.close()
 
     def test_leaving_during_draft_creation_never_starts_file_transmission(self):

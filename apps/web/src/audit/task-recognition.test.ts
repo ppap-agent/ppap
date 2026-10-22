@@ -10,6 +10,30 @@ function task(requestId: string): Task {
   return {id: requestId, number: 'PPAP-20261016-001', state: 'matching', analysis_mode: 'standard', customer_preference: null, source_draft_id: null, round_id: null, completion_reason: null, estimated_points: null, created_at: '2026-10-16T00:00:00Z', updated_at: '2026-10-16T00:00:00Z', files: structuredClone(files), input_revision: 0, recognition_request_id: requestId}
 }
 
+test('a prepared draft retains its own task identity when the recognition reply is lost', async () => {
+  const commands: unknown[] = [], reads: unknown[] = [], accepted: Task[] = []
+  const preparation = {id: 'prepared-draft', revision: 4}
+  const recognition = createTaskRecognition({
+    match: async (_files, _mode, _customer, _previous, requestId, _predecessor, source) => {
+      commands.push({requestId, source}); throw new Error('reply lost')
+    },
+    readRecognition: async (taskId, requestId) => {
+      reads.push({taskId, requestId})
+      return {task_id: taskId, request_id: requestId, state: 'accepted', input_revision: 0, task: {...task(requestId), id: preparation.id, source_draft_id: preparation.id}}
+    },
+  }, next => accepted.push(next))
+  await recognition.start('local-preparation', {...input(), preparation})
+  const original = recognition.get('local-preparation')!
+  assert.equal(original.taskId, preparation.id)
+  assert.notEqual(original.requestId, preparation.id)
+  await recognition.start('local-preparation', {...input(), preparation})
+  await recognition.read('local-preparation')
+  assert.deepEqual(commands, [{requestId: original.requestId, source: preparation}])
+  assert.deepEqual(reads, [{taskId: preparation.id, requestId: original.requestId}])
+  assert.equal(accepted[0].id, preparation.id)
+  assert.equal(recognition.get('local-preparation')!.phase, 'accepted')
+})
+
 test('a lost recognition reply retains its input and can only read the original request', async () => {
   const requests: string[] = [], receipts: string[] = [], accepted: Task[] = []
   const adapter: AuditRecognitionAdapter = {

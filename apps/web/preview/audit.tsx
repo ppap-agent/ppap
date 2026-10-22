@@ -200,6 +200,7 @@ const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' 
       receipt = {request_id: requestId, state: 'ready', file: {...file, file_id: fixture.source.token, original_filename: fixture.filename, content_type: fixture.mime}, reason: null, retry_allowed: false}
     } else {
       const file = input.file
+      if (!(file instanceof File)) throw new Error('preview_original_bytes_missing')
       const reason = file.size > 200 * 1024 * 1024 ? '文件超过 200 MB，未开始上传。' : !/\.(xlsx|xls|xlsm|doc|docx|pdf)$/i.test(file.name) ? '非审核支持格式，传输未开始。' : ''
       const knownFailure = scene === 'upload-partial' && file.name === '明确失败.xlsx' && !transferAttempts.has(file)
       transferAttempts.add(file)

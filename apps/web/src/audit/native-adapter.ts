@@ -72,6 +72,7 @@ export const nativeArchiveAdapter: AuditArchiveAdapter = {
 const nativeUploads: UploadAdapter = {
   async upload(input, requestId) {
     if (input.kind === 'local') {
+      if (!(input.file instanceof File)) throw new Error('请重新选择当时的原件，再读取原请求。')
       const receipt = await uploadLocalVersion(input.file, requestId, undefined, input.destination?.token)
       if (!input.destination || receipt.state !== 'uploading' || receipt.file?.status !== 'ready' || !receipt.resume_allowed) return receipt
       try {return await request(`/file-uploads/${encodeURIComponent(requestId)}/feishu`, 'POST')}
@@ -242,6 +243,13 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       }
     }},
     autoValidate: true,
+    preparation: {
+      read: id => request(`/drafts/${encoded(id)}`),
+      save: (id, revision, value) => revision === null
+        ? request('/drafts', 'POST', {request_id: id, upload_preparation: value})
+        : request(`/drafts/${encoded(id)}`, 'PUT', {expected_revision: revision, upload_preparation: value}),
+      readFile: (fileId, versionId) => request(`/files/${encoded(fileId)}/versions/${encoded(versionId)}`),
+    },
     ...nativeUploads,
     async readValidation(file) {
       const known = file.validation_id || validations.get(file.file.id)
@@ -254,11 +262,12 @@ export function createNativeAuditAdapter(options: {deepOffered: boolean; custome
       return validation(await request<ValidationJob>('/file-validations', 'POST', {request_id: id, source_file_id: file.file.file_id, source_file_version_id: file.file.id}), file, id)
     },
     prepareReaudit: roundId => request(`/rounds/${encoded(roundId)}/reaudit-inputs`),
-    match: (files, mode, customer, previous, requestId, predecessorId) => request<AuditTask>('/audit-tasks', 'POST', {
+    match: (files, mode, customer, previous, requestId, predecessorId, preparation) => request<AuditTask>('/audit-tasks', 'POST', {
       request_id: requestId,
       analysis_mode: mode,
       customer_preference: customer,
       ...(previous ? {task_id: previous.id, expected_revision: previous.input_revision ?? 0} : {}),
+      ...(!previous && preparation ? {source_draft_id: preparation.id, expected_draft_revision: preparation.revision} : {}),
       ...((previous?.predecessor_id || predecessorId) ? {predecessor_id: previous?.predecessor_id || predecessorId} : {}),
       files: files.map(row => ({file_version_id: row.file.id, validation_id: row.validation_id ?? null, selection: row.selection, removal_reason: row.removal_reason, preferred_rule_version_id: row.preferred_rule_version_id, reference_only: row.reference_only, replacement_of_file_version_id: row.replacement_of_file_version_id})),
     }),
