@@ -13,7 +13,7 @@ import {writeAuditAddress} from './routes'
 type Round = components['schemas']['Round']
 export type ReadRound = (id: string, signal: AbortSignal) => Promise<Round>
 
-export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit, returnHref = '/workbench'}: {roundId: string; readRound: ReadRound; renderOriginal?: OriginalRenderer; onReaudit?: () => void; returnHref?: string}) {
+export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit, onReport, returnHref = '/workbench'}: {roundId: string; readRound: ReadRound; renderOriginal?: OriginalRenderer; onReaudit?: () => void; onReport?: (taskId: string, fileVersionId: string) => void; returnHref?: string}) {
   const reviewEditor = useContext(ReviewEditorContext)
   const [round, setRound] = useState<Round | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0), [selected, setSelected] = useState(() => new URL(location.href).searchParams.get('file') || '')
   useEffect(() => {
@@ -39,6 +39,8 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
   }
   const view = round?.id === roundId ? round.read_view : null
   const file = view?.files.find(row => row.file.id === selected) ?? view?.files.find(row => row.role === 'target') ?? view?.files[0]
+  const reportSource = view?.report_source
+  const reportTaskId = reportSource?.access.state === 'allowed' ? reportSource.task_id : null
   const versions = view?.files.map(row => row.file.id) || []
   const originals = view?.files.map(row => ({file_version_id: row.file.id, file: row.file, access: {state: 'allowed' as const, reason: null}})) || []
   return <section aria-label="历史审核" className="mx-auto max-w-screen-2xl space-y-6">
@@ -48,7 +50,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
     </header>
     {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <p role="status">正在读取本轮审核…</p> : <>
       <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => selectFile(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>
-      {file ? file.role === 'target' ? <AuditReviewContent key={`${roundId}:${file.file.id}`} file={file} roundId={roundId} frozenRule={file.rule} frozenFileVersionIds={versions} originals={originals} renderOriginal={renderOriginal}/> : <section aria-label="本轮比对原件" className="space-y-4"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal ? renderOriginal(file.file, null, roundId) : <p>原件暂不可预览。</p>}</section> : <p>本轮没有可读取的文件。</p>}
+      {file ? file.role === 'target' ? <AuditReviewContent key={`${roundId}:${file.file.id}`} file={file} roundId={roundId} frozenRule={file.rule} frozenFileVersionIds={versions} originals={originals} renderOriginal={renderOriginal} reportAccess={reportSource?.access} onReport={onReport && reportTaskId ? () => onReport(reportTaskId, file.file.id) : undefined}/> : <section aria-label="本轮比对原件" className="space-y-4"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal ? renderOriginal(file.file, null, roundId) : <p>原件暂不可预览。</p>}</section> : <p>本轮没有可读取的文件。</p>}
       <HistoricalFindings findings={view.unassigned_findings} roundId={roundId} resultAttempt={round?.result_attempt ?? null} versions={versions} originals={originals} renderOriginal={renderOriginal} title="未归属文件的历史记录"/>
     </>}
   </section>

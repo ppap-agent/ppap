@@ -51,7 +51,7 @@ function DisplayInformation({file, onEdit}: {file: File; onEdit?: () => void}) {
 }
 
 /** P5 and historical readers share the same frozen results, evidence and review actions. */
-export function AuditReviewContent({file, roundId, taskId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, onEditDisplay, showFileTitle = true}: {file: File; roundId: string; taskId?: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; onEditDisplay?: () => void; showFileTitle?: boolean}) {
+export function AuditReviewContent({file, roundId, taskId, frozenRule = file.match?.rule, frozenFileVersionIds, originals, renderOriginal, onReport, reportAccess, onEditDisplay, showFileTitle = true}: {file: File; roundId: string; taskId?: string; frozenRule?: components['schemas']['BoundRule'] | null; frozenFileVersionIds: string[]; originals: components['schemas']['AuditArchiveOriginal'][]; renderOriginal?: OriginalRenderer; onReport?: () => void; reportAccess?: components['schemas']['AuditArchiveAccess']; onEditDisplay?: () => void; showFileTitle?: boolean}) {
   const reviewEditor = useContext(ReviewEditorContext)
   const [clause, setClause] = useState(() => new URL(location.href).searchParams.get('clause') || ''), [chosenSource, setSource] = useState<SelectedSource | null>(null)
   const [focus, setFocus] = useState(() => new URL(location.href).searchParams.get('focus') === 'review')
@@ -62,6 +62,7 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
   const trigger = useRef<HTMLElement | null>(null)
   const audit = file.audit, check = audit?.checks.find(row => row.rule_item.id === clause) ?? audit?.checks[0]
   const issue = frozenResultError(roundId, file, frozenFileVersionIds, frozenRule)
+  const reportAccessIssue = reportAccess && reportAccess.state !== 'allowed' ? reportAccess.reason || '当前账号不能读取此报告。' : ''
   const review = check?.review !== undefined ? check.review : check?.finding?.review
   const chosen = chosenSource && (chosenSource.kind === 'machine' ? check?.evidence : review?.citations)?.some(row => sameSnapshot(row, chosenSource.reference)) ? chosenSource : null
   const source = chosen?.kind === 'machine' ? chosen.reference : null
@@ -128,10 +129,10 @@ export function AuditReviewContent({file, roundId, taskId, frozenRule = file.mat
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={showOriginal}><FileSearch/>查看原件</Button>
         {audit && <Button variant={focus ? "secondary" : "outline"} onClick={() => navigateClause(check?.rule_item.id || "", !focus)}>{focus ? "返回审核项" : "专注复核（选做）"}</Button>}
-        <Button variant="outline" disabled={!onReport || Boolean(issue) || !audit || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}><FileText/>查看报告</Button>
+        <Button variant="outline" disabled={!onReport || Boolean(issue || reportAccessIssue) || !audit || !['ready', 'failed', 'pending', 'generating'].includes(audit.report.state)} onClick={onReport}><FileText/>查看报告</Button>
         <Sheet><SheetTrigger asChild><Button variant="outline"><Info/>文件信息</Button></SheetTrigger><SheetContent onEscapeKeyDown={event => {if (event.target instanceof Element && event.target.closest('[data-slot="dialog-content"]')) event.preventDefault()}} className="overflow-y-auto data-[side=right]:w-full data-[side=right]:max-w-2xl"><SheetHeader><SheetTitle>文件信息</SheetTitle><SheetDescription className="sr-only">查看文件显示信息与本轮确认的规则</SheetDescription></SheetHeader><FileName name={file.file.original_filename}/><DisplayInformation file={file} onEdit={onEditDisplay}/>{rule && <section aria-label="本轮审核规则" data-rule-version={rule.id} className="space-y-4 border-t pt-4"><h3 className="flex items-center gap-2 font-semibold"><BookOpen className="size-4"/>本轮审核规则</h3><p className="text-sm">{rule.title}</p>{rule.body.kind === 'engine' ? rule.body.rules.map(item => <article key={item.id} className="space-y-2 border-t pt-3"><h4 className="font-medium">{item.id} · {item.category}</h4><p className="whitespace-pre-wrap text-sm">{item.rule_to_check}</p></article>) : <p className="text-sm">文件存在性检查。</p>}</section>}</SheetContent></Sheet>
       </div>
-      {audit && (issue || audit.report.state !== 'ready') && <p className="text-xs text-muted-foreground">{issue ? '报告资格待核对。' : audit.report.state === 'not_eligible' && audit.counts.unknown_count + audit.counts.not_covered_count + audit.counts.error_count > 0 ? '部分审核项尚未取得明确结果，不生成完整 PASS/NG 报告。' : reportLabel[audit.report.state]}{!issue && audit.report.reason && ' · ' + audit.report.reason}</p>}
+      {audit && (issue || reportAccessIssue || audit.report.state !== 'ready') && <p className="text-xs text-muted-foreground">{issue ? '报告资格待核对。' : reportAccessIssue || (audit.report.state === 'not_eligible' && audit.counts.unknown_count + audit.counts.not_covered_count + audit.counts.error_count > 0 ? '部分审核项尚未取得明确结果，不生成完整 PASS/NG 报告。' : reportLabel[audit.report.state])}{!issue && !reportAccessIssue && audit.report.reason && ' · ' + audit.report.reason}</p>}
     </header>
     {issue && <div className="px-6 pt-4"><Alert variant="destructive"><AlertTitle>结果数据需要核对</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert></div>}
     {!audit ? <p role="status">审核结果尚未取得，请读取当前记录。</p> : <>

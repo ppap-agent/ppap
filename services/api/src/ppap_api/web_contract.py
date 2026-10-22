@@ -805,9 +805,15 @@ class AuditRoundReadFile(TypedDict):
     audit: AuditFileReview | None
 
 
+class AuditRoundReportSource(TypedDict):
+    task_id: str | None
+    access: AuditArchiveAccess
+
+
 class AuditRoundReadView(TypedDict):
     files: list[AuditRoundReadFile]
     unassigned_findings: list[Finding]
+    report_source: NotRequired[AuditRoundReportSource]
 
 
 class AuditAcceptance(TypedDict):
