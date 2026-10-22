@@ -1,6 +1,7 @@
 // Reference: Stitch projects/13261964020862199279/screens/8996512ca72547bdb84f5399a3b95a22.
 import {useRef, useState, type MouseEventHandler, type ReactNode} from 'react'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle} from '../components/ui/item'
 import {FileIcon} from './file-name'
 import {SourceReaderDialog} from './source-reader'
@@ -42,7 +43,7 @@ export function FileCollection({files, context = ''}: {files: FileReference[]; c
       readLabel: `阅读 ${file.name}${files.filter(item => item.name === file.name).length > 1 ? ` · 版本 ${file.id}` : ''}`,
       onRead: file.source?.material || file.source?.localFile || file.roundId ? event => {trigger.current = event.currentTarget; setReading({file, files})} : undefined,
     }))}/>
-    {reading && !selected && <div className="space-y-2 p-2 text-sm" role={readError ? 'alert' : 'status'}><p>{readError || '正在读取原件入口…'}</p><div className="flex flex-wrap gap-2">{readError && <Button variant="outline" size="sm" onClick={round.refresh}>重新读取原件入口</Button>}<Button variant="ghost" size="sm" onClick={() => {setReading(null); trigger.current?.focus()}}>取消阅读</Button></div></div>}
+    {reading && !selected && <div className="space-y-2 p-2 text-sm">{readError ? <p role="alert">{readError}</p> : <ReadSkeleton label="正在读取原件入口…" kind="inline"/>}<div className="flex flex-wrap gap-2">{readError && <Button variant="outline" size="sm" onClick={round.refresh}>重新读取原件入口</Button>}<Button variant="ghost" size="sm" onClick={() => {setReading(null); trigger.current?.focus()}}>取消阅读</Button></div></div>}
     <SourceReaderDialog open={Boolean(selected)} onOpenChange={next => {if (!next) setReading(null)}} input={{receiptId: reading?.file.roundId || '文件清单', scope: context, files: sources, evidence: [], clarification: null}} file={selected} onCloseAutoFocus={event => {event.preventDefault(); trigger.current?.focus()}}/>
   </>
 }

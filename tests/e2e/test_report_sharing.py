@@ -148,9 +148,12 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
         page.get_by_role("button", name="报告信息", exact=True).click()
         info = page.get_by_role("dialog", name="报告信息", exact=True)
         expect(info.get_by_text("固定要求 2", exact=True)).to_be_visible()
+        expect(info.get_by_text("rule-2", exact=True)).to_be_hidden()
+        expect(info.get_by_text("version-2", exact=True)).to_be_hidden()
+        info.get_by_text("追溯信息", exact=True).click()
         expect(info.get_by_text("rule-2", exact=True)).to_be_visible()
         expect(info.get_by_text("version-2", exact=True)).to_be_visible()
-        expect(info.get_by_text("未提供生成时间", exact=True)).to_be_visible()
+        expect(info.get_by_text("未记录", exact=True)).to_be_visible()
         expect(info.get_by_text("尚未生成", exact=True)).to_have_count(0)
         info.get_by_role("button", name="关闭", exact=True).click()
         with page.expect_download() as waiting:

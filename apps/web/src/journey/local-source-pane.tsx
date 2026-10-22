@@ -2,6 +2,7 @@
 import {lazy, Suspense, useEffect, useRef, useState} from 'react'
 import {BookOpen, Download, RotateCcw, Upload} from 'lucide-react'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {fileError, readLocalFile, restoreLocalFile, type LocalFileRef} from './local-files'
 import type {SourceFile} from './source-documents'
 const PdfSource = lazy(() => import('./pdf-source').then(module => ({default: module.PdfSource})))
@@ -46,9 +47,9 @@ export function LocalSourcePane({file, side}: {file: SourceFile & {localFile: Lo
     const a = document.createElement('a'); a.href = state.url; a.download = file.name; a.click()
     setNotice('已请求下载原件，请在浏览器下载列表确认。')
   }
-  return <Suspense fallback={<p role="status">正在准备原件阅读器…</p>}><section className={"flex flex-col min-h-0 flex-1 bg-background border [&_>_[hidden]]:hidden [&_>_footer]:flex [&_>_footer]:shrink-0 [&_>_footer]:flex-wrap [&_>_footer]:items-center [&_>_footer]:gap-2.5 [&_>_footer]:py-2.5 [&_>_footer]:px-3 [&_>_footer]:text-xs [&_>_footer]:text-muted-foreground [&_>_footer]:border-t [&_>_footer_>_span]:flex-1"} aria-label={`${side}阅读区`}>
+  return <Suspense fallback={<ReadSkeleton label="正在准备原件阅读器…" kind="document" className="min-h-55 flex-1 p-3"/>}><section className={"flex flex-col min-h-0 flex-1 bg-background border [&_>_[hidden]]:hidden [&_>_footer]:flex [&_>_footer]:shrink-0 [&_>_footer]:flex-wrap [&_>_footer]:items-center [&_>_footer]:gap-2.5 [&_>_footer]:py-2.5 [&_>_footer]:px-3 [&_>_footer]:text-xs [&_>_footer]:text-muted-foreground [&_>_footer]:border-t [&_>_footer_>_span]:flex-1"} aria-label={`${side}阅读区`}>
     <div className={"flex shrink-0 flex-wrap gap-1 py-1 px-2 border-b max-md:gap-0"} role="toolbar" aria-label={`${side}原件工具`}><Button variant="ghost" size="sm" disabled={state.kind !== 'ready'} onClick={download}><Download/>下载原件</Button><Button variant="ghost" size="sm" disabled={state.kind === 'loading' || restoring} onClick={() => setAttempt(value => value + 1)}><RotateCcw/>重新读取</Button></div>
-    {state.kind !== 'ready' ? <div className={"flex-1 min-h-45 overflow-auto p-5.5 bg-background max-lg:p-3 max-md:min-h-0 max-md:p-2"}><div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}><BookOpen/><h3>{state.kind === 'loading' ? '正在读取原件…' : state.kind === 'missing' ? '此设备缺少原件' : '原件读取失败'}</h3><p>{state.kind === 'loading' ? '正在核对本机文件内容。' : state.message ?? '登记记录仍在。重新选择当时的文件即可恢复；文件名相同不代表内容相同。'}</p>{state.kind !== 'loading' && <Button variant="outline" disabled={restoring} onClick={() => picker.current?.click()}><Upload/>{restoring ? '正在核对内容…' : '重新选择当时原件'}</Button>}</div></div>
+    {state.kind === 'loading' ? <ReadSkeleton label="正在读取原件…" kind="document" className="min-h-55 flex-1 p-3"/> : state.kind !== 'ready' ? <div className={"flex-1 min-h-45 overflow-auto p-5.5 bg-background max-lg:p-3 max-md:min-h-0 max-md:p-2"}><div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}><BookOpen/><h3>{state.kind === 'missing' ? '此设备缺少原件' : '原件读取失败'}</h3><p>{state.message ?? '登记记录仍在。重新选择当时的文件即可恢复；文件名相同不代表内容相同。'}</p><Button variant="outline" disabled={restoring} onClick={() => picker.current?.click()}><Upload/>{restoring ? '正在核对内容…' : '重新选择当时原件'}</Button></div></div>
       : <div className={"flex-1 min-h-45 overflow-auto p-5.5 bg-background max-lg:p-3 max-md:min-h-0 max-md:p-2 [&_>_img]:block [&_>_img]:max-w-full [&_>_img]:h-auto [&_>_img]:m-auto"}>
         {extension === 'pdf' ? <PdfSource key={state.url} url={state.url!} name={file.name}/>
           : ['xlsx', 'xlsm', 'xls'].includes(extension) ? <WorkbookSource key={state.url} blob={state.blob!} name={file.name}/>

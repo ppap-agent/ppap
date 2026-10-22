@@ -5,6 +5,7 @@ import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components
 import {useEffect, useRef, useState} from 'react'
 import {ArrowLeft, ArrowRight, CircleHelp, LoaderCircle, RefreshCw} from 'lucide-react'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Input} from '../components/ui/input'
 import {NativeSelect, NativeSelectOption} from '../components/ui/native-select'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
@@ -23,10 +24,10 @@ function ProductUsage() {
   return <section className="space-y-6">
     <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold">用量</h1><Button variant="outline" onClick={() => {usage.refresh(); quota.refresh()}}><RefreshCw/>刷新</Button></header>
     {quota.error && <p role="alert">{quota.error}</p>}
+    {quota.loading && !quota.value && <ReadSkeleton label="正在读取可用额度…" kind="inline"/>}
     {quota.value && <p className="text-sm text-muted-foreground">{!quota.value.usage_charge_enabled ? '当前环境未启用扣费' : `可用额度：${quota.value.user_quota ?? '暂不可用'}`}</p>}
     {usage.error && <p role="alert">{usage.error}</p>}
-    {usage.loading && !usage.value && <p role="status">正在读取用量…</p>}
-    <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>点数</TableHead><TableHead>类型</TableHead><TableHead>审核</TableHead></TableRow></TableHeader><TableBody>{usage.value?.events.map(event => <TableRow key={event.id}><TableCell>{dateLabel(event.created_at)}</TableCell><TableCell>{event.consumed_points}</TableCell><TableCell>{event.is_free_trial ? '试用' : '标准用量'}</TableCell><TableCell>{event.round_id && <Button variant="ghost" asChild><a href={`/?round=${encodeURIComponent(event.round_id)}`}>查看审核<ArrowRight/></a></Button>}</TableCell></TableRow>)}</TableBody></Table>
+    <Table><TableHeader><TableRow><TableHead>时间</TableHead><TableHead>点数</TableHead><TableHead>类型</TableHead><TableHead>审核</TableHead></TableRow></TableHeader><TableBody>{usage.loading && !usage.value ? <TableRow><TableCell colSpan={4}><ReadSkeleton label="正在读取用量…" kind="table" rows={5}/></TableCell></TableRow> : usage.value?.events.map(event => <TableRow key={event.id}><TableCell>{dateLabel(event.created_at)}</TableCell><TableCell>{event.consumed_points}</TableCell><TableCell>{event.is_free_trial ? '试用' : '标准用量'}</TableCell><TableCell>{event.round_id && <Button variant="ghost" asChild><a href={`/?round=${encodeURIComponent(event.round_id)}`}>查看审核<ArrowRight/></a></Button>}</TableCell></TableRow>)}</TableBody></Table>
     {usage.value && !usage.value.events.length && <p className="text-sm text-muted-foreground">暂无用量记录</p>}
     <div className="flex justify-end gap-2"><Button variant="outline" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>上一页</Button><Button variant="outline" disabled={usage.value?.next_offset == null} onClick={() => setOffset(usage.value!.next_offset!)}>下一页</Button></div>
   </section>

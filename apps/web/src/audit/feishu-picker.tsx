@@ -1,3 +1,4 @@
+import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/639a2a5ebe7841d1adfc76ae28577f93
 // Mobile: projects/13261964020862199279/screens/719e87ef8fb9452e9955b8c2762fd62d
 import {useEffect, useId, useRef, useState} from 'react'
@@ -58,7 +59,7 @@ export function FeishuFolderPicker({source, files, onChoose, onClose}: {source: 
     <nav aria-label="上传目录" className="flex flex-wrap items-center gap-1">{path.map((folder, index) => <Button key={folder.token} variant="ghost" size="sm" disabled={index === path.length - 1} onClick={() => void load(path.slice(0, index + 1))}>{index > 0 && <ChevronRight/>}{folder.name}</Button>)}</nav>
     <ScrollArea className="min-h-40 max-h-[55dvh] min-w-0"><section aria-label="选择上传目录" className="space-y-4 pr-3">
       <ItemGroup>{listing.files.map(folder => <Item key={folder.token} size="xs" asChild><Button variant="ghost" className="h-auto min-h-11 w-full justify-start whitespace-normal text-left" aria-label={`打开文件夹 ${folder.name}`} onClick={() => void load([...path, {token: folder.token, name: folder.name}])}><Folder className="shrink-0"/><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{folder.name}</span><ChevronRight className="shrink-0"/></Button></Item>)}</ItemGroup>
-      {listing.loading || !current && !listing.error ? <p role="status" className="text-sm text-muted-foreground">正在读取文件夹…</p> : listing.error ? <Alert variant="destructive"><AlertTitle>文件夹未能读取</AlertTitle><AlertDescription><p>{listing.error}</p><Button variant="outline" size="sm" onClick={() => current ? void load(path, listing.nextPage || undefined) : setRevision(value => value + 1)}>重新读取文件夹</Button></AlertDescription></Alert> : !listing.files.length && <p className="text-sm text-muted-foreground">此目录没有子文件夹，可以直接上传到这里。</p>}
+      {listing.loading || !current && !listing.error ? <ReadSkeleton label="正在读取文件夹…" kind={listing.files.length ? 'inline' : 'list'}/> : listing.error ? <Alert variant="destructive"><AlertTitle>文件夹未能读取</AlertTitle><AlertDescription><p>{listing.error}</p><Button variant="outline" size="sm" onClick={() => current ? void load(path, listing.nextPage || undefined) : setRevision(value => value + 1)}>重新读取文件夹</Button></AlertDescription></Alert> : !listing.files.length && <p className="text-sm text-muted-foreground">此目录没有子文件夹，可以直接上传到这里。</p>}
       {listing.nextPage && !listing.loading && !listing.error && <Button variant="outline" size="sm" onClick={() => void load(path, listing.nextPage)}>更多文件夹</Button>}
       <section className="space-y-2 border-t pt-4"><h3 className="text-sm font-medium">本次上传 · {files.length} 份</h3><ItemGroup>{files.map((file, index) => <Item key={index} size="xs"><ItemContent className="min-w-0"><FileName name={file.name}/></ItemContent></Item>)}</ItemGroup></section>
     </section></ScrollArea>
@@ -136,7 +137,7 @@ export function FeishuPicker({source, onAdd, onClose, trigger}: {source: DrivePi
           <ItemContent className="min-w-0"><FileName name={file.name} format={nativeSources.get(file.type)?.format}/>{nativeSources.has(file.type) && <ItemDescription>{nativeSources.get(file.type)!.label}</ItemDescription>}{!supported(file) && <ItemDescription>仅支持 Excel、Word、PDF</ItemDescription>}</ItemContent>
         </label></Item></div>
       })}</ItemGroup>
-      {state.loading && <p role="status" className="px-2 py-3 text-sm text-muted-foreground">正在读取飞书文件…</p>}
+      {state.loading && <ReadSkeleton label="正在读取飞书文件…" kind={state.files.length ? 'inline' : 'list'}/>}
       {state.error && <Alert variant="destructive" className="my-2"><AlertTitle>暂时无法读取</AlertTitle><AlertDescription>{state.error}</AlertDescription></Alert>}
       {!state.loading && !state.error && !shown.length && <p className="px-2 py-4 text-sm text-muted-foreground">{filter ? '已加载文件中没有匹配项。' : '没有可选择的云文件。'}</p>}
       {(state.error || state.nextPage) && <div className="px-2 py-2"><Button variant="outline" size="sm" className="min-h-11" disabled={state.loading} onClick={() => void load(token, state.nextPage || undefined)}>{state.error ? '重新读取文件' : '加载更多'}</Button></div>}

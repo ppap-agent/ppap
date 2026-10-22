@@ -44,9 +44,11 @@ export function TaskSwitcher({open, onOpenChange, currentId, tasks, labels, quer
       <nav className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto" aria-label="任务列表">
         {current && <section className="grid gap-2"><h2 className="px-3 text-xs font-medium text-muted-foreground">当前任务</h2>{row(current)}</section>}
         {recent.length > 0 && <section className="grid gap-2"><h2 className="px-3 text-xs font-medium text-muted-foreground">最近任务</h2>{recent.map(row)}</section>}
-        {!tasks.length && <p className="text-sm text-muted-foreground" role={busy ? 'status' : undefined}>{busy ? '正在读取任务…' : hasTasks ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}
+        {busy && <ReadSkeleton label="正在读取任务…" kind={tasks.length ? 'inline' : 'list'}/>}
+        {!tasks.length && !busy && <p className="text-sm text-muted-foreground">{hasTasks ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}
       </nav>
       {(hasMore || error) && <div className="grid shrink-0 gap-3 border-t pt-4">{error && <p role="alert" className="text-xs">{error}</p>}<Button variant="outline" disabled={busy} onClick={onMore}>{busy ? '正在读取任务…' : error ? '重新读取任务列表' : '加载更多任务'}</Button></div>}
     </SheetContent>
   </Sheet>
 }
+import {ReadSkeleton} from '../components/read-skeleton'

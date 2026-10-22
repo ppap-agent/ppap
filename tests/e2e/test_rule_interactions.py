@@ -172,7 +172,7 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertNotIn("/rules/rule-b1", reads)
             page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="规则 B", exact=True).click()
-            expect(page.get_by_text("正在读取要求版本…", exact=True)).to_be_visible()
+            expect(page.get_by_role("status", name="正在读取要求版本…", exact=True)).to_be_visible()
             page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="规则 A", exact=True).click()
             expect(page.get_by_role("article", name="条款 1", exact=True)).to_contain_text("新版条款 A")
@@ -562,7 +562,7 @@ class RuleInteractionTests(unittest.TestCase):
             held = []
             page.route("**/api/rules/" + published["id"], lambda route: held.append(route))
             page.get_by_role("tab", name="版本变化", exact=True).click()
-            expect(page.get_by_text("正在读取要求版本…", exact=True)).to_be_visible()
+            expect(page.get_by_role("status", name="正在读取要求版本…", exact=True)).to_be_visible()
             page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
             expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")

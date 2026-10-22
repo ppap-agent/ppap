@@ -4,6 +4,7 @@ import {ArrowLeft, ArrowRight, BookOpen, ChevronDown, LoaderCircle, Plus, Upload
 import {Alert, AlertDescription} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Checkbox} from '../components/ui/checkbox'
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from '../components/ui/collapsible'
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '../components/ui/dialog'
@@ -176,7 +177,7 @@ export function Requirements({basis, scopeKey, scope, scopeReady = true, collect
     <Dialog open={sourceOpen} onOpenChange={setSourceOpen}><DialogContent className="max-h-[calc(100dvh-32px)] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>选择审核要求</DialogTitle><DialogDescription>{!scopeReady ? '事项范围尚未完整。先补全范围，才能确认有限定条件的要求是否适用。' : basis ? '使用新来源会替换当前未提交的要求草稿。' : '选择本次适用的已发布版本。'}</DialogDescription></DialogHeader>
       <Input type="search" maxLength={200} aria-label="搜索要求版本" placeholder="搜索要求、客户或版本" value={query} onChange={event => setQuery(event.target.value)}/>
       <label className="flex min-h-9 items-center gap-2 max-md:min-h-11"><Checkbox checked={showSourceHistory} onCheckedChange={value => setShowSourceHistory(value === true)}/>显示历史版本</label>
-      {catalog?.loading && <p role="status" className="text-sm text-muted-foreground">正在读取要求目录…</p>}
+      {catalog?.loading && <ReadSkeleton label="正在读取要求目录…" kind={versions.length ? 'inline' : 'list'}/>}
       {catalog?.error && <Alert variant="destructive"><AlertDescription>{catalog.error}<div className="mt-2"><Button variant="outline" size="sm" onClick={catalog.reload}>重新读取要求目录</Button></div></AlertDescription></Alert>}
       <RadioGroup value={candidate?.library?.versionId || (candidate?.conflict.active ? 'demo-conflict' : '')} onValueChange={id => {if (id === 'demo-conflict') {setCandidate(demoBasis(true)); return} const selected = versions.find(item => item.version.id === id); if (selected && scopeMatches(scope, selected.version.scope)) setCandidate(copyForCase(selected.family, selected.version))}} aria-label="审核要求版本">
         {versions.map(({version}) => <label key={version.id} className="flex items-start gap-3 border-b py-3 text-sm"><RadioGroupItem value={version.id} disabled={locked || catalog?.loading || Boolean(catalog?.error) || !scopeMatches(scope, version.scope)} className="mt-1"/><span className="min-w-0 space-y-1 text-left"><span className="block break-words font-medium">{version.basis.source.title}</span><span className="block break-words text-muted-foreground">{scopeLabel(version.scope)}</span><span className="block text-xs text-muted-foreground">{version.basis.source.version} · {version.basis.clauses.length} 条{!scopeMatches(scope, version.scope) ? scopeReady ? ' · 范围不符' : ' · 范围待核对' : ''}{showSourceHistory && version.at ? ` · ${new Date(version.at).toLocaleString('zh-CN')}` : ''}</span></span></label>)}

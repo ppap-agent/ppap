@@ -1,3 +1,4 @@
+import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/bfd8b8db93484b159a6ce9d171447c80
 import {useEffect, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
@@ -143,7 +144,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
       <Button type="button" variant="outline" size="icon" aria-label="刷新档案" className="ml-auto" disabled={loading} onClick={() => setReload(value => value + 1)}><RotateCw className={loading ? 'animate-spin' : ''}/></Button>
     </form>
     {applied.length > 0 && <div className="flex flex-wrap items-center gap-2" aria-label="已应用筛选">{applied.map(([key, label, value]) => <Button key={key} variant="secondary" size="sm" aria-label={`移除${label}筛选`} className="h-auto min-h-7 whitespace-normal text-left" onClick={() => {if (key === 'search') setSearch(''); filter({[key]: key === 'search' ? '' : null})}}>{label}：{value}<X/></Button>)}<Button variant="ghost" size="sm" onClick={clearFilters}>清除筛选</Button></div>}
-    {loading && <p role="status" className="text-sm text-muted-foreground">正在读取文件档案…</p>}
+    {loading && <ReadSkeleton label="正在读取文件档案…" kind={current ? 'inline' : 'table'}/>}
     {error && <Alert variant="destructive"><AlertTitle>档案读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => setReload(value => value + 1)}>重新读取档案</Button></AlertDescription></Alert>}
     {current && <div className="overflow-hidden rounded-lg border">
       <Table aria-label="审核文件档案" className="table-fixed"><TableHeader variant="muted"><TableRow><TableHead className="w-10"><span className="sr-only">选择报告</span></TableHead><TableHead>文件</TableHead><TableHead className="w-44 max-md:hidden">最新完成审核</TableHead><TableHead className="w-32 max-lg:hidden">审核时间</TableHead><TableHead className="w-40 text-right max-md:hidden">操作</TableHead></TableRow></TableHeader><TableBody>{current.documents.map(document => <TableRow key={document.document_id} data-state={checked[document.document_id] ? 'selected' : undefined}>
@@ -160,7 +161,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
       </footer>
     </div>}
     {!current && selection}
-    {packageReading && <p role="status">正在恢复 ZIP 工作…</p>}
+    {packageReading && <ReadSkeleton label="正在恢复 ZIP 工作…" kind={job ? 'inline' : 'detail'}/>}
     {packageError && <Alert variant="destructive"><AlertTitle>ZIP 暂不可用</AlertTitle><AlertDescription><p>{packageError}</p><Button variant="outline" disabled={packageReading} onClick={() => void restorePackage()}>重新读取 ZIP</Button></AlertDescription></Alert>}
     <ReportPackage job={job} nameFor={reference => known.current.get(resultKey(reference))?.title || '历史文件'} busy={packaging.packageBusy || downloading || packageReading} onRead={() => void packaging.readPackage()} onDownload={() => void download(true)} onRetry={() => {if (job?.state === 'failed' && job.retry_allowed) void packaging.createPackage(job.reports)}} downloadError={downloadError}/>
     {!job && downloadError && <p role="alert">{downloadError}</p>}

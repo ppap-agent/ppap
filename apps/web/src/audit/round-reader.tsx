@@ -1,3 +1,4 @@
+import {ReadSkeleton} from '../components/read-skeleton'
 import {useContext, useEffect, useState} from 'react'
 import {createPortal} from 'react-dom'
 import type {components} from '../generated/openapi'
@@ -55,7 +56,7 @@ export function AuditRoundReader({roundId, readRound, renderOriginal, onReaudit,
       <div className="space-y-2"><h1 className="text-2xl font-semibold">历史审核</h1>{round?.id === roundId && round.created_at && <p className="text-sm text-muted-foreground">{new Date(round.created_at).toLocaleString()}</p>}</div>
       <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><a href={returnHref}>返回工作台</a></Button>{onReaudit && round && ['completed', 'failed'].includes(round.execution) && <Button onClick={onReaudit}>补件／重新审核</Button>}<Button variant="outline" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div>
     </header>}
-    {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <p role="status">正在读取本轮审核…</p> : <>
+    {error ? <Alert variant="destructive"><AlertTitle>历史审核暂不可用</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !view ? <ReadSkeleton label="正在读取本轮审核…" kind={'detail'}/> : <>
       <nav aria-label="本轮文件" className="flex flex-wrap gap-2">{view.files.map(row => <Button key={row.file.id} variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} className="h-auto max-w-full whitespace-normal text-left" aria-pressed={file?.file.id === row.file.id} onClick={() => selectFile(row.file.id)}><FileName name={row.file.original_filename}/>{row.role === 'reference' && <span className="text-xs text-muted-foreground">比对资料</span>}</Button>)}</nav>
       {file ? file.role === 'target' ? <AuditReviewContent key={`${roundId}:${file.file.id}`} file={file} roundId={roundId} frozenRule={file.rule} frozenFileVersionIds={versions} originals={originals} renderOriginal={renderOriginal} reportAccess={reportSource?.access} onReport={onReport && reportTaskId ? () => onReport(reportTaskId, file.file.id) : undefined}/> : <section aria-label="本轮比对原件" className="space-y-4"><h2 className="font-semibold"><FileName name={file.file.original_filename}/></h2>{renderOriginal ? renderOriginal(file.file, null, roundId) : <p>原件暂不可预览。</p>}</section> : <p>本轮没有可读取的文件。</p>}
       <HistoricalFindings findings={view.unassigned_findings} roundId={roundId} resultAttempt={round?.result_attempt ?? null} versions={versions} originals={originals} renderOriginal={renderOriginal} title="未归属文件的历史记录"/>

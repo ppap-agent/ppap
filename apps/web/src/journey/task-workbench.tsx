@@ -75,7 +75,7 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
   }
   const toolbar = <>
     <div role="search" className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground max-sm:basis-full sm:max-w-sm"><Search size={16} aria-hidden="true"/><Input type="search" aria-label="搜索零件、供应商或文件" placeholder="搜索零件、供应商或文件" value={query} maxLength={200} onChange={event => setQuery(event.target.value)}/>{query && <Button variant="ghost" size="sm" onClick={() => setQuery('')}>清除</Button>}</div>
-    {onRefresh && <Button variant="outline" size="icon" aria-label="刷新审核记录" title="刷新审核记录" disabled={refreshing || loadingMore} onClick={onRefresh}><RefreshCw className={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined}/></Button>}
+    {onRefresh && <Button variant="outline" size="icon" aria-label="刷新审核记录" title="刷新审核记录" disabled={refreshing || loadingMore} onClick={onRefresh}><RefreshCw/></Button>}
   </>
   const table = (rows: WorkItem[], label: string) => <WorkItemsTable items={rows} label={label} onOpen={onOpen} loading={loading} readFailed={errors.length > 0} hasMore={Boolean(onLoadMore)} onLoadMore={onLoadMore} busy={loadingMore || refreshing} toolbar={toolbar}/>
 
@@ -101,7 +101,7 @@ export function TaskWorkbench({items, onOpen, onFiles, onDemo, requirements, usa
         {isPreview() && <Badge variant="outline" className="mb-4">交互预览</Badge>}
         {view === 'usage' ? usage : view === 'requirements' ? requirements : <>
         <header className="mb-6 flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1><Button onClick={() => {setUploadError(''); setUploadOpen(true)}}><UploadCloud/>上传资料</Button></header>
-        {errors.length > 0 && <Alert className="mb-6"><AlertTitle>{shown.length ? '部分状态未能更新' : '暂时无法读取审核记录'}</AlertTitle><AlertDescription><div className="space-y-2">{errors.map(error => <p key={error}>{error}</p>)}{shown.length > 0 && <p>已读取的记录仍可打开；状态可能已变化。</p>}{onRefresh && <Button variant="outline" size="sm" disabled={refreshing || loadingMore} onClick={onRefresh}>{refreshing ? '正在读取…' : '重新读取'}</Button>}</div></AlertDescription></Alert>}
+        {errors.length > 0 && <Alert className="mb-6"><AlertTitle>{shown.length ? '部分状态未能更新' : '暂时无法读取审核记录'}</AlertTitle><AlertDescription><div className="space-y-2">{errors.map(error => <p key={error}>{error}</p>)}{shown.length > 0 && <p>已读取的记录仍可打开；状态可能已变化。</p>}{onRefresh && <Button variant="outline" size="sm" disabled={refreshing || loadingMore} onClick={onRefresh}>重新读取</Button>}</div></AlertDescription></Alert>}
           <Tabs value={activeQueue} onValueChange={changeQueue}>
             <TabsList aria-label="审核记录"><TabsTrigger value="attention" onClick={() => changeQueue('attention')}>需要处理<Badge variant="secondary">{loading || errors.length > 0 && !attention.length ? '—' : `${attention.length}${onLoadMore ? '+' : ''}`}</Badge></TabsTrigger><TabsTrigger value="review" onClick={() => changeQueue('review')}>待复核<Badge variant="secondary">{loading || errors.length > 0 && !review.length ? '—' : `${review.length}${onLoadMore ? '+' : ''}`}</Badge></TabsTrigger><TabsTrigger value="all" onClick={() => changeQueue('all')}>全部记录</TabsTrigger></TabsList>
             <TabsContent key={activeQueue} value={activeQueue} className="mt-3">{table(activeQueue === 'attention' ? attention : activeQueue === 'review' ? review : shown, {attention: '需要处理', review: '待复核', all: '全部'}[activeQueue])}</TabsContent>

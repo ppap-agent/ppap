@@ -5,6 +5,7 @@ import {ChevronLeft, ChevronRight, Minus, Plus, RotateCw} from 'lucide-react'
 import {getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask} from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Input} from '../components/ui/input'
 
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -70,7 +71,7 @@ export function PdfSource({url, name}: {url: string; name: string}) {
       <Button variant="ghost" size="icon-sm" aria-label="旋转 PDF" onClick={() => setRotation(value => (value + 90) % 360)}><RotateCw/></Button>
     </div>
     <div className={"relative flex-1 min-h-40 overflow-auto"} ref={viewport} role="region" aria-label="PDF 页面" tabIndex={0} aria-busy={!error && rendering}>
-      {error ? <p role="alert" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>{error}</p> : rendering && <p role="status" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>正在排版第 {page} 页…</p>}
+      {error ? <p role="alert" className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}>{error}</p> : rendering && <ReadSkeleton label={`正在排版第 ${page} 页…`} kind="document" className="min-h-55 p-3"/>}
       <div className={"w-max min-w-full p-3 [&_canvas]:block [&_canvas]:m-auto [&_canvas]:bg-background"} ref={paper}/>
     </div>
     {pdf && !rendering && !error && <Collapsible className={"max-h-40 overflow-auto"}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">当前页文字</Button></CollapsibleTrigger><CollapsibleContent><pre>{text.trim() || '此页没有可提取的文字，请查看页面图像。'}</pre></CollapsibleContent></Collapsible>}

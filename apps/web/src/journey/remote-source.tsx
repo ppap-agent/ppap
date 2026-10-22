@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from 'react'
 import {Download, Maximize, Minimize, RotateCcw} from 'lucide-react'
 import {originalUrl, request, type Material, type OfficePreviewResponse} from '../api'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import OfficePreview from '../OfficePreview'
 import {message} from './remote'
 import type {SourceFocus} from './source-documents'
@@ -41,7 +42,7 @@ function BrowserOriginal({file, roundId, source}: {file: Material; roundId?: str
     return () => {controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl)}
   }, [file.file_id, file.file_version_id, roundId, mime, textFile, source])
   if (error) return <p role="alert" className="p-4 text-sm">{error}</p>
-  if (!url) return <p role="status" className="p-4 text-sm text-muted-foreground">正在读取原件…</p>
+  if (!url) return <ReadSkeleton label="正在读取原件…" kind="document" className="p-3"/>
   if (extension === 'pdf') return <iframe className="absolute inset-0 size-full border-0" src={url} title={file.original_filename + ' 原件'}/>
   if (imageTypes[extension]) return <div className="absolute inset-0 overflow-auto p-3"><img className="mx-auto max-w-full" src={url} alt={file.original_filename}/></div>
   return <div className="absolute inset-0 overflow-auto p-4"><pre className="whitespace-pre-wrap break-words text-sm">{text || '（空文件）'}</pre>{truncated && <p className="mt-3 text-sm text-muted-foreground">仅显示前 1 MB，请下载完整原件。</p>}</div>
@@ -90,7 +91,7 @@ export function RemoteSourcePane({file, roundId, focus, source = productOriginal
       {browserOriginal ? <BrowserOriginal key={`${roundId}:${file.file_id}:${file.file_version_id}:${attempt}`} file={file} roundId={roundId} source={source}/>
         : officeFailed || office && (!office.available || !office.script_url || !office.config) ? <div className="grid min-h-80 content-center justify-items-start gap-3 p-4 text-sm"><p role="alert">原件预览暂不可用</p><p className="text-muted-foreground">{office?.notice || '请重新读取，或下载原件核对。'}</p><Button variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}><RotateCcw/>重新读取</Button></div>
           : office?.script_url && office.config ? <OfficePreview key={attempt} scriptUrl={office.script_url} config={office.config} onFailed={() => setOfficeFailed(true)}/>
-            : <p role="status" className="p-4 text-sm text-muted-foreground">正在连接原件预览…</p>}
+            : <ReadSkeleton label="正在连接原件预览…" kind="document" className="p-3"/>}
     </div>
   </section>
 }
