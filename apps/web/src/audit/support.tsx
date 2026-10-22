@@ -1,3 +1,4 @@
+import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/3976a221e25c4216a89f46d42d69e065
 import {createContext, useEffect, useState} from 'react'
 import type {components} from '../generated/openapi'
@@ -40,7 +41,7 @@ export function AuditSupport({adapter, snapshot, pageReference, returnTargets, o
   const copyText = [scenario, `本页参考编号：${pageReference}`, ...(traceId ? [`服务请求编号：${traceId}`] : []), ...facts.map(fact => `${fact.label}：${fact.value}`)].join('\n')
   const available = info?.state === 'configured' && Boolean(info.config_version) && Boolean(info.phone?.trim() || info.email?.trim() || qr)
   return <Dialog open onOpenChange={open => {if (!open) onClose()}}><DialogContent className="max-h-[88dvh] overflow-y-auto" onCloseAutoFocus={event => {event.preventDefault(); [...returnTargets, document.getElementById('audit-main')].find(element => element?.isConnected && element.getClientRects().length)?.focus()}} onEscapeKeyDown={event => {if (zoom) {event.preventDefault(); setZoom(false)}}}><DialogHeader><DialogTitle>联系我们</DialogTitle><DialogDescription className="sr-only">获取帮助与联系方式。</DialogDescription></DialogHeader>
-    {loading ? <p role="status">正在读取服务信息…</p> : !available ? <div className="space-y-3"><p>服务信息暂不可用</p><Button variant="outline" onClick={() => setRetry(value => value + 1)}>重新读取服务信息</Button></div> : <dl className="space-y-4 text-sm">
+    {loading ? <ReadSkeleton label="正在读取服务信息…" kind={'detail'}/> : !available ? <div className="space-y-3"><p>服务信息暂不可用</p><Button variant="outline" onClick={() => setRetry(value => value + 1)}>重新读取服务信息</Button></div> : <dl className="space-y-4 text-sm">
       {info?.phone && <div><dt className="text-muted-foreground">电话</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{info.phone}</span><Button variant="outline" size="sm" onClick={() => void copy(info.phone!)}>复制电话</Button></dd></div>}
       {info?.email && <div><dt className="text-muted-foreground">邮箱</dt><dd className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{/^[^\s@?\r\n]+@[^\s@?\r\n]+\.[^\s@?\r\n]+$/.test(info.email) ? <a className="underline" href={`mailto:${encodeURIComponent(info.email)}`}>{info.email}</a> : info.email}</span><Button variant="outline" size="sm" onClick={() => void copy(info.email!)}>复制邮箱</Button></dd></div>}
       {info?.service_hours && <div><dt className="text-muted-foreground">服务时间</dt><dd>{info.service_hours}</dd></div>}

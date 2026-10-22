@@ -5,6 +5,7 @@ import {ArrowRight, ChevronDown, ClipboardCheck, FolderClock, Gauge, LogOut} fro
 import {apiUrl, connect, feishuAppId, request, type HostLoginRequest, type PrincipalPublic} from '../api'
 import {isFeishuHost, requestHostCode} from '../hostLogin'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Alert, AlertDescription} from '../components/ui/alert'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger} from '../components/ui/dropdown-menu'
 import {LocalRecordsDialog} from './local-records'
@@ -97,7 +98,7 @@ export function ProductAccess({children, recordValidators = emptyValidators, rec
     <header className={"flex items-center gap-3 p-6"}><ClipboardCheck/><strong>PPAP</strong></header>
     <main className={"m-auto flex w-full max-w-md flex-col gap-5 px-6 pb-16"}>
       <h1 className={"text-2xl font-semibold tracking-tight"}>登录审核工作台</h1>
-      {!ready ? <p role="status">正在确认登录状态…</p> : error ? <>
+      {!ready ? <ReadSkeleton label="正在确认登录状态…" kind="detail" rows={2}/> : error ? <>
         <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
         <Button onClick={() => setRevision(value => value + 1)}>{canSignIn ? '重新读取登录状态' : '重试连接'}</Button>
         {canSignIn && <Button variant="outline" asChild><a href={`${apiUrl}/login/feishu?return_to=${encodeURIComponent(location.href)}`}>使用飞书登录<ArrowRight/></a></Button>}

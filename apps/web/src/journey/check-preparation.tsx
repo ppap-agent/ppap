@@ -1,6 +1,7 @@
 import {useEffect, useState, type SetStateAction} from 'react'
 import {ArrowRight, LoaderCircle} from 'lucide-react'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Badge} from '../components/ui/badge'
 import {RadioGroup, RadioGroupItem} from '../components/ui/radio-group'
 import {Alert, AlertDescription} from '../components/ui/alert'
@@ -37,7 +38,7 @@ export function CheckPreparation({caseId, state, plan, onChange, onContinue, con
     {(saveError || live?.error) && <Alert variant="destructive"><AlertDescription>{saveError || live?.error}</AlertDescription></Alert>}
     {quotaError}
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <div className="flex flex-wrap items-center gap-3">{modePicker}{record?.phase !== 'accepted' && (!live || live.quota?.usage_charge_enabled !== false) && <span className="text-sm text-muted-foreground">{live ? live.quota?.estimated_points !== undefined ? `${live.quota.estimated_points} 点` : live.quotaError ? '' : '正在核对启动条件…' : `${frozen.estimate.low}–${frozen.estimate.high} 点（演示）`}</span>}</div>
+      <div className="flex flex-wrap items-center gap-3">{modePicker}{record?.phase !== 'accepted' && (!live || live.quota?.usage_charge_enabled !== false) && (live && live.quota?.estimated_points === undefined && !live.quotaError ? <ReadSkeleton label="正在核对启动条件…" kind="inline"/> : <span className="text-sm text-muted-foreground">{live ? live.quota?.estimated_points !== undefined ? `${live.quota.estimated_points} 点` : '' : `${frozen.estimate.low}–${frozen.estimate.high} 点（演示）`}</span>)}</div>
       {record?.phase === 'accepted' ? <Button onClick={onContinue}>{continueLabel}<ArrowRight/></Button> : pending ? <Button disabled={live?.busy} onClick={live ? live.reconcile : () => onChange(current => current ? observeCheck(current, record.id, record.attempt, true) : current)}>{live?.busy ? record.phase === 'requesting' ? '正在提交…' : '正在核对…' : '核对受理结果'}</Button> : disabledReason && nextAction ? <Button onClick={nextAction.run}>{nextAction.label}<ArrowRight/></Button> : <Button className="max-sm:w-full" disabled={Boolean(saveError || disabledReason) || !canStart} onClick={onStart ?? (live ? live.start : () => onChange(current => startCheck(current ?? state, plan)))}>{live?.busy && <LoaderCircle className="animate-spin motion-reduce:animate-none"/>}{record ? '重试原请求' : '开始审核'}<ArrowRight/></Button>}
     </div>
     {record?.phase !== 'accepted' && <p role="status" className="text-sm text-muted-foreground">{pending ? record.phase === 'requesting' && live?.busy ? '正在提交本次资料与审核依据…' : '受理结果尚未确认；本次资料已保留，请先查询原请求。' : live?.quota?.accept_allowed === false ? live.quota.message || '本次额度不可用' : disabledReason || (frozen.mode === 'standard' ? 'Standard 执行已适配检查，其余条款保留为未覆盖。' : 'Deep 调查条款与原件，并核验证据。')}</p>}
@@ -57,7 +58,7 @@ export function CheckPreparation({caseId, state, plan, onChange, onContinue, con
         {live && <div className={"mt-4 flex flex-col gap-2 text-sm"}><strong>待审文件</strong>{live.targets.length ? <FileList files={live.targets.map((name, index) => ({id: String(index), name}))}/> : <p className={"text-destructive"}>请返回核对资料类型，至少一份文件须对应本次要求。</p>}<p className={"text-muted-foreground"}>其余选中的资料作为联合审核的参考原件。</p></div>}
       </section>
       <section className={"flex flex-col gap-5"}><div><h2 className={"mb-3 font-semibold"}>检查方式</h2>{modePicker}<p className={"mt-3 text-sm text-muted-foreground"}>{frozen.mode === 'standard' ? '执行已有适配检查，未支持的条款保留为未覆盖。' : '调查条款与原件的对应关系，核验证据后形成结果。'}</p></div>
-        <div><h2 className={"font-semibold"}>本次用量</h2><p className={"mt-2 text-sm"}>{live ? live.quota?.usage_charge_enabled === false ? '当前环境不计费' : live.quota?.estimated_points !== undefined ? `${live.quota.estimated_points} 点` : '正在核对额度…' : `${frozen.estimate.low}–${frozen.estimate.high} 点（演示）`}</p>{live?.quota?.accept_allowed === false && <p role="alert" className={"mt-2 text-sm text-destructive"}>{live.quota.message || live.quota.accept_reason || '额度暂不可用'}</p>}</div>
+        <div><h2 className={"font-semibold"}>本次用量</h2>{live && !live.quota && !live.quotaError ? <ReadSkeleton label="正在核对额度…" kind="inline" className="mt-2"/> : <p className={"mt-2 text-sm"}>{live ? live.quota?.usage_charge_enabled === false ? '当前环境不计费' : live.quota?.estimated_points !== undefined ? `${live.quota.estimated_points} 点` : '' : `${frozen.estimate.low}–${frozen.estimate.high} 点（演示）`}</p>}{live?.quota?.accept_allowed === false && <p role="alert" className={"mt-2 text-sm text-destructive"}>{live.quota.message || live.quota.accept_reason || '额度暂不可用'}</p>}</div>
         {(!record || record.phase === 'absent') && <Button disabled={Boolean(saveError) || !canStart} onClick={live ? live.start : () => onChange(current => startCheck(current ?? state, plan))}>{live?.busy && <LoaderCircle className={""}/>}{record ? '重试原请求' : recheck ? '开始复查' : '开始检查'}<ArrowRight/></Button>}
         <Button variant="ghost" onClick={onHome}>{recheck?.backLabel || '返回工作台'}</Button>
       </section>

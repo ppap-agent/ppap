@@ -4,6 +4,7 @@ import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components
 import {useEffect, useMemo, useRef, useState} from 'react'
 import {ChevronLeft, ChevronRight, Copy, Minus, Plus, Search} from 'lucide-react'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 import {Input} from '../components/ui/input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '../components/ui/select'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
@@ -91,7 +92,7 @@ export function WorkbookSource({blob, name, focus, onCite}: {blob: Blob; name: s
     catch {setNotice('浏览器未允许复制，请手动选择下方文字。')}
   }
   if (error) return <div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"}><h3>表格无法显示</h3><p role="alert">{error}</p></div>
-  if (!sheet) return <div className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"} role="status">正在读取工作表…</div>
+  if (!sheet) return <ReadSkeleton label="正在读取工作表…" kind="table" rows={8} className="min-h-55 p-3"/>
   const end = range ? {r: Math.min(origin.r + rowsPerView - 1, range.e.r), c: Math.min(origin.c + columnsPerView - 1, range.e.c)} : origin
   const rowNumbers = range ? Array.from({length: end.r - origin.r + 1}, (_, i) => origin.r + i) : []
   const columnNumbers = range ? Array.from({length: end.c - origin.c + 1}, (_, i) => origin.c + i) : []

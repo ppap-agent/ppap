@@ -1,3 +1,4 @@
+import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/5bc532c5a9a142a8a378434ddfe73fd5
 import {useContext, useEffect, useRef, useState, type ReactNode} from 'react'
 import {requestTrace} from '../api'
@@ -644,7 +645,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
           return <li key={label} aria-current={!done && current === index ? 'step' : undefined} data-state={done ? 'complete' : current === index ? 'current' : 'upcoming'} className={`flex items-center gap-2 ${done ? 'text-success' : current === index ? 'font-medium text-foreground' : 'text-muted-foreground'}`}><span className={`flex size-6 shrink-0 items-center justify-center rounded-full border ${done ? 'border-success' : current === index ? 'border-primary bg-primary text-primary-foreground' : ''}`}>{done ? <Check aria-label="已完成" className="size-3.5"/> : index + 1}</span><span>{label}</span>{index < 2 && <ArrowRight aria-hidden="true" className="ml-1 size-3.5 text-muted-foreground"/>}</li>
         })}</ol>}
         {error && <Alert variant="destructive"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {preparingReaudit && <p role="status">正在读取原审核的完整文件与规则版本…</p>}
+        {preparingReaudit && <ReadSkeleton label="正在读取原审核的完整文件与规则版本…" kind={'detail'}/>}
         {predecessorId && !workbench && <Alert><AlertTitle>新建关联重审</AlertTitle><AlertDescription>原任务和历史结果保留。默认沿用原文件与规则版本，所有本次审核文件都会重新审核；人工复核从未复核开始。<Button variant="link" asChild><a href={`/?round=${encodeURIComponent(predecessorId)}`}>查看原审核</a></Button></AlertDescription></Alert>}
         {recognitionState && recognitionLocked && <Alert data-request-id={recognitionState.requestId}><AlertTitle>{recognitionState.phase === 'sending' ? '正在提交识别请求' : '识别请求待核对'}</AlertTitle><AlertDescription><p>{recognitionState.message || '正在等待同一请求的回执，文件与选择已保留。'}</p>{['unknown', 'reading'].includes(recognitionState.phase) && <><Button variant="outline" disabled={recognitionState.phase === 'reading'} onClick={readRecognition}>{recognitionState.phase === 'reading' ? '正在读取识别回执…' : '读取识别回执'}</Button>{recognitionSupport}</>}</AlertDescription></Alert>}
         {recognitionState?.phase === 'rejected' && <Alert data-request-id={recognitionState.requestId}><AlertTitle>本次识别未受理</AlertTitle><AlertDescription><p>{recognitionState.message}</p>{task?.id === recognitionState.taskId && <Button variant="outline" onClick={readCurrentRecognition}>读取当前任务</Button>}{recognitionSupport}</AlertDescription></Alert>}

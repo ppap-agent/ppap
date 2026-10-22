@@ -3,6 +3,7 @@ import {Collapsible, CollapsibleTrigger, CollapsibleContent} from '../components
 import {useEffect, useState} from 'react'
 import {Minus, Plus} from 'lucide-react'
 import {Button} from '../components/ui/button'
+import {ReadSkeleton} from '../components/read-skeleton'
 export function WordSource({blob, name}: {blob: Blob; name: string}) {
   const [html, setHTML] = useState(''), [text, setText] = useState(''), [error, setError] = useState(''), [zoom, setZoom] = useState(100)
   useEffect(() => {
@@ -29,7 +30,7 @@ export function WordSource({blob, name}: {blob: Blob; name: string}) {
   return <div className={"flex flex-col h-full min-h-105 min-w-0 max-md:min-h-0"}>
     <div className={"flex flex-wrap gap-1.5 items-center p-2 border-b shrink-0 text-sm [&>[role=combobox]]:w-auto [&>[role=combobox]]:max-w-full [&>[role=combobox]]:min-w-40 [&_form]:flex [&_form]:gap-1 [&_form]:items-center [&_form]:min-w-0 max-md:gap-2 max-md:[&>[role=combobox]]:flex-[1_0_calc(100%_-_116px)] max-md:[&>[role=combobox]]:min-w-0 max-md:[&>[role=combobox]]:w-0 max-md:[&_form]:order-[2]"}><span>Word 阅读视图</span><div className={"flex items-center gap-1 whitespace-nowrap ml-auto"}><Button variant="ghost" size="icon-sm" aria-label="缩小 Word" disabled={zoom <= 100} onClick={() => setZoom(value => value - 25)}><Minus/></Button><span>{zoom}%</span><Button variant="ghost" size="icon-sm" aria-label="放大 Word" disabled={zoom >= 200} onClick={() => setZoom(value => value + 25)}><Plus/></Button></div></div>
     <Collapsible className={"shrink-0 "}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">排版与页码可能不同于原件</Button></CollapsibleTrigger><CollapsibleContent><p>此视图辅助阅读正文和表格，分页、字体、批注、修订显示和嵌入对象可能不完整。需要精确页码、签章或修改记录时，请下载原件核对。</p></CollapsibleContent></Collapsible>
-    {error ? <p className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"} role="alert">{error}</p> : !html ? <p className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"} role="status">正在排版 Word 内容…</p> : <iframe className={"w-full border-0 bg-background flex-1 min-h-75"} title={`${name} Word 阅读内容`} sandbox="" srcDoc={source}/>}
+    {error ? <p className={"min-h-55 grid justify-items-start gap-3.5 max-w-115 m-auto [&_h3]:text-lg [&_h3]:font-semibold [&_p]:leading-relaxed [&_p]:text-muted-foreground"} role="alert">{error}</p> : !html ? <ReadSkeleton label="正在排版 Word 内容…" kind="document" className="min-h-75 flex-1 p-3"/> : <iframe className={"w-full border-0 bg-background flex-1 min-h-75"} title={`${name} Word 阅读内容`} sandbox="" srcDoc={source}/>}
     {html && <Collapsible className={"max-h-45 overflow-auto"}><CollapsibleTrigger asChild><Button variant="ghost" size="sm">正文文字</Button></CollapsibleTrigger><CollapsibleContent><pre>{text || '没有可提取的段落文字；请阅读页面内容或下载原件核对。'}</pre></CollapsibleContent></Collapsible>}
   </div>
 }

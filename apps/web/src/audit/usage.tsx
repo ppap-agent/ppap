@@ -1,3 +1,4 @@
+import {ReadSkeleton} from '../components/read-skeleton'
 // Stitch: projects/13261964020862199279/screens/3deae156470647bda90de9665bafccff
 import {useEffect, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
@@ -61,7 +62,7 @@ export function AuditUsage({active, adapter, archiveAdapter, reportAdapter, shar
     {current?.notices.map(notice => <Alert key={notice}><AlertTitle>额度提示</AlertTitle><AlertDescription>{usageNotices[notice]}<Button variant="outline" onClick={() => onSupport(usageNotices[notice])}>联系我们</Button></AlertDescription></Alert>)}
     {current?.unattributed && current.unattributed.slice_count > 0 && <Alert><AlertTitle>另有 {current.unattributed.points.toLocaleString('zh-CN')} 点历史费用待核对</AlertTitle><AlertDescription>{current.unattributed.reason}</AlertDescription></Alert>}
     <form aria-label="筛选用量记录" className="flex flex-wrap items-center gap-2" onSubmit={event => {event.preventDefault(); filter({search: search.trim()})}}><Select value={query.range} onValueChange={range => filter({range: range as UsageQuery['range']})}><SelectTrigger className="w-36" aria-label="用量时间范围"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="7d">最近7天</SelectItem><SelectItem value="30d">最近30天</SelectItem><SelectItem value="90d">最近90天</SelectItem><SelectItem value="all">全部</SelectItem></SelectContent></Select><Input aria-label="搜索文件名或发起人" className="min-w-0 basis-full sm:max-w-sm sm:basis-0 sm:flex-1" value={search} placeholder="搜索文件名或发起人" onChange={event => setSearch(event.target.value)}/><Button variant="outline" type="submit">搜索</Button>{!headerActions && refresh}</form>
-    {loading && <p role="status">正在读取企业用量…</p>}{error && <Alert variant="destructive"><AlertTitle>用量读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => setReload(value => value + 1)}>重新读取用量</Button></AlertDescription></Alert>}
+    {loading && <ReadSkeleton label="正在读取企业用量…" kind={current ? 'inline' : 'table'}/>}{error && <Alert variant="destructive"><AlertTitle>用量读取未完成</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => setReload(value => value + 1)}>重新读取用量</Button></AlertDescription></Alert>}
     {current && <div className="min-w-0 space-y-3">
       {error && <p role="status">下方保留上次读取的记录，不代表当前余额或最新结算。</p>}
       <p className="text-xs text-muted-foreground">明细范围：{current.from_date || '全部历史'} 至 {current.through_date}</p>
