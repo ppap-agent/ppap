@@ -297,15 +297,15 @@ class Handler(BaseHTTPRequestHandler):
                                 }
                                 else "other"
                             )
-                            if event.get("type") == "response.completed":
+                            if kind in {"response.completed", "response.incomplete", "response.failed"}:
                                 if provider_usage is not None:
                                     raise ValueError("Duplicate provider completion")
                                 provider_usage = event.get("response", {}).get("usage")
                                 if not isinstance(provider_usage, dict):
                                     raise ValueError("Unknown provider usage")
-                                # Grok can start its next tool/model turn as soon
-                                # as it receives response.completed, before EOF.
-                                # Settle this request before forwarding that event.
+                                # A failed or incomplete response may still have
+                                # consumed tokens. Settle its valid receipt before
+                                # forwarding the original terminal event, not EOF.
                                 self.server.grants.record_usage(lease, provider_usage)
                                 recorded = True
                 if client_connected:
