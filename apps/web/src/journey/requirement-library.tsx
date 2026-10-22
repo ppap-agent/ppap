@@ -15,6 +15,7 @@ import {Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHea
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '../components/ui/tabs'
 import {Textarea} from '../components/ui/textarea'
+import {Skeleton} from '../components/ui/skeleton'
 import {clauseSourceReady, type RequirementBasis, type RequirementClause} from './requirements-state'
 import {verifiedClauseCount} from './requirement-sources'
 import {RequirementSourceSelect} from './requirement-source-select'
@@ -225,12 +226,12 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {uploadRevision.current = visibility.current.revision; void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
     {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : headerActions ? <><h1 className="sr-only">{title}</h1>{active && createPortal(uploadAction, headerActions)}</> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">{title}</h1>{uploadAction}</header>}
     {upload.busy && <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none"/>正在上传要求原件…</p>}
-    {loading && <p role="status" className="text-muted-foreground">正在读取审核要求…</p>}
+    {loading && <div role="status" aria-label="正在读取审核要求" className="space-y-4"><span className="sr-only">正在读取审核要求…</span><div aria-hidden="true" className="space-y-4">{!shown.length && <><Skeleton className="h-9 max-w-xl"/>{Array.from({length: 6}, (_, index) => <div key={index} className="grid min-h-16 grid-cols-1 items-center gap-2 lg:gap-6 border-b py-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_9rem_4rem]"><Skeleton className={index % 2 ? 'h-4 w-4/5' : 'h-4 w-3/5'}/><Skeleton className="h-4 w-4/5"/><Skeleton className="hidden h-4 w-24 lg:block"/><Skeleton className="hidden h-4 w-6 lg:block"/></div>)}</>}{shown.length > 0 && <Skeleton className="h-1 w-full"/>}</div></div>}
     {readError && <Alert variant="destructive"><AlertTitle>审核要求未能读取</AlertTitle><AlertDescription>{readError}<div><Button variant="outline" disabled={locked} onClick={onReload}>重新读取</Button></div></AlertDescription></Alert>}
     {(upload.error || saveError) && <Alert variant="destructive"><AlertTitle>未能保存</AlertTitle><AlertDescription>{upload.error || saveError}</AlertDescription></Alert>}
     {feedback && <p role={feedback.failed ? 'alert' : 'status'} className={feedback.failed ? 'text-destructive' : 'text-muted-foreground'}>{feedback.text}</p>}
     {!selection.id ? <>
-      <div role="search" aria-label="筛选审核要求" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核要求" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>
+      {(!loading || shown.length > 0) && <div role="search" aria-label="筛选审核要求" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核要求" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>}
       {shown.length ? <>
         <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-[40%]">要求名称</TableHead><TableHead>适用范围</TableHead><TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{shown.map(item => {
           const latest = item.draft ?? item.versions.at(-1)!
