@@ -1293,11 +1293,15 @@ class AuthStore:
         replacements = [row["replacement_of_file_version_id"] for row in files if row["selection"] == "selected" and row.get("replacement_of_file_version_id")]
         if len(replacements) != len(set(replacements)):
             raise ValueError("invalid_replacement_binding")
+        for row in files:
+            if row.get("replacement_of_file_version_id") and (not predecessor or row["replacement_of_file_version_id"] not in predecessor["inputs"]):
+                raise ValueError("invalid_replacement_binding")
         for replaced in replacements:
-            if not predecessor or replaced not in predecessor["inputs"] or any(row["file_version_id"] == replaced and row["selection"] == "selected" for row in files):
+            if any(row["file_version_id"] == replaced and row["selection"] == "selected" for row in files):
                 raise ValueError("invalid_replacement_binding")
         conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (task_id,))
         receipt_id = request_id
+        retained_replacements = {row["file_version_id"]: row["replacement_of_file_version_id"] for row in files if row["selection"] != "selected" and row.get("replacement_of_file_version_id")}
         for position, (row, source) in enumerate(zip(files, prepared)):
             preferred = row.get("preferred_rule_version_id")
             replacement = row.get("replacement_of_file_version_id")
@@ -1325,6 +1329,11 @@ class AuthStore:
                 }
                 if replacement:
                     payload["replacement_of_file_version_id"] = replacement
+                if retained_replacements:
+                    # The existing revision-bound job retains inactive input intent
+                    # without scheduling recognition for any excluded file.
+                    payload["retained_replacements"] = retained_replacements
+                    retained_replacements = {}
                 if inherited is not None and reuse and (not replacement or reference_only):
                     payload["confirmed_match"] = {
                         "matching_status": "reference" if reference_only else "matched",
@@ -2145,6 +2154,12 @@ class AuthStore:
                 (task_id,),
             )
             rows = cur.fetchall()
+        retained_replacements = {
+            file_id: original_id
+            for row in rows
+            if (row["analysis_payload"] or {}).get("task_id") == task_id and (row["analysis_payload"] or {}).get("task_revision", 0) == draft["input_revision"]
+            for file_id, original_id in (row["analysis_payload"] or {}).get("retained_replacements", {}).items()
+        }
         self._prepared_items(conn, principal, [{"file_version_id": str(row["file_version_id"]), "role": "reference"} for row in rows])
         validations = self._file_jobs(conn, principal, [str(row["validation_job_id"]) for row in rows if row["validation_job_id"]], "file_validation")
         rule_ids = {
@@ -2162,6 +2177,7 @@ class AuthStore:
         updated = draft["updated_at"]
         for row in rows:
             vid = str(row["file_version_id"])
+            replacement = (row["analysis_payload"] or {}).get("replacement_of_file_version_id") or retained_replacements.get(vid)
             version = self._version_from_row(
                 (row["file_version_id"], *(row[key] for key in ("file_id", "tenant_id", "original_filename", "content_type", "byte_size", "sha256", "object_key", "status")))
             )
@@ -2216,16 +2232,8 @@ class AuthStore:
                     "validation": checked,
                     "match": match,
                     **({"preferred_rule_version_id": str(row["rule_version_id"])} if row["rule_version_id"] else {}),
-                    **({"replacement_of_file_version_id": row["analysis_payload"]["replacement_of_file_version_id"]} if (row["analysis_payload"] or {}).get("replacement_of_file_version_id") else {}),
-                    **(
-                        {
-                            "rule_options": self._reaudit_rule_options(
-                                original_rules.get((row["analysis_payload"] or {}).get("replacement_of_file_version_id") or str(row["file_version_id"])), available_rules
-                            )
-                        }
-                        if original_rules
-                        else {}
-                    ),
+                    **({"replacement_of_file_version_id": replacement} if replacement else {}),
+                    **({"rule_options": self._reaudit_rule_options(original_rules.get(replacement or vid), available_rules)} if original_rules else {}),
                     **({"reference_only": True} if draft["predecessor_id"] and row["role"] == "reference" else {}),
                 }
             )
