@@ -33,6 +33,7 @@ const buttonVariants = cva(
         "icon-lg": "size-9",
         profile: "h-12 w-full justify-start gap-3 rounded-xl px-2 text-left",
         row: "h-auto min-h-16 w-full justify-start gap-3 rounded-none px-3 py-2.5 text-left whitespace-normal aria-pressed:bg-muted/50",
+        tile: "h-auto min-h-28 min-w-0 flex-col items-start justify-between gap-5 rounded-sm p-4 text-left text-base whitespace-normal [&_svg:not([class*='size-'])]:size-6",
         "profile-icon": "size-8 rounded-full",
       },
     },
