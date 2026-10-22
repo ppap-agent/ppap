@@ -151,7 +151,11 @@ def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
         calls.append("verified")
         return refs, CONFIGS
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "tested_source": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": checked}):
+    def run(args, **kwargs):
+        assert args[0] == "git", "build must not query CI"
+        return SHA.encode() if args[1] == "rev-parse" else b""
+
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked}):
         operation(SHA, "yunxiao", tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
@@ -168,7 +172,7 @@ def test_failed_registry_verification_leaves_configuration_unchanged(tmp_path):
     def invalid(*args):
         raise ValueError("source identity mismatch")
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "tested_source": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": invalid}):
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": invalid}):
         with pytest.raises(ValueError):
             operation(SHA, "yunxiao", tmp_path, 2)
     assert config.read_text() == "sentinel"
@@ -312,6 +316,18 @@ def test_live_readback_cannot_report_success_for_wrong_target_or_state(tmp_path,
     assert (tmp_path / "verified.json").exists() == (not rejected)
 
 
+@pytest.mark.parametrize("candidate,actual", [("short", SHA), (SHA, "0" * 40)])
+def test_invalid_source_blocks_build_before_cloud_actions(tmp_path, candidate, actual):
+    operation = RELEASE["build"]
+
+    def forbidden(*args):
+        pytest.fail("invalid source must not reach the cloud")
+
+    with patch.dict(operation.__globals__, {"run": lambda *args, **kwargs: actual.encode(), "yunxiao": forbidden}):
+        with pytest.raises(ValueError, match="source"):
+            operation(candidate, "yunxiao", tmp_path, None)
+
+
 def test_exact_tests_failure_blocks_source_before_cloud_actions():
     operation = RELEASE["tested_source"]
 
@@ -414,7 +430,7 @@ def test_backup_reuses_verified_images_without_build_or_duplicate_metadata_reads
         checks.append(args)
         return images, CONFIGS
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "tested_source": lambda sha: None, "run": lambda *args: b"", "registry_images": registry}):
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "run": lambda *args: b"", "registry_images": registry}):
         operation(SHA, "unregistry", tmp_path, None)
     assert len(checks) == 1
     assert not (tmp_path / "source.tar").exists() and not (tmp_path / "source").exists()

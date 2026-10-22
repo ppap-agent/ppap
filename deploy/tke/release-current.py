@@ -1,4 +1,4 @@
-"""Build tested PPAP images, or deploy the reviewed TKE configuration.
+"""Build PPAP images independently of CI, or deploy tested, reviewed TKE pins.
 
 Run build SOURCE_SHA first; review/commit its current.yaml pins, then run deploy.
 A failed remote mutation is reconciled, never automatically repeated.
@@ -56,9 +56,13 @@ def digest(raw: bytes) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def tested_source(sha: str) -> None:
+def source_commit(sha: str) -> None:
     require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "source must be a full Git SHA")
     require(run(["git", "rev-parse", sha + "^{commit}"], timeout=30).decode().strip() == sha, "source commit is unavailable")
+
+
+def tested_source(sha: str) -> None:
+    source_commit(sha)
     data = json.loads(run(["gh", "api", f"repos/ppap-agent/ppap/actions/workflows/tests.yml/runs?head_sha={sha}&per_page=100"]))
     trusted = [r for r in data["workflow_runs"] if r["head_sha"] == sha and r["event"] in {"push", "workflow_dispatch"} and r["head_repository"]["full_name"] == "ppap-agent/ppap"]
     require(bool(trusted) and max(trusted, key=lambda r: r["id"])["conclusion"] == "success", "exact source needs a successful latest Tests run; no test bypass")
@@ -293,7 +297,7 @@ def registry_images(sha: str, images: dict[str, str]) -> tuple[dict[str, str], d
 
 
 def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
-    tested_source(sha)
+    source_commit(sha)
     require(not run(["git", "status", "--porcelain", "--", "deploy/tke/current.yaml"]).strip(), "current.yaml has local edits; review/commit them before updating pins")
     prefix = PREFIXES[provider]
     pins = None
@@ -579,7 +583,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_args: sys.exit(143))
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
-    build_parser = commands.add_parser("build", help="build tested source and update desired pins; never deploy")
+    build_parser = commands.add_parser("build", help="build exact source without waiting for CI and update desired pins; never deploy")
     build_parser.add_argument("source")
     build_parser.add_argument("--provider", choices=tuple(PREFIXES), default="yunxiao")
     build_parser.add_argument("--run-id", type=int, help="resume/reconcile an existing Yunxiao run; never dispatch")
