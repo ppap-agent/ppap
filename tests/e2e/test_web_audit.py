@@ -181,7 +181,8 @@ class WebAuditLoopTests(unittest.TestCase):
             page.keyboard.press("Escape")
             writes = []
             page.on("request", lambda request: writes.append(request.url) if request.method == "POST" and ("/audit-tasks" in request.url or request.url.endswith("/drafts")) else None)
-            page.get_by_role("button", name="补件／重新审核", exact=True).click()
+            page.get_by_role("button", name="历史操作", exact=True).click()
+            page.get_by_role("menuitem", name="补件／重新审核", exact=True).click()
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(page.get_by_role("region", name="重审文件与规则", exact=True)).to_contain_text(name)
             expect(page.get_by_role("region", name="重审文件与规则", exact=True)).to_contain_text(context)
