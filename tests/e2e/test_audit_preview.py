@@ -2440,6 +2440,31 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("heading", name="1.2 · 记录完整性", exact=True)).to_be_visible()
             browser.close()
 
+    def test_old_round_pauses_hidden_task_observation_and_forward_recovers_current_results(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1280, "height": 1000})
+            page.set_default_timeout(5000)
+            page.clock.install()
+            address = PREVIEW + "/preview/audit.html?scene=restore-observe&round=history-round"
+            page.goto(address)
+            expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
+            page.get_by_role("button", name="打开审核任务", exact=True).click()
+            page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button").filter(has_text="PPAP-恢复示例").click()
+            expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
+            page.go_back()
+            expect(page).to_have_url(address)
+            expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
+            page.clock.fast_forward(30000)
+            page.evaluate("window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online'))")
+            expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
+            page.go_forward()
+            expect(page.get_by_text("任务观察 · preview-recovery-task · 读取 1", exact=True)).to_be_visible()
+            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+            expect(page.get_by_role("region", name="全部文件概览", exact=True)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text="审核已结束 · 文件已结束 3/3")).to_be_visible()
+            browser.close()
+
     def test_task_observation_pauses_when_hidden_and_respects_failure_backoff_after_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
