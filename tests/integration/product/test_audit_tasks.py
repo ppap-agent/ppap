@@ -151,7 +151,9 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
     assert client.get(history_path + "/result", params=frozen).status_code == 403
 
 
-@pytest.mark.parametrize("invalid", ["not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation", "stale_analysis"])
+@pytest.mark.parametrize(
+    "invalid", ["not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation", "stale_analysis", "null_revision", "string_revision", "boolean_revision", "fractional_revision"]
+)
 def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, auth_store_factory, invalid):
     client, worker, path, body, _rule = matched_task
     migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
@@ -174,13 +176,13 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
             conn.execute("UPDATE engine.jobs SET kind = 'file_analysis' WHERE id = %s", (body["files"][0]["validation_id"],))
         else:
             conn.execute(
-                """UPDATE engine.jobs SET payload = jsonb_set(payload, '{task_revision}', '999')
+                """UPDATE engine.jobs SET payload = jsonb_set(payload, '{task_revision}', %s)
                 WHERE id = (SELECT analysis_job_id FROM product.draft_items WHERE draft_id = %s AND file_version_id = %s)""",
-                (accepted.json()["id"], version),
+                (Jsonb({"stale_analysis": 999, "null_revision": None, "string_revision": "0", "boolean_revision": False, "fractional_revision": 0.0}[invalid]), accepted.json()["id"], version),
             )
     task = client.get(path)
     archive = client.get("/audit-archive")
-    if invalid != "stale_analysis":
+    if invalid in {"not_ready", "unmapped_cloud_file", "foreign_resource", "invalid_validation"}:
         assert archive.status_code == task.status_code
         assert archive.status_code in {400, 403, 404, 409, 422}
     else:
