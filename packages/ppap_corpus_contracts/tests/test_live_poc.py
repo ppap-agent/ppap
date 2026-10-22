@@ -1,14 +1,15 @@
 """The live runner fails before writes on the wrong candidate or charging policy."""
 
 import json
+import sys
 from hashlib import sha256
 from uuid import uuid4
 
 import httpx
 import pytest
 from ppap_core.audits import EXECUTOR_DEEP, EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION
-from ppap_corpus_contracts.live_poc import run_live
-from ppap_corpus_contracts.poc_oracle import load_poc_cases
+from ppap_corpus_contracts.live_poc import RULE_DOCS, main, run_live
+from ppap_corpus_contracts.poc_oracle import build_bundle_map, load_poc_cases
 
 
 @pytest.mark.parametrize("changed", [{"git_sha": "other"}, {"usage_charge_enabled": True}])
@@ -345,6 +346,8 @@ def test_default_mode_stays_standard_and_invalid_modes_never_make_requests(tmp_p
         result = run_live(client, candidate_sha="a" * 40, output=tmp_path / "default")
     assert result["outcome"] == "PROVEN"
     assert result["analysis_mode"] == "standard"
+    assert result["scope"] == "full"
+    assert result["denominators"] == {"full": {"bundles": 8, "files": 27, "rules": 220}, "selected": {"bundles": 8, "files": 27, "rules": 220}}
     assert {draft["analysis_mode"] for draft in api.drafts.values()} == {"standard"}
 
     def unexpected_request(_request):
@@ -354,6 +357,105 @@ def test_default_mode_stays_standard_and_invalid_modes_never_make_requests(tmp_p
     with httpx.Client(base_url="http://test", transport=httpx.MockTransport(unexpected_request)) as client, pytest.raises(ValueError, match="invalid_analysis_mode"):
         run_live(client, candidate_sha="a" * 40, output=output, analysis_mode="automatic")
     assert not output.exists()
+
+
+@pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
+@pytest.mark.parametrize("bundle_ids", [["Aries Spoiler"], ["POC测试样本", "Aries Spoiler"]])
+def test_selected_whole_bundles_publish_only_required_rules_and_never_claim_full_proof(tmp_path, analysis_mode, bundle_ids):
+    api = ProductAPI()
+    output = tmp_path / "subset"
+    bundles = build_bundle_map(api.cases.values())
+    selected = [case for bundle in bundle_ids for case in bundles[bundle]]
+    required_seqs = {case.file_seq for case in selected}
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, analysis_mode=analysis_mode, bundle_ids=bundle_ids, isolated_login=True)
+    assert result["outcome"] == "SUBSET_PROVEN"
+    assert result["scope"] == "subset"
+    assert result["selected_bundles"] == sorted(bundle_ids)
+    assert result["denominators"] == {
+        "full": {"bundles": 8, "files": 27, "rules": 220},
+        "selected": {"bundles": len(bundle_ids), "files": len(selected), "rules": sum(len(case.expected) for case in selected)},
+    }
+    assert {draft["analysis_mode"] for draft in api.drafts.values()} == {analysis_mode}
+    assert {version["original_filename"] for version in api.files.values()} == {case.file_name for case in selected} | {RULE_DOCS[seq] for seq in required_seqs}
+    assert len(api.rules) == len(api.parses) == len(required_seqs)
+    accepts = [operation for operation in result["operations"] if operation["stage"] == "accept"]
+    assert [operation["bundle"] for operation in accepts] == sorted(bundle_ids)
+    assert len({path for _method, path in api.writes if path.endswith("/accept")}) == len(bundle_ids)
+    assert all(operation["analysis_mode"] == analysis_mode and operation["executor_revision"] == ("b" * 64 if analysis_mode == "deep" else STANDARD_EXECUTOR_REVISION) for operation in accepts)
+    for draft in api.drafts.values():
+        names = {api.files[item["file_version_id"]]["original_filename"] for item in draft["items"]}
+        bundle = next(bundle for bundle in bundle_ids if names & {case.file_name for case in bundles[bundle]})
+        assert names == {case.file_name for case in bundles[bundle]}
+    report = json.loads((output / "report.json").read_text())
+    assert report["run"] == result
+    assert set(report["by_bundle"]) == set(bundle_ids)
+    assert report["summary"]["selected_cases"] == len(selected)
+    assert report["summary"]["total_rules"] == len(report["rule_results"]) == result["denominators"]["selected"]["rules"]
+    markdown = (output / "report.md").read_text()
+    assert "SUBSET_PROVEN" in markdown and "subset" in markdown and "denominators" in markdown and "220" in markdown
+
+
+@pytest.mark.parametrize("bundle_ids", [[], ["unknown"], ["Aries Spoiler", "Aries Spoiler"], ["Aries Spoiler", "unknown"], ["Aries Spoiler "]])
+def test_invalid_or_duplicate_bundle_selection_fails_before_any_http_request(tmp_path, bundle_ids):
+    calls = []
+
+    def unexpected_request(request):
+        calls.append((request.method, request.url.path))
+        raise AssertionError("invalid bundle selection reached the HTTP boundary")
+
+    output = tmp_path / "invalid"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(unexpected_request)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, bundle_ids=bundle_ids, isolated_login=True)
+    assert result["outcome"] == "NOT_PROVEN"
+    assert result["attribution"] == "inconclusive"
+    assert result["errors"] == [{"stage": "preflight", "code": "invalid_bundle_selection" if not bundle_ids or len(set(bundle_ids)) != len(bundle_ids) else "unknown_bundle_selection"}]
+    assert result["operations"] == calls == []
+
+
+def test_explicitly_selecting_all_bundles_is_the_same_full_scope(tmp_path):
+    api = ProductAPI()
+    bundles = sorted(build_bundle_map(api.cases.values()), reverse=True)
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=tmp_path / "all", bundle_ids=bundles)
+    assert result["outcome"] == "PROVEN"
+    assert result["scope"] == "full"
+    assert result["selected_bundles"] == sorted(bundles)
+    assert result["denominators"]["full"] == result["denominators"]["selected"] == {"bundles": 8, "files": 27, "rules": 220}
+    assert len(api.drafts) == 8 and len(api.rules) == 5
+
+
+@pytest.mark.parametrize("failure", ["lost_accept_response", "one_status_mismatch", "extra_rule_output", "frozen_rule_text_drift", "execution_error"])
+def test_subset_keeps_selected_denominator_identity_and_read_only_unknown_recovery(tmp_path, failure):
+    api = ProductAPI(failure)
+    bundle = "Cetus Spoiler-有特殊特性清单"
+    output = tmp_path / "subset"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, analysis_mode="deep", bundle_ids=[bundle], timeout=0.001, poll_interval=0)
+    assert result["outcome"] == ("SUBSET_PROVEN" if failure == "lost_accept_response" else "NOT_PROVEN")
+    assert result["scope"] == "subset"
+    assert result["denominators"]["selected"] == {"bundles": 1, "files": 5, "rules": 31}
+    assert len([path for _method, path in api.writes if path.endswith("/accept")]) == 1
+    assert len(api.drafts) == len(api.rounds) == 1
+    report = json.loads((output / "report.json").read_text())
+    assert report["summary"]["selected_cases"] == 5
+    assert report["summary"]["total_rules"] == len(report["rule_results"]) == 31
+    assert {row["bundle"] for row in report["rule_results"]} == {bundle}
+    if failure == "execution_error":
+        failed = [row for row in report["rule_results"] if row["kind"] != "match"]
+        assert len(failed) == 1 and failed[0]["kind"] == "execution_failure" and failed[0]["actual_status"] == "ERR"
+
+
+def test_cli_repeated_bundle_selection_returns_success_only_as_subset_proof(tmp_path, monkeypatch, capsys):
+    api = ProductAPI()
+    client = httpx.Client(base_url="http://test", transport=httpx.MockTransport(api))
+    monkeypatch.setattr("ppap_corpus_contracts.live_poc.httpx.Client", lambda **_kwargs: client)
+    monkeypatch.setattr(sys, "argv", ["live_poc", "--api", "http://test", "--candidate-sha", "a" * 40, "--output", str(tmp_path / "cli"), "--bundle", "Aries Spoiler", "--bundle", "POC测试样本"])
+    with pytest.raises(SystemExit) as exited:
+        main()
+    assert exited.value.code == 0
+    assert json.loads(capsys.readouterr().out)["outcome"] == "SUBSET_PROVEN"
+    assert len(api.drafts) == 2
 
 
 @pytest.mark.parametrize("analysis_mode", ["standard", "deep"])

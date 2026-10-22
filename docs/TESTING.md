@@ -104,13 +104,19 @@ uv run --no-sync python -m ppap_corpus_contracts.live_poc \
 
 `--analysis-mode standard|deep` 显式选择执行模式，缺省仍为 Standard；现有远端 Live workflow 未因此改为 Deep。若另获授权使用具备当前候选 Deep sidecar 的独立栈，可在同一命令加入 `--analysis-mode deep`，并使用新的输出目录。runner 将所选模式写入报告，核对受理与完成读回的冻结模式、executor 和 revision；Deep 要求实际策略摘要，不能静默回退 Standard。这里仍只比较同一 canonical 27 样例／220 条人工预期，不代表 #166 的独立保留集、完整质量、成本、隔离或恢复验收已完成，也不构成执行 Live 的授权。
 
-已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先检查候选、收费策略及完整 27 样例／8 组／220 预期。5 份原始 DOCX 经上传、解析、真实出处核对和发布后，逐组明确绑定并受理；不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑。
+可重复传入 `--bundle 'Aries Spoiler' --bundle 'POC测试样本'`，精确选择 `build_bundle_map` 中已有的完整文件组；不按文件或规则拆组。省略参数仍执行全部 8 组，显式选择全部 8 组也记为 `scope=full`；其他选择记为 `scope=subset`。报告的 `selected_bundles` 与 `denominators.full/selected` 明确列出总计及所选的组数、文件数、规则数。子集全部对齐只返回 `SUBSET_PROVEN` 和成功退出码，不返回完整 `PROVEN`，不代表完整 corpus 或产品验收。无效、空或重复选择在登录及任何 HTTP 请求之前失败。组名可用以下纯离线命令查看，不会启动审核：
+
+```sh
+uv run --no-sync python -c 'from ppap_corpus_contracts.poc_oracle import build_bundle_map, load_poc_cases; print("\n".join(sorted(build_bundle_map(load_poc_cases()))))'
+```
+
+已有 isolated-dev 授权可通过 `PPAP_LIVE_COOKIE` 注入，不在参数、日志或报告中保存。命令只接受独立栈，先核对完整 27 样例／8 组／220 预期及选择，再检查候选、收费策略。完整运行发布 5 份原始 DOCX；子集只上传和发布所选组需要的规则 DOCX，仍核对原文、出处与发布版本，再逐组明确绑定并受理，不从检查器生成规则。每组仅 accept 一次，响应丢失只 GET 同一 Draft 的 Round，失败或超时不重新受理。输出目录必须不存在，避免误用同一命令重跑；小批次选择也不构成额外 Live 或付费调用授权。
 
 完整 canonical suite 含需要 OCR 回退的控制计划 PDF。使用本 Live overlay 的 in-process OCR 路径时，执行前须提供真实 `PADDLE_OCR_URL` 及该服务需要的授权；LLM 配置或离线 OCR cache 不能证明此能力可用。workflow 在任何业务写入前检查地址已配置，但配置存在不代表外部服务验收通过。
 
 复用参考环境时，须分别核对服务级配置与仓库根配置；两者不是同一来源。迁入代码不会继承参考服务的 OCR 配置，独立栈须显式注入当前 Settings 所需的 Paddle／模型变量，不增加运行时跨仓配置回退。
 
-每次写操作前保存安全回执，JSON／Markdown 保留逐条结果和失败阶段；只读到终态、冻结输入一致且 220 项逐一匹配才返回 `PROVEN`。缺项、重复项、ERR、状态不符或未完成均为 `NOT_PROVEN`，归因默认 `inconclusive`。不要仅凭退出码推断缺陷归属或自动重跑。可选证据位置不参与 PASS/NG 门槛。这里证明 Product API／Worker 能力，包含显式 SCL 审核；不改变 Native 客户流程中 SCL 仅为比对资料的政策，也不证明浏览器、飞书登录、PDF/ZIP、收费或生产放行。运行授权、预算和真实结果只记在 owning Issue，不新增运行台账或提交报告文件。
+每次写操作前保存安全回执，JSON／Markdown 保留逐条结果和失败阶段；只读到终态、冻结输入一致且所选规则全部逐一匹配才通过所声明范围，只有完整 220 项对齐才返回 `PROVEN`。子集的未完成规则仍保留在所选分母中，未选组不冒充已验证。缺项、重复项、ERR、状态不符或未完成均为 `NOT_PROVEN`，归因默认 `inconclusive`。不要仅凭退出码推断缺陷归属或自动重跑。可选证据位置不参与 PASS/NG 门槛。这里证明 Product API／Worker 能力，包含显式 SCL 审核；不改变 Native 客户流程中 SCL 仅为比对资料的政策，也不证明浏览器、飞书登录、PDF/ZIP、收费或生产放行。运行授权、预算和真实结果只记在 owning Issue，不新增运行台账或提交报告文件。
 
 规则结果通过同一 Round 中冻结的 FileVersion → RuleVersion、coverage 的文件／规则索引及唯一 finding 关联。coverage 的 inline `rule_version_id` 是可选字段，不能把缺省当作缺项；若返回该字段，必须与冻结绑定一致。错误绑定和重复 finding 均拒绝，但不要求一个可选表示成为唯一证明。失败后的只读诊断报告须保留原始报告，并明确未重新受理或调用模型／转换服务，不能冒充新候选的一次成功验收。
 
