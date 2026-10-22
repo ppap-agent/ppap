@@ -927,7 +927,7 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=recognition-recovery-current&task=preview-recovery-task")
-            expect(page.get_by_role("heading", name="正在恢复任务", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核任务", exact=True)).to_be_visible()
             task_list(page)
             page.get_by_role("textbox", name="搜索任务文件", exact=True).fill("PFMEA")
             expect(task_list(page).get_by_role("button")).to_contain_text("2 份文件")
@@ -1138,12 +1138,12 @@ class AuditPreviewTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-traced&task=preview-recovery-task")
-            expect(page.get_by_role("heading", name="任务暂不可用", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="任务暂时无法打开", exact=True)).to_be_visible()
             page.get_by_role("button", name="联系支持", exact=True).click()
             support = page.get_by_role("dialog", name="联系我们", exact=True)
             expect(support.get_by_label("服务请求编号", exact=True)).to_have_value("preview-task-read-1")
             support.get_by_role("button", name="关闭", exact=True).click()
-            page.get_by_role("button", name="重新读取任务", exact=True).click()
+            page.get_by_role("button", name="重新读取", exact=True).click()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             read_results(page)
             expect(page.get_by_text("结果暂时无法读取", exact=True)).to_be_visible()
@@ -4094,14 +4094,65 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("附加.pdf", exact=True)).to_be_visible()
             browser.close()
 
+    def test_opening_an_existing_report_or_task_keeps_its_context_while_loading(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for width, report in ((1012, "preview-recovery-version-1"), (390, "")):
+                with self.subTest(width=width, report=report):
+                    page = browser.new_page(viewport={"width": width, "height": 853})
+                    page.set_default_timeout(5000)
+                    address = PREVIEW + "/preview/audit.html?scene=restore-loading&task=preview-recovery-task"
+                    if report:
+                        address += "&report=" + report
+                    page.goto(address)
+                    main = page.get_by_role("main")
+                    expect(main.get_by_role("heading", name="审核报告" if report else "审核任务", exact=True)).to_be_visible()
+                    expect(main.get_by_role("status")).to_have_text("正在打开报告…" if report else "正在打开任务…")
+                    expect(main.get_by_text("preview-recovery-task", exact=False)).to_have_count(0)
+                    expect(main.get_by_role("button", name="返回新建", exact=True)).to_have_count(0)
+                    expect(main.get_by_role("list", name="审核步骤", exact=True)).to_have_count(0)
+                    expect(page.get_by_text("PPAP Audit / 新建审核", exact=True)).to_have_count(0)
+                    self.assertLessEqual(main.evaluate("element => element.scrollWidth"), width)
+                    page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                    expect(main.get_by_role("heading", name="审核报告" if report else "审核结果", exact=True)).to_be_visible()
+                    if report:
+                        expect(main.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+                        self.assertEqual(parse_qs(urlparse(page.url).query)["report"], [report])
+                    self.assertEqual(parse_qs(urlparse(page.url).query)["task"], ["preview-recovery-task"])
+                    expect(main.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_have_count(0)
+                    page.close()
+            browser.close()
+
+    def test_failed_report_read_keeps_the_selected_report_and_does_not_open_a_new_task(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1012, "height": 853})
+            page.set_default_timeout(5000)
+            address = PREVIEW + "/preview/audit.html?scene=restore-loading&task=preview-recovery-task&report=preview-recovery-version-1"
+            page.goto(address)
+            expect(page.get_by_role("status")).to_have_text("正在打开报告…")
+            page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
+            main = page.get_by_role("main")
+            expect(main.get_by_role("heading", name="报告暂时无法打开", exact=True)).to_be_visible()
+            expect(main.get_by_role("alert")).to_contain_text("暂时无法读取任务，请重试。")
+            expect(main.get_by_role("button", name="返回新建", exact=True)).to_have_count(0)
+            expect(main.get_by_text("preview-recovery-task", exact=False)).to_have_count(0)
+            expect(main.get_by_role("list", name="审核步骤", exact=True)).to_have_count(0)
+            self.assertEqual(page.url, address)
+            main.get_by_role("button", name="重新读取", exact=True).click()
+            expect(main.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            self.assertEqual(page.url, address)
+            expect(main.get_by_role("heading", name="上传 PPAP 文件", exact=True)).to_have_count(0)
+            browser.close()
+
     def test_recovery_late_response_cannot_replace_new_uploads(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-loading&task=preview-recovery-task")
-            expect(page.get_by_role("heading", name="正在恢复任务", exact=True)).to_be_visible()
-            page.get_by_role("button", name="返回新建", exact=True).click()
+            expect(page.get_by_role("heading", name="审核任务", exact=True)).to_be_visible()
+            new_task(page)
             page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "新选择.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
             close_workspace_panel(page)
             page.get_by_role("button", name="返回示例读取 1", exact=True).click()
@@ -4150,7 +4201,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-missing&task=missing")
             expect(page.get_by_text("未找到此任务，请核对链接。", exact=True)).to_be_visible()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-auth&task=preview-recovery-task")
-            page.get_by_role("button", name="恢复登录", exact=True).click()
+            page.get_by_role("button", name="重新登录", exact=True).click()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             browser.close()
 
@@ -4772,7 +4823,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_text("PPAP Audit / 新建审核", exact=True)).to_be_visible()
             expect(page.get_by_text("PFMEA.xlsx", exact=True)).to_have_count(0)
             task_list(page).get_by_role("button").click()
-            expect(page.get_by_role("heading", name="正在恢复任务", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="审核任务", exact=True)).to_be_visible()
             page.get_by_role("button", name="返回示例读取 2", exact=True).click()
             expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_be_visible()
             expect(page.get_by_text("示例 PFMEA 规则 · v1", exact=True)).to_be_visible()
