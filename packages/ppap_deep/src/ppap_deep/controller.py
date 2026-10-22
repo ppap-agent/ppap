@@ -17,6 +17,7 @@ from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from pydantic import ValidationError
 
 from ppap_deep.client import DeepError, DeepUnavailable, read_frame, write_frame
+from ppap_deep.limits import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from ppap_deep.protocol import (
     DeepProgress,
     ErrorEnvelope,
@@ -27,7 +28,7 @@ from ppap_deep.protocol import (
     ResultEnvelope,
 )
 
-FileSource = Callable[[str], bytes]
+FileSource = Callable[[str, int], bytes]
 
 
 @dataclass
@@ -91,20 +92,26 @@ class Controller:
             raise DeepError("executor_revision_mismatch")
         if self.authorize:
             self.authorize(spec)
+        if len(spec.files) > MAX_INPUT_FILES:
+            raise DeepError("deep_budget_exhausted")
         context.progress({"phase": "reading"})
         blobs: dict[str, bytes] = {}
+        remaining = MAX_INPUT_TOTAL
         try:
             for item in spec.files:
                 context.raise_if_cancelled()
                 if not item.sha256:
                     raise DeepError("deep_integrity_mismatch")
                 try:
-                    data = self.file_source(item.file_version_id)
+                    data = self.file_source(item.file_version_id, remaining)
                 except DeepError:
                     raise
                 except Exception as exc:
                     raise DeepError("deep_input_missing") from exc
                 context.raise_if_cancelled()
+                if len(data) > remaining:
+                    raise DeepError("deep_budget_exhausted")
+                remaining -= len(data)
                 digest = hashlib.sha256(data).hexdigest()
                 if digest != item.sha256:
                     raise DeepError("deep_integrity_mismatch")

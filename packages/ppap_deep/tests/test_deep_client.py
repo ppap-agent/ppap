@@ -87,7 +87,7 @@ def test_undelivered_request_can_explicitly_recover_without_changing_frozen_iden
         assert request.model_dump(mode="json") == original
         authorized.append(request.model_dump(mode="json"))
 
-    def source(version_id: str) -> bytes:
+    def source(version_id: str, _max_bytes: int) -> bytes:
         assert authorized == [original]
         assert executions == []
         reads.append(version_id)

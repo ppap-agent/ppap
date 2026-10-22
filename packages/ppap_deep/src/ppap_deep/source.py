@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from ppap_core.db import connect
-from ppap_core.files import ObjectMissing
+from ppap_core.files import ObjectMissing, ObjectTooLarge
 from ppap_core.settings import Settings
 from ppap_core.storage import S3Objects
 
@@ -51,7 +51,7 @@ def authorize_execution(settings: Settings):
 def object_file_source(settings: Settings) -> FileSource:
     objects = S3Objects(settings)
 
-    def load(file_version_id: str) -> bytes:
+    def load(file_version_id: str, max_bytes: int) -> bytes:
         try:
             ident = str(UUID(str(file_version_id)))
         except (ValueError, TypeError) as exc:
@@ -64,7 +64,9 @@ def object_file_source(settings: Settings) -> FileSource:
         if not row or row[1] != "ready" or not row[0]:
             raise DeepError("deep_input_missing")
         try:
-            return objects.get(row[0])
+            return objects.get(row[0], max_bytes=max_bytes)
+        except ObjectTooLarge as exc:
+            raise DeepError("deep_budget_exhausted") from exc
         except ObjectMissing as exc:
             raise DeepError("deep_input_missing") from exc
 

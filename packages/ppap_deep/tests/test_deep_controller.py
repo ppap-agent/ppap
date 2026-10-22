@@ -8,14 +8,18 @@ import socket
 import tempfile
 import threading
 import time
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
+from ppap_core.settings import Settings
 from ppap_deep.client import DeepClient, DeepError, read_frame
 from ppap_deep.controller import Controller, ExecutionContext, UnconfiguredRuntime, UnixControllerServer
+from ppap_deep.limits import MAX_INPUT_FILES
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
+from ppap_deep.source import object_file_source
 
 
 def controller_request() -> tuple[ExecuteRequest, dict[str, bytes]]:
@@ -41,6 +45,45 @@ def controller_request() -> tuple[ExecuteRequest, dict[str, bytes]]:
     return spec, blobs
 
 
+def test_excessive_input_count_is_rejected_before_reading_objects():
+    spec, _blobs = controller_request()
+    spec.files = [spec.files[0].model_copy(update={"file_version_id": str(index)}) for index in range(MAX_INPUT_FILES + 1)]
+    reads = []
+    controller = Controller(UnconfiguredRuntime(), lambda version, limit: reads.append((version, limit)) or b"", executor_revision="a" * 64)
+    response = controller.handle_raw({"op": "execute", "spec": spec.model_dump()})
+    assert response["code"] == "deep_budget_exhausted"
+    assert reads == []
+
+
+def test_frozen_object_source_maps_size_rejection_to_execution_budget():
+    body = BytesIO(b"oversize")
+    with patch("ppap_deep.source.connect") as database, patch("ppap_core.storage.s3_client") as s3:
+        database.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = ("frozen-object", "ready")
+        s3.return_value.get_object.return_value = {"Body": body, "ContentLength": 8}
+        with pytest.raises(DeepError) as failure:
+            object_file_source(Settings())("00000000-0000-4000-8000-000000000001", 3)
+    assert failure.value.code == "deep_budget_exhausted"
+    assert body.closed
+
+
+@pytest.mark.parametrize("sizes,expected_reads,expected_code", [([6, 1, 1], [5], "deep_budget_exhausted"), ([3, 3, 1], [5, 2], "deep_budget_exhausted"), ([3, 2], [5, 2], "deep_runtime_unavailable")])
+def test_input_bytes_use_remaining_budget_and_stop_before_runtime(sizes, expected_reads, expected_code):
+    spec, _blobs = controller_request()
+    blobs = {str(index): b"x" * size for index, size in enumerate(sizes)}
+    spec.files = [spec.files[0].model_copy(update={"file_version_id": version, "sha256": hashlib.sha256(data).hexdigest()}) for version, data in blobs.items()]
+    budgets = []
+
+    def source(version, limit):
+        budgets.append(limit)
+        return blobs[version]
+
+    controller = Controller(UnconfiguredRuntime(), source, executor_revision="a" * 64)
+    with patch("ppap_deep.controller.MAX_INPUT_TOTAL", 5):
+        response = controller.handle_raw({"op": "execute", "spec": spec.model_dump()})
+    assert response["code"] == expected_code
+    assert budgets == expected_reads
+
+
 @pytest.mark.parametrize("cancel_during", ["target-version", "reference-version"])
 def test_cancellation_during_input_read_stops_further_reads_and_execution(cancel_during: str) -> None:
     spec, blobs = controller_request()
@@ -48,7 +91,7 @@ def test_cancellation_during_input_read_stops_further_reads_and_execution(cancel
     progress, authorized, reads = [], [], []
     context = ExecutionContext(on_progress=progress.append)
 
-    def source(version: str) -> bytes:
+    def source(version: str, _max_bytes: int) -> bytes:
         assert authorized == [original]
         reads.append(version)
         if version == cancel_during:
@@ -71,7 +114,7 @@ def test_request_frame_deadline_closes_slow_peers_before_dispatch(fragment: str)
     original = spec.model_dump_json()
     authorized, reads = [], []
 
-    def source(version: str) -> bytes:
+    def source(version: str, _max_bytes: int) -> bytes:
         reads.append(version)
         return blobs[version]
 
@@ -150,7 +193,7 @@ def test_close_cancels_a_connection_accepted_before_context_registration() -> No
     spec, blobs = controller_request()
     authorized, reads = [], []
 
-    def source(version: str) -> bytes:
+    def source(version: str, _max_bytes: int) -> bytes:
         reads.append(version)
         return blobs[version]
 
