@@ -28,7 +28,7 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 `packages/ppap_deep/tests/test_deep_client.py` 使用真实 UDS 验证未送达请求的显式恢复，以及分片响应、发送背压中的总时限与取消。外部 peer 受控；不调用模型，也不证明 provider 已取消或执行域已清理。总时限从调用开始计算，帧内读写不能重置预算；已发送请求超时不等于未执行，客户端不自动重发。
 
-`packages/ppap_deep/tests/test_deep_controller.py` 验证公开 Controller 的读取取消及真实 UDS 入帧边界：当前对象读取返回后，取消会停止后续读取与 Runtime 派发；不承诺撤销已在途读取。服务端 `request_timeout` 从接收连接开始约束整份入站帧，片段不续期，超时关闭后正常请求仍可派发；它不是 Deep 审核的执行时限。测试只控制对象存储和外部 peer，使用实际未配置 Runtime 检查派发边界，不提供模型质量、PG 或强隔离证明。现有 `DeepExecutionQueue.tla` 不覆盖这些读取阶段，本批没有新增 TLC 或完整生命周期证明。
+`packages/ppap_deep/tests/test_deep_controller.py` 验证公开 Controller 的读取取消及真实 UDS 入帧边界：当前对象读取返回后，取消会停止后续读取与 Runtime 派发；不承诺撤销已在途读取。服务端 `request_timeout` 从接收连接开始约束整份入站帧，片段不续期，同时保留 socket 的空闲超时；它不是 Deep 审核的执行时限。超时后正常请求仍可派发；已接收但晚于 close 才登记的连接不能启动授权或读取。测试控制对象存储、外部 peer 及 OS accept 返回时序，使用实际未配置 Runtime 检查派发边界，不提供模型质量、PG 或强隔离证明。现有 `DeepExecutionQueue.tla` 不覆盖这些读取阶段，本批没有新增 TLC、完整 shutdown 或生命周期证明。
 
 `tests/integration/runtime/test_runtime.py` 在同 SHA 的交付 Worker 镜像中运行 `deep_container_cases.py`，验证公开 `ContainerRuntime.run` 的排队超时、取消和执行位释放。真实 Linux、构造器、锁及文件准备/清理不替换；外部 guest 进程受控，版本探针使用测试程序，不调用 Grok 或模型，不证明语义质量或强隔离。`DeepExecutionQueue.tla` 只检查一个占用者与一个等待者：即使占用者不结束，到期/取消仍能响应；正向配置检查允许时钟和等待线程持续获得调度时的终结性质，`-unbounded` 配置保留响应依赖占用者释放的反例。它不证明毫秒级时限、运行中取消、整个进程树清理或完整系统 refinement。
 

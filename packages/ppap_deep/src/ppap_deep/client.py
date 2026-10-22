@@ -68,10 +68,17 @@ def _check_active(deadline: float | None, cancelled: threading.Event | None) -> 
 
 def read_exact(sock: socket.socket, size: int, *, deadline: float | None = None, cancelled: threading.Event | None = None) -> bytes:
     chunks = bytearray()
+    idle_timeout = sock.gettimeout()
+    idle_deadline = time.monotonic() + idle_timeout if idle_timeout else None
     while len(chunks) < size:
         if deadline is not None or cancelled is not None:
             _check_active(deadline, cancelled)
             wait = min(0.25, max(0, deadline - time.monotonic())) if deadline is not None else 0.25
+            if idle_deadline is not None:
+                remaining_idle = idle_deadline - time.monotonic()
+                if remaining_idle <= 0:
+                    raise TimeoutError("timed out")
+                wait = min(wait, remaining_idle)
             readable, _, _ = select.select([sock], [], [], wait)
             if not readable:
                 continue
@@ -80,6 +87,8 @@ def read_exact(sock: socket.socket, size: int, *, deadline: float | None = None,
         if not piece:
             raise DeepUnavailable("deep_runtime_unavailable")
         chunks.extend(piece)
+        if idle_timeout:
+            idle_deadline = time.monotonic() + idle_timeout
     return bytes(chunks)
 
 

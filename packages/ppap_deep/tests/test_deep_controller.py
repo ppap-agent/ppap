@@ -9,10 +9,11 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
-from ppap_deep.client import DeepClient, DeepError
+from ppap_deep.client import DeepClient, DeepError, read_frame
 from ppap_deep.controller import Controller, ExecutionContext, UnconfiguredRuntime, UnixControllerServer
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 
@@ -129,3 +130,75 @@ def test_request_frame_deadline_closes_slow_peers_before_dispatch(fragment: str)
             assert reads == ["target-version", "reference-version"]
         finally:
             server.close()
+
+
+@pytest.mark.parametrize("fragment", ["header", "body"])
+def test_total_frame_deadline_preserves_the_socket_idle_timeout(fragment: str) -> None:
+    body = b'{"op":"execute"}'
+    header = len(body).to_bytes(4, "big")
+    reader, writer = socket.socketpair()
+    with reader, writer:
+        reader.settimeout(0.04)
+        writer.sendall(header[:1] if fragment == "header" else header + body[:1])
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            read_frame(reader, deadline=started + 0.35)
+        assert time.monotonic() - started < 0.25
+
+
+def test_close_cancels_a_connection_accepted_before_context_registration() -> None:
+    spec, blobs = controller_request()
+    authorized, reads = [], []
+
+    def source(version: str) -> bytes:
+        reads.append(version)
+        return blobs[version]
+
+    controller = Controller(UnconfiguredRuntime(), source, executor_revision="a" * 64, authorize=lambda request: authorized.append(request.model_dump_json()))
+    accepted, close_poked, release_accept = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    with tempfile.TemporaryDirectory(prefix="pd-close-", dir="/tmp") as temporary:
+        path = str(Path(temporary) / "c.sock")
+        server = UnixControllerServer(path, controller, request_timeout=2)
+        closer = threading.Thread(target=server.close, daemon=True)
+        original_accept, original_connect = socket.socket.accept, socket.socket.connect
+
+        def delayed_accept(listener):
+            connection = original_accept(listener)
+            accepted.set()
+            if not release_accept.wait(2):
+                errors.append("accepted peer was not released")
+            return connection
+
+        def observed_connect(peer, address):
+            result = original_connect(peer, address)
+            if address == path and threading.current_thread() is closer:
+                close_poked.set()  # close has set its stop signal before this I/O.
+            return result
+
+        with patch.object(socket.socket, "accept", delayed_accept), patch.object(socket.socket, "connect", observed_connect):
+            server.start()
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                    peer.settimeout(1)
+                    peer.connect(path)
+                    assert accepted.wait(1)
+                    body = json.dumps({"op": "execute", "spec": spec.model_dump(mode="json")}).encode()
+                    peer.sendall(len(body).to_bytes(4, "big") + body)
+                    closer.start()
+                    assert close_poked.wait(1)
+                    release_accept.set()
+                    closer.join(timeout=1)
+                    assert not closer.is_alive()
+                    try:
+                        received = peer.recv(1)
+                    except ConnectionResetError:
+                        received = b""
+                    assert received == b"", "a connection registered after close reached dispatch"
+                    assert authorized == reads == []
+            finally:
+                release_accept.set()
+                if closer.ident is not None:
+                    closer.join(timeout=2)
+                server.close()
+    assert not errors, errors
