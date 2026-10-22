@@ -43,6 +43,8 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 失败轮次的新轮准备由 `test_rule_interactions.py` 覆盖正常、丢失／无效回执、错身份、刷新恢复与离开后的晚到响应，以及多类型／同类型不同规则在编辑和重新读取后的绑定保留；迟到响应先等待响应完成与渲染边界，再检查未发生导航。`test_audit_flow.py` 使用独立 PostgreSQL 验证草稿初始输入、并发同身份重放、撤权、事务回滚及不新增工作／用量；`test_audit_tasks.py` 验证 V3 终态不能绕入旧式重审入口。`RoundPreparation` 是单次准备、两个请求身份、三个导航代次的有限安全模型；数据库去重与授权是外部假设，不证明完整审核、跨窗口原子性或最终网络恢复。准备步骤不改变 `GreenfieldCheckStart` 中的受理计数。
 
+`test_audit_flow.py` 的 Standard 结果写回故障用例通过公开受理、真实 Worker／PostgreSQL 和公开 Round 读回验证：首次 findings 写入事务回滚不能被误归为审核器异常，再提交伪 ERR。完成事务在审核器异常捕获之外；保存失败向调用者传播，原未完成 attempt 不被伪造终结，不自动创建新轮次或消费。此用例不证明持久模型结果缓存、provider 去重或完整技术恢复。
+
 ## Runner capability
 
 CI 依赖 capability，而不是 Ubuntu/Debian 或 `sudo`：
