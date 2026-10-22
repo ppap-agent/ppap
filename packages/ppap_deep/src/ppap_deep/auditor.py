@@ -220,6 +220,9 @@ class SemanticRuntime:
     def __init__(self, runtime, objects: Objects, *, timeout: float = DEEP_TOTAL_SECONDS):
         self.runtime, self.objects, self.timeout = runtime, objects, timeout
 
+    def ready(self) -> bool:
+        return self.runtime.ready()
+
     @staticmethod
     def _prefix(spec: ExecuteRequest, submission: SubmissionSpec) -> str:
         tenant = hashlib.sha256(spec.tenant_id.encode()).hexdigest()

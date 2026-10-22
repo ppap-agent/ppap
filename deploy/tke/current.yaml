@@ -550,7 +550,7 @@ spec:
               memory: 2Gi
           readinessProbe:
             exec:
-              command: ["sh", "-c", 'test -S "$PPAP_DEEP_CONTROLLER_SOCKET"']
+              command: ["python", "-m", "ppap_deep.readiness"]
             periodSeconds: 5
             timeoutSeconds: 3
         - name: worker
