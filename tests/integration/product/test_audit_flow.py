@@ -14,9 +14,11 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from ppap_api import create_app
+from ppap_application import build_product_store
 from ppap_core.fixtures import RULE_A, USER_BOB
 from ppap_core.settings import Settings
 from ppap_worker import process_claimed
+from psycopg import errors, sql
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -236,6 +238,69 @@ class AuditFlowTests(unittest.TestCase):
         original = body["findings"][0]
         download = self.client.get(f"/rounds/{round_id}/files/{original['locator']['file_id']}/versions/{original['locator']['file_version_id']}/download")
         self.assertIn(download.content, {b"target-bytes", b"reference-bytes"})
+
+    def test_standard_result_writeback_failure_is_not_reclassified_or_submitted_again(self):
+        self._login("alice")
+        target = self._upload("report.xlsx", b"target-bytes")
+        draft = self.client.post("/drafts").json()["id"]
+        saved = self.client.put(f"/drafts/{draft}", json={"items": [{"file_version_id": target["id"], "role": "target", "rule_version_id": RULE_A}]})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        accepted = self.client.post(f"/drafts/{draft}/accept", json={"idempotency_key": "standard-writeback-fault"})
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        frozen = accepted.json()
+        usage = self.client.get("/usage").json()
+        worker = build_product_store(self.settings, objects=self.store.objects, role="worker")
+        job = worker.claim_job("standard-writeback")
+        self.assertIsNotNone(job)
+        self.assertEqual((job.kind, job.round_id, job.attempt), ("audit", frozen["id"], 1))
+
+        suffix = uuid.uuid4().hex
+        sequence = sql.Identifier("engine", "test_write_sequence_" + suffix)
+        function = sql.Identifier("engine", "test_write_failure_" + suffix)
+        trigger = sql.Identifier("test_write_failure_" + suffix)
+        try:
+            with self.store._conn() as conn:
+                # This fault belongs to the isolated test DB, not a store mock.
+                # nextval survives the rejected transaction, so a second write
+                # succeeds and exposes a fabricated engine_error on current code.
+                conn.execute(sql.SQL("CREATE SEQUENCE {}").format(sequence))
+                conn.execute(
+                    sql.SQL("CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS {}").format(
+                        function,
+                        sql.Literal("BEGIN IF nextval(TG_ARGV[0]::regclass) = 1 THEN RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'test-only audit writeback failure'; END IF; RETURN NEW; END;"),
+                    )
+                )
+                conn.execute(
+                    sql.SQL("CREATE TRIGGER {} BEFORE INSERT ON product.findings FOR EACH ROW WHEN (NEW.round_id = {}::uuid) EXECUTE FUNCTION {}({})").format(
+                        trigger, sql.Literal(frozen["id"]), function, sql.Literal("engine.test_write_sequence_" + suffix)
+                    )
+                )
+            write_error = None
+            try:
+                process_claimed(worker, job, "standard-writeback")
+            except errors.SerializationFailure as error:
+                write_error = error
+            loaded = self.client.get(f"/rounds/{frozen['id']}").json()
+            writes = self._scalar(sql.SQL("SELECT last_value FROM {}").format(sequence))
+            self.assertIsInstance(write_error, errors.SerializationFailure, f"write attempts={writes}; public findings={loaded['findings']}")
+            self.assertEqual(write_error.sqlstate, "40001")
+            self.assertEqual(writes, 1)
+            self.assertEqual(loaded["execution"], "running")
+            self.assertEqual(loaded["inputs"], frozen["inputs"])
+            self.assertEqual(loaded["findings"], [])
+            self.assertEqual(loaded["coverage"], {})
+            self.assertIsNone(loaded["failure"])
+            self.assertIsNone(loaded["result_attempt"])
+            for _ in range(2):
+                self.assertEqual(self.client.get(f"/rounds/{frozen['id']}").json(), loaded)
+            self.assertIsNone(worker.claim_job("no-writeback-reexecution"))
+            self.assertEqual([row["id"] for row in self.client.get("/rounds").json()["rounds"]], [frozen["id"]])
+            self.assertEqual(self.client.get("/usage").json(), usage)
+        finally:
+            with self.store._conn() as conn:
+                conn.execute(sql.SQL("DROP TRIGGER IF EXISTS {} ON product.findings").format(trigger))
+                conn.execute(sql.SQL("DROP FUNCTION IF EXISTS {}()").format(function))
+                conn.execute(sql.SQL("DROP SEQUENCE IF EXISTS {}").format(sequence))
 
     def test_cross_tenant_and_review_permission(self):
         self._login("alice")
