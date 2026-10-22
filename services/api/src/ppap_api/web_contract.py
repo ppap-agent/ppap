@@ -400,6 +400,7 @@ class Evidence(TypedDict):
 
 
 class FindingLocator(TypedDict, total=False):
+    kind: str
     file_id: str
     file_version_id: str
     filename: str
