@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Mapping
+from time import monotonic
 from urllib.parse import quote
 
 import httpx
@@ -41,10 +42,49 @@ class ReportSharingError(Exception):
     pass
 
 
+class ReportDirectoryHttp:
+    """One directory read shares a budget; it never changes delivery policy.
+
+    HTTPX phase timeouts do not cancel a transport at a hard wall-clock limit.
+    Check again after it returns so a late response cannot verify a recipient.
+    """
+
+    def __init__(self, http):
+        self.http = http
+        self.deadline = monotonic() + 30.0
+        self.timed_out = False
+
+    def check(self):
+        remaining = self.deadline - monotonic()
+        if remaining <= 0:
+            self.timed_out = True
+            raise ReportSharingError("share_directory_timeout")
+        return remaining
+
+    def _request(self, method, url, kwargs):
+        remaining = self.check()
+        kwargs["timeout"] = min(kwargs.get("timeout", remaining), remaining)
+        try:
+            response = getattr(self.http, method)(url, **kwargs)
+        except Exception:
+            self.check()
+            raise
+        self.check()
+        return response
+
+    def get(self, url, **kwargs):
+        return self._request("get", url, kwargs)
+
+    def post(self, url, **kwargs):
+        return self._request("post", url, kwargs)
+
+
 def _get(http, token, path, params=None):
     try:
         response = http.get(BASE + path, headers={"Authorization": "Bearer " + token}, params=params, timeout=20)
         body = response.json()
+        if isinstance(http, ReportDirectoryHttp):
+            http.check()
         if response.status_code == 400 and isinstance(body, dict) and body.get("code") == 99991672:
             raise ReportSharingError("share_directory_permission_missing")
         if not 200 <= response.status_code < 300 or not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0 or not isinstance(body.get("data"), dict):
@@ -84,6 +124,8 @@ def resolve_report_target(http, token: str, organization_id: str, reference: Map
     except ReportSharingError as error:
         if str(error) == "share_directory_permission_missing":
             target["reason"] = "当前组织尚未授权所需的飞书目录权限，接收资格未确认。"
+        elif str(error) == "share_directory_timeout":
+            target["reason"] = "读取接收对象超时，接收资格尚未确认，请重新核对。"
     return target
 
 
