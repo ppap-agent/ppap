@@ -96,6 +96,21 @@ class OpenAPIContractTests(unittest.TestCase):
                 finding = {"item_key": "1", "status": "NG", "item": "必须填写零件号", "classification": "身份", "suggestions": "请核对零件号", "priority": "P1", "locator": locator, "review": None}
                 self.assertEqual(TypeAdapter(wc.Finding).validate_python(finding), finding)
 
+    def test_failed_clause_without_a_finding_preserves_execution_error_coverage(self):
+        check = {
+            "rule_item": {"id": "1", "category": "身份", "priority": None, "rule_to_check": "核对零件号", "type_of_rule": "通用"},
+            "execution": "failed",
+            "coverage": "execution_error",
+            "finding": None,
+            "evidence_verified": False,
+            "scope": None,
+            "scope_notice": "本条审核执行失败。",
+            "evidence": [],
+        }
+        self.assertEqual(TypeAdapter(wc.AuditClauseEvaluation).validate_python(check), check)
+        schema = app.openapi()["components"]["schemas"]["AuditClauseEvaluation"]
+        self.assertIn("execution_error", schema["properties"]["coverage"]["enum"])
+
     def test_file_report_recovery_binds_the_same_frozen_reference_and_original_request(self):
         paths = app.openapi()["paths"]
         path = "/audit-tasks/{task_id}/reports/{report_id}/regenerations"
