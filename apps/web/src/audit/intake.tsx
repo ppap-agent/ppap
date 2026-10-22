@@ -3,7 +3,7 @@ import {useContext, useEffect, useRef, useState, type ReactNode} from 'react'
 import {requestTrace} from '../api'
 import {analysisNotice} from '../helpers'
 import {MatchingFeedback, isMatchingReason} from './matching-feedback'
-import {ArrowLeft, ArrowRight, BookOpen, Check, ExternalLink, ClipboardCheck, Files, HelpCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, ReceiptText, Search, UploadCloud, X} from 'lucide-react'
+import {ArrowLeft, ArrowRight, BookOpen, Check, ExternalLink, ClipboardCheck, Files, HelpCircle, Menu, PanelLeftClose, PanelLeftOpen, Plus, ReceiptText, UploadCloud, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -44,6 +44,7 @@ import {AuditWorkbench, type WorkbenchProps} from './workbench'
 import {auditAddressChanged, readAuditRoute, surfaceAddress, taskAddress as taskHref, writeAuditAddress} from './routes'
 import {AuditRoundReader, type ReadRound} from './round-reader'
 import {TaskRecovery, type TaskRecoveryState} from './task-recovery'
+import {TaskSwitcher} from './task-switcher'
 
 export type AuditTask = components['schemas']['AuditTask']
 export type AuditTaskFile = components['schemas']['AuditTaskFile']
@@ -152,6 +153,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const latestTasks = useRef(tasks); latestTasks.current = tasks
   const [query, setQuery] = useState(''), [filter, setFilter] = useState('all')
   const [sheet, setSheet] = useState(false)
+  const [navigationSheet, setNavigationSheet] = useState(false)
   const [reportView, setReportView] = useState(() => new URL(location.href).searchParams.has('report'))
   const [error, setError] = useState(''), [dragging, setDragging] = useState(false)
   const [checking, setChecking] = useState<string[]>([])
@@ -293,6 +295,15 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     if (window.parent !== window && !keepSurface) window.parent.postMessage({type: 'ppap-audit-task', task: id, report: null}, location.origin)
   }
   function newTask() {restoreEpoch.current += 1; setRecovery(null); retainDraft(); clearReads(); activeTaskId.current = null; activeUploadDraftId.current = crypto.randomUUID(); setFiles([]); setTask(null); setLocalFiles([]); setStep('upload'); setMode('standard'); setCustomer('auto'); setPredecessorId(undefined); setError(''); setSheet(false); taskAddress(null)}
+  function taskResultsAddress() {
+    const url = new URL(location.href)
+    url.searchParams.delete('report'); url.searchParams.delete('packageRequest')
+    return url
+  }
+  function showTaskResults() {
+    setReportView(false)
+    writeAuditAddress(taskResultsAddress(), 'push')
+  }
   async function prepareReaudit(roundId: string) {
     if (!adapter.prepareReaudit || preparingReaudit) return
     newTask(); setPreparingReaudit(true)
@@ -523,6 +534,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const shownTasks = summaries.filter(row => (surface === 'workbench' || filter === 'all' || row.state === filter) && `${row.number} ${row.files.map(file => file.file.original_filename).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   function showSurface(value: ProductSurface) {
     setSheet(false)
+    setNavigationSheet(false)
     if (surfaceRef.current === 'audit' && value !== 'audit') retainAuditAddress()
     if (value === 'audit' && auditReturn.current) {
       history.pushState(auditReturn.current.state, '', auditReturn.current.url)
@@ -560,14 +572,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const navigation = (compact = false) => <nav aria-label="产品导航" className="grid gap-1">
     {productLinks.filter(link => link.view !== 'requirements' || rules).map(({view, label, icon: Icon}) => <Tooltip key={view} {...navigationTooltipProps(view, compact)}><TooltipTrigger asChild>{view === 'templates' ? <Button asChild className={compact ? 'justify-center' : 'justify-start'} variant="ghost"><a href={TEMPLATE_GUIDE_URL} target="_blank" rel="noopener noreferrer" aria-label="模板库（在飞书新窗口打开）"><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span>{!compact && <ExternalLink className="ml-auto size-3 text-muted-foreground" aria-hidden="true"/>}</a></Button> : <Button className={compact ? 'justify-center' : 'justify-start'} aria-label={label} aria-current={(surface === view || view === 'workbench' && surface === 'audit') ? 'page' : undefined} variant={(surface === view || view === 'workbench' && surface === 'audit') ? 'secondary' : 'ghost'} onClick={() => showSurface(view)}><Icon aria-hidden="true"/><span className={compact ? 'sr-only' : ''}>{label}</span></Button>}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>)}
   </nav>
-  const taskRail = <div className="flex h-full min-w-0 flex-col gap-4">
-    <Button variant="outline" onClick={newTask}><Plus/>新建审核任务</Button>
-    <label className="flex items-center gap-2"><span className="sr-only">搜索任务文件</span><Search className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索文件名" value={query} onChange={event => setQuery(event.target.value)}/></label>
-    <Select value={filter} onValueChange={setFilter}><SelectTrigger className="w-full" aria-label="任务状态"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(taskLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-    <nav className="grid gap-2" aria-label="任务列表">{shownTasks.length ? shownTasks.map(row => <Button key={row.id} variant={task?.id === row.id ? 'secondary' : 'ghost'} className="h-auto min-w-0 justify-start whitespace-normal text-left" onClick={() => {setSheet(false); taskAddress(row.id); void recover(row.id)}}><span className="grid min-w-0 gap-1"><span>{row.number}</span><span className="text-xs">{taskLabels[row.state]} · {row.files.filter(file => file.selection === 'selected').length} 份文件</span></span></Button>) : <p className="text-sm text-muted-foreground">{summaries.length ? '没有符合条件的任务。' : '开始识别后，任务显示在这里。'}</p>}</nav>
-    {taskList.error && <p role="alert" className="text-xs">{taskList.error}</p>}
-    {(taskList.next !== null || taskList.error) && <Button variant="outline" disabled={taskList.busy} onClick={() => void loadTasks(taskList.error ? 0 : taskList.next!)}>{taskList.busy ? '正在读取任务…' : taskList.error ? '重新读取任务列表' : '加载更多任务'}</Button>}
-  </div>
+  const taskSwitcher = surface === 'audit' && <TaskSwitcher open={sheet} onOpenChange={setSheet} currentId={task?.id} tasks={shownTasks} labels={taskLabels} query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} busy={taskList.busy} error={taskList.error} hasMore={taskList.next !== null} hasTasks={summaries.length > 0} onMore={() => void loadTasks(taskList.error ? 0 : taskList.next!)} onNew={newTask} onOpen={id => {setSheet(false); taskAddress(id); void recover(id)}}/>
   const table = (rows: AuditTaskFile[], selectable: boolean) => <Table className="table-fixed">
     <TableHeader><TableRow>{selectable && <TableHead className="w-12"><Checkbox aria-label="全选可审核文件" checked={selected.length === valid.length && valid.length > 0 ? true : selected.length ? 'indeterminate' : false} onCheckedChange={value => setFiles(items => items.map(row => row.validation.state === 'valid' && row.selection !== 'removed' ? {...row, selection: value === true ? 'selected' : 'unselected'} : row))}/></TableHead>}<TableHead>文件</TableHead><TableHead className="w-24 max-md:hidden">大小</TableHead><TableHead className="w-28 max-md:hidden">预检查</TableHead><TableHead className={selectable ? 'w-16' : 'w-36'}><span className="sr-only">操作</span></TableHead></TableRow></TableHeader>
     <TableBody>{rows.map(row => <TableRow key={row.file.id}>{selectable && <TableCell><Checkbox aria-label={`选择 ${row.file.original_filename}`} checked={row.selection === 'selected'} onCheckedChange={value => toggle(row.file.id, value === true)}/></TableCell>}<TableCell className="whitespace-normal"><FileName name={row.file.original_filename}/>{!selectable && <p className="mt-2 text-sm text-muted-foreground">{row.validation.reasons.join('；') || '暂未完成检查'}</p>}<span className="mt-1 block text-xs text-muted-foreground md:hidden">{sizeLabel(row.file.byte_size)} · {row.validation.state === 'valid' ? '可审核' : '待处理'}</span></TableCell><TableCell className="max-md:hidden"><span className="text-muted-foreground">{sizeLabel(row.file.byte_size)}</span></TableCell><TableCell className="max-md:hidden"><Badge variant="outline">{{valid: '可审核', pending: '待预检查', checking: '检查中', invalid: '文件异常', error: '读取失败'}[row.validation.state]}</Badge></TableCell><TableCell><div className="flex flex-wrap items-center justify-end gap-1">{!selectable && row.validation.state !== 'invalid' && <Button variant="outline" size="sm" disabled={checking.includes(row.file.id)} aria-label={`${row.validation.state === 'error' ? '重新读取' : '读取'} ${row.file.original_filename} 检查结果`} onClick={() => void readValidation(row)}>{checking.includes(row.file.id) ? '读取中…' : row.validation.state === 'error' ? '重新读取' : '读取结果'}</Button>}<Button variant="ghost" size="icon" aria-label={`移除 ${row.file.original_filename}`} onClick={() => remove(row.file.id)}><X/></Button></div></TableCell></TableRow>)}</TableBody>
@@ -587,7 +592,15 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
       </div>
     </aside>
     <div className="min-w-0 flex-1">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2 max-sm:px-4"><div className="flex items-center gap-3"><Sheet open={sheet} onOpenChange={setSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className={surface !== 'audit' ? 'lg:hidden' : ''} aria-label={surface !== 'audit' ? '打开产品导航' : '打开审核任务'}><Menu/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>{surface !== 'audit' ? '产品导航' : '审核任务'}</SheetTitle><SheetDescription className="sr-only">选择页面或审核任务</SheetDescription></SheetHeader><div className="grid flex-1 gap-6 overflow-y-auto p-4"><div className="lg:hidden">{navigation()}<Button variant="ghost" className="w-full justify-start" onClick={() => {setSheet(false); openSupport({scenario: supportScenario})}}><HelpCircle/>联系我们</Button></div>{surface === 'audit' && taskRail}</div></SheetContent></Sheet><span className="text-muted-foreground">PPAP Audit / {pageContext}</span></div><div className="flex shrink-0 items-center gap-2"><div hidden={surface !== 'audit' || !workbench || reportView} ref={setWorkspaceActions}/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')} showLocalRecords={Boolean(rules)}/>}</div></header>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2 max-sm:px-4"><div className="flex min-w-0 items-center gap-3">
+        <Sheet open={navigationSheet} onOpenChange={setNavigationSheet}><SheetTrigger asChild><Button variant="outline" size="icon" className="lg:hidden" aria-label="打开产品导航"><Menu aria-hidden="true"/></Button></SheetTrigger><SheetContent side="left"><SheetHeader><SheetTitle>产品导航</SheetTitle><SheetDescription className="sr-only">选择产品页面</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">{navigation()}<Button variant="ghost" className="mt-auto w-full justify-start" onClick={() => {setNavigationSheet(false); openSupport({scenario: supportScenario})}}><HelpCircle aria-hidden="true"/>联系我们</Button></div></SheetContent></Sheet>
+        {surface === 'audit' && reportView ? <nav aria-label="当前位置" className="min-w-0"><ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <li><a href={surfaceAddress('workbench')} className="text-muted-foreground hover:text-foreground hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showSurface('workbench')}}}>工作台</a></li>
+          <li aria-hidden="true" className="text-muted-foreground">/</li>
+          <li className="flex min-w-0 items-center gap-1">{task && !recovery ? <a href={taskResultsAddress().href} aria-label="返回审核结果" className="font-medium hover:underline" onClick={event => {if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {event.preventDefault(); showTaskResults()}}}>{task.number}</a> : <span className="text-muted-foreground">审核任务</span>}{taskSwitcher}</li>
+          <li aria-hidden="true" className="text-muted-foreground">/</li><li aria-current="page" className="font-medium">审核报告</li>
+        </ol></nav> : <div className="flex min-w-0 items-center gap-1"><span className="text-muted-foreground">PPAP Audit / {pageContext}</span>{taskSwitcher}</div>}
+      </div><div className="flex shrink-0 items-center gap-2"><div hidden={surface !== 'audit' || !workbench || reportView} ref={setWorkspaceActions}/>{access?.principal && <AccountMenu compact onUsage={() => showSurface('usage')} showLocalRecords={Boolean(rules)}/>}</div></header>
       <main id="audit-main" tabIndex={-1} className={surface === 'audit' && workbench && !reportView ? 'w-full' : `mx-auto w-full space-y-6 p-6 max-sm:p-4 ${recovery || workbench || surface !== 'audit' ? '' : 'max-w-5xl'}`}>
         {surface === 'workbench' && (renderWorkbench || (props => <AuditWorkbench {...props}/>))({tasks: shownTasks, query, onQuery: setQuery, onNew: newTask, onResume: auditReturn.current || activeTaskId.current || activeUploadDraftId.current ? () => showSurface('audit') : undefined, onOpen: href => {const route = readAuditRoute(new URL(href, location.href)); if (route.taskId) {taskAddress(route.taskId); void recover(route.taskId)} else location.assign(href)}, loading: taskList.busy && !summaries.length, busy: taskList.busy, errors: taskList.error ? [taskList.error] : [], more: taskList.next !== null, onMore: () => void loadTasks(taskList.next || 0), onRefresh: () => void loadTasks()})}
         {archiveOpened && <div hidden={surface !== 'archive'}>{archiveAdapter ? <AuditArchive active={surface === 'archive'} adapter={archiveAdapter} onUpload={newTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}}/> : <Alert><AlertTitle>审核文件暂不可用</AlertTitle><AlertDescription>请稍后重试。</AlertDescription></Alert>}</div>}
@@ -595,7 +608,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
         {usageOpened && <div hidden={surface !== 'usage'}><AuditUsage active={surface === 'usage'} adapter={usageAdapter} archiveAdapter={archiveAdapter} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter} renderOriginal={renderOriginal} onOpenTask={id => {taskAddress(id); void recover(id)}} onSupport={notice => openSupport({scenario: `用量记录 · ${notice}`})}/></div>}
         {surface === 'audit' && legacyRoundId && adapter.readRound && <AuditRoundReader roundId={legacyRoundId} readRound={adapter.readRound} renderOriginal={renderOriginal} onReaudit={adapter.prepareReaudit ? () => void prepareReaudit(legacyRoundId) : undefined} returnHref="/workbench"/>}
         <div hidden={surface !== 'audit' || Boolean(legacyRoundId)} className={workbench && !reportView ? '' : 'space-y-6'}>
-        <div className={workbench ? 'px-6 pt-3' : ''}><Button variant="ghost" size="sm" onClick={() => showSurface('workbench')}><ArrowLeft/>工作台</Button></div>
+        {!reportView && <div className={workbench ? 'px-6 pt-3' : ''}><Button variant="ghost" size="sm" onClick={() => showSurface('workbench')}><ArrowLeft/>工作台</Button></div>}
         {!reportView && !recovery && <ol aria-label="审核步骤" className={workbench ? 'flex flex-wrap gap-3 px-6 pt-3 text-sm max-sm:px-4' : 'flex flex-wrap gap-4 border-b pb-4 text-sm'}>{['上传与检查', '确认规则', 'AI审核'].map((label, index) => {
           const current = workbench ? 2 : step === 'match' ? 1 : 0
           const done = index < current || Boolean(workbench && task && allTaskReportsReady(task))

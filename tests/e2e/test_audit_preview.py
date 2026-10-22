@@ -158,14 +158,34 @@ def open_reports(page, scene):
 
 
 def package_references(package):
-    entries = package.get_by_role("listitem")
+    record = open_package_record(package.page)
+    entries = record.get_by_role("table", name="固定打包报告", exact=True).locator("tbody tr")
     expect(entries).to_have_count(2)
     references = [json.loads(item.get_attribute("data-report-reference")) for item in entries.all()]
     for reference in references:
         assert set(reference) == {"task_id", "round_id", "file_version_id", "result_attempt", "report_id"}
         assert all(reference[field] for field in reference)
     assert references[0] != references[1]
+    record.get_by_role("button", name="关闭", exact=True).click()
     return references
+
+
+def open_package_record(page):
+    record = page.get_by_role("dialog", name="打包记录", exact=True).and_(page.locator('[data-state="open"]'))
+    if not record.is_visible():
+        page.get_by_role("button", name="打包记录", exact=True).click()
+    return record
+
+
+def expect_zip_ready(page):
+    record = open_package_record(page)
+    expect(record.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+    record.get_by_role("button", name="关闭", exact=True).click()
+
+
+def zip_download(page):
+    selected = page.get_by_role("button", name="下载所选报告 ZIP", exact=True)
+    return selected if selected.is_visible() else open_package_record(page).get_by_role("button", name="下载已就绪 ZIP", exact=True)
 
 
 def deliver_reply(control):
@@ -194,8 +214,8 @@ class AuditPreviewTests(unittest.TestCase):
             close_workspace_panel(page)
             page.get_by_role("button", name="报告中心", exact=True).click()
             expect(page.get_by_text("所选报告不可用，请从清单中重新选择。", exact=True)).to_have_count(0)
-            expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            expect(page.get_by_role("table", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("navigation", name="文件队列").get_by_role("button", name=re.compile("特殊特性清单.xlsx"))).to_be_visible()
             browser.close()
 
@@ -539,7 +559,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/__preview?page=audit&scene=reports-zip-link&task=preview-report-task&report=1&packageRequest=preview-linked-zip")
             product = page.frame_locator("#product")
             linked = product.get_by_role("region", name="通知中的 ZIP", exact=True)
-            expect(linked.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+            expect_zip_ready(product)
             self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], ["preview-linked-zip"])
             linked.get_by_role("button", name="返回当前报告中心", exact=True).click()
             expect(linked).to_have_count(0)
@@ -558,18 +578,21 @@ class AuditPreviewTests(unittest.TestCase):
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-zip-link&task=preview-report-task&report=1&packageRequest=preview-linked-zip")
             linked = page.get_by_role("region", name="通知中的 ZIP", exact=True)
-            expect(linked.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
-            expect(linked.get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_have_count(0)
+            expect_zip_ready(page)
+            record = open_package_record(page)
+            expect(record.get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_have_count(0)
+            record.get_by_role("button", name="关闭", exact=True).click()
             page.get_by_role("button", name="读取报告状态", exact=True).click()
-            expect(linked.get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_have_count(0)
+            record = open_package_record(page)
+            expect(record.get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_have_count(0)
             with page.expect_download() as downloaded:
-                linked.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+                record.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
             self.assertTrue(downloaded.value.suggested_filename.endswith(".zip"))
             page.reload()
-            expect(linked.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+            expect_zip_ready(page)
             linked.get_by_role("button", name="返回当前报告中心", exact=True).click()
             page.get_by_role("button", name="读取报告状态", exact=True).click()
-            expect(page.get_by_role("region", name="ZIP 工作", exact=True).get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_be_visible()
+            expect(open_package_record(page).get_by_text("补充 PFMEA.xlsx-审核报告", exact=True)).to_be_visible()
             browser.close()
 
     def test_missing_explicit_zip_does_not_fall_back_or_block_individual_reports(self):
@@ -579,7 +602,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1&packageRequest=missing-request")
             expect(page.get_by_text("此 ZIP 暂不可用", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name=re.compile(r"^下载(?:所选报告|已就绪) ZIP$"))).to_have_count(0)
             page.get_by_role("button", name="返回当前报告中心", exact=True).click()
             expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
             self.assertNotIn("packageRequest", parse_qs(urlparse(page.url).query))
@@ -1353,7 +1376,7 @@ class AuditPreviewTests(unittest.TestCase):
                         read_results(page)
                     details.get_by_role("button", name="查看报告", exact=True).click()
                     expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
-                    page.get_by_role("button", name="返回审核结果", exact=True).click()
+                    page.get_by_role("link", name="返回审核结果", exact=True).click()
                     if width >= 1024:
                         page.get_by_role("button", name="联系我们", exact=True).click()
                         expect(dialog.get_by_role("region", name="操作信息", exact=True)).to_have_count(0)
@@ -1430,15 +1453,15 @@ class AuditPreviewTests(unittest.TestCase):
             page.set_viewport_size({"width": 390, "height": 844})
             expect(sidebar).to_have_count(0)
             expect(page.get_by_role("tooltip", name="模板库", exact=True)).to_have_count(0)
-            page.get_by_role("button", name="打开审核任务", exact=True).click()
-            sheet = page.get_by_role("dialog", name="审核任务", exact=True)
+            page.get_by_role("button", name="打开产品导航", exact=True).click()
+            sheet = page.get_by_role("dialog", name="产品导航", exact=True)
             for label in ("工作台", "审核文件", "模板库", "用量记录"):
                 expect(sheet.get_by_role("navigation", name="产品导航", exact=True).get_by_text(label, exact=True)).to_be_visible()
             expect(sheet.get_by_role("button", name="联系我们", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             expect(sheet).to_have_count(0)
-            expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
-            page.get_by_role("button", name="打开审核任务", exact=True).click()
+            expect(page.get_by_role("button", name="打开产品导航", exact=True)).to_be_focused()
+            page.get_by_role("button", name="打开产品导航", exact=True).click()
             page.context.route("https://icoastline.feishu.cn/wiki/**", lambda route: route.fulfill(body="Template guide"))
             with page.expect_popup() as opened:
                 sheet.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True).click()
@@ -1447,7 +1470,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(sheet).to_have_count(0)
             self.assertEqual(page.url, report_address)
             expect(page.get_by_role("heading", name="审核报告", exact=True)).to_be_visible()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             page.set_viewport_size({"width": 1024, "height": 900})
             expect(sidebar).to_be_visible()
             expect(page.get_by_role("button", name="展开产品导航", exact=True)).to_be_visible()
@@ -1474,14 +1497,14 @@ class AuditPreviewTests(unittest.TestCase):
             create = page.get_by_role("button", name="打包所选 2 份报告", exact=True)
             create.click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            expect_zip_ready(page)
             page.get_by_role("button", name="读取报告状态", exact=True).click()
             expect(page.get_by_text("ZIP 不属于当前任务", exact=True)).to_be_visible()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name=re.compile(r"^下载(?:所选报告|已就绪) ZIP$"))).to_have_count(0)
             expect(create).to_be_disabled()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("button", name="重新读取报告状态", exact=True).click()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            expect_zip_ready(page)
             expect(page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True)).to_be_checked()
             expect(page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True)).to_be_checked()
             browser.close()
@@ -1508,7 +1531,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(create).to_be_disabled()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
-            expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+            expect(package.get_by_role("button", name=re.compile(r"^下载(?:所选报告|已就绪) ZIP$"))).to_have_count(0)
             browser.close()
 
     def test_zip_recovery_preserves_its_frozen_order_after_archive_selection_changes(self):
@@ -1531,7 +1554,7 @@ class AuditPreviewTests(unittest.TestCase):
             first.check()
             create.click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-            expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            expect_zip_ready(page)
             self.assertEqual(package_references(package), original)
             browser.close()
 
@@ -1550,22 +1573,22 @@ class AuditPreviewTests(unittest.TestCase):
                     before = package_references(package)
                     page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
                     expect(package.get_by_text("ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。", exact=True)).to_be_visible()
-                    expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+                    expect(page.get_by_role("button", name=re.compile(r"^下载(?:所选报告|已就绪) ZIP$"))).to_have_count(0)
                     expect(page.get_by_role("button", name="打包所选 2 份报告", exact=True)).to_be_disabled()
                     expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
                     self.assertEqual(package_references(package), before)
                     if failure == "ready":
                         page.get_by_role("button", name="读取报告状态", exact=True).click()
                         expect(package.get_by_text("ZIP 明细需要核对", exact=True)).to_be_visible()
-                        expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name=re.compile(r"^下载(?:所选报告|已就绪) ZIP$"))).to_have_count(0)
                         expect(page.get_by_role("button", name="打包所选 2 份报告", exact=True)).to_be_disabled()
-                        page.get_by_role("button", name="分享", exact=True).click()
+                        page.get_by_role("button", name="分享所选", exact=True).click()
                         share = page.get_by_role("dialog", name="分享审核报告", exact=True)
                         share.get_by_role("tab", name="文件", exact=True).click()
                         expect(share.get_by_text("所选 ZIP 尚未就绪", exact=True)).to_be_visible()
                         share.get_by_role("button", name="关闭", exact=True).click()
                     page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-                    expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+                    expect_zip_ready(page)
                     self.assertEqual(package_references(package), before)
                     page.close()
             browser.close()
@@ -1584,16 +1607,19 @@ class AuditPreviewTests(unittest.TestCase):
                     page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
                     package = page.get_by_role("region", name="ZIP 工作", exact=True)
                     expect(package.get_by_text("打包准备失败", exact=True)).to_have_count(0)
+                    record = open_package_record(page)
                     if scene == "reports-zip-legacy":
-                        expect(package.get_by_text("未提供逐项状态", exact=True)).to_have_count(2)
-                        expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+                        expect(record.get_by_text("未提供逐项状态", exact=True)).to_have_count(2)
+                        expect(record.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
                     elif scene == "reports-zip-write-failed":
-                        expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
-                        expect(package.get_by_text("打包准备完成", exact=True)).to_have_count(2)
-                        expect(package.get_by_text("ZIP 保存失败，各份 PDF 已准备完成。", exact=True)).to_be_visible()
+                        expect(record.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
+                        expect(record.get_by_text("完成", exact=True)).to_have_count(2)
                     else:
-                        expect(package.get_by_text("尚未确认", exact=True)).to_have_count(1)
-                        expect(package.get_by_text("打包准备完成", exact=True)).to_have_count(1)
+                        expect(record.get_by_text("尚未确认", exact=True)).to_have_count(1)
+                        expect(record.get_by_text("完成", exact=True)).to_have_count(1)
+                    record.get_by_role("button", name="关闭", exact=True).click()
+                    if scene == "reports-zip-write-failed":
+                        expect(package.get_by_text("ZIP 保存失败，各份 PDF 已准备完成。", exact=True)).to_be_visible()
                     expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
                     page.close()
             browser.close()
@@ -1616,7 +1642,7 @@ class AuditPreviewTests(unittest.TestCase):
             dialog.get_by_role("button", name="关闭，稍后核对", exact=True).click()
             close_workspace_panel(product)
             product.get_by_role("button", name="报告中心", exact=True).click()
-            product.get_by_role("button", name="返回审核结果", exact=True).click()
+            product.get_by_role("link", name="返回审核结果", exact=True).click()
             file_information(product)
             product.get_by_role("button", name="更正显示信息", exact=True).click()
             expect(dialog.get_by_role("textbox", name="客户", exact=True)).to_have_value("主题切换后保留")
@@ -2003,7 +2029,7 @@ class AuditPreviewTests(unittest.TestCase):
             browser = playwright.chromium.launch()
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
-            expect(page.get_by_role("button", name="返回审核结果", exact=True)).to_be_visible()
+            expect(page.get_by_role("link", name="返回审核结果", exact=True)).to_be_visible()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="工作台", exact=True).click()
             page.get_by_role("button", name="新建审核", exact=True).click()
             page.get_by_role("button", name="使用三类文件示例", exact=True).click()
@@ -2330,7 +2356,7 @@ class AuditPreviewTests(unittest.TestCase):
             audit_details(page).get_by_role("button", name="查看报告", exact=True).click()
             expect(page.locator('[data-request-id="preview-original-generation-request"]')).to_be_visible()
             expect(page.get_by_role("button", name="读取生成结果", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             page.clock.fast_forward(30000)
             expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
             browser.close()
@@ -2505,7 +2531,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name=re.compile("PFMEA.xlsx")).click()
             detail.get_by_role("button", name="查看报告", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             read_results(page)
             expect(page.get_by_role("status").filter(has_text="审核已结束 · 文件已结束 3/3")).to_be_visible()
             expect(page.get_by_role("alert").filter(has_text="仍有首次生成中的报告")).to_have_count(0)
@@ -2865,7 +2891,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             self.assertEqual(parse_qs(urlparse(page.url).query)["packageRequest"], [request_id])
             with page.expect_download() as download:
-                page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+                zip_download(page).click()
             import zipfile
 
             with zipfile.ZipFile(download.value.path()) as archive:
@@ -3596,7 +3622,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_reports(page, "reports-share-ready")
             page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
             page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
-            page.get_by_role("button", name="分享", exact=True).click()
+            page.get_by_role("button", name="分享所选", exact=True).click()
             dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
             expect(dialog.get_by_role("tab", name="文件", exact=True)).to_be_visible()
             dialog.get_by_role("tab", name="文件", exact=True).click()
@@ -3607,7 +3633,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True)).to_be_checked()
             page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-            page.get_by_role("button", name="分享", exact=True).click()
+            page.get_by_role("button", name="分享所选", exact=True).click()
             expect(dialog.get_by_role("tab", name="文件", exact=True)).to_have_attribute("aria-selected", "true")
             expect(dialog.get_by_text("附件：审核报告-示例.zip", exact=True)).to_be_visible()
             expect(dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True)).to_be_checked()
@@ -3625,7 +3651,7 @@ class AuditPreviewTests(unittest.TestCase):
             open_reports(page, "reports-share-partial")
             page.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
             page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
-            page.get_by_role("button", name="分享", exact=True).click()
+            page.get_by_role("button", name="分享所选", exact=True).click()
             dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
             expect(dialog.get_by_text("本次分享 2 份已就绪报告", exact=True)).to_be_visible()
             dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True).check()
@@ -3687,7 +3713,7 @@ class AuditPreviewTests(unittest.TestCase):
                 expect(page.get_by_role("checkbox", name="选择报告 " + filename, exact=True)).to_be_disabled()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_disabled()
             expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("审核异常，无法生成报告。", exact=True)).to_be_visible()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="查看报告失败原因", exact=True)).to_have_count(0)
             browser.close()
@@ -3700,27 +3726,61 @@ class AuditPreviewTests(unittest.TestCase):
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
             original = "2026-10-16T10:00:00+08:00"
             current = page.get_by_role("region", name="当前报告", exact=True)
-            generated = current.locator("time")
-            expect(generated).to_have_attribute("datetime", original)
-            expect(generated).to_contain_text("2026/10/15")
-            expect(generated).to_contain_text("19:00")
-            expect(generated).to_contain_text("GMT-7")
-            listing = page.get_by_role("list", name="逐文件报告清单", exact=True)
-            expect(listing.get_by_role("listitem")).to_have_count(3)
-            expect(listing.locator("time")).to_have_count(2)
-            for item in listing.locator("time").all():
-                expect(item).to_have_attribute("datetime", original)
-                expect(item).to_have_text(generated.inner_text())
+            listing = page.get_by_role("table", name="逐文件报告清单", exact=True)
+            expect(listing.locator("tbody tr")).to_have_count(3)
+            expect(listing.locator("time")).to_have_count(0)
+            for filename in ("控制计划.xlsx", "PFMEA.xlsx"):
+                listing.get_by_role("button", name=filename + "-审核报告 就绪", exact=True).click()
+                current.get_by_role("button", name="报告信息", exact=True).click()
+                info = page.get_by_role("dialog", name="报告信息", exact=True)
+                generated = info.locator("time")
+                expect(generated).to_have_attribute("datetime", original)
+                expect(generated).to_contain_text("2026/10/15")
+                expect(generated).to_contain_text("19:00")
+                expect(generated).to_contain_text("GMT-7")
+                info.get_by_role("button", name="关闭", exact=True).click()
             page.get_by_role("button", name="审核文件", exact=True).click()
             page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
             select_history(page, 2)
             page.get_by_role("button", name="查看报告", exact=True).click()
             expect(page.get_by_role("heading", name="历史报告", exact=True)).to_be_visible()
-            historical = page.get_by_role("region", name="当前报告", exact=True).locator("time")
+            page.get_by_role("region", name="当前报告", exact=True).get_by_role("button", name="报告信息", exact=True).click()
+            historical = page.get_by_role("dialog", name="报告信息", exact=True).locator("time")
             expect(historical).to_have_attribute("datetime", original)
             expect(historical).to_contain_text("2026/10/15")
             expect(historical).to_contain_text("19:00")
             expect(historical).to_contain_text("GMT-7")
+            browser.close()
+
+    def test_report_reader_uses_one_compact_table_and_keeps_metadata_out_of_the_reading_area(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1012, "height": 853})
+            page.set_default_timeout(5000)
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=preview-recovery-version-1")
+            table = page.get_by_role("table", name="逐文件报告清单", exact=True)
+            expect(table).to_be_visible()
+            expect(table.get_by_role("row")).to_have_count(4)
+            expect(table.get_by_text("就绪", exact=True)).to_have_count(0)
+            expect(table.locator("time")).to_have_count(0)
+            current = page.get_by_role("region", name="当前报告", exact=True)
+            expect(current.get_by_text("就绪", exact=True)).to_have_count(0)
+            expect(current.locator("time")).to_have_count(0)
+            toolbar = current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)
+            expect(toolbar).to_be_visible()
+            self.assertLess(toolbar.bounding_box()["y"], 853 / 3)
+            address = page.url
+            table.get_by_role("checkbox", name="选择报告 PFMEA.xlsx", exact=True).check()
+            self.assertEqual(page.url, address)
+            expect(current.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            expect(page.get_by_text("已选 1 份", exact=True)).to_be_visible()
+            current.get_by_role("button", name="报告信息", exact=True).click()
+            info = page.get_by_role("dialog", name="报告信息", exact=True)
+            expect(info.locator("time")).to_have_attribute("datetime", "2026-10-16T10:00:00+08:00")
+            expect(info.get_by_text("示例控制计划规则 · v2", exact=True)).to_be_visible()
+            expect(info.get_by_text("preview-recovery-version-1", exact=True)).to_be_visible()
+            info.get_by_role("button", name="关闭", exact=True).click()
+            expect(current.get_by_role("button", name="报告信息", exact=True)).to_be_focused()
             browser.close()
 
     def test_report_view_gives_the_pdf_space_and_keeps_task_navigation_available(self):
@@ -3737,7 +3797,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("dialog", name="审核任务", exact=True)).to_be_visible()
             page.keyboard.press("Escape")
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_focused()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("button", name="打开审核任务", exact=True)).to_be_visible()
             expect(page.get_by_role("complementary", name="审核任务", exact=True)).to_have_count(0)
             browser.close()
@@ -3777,7 +3837,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取报告状态", exact=True).click()
             expect(page.get_by_role("region", name="ZIP 工作", exact=True)).to_be_visible()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            expect_zip_ready(page)
             browser.close()
 
     def test_failed_zip_recovers_only_the_package_and_keeps_ready_pdfs(self):
@@ -3792,17 +3852,20 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             expect(page.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
             package = page.get_by_role("region", name="ZIP 工作", exact=True)
-            expect(package.get_by_role("listitem").filter(has_text="PFMEA.xlsx").get_by_text("打包准备完成", exact=True)).to_be_visible()
-            failed = package.get_by_role("listitem").filter(has_text="控制计划.xlsx")
-            expect(failed.get_by_text("打包准备失败", exact=True)).to_be_visible()
+            record = open_package_record(page)
+            entries = record.get_by_role("table", name="固定打包报告", exact=True).locator("tbody tr")
+            expect(entries.filter(has_text="PFMEA.xlsx").get_by_text("完成", exact=True)).to_be_visible()
+            failed = entries.filter(has_text="控制计划.xlsx")
+            expect(failed.get_by_text("失败", exact=True)).to_be_visible()
             expect(failed.get_by_text("控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
+            record.get_by_role("button", name="关闭", exact=True).click()
             page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).uncheck()
-            expect(package.get_by_role("listitem")).to_have_count(2)
-            expect(failed.get_by_text("控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
+            self.assertEqual(len(package_references(package)), 2)
+            expect(page.get_by_role("table", name="逐文件报告清单", exact=True).get_by_text("上次打包：控制计划 PDF 暂时无法读取。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
             page.get_by_role("button", name="重试同一报告集合打包", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
-            expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+            expect_zip_ready(page)
             browser.close()
 
     def test_rejected_zip_recovery_still_reads_the_original_failed_package(self):
@@ -3838,11 +3901,13 @@ class AuditPreviewTests(unittest.TestCase):
             identities = package_references(package)
             expect(package.get_by_text(re.compile("^冻结文件："))).to_have_count(0)
             expect(package.get_by_text(re.compile("结果尝试："))).to_have_count(0)
-            for index, item in enumerate(package.get_by_role("listitem").all(), 1):
-                expect(item.get_by_text(f"第 {index} 份", exact=True)).to_be_visible()
+            record = open_package_record(page)
+            expect(record.get_by_role("table", name="固定打包报告", exact=True).locator("tbody tr")).to_have_count(2)
+            expect(record.get_by_text(re.compile("^第 \\d+ 份$"))).to_have_count(0)
+            record.get_by_role("button", name="关闭", exact=True).click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             with page.expect_download() as download:
-                page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+                zip_download(page).click()
             import zipfile
 
             with zipfile.ZipFile(download.value.path()) as archive:
@@ -3950,7 +4015,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="当前报告", exact=True).get_by_text("生成中", exact=True)).to_be_visible()
             page.get_by_role("button", name="读取报告状态", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button", name="PFMEA.xlsx NG 2/2 项 · 报告已就绪", exact=True)).to_be_visible()
             browser.close()
 
@@ -3974,8 +4039,10 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取报告状态", exact=True).click()
             expect(page.get_by_role("region", name="ZIP 工作", exact=True)).to_be_visible()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
+            expect(page.get_by_role("button", name="下载所选报告 ZIP", exact=True)).to_have_count(0)
+            expect(page.get_by_text("已选 1 份", exact=True)).to_be_visible()
             with page.expect_download() as download:
-                page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+                zip_download(page).click()
             import zipfile
 
             with zipfile.ZipFile(download.value.path()) as archive:
@@ -4012,7 +4079,7 @@ class AuditPreviewTests(unittest.TestCase):
                 self.assertIn("示例报告", text)
                 self.assertIn("控制计划.xlsx", text)
                 self.assertIn("审核总结", text)
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(audit_details(page).get_by_role("heading", name="控制计划.xlsx", exact=True)).to_be_visible()
             browser.close()
 

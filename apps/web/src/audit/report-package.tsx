@@ -3,7 +3,8 @@ import type {components} from '../generated/openapi'
 import {Button} from '../components/ui/button'
 import {Badge} from '../components/ui/badge'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
-import {Item, ItemContent, ItemGroup} from '../components/ui/item'
+import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
+import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
 import {FileName} from '../journey/file-name'
 import {sameSnapshot, packageOutcomeError, taskPackageScopeError, reportReference} from './result-projection'
 import {readTaskReportPackage, type AuditReportAdapter} from './report-contract'
@@ -44,17 +45,18 @@ export function ReportPackage({job, nameFor, busy, onRead, onDownload, onRetry, 
   const known = job.receipt.state !== 'pending'
   const issue = packageOutcomeError(job)
   const labels = {pending: '等待打包', generating: '打包中', ready: 'ZIP 已就绪', failed: 'ZIP 打包失败'}
-  const itemLabels = {pending: '尚未确认', prepared: '打包准备完成', failed: '打包准备失败'}
-  return <section aria-label="ZIP 工作" className="space-y-3 border-y py-4">
-    <h2 className="font-semibold">{issue ? 'ZIP 状态待核对' : known ? labels[job.state] : 'ZIP 受理结果未知'}</h2>
-    <p className="text-xs text-muted-foreground">共 {job.reports.length} 份报告</p>
-    {job.reason && <p role="status">{job.reason}</p>}
-    {issue && <Alert variant="destructive"><AlertTitle>ZIP 明细需要核对</AlertTitle><AlertDescription>{issue} 请读取原打包请求的状态。</AlertDescription></Alert>}
-    <ItemGroup>{job.reports.map((reference, index) => {
+  const ready = !issue && known && job.state === 'ready'
+  const title = issue ? 'ZIP 状态待核对' : known ? labels[job.state] : 'ZIP 受理结果未知'
+  const error = downloadError && <Alert variant="destructive"><AlertTitle>ZIP 下载未完成</AlertTitle><AlertDescription>{downloadError}</AlertDescription></Alert>
+  const controls = <div className="flex flex-wrap gap-2">{ready ? <Button variant="outline" disabled={busy} onClick={onDownload}>下载已就绪 ZIP</Button> : <Button variant="outline" size="sm" disabled={busy} onClick={onRead}>{busy ? '正在读取 ZIP 状态…' : '读取 ZIP 状态'}</Button>}{!issue && known && job.state === 'failed' && <Button variant="outline" size="sm" disabled={busy || !job.retry_allowed} onClick={onRetry}>重试同一报告集合打包</Button>}</div>
+  return <section aria-label="ZIP 工作" className="min-w-0 space-y-2">
+    <div className="flex flex-wrap items-center gap-2">{!ready && <h2 className="text-xs font-medium">{title}</h2>}<Sheet><SheetTrigger asChild><Button variant="ghost" size="sm">打包记录</Button></SheetTrigger><SheetContent className="sm:max-w-xl"><SheetHeader><SheetTitle>打包记录</SheetTitle><SheetDescription className="sr-only">此打包请求创建时固定的报告集合</SheetDescription></SheetHeader><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4"><h2 className="font-medium">{title}</h2><Table aria-label="固定打包报告"><TableHeader><TableRow><TableHead>报告</TableHead><TableHead className="w-24">准备状态</TableHead></TableRow></TableHeader><TableBody>{job.reports.map(reference => {
       const outcome = issue ? undefined : job.outcomes?.find(row => sameSnapshot(row.reference, reference))
-      return <Item role="listitem" key={JSON.stringify(reference)} data-report-reference={JSON.stringify(reference)} size="xs"><ItemContent><div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">第 {index + 1} 份</span><FileName name={outcome?.filename || `${nameFor(reference)}-审核报告`} format="pdf"/>{outcome ? <Badge variant={outcome.state === 'failed' ? 'destructive' : 'outline'}>{itemLabels[outcome.state]}</Badge> : <span className="text-xs text-muted-foreground">{issue ? '逐项状态待核对' : '未提供逐项状态'}</span>}</div>{outcome?.reason && <p className="text-sm">{outcome.reason}</p>}</ItemContent></Item>
-    })}</ItemGroup>
-    <div className="flex flex-wrap gap-2">{!issue && known && job.state === 'ready' ? <Button variant="outline" disabled={busy} onClick={onDownload}>下载已就绪 ZIP</Button> : <Button variant="outline" disabled={busy} onClick={onRead}>{busy ? '正在读取 ZIP 状态…' : '读取 ZIP 状态'}</Button>}{!issue && known && job.state === 'failed' && <Button variant="outline" disabled={busy || !job.retry_allowed} onClick={onRetry}>重试同一报告集合打包</Button>}</div>
-    {downloadError && <Alert variant="destructive"><AlertTitle>ZIP 下载未完成</AlertTitle><AlertDescription>{downloadError}</AlertDescription></Alert>}
+      return <TableRow key={JSON.stringify(reference)} data-report-reference={JSON.stringify(reference)}><TableCell className="whitespace-normal"><FileName name={outcome?.filename || `${nameFor(reference)}-审核报告`} format="pdf"/>{outcome?.reason && <p className="mt-2 text-sm text-destructive">{outcome.reason}</p>}</TableCell><TableCell>{outcome?.state === 'prepared' ? '完成' : <Badge variant={outcome?.state === 'failed' ? 'destructive' : 'outline'}>{outcome?.state === 'failed' ? '失败' : issue ? '待核对' : !job.outcomes ? '未提供逐项状态' : '尚未确认'}</Badge>}</TableCell></TableRow>
+    })}</TableBody></Table>{controls}{error}</div></SheetContent></Sheet></div>
+    {!ready && job.reason && <p role="status" className="text-xs text-muted-foreground">{job.reason}</p>}
+    {issue && <Alert variant="destructive"><AlertTitle>ZIP 明细需要核对</AlertTitle><AlertDescription>{issue} 请读取原打包请求的状态。</AlertDescription></Alert>}
+    {!ready && controls}
+    {error}
   </section>
 }
