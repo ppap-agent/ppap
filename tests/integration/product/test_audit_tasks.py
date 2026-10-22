@@ -260,6 +260,77 @@ def test_pdf_download_still_verifies_the_frozen_object_bytes(matched_task, auth_
     assert worker.claim_job("integrity-no-new-work") is None
 
 
+@pytest.mark.parametrize("source_fault", ["not_ready", "changed_artifact"])
+def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_member(matched_task, auth_store_factory, source_fault):
+    client, worker, path, body, _rule = matched_task
+    second = checked_file(client, worker, "另一份控制计划.xlsx")
+    revised = {**body, "request_id": str(uuid.uuid4()), "task_id": body["request_id"], "expected_revision": 0, "files": body["files"] + [second]}
+    assert client.post("/audit-tasks", json=revised).status_code == 202
+    for _ in range(2):
+        process_claimed(worker, worker.claim_job("bulk-recognition"), "bulk-recognition", rule_ai=MetadataAI())
+    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 1}).status_code == 201
+    process_claimed(worker, worker.claim_job("bulk-audit"), "bulk-audit")
+    for _ in range(2):
+        process_claimed(worker, worker.claim_job("bulk-pdf"), "bulk-pdf")
+    task = client.get(path).json()
+    assert all(file["audit"]["report"]["state"] == "ready" for file in task["files"])
+    reports = [
+        {
+            "task_id": task["id"],
+            "round_id": task["round_id"],
+            "file_version_id": file["file"]["id"],
+            "result_attempt": file["audit"]["result_attempt"],
+            "report_id": file["audit"]["report"]["report_id"],
+        }
+        for file in reversed(task["files"])
+    ]
+    frozen = client.get(f"/rounds/{task['round_id']}").json()
+    usage = client.get("/usage").json()
+    invalid_members = [
+        ([reports[0], {**reports[1], "report_id": str(uuid.uuid4())}], 403, "access_denied"),
+        ([reports[0], {**reports[1], "report_id": reports[0]["report_id"]}], 403, "access_denied"),
+        ([reports[0], {**reports[1], "result_attempt": reports[1]["result_attempt"] + 1}], 403, "access_denied"),
+        ([reports[0], reports[0]], 400, "invalid_report_package"),
+    ]
+    for invalid, status, error in invalid_members:
+        rejected = client.post("/audit-report-packages", json={"request_id": str(uuid.uuid4()), "reports": invalid})
+        assert rejected.status_code == status, rejected.text
+        assert rejected.json() == {"error": error}
+        assert worker.claim_job("invalid-bulk-source-no-work") is None
+    command = {"request_id": str(uuid.uuid4()), "reports": reports}
+    accepted = client.post("/audit-report-packages", json=command)
+    assert accepted.status_code == 202, accepted.text
+    process_claimed(worker, worker.claim_job("bulk-zip"), "bulk-zip")
+    package_path = "/audit-report-packages/" + command["request_id"]
+    ready = client.get(package_path).json()
+    assert ready["state"] == "ready"
+    assert ready["reports"] == reports
+    assert [item["reference"] for item in ready["outcomes"]] == reports
+    alias = client.post("/audit-report-packages", json={"request_id": str(uuid.uuid4()), "reports": list(reversed(reports))})
+    assert alias.status_code == 202, alias.text
+    assert alias.json()["package_id"] == ready["package_id"]
+    assert alias.json()["reports"] == list(reversed(reports))
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    with migrator._conn() as conn:
+        status, result = conn.execute("SELECT status, result FROM engine.jobs WHERE id = %s", (reports[1]["report_id"],)).fetchone()
+        if source_fault == "not_ready":
+            conn.execute("UPDATE engine.jobs SET status = 'queued' WHERE id = %s", (reports[1]["report_id"],))
+        else:
+            changed = {**result, "artifact": {**result["artifact"], "filename": "changed.pdf"}}
+            conn.execute("UPDATE engine.jobs SET result = %s WHERE id = %s", (Jsonb(changed), reports[1]["report_id"]))
+    try:
+        rejected = client.get(package_path)
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json() == {"error": "report_not_ready" if source_fault == "not_ready" else "report_artifact_conflict"}
+    finally:
+        with migrator._conn() as conn:
+            conn.execute("UPDATE engine.jobs SET status = %s, result = %s WHERE id = %s", (status, Jsonb(result), reports[1]["report_id"]))
+    assert client.get(package_path).json() == ready
+    assert client.get(f"/rounds/{task['round_id']}").json() == frozen
+    assert client.get("/usage").json() == usage
+    assert worker.claim_job("bulk-source-no-new-work") is None
+
+
 def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quota(matched_task):
     _client, worker, path, body, _rule = matched_task
     worker.settings.feishu_free_trial_quota_points = 1
