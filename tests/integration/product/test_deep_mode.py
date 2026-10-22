@@ -20,6 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from ppap_api import create_app
+from ppap_api import web_contract as wc
 from ppap_application import build_product_store
 from ppap_core.audits import (
     ANALYSIS_DEEP,
@@ -49,7 +50,7 @@ from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.trace import AuditExecution
 from ppap_deep.source import authorize_execution, object_file_source
 from ppap_worker import process_claimed
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 
 def _clean_env(**extra: str):
@@ -406,6 +407,7 @@ class DeepModeTests(unittest.TestCase):
         self.assertEqual(result["usage"]["output_tokens"], 8)
 
         loaded = self.client.get(round_path, params={"read_view": "true"}).json()
+        TypeAdapter(wc.Round).validate_python(loaded)
         self.assertEqual(loaded["execution"], "completed")
         self.assertEqual(loaded["inputs"], frozen["inputs"])
         self.assertEqual(loaded["executor_revision"], frozen_revision)
@@ -427,6 +429,7 @@ class DeepModeTests(unittest.TestCase):
         )
         self.assertEqual(loaded["read_view"]["unassigned_findings"], [])
         current = self.client.get(task_path).json()
+        TypeAdapter(wc.AuditTask).validate_python(current)
         by_version = {row["file"]["id"]: row["audit"] for row in current["files"]}
         failed, healthy = by_version[bad_target], by_version[good_target]
         self.assertEqual(failed["execution"], "review_failed")
