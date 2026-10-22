@@ -158,3 +158,28 @@ def test_category_and_explicit_queue_survive_task_back_and_reload(partial_error,
         assert calls.count(("GET", "/audit-tasks/" + TASK)) == 1
         assert all(method == "GET" for method, _path in calls)
         browser.close()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_queue_tracks_history_entries_without_leaving_the_workbench(width):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": 960})
+        page.set_default_timeout(5000)
+        calls, _summary, _held = task_routes(page, False)
+        page.goto(WEB + "/workbench")
+        completed = page.get_by_role("tab", name=re.compile("^已完成"))
+        attention = page.get_by_role("tab", name=re.compile("^需要处理"))
+        completed.click()
+        menu = page.get_by_role("button", name="打开产品导航", exact=True)
+        if menu.is_visible():
+            menu.click()
+        page.get_by_role("button", name="工作台", exact=True).click()
+        attention.click()
+        page.go_back()
+        expect(completed).to_have_attribute("aria-selected", "true")
+        page.go_forward()
+        expect(attention).to_have_attribute("aria-selected", "true")
+        assert not any(path == "/audit-tasks/" + TASK for _method, path in calls)
+        assert all(method == "GET" for method, _path in calls)
+        browser.close()
