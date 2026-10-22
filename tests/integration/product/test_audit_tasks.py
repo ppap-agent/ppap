@@ -1416,6 +1416,74 @@ def test_explicit_candidate_resolves_ambiguity_without_selecting_the_first_rule(
     assert current["files"][0]["match"]["rule"]["id"] == chosen["id"]
 
 
+def test_native_preparation_ambiguity_is_resolved_by_explicit_rematching_before_freezing(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    first = publish_rule(client, file, title="规则 A")
+    chosen = publish_rule(client, file, title="规则 B")
+    preparation = upload_preparation([file])
+    draft_id = str(uuid.uuid4())
+    draft_path = f"/drafts/{draft_id}"
+    assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
+    saved = client.put(draft_path, json={"expected_revision": 0, "upload_preparation": preparation})
+    assert saved.status_code == 200 and saved.json()["preparation_revision"] == 1
+    original_objects = dict(worker.objects.data)
+    promoted = client.post(
+        "/audit-tasks",
+        json={"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "analysis_mode": "standard", "customer_preference": None, "files": [file]},
+    )
+    assert promoted.status_code == 202, promoted.text
+    task = promoted.json()
+    assert task["id"] == draft_id and task["source_draft_id"] == draft_id and task["input_revision"] == 0
+    path = f"/audit-tasks/{draft_id}"
+    process_claimed(worker, worker.claim_job("ambiguous-recognition"), "ambiguous-recognition", rule_ai=MetadataAI())
+    ambiguous = client.get(path).json()
+    match = ambiguous["files"][0]["match"]
+    assert match["state"] == "failed" and match["rule"] is None
+    assert match["gaps"] == ["ambiguous_available_rules"]
+    assert {row["id"] for row in match["candidates"]} == {first["id"], chosen["id"]}
+    assert client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).status_code == 409
+    assert client.get("/rounds").json()["rounds"] == []
+
+    rematch = {
+        "request_id": str(uuid.uuid4()),
+        "task_id": draft_id,
+        "expected_revision": 0,
+        "analysis_mode": "standard",
+        "customer_preference": None,
+        "files": [{**file, "preferred_rule_version_id": chosen["id"]}],
+    }
+    changed = client.post("/audit-tasks", json=rematch)
+    assert changed.status_code == 202, changed.text
+    assert changed.json()["id"] == draft_id and changed.json()["input_revision"] == 1
+    process_claimed(worker, worker.claim_job("chosen-recognition"), "chosen-recognition", rule_ai=MetadataAI())
+    matched = client.get(path).json()
+    assert matched["files"][0]["match"]["state"] == "matched"
+    assert matched["files"][0]["match"]["rule"]["id"] == chosen["id"]
+    confirmation = {"request_id": str(uuid.uuid4()), "expected_revision": 1}
+    accepted = client.post(path + "/confirm", json=confirmation)
+    assert accepted.status_code == 201, accepted.text
+    result = accepted.json()
+    frozen = client.get(f"/rounds/{result['round_id']}").json()
+    assert result["id"] == draft_id and result["source_draft_id"] == draft_id
+    assert frozen["source_draft_id"] == draft_id and frozen["analysis_mode"] == "standard"
+    assert len(frozen["inputs"]) == 1
+    source = frozen["inputs"][0]
+    assert source["file_version_id"] == file["file_version_id"] and source["role"] == "target"
+    assert source["rule_version_id"] == chosen["id"] != first["id"]
+    assert source["rule"]["id"] == chosen["id"] and source["rule"]["body"] == chosen["body"]
+    assert client.post(path + "/confirm", json=confirmation).json()["round_id"] == frozen["id"]
+    restored = client.get(draft_path).json()
+    assert restored["id"] == draft_id and restored["task_id"] == draft_id
+    assert restored["upload_preparation"] == preparation
+    assert [row["id"] for row in client.get("/audit-tasks").json()["tasks"]] == [draft_id]
+    assert [row["id"] for row in client.get("/rounds").json()["rounds"]] == [frozen["id"]]
+    assert client.get("/usage").json()["events"] == []
+    assert worker.objects.data == original_objects
+    assert worker.claim_job("one-audit").round_id == frozen["id"]
+    assert worker.claim_job("no-extra-recognition-or-audit") is None
+
+
 def test_concurrent_creation_coalesces_and_changed_inputs_cannot_replace_it(task_system):
     client, worker = task_system
     file = checked_file(client, worker)
