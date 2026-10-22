@@ -2832,6 +2832,8 @@ export interface components {
             file_version_id?: string;
             /** Filename */
             filename?: string;
+            /** Kind */
+            kind?: string;
             /** Locator */
             locator?: string;
             /** Rule Item Id */
