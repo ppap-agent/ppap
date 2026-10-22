@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 
 from ppap_api import app
+from ppap_api import web_contract as wc
+from pydantic import TypeAdapter
 
 REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/public-config"): False,
@@ -73,6 +75,18 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_failed_rule_plans_have_a_public_coverage_state_without_a_fake_verdict(self):
+        failed = {
+            "id": "B1",
+            "rule_to_check": "正文每行频次非空，否则不通过。",
+            "coverage": "execution_error",
+            "status": "ERR",
+            "reason": "审核计划生成失败，本项未执行。",
+        }
+        self.assertEqual(TypeAdapter(wc.RuleCoverageItem).validate_python(failed), failed)
+        schema = app.openapi()["components"]["schemas"]["RuleCoverageItem"]
+        self.assertEqual(set(schema["properties"]["coverage"]["enum"]), {"mapped", "unsupported", "executed", "execution_error"})
+
     def test_file_report_recovery_binds_the_same_frozen_reference_and_original_request(self):
         paths = app.openapi()["paths"]
         path = "/audit-tasks/{task_id}/reports/{report_id}/regenerations"

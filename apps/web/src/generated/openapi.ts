@@ -1701,7 +1701,7 @@ export interface components {
              * Coverage
              * @enum {string}
              */
-            coverage: "mapped" | "unsupported" | "executed";
+            coverage: "mapped" | "unsupported" | "executed" | "execution_error";
             /** Evidence */
             evidence: components["schemas"]["AuditEvidenceReference"][];
             /** Evidence Verified */
@@ -3233,7 +3233,7 @@ export interface components {
              * Coverage
              * @enum {string}
              */
-            coverage: "mapped" | "unsupported" | "executed";
+            coverage: "mapped" | "unsupported" | "executed" | "execution_error";
             /** File Version Id */
             file_version_id?: string;
             /** Id */

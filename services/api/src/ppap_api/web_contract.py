@@ -13,7 +13,7 @@ from pydantic import TypeAdapter
 AnalysisMode = Literal["standard", "deep"]
 FindingStatus = Literal["PASS", "NG", "ERR", "UNABLE", "NA"]
 MaterialRole = Literal["target", "reference"]
-CoverageState = Literal["mapped", "unsupported", "executed"]
+CoverageState = Literal["mapped", "unsupported", "executed", "execution_error"]
 ProgressPhase = Literal["reading", "planning", "checking", "validating"]
 
 
