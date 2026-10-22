@@ -8,7 +8,7 @@ export function TaskRecovery({recovery, report, onRead, onSupport}: {recovery: T
   const loading = recovery.state === 'loading'
   const errors = {unauthenticated: '登录已失效', forbidden: '无法访问此任务', not_found: '未找到此任务', error: report ? '报告暂时无法打开' : '任务暂时无法打开'}
   const title = recovery.state === 'loading' ? report ? '审核报告' : '审核任务' : errors[recovery.state]
-  return <section className="min-w-0 space-y-5" aria-label={report ? '报告读取状态' : '任务读取状态'}>
+  return <section className={loading ? 'min-w-0' : 'min-w-0 space-y-5'} aria-label={report ? '报告读取状态' : '任务读取状态'}>
     <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <h1 className={loading ? 'sr-only' : 'text-2xl font-semibold'}>{title}</h1>
     </header>
