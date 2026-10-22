@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 from uuid import UUID
 
-from ppap_core.files import ObjectExists, ObjectMissing
+from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
 
 from ppap_deep.client import DeepError
 from ppap_deep.controller import ExecutionContext
@@ -36,7 +36,7 @@ DIAGNOSTIC_LABELS = {
 
 
 class Objects(Protocol):
-    def get(self, key: str) -> bytes: ...
+    def get(self, key: str, *, max_bytes: int | None = None) -> bytes: ...
     def put_exclusive(self, key: str, body: bytes, content_type: str) -> None: ...
 
 
@@ -227,8 +227,8 @@ class SemanticRuntime:
 
     def _cache(self, key: str, path: Path) -> bool:
         try:
-            raw = self.objects.get(key)
-        except ObjectMissing:
+            raw = self.objects.get(key, max_bytes=MAX_BUNDLE_BYTES)
+        except (ObjectMissing, ObjectTooLarge):
             return False
         if len(raw) > MAX_BUNDLE_BYTES:
             return False

@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from openpyxl import Workbook
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
-from ppap_core.files import ObjectExists, ObjectMissing
+from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
 from ppap_deep.auditor import SemanticRuntime
 from ppap_deep.controller import ExecutionContext
 from ppap_deep.isolation.container import ContainerRuntime, RuntimeConfig
@@ -406,10 +406,13 @@ class ContainerCacheTests(unittest.TestCase):
         owner = self
 
         class Objects:
-            def get(self, key):
+            def get(self, key, *, max_bytes=None):
                 if key not in owner.stored:
                     raise ObjectMissing()
-                return owner.stored[key]
+                data = owner.stored[key]
+                if max_bytes is not None and len(data) > max_bytes:
+                    raise ObjectTooLarge()
+                return data
 
             def put_exclusive(self, key, body, _content_type):
                 if key in owner.stored:
