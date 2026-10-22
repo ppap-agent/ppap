@@ -3827,6 +3827,8 @@ class AuditPreviewTests(unittest.TestCase):
             info = page.get_by_role("dialog", name="报告信息", exact=True)
             expect(info.locator("time")).to_have_attribute("datetime", "2026-10-16T10:00:00+08:00")
             expect(info.get_by_text("示例控制计划规则 · v2", exact=True)).to_be_visible()
+            expect(info.get_by_text("preview-recovery-version-1", exact=True)).to_be_hidden()
+            info.get_by_text("追溯信息", exact=True).click()
             expect(info.get_by_text("preview-recovery-version-1", exact=True)).to_be_visible()
             info.get_by_role("button", name="关闭", exact=True).click()
             expect(current.get_by_role("button", name="报告信息", exact=True)).to_be_focused()
