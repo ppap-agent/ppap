@@ -509,7 +509,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     }
   }, [reviewEditor?.revision])
   const observedTaskEpoch = task ? taskReadEpoch.current.get(task.id) : undefined
-  useTaskObservation(task?.id, autoObserve && surface === 'audit' && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
+  useTaskObservation(task?.id, autoObserve && surface === 'audit' && !legacyRoundId && !recovery && step === 'match' && !reportView && canObserveTask(task), () => task && activeTaskId.current === task.id && surfaceRef.current === 'audit' && stepRef.current === 'match' && taskReadEpoch.current.get(task.id) === observedTaskEpoch ? readMatching(task) : Promise.resolve(null))
   async function loadTasks(offset = 0, signal?: AbortSignal) {
     const epoch = ++listEpoch.current
     setTaskList(current => ({...current, busy: true, error: ''}))
