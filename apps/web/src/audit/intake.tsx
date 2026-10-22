@@ -303,6 +303,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   function showTaskResults() {
     setReportView(false)
     writeAuditAddress(taskResultsAddress(), 'push')
+    if (window.parent !== window && task) window.parent.postMessage({type: 'ppap-audit-task', task: task.id, report: null, packageRequest: null}, location.origin)
   }
   async function prepareReaudit(roundId: string) {
     if (!adapter.prepareReaudit || preparingReaudit) return

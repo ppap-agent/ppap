@@ -145,6 +145,14 @@ def test_shared_report_switch_download_and_denied_revisit_never_open_private_inp
             late.value.finished()
             page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             expect(page.get_by_role("img", name="尺寸检验报告.xlsx-审核报告.pdf · 第 1 页", exact=True)).to_be_visible()
+        page.get_by_role("button", name="报告信息", exact=True).click()
+        info = page.get_by_role("dialog", name="报告信息", exact=True)
+        expect(info.get_by_text("固定要求 2", exact=True)).to_be_visible()
+        expect(info.get_by_text("rule-2", exact=True)).to_be_visible()
+        expect(info.get_by_text("version-2", exact=True)).to_be_visible()
+        expect(info.get_by_text("未提供生成时间", exact=True)).to_be_visible()
+        expect(info.get_by_text("尚未生成", exact=True)).to_have_count(0)
+        info.get_by_role("button", name="关闭", exact=True).click()
         with page.expect_download() as waiting:
             page.get_by_role("button", name="下载当前报告", exact=True).click()
         download = waiting.value

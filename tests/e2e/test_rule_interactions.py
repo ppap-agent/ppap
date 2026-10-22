@@ -23,9 +23,8 @@ def open_rule_library(page):
     if button.is_visible():
         button.click()
     else:
-        navigation = page.get_by_role("button", name="打开产品导航", exact=True)
-        (navigation if navigation.is_visible() else page.get_by_role("button", name="打开审核任务", exact=True)).click()
-        page.get_by_role("dialog").get_by_role("button", name="审核规则", exact=True).click()
+        page.get_by_role("button", name="打开产品导航", exact=True).click()
+        page.get_by_role("dialog", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True).click()
 
 
 ROOT = Path(__file__).resolve().parents[2]

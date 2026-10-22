@@ -196,7 +196,7 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_enabled()
             page.get_by_role("button", name="报告中心", exact=True).click()
             expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
-            page.get_by_role("button", name="返回审核结果", exact=True).click()
+            page.get_by_role("link", name="返回审核结果", exact=True).click()
             expect(page.get_by_role("navigation", name="文件队列", exact=True).get_by_role("button")).to_have_count(3)
             browser.close()
 
@@ -217,5 +217,5 @@ class AuditWorkspacePreviewTests(unittest.TestCase):
             expect(page.get_by_role("region", name="比对资料原件", exact=True)).to_be_visible()
             expect(page.get_by_role("status").filter(has_text="文件已结束 2/2")).to_be_visible()
             page.get_by_role("button", name="报告中心", exact=True).click()
-            expect(page.get_by_role("list", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
+            expect(page.get_by_role("table", name="逐文件报告清单").get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
             browser.close()

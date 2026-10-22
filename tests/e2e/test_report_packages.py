@@ -85,13 +85,20 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         page.route("**/api/**", api)
         page.goto(WEB + "/audit?view=archive&packageRequest=original-request")
         package = page.get_by_role("region", name="ZIP 工作", exact=True)
-        expect(package.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+
+        def record():
+            package.get_by_role("button", name="打包记录", exact=True).click()
+            return page.get_by_role("dialog", name="打包记录", exact=True)
+
+        details = record()
+        expect(details.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
         for name in names:
-            expect(package.get_by_text(name, exact=True)).to_be_visible()
+            expect(details.get_by_text(name, exact=True)).to_be_visible()
         page.reload()
-        expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
+        details = record()
+        expect(details.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
         with page.expect_download() as download:
-            package.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
+            details.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
         with open(download.value.path(), "rb") as source:
             assert source.read() == content
         assert calls.count(("GET", "/audit-report-packages/original-request")) == 2
@@ -103,7 +110,9 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         expect(package).to_have_count(0)
         unavailable[0] = False
         page.get_by_role("button", name="重新读取 ZIP", exact=True).click()
-        expect(package.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+        details = record()
+        expect(details.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+        details.get_by_role("button", name="关闭", exact=True).click()
         mismatch[0] = True
         page.reload()
         expect(page.get_by_role("alert")).to_contain_text("未能读取此打包请求")
@@ -121,7 +130,7 @@ def test_archive_zip_refresh_reads_original_cross_task_package_and_downloads_fix
         assert urlsplit(page.url).path == "/usage"
         expect(package).to_have_count(0)
         page.go_back()
-        expect(package.get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
+        expect(record().get_by_role("heading", name="ZIP 已就绪", exact=True)).to_be_visible()
         assert parse_qs(urlsplit(page.url).query)["packageRequest"] == ["original-request"]
         assert not any(method != "GET" for method, _path in calls)
         browser.close()

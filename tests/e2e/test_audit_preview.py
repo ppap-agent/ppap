@@ -3750,6 +3750,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(historical).to_contain_text("2026/10/15")
             expect(historical).to_contain_text("19:00")
             expect(historical).to_contain_text("GMT-7")
+            expect(page.get_by_role("dialog", name="报告信息", exact=True).get_by_text("preview-rule-2", exact=True)).to_be_visible()
             browser.close()
 
     def test_report_reader_uses_one_compact_table_and_keeps_metadata_out_of_the_reading_area(self):
@@ -3984,6 +3985,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True)).to_be_checked()
             page.keyboard.press("Escape")
             expect(page.get_by_role("button", name="下载所选 1 份报告", exact=True)).to_be_enabled()
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
             browser.close()
 
     def test_report_recovery_policy_does_not_block_other_ready_downloads(self):
