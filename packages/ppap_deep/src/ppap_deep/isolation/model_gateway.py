@@ -43,6 +43,8 @@ class Lease:
     budget_exhausted: bool = False
     request_hashes: set[str] = field(default_factory=set)
     transport_failure: dict[str, int | str] | None = None
+    upstream: http.client.HTTPConnection | None = field(default=None, repr=False)
+    upstream_socket: socket.socket | None = field(default=None, repr=False)
 
 
 class Grants:
@@ -155,7 +157,37 @@ class Grants:
 
     def revoke(self, execution_id: UUID) -> None:
         with self.lock:
+            revoked = [lease for lease in self.leases.values() if lease.execution_id == execution_id]
             self.leases = {key: lease for key, lease in self.leases.items() if lease.execution_id != execution_id}
+            connections = [(lease.upstream, lease.upstream_socket) for lease in revoked]
+        # A provider need not send another byte after cancellation. Interrupt
+        # the local socket outside the grants lock so the handler can settle
+        # unknown usage and release its inference slot. This is not evidence
+        # that the provider stopped work or did not charge for the request.
+        for upstream, transport in connections:
+            if upstream is None:
+                continue
+            transport = transport or getattr(upstream, "sock", None)
+            if transport is not None:
+                try:
+                    transport.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            upstream.close()
+
+    def bind_upstream(self, lease: Lease, upstream: http.client.HTTPConnection) -> None:
+        with self.lock:
+            if lease.expires <= time.monotonic() or not any(value is lease for value in self.leases.values()):
+                raise ValueError("Invalid execution grant")
+            lease.upstream = upstream
+            # getresponse() can detach a Connection: close socket from the
+            # HTTPConnection while its response is still blocking in read1().
+            lease.upstream_socket = getattr(upstream, "sock", None)
+
+    def release_upstream(self, lease: Lease) -> None:
+        with self.lock:
+            lease.upstream = None
+            lease.upstream_socket = None
 
     def active(self, lease: Lease) -> bool:
         with self.lock:
@@ -249,7 +281,9 @@ class Handler(BaseHTTPRequestHandler):
             phase = "provider_request"
             # The 3.12 typeshed types this port as str. Runtime still needs an int.
             upstream = http.client.HTTPSConnection(str(url.hostname), port=cast(Any, url.port or 443), timeout=min(300, max(1, lease.expires - time.monotonic())))
+            self.server.grants.bind_upstream(lease, upstream)
             upstream.request("POST", url.path.rstrip("/") + "/responses", json.dumps(body), {"Authorization": "Bearer " + self.server.provider_key, "Content-Type": "application/json"})
+            self.server.grants.bind_upstream(lease, upstream)
             phase = "provider_headers"
             response = upstream.getresponse()
             provider_status = response.status
@@ -351,10 +385,14 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
             self.close_connection = True
-            if upstream:
-                upstream.close()
-            if acquired:
-                self.server.inference_lock.release()
+            try:
+                if upstream:
+                    upstream.close()
+            finally:
+                if lease is not None:
+                    self.server.grants.release_upstream(lease)
+                if acquired:
+                    self.server.inference_lock.release()
 
 
 class GrantServer(socketserver.UnixStreamServer):
