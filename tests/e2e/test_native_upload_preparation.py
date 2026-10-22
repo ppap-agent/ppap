@@ -289,7 +289,8 @@ def test_failed_preparation_read_after_back_does_not_leave_the_previous_task_act
         browser.close()
 
 
-def test_same_bytes_can_be_reselected_without_changing_the_original_upload_identity():
+@pytest.mark.parametrize("fail_resume_read", [False, True])
+def test_same_bytes_can_be_reselected_without_changing_the_original_upload_identity(fail_resume_read):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
@@ -304,6 +305,18 @@ def test_same_bytes_can_be_reselected_without_changing_the_original_upload_ident
         page.close()
         page = browser.new_page()
         http.install(page)
+        if fail_resume_read:
+            page.add_init_script("""(() => {
+              const read = File.prototype.arrayBuffer;
+              let fail = true;
+              File.prototype.arrayBuffer = function() {
+                if (fail && this.name === '待核对.xlsx') {
+                  fail = false;
+                  return Promise.reject(new DOMException('unreadable', 'NotReadableError'));
+                }
+                return read.call(this);
+              };
+            })();""")
         page.goto(saved_url)
         expect(page.get_by_role("button", name="重新选择原件 待核对.xlsx", exact=True)).to_be_enabled()
         page.get_by_role("button", name="重新选择原件 待核对.xlsx", exact=True).click()
@@ -316,7 +329,49 @@ def test_same_bytes_can_be_reselected_without_changing_the_original_upload_ident
         assert len(http.creates) == len(http.blobs) == 1
         http.allow_receipts = True
         page.get_by_role("button", name="继续传输 待核对.xlsx", exact=True).click()
+        if fail_resume_read:
+            expect(page.get_by_text("未能读取本地原件，本次未继续传输。请读取原请求，不要新建上传。", exact=True)).to_be_visible()
+            assert len(http.creates) == len(http.blobs) == 1
+            # Read the same unresolved request, then replace only its local bytes.
+            http.allow_receipts = False
+            page.get_by_role("button", name="读取传输 待核对.xlsx", exact=True).click()
+            expect(page.get_by_role("button", name="重新选择原件 待核对.xlsx", exact=True)).to_be_enabled()
+            page.get_by_role("button", name="重新选择原件 待核对.xlsx", exact=True).click()
+            page.get_by_label("重新选择当时原件", exact=True).set_input_files({"name": "改名.xlsx", "mimeType": "application/vnd.ms-excel", "buffer": b"original"})
+            expect(page.get_by_role("button", name="继续传输 待核对.xlsx", exact=True)).to_be_enabled()
+            http.allow_receipts = True
+            page.get_by_role("button", name="继续传输 待核对.xlsx", exact=True).click()
         expect(page.get_by_role("checkbox", name="选择 待核对.xlsx", exact=True)).to_be_checked()
         assert [row["request_id"] for row in http.creates] == [original_request, original_request]
         assert len(http.blobs) == 2 and len(http.preparation_creates) == 1
+        browser.close()
+
+
+def test_one_unreadable_local_file_does_not_block_the_other_files_before_transfer():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        http = PreparationHTTP()
+        http.allow_receipts = True
+        http.install(page)
+        # Control the browser file-reading boundary, not audit or upload state.
+        page.add_init_script("""(() => {
+          const read = File.prototype.arrayBuffer;
+          File.prototype.arrayBuffer = function() {
+            return this.name === '不可读取.xlsx' ? Promise.reject(new DOMException('unreadable', 'NotReadableError')) : read.call(this);
+          };
+        })();""")
+        page.goto(WEB + "/tasks/new")
+        page.get_by_label("选择审核文件", exact=True).set_input_files(
+            [{"name": name, "mimeType": "application/octet-stream", "buffer": b"original"} for name in ("已接收.xlsx", "不可读取.xlsx", "另一份.xlsx")]
+        )
+        expect(page.get_by_role("checkbox", name="选择 已接收.xlsx", exact=True)).to_be_checked()
+        expect(page.get_by_role("checkbox", name="选择 另一份.xlsx", exact=True)).to_be_checked()
+        expect(page.get_by_text("本地原件无法读取，未开始上传。请排除此文件后重新选择。", exact=True)).to_be_visible()
+        assert len(http.creates) == len(http.blobs) == 2
+        assert {row["original_filename"] for row in http.creates} == {"已接收.xlsx", "另一份.xlsx"}
+        assert len(http.preparation_creates) == 1
+        page.get_by_role("button", name="排除传输 不可读取.xlsx", exact=True).click()
+        expect(page.get_by_role("button", name="开始识别", exact=True)).to_be_enabled()
+        assert http.task_commands == []
         browser.close()
