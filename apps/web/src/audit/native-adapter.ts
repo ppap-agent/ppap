@@ -44,7 +44,7 @@ async function readArchive<T>(path: string): Promise<T> {
   try {
     return await request<T>(path, 'GET', undefined, controller.signal)
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('读取审核档案超时，请重新读取。')
+    if (controller.signal.aborted) throw Object.assign(new Error('读取审核档案超时，请重新读取。'), {name: 'TimeoutError'})
     throw error
   } finally {
     clearTimeout(timer)
