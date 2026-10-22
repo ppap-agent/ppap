@@ -19,6 +19,7 @@ from ppap_core.audits import (
 from ppap_core.contracts import AuditInput, GroupContextInput, RuleInput
 from ppap_core.logs import emit
 from ppap_core.rule_coverage import COVERAGE_MAPPED, MODE_RULE_ITEMS
+from ppap_core.token_tracker import get_token_tracker
 from ppap_core.types import cross_file_doc_type_name
 
 
@@ -90,6 +91,21 @@ def _write_temp(item: RoundInput, data: bytes) -> str:
 
 
 def run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
+    """Execute frozen Standard inputs with one bounded SDK-receipt scope."""
+    tracker = get_token_tracker()
+    previous_request = tracker.get_current_request_id()
+    request_id = tracker.start_request_tracking()
+    try:
+        result = _run_round_from_bytes(work, blobs)
+    finally:
+        summary = tracker.end_request_tracking(request_id)
+        tracker.cleanup_request(request_id)
+        tracker.set_current_request_id(previous_request)
+    result["usage"] = summary.to_dict()
+    return result
+
+
+def _run_round_from_bytes(work: RoundWork, blobs: dict[str, bytes]) -> dict:
     from ppap_excel_audit_engine.app_runtime import run_audit_engine
 
     targets = [item for item in work.inputs if item.role == TARGET]

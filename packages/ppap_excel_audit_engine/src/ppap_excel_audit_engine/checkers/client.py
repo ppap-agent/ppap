@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from openai import OpenAI as BaseOpenAI
 from ppap_core.settings import get_settings
-from ppap_core.token_tracker import record_token_usage
+from ppap_core.token_tracker import record_token_usage, record_unreported_usage
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +230,31 @@ class AIClient:
             for attempt in range(max_retries + 1):
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
-                response = request_client.responses.create(**request_kwargs)
+                try:
+                    response = request_client.responses.create(**request_kwargs)
+                except Exception:
+                    record_unreported_usage()
+                    raise
+
+                # A visible provider receipt is usage even when its audit output
+                # is incomplete. This observes SDK calls, not hidden HTTP retries.
+                usage = getattr(response, "usage", None)
+                input_tokens = getattr(usage, "input_tokens", None)
+                output_tokens = getattr(usage, "output_tokens", None)
+                if type(input_tokens) is int and input_tokens >= 0 and type(output_tokens) is int and output_tokens >= 0:
+                    details = getattr(usage, "output_tokens_details", None)
+                    thinking_tokens = getattr(details, "reasoning_tokens", 0)
+                    if type(thinking_tokens) is not int or thinking_tokens < 0:
+                        thinking_tokens = 0
+                    record_token_usage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        thinking_tokens=thinking_tokens,
+                        model_name=self.settings.MODEL_NAME,
+                        operation=operation,
+                    )
+                else:
+                    record_unreported_usage()
 
                 try:
                     if getattr(response, "status", None) != "completed":
@@ -240,25 +264,6 @@ class AIClient:
                         raise TypeError("AI response content is not text")
                     if not content.strip():
                         raise _InvalidAIResponseError("AI response has no output text")
-
-                    # 记录token使用情况
-                    if hasattr(response, "usage") and response.usage:
-                        usage = response.usage
-                        input_tokens = getattr(usage, "input_tokens", 0)
-                        output_tokens = getattr(usage, "output_tokens", 0)
-
-                        # 安全地获取thinking tokens
-                        thinking_tokens = 0
-                        if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
-                            thinking_tokens = getattr(usage.output_tokens_details, "reasoning_tokens", 0)
-
-                        record_token_usage(
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            thinking_tokens=thinking_tokens,
-                            model_name=self.settings.MODEL_NAME,
-                            operation=operation,
-                        )
 
                     return content
                 except _InvalidAIResponseError as exc:
