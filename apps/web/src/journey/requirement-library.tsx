@@ -1,6 +1,7 @@
 // Stitch: projects/13261964020862199279/screens/9988350685214b589db5c26ca0920ee5
 // and projects/13261964020862199279/screens/de9558b8e43347e2a006989d2b41b790.
 import {useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction} from 'react'
+import {createPortal} from 'react-dom'
 import {ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, GitBranch, Loader2, Plus, Search, Trash2, UploadCloud} from 'lucide-react'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
@@ -59,12 +60,13 @@ function ClauseDifference({before, after, label}: {before?: RequirementClause; a
   </article>
 }
 
-export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0}: {
+export function RequirementLibraryPanel({collections, onChange, uses, onOpen, saveError, loading, readError, onReload, title = '审核要求', uploadLabel = '上传要求', onPublished, active = true, automaticMatching = false, directory, readVersions, readRevision = 0, headerActions}: {
   collections: RequirementCollection[]; onChange: Dispatch<SetStateAction<RequirementCollection[]>>
   uses: RequirementUse[]; onOpen: (id: string) => void; saveError: string
   loading: boolean; readError: string; onReload: () => void
   title?: string; uploadLabel?: string; onPublished?: () => void; active?: boolean; automaticMatching?: boolean
   directory?: RequirementDirectoryCollection[]; readVersions?: ReadRequirementVersions; readRevision?: number
+  headerActions?: HTMLElement | null
 }) {
   const [selection, setSelection] = useState(routeSelection)
   const [query, setQuery] = useState(routeQuery)
@@ -218,16 +220,17 @@ export function RequirementLibraryPanel({collections, onChange, uses, onOpen, sa
     edit(draft => ({...draft, basis: {...draft.basis, source: {...draft.basis.source, state: 'manual'}, clauses: [...draft.basis.clauses, {id, title: '', text: '', original: '', source: draft.basis.source.filename, location: '', applicability: 'pending', checked: false, reason: ''}]}}))
     setEditing(id)
   }
+  const uploadAction = <Button disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>{uploadLabel}</Button>
   return <Dialog open={active && discard} onOpenChange={open => !working.current && setDiscard(open)}><section className="min-w-0 space-y-6 pb-10 text-sm">
     <input hidden aria-label="上传共用要求文件" ref={picker} type="file" accept={requirementFileAccept} disabled={locked} onChange={event => {uploadRevision.current = visibility.current.revision; void upload.upload(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
-    {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><Button disabled={locked} onClick={() => picker.current?.click()}><UploadCloud/>{uploadLabel}</Button></header>}
+    {selection.id ? <nav aria-label="要求导航"><a className="inline-flex min-h-9 items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-ring max-md:min-h-11" href={requirementHref()} aria-disabled={locked || undefined} onClick={event => {if (locked) event.preventDefault(); else navigate(event)}}><ArrowLeft className="size-4"/>返回{title}</a></nav> : headerActions ? <><h1 className="sr-only">{title}</h1>{active && createPortal(uploadAction, headerActions)}</> : <header className="flex items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">{title}</h1>{uploadAction}</header>}
     {upload.busy && <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin motion-reduce:animate-none"/>正在上传要求原件…</p>}
     {loading && <p role="status" className="text-muted-foreground">正在读取审核要求…</p>}
     {readError && <Alert variant="destructive"><AlertTitle>审核要求未能读取</AlertTitle><AlertDescription>{readError}<div><Button variant="outline" disabled={locked} onClick={onReload}>重新读取</Button></div></AlertDescription></Alert>}
     {(upload.error || saveError) && <Alert variant="destructive"><AlertTitle>未能保存</AlertTitle><AlertDescription>{upload.error || saveError}</AlertDescription></Alert>}
     {feedback && <p role={feedback.failed ? 'alert' : 'status'} className={feedback.failed ? 'text-destructive' : 'text-muted-foreground'}>{feedback.text}</p>}
     {!selection.id ? <>
-      <div className="space-y-3"><div role="search" aria-label="筛选审核要求" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核要求" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>{!loading && !readError && <p className="text-xs text-muted-foreground" role="status">{query ? `找到 ${shown.length} 份要求` : `${shown.length} 份要求`}</p>}</div>
+      <div role="search" aria-label="筛选审核要求" className="flex max-w-xl items-center gap-2"><Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true"/><Input aria-label="搜索审核要求" type="search" placeholder="搜索要求、客户或零件" maxLength={200} value={query} onChange={event => search(event.target.value)}/>{query && <Button variant="ghost" onClick={() => search('')}>清除</Button>}</div>
       {shown.length ? <>
         <div className="max-lg:hidden"><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-[40%]">要求名称</TableHead><TableHead>适用范围</TableHead><TableHead className="w-36">最近版本</TableHead><TableHead className="w-16">条款</TableHead><TableHead className="w-10"><span className="sr-only">打开</span></TableHead></TableRow></TableHeader><TableBody>{shown.map(item => {
           const latest = item.draft ?? item.versions.at(-1)!

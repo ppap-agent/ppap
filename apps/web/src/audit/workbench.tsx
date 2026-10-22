@@ -1,4 +1,5 @@
 import {useState} from 'react'
+import {createPortal} from 'react-dom'
 import {Plus, RefreshCw, Search} from 'lucide-react'
 import {Button} from '../components/ui/button'
 import {Input} from '../components/ui/input'
@@ -11,6 +12,7 @@ export type WorkbenchProps = {
   tasks: TaskSummary[]; query: string; onQuery: (value: string) => void; onNew: () => void; onOpen: (href: string) => void
   loading: boolean; errors: string[]; busy: boolean; more: boolean; onMore: () => void; onRefresh: () => void
   legacyItems?: WorkItem[]; onResume?: () => void
+  headerActions?: HTMLElement | null
 }
 const queues = [{id: 'all', label: '全部任务'}, {id: 'attention', label: '需要处理'}, {id: 'running', label: '进行中'}, {id: 'completed', label: '已完成'}] as const
 
@@ -19,8 +21,9 @@ export function AuditWorkbench(props: WorkbenchProps) {
   const [queue, setQueue] = useState('all')
   const items = [...workbenchItems(props.tasks), ...props.legacyItems || []]
   const shown = queue === 'all' ? items : items.filter(item => item.task === queue)
+  const actions = <div className="flex flex-wrap gap-2">{props.onResume && <Button variant="outline" onClick={props.onResume}>继续当前审核</Button>}<Button onClick={props.onNew}><Plus/>新建审核</Button></div>
   return <section className="mx-auto max-w-300 space-y-6" aria-label="工作台">
-    <header className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1><div className="flex flex-wrap gap-2">{props.onResume && <Button variant="outline" onClick={props.onResume}>继续当前审核</Button>}<Button onClick={props.onNew}><Plus/>新建审核</Button></div></header>
+    {props.headerActions ? <><h1 className="sr-only">工作台</h1>{createPortal(actions, props.headerActions)}</> : <header className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-2xl font-semibold tracking-tight">工作台</h1>{actions}</header>}
     <Tabs value={queue} onValueChange={setQueue}><TabsList>{queues.map(row => <TabsTrigger key={row.id} value={row.id}>{row.label}<span className="ml-1 text-xs tabular-nums text-muted-foreground">{row.id === 'all' ? items.length : items.filter(item => item.task === row.id).length}</span></TabsTrigger>)}</TabsList></Tabs>
     {props.errors.map(error => <p key={error} role="alert" className="text-sm text-destructive">{error}</p>)}
     {props.errors.length > 0 && items.length > 0 && <p className="text-sm text-muted-foreground">已读取的记录仍可打开；状态可能已变化。</p>}
