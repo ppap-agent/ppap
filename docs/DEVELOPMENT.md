@@ -115,6 +115,17 @@ Browser E2E 是 Python Playwright（`uv run --no-sync pytest tests/e2e`），对
 
 single-owner Python tests 位于各自 `packages/*/tests` / `services/*/tests`。pytest fixture lifecycle 直接由 owner `conftest.py` 提供；不动态加载 sibling support/test modules，也不通过 `request.instance` 建立注入框架。根 `tests/` 只保留 `repository`、`schema`、`corpus`、`integration`、`e2e`、`live` 六类 system-level authority。`tests/integration/product/conftest.py` 通过 pytest-native fixtures 提供该 suite 的数据库 reset/fixture seeding 与 `MemoryObjects` object-storage boundary fake，不实现第二套产品状态机；仓库明确不保留 `store_fixture.py` 这类 test-module import seam。API / Worker tests 各自保留 owner-local copy，不把 integration 当 library。pytest 不注入仓库根 `pythonpath`。
 
+## POC 规则资产导出
+
+原始 DOCX 是规则资产的内容依据；[`POC Rule Assets`](../assets/poc测试/poc规则/AGENTS.md) 规定生成文件和媒体路径。仅在需要重新生成资产时，从仓库根目录执行：
+
+```sh
+cd assets/poc测试/poc规则/markdown
+pandoc '../10规则-控制计划.docx' --wrap=none -t gfm -o '10规则-控制计划.docx.md' --extract-media='media/10规则-控制计划'
+```
+
+在输出目录运行 Pandoc，使图片链接保持 `media/10规则-控制计划/media/image*.png`，对应文件位于该目录的 `media/10规则-控制计划/` 下。生成后检查 diff、所有图片引用和对应文件；只移除已确认不再被引用的旧生成图片，不手改规则正文。若内容变化会影响预期行为，按 [TESTING](TESTING.md) 在当前 `tests/corpus/v3_poc` 入口验证，不恢复旧仓的测试路径，也不据导出成功声明审核通过。
+
 ## 工程工具链
 
 当前实现是 Python 3.12、uv workspace（每个 production owner 一份 `pyproject.toml` + 统一 `src-layout`）、已提交的 `uv.lock`，以及 `apps/web` 的 pnpm/TypeScript。质量检查是 `git show --check` 与 `compileall`；Python 测试统一由 pytest collect/execute；现有 `unittest.TestCase` 仅作为测试类写法保留；前端白盒/契约测试是 `pnpm test`；跨栈浏览器 E2E 是 Python Playwright；镜像是 Docker Bake；运行时是 Docker Compose 或 InsForge native lifecycle（`@insforge/cli@0.2.8`）。
