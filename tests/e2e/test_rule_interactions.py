@@ -558,13 +558,16 @@ class RuleInteractionTests(unittest.TestCase):
             published = next(iter(state["rules"].values()))
             page.get_by_role("button", name="创建新版本", exact=True).click()
             page.get_by_label("版本号", exact=True).fill("v2")
+            expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
             held = []
             page.route("**/api/rules/" + published["id"], lambda route: held.append(route))
             page.get_by_role("tab", name="版本变化", exact=True).click()
             expect(page.get_by_text("正在读取要求版本…", exact=True)).to_be_visible()
             page.get_by_role("link", name="返回审核规则", exact=True).click()
             page.get_by_role("link", name="已核对要求", exact=True).filter(visible=True).click()
+            expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
             page.get_by_label("来源说明／变更原因", exact=True).fill("等待旧版本期间补充的说明")
+            expect(page.get_by_label("版本号", exact=True)).to_have_value("v2")
             self.assertEqual(len(held), 1)
             with page.expect_response(lambda response: response.url.endswith("/api/rules/" + published["id"])) as late:
                 held[0].fulfill(json=published)
