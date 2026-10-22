@@ -1,8 +1,10 @@
 import {lazy, Suspense, useEffect, useState, type ReactNode} from 'react'
+import {Download, Info} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Badge} from '../components/ui/badge'
 import {Button} from '../components/ui/button'
+import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger} from '../components/ui/sheet'
 import {readReportPdf, type AuditReportAdapter, type AuditReportReference} from './report-contract'
 
 const PdfSource = lazy(() => import('../journey/pdf-source').then(module => ({default: module.PdfSource})))
@@ -14,7 +16,7 @@ export function ReportTime({value}: {value: string}) {
 }
 
 /** The same fixed-artifact reader is used by P6 and P11. */
-export function ReportPreview({name, rule, reference, report, ready, issue, adapter, children}: {name: string; rule: string; reference: AuditReportReference | null; report?: components['schemas']['AuditFileReport'] | null; ready: boolean; issue: string; adapter?: AuditReportAdapter; children?: ReactNode}) {
+export function ReportPreview({name, rule, ruleVersion, reference, report, ready, issue, adapter, actions, children}: {name: string; rule: string; ruleVersion?: string; reference: AuditReportReference | null; report?: components['schemas']['AuditFileReport'] | null; ready: boolean; issue: string; adapter?: AuditReportAdapter; actions?: ReactNode; children?: ReactNode}) {
   const [pdf, setPdf] = useState<{key: string; url: string; error: string} | null>(null), [reload, setReload] = useState(0)
   const pdfKey = ready && reference ? JSON.stringify([reference, report?.artifact]) : ''
   useEffect(() => {
@@ -26,5 +28,13 @@ export function ReportPreview({name, rule, reference, report, ready, issue, adap
   }, [pdfKey, adapter, reload])
   const currentPdf = pdf?.key === pdfKey ? pdf : null
   function download() {if (currentPdf?.url && report?.artifact) {const link = document.createElement('a'); link.href = currentPdf.url; link.download = report.artifact.filename; link.click()}}
-  return <section className="min-w-0 space-y-4" aria-label="当前报告" data-file-version={reference?.file_version_id} data-result-attempt={reference?.result_attempt}><div className="flex flex-wrap items-start justify-between gap-3"><h2 className="min-w-0 flex-1 break-all text-lg font-semibold">{name}-审核报告</h2><Button disabled={!currentPdf?.url} onClick={download}>下载当前报告</Button></div><Badge variant="outline">{issue ? '结果待核对' : !report ? '尚未取得结果' : report.state === 'ready' && !ready ? '产物待核对' : labels[report.state]}</Badge>{report?.generated_at && <p className="text-xs text-muted-foreground">生成时间：<ReportTime value={report.generated_at}/></p>}<p className="text-xs text-muted-foreground">审核规则：{rule}</p>{issue ? <Alert variant="destructive"><AlertTitle>不能展示正式报告</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert> : report?.reason ? <p className="text-muted-foreground">{report.reason}</p> : null}{children}{ready && adapter ? currentPdf?.error ? <Alert variant="destructive"><AlertTitle>无法读取 PDF</AlertTitle><AlertDescription>{currentPdf.error}<Button variant="outline" onClick={() => {setPdf(null); setReload(value => value + 1)}}>重新读取 PDF</Button></AlertDescription></Alert> : currentPdf?.url ? <div className="h-[65dvh] min-h-96 overflow-hidden border"><Suspense fallback={<p role="status">正在加载 PDF 阅读器…</p>}><PdfSource key={currentPdf.url} url={currentPdf.url} name={report!.artifact!.filename}/></Suspense></div> : <p role="status">正在读取 PDF…</p> : ready ? <p>暂时无法读取报告。</p> : null}</section>
+  return <section className="flex h-full min-w-0 flex-col gap-3" aria-label="当前报告" data-file-version={reference?.file_version_id} data-result-attempt={reference?.result_attempt}>
+    <header className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere] text-base font-semibold">{name}-审核报告</h2><div className="flex flex-wrap items-center gap-1">
+      <Sheet><SheetTrigger asChild><Button variant="ghost" size="sm"><Info/>报告信息</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>报告信息</SheetTitle><SheetDescription className="sr-only">当前报告的生成信息与冻结版本</SheetDescription></SheetHeader><dl className="grid gap-4 overflow-y-auto p-4 text-sm [&_dt]:mb-1 [&_dt]:text-xs [&_dt]:text-muted-foreground [&_dd]:[overflow-wrap:anywhere]"><div><dt>文件</dt><dd>{name}</dd></div><div><dt>生成时间</dt><dd>{report?.generated_at ? <ReportTime value={report.generated_at}/> : '尚未生成'}</dd></div><div><dt>审核规则</dt><dd>{rule}</dd></div>{ruleVersion && <div><dt>规则版本</dt><dd>{ruleVersion}</dd></div>}{reference && <><div><dt>任务</dt><dd>{reference.task_id}</dd></div><div><dt>审核轮次</dt><dd>{reference.round_id}</dd></div><div><dt>文件版本</dt><dd>{reference.file_version_id}</dd></div><div><dt>结果尝试</dt><dd>{reference.result_attempt}</dd></div><div><dt>报告</dt><dd>{reference.report_id}</dd></div></>}</dl></SheetContent></Sheet>
+      {actions}<Button size="sm" disabled={!currentPdf?.url} onClick={download}><Download/>下载当前报告</Button>
+    </div></header>
+    {(!ready || issue) && <Badge className="self-start" variant="outline">{issue ? '结果待核对' : !report ? '尚未取得结果' : report.state === 'ready' ? '产物待核对' : labels[report.state]}</Badge>}
+    {issue ? <Alert variant="destructive"><AlertTitle>不能展示正式报告</AlertTitle><AlertDescription>{issue}</AlertDescription></Alert> : report?.reason ? <p className="text-muted-foreground">{report.reason}</p> : null}{children}
+    {ready && adapter ? currentPdf?.error ? <Alert variant="destructive"><AlertTitle>无法读取 PDF</AlertTitle><AlertDescription>{currentPdf.error}<Button variant="outline" onClick={() => {setPdf(null); setReload(value => value + 1)}}>重新读取 PDF</Button></AlertDescription></Alert> : currentPdf?.url ? <div className="h-[65dvh] min-h-96 min-w-0 flex-1 overflow-hidden rounded-md border"><Suspense fallback={<p role="status">正在加载 PDF 阅读器…</p>}><PdfSource key={currentPdf.url} url={currentPdf.url} name={report!.artifact!.filename}/></Suspense></div> : <p role="status">正在读取 PDF…</p> : ready ? <p>暂时无法读取报告。</p> : null}
+  </section>
 }

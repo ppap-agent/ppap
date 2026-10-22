@@ -7,7 +7,7 @@ import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
 import {Button} from '../components/ui/button'
 import {Badge} from '../components/ui/badge'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table'
-import {readAuditRoute, taskAddress, writeAuditAddress} from './routes'
+import {auditAddressChanged, readAuditRoute, taskAddress, writeAuditAddress} from './routes'
 import {reviewed as hasReview, reviewable} from './review-navigation'
 import {CompletionNotification, type AuditNotificationAdapter} from './completion-notification'
 import {Item, ItemContent, ItemDescription, ItemGroup} from '../components/ui/item'
@@ -49,7 +49,8 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
       const id = params.get('report'); setReport(id === '1' ? task.files.find(row => row.selection === 'selected')?.file.id || '' : id)
     }
     window.addEventListener('popstate', restore)
-    return () => window.removeEventListener('popstate', restore)
+    window.addEventListener(auditAddressChanged, restore)
+    return () => {window.removeEventListener('popstate', restore); window.removeEventListener(auditAddressChanged, restore)}
   }, [task.id, task.files])
   function chooseFile(id: string) {
     setSelected(id)
@@ -83,7 +84,7 @@ export function AuditWorkspace({task, busy, readError, onReadSupport, onRead, on
   const actions = <div hidden={report !== null}><div className="flex shrink-0 items-center gap-2">{onReaudit && task.state === "completed" && <Button variant="outline" onClick={onReaudit}>发起重审</Button>}<Button aria-label="报告中心" onClick={() => showReport(file?.match?.state === 'reference' ? '' : file?.file.id || '')}><FileText/>报告中心{readyReports > 0 && <span>({readyReports})</span>}</Button><Button variant="outline" size="icon" aria-label="读取审核结果" title="刷新审核结果" disabled={busy} onClick={onRead}><RefreshCw className={busy ? 'animate-spin' : ''}/></Button>{task.notification_enabled !== undefined && notificationAdapter && <CompletionNotification compact task={task} adapter={notificationAdapter} onChange={preference => onChange({...task, notification_enabled: preference.enabled, notification_revision: preference.revision})}/>}</div></div>
   return <section>
     {headerActions && createPortal(actions, headerActions)}
-    {report !== null && <AuditReports task={task} initialFile={report} onChoose={showReport} onBack={() => showReport(null)} onRead={onRead} busy={busy} readError={readError} onReadSupport={onReadSupport} adapter={reportAdapter} onChange={onReportChange} sharingAdapter={sharingAdapter}/>}
+    {report !== null && <AuditReports task={task} initialFile={report} onChoose={showReport} onRead={onRead} busy={busy} readError={readError} onReadSupport={onReadSupport} adapter={reportAdapter} onChange={onReportChange} sharingAdapter={sharingAdapter}/>}
     <div hidden={report !== null}><header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b px-6 py-3 max-sm:px-4"><div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"><h1 className="text-2xl font-semibold">审核结果</h1><Badge shape="square" variant="outline">{progressIssue ? '进度待核对' : task.state === 'completed' ? '审核完成' : '审核中'}</Badge><p role="status" className="text-xs text-muted-foreground">{progressIssue ? '任务进度待核对' : <>{task.state === 'completed' ? '审核已结束' : '审核中'} · 文件已结束 {task.progress?.completed ?? '—'}/{task.progress?.total ?? targets.length}</>}</p>{references.length > 0 && <span className="text-xs text-muted-foreground">比对资料 {references.length} 份</span>}{counts && <><span className="text-xs text-muted-foreground">共 {counts.items} 项</span><div className="flex flex-wrap gap-1.5"><Badge shape="square" variant="success">符合 {counts.pass_count}</Badge><Badge shape="square" variant={counts.ng_count ? 'destructive' : 'outline'}>不符合 {counts.ng_count}</Badge>{counts.unknown_count > 0 && <Badge shape="square" variant="outline">无法判断 {counts.unknown_count}</Badge>}{counts.not_covered_count > 0 && <Badge shape="square" variant="outline">未覆盖 {counts.not_covered_count}</Badge>}{counts.error_count > 0 && <Badge shape="square" variant="outline">技术错误 {counts.error_count}</Badge>}</div></>}</div>{!headerActions && actions}</header>
       <div className="space-y-3 empty:hidden [&:not(:empty)]:border-b [&:not(:empty)]:px-6 [&:not(:empty)]:py-3">
       <AuditTaskEstimate task={task} progressIssue={Boolean(progressIssue)}/>
