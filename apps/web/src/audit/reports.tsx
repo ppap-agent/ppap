@@ -11,7 +11,7 @@ import {resultConsistencyError, reportReady, reportReference, shareContentFor, s
 import {readReportPdf, readReportZip, type AuditReportAdapter} from './report-contract'
 import {useReportActions} from './report-actions'
 import {ReportPackage, LinkedReportPackage, reportPackageAddress} from './report-package'
-import {ReportPreview} from './report-preview'
+import {ReportPreview, ReportTime} from './report-preview'
 import {ReportShareDialog} from './report-share'
 import {useShareActions} from './share-actions'
 import type {AuditSharingAdapter} from './sharing-contract'
@@ -79,7 +79,7 @@ export function AuditReports({task, initialFile, onBack, onChoose, onRead, busy,
     return <Item role="listitem" key={row.file.id} size="xs" className="items-start">
       <Checkbox aria-label={`选择报告 ${row.file.original_filename}${suffix}`} disabled={!ready} checked={checked.includes(row.file.id)} onCheckedChange={value => setChecked(ids => value === true ? [...ids, row.file.id] : ids.filter(id => id !== row.file.id))}/>
       <ItemContent><Button variant={file?.file.id === row.file.id ? 'secondary' : 'ghost'} aria-label={`${row.file.original_filename}-审核报告 ${status}${suffix}`} aria-pressed={file?.file.id === row.file.id} className="h-auto justify-start whitespace-normal text-left" onClick={() => {setSelected(row.file.id); onChoose(row.file.id); setOpen(false)}}>
-        <span className="grid min-w-0 gap-2"><FileName name={`${row.file.original_filename}-审核报告`} format="pdf"/><span className="text-xs">{status}{suffix}</span>{row.audit?.report.generated_at && <span className="text-xs">{row.audit.report.generated_at.replace('T', ' ')}</span>}</span>
+        <span className="grid min-w-0 gap-2"><FileName name={`${row.file.original_filename}-审核报告`} format="pdf"/><span className="text-xs">{status}{suffix}</span>{row.audit?.report.generated_at && <span className="text-xs"><ReportTime value={row.audit.report.generated_at}/></span>}</span>
       </Button></ItemContent>
     </Item>
   })}</ItemGroup>

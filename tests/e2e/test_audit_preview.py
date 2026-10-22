@@ -4,6 +4,7 @@ These checks do not prove real upload, matching, audit, billing or persistence.
 The production browser suite remains separate and unchanged.
 """
 
+import json
 import os
 import re
 import time
@@ -154,6 +155,17 @@ def open_reports(page, scene):
     read_results(page)
     close_workspace_panel(page)
     page.get_by_role("button", name="报告中心", exact=True).click()
+
+
+def package_references(package):
+    entries = package.get_by_role("listitem")
+    expect(entries).to_have_count(2)
+    references = [json.loads(item.get_attribute("data-report-reference")) for item in entries.all()]
+    for reference in references:
+        assert set(reference) == {"task_id", "round_id", "file_version_id", "result_attempt", "report_id"}
+        assert all(reference[field] for field in reference)
+    assert references[0] != references[1]
+    return references
 
 
 def deliver_reply(control):
@@ -1514,13 +1526,13 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             package = page.get_by_role("region", name="ZIP 工作", exact=True)
             expect(package.get_by_role("heading", name="ZIP 打包失败", exact=True)).to_be_visible()
-            original = package.get_by_text(re.compile("^冻结文件：")).all_text_contents()
+            original = package_references(package)
             first.uncheck()
             first.check()
             create.click()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             expect(package.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
-            self.assertEqual(package.get_by_text(re.compile("^冻结文件：")).all_text_contents(), original)
+            self.assertEqual(package_references(package), original)
             browser.close()
 
     def test_zip_incomplete_or_wrong_report_outcomes_are_read_back_without_repackaging(self):
@@ -1535,13 +1547,13 @@ class AuditPreviewTests(unittest.TestCase):
                     page.get_by_role("checkbox", name="选择报告 控制计划.xlsx", exact=True).check()
                     page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
                     package = page.get_by_role("region", name="ZIP 工作", exact=True)
-                    before = package.get_by_text(re.compile("^冻结文件：")).all_text_contents()
+                    before = package_references(package)
                     page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
                     expect(package.get_by_text("ZIP 结果暂时无法确认。保留原集合与原请求，只读取状态，不重复打包。", exact=True)).to_be_visible()
                     expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_have_count(0)
                     expect(page.get_by_role("button", name="打包所选 2 份报告", exact=True)).to_be_disabled()
                     expect(page.get_by_role("button", name="下载当前报告", exact=True)).to_be_enabled()
-                    self.assertEqual(package.get_by_text(re.compile("^冻结文件：")).all_text_contents(), before)
+                    self.assertEqual(package_references(package), before)
                     if failure == "ready":
                         page.get_by_role("button", name="读取报告状态", exact=True).click()
                         expect(package.get_by_text("ZIP 明细需要核对", exact=True)).to_be_visible()
@@ -1554,7 +1566,7 @@ class AuditPreviewTests(unittest.TestCase):
                         share.get_by_role("button", name="关闭", exact=True).click()
                     page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
                     expect(page.get_by_role("button", name="下载已就绪 ZIP", exact=True)).to_be_enabled()
-                    self.assertEqual(package.get_by_text(re.compile("^冻结文件：")).all_text_contents(), before)
+                    self.assertEqual(package_references(package), before)
                     page.close()
             browser.close()
 
@@ -3680,6 +3692,37 @@ class AuditPreviewTests(unittest.TestCase):
             expect(page.get_by_role("button", name="查看报告失败原因", exact=True)).to_have_count(0)
             browser.close()
 
+    def test_report_generation_time_uses_local_time_and_preserves_the_original_in_task_and_history(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000}, timezone_id="America/Los_Angeles")
+            page.set_default_timeout(5000)
+            page.goto(PREVIEW + "/preview/audit.html?scene=reports-ready&task=preview-report-task&report=1")
+            original = "2026-10-16T10:00:00+08:00"
+            current = page.get_by_role("region", name="当前报告", exact=True)
+            generated = current.locator("time")
+            expect(generated).to_have_attribute("datetime", original)
+            expect(generated).to_contain_text("2026/10/15")
+            expect(generated).to_contain_text("19:00")
+            expect(generated).to_contain_text("GMT-7")
+            listing = page.get_by_role("list", name="逐文件报告清单", exact=True)
+            expect(listing.get_by_role("listitem")).to_have_count(3)
+            expect(listing.locator("time")).to_have_count(2)
+            for item in listing.locator("time").all():
+                expect(item).to_have_attribute("datetime", original)
+                expect(item).to_have_text(generated.inner_text())
+            page.get_by_role("button", name="审核文件", exact=True).click()
+            page.get_by_role("table", name="审核文件档案", exact=True).get_by_role("row", name=re.compile("档案 A001")).get_by_role("button", name="查看审核记录", exact=True).click()
+            select_history(page, 2)
+            page.get_by_role("button", name="查看报告", exact=True).click()
+            expect(page.get_by_role("heading", name="历史报告", exact=True)).to_be_visible()
+            historical = page.get_by_role("region", name="当前报告", exact=True).locator("time")
+            expect(historical).to_have_attribute("datetime", original)
+            expect(historical).to_contain_text("2026/10/15")
+            expect(historical).to_contain_text("19:00")
+            expect(historical).to_contain_text("GMT-7")
+            browser.close()
+
     def test_report_view_gives_the_pdf_space_and_keeps_task_navigation_available(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -3791,7 +3834,12 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("checkbox", name="选择报告 控制计划.xlsx · 同名文件 1/2", exact=True).check()
             page.get_by_role("checkbox", name="选择报告 控制计划.xlsx · 同名文件 2/2", exact=True).check()
             page.get_by_role("button", name="打包所选 2 份报告", exact=True).click()
-            identities = page.get_by_role("region", name="ZIP 工作", exact=True).get_by_text(re.compile("^冻结文件：")).all_text_contents()
+            package = page.get_by_role("region", name="ZIP 工作", exact=True)
+            identities = package_references(package)
+            expect(package.get_by_text(re.compile("^冻结文件："))).to_have_count(0)
+            expect(package.get_by_text(re.compile("结果尝试："))).to_have_count(0)
+            for index, item in enumerate(package.get_by_role("listitem").all(), 1):
+                expect(item.get_by_text(f"第 {index} 份", exact=True)).to_be_visible()
             page.get_by_role("button", name="读取 ZIP 状态", exact=True).click()
             with page.expect_download() as download:
                 page.get_by_role("button", name="下载已就绪 ZIP", exact=True).click()
@@ -3803,7 +3851,7 @@ class AuditPreviewTests(unittest.TestCase):
                 self.assertEqual(len(identities), 2)
                 self.assertNotEqual(identities[0], identities[1])
                 for identity in identities:
-                    self.assertIn(identity.split("：", 1)[1].split(" · ")[0], index)
+                    self.assertIn(identity["file_version_id"], index)
             browser.close()
 
     def test_unknown_report_generation_reads_the_original_request(self):
