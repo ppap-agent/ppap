@@ -230,18 +230,19 @@ def run_live(
     candidate_sha: str,
     output: Path,
     analysis_mode: str = ANALYSIS_STANDARD,
+    bundle_ids: list[str] | None = None,
     isolated_login: bool = False,
     timeout: float = 900,
     poll_interval: float = 1,
 ) -> dict:
-    """Consume at most one acceptance per canonical bundle. Existing output is refused."""
+    """Accept each selected canonical bundle once. Existing output is refused."""
     if analysis_mode not in ANALYSIS_MODES:
         raise ValueError("invalid_analysis_mode")
     output.mkdir(parents=True, exist_ok=False)
     run: dict[str, Any] = {
         "candidate_sha": candidate_sha,
         "analysis_mode": analysis_mode,
-        "boundary": "canonical 27-case / 220-rule Product API / Worker comparison; not full Deep quality, safety, browser or production acceptance",
+        "boundary": "canonical Product API / Worker comparison in declared scope; subset is not full-corpus acceptance; not full Deep quality, safety, browser or production acceptance",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "outcome": "NOT_PROVEN",
         "attribution": "inconclusive",
@@ -256,6 +257,28 @@ def run_live(
     stage = "preflight"
     save()
     try:
+        oracle_path = REPO_ROOT / "assets" / "poc测试" / "poc-测试数据统计表.xlsx"
+        cases = load_poc_cases(dataset_root=REPO_ROOT / "assets" / "poc测试" / "POC测试样本", expected_xlsx=oracle_path)
+        bundles = build_bundle_map(cases)
+        if len(cases) != 27 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 220 or {case.file_seq for case in cases} != set(RULE_DOCS):
+            raise LiveError("canonical_universe_incomplete")
+        if bundle_ids is not None:
+            if not isinstance(bundle_ids, list) or not bundle_ids or any(not isinstance(bundle, str) for bundle in bundle_ids) or len(set(bundle_ids)) != len(bundle_ids):
+                raise LiveError("invalid_bundle_selection")
+            if any(bundle not in bundles for bundle in bundle_ids):
+                raise LiveError("unknown_bundle_selection")
+            bundles = {bundle: selected for bundle, selected in bundles.items() if bundle in bundle_ids}
+        selected_cases = [case for case in cases if case.bundle_id in bundles]
+        selected_rules = sum(len(case.expected) for case in selected_cases)
+        required_seqs = {case.file_seq for case in selected_cases}
+        run.update(
+            scope="full" if len(bundles) == 8 else "subset",
+            selected_bundles=sorted(bundles),
+            denominators={"full": {"bundles": 8, "files": 27, "rules": 220}, "selected": {"bundles": len(bundles), "files": len(selected_cases), "rules": selected_rules}},
+        )
+        assets = [oracle_path, *[case.file_path for case in selected_cases], *[REPO_ROOT / "assets" / "poc测试" / "poc规则" / RULE_DOCS[seq] for seq in RULE_DOCS if seq in required_seqs]]
+        run["asset_digests"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets}
+        save()
         config = _json(client, "GET", "/public-config")
         if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha) or config.get("git_sha") != candidate_sha or config.get("usage_charge_enabled") is not False:
             raise LiveError("candidate_or_charging_policy_mismatch")
@@ -266,16 +289,11 @@ def run_live(
             raise LiveError("stack_not_ready")
         if isolated_login:
             _json(client, "POST", "/isolated-dev/sessions", json={"subject": "alice"})
-        oracle_path = REPO_ROOT / "assets" / "poc测试" / "poc-测试数据统计表.xlsx"
-        cases = load_poc_cases(dataset_root=REPO_ROOT / "assets" / "poc测试" / "POC测试样本", expected_xlsx=oracle_path)
-        bundles = build_bundle_map(cases)
-        if len(cases) != 27 or len(bundles) != 8 or sum(len(case.expected) for case in cases) != 220 or {case.file_seq for case in cases} != set(RULE_DOCS):
-            raise LiveError("canonical_universe_incomplete")
-        assets = [oracle_path, *[case.file_path for case in cases], *[REPO_ROOT / "assets" / "poc测试" / "poc规则" / name for name in RULE_DOCS.values()]]
-        run["asset_digests"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets}
         published, unavailable = {}, set()
         stage = "rule_setup"
         for seq in RULE_DOCS:
+            if seq not in required_seqs:
+                continue
             try:
                 published[seq] = _publish(client, seq, cases, run, save, timeout, poll_interval)
             except (LiveError, KeyError, TypeError, OSError) as exc:
@@ -327,8 +345,8 @@ def run_live(
                     row["kind"] = "execution_failure"
             rows.extend(group_rows)
             save()
-        if len(rows) == 220 and all(row["kind"] == MATCH for row in rows) and not run["errors"]:
-            run["outcome"] = "PROVEN"
+        if len(rows) == selected_rules and all(row["kind"] == MATCH for row in rows) and not run["errors"]:
+            run["outcome"] = "PROVEN" if run["scope"] == "full" else "SUBSET_PROVEN"
             run.pop("attribution")
     except (LiveError, KeyError, TypeError, OSError, AssertionError, ValueError) as exc:
         run["errors"].append({"stage": stage, "code": str(exc) if isinstance(exc, LiveError) else "invalid_setup"})
@@ -344,6 +362,7 @@ def main():
     parser.add_argument("--candidate-sha", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--analysis-mode", choices=sorted(ANALYSIS_MODES), default=ANALYSIS_STANDARD)
+    parser.add_argument("--bundle", dest="bundle_ids", action="append", help="exact canonical bundle name; repeat to select whole bundles (default: all eight)")
     parser.add_argument("--isolated-login", action="store_true")
     parser.add_argument("--timeout", type=float, default=900)
     args = parser.parse_args()
@@ -354,9 +373,13 @@ def main():
         parser.error("API must be an origin without credentials; timeout must be 0..1800 seconds")
     headers = {"Cookie": os.environ["PPAP_LIVE_COOKIE"]} if os.environ.get("PPAP_LIVE_COOKIE") else {}
     with httpx.Client(base_url=args.api.rstrip("/"), headers=headers, timeout=30, follow_redirects=False) as client:
-        result = run_live(client, candidate_sha=args.candidate_sha, output=args.output, analysis_mode=args.analysis_mode, isolated_login=args.isolated_login, timeout=args.timeout)
-    print(json.dumps({"outcome": result["outcome"], "candidate_sha": args.candidate_sha, "analysis_mode": args.analysis_mode, "report": str(args.output / "report.json")}))
-    raise SystemExit(0 if result["outcome"] == "PROVEN" else 1)
+        result = run_live(
+            client, candidate_sha=args.candidate_sha, output=args.output, analysis_mode=args.analysis_mode, bundle_ids=args.bundle_ids, isolated_login=args.isolated_login, timeout=args.timeout
+        )
+    print(
+        json.dumps({"outcome": result["outcome"], "scope": result.get("scope"), "candidate_sha": args.candidate_sha, "analysis_mode": args.analysis_mode, "report": str(args.output / "report.json")})
+    )
+    raise SystemExit(0 if result["outcome"] in {"PROVEN", "SUBSET_PROVEN"} else 1)
 
 
 if __name__ == "__main__":
