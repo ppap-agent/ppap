@@ -15,6 +15,27 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class TaskNavigationPreviewTests(unittest.TestCase):
+    def test_notification_report_link_skips_a_leading_reference_but_keeps_explicit_identity(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(5000)
+            address = PREVIEW + "/preview/audit.html?scene=reports-reference-first&task=preview-report-task&report=1"
+            page.goto(address)
+            current = page.get_by_role("region", name="当前报告", exact=True)
+            expect(current.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            expect(current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_be_visible()
+            table = page.get_by_role("table", name="逐文件报告清单", exact=True)
+            expect(table.get_by_text("特殊特性清单.xlsx", exact=True)).to_have_count(0)
+            page.reload()
+            expect(current.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            page.goto(address.replace("report=1", "report=preview-recovery-version-0"))
+            expect(page.get_by_text("所选报告不可用，请从清单中重新选择。", exact=True)).to_be_visible()
+            expect(current.get_by_role("toolbar", name="PDF 阅读工具", exact=True)).to_have_count(0)
+            page.go_back()
+            expect(current.get_by_role("heading", name="控制计划.xlsx-审核报告", exact=True)).to_be_visible()
+            browser.close()
+
     def test_report_breadcrumb_clears_the_host_preview_report_address_before_reload(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
