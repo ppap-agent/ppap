@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from ppap_core.audits import EXECUTOR_DEEP, EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION
 from ppap_corpus_contracts.live_poc import run_live
 from ppap_corpus_contracts.poc_oracle import load_poc_cases
 
@@ -104,7 +105,9 @@ class ProductAPI:
                 result = {
                     "id": str(uuid4()),
                     "source_draft_id": draft["id"],
-                    "analysis_mode": "standard",
+                    "analysis_mode": draft["analysis_mode"],
+                    "executor": EXECUTOR_DEEP if draft["analysis_mode"] == "deep" else EXECUTOR_STANDARD,
+                    "executor_revision": "b" * 64 if draft["analysis_mode"] == "deep" else STANDARD_EXECUTOR_REVISION,
                     "execution": "completed",
                     "result_job_id": str(uuid4()),
                     "inputs": draft["items"],
@@ -117,7 +120,14 @@ class ProductAPI:
                     for index, expected in self.cases[version["original_filename"]].expected.items():
                         key = f"{version['id']}:rule:{index}"
                         result["coverage"]["rule_items"].append(
-                            {"id": str(index), "file_version_id": version["id"], "rule_version_id": item["rule_version_id"], "coverage": "mapped", "status": expected.status, "item_key": key}
+                            {
+                                "id": str(index),
+                                "file_version_id": version["id"],
+                                "rule_version_id": item["rule_version_id"],
+                                "coverage": "executed" if draft["analysis_mode"] == "deep" else "mapped",
+                                "status": expected.status,
+                                "item_key": key,
+                            }
                         )
                         result["findings"].append({"item_key": key, "status": expected.status, "suggestions": "真实结果的 HTTP 样例"})
                 if self.failure == "duplicate":
@@ -177,6 +187,27 @@ class ProductAPI:
                             row["status"] = finding["status"] = "NG" if row["status"] == "PASS" else "PASS"
                         else:
                             finding["suggestions"] = "说明文字已更新\n  审核结果未改变"
+                if self.failure.startswith(("accepted_", "completed_")) or self.failure in {"execution_error", "extra_rule_output", "extra_finding", "swapped_coverage_mode"}:
+                    if self.changed_round_id is None:
+                        self.changed_round_id = result["id"]
+                        if self.failure == "accepted_mode":
+                            result["analysis_mode"] = "standard" if draft["analysis_mode"] == "deep" else "deep"
+                        elif self.failure == "accepted_executor":
+                            result["executor"] = EXECUTOR_STANDARD if draft["analysis_mode"] == "deep" else EXECUTOR_DEEP
+                        elif self.failure == "accepted_revision":
+                            result["executor_revision"] = "ppap-deep-v2" if draft["analysis_mode"] == "deep" else "another-standard-revision"
+                        elif self.failure == "execution_error":
+                            result["coverage"]["rule_items"][0].update(coverage="execution_error", status="ERR")
+                            result["findings"][0]["status"] = "ERR"
+                        elif self.failure == "extra_rule_output":
+                            extra = {**result["coverage"]["rule_items"][0], "id": "unexpected-rule", "item_key": "unexpected-item"}
+                            result["coverage"]["rule_items"].append(extra)
+                            result["findings"].append({"item_key": extra["item_key"], "status": "PASS"})
+                        elif self.failure == "extra_finding":
+                            result["findings"].append({"item_key": "unexpected-item", "status": "PASS"})
+                        elif self.failure == "swapped_coverage_mode":
+                            for row in result["coverage"]["rule_items"]:
+                                row["coverage"] = "mapped" if draft["analysis_mode"] == "deep" else "executed"
                 self.rounds[result["id"]] = result
                 draft["round"] = result
                 if self.failure == "lost_accept_response":
@@ -187,6 +218,13 @@ class ProductAPI:
             return httpx.Response(200, json=draft.get("round") if path.endswith("/round") else draft)
         if path.startswith("/rounds/"):
             result = self.rounds[path.rsplit("/", 1)[1]]
+            if result["id"] == self.changed_round_id:
+                if self.failure == "completed_mode":
+                    result["analysis_mode"] = "standard" if result["analysis_mode"] == "deep" else "deep"
+                elif self.failure == "completed_executor":
+                    result["executor"] = "another-executor"
+                elif self.failure == "completed_revision":
+                    result["executor_revision"] = "c" * 64 if result["analysis_mode"] == "deep" else "another-standard-revision"
             if self.failure == "profile_drift_readback" and result["id"] == self.changed_round_id:
                 body = result["inputs"][0]["rule"]["body"]
                 result["inputs"][0]["rule"]["body"] = {**body, "rule_profile": "v2"}
@@ -212,17 +250,27 @@ class ProductAPI:
         ("one_status_mismatch", "NOT_PROVEN"),
     ],
 )
-def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure, outcome):
+@pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
+def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure, outcome, analysis_mode):
     api = ProductAPI(failure)
     output = tmp_path / "run"
     with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
-        result = run_live(client, candidate_sha="a" * 40, output=output, isolated_login=True, timeout=0.001, poll_interval=0)
+        result = run_live(client, candidate_sha="a" * 40, output=output, analysis_mode=analysis_mode, isolated_login=True, timeout=0.001, poll_interval=0)
     assert result["outcome"] == outcome
     assert len([path for method, path in api.writes if path.endswith("/accept")]) == 8
     assert len([path for method, path in api.writes if path == "/rules/parse"]) == 5
     report = json.loads((output / "report.json").read_text())
     assert report["summary"]["selected_cases"] == 27
     assert report["summary"]["total_rules"] == 220
+    assert result["analysis_mode"] == report["run"]["analysis_mode"] == analysis_mode
+    assert {draft["analysis_mode"] for draft in api.drafts.values()} == {analysis_mode}
+    accepted = [operation for operation in result["operations"] if operation["stage"] == "accept"]
+    assert {operation["analysis_mode"] for operation in accepted} == {analysis_mode}
+    frozen = [operation for operation in accepted if "executor" in operation]
+    assert all(operation["executor"] == (EXECUTOR_DEEP if analysis_mode == "deep" else EXECUTOR_STANDARD) for operation in frozen)
+    assert all(operation["executor_revision"] == ("b" * 64 if analysis_mode == "deep" else STANDARD_EXECUTOR_REVISION) for operation in frozen)
+    if outcome == "PROVEN":
+        assert len(frozen) == 8
     assert "private transport" not in (output / "report.json").read_text()
     assert (output / "report.md").is_file()
     if failure == "reordered_inputs":
@@ -264,11 +312,12 @@ def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure,
         ("profile_drift_readback", "audit", "execution_failure"),
     ],
 )
-def test_changed_frozen_inputs_reject_only_the_affected_group_without_reaccepting(tmp_path, failure, stage, kind):
+@pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
+def test_changed_frozen_inputs_reject_only_the_affected_group_without_reaccepting(tmp_path, failure, stage, kind, analysis_mode):
     api = ProductAPI(failure)
     output = tmp_path / "run"
     with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
-        result = run_live(client, candidate_sha="a" * 40, output=output, isolated_login=True, timeout=0.001, poll_interval=0)
+        result = run_live(client, candidate_sha="a" * 40, output=output, analysis_mode=analysis_mode, isolated_login=True, timeout=0.001, poll_interval=0)
 
     assert result["outcome"] == "NOT_PROVEN"
     assert result["attribution"] == "inconclusive"
@@ -288,3 +337,70 @@ def test_changed_frozen_inputs_reject_only_the_affected_group_without_reacceptin
     assert {row["failure_stage"] for row in affected} == {stage}
     assert {row["kind"] for row in affected} == {kind}
     assert all(row["kind"] == "match" for row in report["rule_results"] if row["round_id"] != api.changed_round_id)
+
+
+def test_default_mode_stays_standard_and_invalid_modes_never_make_requests(tmp_path):
+    api = ProductAPI()
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=tmp_path / "default")
+    assert result["outcome"] == "PROVEN"
+    assert result["analysis_mode"] == "standard"
+    assert {draft["analysis_mode"] for draft in api.drafts.values()} == {"standard"}
+
+    def unexpected_request(_request):
+        raise AssertionError("invalid mode reached the HTTP boundary")
+
+    output = tmp_path / "invalid"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(unexpected_request)) as client, pytest.raises(ValueError, match="invalid_analysis_mode"):
+        run_live(client, candidate_sha="a" * 40, output=output, analysis_mode="automatic")
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
+@pytest.mark.parametrize("failure", ["accepted_mode", "accepted_executor", "accepted_revision", "completed_mode", "completed_executor", "completed_revision", "extra_rule_output", "extra_finding"])
+def test_mode_policy_and_exact_rule_output_are_frozen_without_reaccepting(tmp_path, analysis_mode, failure):
+    api = ProductAPI(failure)
+    output = tmp_path / "run"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, analysis_mode=analysis_mode, timeout=0.001, poll_interval=0)
+
+    assert result["outcome"] == "NOT_PROVEN"
+    assert result["attribution"] == "inconclusive"
+    assert len(result["errors"]) == 1
+    expected_stage = "accept" if failure.startswith("accepted_") else "audit"
+    assert result["errors"][0]["stage"] == expected_stage
+    assert result["errors"][0]["code"] == (
+        "round_identity_mismatch" if failure.endswith("_mode") else "rule_result_identity_mismatch" if failure in {"extra_rule_output", "extra_finding"} else "frozen_executor_mismatch"
+    )
+    accepts = [path for _method, path in api.writes if path.endswith("/accept")]
+    assert len(accepts) == len(set(accepts)) == 8
+    report = json.loads((output / "report.json").read_text())
+    assert report["summary"]["selected_cases"] == 27
+    assert report["summary"]["total_rules"] == 220
+    assert all(row["kind"] == "match" for row in report["rule_results"] if row["round_id"] != api.changed_round_id)
+
+
+@pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
+@pytest.mark.parametrize("failure", ["execution_error", "swapped_coverage_mode"])
+def test_mode_coverage_keeps_execution_errors_distinct_from_missing_rules(tmp_path, analysis_mode, failure):
+    api = ProductAPI(failure)
+    output = tmp_path / "run"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, analysis_mode=analysis_mode, timeout=0.001, poll_interval=0)
+
+    assert result["outcome"] == "NOT_PROVEN"
+    assert result["errors"] == []
+    assert len([path for _method, path in api.writes if path.endswith("/accept")]) == 8
+    report = json.loads((output / "report.json").read_text())
+    assert report["summary"]["total_rules"] == 220
+    affected = [row for row in report["rule_results"] if row["kind"] != "match"]
+    assert {row["round_id"] for row in affected} == {api.changed_round_id}
+    if failure == "execution_error":
+        assert len(affected) == 1
+        assert affected[0]["actual_status"] == "ERR"
+        assert affected[0]["kind"] == "execution_failure"
+        assert report["summary"]["execution_failed_rules"] == 1
+        assert report["summary"]["parity_failed_rules"] == 0
+        assert "execution_failure" in (output / "report.md").read_text()
+    else:
+        assert {row["kind"] for row in affected} == {"missing_rule"}
