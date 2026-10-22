@@ -3164,6 +3164,31 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True)).to_be_enabled()
             browser.close()
 
+    def test_directory_switch_failure_clears_old_candidates_but_keeps_selected_recipients(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            page.set_default_timeout(5000)
+            open_reports(page, "reports-share-directory-loading")
+            page.get_by_role("button", name="分享", exact=True).click()
+            dialog = page.get_by_role("dialog", name="分享审核报告", exact=True)
+            page.evaluate("window.postMessage({type: 'ppap-preview-read', failed: false}, location.origin)")
+            dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True).check()
+            dialog.get_by_role("tab", name="群组", exact=True).click()
+            expect(dialog.get_by_text("正在读取组织目录…", exact=True)).to_be_visible()
+            expect(dialog.get_by_role("checkbox")).to_have_count(0)
+            expect(dialog.get_by_role("list", name="已选接收人", exact=True)).to_contain_text("示例李工")
+            page.evaluate("window.postMessage({type: 'ppap-preview-read', failed: true}, location.origin)")
+            expect(dialog.get_by_role("alert")).to_contain_text("目录暂不可用")
+            expect(dialog.get_by_role("checkbox")).to_have_count(0)
+            expect(dialog.get_by_role("button", name="加载更多目标", exact=True)).to_have_count(0)
+            expect(dialog.get_by_role("button", name="发送给 1 个目标", exact=True)).to_be_disabled()
+            dialog.get_by_role("tab", name="人员", exact=True).click()
+            page.evaluate("window.postMessage({type: 'ppap-preview-read', failed: false}, location.origin)")
+            expect(dialog.get_by_role("checkbox", name="选择人员 示例李工", exact=True)).to_be_checked()
+            expect(dialog.get_by_role("button", name="发送给 1 个目标", exact=True)).to_be_enabled()
+            browser.close()
+
     def test_reopened_share_revalidates_retained_targets_before_sending(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

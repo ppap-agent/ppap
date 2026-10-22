@@ -21,6 +21,7 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
   async function load(pageToken?: string, lookup = {query, kind}) {
     const run = ++epoch.current
     onReadyChange(false); setLoading(true); setError(''); setNotice('')
+    if (!pageToken) {setTargets([]); setNextPage('')}
     try {
       const search = pageToken ? committed.current : lookup
       const page = await adapter.listTargets(search.query, search.kind, pageToken)
