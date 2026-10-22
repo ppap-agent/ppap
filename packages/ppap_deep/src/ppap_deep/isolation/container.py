@@ -25,6 +25,7 @@ from uuid import UUID
 from ppap_core.deep_policy import GUEST_UID, DeepExecutionPolicy
 from pydantic import Field
 
+from ppap_deep.limits import MAX_INPUT_FILES, MAX_INPUT_TOTAL
 from ppap_deep.semantic.guest_model import ModelGrant
 from ppap_deep.semantic.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpec, SubmissionSpec
 from ppap_deep.semantic.secure_files import read_json, read_regular
@@ -34,8 +35,6 @@ from .progress import Progress
 from .storage import write_json
 
 MAX_OUTPUT = 16 * 1024 * 1024
-MAX_INPUT_TOTAL = 128 * 1024 * 1024
-MAX_INPUT_FILES = 256
 MAX_OUTER_STDERR = 4096
 
 

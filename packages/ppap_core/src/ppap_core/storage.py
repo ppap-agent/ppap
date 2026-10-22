@@ -4,7 +4,7 @@ import boto3
 from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
-from ppap_core.files import ObjectExists, ObjectMissing
+from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
 from ppap_core.settings import Settings
 
 
@@ -63,7 +63,9 @@ class S3Objects:
             raise ObjectExists()
         client.put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
 
-    def get(self, key: str) -> bytes:
+    def get(self, key: str, *, max_bytes: int | None = None) -> bytes:
+        if max_bytes is not None and max_bytes < 0:
+            raise ValueError("max_bytes must be nonnegative")
         try:
             response = s3_client(self.settings).get_object(Bucket=self.settings.s3_bucket, Key=key)
         except ClientError as exc:
@@ -71,7 +73,20 @@ class S3Objects:
             if code in {"404", "NoSuchKey", "NotFound"}:
                 raise ObjectMissing() from exc
             raise
-        return response["Body"].read()
+        body = response["Body"]
+        try:
+            if max_bytes is None:
+                return body.read()
+            if response.get("ContentLength", 0) > max_bytes:
+                raise ObjectTooLarge()
+            data = bytearray()
+            while chunk := body.read(min(1024 * 1024, max_bytes + 1 - len(data))):
+                data.extend(chunk)
+                if len(data) > max_bytes:
+                    raise ObjectTooLarge()
+            return bytes(data)
+        finally:
+            body.close()
 
     def delete(self, key: str) -> None:
         s3_client(self.settings).delete_object(Bucket=self.settings.s3_bucket, Key=key)
