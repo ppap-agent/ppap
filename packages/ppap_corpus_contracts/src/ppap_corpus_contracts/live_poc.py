@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from ppap_core.audits import ANALYSIS_DEEP, ANALYSIS_MODES, ANALYSIS_STANDARD, EXECUTOR_DEEP, EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION
 
 from ppap_corpus_contracts.acceptance_report import write_acceptance_report
 from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, REPO_ROOT, build_bundle_map, load_poc_cases
@@ -143,9 +144,17 @@ def _publish(client, seq, cases, run, save, timeout, interval):
     return published
 
 
-def _frozen_inputs(result, draft_id, items, rules):
-    if result.get("source_draft_id") != draft_id or result.get("analysis_mode") != "standard":
+def _frozen_inputs(result, draft_id, items, rules, analysis_mode, frozen_execution=None):
+    if result.get("source_draft_id") != draft_id or result.get("analysis_mode") != analysis_mode:
         raise LiveError("round_identity_mismatch")
+    executor = EXECUTOR_DEEP if analysis_mode == ANALYSIS_DEEP else EXECUTOR_STANDARD
+    revision = result.get("executor_revision")
+    revision_valid = isinstance(revision, str) and bool(re.fullmatch(r"[0-9a-f]{64}", revision)) if analysis_mode == ANALYSIS_DEEP else revision == STANDARD_EXECUTOR_REVISION
+    if result.get("executor") != executor or not revision_valid:
+        raise LiveError("frozen_executor_mismatch")
+    execution = {"analysis_mode": analysis_mode, "executor": executor, "executor_revision": revision}
+    if frozen_execution is not None and execution != frozen_execution:
+        raise LiveError("frozen_executor_mismatch")
     actual = result.get("inputs") or []
     if len(actual) != len(items):
         raise LiveError("frozen_input_mismatch")
@@ -154,12 +163,38 @@ def _frozen_inputs(result, draft_id, items, rules):
         actual = by_version.get(expected["file_version_id"], {})
         if any(actual.get(key) != value for key, value in expected.items()) or actual.get("rule", {}).get("body") != rules[expected["rule_version_id"]]["body"]:
             raise LiveError("frozen_input_mismatch")
+    return execution
 
 
-def _rows(cases, versions, rule_versions, result, stage, error, round_id):
+def _rule_results(result, items, rules):
+    expected = {(item["file_version_id"], str(rule["id"])) for item in items for rule in rules[item["rule_version_id"]]["body"]["rules"]}
+    coverage = result.get("coverage", {}).get("rule_items", [])
+    findings = result.get("findings", [])
+    identities = [(row.get("file_version_id"), str(row.get("id"))) for row in coverage]
+    keys = [row.get("item_key") for row in coverage]
+    finding_keys = [row.get("item_key") for row in findings]
+    if (
+        len(identities) != len(expected)
+        or set(identities) != expected
+        or any(not isinstance(key, str) or not key for key in keys)
+        or len(set(keys)) != len(keys)
+        or len(finding_keys) != len(keys)
+        or set(finding_keys) != set(keys)
+    ):
+        raise LiveError("rule_result_identity_mismatch")
+
+
+def _rows(cases, versions, rule_versions, result, stage, error, round_id, analysis_mode):
     rows = []
     for case in cases:
-        verdicts = compare_file(file_name=case.file_name, version_id=versions.get(case.file_name, ""), expected={i: e.status for i, e in case.expected.items()}, result=result, setup_error=error)
+        verdicts = compare_file(
+            file_name=case.file_name,
+            version_id=versions.get(case.file_name, ""),
+            expected={i: e.status for i, e in case.expected.items()},
+            result=result,
+            setup_error=error,
+            expected_coverage="executed" if analysis_mode == ANALYSIS_DEEP else "mapped",
+        )
         coverage = [item for item in (result or {}).get("coverage", {}).get("rule_items", []) if item.get("file_version_id") == versions.get(case.file_name)]
         for verdict in verdicts:
             matched = [item for item in coverage if str(item.get("id")) == str(verdict.rule_index)]
@@ -189,12 +224,24 @@ def _rows(cases, versions, rule_versions, result, stage, error, round_id):
     return rows
 
 
-def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated_login: bool = False, timeout: float = 900, poll_interval: float = 1) -> dict:
+def run_live(
+    client: httpx.Client,
+    *,
+    candidate_sha: str,
+    output: Path,
+    analysis_mode: str = ANALYSIS_STANDARD,
+    isolated_login: bool = False,
+    timeout: float = 900,
+    poll_interval: float = 1,
+) -> dict:
     """Consume at most one acceptance per canonical bundle. Existing output is refused."""
+    if analysis_mode not in ANALYSIS_MODES:
+        raise ValueError("invalid_analysis_mode")
     output.mkdir(parents=True, exist_ok=False)
     run: dict[str, Any] = {
         "candidate_sha": candidate_sha,
-        "boundary": "isolated Product API / Worker; not browser or production acceptance",
+        "analysis_mode": analysis_mode,
+        "boundary": "canonical 27-case / 220-rule Product API / Worker comparison; not full Deep quality, safety, browser or production acceptance",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "outcome": "NOT_PROVEN",
         "attribution": "inconclusive",
@@ -248,12 +295,12 @@ def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated
                     items.append({"file_version_id": version["id"], "role": "target", "rule_version_id": published[case.file_seq]["id"]})
                 stage = "draft_save"
                 draft_id = str(uuid4())
-                run["operations"].append({"stage": stage, "bundle": bundle, "request_id": draft_id})
+                run["operations"].append({"stage": stage, "bundle": bundle, "request_id": draft_id, "analysis_mode": analysis_mode})
                 save()
                 _submit(client, "/drafts", {"request_id": draft_id}, 201, "/drafts/" + draft_id)
-                _json(client, "PUT", "/drafts/" + draft_id, json={"analysis_mode": "standard", "items": items})
+                _json(client, "PUT", "/drafts/" + draft_id, json={"analysis_mode": analysis_mode, "items": items})
                 stage = "accept"
-                run["operations"].append({"stage": stage, "bundle": bundle, "draft_id": draft_id, "idempotency_key": str(uuid4())})
+                run["operations"].append({"stage": stage, "bundle": bundle, "draft_id": draft_id, "idempotency_key": str(uuid4()), "analysis_mode": analysis_mode})
                 save()
                 accepted = _submit(client, f"/drafts/{draft_id}/accept", {"idempotency_key": run["operations"][-1]["idempotency_key"]}, 201, f"/drafts/{draft_id}/round")
                 if not accepted:
@@ -261,17 +308,20 @@ def run_live(client: httpx.Client, *, candidate_sha: str, output: Path, isolated
                 round_id = accepted["id"]
                 run["operations"][-1]["round_id"] = round_id
                 save()
-                _frozen_inputs(accepted, draft_id, items, by_rule)
+                execution = _frozen_inputs(accepted, draft_id, items, by_rule, analysis_mode)
+                run["operations"][-1].update(execution)
+                save()
                 stage = "audit"
                 result = _poll(client, "/rounds/" + round_id, "execution", {"completed", "failed"}, timeout, poll_interval)
                 run["operations"][-1]["job_id"] = result.get("result_job_id")
-                _frozen_inputs(result, draft_id, items, by_rule)
+                _frozen_inputs(result, draft_id, items, by_rule, analysis_mode, execution)
                 if result["execution"] != "completed" or not result.get("result_job_id"):
                     raise LiveError("audit_not_completed")
+                _rule_results(result, items, by_rule)
             except (LiveError, KeyError, TypeError, OSError) as exc:
                 error = str(exc) if isinstance(exc, LiveError) else "invalid_product_response"
                 run["errors"].append({"stage": stage, "bundle": bundle, "code": error, "round_id": round_id})
-            group_rows = _rows(selected, versions, {item["file_version_id"]: item["rule_version_id"] for item in items}, result, stage, error, round_id)
+            group_rows = _rows(selected, versions, {item["file_version_id"]: item["rule_version_id"] for item in items}, result, stage, error, round_id, analysis_mode)
             if stage == "audit" and error:
                 for row in group_rows:
                     row["kind"] = "execution_failure"
@@ -293,6 +343,7 @@ def main():
     parser.add_argument("--api", required=True)
     parser.add_argument("--candidate-sha", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--analysis-mode", choices=sorted(ANALYSIS_MODES), default=ANALYSIS_STANDARD)
     parser.add_argument("--isolated-login", action="store_true")
     parser.add_argument("--timeout", type=float, default=900)
     args = parser.parse_args()
@@ -303,8 +354,8 @@ def main():
         parser.error("API must be an origin without credentials; timeout must be 0..1800 seconds")
     headers = {"Cookie": os.environ["PPAP_LIVE_COOKIE"]} if os.environ.get("PPAP_LIVE_COOKIE") else {}
     with httpx.Client(base_url=args.api.rstrip("/"), headers=headers, timeout=30, follow_redirects=False) as client:
-        result = run_live(client, candidate_sha=args.candidate_sha, output=args.output, isolated_login=args.isolated_login, timeout=args.timeout)
-    print(json.dumps({"outcome": result["outcome"], "candidate_sha": args.candidate_sha, "report": str(args.output / "report.json")}))
+        result = run_live(client, candidate_sha=args.candidate_sha, output=args.output, analysis_mode=args.analysis_mode, isolated_login=args.isolated_login, timeout=args.timeout)
+    print(json.dumps({"outcome": result["outcome"], "candidate_sha": args.candidate_sha, "analysis_mode": args.analysis_mode, "report": str(args.output / "report.json")}))
     raise SystemExit(0 if result["outcome"] == "PROVEN" else 1)
 
 

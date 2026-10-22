@@ -109,6 +109,7 @@ def compare_file(
     expected: dict[int, str],
     result: dict | None,
     setup_error: str | None,
+    expected_coverage: str = "mapped",
 ) -> list[RuleVerdict]:
     if setup_error or result is None:
         return [RuleVerdict(file_name, index, SETUP_FAILURE, status, detail=setup_error or "round did not run") for index, status in sorted(expected.items())]
@@ -123,13 +124,17 @@ def compare_file(
     verdicts: list[RuleVerdict] = []
     for index, status in sorted(expected.items()):
         row = by_index.get(index)
-        if row is None or row.get("coverage") != "mapped":
+        if row is None:
             verdicts.append(RuleVerdict(file_name, index, MISSING_RULE, status, detail=note))
             continue
         actual = str(row.get("status") or "").upper()
         findings = [item for item in result.get("findings") or [] if row.get("item_key") and item.get("item_key") == row["item_key"]]
         detail = str(findings[0].get("suggestions") or "") if len(findings) == 1 and str(findings[0].get("status") or "").upper() == actual else ""
-        if actual == ERR:
+        if row.get("coverage") == "execution_error" and actual == ERR:
+            verdicts.append(RuleVerdict(file_name, index, EXECUTION_FAILURE, status, actual, detail or note))
+        elif row.get("coverage") != expected_coverage:
+            verdicts.append(RuleVerdict(file_name, index, MISSING_RULE, status, actual, note))
+        elif actual == ERR:
             verdicts.append(RuleVerdict(file_name, index, EXECUTION_FAILURE, status, actual, detail or note))
         elif actual != status:
             verdicts.append(RuleVerdict(file_name, index, STATUS_MISMATCH, status, actual, detail))
