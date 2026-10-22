@@ -7,10 +7,10 @@ import {rememberRequest} from './routes.ts'
 type Task = components['schemas']['AuditTask']
 export type AuditRecognitionRead = components['schemas']['AuditRecognitionRead']
 export type AuditRecognitionAdapter = {
-  match: (files: Task['files'], mode: Task['analysis_mode'], customer: string | null, previous: Task | null, requestId: string, predecessorId?: string) => Promise<Task>
+  match: (files: Task['files'], mode: Task['analysis_mode'], customer: string | null, previous: Task | null, requestId: string, predecessorId?: string, preparation?: {id: string; revision: number}) => Promise<Task>
   readRecognition: (taskId: string, requestId: string) => Promise<AuditRecognitionRead>
 }
-type RecognitionInput = {files: Task['files']; mode: Task['analysis_mode']; customer: string | null; previous: Task | null; predecessorId?: string}
+type RecognitionInput = {files: Task['files']; mode: Task['analysis_mode']; customer: string | null; previous: Task | null; predecessorId?: string; preparation?: {id: string; revision: number}}
 export type RecognitionObservation = {requestId: string; taskId: string; phase: 'sending' | 'reading' | 'unknown' | 'accepted' | 'rejected' | 'conflict'; message: string; traceId?: string; currentRevision?: number; currentState?: Task['state']}
 const unknownMessage = '识别请求结果尚未确认。文件与选择已保留；请读取原请求回执，不要重复开始识别。'
 
@@ -34,12 +34,12 @@ export function createTaskRecognition(adapter: AuditRecognitionAdapter, onAccept
     const trace = readOnly && current!.observation.traceId ? {traceId: current!.observation.traceId} : {}
     const frozen = readOnly ? current!.input : structuredClone(input)
     if (!readOnly) frozen.files = frozen.files.map(file => ({...file, removal_reason: file.removal_reason?.trim() || null}))
-    const taskId = frozen.previous?.id || requestId
+    const taskId = frozen.previous?.id || frozen.preparation?.id || requestId
     if (!readOnly) rememberRequest(taskId, 'recognitionRequest', requestId)
     const operation = remember(key, frozen, {requestId, taskId, ...trace, phase: readOnly ? 'reading' : 'sending', message: readOnly ? current!.observation.message : ''})
     try {
       const receipt = readOnly ? await adapter.readRecognition(taskId, requestId) : null
-      const next = readOnly ? receipt?.task : await adapter.match(structuredClone(frozen.files), frozen.mode, frozen.customer, structuredClone(frozen.previous), requestId, frozen.predecessorId)
+      const next = readOnly ? receipt?.task : await adapter.match(structuredClone(frozen.files), frozen.mode, frozen.customer, structuredClone(frozen.previous), requestId, frozen.predecessorId, frozen.preparation)
       if (operations.get(key) !== operation) return
       const acceptedRevision = frozen.previous ? (frozen.previous.input_revision ?? 0) + 1 : 0
       if (receipt?.state === 'accepted' && receipt.request_id === requestId && receipt.task_id === taskId && receipt.input_revision === acceptedRevision && next?.id === taskId && ((next.input_revision ?? -1) > acceptedRevision || next.input_revision === acceptedRevision && ['reviewing', 'completed'].includes(next.state))) {

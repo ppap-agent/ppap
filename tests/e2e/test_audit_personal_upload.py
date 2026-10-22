@@ -54,6 +54,32 @@ def test_choose_folder_cancel_and_resume_keep_original_upload_request(width, rec
         version = {}
         imported = {}
         import_inputs = []
+        preparation = {}
+
+        def prepare(route):
+            if route.request.method == "POST":
+                body = route.request.post_data_json
+                preparation.update(
+                    id=body["request_id"],
+                    status="open",
+                    task_id=None,
+                    items=[],
+                    upload_preparation=body["upload_preparation"],
+                    preparation_revision=0,
+                    analysis_mode="standard",
+                    predecessor_id=None,
+                    case_context={},
+                    writeback={"available": False},
+                    updated_at="2026-10-22T00:00:00Z",
+                )
+            elif route.request.method == "PUT":
+                body = route.request.post_data_json
+                assert body["expected_revision"] == preparation["preparation_revision"]
+                preparation.update(upload_preparation=body["upload_preparation"], preparation_revision=body["expected_revision"] + 1)
+            route.fulfill(json=preparation)
+
+        page.route("**/api/drafts", prepare)
+        page.route("**/api/drafts/*", prepare)
 
         def create(route):
             body = route.request.post_data_json

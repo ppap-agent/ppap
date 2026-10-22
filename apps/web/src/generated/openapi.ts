@@ -1973,6 +1973,28 @@ export interface components {
             /** Task Id */
             task_id: string;
         };
+        /** AuditPreparedUpload */
+        AuditPreparedUpload: {
+            /** Byte Size */
+            byte_size?: number;
+            /** Content Type */
+            content_type?: string;
+            drive_file?: components["schemas"]["AuditUploadDriveFile"];
+            folder?: components["schemas"]["AuditUploadFolder"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "local" | "feishu";
+            /** Name */
+            name: string;
+            /** Removed */
+            removed: boolean;
+            /** Request Id */
+            request_id: string;
+            /** Sha256 */
+            sha256?: string;
+        };
         /** AuditProgress */
         AuditProgress: {
             /** Completed */
@@ -2016,6 +2038,26 @@ export interface components {
             validation: components["schemas"]["AuditFileValidation"];
             /** Validation Id */
             validation_id?: string;
+        };
+        /** AuditRecognitionInput */
+        AuditRecognitionInput: {
+            /** File Version Id */
+            file_version_id: string;
+            /** Preferred Rule Version Id */
+            preferred_rule_version_id?: string | null;
+            /** Reference Only */
+            reference_only?: boolean;
+            /** Removal Reason */
+            removal_reason: string | null;
+            /** Replacement Of File Version Id */
+            replacement_of_file_version_id?: string | null;
+            /**
+             * Selection
+             * @enum {string}
+             */
+            selection: "selected" | "unselected" | "removed";
+            /** Validation Id */
+            validation_id: string | null;
         };
         /** AuditRecognitionRead */
         AuditRecognitionRead: {
@@ -2472,6 +2514,22 @@ export interface components {
              */
             selection: "selected" | "unselected" | "removed";
         };
+        /** AuditUploadDriveFile */
+        AuditUploadDriveFile: {
+            /** Name */
+            name: string;
+            /** Token */
+            token: string;
+            /** Type */
+            type: string;
+        };
+        /** AuditUploadFolder */
+        AuditUploadFolder: {
+            /** Name */
+            name: string;
+            /** Token */
+            token: string;
+        };
         /**
          * AuditUploadItem
          * @description A request receipt, not proof of parsing or a task before matching.
@@ -2494,6 +2552,27 @@ export interface components {
              * @enum {string}
              */
             state: "uploading" | "ready" | "failed" | "unknown";
+        };
+        /** AuditUploadPreparation */
+        AuditUploadPreparation: {
+            /**
+             * Analysis Mode
+             * @enum {string}
+             */
+            analysis_mode: "standard" | "deep";
+            /** Customer Preference */
+            customer_preference: string | null;
+            /** Files */
+            files: components["schemas"]["AuditRecognitionInput"][];
+            /** Predecessor Id */
+            predecessor_id: string | null;
+            /** Uploads */
+            uploads: components["schemas"]["AuditPreparedUpload"][];
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
         };
         /** AuditUsageAllocation */
         AuditUsageAllocation: {
@@ -2720,10 +2799,15 @@ export interface components {
             items: components["schemas"]["MaterialWire"][];
             /** Predecessor Id */
             predecessor_id: string | null;
+            /** Preparation Revision */
+            preparation_revision?: number | null;
             /** Status */
             status: string;
+            /** Task Id */
+            task_id?: string | null;
             /** Updated At */
             updated_at: string;
+            upload_preparation?: components["schemas"]["AuditUploadPreparation"] | null;
             writeback: components["schemas"]["WritebackTarget"];
         };
         /** DraftList */
@@ -4157,6 +4241,8 @@ export interface operations {
                     analysis_mode: "standard" | "deep";
                     /** Customer Preference */
                     customer_preference: string | null;
+                    /** Expected Draft Revision */
+                    expected_draft_revision?: number;
                     /** Expected Revision */
                     expected_revision?: number;
                     /** Files */
@@ -4183,6 +4269,8 @@ export interface operations {
                     predecessor_id?: string;
                     /** Request Id */
                     request_id: string;
+                    /** Source Draft Id */
+                    source_draft_id?: string;
                     /** Task Id */
                     task_id?: string;
                 };
@@ -4778,6 +4866,79 @@ export interface operations {
                     predecessor_id?: string | null;
                     /** Request Id */
                     request_id?: string;
+                    /** AuditUploadPreparation */
+                    upload_preparation?: {
+                        /**
+                         * Analysis Mode
+                         * @enum {string}
+                         */
+                        analysis_mode: "standard" | "deep";
+                        /** Customer Preference */
+                        customer_preference: string | null;
+                        /** Files */
+                        files: {
+                            /** File Version Id */
+                            file_version_id: string;
+                            /** Preferred Rule Version Id */
+                            preferred_rule_version_id?: string | null;
+                            /** Reference Only */
+                            reference_only?: boolean;
+                            /** Removal Reason */
+                            removal_reason: string | null;
+                            /** Replacement Of File Version Id */
+                            replacement_of_file_version_id?: string | null;
+                            /**
+                             * Selection
+                             * @enum {string}
+                             */
+                            selection: "selected" | "unselected" | "removed";
+                            /** Validation Id */
+                            validation_id: string | null;
+                        }[];
+                        /** Predecessor Id */
+                        predecessor_id: string | null;
+                        /** Uploads */
+                        uploads: {
+                            /** Byte Size */
+                            byte_size?: number;
+                            /** Content Type */
+                            content_type?: string;
+                            /** AuditUploadDriveFile */
+                            drive_file?: {
+                                /** Name */
+                                name: string;
+                                /** Token */
+                                token: string;
+                                /** Type */
+                                type: string;
+                            };
+                            /** AuditUploadFolder */
+                            folder?: {
+                                /** Name */
+                                name: string;
+                                /** Token */
+                                token: string;
+                            };
+                            /**
+                             * Kind
+                             * @enum {string}
+                             */
+                            kind: "local" | "feishu";
+                            /** Name */
+                            name: string;
+                            /** Removed */
+                            removed: boolean;
+                            /** Request Id */
+                            request_id: string;
+                            /** Sha256 */
+                            sha256?: string;
+                        }[];
+                        /**
+                         * Version
+                         * @constant
+                         */
+                        version: 1;
+                    };
                 } | Record<string, never> | null;
             };
         };
@@ -4860,6 +5021,8 @@ export interface operations {
                         /** Registration */
                         registration?: string;
                     };
+                    /** Expected Revision */
+                    expected_revision?: number;
                     /** Items */
                     items?: {
                         /** File Version Id */
@@ -4872,6 +5035,79 @@ export interface operations {
                         /** Rule Version Id */
                         rule_version_id: string | null;
                     }[];
+                    /** AuditUploadPreparation */
+                    upload_preparation?: {
+                        /**
+                         * Analysis Mode
+                         * @enum {string}
+                         */
+                        analysis_mode: "standard" | "deep";
+                        /** Customer Preference */
+                        customer_preference: string | null;
+                        /** Files */
+                        files: {
+                            /** File Version Id */
+                            file_version_id: string;
+                            /** Preferred Rule Version Id */
+                            preferred_rule_version_id?: string | null;
+                            /** Reference Only */
+                            reference_only?: boolean;
+                            /** Removal Reason */
+                            removal_reason: string | null;
+                            /** Replacement Of File Version Id */
+                            replacement_of_file_version_id?: string | null;
+                            /**
+                             * Selection
+                             * @enum {string}
+                             */
+                            selection: "selected" | "unselected" | "removed";
+                            /** Validation Id */
+                            validation_id: string | null;
+                        }[];
+                        /** Predecessor Id */
+                        predecessor_id: string | null;
+                        /** Uploads */
+                        uploads: {
+                            /** Byte Size */
+                            byte_size?: number;
+                            /** Content Type */
+                            content_type?: string;
+                            /** AuditUploadDriveFile */
+                            drive_file?: {
+                                /** Name */
+                                name: string;
+                                /** Token */
+                                token: string;
+                                /** Type */
+                                type: string;
+                            };
+                            /** AuditUploadFolder */
+                            folder?: {
+                                /** Name */
+                                name: string;
+                                /** Token */
+                                token: string;
+                            };
+                            /**
+                             * Kind
+                             * @enum {string}
+                             */
+                            kind: "local" | "feishu";
+                            /** Name */
+                            name: string;
+                            /** Removed */
+                            removed: boolean;
+                            /** Request Id */
+                            request_id: string;
+                            /** Sha256 */
+                            sha256?: string;
+                        }[];
+                        /**
+                         * Version
+                         * @constant
+                         */
+                        version: 1;
+                    };
                     writeback_target?: {
                         /** Object Kind */
                         object_kind: string;

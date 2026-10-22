@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {canResumeUpload, canRetryUpload, type UploadRow} from './uploads.ts'
+import {canResumeUpload, canRetryUpload, originalUploadFile, type UploadRow} from './uploads.ts'
+
+test('reattached bytes keep the original upload name and content type', async () => {
+  const original = {name: '原控制计划.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+  const selected = new File(['original bytes'], '改名.bin', {type: 'application/octet-stream'})
+  const attached = originalUploadFile(original, selected)
+  assert.equal(attached.name, original.name)
+  assert.equal(attached.type, original.type)
+  assert.equal(attached.size, selected.size)
+  assert.deepEqual(await attached.arrayBuffer(), await selected.arrayBuffer())
+})
 
 test('only an explicit terminal failure with retry authority permits another upload', () => {
   const row: UploadRow = {id: 'row', input: {kind: 'local', file: new File(['x'], 'a.pdf')}, removed: false, busy: false, receipt: {request_id: 'request', state: 'failed', file: null, reason: 'terminal; no write in flight', retry_allowed: true}}
