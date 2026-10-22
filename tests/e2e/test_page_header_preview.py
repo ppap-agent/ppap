@@ -13,6 +13,26 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class PageHeaderPreviewTests(unittest.TestCase):
+    def test_loading_a_report_does_not_restore_the_duplicate_page_title(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1057, "height": 853})
+            page.set_default_timeout(5000)
+            page.goto(PREVIEW + "/preview/audit.html?scene=restore-loading&task=preview-recovery-task&report=preview-recovery-version-1")
+            bar = page.get_by_role("banner")
+            expect(bar.get_by_role("listitem").filter(has_text="审核报告")).to_be_visible()
+            recovery = page.get_by_role("region", name="报告读取状态", exact=True)
+            title = recovery.get_by_role("heading", name="审核报告", exact=True)
+            self.assertLessEqual(title.bounding_box()["height"], 2)
+            status = recovery.get_by_role("status")
+            expect(status).to_have_text("正在打开报告…")
+            bottom = bar.bounding_box()["y"] + bar.bounding_box()["height"]
+            self.assertLessEqual(status.bounding_box()["y"] - bottom, 32)
+            page.get_by_role("button", name="令示例读取 1 失败", exact=True).click()
+            expect(recovery.get_by_role("heading", name="报告暂时无法打开", exact=True)).to_be_visible()
+            self.assertGreater(recovery.get_by_role("heading", name="报告暂时无法打开", exact=True).bounding_box()["height"], 2)
+            browser.close()
+
     def test_return_to_historical_round_removes_the_hidden_task_report_actions(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
