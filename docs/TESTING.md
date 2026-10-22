@@ -294,7 +294,7 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 
 `tests/e2e/test_web_audit.py::WebAuditLoopTests::test_audit_files_path_loads_history_after_login` 从现有 `/audit-files` 深链读取服务器轮次，验证当前工作台搜索、冻结轮次入口和列表只读回访；隔离 fixture 的 presence 规则不证明真实 PPAP 审核质量。工作台初次读取期间，用户显式选择的队列优先于数据返回后计算的默认队列；`test_explicit_all_records_selection_survives_initial_history_read` 控制响应顺序验证此边界。
 
-`tests/e2e/test_report_sharing.py` 验证固定 PDF/ZIP、中文字符映射、报告切换和撤权后拒绝访问，不读取私有任务或原件。静态构建将已安装 PDF.js 的 `cmaps`、`standard_fonts`、`wasm` 资源及许可证放入 `dist/pdfjs`；开发环境继续使用本机依赖。Nginx 必须以 JavaScript MIME 提供 `.mjs` worker；`tests/repository/test_web_server.py` 通过实际 Nginx 请求检查该响应和不存在文件的 404。
+`tests/e2e/test_report_sharing.py` 验证固定 PDF/ZIP、中文字符映射、报告切换和撤权后拒绝访问，不读取私有任务或原件。读取停滞场景在 45 秒客户端截止后只允许显式重读同一冻结产物；旧响应不能替换当前 PDF 或追加 ZIP 下载，不重新生成或重审。适配器测试另覆盖 fetch／响应体停滞及忽略 Abort 的外部边界；客户端结束不证明服务端工作已取消，也不是既有报告生成／恢复模型的完整 refinement 证明。静态构建将已安装 PDF.js 的 `cmaps`、`standard_fonts`、`wasm` 资源及许可证放入 `dist/pdfjs`；开发环境继续使用本机依赖。Nginx 必须以 JavaScript MIME 提供 `.mjs` worker；`tests/repository/test_web_server.py` 通过实际 Nginx 请求检查该响应和不存在文件的 404。
 
 `tests/e2e/test_report_packages.py` 使用原生档案组件与受控 HTTP，验证原 ZIP 请求的刷新恢复、固定下载字节、失败后只读恢复、错误回执拒绝及切页后的迟到响应；不据此证明真实服务或飞书送达。跨任务包的实际 PostgreSQL／Worker 回归位于 `tests/schema/test_audit_bindings.py`，覆盖同名 PDF、固定字节、反序请求复用、全部来源授权、原集合重试与旧 attempt 拒绝。固定模板与联系链接由 `tests/e2e/test_template_links_preview.py` 和 `test_product_access.py` 验证新窗口打开及审核草稿保留，不把链接打开当作反馈送达。
 

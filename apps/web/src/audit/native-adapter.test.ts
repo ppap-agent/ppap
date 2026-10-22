@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, {afterEach} from 'node:test'
 import type {components} from '../generated/openapi.ts'
-import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, sharedReportAdapter, readAuditCustomers} from './native-adapter.ts'
+import {createNativeAuditAdapter, nativeArchiveAdapter, nativeDisplayAdapter, nativeReportAdapter, nativeSharingAdapter, nativeSupportAdapter, nativeUsageAdapter, sharedReportAdapter, readSharedArchive, readAuditCustomers} from './native-adapter.ts'
 import {readReportPdf, readReportZip} from './report-contract.ts'
 import {requestTrace} from '../api.ts'
 
@@ -159,6 +159,60 @@ test('archive reads time out without replay and allow an explicit read of the sa
   const frozenUrl = calls.at(-1)!.url
   globalThis.fetch = async input => {assert.equal(String(input), frozenUrl); return json({reference})}
   assert.deepEqual(await nativeArchiveAdapter.readHistory('document/a', reference), {reference})
+})
+
+test('frozen PDF and ZIP reads bound fetch and body stalls without automatic replay', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']})
+  const reference = {task_id: 'old-task', round_id: 'old-round', file_version_id: 'old-version', result_attempt: 2, report_id: 'old-report'}
+  const pdf = new TextEncoder().encode('%PDF-frozen-report'), zip = new TextEncoder().encode('PK-frozen-zip')
+  const pdfArtifact = {artifact_id: 'frozen-pdf', filename: '原报告.pdf', content_type: 'application/pdf' as const, byte_size: pdf.length}
+  const zipArtifact = {artifact_id: 'frozen-zip', filename: '原报告.zip', content_type: 'application/zip' as const, byte_size: zip.length}
+  const job: components['schemas']['AuditReportPackage'] = {package_id: 'old-package', reports: [reference], receipt: {request_id: 'old-package-request', state: 'accepted', reason: null}, state: 'ready', artifact: zipArtifact, reason: null, retry_allowed: false}
+  const reads = [
+    {read: () => nativeReportAdapter.readPdf(reference, pdfArtifact), body: pdf, artifact: pdfArtifact},
+    {read: () => nativeReportAdapter.readPackageFile!(job), body: zip, artifact: zipArtifact},
+    {read: () => sharedReportAdapter('old-share').readPdf(reference, pdfArtifact), body: pdf, artifact: pdfArtifact},
+    {read: () => readSharedArchive('old-share', zipArtifact), body: zip, artifact: zipArtifact},
+  ]
+  for (const phase of ['fetch', 'body']) for (const {read, body, artifact} of reads) {
+    const calls: string[] = [], signals: AbortSignal[] = []
+    globalThis.fetch = async (input, init) => {
+      assert.equal(init?.method, 'GET'); assert.equal(init?.credentials, 'include')
+      assert.ok(init?.signal); signals.push(init.signal); calls.push(String(input))
+      // Deliberately ignore cancellation: local expiry must still settle the read.
+      const stalled = new Promise<never>(() => {})
+      return phase === 'fetch' ? stalled : {ok: true, blob: () => stalled} as unknown as Response
+    }
+    const pending = assert.rejects(read(), {name: 'TimeoutError'})
+    await Promise.resolve()
+    context.mock.timers.tick(45_000)
+    await pending
+    assert.equal(calls.length, 1); assert.equal(signals[0].aborted, true)
+    const frozenUrl = calls[0]
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', body)), byte => byte.toString(16).padStart(2, '0')).join('')
+    globalThis.fetch = async (input, init) => {
+      assert.equal(String(input), frozenUrl); assert.equal(init?.method, 'GET'); assert.equal(init?.credentials, 'include')
+      assert.ok(init?.signal); signals.push(init.signal); calls.push(String(input))
+      return new Response(body, {headers: {'Content-Type': artifact.content_type, 'X-Content-SHA256': digest}})
+    }
+    assert.deepEqual(new Uint8Array(await (await read()).arrayBuffer()), body)
+    context.mock.timers.tick(45_000)
+    assert.equal(calls.length, 2); assert.equal(signals[1].aborted, false)
+  }
+})
+
+test('a PDF read cannot become successful after its deadline even when fetch completes late', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']})
+  const reference = {task_id: 'old-task', round_id: 'old-round', file_version_id: 'old-version', result_attempt: 2, report_id: 'old-report'}
+  const artifact = {artifact_id: 'frozen-pdf', filename: '原报告.pdf', content_type: 'application/pdf' as const, byte_size: 8}
+  let finish!: (response: Response) => void
+  globalThis.fetch = async () => new Promise(resolve => {finish = resolve})
+  const read = nativeReportAdapter.readPdf(reference, artifact)
+  const expired = assert.rejects(read, {name: 'TimeoutError'})
+  context.mock.timers.tick(45_000)
+  await expired
+  finish(new Response('%PDF-1.7', {headers: {'Content-Type': 'application/pdf'}}))
+  await assert.rejects(read, {name: 'TimeoutError'})
 })
 
 test('Deep selection reaches task recognition and survives readback without starting an audit', async () => {
