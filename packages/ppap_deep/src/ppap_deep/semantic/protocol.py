@@ -138,7 +138,7 @@ ErrorCode = Literal[
 ]
 
 
-CompileValidationReason = Literal["coverage_mismatch", "source_locator_unresolved", "source_locator_empty"]
+CompileValidationReason = Literal["coverage_mismatch", "source_locator_unresolved", "source_locator_empty", "plan_schema_invalid"]
 
 
 class CompileDiagnostic(Artifact):

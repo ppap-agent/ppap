@@ -34,7 +34,7 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 Controller 原件读取与 guest 暂存复用 `ppap_deep.limits` 中的文件数和总字节上限。超出文件数时不读对象；逐对象读取使用剩余字节预算，超限停止后续读取及 Runtime 派发，返回既有 `deep_budget_exhausted`。S3 有界读取不依赖声明大小正确，短读会继续，响应流在成功或失败后关闭。对应 Controller／Core storage 测试仅控制外部存储与小额测试预算，不分配大文件。该提前检查不代表资料已能装入执行环境：暂存还包括规则、缓存及清单，原暂存总量检查继续保留；不是新增用户上传配额，也不证明进程树内存或在途读取取消。
 
-`test_deep_partial_failure.py` 使用真实 XLSX，经 Controller、`SemanticRuntime`、进程内真实 guest 和输出校验，验证一套计划持续失败不会丢弃独立文件；共享失败规则的所有条款保留为 ERR，冻结目标不删除，全部失败也不能变成空 PASS。仅模型响应和对象存储受控，薄 runtime 不证明容器隔离、真实模型质量或 Worker／数据库发布。主机拒绝错身份、缺项、重叠分区及失败条款的伪造业务结果；有效计划可缓存，失败计划不缓存，所有模型尝试保留用量。
+`test_deep_partial_failure.py` 使用真实 XLSX，经 Controller、`SemanticRuntime`、进程内真实 guest 和输出校验，验证一套计划持续失败不会丢弃独立文件；共享失败规则的所有条款保留为 ERR，冻结目标不删除，全部失败也不能变成空 PASS。模型返回的 RulePlan 结构不符同样进入原有的一次有界修复，仍无效则只标记对应规则失败；原 deadline、用量与独立文件保留，不把预算、超时、模型协议或未分类异常变成局部成功。结构校验反馈只包含固定说明，不保存 Pydantic 错误中的模型原文。仅模型响应和对象存储受控，薄 runtime 不证明容器隔离、真实模型质量或 Worker／数据库发布。主机拒绝错身份、缺项、重叠分区及失败条款的伪造业务结果；有效计划可缓存，失败计划不缓存，所有模型尝试保留用量。
 
 `tests/integration/runtime/test_runtime.py` 在同 SHA 的交付 Worker 镜像中运行 `deep_container_cases.py`，验证公开 `ContainerRuntime.run` 的排队超时、取消和执行位释放。真实 Linux、构造器、锁及文件准备/清理不替换；外部 guest 进程受控，版本探针使用测试程序，不调用 Grok 或模型，不证明语义质量或强隔离。`DeepExecutionQueue.tla` 只检查一个占用者与一个等待者：即使占用者不结束，到期/取消仍能响应；正向配置检查允许时钟和等待线程持续获得调度时的终结性质，`-unbounded` 配置保留响应依赖占用者释放的反例。它不证明毫秒级时限、运行中取消、整个进程树清理或完整系统 refinement。
 

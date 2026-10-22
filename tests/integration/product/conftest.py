@@ -8,7 +8,7 @@ import uuid
 import pytest
 from ppap_application import build_product_store
 from ppap_core.db import connect
-from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
+from ppap_core.files import ObjectExists, ObjectMissing
 from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
 from ppap_product_store import AuthStore
 from psycopg import sql
@@ -28,13 +28,10 @@ class MemoryObjects:
             raise ObjectExists()
         self.data[key] = body
 
-    def get(self, key: str, *, max_bytes: int | None = None) -> bytes:
+    def get(self, key: str) -> bytes:
         if key not in self.data:
             raise ObjectMissing()
-        body = self.data[key]
-        if max_bytes is not None and len(body) > max_bytes:
-            raise ObjectTooLarge()
-        return body
+        return self.data[key]
 
     def delete(self, key: str) -> None:
         self.data.pop(key, None)
