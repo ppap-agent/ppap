@@ -16,7 +16,7 @@ class TokenUsage:
 
     input_tokens: int = 0
     output_tokens: int = 0
-    thinking_tokens: int = 0  # 对于支持thinking的模型
+    thinking_tokens: Optional[int] = None  # 可选拆分；缺少回执不当作零
     total_tokens: int = 0
     model_name: str = ""
     operation: str = ""  # 操作描述，如 "document_analysis", "rule_matching"
@@ -97,7 +97,7 @@ class TokenTracker:
                 # 计算总计
                 summary.total_input_tokens = sum(call.input_tokens for call in summary.llm_calls)
                 summary.total_output_tokens = sum(call.output_tokens for call in summary.llm_calls)
-                summary.total_thinking_tokens = sum(call.thinking_tokens for call in summary.llm_calls)
+                summary.total_thinking_tokens = None if any(call.thinking_tokens is None for call in summary.llm_calls) else sum(call.thinking_tokens or 0 for call in summary.llm_calls)
                 summary.total_tokens = sum(call.total_tokens for call in summary.llm_calls)
                 if summary.unreported_calls_count:
                     summary.total_input_tokens = None
@@ -132,7 +132,7 @@ class TokenTracker:
         self,
         input_tokens: int,
         output_tokens: int,
-        thinking_tokens: int = 0,
+        thinking_tokens: Optional[int] = None,
         model_name: str = "",
         operation: str = "",
         request_id: Optional[str] = None,
@@ -208,7 +208,7 @@ def end_request_tracking(request_id: str) -> RequestTokenSummary:
 def record_token_usage(
     input_tokens: int,
     output_tokens: int,
-    thinking_tokens: int = 0,
+    thinking_tokens: Optional[int] = None,
     model_name: str = "",
     operation: str = "",
     request_id: Optional[str] = None,

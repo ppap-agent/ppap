@@ -40,7 +40,7 @@ def test_all_reported_receipts_preserve_existing_totals():
     tracker = TokenTracker()
     request_id = tracker.start_request_tracking()
     tracker.record_token_usage(input_tokens=9, output_tokens=5, thinking_tokens=2)
-    tracker.record_token_usage(input_tokens=4, output_tokens=3)
+    tracker.record_token_usage(input_tokens=4, output_tokens=3, thinking_tokens=0)
 
     usage = tracker.end_request_tracking(request_id).to_dict()
 
@@ -48,3 +48,17 @@ def test_all_reported_receipts_preserve_existing_totals():
     assert usage["unreported_calls_count"] == 0
     assert usage["usage_complete"] is True
     assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_thinking_tokens"], usage["total_tokens"]) == (13, 8, 2, 21)
+
+
+def test_optional_reasoning_is_unknown_without_discarding_known_input_and_output():
+    tracker = TokenTracker()
+    request_id = tracker.start_request_tracking()
+    tracker.record_token_usage(input_tokens=9, output_tokens=5)
+
+    usage = tracker.end_request_tracking(request_id).to_dict()
+
+    assert usage["usage_complete"] is True
+    assert usage["unreported_calls_count"] == 0
+    assert (usage["total_input_tokens"], usage["total_output_tokens"], usage["total_tokens"]) == (9, 5, 14)
+    assert usage["total_thinking_tokens"] is None
+    assert usage["llm_calls"][0]["thinking_tokens"] is None

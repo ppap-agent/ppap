@@ -187,14 +187,26 @@ class RuleAIClientTests(unittest.TestCase):
         for key in ("total_input_tokens", "total_output_tokens", "total_thinking_tokens", "total_tokens"):
             self.assertIsNone(summary[key])
 
-    def test_zero_tokens_are_confirmed_and_invalid_reasoning_does_not_change_totals(self):
-        for input_tokens, output_tokens, reasoning in [(0, 0, 0), (9, 5, None), (9, 5, -1), (9, 5, True), (9, 5, 1.5), (9, 5, "2")]:
-            with self.subTest(input_tokens=input_tokens, output_tokens=output_tokens, reasoning=reasoning):
+    def test_optional_reasoning_stays_unknown_without_invalidating_confirmed_io(self):
+        for label, input_tokens, output_tokens, details, expected_thinking in [
+            ("confirmed-zero", 0, 0, SimpleNamespace(reasoning_tokens=0), 0),
+            ("confirmed-split", 9, 5, SimpleNamespace(reasoning_tokens=2), 2),
+            ("all-output-is-reasoning", 9, 5, SimpleNamespace(reasoning_tokens=5), 5),
+            ("missing-details", 9, 5, None, None),
+            ("missing-reasoning", 9, 5, SimpleNamespace(), None),
+            ("null-reasoning", 9, 5, SimpleNamespace(reasoning_tokens=None), None),
+            ("negative-reasoning", 9, 5, SimpleNamespace(reasoning_tokens=-1), None),
+            ("boolean-reasoning", 9, 5, SimpleNamespace(reasoning_tokens=True), None),
+            ("fractional-reasoning", 9, 5, SimpleNamespace(reasoning_tokens=1.5), None),
+            ("string-reasoning", 9, 5, SimpleNamespace(reasoning_tokens="2"), None),
+            ("reasoning-exceeds-output", 9, 5, SimpleNamespace(reasoning_tokens=6), None),
+        ]:
+            with self.subTest(usage=label):
                 sdk = SDK(
                     SimpleNamespace(
                         status="completed",
                         output_text="ok",
-                        usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens, output_tokens_details=SimpleNamespace(reasoning_tokens=reasoning)),
+                        usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens, output_tokens_details=details),
                     )
                 )
                 with tracked_request() as request_id:
@@ -204,7 +216,10 @@ class RuleAIClientTests(unittest.TestCase):
                 self.assertEqual(summary["llm_calls_count"], 1)
                 self.assertEqual(summary["unreported_calls_count"], 0)
                 self.assertTrue(summary["usage_complete"])
-                self.assertEqual(summary["total_thinking_tokens"], 0)
+                self.assertEqual(summary["total_input_tokens"], input_tokens)
+                self.assertEqual(summary["total_output_tokens"], output_tokens)
+                self.assertEqual(summary["llm_calls"][0]["thinking_tokens"], expected_thinking)
+                self.assertEqual(summary["total_thinking_tokens"], expected_thinking)
                 self.assertEqual(summary["total_tokens"], 0 if input_tokens == 0 else 14)
 
     def test_provider_and_invalid_response_details_never_enter_client_logs(self):
