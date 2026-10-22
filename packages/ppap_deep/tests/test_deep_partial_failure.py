@@ -208,9 +208,12 @@ def frozen_case(broken_first_plan=True, *, shared_bad_rule=False, bad_clause_id=
         assert request.model_dump(mode="json") == original
         authorized.append(request.job_id)
 
-    def read(version_id):
+    def read(version_id, max_bytes=None):
         reads.append(version_id)
-        return blobs[version_id]
+        data = blobs[version_id]
+        if max_bytes is not None and len(data) > max_bytes:
+            raise DeepError("deep_budget_exhausted")
+        return data
 
     model = ModelResponses(broken_first_plan)
     guest = InProcessGuest(model)
