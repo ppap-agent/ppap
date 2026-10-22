@@ -136,7 +136,7 @@ def test_archive_summary_matches_frozen_detail_and_preserves_default_and_revocat
     assert history["default_reference"]["task_id"] == tasks[0]["id"]
     assert document["latest_completed"]["reference"] == history["default_reference"]
     for entry, task in zip(history["entries"], reversed(tasks)):
-        detail = client.get(history_path + "/result", params=entry["reference"])
+        detail = client.get(history_path + "/result", params={key: value for key, value in entry["reference"].items() if value is not None})
         assert detail.status_code == 200, detail.text
         assert detail.json()["entry"] == entry
         audit = task["files"][0]["audit"]
