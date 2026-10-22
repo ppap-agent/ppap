@@ -49,7 +49,16 @@ def provider(request, monkeypatch):
 
     def send(_client, request, **_kwargs):
         calls.append(request)
-        payload = {"psw_stamp_ends_with_company": True, "classification": "视觉", "item": "签字与印章", "priority": "P0", "status": "NG", "suggestions": "模型返回的不符合结论"}
+        payload = {
+            "psw_stamp_ends_with_company": True,
+            "authorized_signature_present": False,
+            "psw_stamp_present": True,
+            "classification": "视觉",
+            "item": "签字与印章",
+            "priority": "P0",
+            "status": "NG",
+            "suggestions": "模型返回的不符合结论",
+        }
         return httpx.Response(
             200,
             request=request,
