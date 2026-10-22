@@ -1,10 +1,11 @@
 """Bounded rule calls use the real adapter with an external SDK stub."""
 
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from ppap_core.contracts import AuditInput, RuleInput, RuleItem
+from ppap_core.token_tracker import get_current_request_id, get_token_tracker, set_current_request_id
 from ppap_excel_audit_engine.checkers.prompts import PromptManager
 
 
@@ -40,7 +41,19 @@ class SDK:
         self.direct_calls += 1
         if self.error:
             raise self.error
-        return self.response
+        return self.response.pop(0) if isinstance(self.response, list) else self.response
+
+
+@contextmanager
+def tracked_request():
+    tracker = get_token_tracker()
+    previous = get_current_request_id()
+    request_id = tracker.start_request_tracking()
+    try:
+        yield request_id
+    finally:
+        tracker.cleanup_request(request_id)
+        set_current_request_id(previous)
 
 
 class RuleAIClientTests(unittest.TestCase):
@@ -82,6 +95,118 @@ class RuleAIClientTests(unittest.TestCase):
         self.assertEqual(len(sdk.calls), 3)
         self.assertEqual(sdk.options, [])
 
+    def test_incomplete_outputs_keep_each_visible_provider_usage_before_validation(self):
+        sdk = SDK(SimpleNamespace(status="incomplete", output_text="", usage=SimpleNamespace(input_tokens=9, output_tokens=5)))
+        with tracked_request() as request_id:
+            with self.assertLogs("ppap_excel_audit_engine.checkers.client", level="WARNING"):
+                with self.assertRaises(RuntimeError):
+                    self.client(sdk).structured_completion("system", "source")
+            summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+        self.assertEqual(len(sdk.calls), 3)
+        self.assertEqual(summary["llm_calls_count"], 3)
+        self.assertEqual(summary["total_input_tokens"], 27)
+        self.assertEqual(summary["total_output_tokens"], 15)
+        self.assertEqual(summary["total_tokens"], 42)
+        self.assertEqual(summary["unreported_calls_count"], 0)
+        self.assertTrue(summary["usage_complete"])
+
+    def test_empty_or_malformed_output_does_not_erase_or_duplicate_a_valid_receipt(self):
+        for status, output, error_type in [("completed", "", RuntimeError), ("failed", "discarded", RuntimeError), ("completed", None, TypeError)]:
+            with self.subTest(status=status, output=output):
+                sdk = SDK(SimpleNamespace(status=status, output_text=output, usage=SimpleNamespace(input_tokens=9, output_tokens=5)))
+                with tracked_request() as request_id:
+                    with self.assertLogs("ppap_excel_audit_engine.checkers.client", level="ERROR"):
+                        with self.assertRaises(error_type):
+                            self.client(sdk).structured_completion("system", "source", retry_limit=0)
+                    summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+                self.assertEqual(len(sdk.calls), 1)
+                self.assertEqual(summary["llm_calls_count"], 1)
+                self.assertEqual(summary["unreported_calls_count"], 0)
+                self.assertTrue(summary["usage_complete"])
+                self.assertEqual(summary["total_tokens"], 14)
+
+    def test_missing_or_invalid_usage_is_unreported_without_changing_valid_output(self):
+        for label, usage in [
+            ("missing", None),
+            ("missing-input", SimpleNamespace(output_tokens=5)),
+            ("missing-output", SimpleNamespace(input_tokens=9)),
+            ("negative-input", SimpleNamespace(input_tokens=-1, output_tokens=5)),
+            ("negative-output", SimpleNamespace(input_tokens=9, output_tokens=-1)),
+            ("boolean-input", SimpleNamespace(input_tokens=True, output_tokens=5)),
+            ("boolean-output", SimpleNamespace(input_tokens=9, output_tokens=False)),
+            ("fractional-input", SimpleNamespace(input_tokens=1.5, output_tokens=5)),
+            ("string-output", SimpleNamespace(input_tokens=9, output_tokens="5")),
+        ]:
+            with self.subTest(usage=label):
+                sdk = SDK(SimpleNamespace(status="completed", output_text="ok", usage=usage))
+                with tracked_request() as request_id:
+                    self.assertEqual(self.client(sdk).structured_completion("system", "source"), "ok")
+                    summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+                self.assertEqual(len(sdk.calls), 1)
+                self.assertEqual(summary["llm_calls_count"], 1)
+                self.assertEqual(summary["unreported_calls_count"], 1)
+                self.assertFalse(summary["usage_complete"])
+                self.assertEqual(summary["llm_calls"], [])
+                for key in ("total_input_tokens", "total_output_tokens", "total_thinking_tokens", "total_tokens"):
+                    self.assertIsNone(summary[key])
+
+    def test_sdk_exception_is_one_unreported_call_without_an_application_retry(self):
+        original = TimeoutError("private-provider-marker")
+        sdk = SDK(error=original)
+        with tracked_request() as request_id:
+            with self.assertLogs("ppap_excel_audit_engine.checkers.client", level="ERROR") as logs:
+                with self.assertRaises(TimeoutError) as raised:
+                    self.client(sdk).structured_completion("system", "private-source-marker")
+            self.assertIs(raised.exception, original)
+            summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+        self.assertEqual(len(sdk.calls), 1)
+        self.assertEqual(summary["llm_calls_count"], 1)
+        self.assertEqual(summary["unreported_calls_count"], 1)
+        self.assertFalse(summary["usage_complete"])
+        self.assertIsNone(summary["total_tokens"])
+        self.assertNotIn("private-provider-marker", "\n".join(logs.output))
+        self.assertNotIn("private-source-marker", "\n".join(logs.output))
+
+    def test_mixed_receipts_preserve_known_details_but_not_an_incomplete_total(self):
+        sdk = SDK(
+            [
+                SimpleNamespace(status="incomplete", output_text="", usage=SimpleNamespace(input_tokens=9, output_tokens=5)),
+                SimpleNamespace(status="incomplete", output_text="", usage=None),
+                SimpleNamespace(status="completed", output_text="ok", usage=SimpleNamespace(input_tokens=3, output_tokens=2)),
+            ]
+        )
+        with tracked_request() as request_id:
+            with self.assertLogs("ppap_excel_audit_engine.checkers.client", level="WARNING"):
+                self.assertEqual(self.client(sdk).structured_completion("system", "source"), "ok")
+            summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+        self.assertEqual(len(sdk.calls), 3)
+        self.assertEqual(summary["llm_calls_count"], 3)
+        self.assertEqual(summary["unreported_calls_count"], 1)
+        self.assertFalse(summary["usage_complete"])
+        self.assertEqual([(row["input_tokens"], row["output_tokens"]) for row in summary["llm_calls"]], [(9, 5), (3, 2)])
+        for key in ("total_input_tokens", "total_output_tokens", "total_thinking_tokens", "total_tokens"):
+            self.assertIsNone(summary[key])
+
+    def test_zero_tokens_are_confirmed_and_invalid_reasoning_does_not_change_totals(self):
+        for input_tokens, output_tokens, reasoning in [(0, 0, 0), (9, 5, None), (9, 5, -1), (9, 5, True), (9, 5, 1.5), (9, 5, "2")]:
+            with self.subTest(input_tokens=input_tokens, output_tokens=output_tokens, reasoning=reasoning):
+                sdk = SDK(
+                    SimpleNamespace(
+                        status="completed",
+                        output_text="ok",
+                        usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens, output_tokens_details=SimpleNamespace(reasoning_tokens=reasoning)),
+                    )
+                )
+                with tracked_request() as request_id:
+                    self.assertEqual(self.client(sdk).structured_completion("system", "source"), "ok")
+                    summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+                self.assertEqual(len(sdk.calls), 1)
+                self.assertEqual(summary["llm_calls_count"], 1)
+                self.assertEqual(summary["unreported_calls_count"], 0)
+                self.assertTrue(summary["usage_complete"])
+                self.assertEqual(summary["total_thinking_tokens"], 0)
+                self.assertEqual(summary["total_tokens"], 0 if input_tokens == 0 else 14)
+
     def test_provider_and_invalid_response_details_never_enter_client_logs(self):
         marker = "private-provider-source-marker"
         for sdk in (SDK(error=RuntimeError(marker)), SDK(SimpleNamespace(status="failed", output_text="", error=marker))):
@@ -102,14 +227,16 @@ class RuleAIClientTests(unittest.TestCase):
             )
         )
         client = self.client(sdk)
-        with patch("ppap_excel_audit_engine.checkers.client.record_token_usage") as record_usage:
+        with tracked_request() as request_id:
             self.assertEqual(client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"], json_format=True), '{"ok": true}')
-        record_usage.assert_called_once_with(
-            input_tokens=9,
-            output_tokens=5,
-            thinking_tokens=2,
-            model_name="test",
-            operation="image_analysis",
+            summary = get_token_tracker().end_request_tracking(request_id).to_dict()
+        self.assertEqual(summary["llm_calls_count"], 1)
+        self.assertEqual(summary["unreported_calls_count"], 0)
+        self.assertTrue(summary["usage_complete"])
+        self.assertEqual(summary["total_tokens"], 14)
+        self.assertEqual(
+            {key: value for key, value in summary["llm_calls"][0].items() if key != "timestamp"},
+            {"input_tokens": 9, "output_tokens": 5, "thinking_tokens": 2, "total_tokens": 14, "model_name": "test", "operation": "image_analysis"},
         )
         request = sdk.calls[0]
         self.assertEqual(request["text"], {"format": {"type": "json_object"}})
