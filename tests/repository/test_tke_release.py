@@ -178,7 +178,7 @@ def test_failed_registry_verification_leaves_configuration_unchanged(tmp_path):
     assert config.read_text() == "sentinel"
 
 
-@pytest.mark.parametrize("fault", [None, "preload", "schema", "active-job", "apply", "noop"])
+@pytest.mark.parametrize("fault", [None, "preload", "schema", "active-job", "apply", "worker-ready", "noop"])
 @pytest.mark.parametrize("full", [False, True])
 def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
     operation = RELEASE["deploy"]
@@ -187,7 +187,7 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
     migrations.mkdir()
     (migrations / "0001_start.sql").write_text("SQL")
     config = {"PPAP_BUILD_SHA": SHA, "PPAP_WEB_URL": "https://ppap.example"}
-    objects = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}]
+    objects = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}, {"kind": "Deployment", "metadata": {"name": "ppap-current-worker"}}]
     events = []
     digests = []
 
@@ -197,14 +197,27 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
             return json.dumps(objects).encode()
         if args[0] == "get":
             return json.dumps({"data": {"0001_start.sql": "SQL"}}).encode()
+        if args[0] == "rollout" and args[2] == "deployment/ppap-current-worker":
+            # Only the first rollout gate runs before the complete render.
+            if "apply" not in events:
+                events.append("worker-ready")
+                if fault == "worker-ready":
+                    raise RuntimeError("Worker rollout incomplete")
+            return b""
         if args[0] == "apply":
+            if Path(args[-1]).name == "worker-first.json":
+                assert json.loads(Path(args[-1]).read_text())["items"] == objects
+                assert (tmp_path / "apply-intent").exists()
+                events.append("worker-apply")
+                return b""
             digests.append(RELEASE["digest"](Path(args[-1]).read_bytes()))
             if "--dry-run=server" not in args:
                 events.append("apply")
                 assert (tmp_path / "apply-intent").exists()
                 if fault == "apply":
                     raise RuntimeError("unknown partial apply")
-            return b"configmap/ppap-current unchanged (server dry run)\n" if fault == "noop" else b"configmap/ppap-current configured (server dry run)\n"
+            state = "unchanged" if fault == "noop" else "configured"
+            return f"configmap/ppap-current {state} (server dry run)\ndeployment.apps/ppap-current-worker {state} (server dry run)\n".encode()
         return b""
 
     def preload(*args):
@@ -243,12 +256,16 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
         assert "apply" not in events and not (tmp_path / "apply-intent").exists()
     elif fault == "apply":
         assert events.count("apply") == 1 and "live-readback" not in events
+    elif fault == "worker-ready":
+        assert events[-2:] == ["worker-apply", "worker-ready"]
+        assert "apply" not in events and "live-readback" not in events
     elif fault == "noop":
         assert "apply" not in events and not (tmp_path / "apply-intent").exists()
         assert events[-1] == "live-readback"
         assert len(digests) == (2 if full else 1)
     else:
-        assert events == (["fresh-db", "both-node-gate", "full-db", "apply", "live-readback"] if full else ["fresh-db", "apply", "live-readback"])
+        prefix = ["fresh-db", "both-node-gate", "full-db"] if full else ["fresh-db"]
+        assert events == prefix + ["worker-apply", "worker-ready", "apply", "live-readback"]
         assert len(digests) == (3 if full else 2)
 
 

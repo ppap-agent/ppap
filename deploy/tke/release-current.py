@@ -568,9 +568,17 @@ def deploy(attempt: Path, *, full_check: bool = False) -> None:
         verify(attempt)
         print("Already current; no apply or rollout wait required.", flush=True)
         return
-    # The intent precedes the mutation. An interrupted/failed apply may be partial.
+    # Upgrade the consumer before API can enqueue new task_confirmation jobs.
+    # Both phases use the same already-validated rendered objects.
+    worker_objects = [obj for obj in objects if (obj["kind"], obj["metadata"]["name"]) in {("ConfigMap", "ppap-current"), ("Deployment", "ppap-current-worker")}]
+    require(len(worker_objects) == 2, "worker-first release needs the application ConfigMap and Worker Deployment")
+    worker_path = attempt / "worker-first.json"
+    worker_path.write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": worker_objects}))
+    # The intent precedes either mutation. An interrupted/failed apply may be partial.
     (attempt / "apply-intent").write_text(target["render_digest"])
     try:
+        kube("apply", "-f", str(worker_path))
+        kube("rollout", "status", "deployment/ppap-current-worker", "--timeout=300s")
         kube("apply", "-f", str(render_path))
         with ThreadPoolExecutor(max_workers=3) as pool:
             list(pool.map(lambda owner: kube("rollout", "status", "deployment/" + owner, "--timeout=300s"), set(PRELOAD["OWNERS"].values())))
