@@ -35,7 +35,7 @@ export function TaskSwitcher({open, onOpenChange, currentId, tasks, labels, quer
   return <Sheet open={open} onOpenChange={onOpenChange}>
     <SheetTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="打开审核任务"><ChevronDown aria-hidden="true"/></Button></SheetTrigger>
     <SheetContent side="left" className="w-full max-w-md sm:max-w-md">
-      <div className="border-b pb-4"><SheetHeader><SheetTitle>审核任务</SheetTitle><SheetDescription>按任务编号或文件名查找并切换任务</SheetDescription></SheetHeader></div>
+      <div className="border-b pb-4"><SheetHeader><SheetTitle>审核任务</SheetTitle><SheetDescription className="sr-only">按任务编号或文件名查找并切换任务</SheetDescription></SheetHeader></div>
       <div className="grid shrink-0 gap-3 border-b pb-4">
         <Button variant="outline" onClick={onNew}><Plus aria-hidden="true"/>新建审核任务</Button>
         <label className="flex items-center gap-2"><span className="sr-only">搜索任务文件</span><Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground"/><Input placeholder="搜索任务编号或文件名" value={query} onChange={event => onQuery(event.target.value)}/></label>

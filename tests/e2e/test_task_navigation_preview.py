@@ -1,6 +1,7 @@
 """Controlled navigation interactions, not backend or audit acceptance evidence."""
 
 import os
+import re
 import unittest
 from urllib.parse import parse_qs, urlparse
 
@@ -14,6 +15,21 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires PPAP_PREVIEW_URL and the e2e dependency group (preview-only UI)")
 class TaskNavigationPreviewTests(unittest.TestCase):
+    def test_report_breadcrumb_clears_the_host_preview_report_address_before_reload(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(5000)
+            page.goto(PREVIEW + "/__preview?page=audit&scene=reports-ready&task=preview-report-task&report=1&packageRequest=original-package")
+            product = page.frame_locator("#product")
+            product.get_by_role("link", name="返回审核结果", exact=True).click()
+            expect(page).not_to_have_url(re.compile(r"[?&](?:report|packageRequest)=[^&]+"))
+            self.assertEqual(parse_qs(urlparse(page.url).query)["task"], ["preview-report-task"])
+            page.reload()
+            expect(product.get_by_role("heading", name="审核报告", exact=True)).to_have_count(0)
+            expect(product.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
+            browser.close()
+
     def test_mobile_global_menu_and_task_switcher_have_separate_content_and_focus(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()

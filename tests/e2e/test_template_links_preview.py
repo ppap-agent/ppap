@@ -39,7 +39,7 @@ class TemplateLinksPreviewTests(unittest.TestCase):
                         expect(page.get_by_role("checkbox", name="选择 PFMEA.xlsx", exact=True)).to_be_checked()
                         expect(page.get_by_role("checkbox", name="深度模式", exact=True)).to_be_checked()
                     if width < 1024:
-                        page.get_by_role("button", name="打开审核任务", exact=True).click()
+                        page.get_by_role("button", name="打开产品导航", exact=True).click()
                     nav = page.get_by_role("navigation", name="产品导航", exact=True).filter(visible=True)
                     expect(nav.get_by_role("link", name="模板库（在飞书新窗口打开）", exact=True)).to_have_attribute("href", GUIDE)
                     page.close()
