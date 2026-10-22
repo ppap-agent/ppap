@@ -78,7 +78,7 @@ There is no automatic route switch after failure. Both routes build the four `li
 
 ### Build and review
 
-Use a clean checkout containing the selected full commit and Python 3.12+, Git, `gh`, Docker/Buildx and `kubectl`. Set `KUBECONFIG` for this cluster. `gh` must read the PPAP repository and its Actions runs. The selected commit needs a successful latest `Tests` run for that exact SHA, with a successful push/manual run; a PR merge-ref test alone is insufficient. Do not substitute the current branch HEAD or a configuration commit for the selected application source.
+Use a clean checkout containing the selected full commit and Python 3.12+, Git, `gh`, Docker/Buildx and `kubectl`. Set `KUBECONFIG` for this cluster. `gh` must read the PPAP repository and its Actions runs. Build requires an available full source commit and can run in parallel with CI. Deployment requires a successful latest `Tests` push/manual run for that exact SHA; a PR merge-ref test alone is insufficient. Do not substitute the current branch HEAD or a configuration commit for the selected application source.
 
 For the default route, supply `ALIYUN_DEV_OPS_TOKEN` only in the operator process. The hax environment file owns that credential. The script never prints it or stores it in Git. TCR verification reuses the existing `web-base` pull Secret binding. Flow uses its existing Codeup and TCR service connections, not the operator PAT in build logs.
 
@@ -86,7 +86,7 @@ For the default route, supply `ALIYUN_DEV_OPS_TOKEN` only in the operator proces
 python3 deploy/tke/release-current.py build <full-source-sha>
 ```
 
-Routine use is **build the selected SHA, then deploy the reviewed pins**. Both operations reuse existing successful CI; neither launches another test workflow.
+Routine use is **build the selected SHA, then deploy the reviewed pins**. Build does not query or wait for CI. Deploy reuses the existing successful exact-SHA CI; neither operation launches another test workflow.
 
 The build operation pushes only a new `codex/ppap-current-release-<full-sha>` ref in the private Codeup `ppap-web` repository; it never forces a ref or changes `master`. Existing history makes later pushes incremental. The script updates only the dedicated build-only Flow from `yunxiao.yaml`, with manual triggers and a source identity check. Do not run two operators against this pipeline concurrently. Matching successful/running builds are reused across Flow history pages; a failed build never permits deployment. New Yunxiao builds import/export [inline cache](https://docs.docker.com/build/cache/backends/inline/) through each component’s separate `build-cache` tag. That tag uses the same image blobs and is never a deployment pin. A first-build cache miss is allowed. The application Dockerfile installs OS packages before copying source, so source edits do not invalidate that layer. Registry manifest/config checks run in parallel and do not download application layers. Resume a known run without reconfiguration or dispatch:
 
@@ -116,7 +116,7 @@ Deploy only with explicit release authorization and reviewed `current.yaml` pins
 The default routine path is short:
 
 1. Reuse exact-SHA Tests, verify four registry identities in parallel, and check schema/in-flight jobs. No test workflow or build is started.
-2. Render once and server-dry-run once. Only the application ConfigMap and API/Web/Worker Deployments may change. Apply that fixed render; each scheduled Kubelet pulls directly with `IfNotPresent` and reuses existing layers. If nothing changes, skip apply and rollout waiting.
+2. Render once and server-dry-run once. Only the application ConfigMap and API/Web/Worker Deployments may change. Apply its application ConfigMap and Worker Deployment first and wait for the Worker rollout before applying the complete fixed render, so API cannot enqueue new confirmation work to an old Worker. Each scheduled Kubelet pulls directly with `IfNotPresent` and reuses existing layers. If nothing changes, skip apply and rollout waiting.
 3. Wait for application rollouts in parallel, then verify actual image IDs, Ready/restarts, public API/Web SHA, readiness, fresh Worker heartbeat, Deep socket, schema and the unchanged default legacy page. Routine checks do not claim a full historical-data comparison.
 
 Full checks run automatically when the live-to-target diff is unknown, runtime/configuration/registry changes, a live Deployment is not ready, or a same-source image is replaced. A proven source/test/doc-only diff with unchanged deployment runtime uses the routine path. A pin-record commit in `current.yaml` does not force full checks by itself: actual rendered configuration is compared with the live runtime. Dockerfiles, lockfiles, dependency manifests and unfamiliar paths require full checks. To force them for an environment investigation:

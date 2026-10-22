@@ -151,7 +151,11 @@ def test_build_updates_only_source_and_four_pins_after_verification(tmp_path):
         calls.append("verified")
         return refs, CONFIGS
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "tested_source": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": checked}):
+    def run(args, **kwargs):
+        assert args[0] == "git", "build must not query CI"
+        return SHA.encode() if args[1] == "rev-parse" else b""
+
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "run": run, "yunxiao": lambda *args: IMAGES, "registry_images": checked}):
         operation(SHA, "yunxiao", tmp_path, 2)
     text = config.read_text()
     changed = [(a, b) for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b]
@@ -168,13 +172,13 @@ def test_failed_registry_verification_leaves_configuration_unchanged(tmp_path):
     def invalid(*args):
         raise ValueError("source identity mismatch")
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "tested_source": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": invalid}):
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "run": lambda args: b"", "yunxiao": lambda *args: IMAGES, "registry_images": invalid}):
         with pytest.raises(ValueError):
             operation(SHA, "yunxiao", tmp_path, 2)
     assert config.read_text() == "sentinel"
 
 
-@pytest.mark.parametrize("fault", [None, "preload", "schema", "active-job", "apply", "noop"])
+@pytest.mark.parametrize("fault", [None, "preload", "schema", "active-job", "apply", "worker-ready", "noop"])
 @pytest.mark.parametrize("full", [False, True])
 def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
     operation = RELEASE["deploy"]
@@ -183,7 +187,7 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
     migrations.mkdir()
     (migrations / "0001_start.sql").write_text("SQL")
     config = {"PPAP_BUILD_SHA": SHA, "PPAP_WEB_URL": "https://ppap.example"}
-    objects = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}]
+    objects = [{"kind": "ConfigMap", "metadata": {"name": "ppap-current"}, "data": config}, {"kind": "Deployment", "metadata": {"name": "ppap-current-worker"}}]
     events = []
     digests = []
 
@@ -193,14 +197,27 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
             return json.dumps(objects).encode()
         if args[0] == "get":
             return json.dumps({"data": {"0001_start.sql": "SQL"}}).encode()
+        if args[0] == "rollout" and args[2] == "deployment/ppap-current-worker":
+            # Only the first rollout gate runs before the complete render.
+            if "apply" not in events:
+                events.append("worker-ready")
+                if fault == "worker-ready":
+                    raise RuntimeError("Worker rollout incomplete")
+            return b""
         if args[0] == "apply":
+            if Path(args[-1]).name == "worker-first.json":
+                assert json.loads(Path(args[-1]).read_text())["items"] == objects
+                assert (tmp_path / "apply-intent").exists()
+                events.append("worker-apply")
+                return b""
             digests.append(RELEASE["digest"](Path(args[-1]).read_bytes()))
             if "--dry-run=server" not in args:
                 events.append("apply")
                 assert (tmp_path / "apply-intent").exists()
                 if fault == "apply":
                     raise RuntimeError("unknown partial apply")
-            return b"configmap/ppap-current unchanged (server dry run)\n" if fault == "noop" else b"configmap/ppap-current configured (server dry run)\n"
+            state = "unchanged" if fault == "noop" else "configured"
+            return f"configmap/ppap-current {state} (server dry run)\ndeployment.apps/ppap-current-worker {state} (server dry run)\n".encode()
         return b""
 
     def preload(*args):
@@ -239,12 +256,16 @@ def test_deploy_owns_gates_fixed_render_and_readback(tmp_path, fault, full):
         assert "apply" not in events and not (tmp_path / "apply-intent").exists()
     elif fault == "apply":
         assert events.count("apply") == 1 and "live-readback" not in events
+    elif fault == "worker-ready":
+        assert events[-2:] == ["worker-apply", "worker-ready"]
+        assert "apply" not in events and "live-readback" not in events
     elif fault == "noop":
         assert "apply" not in events and not (tmp_path / "apply-intent").exists()
         assert events[-1] == "live-readback"
         assert len(digests) == (2 if full else 1)
     else:
-        assert events == (["fresh-db", "both-node-gate", "full-db", "apply", "live-readback"] if full else ["fresh-db", "apply", "live-readback"])
+        prefix = ["fresh-db", "both-node-gate", "full-db"] if full else ["fresh-db"]
+        assert events == prefix + ["worker-apply", "worker-ready", "apply", "live-readback"]
         assert len(digests) == (3 if full else 2)
 
 
@@ -310,6 +331,18 @@ def test_live_readback_cannot_report_success_for_wrong_target_or_state(tmp_path,
         else:
             operation(tmp_path)
     assert (tmp_path / "verified.json").exists() == (not rejected)
+
+
+@pytest.mark.parametrize("candidate,actual", [("short", SHA), (SHA, "0" * 40)])
+def test_invalid_source_blocks_build_before_cloud_actions(tmp_path, candidate, actual):
+    operation = RELEASE["build"]
+
+    def forbidden(*args):
+        pytest.fail("invalid source must not reach the cloud")
+
+    with patch.dict(operation.__globals__, {"run": lambda *args, **kwargs: actual.encode(), "yunxiao": forbidden}):
+        with pytest.raises(ValueError, match="source"):
+            operation(candidate, "yunxiao", tmp_path, None)
 
 
 def test_exact_tests_failure_blocks_source_before_cloud_actions():
@@ -414,7 +447,7 @@ def test_backup_reuses_verified_images_without_build_or_duplicate_metadata_reads
         checks.append(args)
         return images, CONFIGS
 
-    with patch.dict(operation.__globals__, {"HERE": tmp_path, "tested_source": lambda sha: None, "run": lambda *args: b"", "registry_images": registry}):
+    with patch.dict(operation.__globals__, {"HERE": tmp_path, "source_commit": lambda sha: None, "run": lambda *args: b"", "registry_images": registry}):
         operation(SHA, "unregistry", tmp_path, None)
     assert len(checks) == 1
     assert not (tmp_path / "source.tar").exists() and not (tmp_path / "source").exists()
