@@ -229,6 +229,8 @@ class UnixControllerServer:
         context = ExecutionContext()
         finished = threading.Event()
         with self._contexts_lock:
+            if self._stop.is_set():
+                context.cancelled.set()
             self._contexts.append(context)
         try:
             with conn:
