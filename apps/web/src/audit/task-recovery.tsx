@@ -11,7 +11,7 @@ export function TaskRecovery({recovery, report, onRead, onSupport}: {recovery: T
   const title = recovery.state === 'loading' ? report ? '审核报告' : '审核任务' : errors[recovery.state]
   return <section className="min-w-0 space-y-5" aria-label={report ? '报告读取状态' : '任务读取状态'}>
     <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      <h1 className="text-2xl font-semibold">{title}</h1>
+      <h1 className={loading ? 'sr-only' : 'text-2xl font-semibold'}>{title}</h1>
       {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none"/>{report ? '正在打开报告…' : '正在打开任务…'}</p>}
     </header>
     {loading ? <div aria-hidden="true" className="grid min-w-0 gap-6 min-[900px]:grid-cols-[16rem_minmax(0,1fr)]">
