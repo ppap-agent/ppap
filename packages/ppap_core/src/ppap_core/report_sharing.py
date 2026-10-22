@@ -45,6 +45,8 @@ def _get(http, token, path, params=None):
     try:
         response = http.get(BASE + path, headers={"Authorization": "Bearer " + token}, params=params, timeout=20)
         body = response.json()
+        if response.status_code == 400 and isinstance(body, dict) and body.get("code") == 99991672:
+            raise ReportSharingError("share_directory_permission_missing")
         if not 200 <= response.status_code < 300 or not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0 or not isinstance(body.get("data"), dict):
             raise ReportSharingError("share_directory_unavailable")
         return body["data"]
@@ -65,7 +67,10 @@ def resolve_report_target(http, token: str, organization_id: str, reference: Map
                 target.update(eligibility="eligible", reason=None)
         else:
             user = _get(http, token, "/contact/v3/users/" + quote(reference["id"], safe=""), {"user_id_type": "open_id"}).get("user")
-            if not isinstance(user, dict) or user.get("open_id") != reference["id"] or not isinstance(user.get("name"), str) or not user["name"].strip():
+            if not isinstance(user, dict) or user.get("open_id") != reference["id"]:
+                return target
+            target["reason"] = "未取得完整的成员姓名或账号状态，请检查通讯录字段权限与数据范围。"
+            if not isinstance(user.get("name"), str) or not user["name"].strip():
                 return target
             target["display_name"] = user["name"]
             status = user.get("status")
@@ -76,8 +81,9 @@ def resolve_report_target(http, token: str, organization_id: str, reference: Map
                 target.update(eligibility="blocked", reason="该用户当前不可接收报告。")
             elif status.get("is_activated") is True and all(status.get(key) is False for key in blocked):
                 target.update(eligibility="eligible", reason=None)
-    except ReportSharingError:
-        pass
+    except ReportSharingError as error:
+        if str(error) == "share_directory_permission_missing":
+            target["reason"] = "当前组织尚未授权所需的飞书目录权限，接收资格未确认。"
     return target
 
 
@@ -137,6 +143,8 @@ def upload_report_message_file(http, token: str, artifact: dict, body: bytes) ->
             timeout=60,
         )
         data = response.json()
+        if response.status_code == 400 and isinstance(data, dict) and data.get("code") == 99991672:
+            raise ReportSharingError("share_upload_permission_missing")
         key = data.get("data", {}).get("file_key") if isinstance(data, dict) and isinstance(data.get("data"), dict) else None
         if not 200 <= response.status_code < 300 or not isinstance(data, dict) or type(data.get("code")) is not int or data["code"] != 0 or not isinstance(key, str) or not key.strip():
             raise ReportSharingError("share_upload_unconfirmed")

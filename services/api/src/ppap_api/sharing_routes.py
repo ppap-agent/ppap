@@ -63,7 +63,11 @@ def register_sharing_routes(app, store, session_of, http, settings):
             if isinstance(error, ValidationError)
             else 409
         )
-        message = "access_denied" if status == 403 else "share_unavailable" if status == 503 else str(error) if not isinstance(error, ValidationError) else "invalid_share_request"
+        message = "invalid_share_request" if isinstance(error, ValidationError) else str(error)
+        if status == 403:
+            message = "access_denied"
+        elif status == 503 and not (isinstance(error, ReportSharingError) and message == "share_directory_permission_missing"):
+            message = "share_unavailable"
         return JSONResponse({"error": message}, status_code=status, headers=HEADERS)
 
     @app.get("/audit-share-targets", response_model=wc.AuditShareTargetsPage)
@@ -103,8 +107,11 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 attempt["target"] = target_for(session.principal, profile, token, reference)
                 if attempt["target"]["eligibility"] != "eligible":
                     raise ReportSharingError("share_target_unverified")
-            except (KeyError, ValueError, ObjectMissing, ReportSharingError, FeishuUsageError):
-                attempt.update(phase="failed", reason="尚未向接收对象发送消息。请检查授权及接收对象后重试；私有上传可能仍保留。")
+            except (KeyError, ValueError, ObjectMissing, ReportSharingError, FeishuUsageError) as error:
+                reason = "尚未向接收对象发送消息。请检查授权及接收对象后重试；私有上传可能仍保留。"
+                if str(error) == "share_upload_permission_missing":
+                    reason = "尚未发送消息：当前组织未授权上传飞书消息附件。请联系管理员完成授权，授权后仅重试失败目标；也可另建链接分享。"
+                attempt.update(phase="failed", reason=reason)
                 shares.save(guard, row)
                 continue
             attempt.update(phase="dispatching", reason="正在核对发送结果，请勿重新发送。")
