@@ -309,6 +309,7 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     taskAddress(taskId)
     const url = new URL(location.href); url.searchParams.set('report', fileVersionId)
     writeAuditAddress(url); setReportView(true)
+    if (window.parent !== window) window.parent.postMessage({type: 'ppap-audit-task', task: taskId, report: fileVersionId, packageRequest: null}, location.origin)
     void recover(taskId)
   }
   async function prepareReaudit(roundId: string) {

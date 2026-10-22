@@ -316,7 +316,7 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 
 `test_audit_preview.py` 的历史返回回归要求：旧 Round 可见时，缓存 Task 的定时观察、聚焦和网络恢复不能发起后台读取；浏览器前进回 Task 后仍读取当前结果。测试使用受控读取与浏览器时钟，不推进真实审核或证明服务端执行进度。原单请求、失败退避及迟到读取保护继续由相邻观察回归覆盖。
 
-`test_round_reports.py` 使用原生页面与受控 HTTP，核对历史 Round 从已授权的真实 Task 关联打开原 PDF、下载固定字节，返回保留文件、条款、筛选与专注复核；生成中、失败、无来源 Task 及报告权限拒绝分开表达，读取不创建或恢复工作。`tests/integration/product/test_audit_tasks.py` 在隔离 PostgreSQL/Worker 中核对同一 Round 与 Task 的报告投影、冻结结果不变、撤权及跨身份拒绝；原 Round 可读不等于私有 Task/PDF 可读，缺少 Task 关联不伪造任务或报告。浏览器受控响应不代替这些持久化与授权检查。
+`test_round_reports.py` 使用原生页面与受控 HTTP，核对历史 Round 从已授权的真实 Task 关联打开原 PDF、下载固定字节，返回保留文件、条款、筛选与专注复核；生成中、失败、无来源 Task 及报告权限拒绝分开表达，读取不创建或恢复工作。受控同源宿主只承载已有导航消息，核对内嵌原生页面打开报告后，宿主刷新仍恢复同一报告；不据此声称当前预览宿主已有该历史入口。`tests/integration/product/test_audit_tasks.py` 在隔离 PostgreSQL/Worker 中核对同一 Round 与 Task 的报告投影、冻结结果不变、撤权及跨身份拒绝；原 Round 可读不等于私有 Task/PDF 可读，缺少 Task 关联不伪造任务或报告。浏览器受控响应不代替这些持久化与授权检查。
 
 其中的未知提取恢复用例从当前审核要求上传入口进入：刷新和核对只读原请求，记录 HTTP 方法以拒绝恢复期间的写操作；重新提取需确认可能的模型费用并创建新请求。原请求的迟到读取不能替换新请求；挂起的提交响应晚于人工录入返回时不能覆盖人工内容。`RuleExtractionRecovery.tla` 是一份冻结来源、两个请求及延迟响应的有限 Safety 检查；正向配置检查未知不冒充运行中、只读不重提、当前请求及人工录入边界，四个故障配置保留对应反例。它不证明 SQL 持久化、跨标签页恢复、授权、模型质量、真实收费或最终完成。
 
