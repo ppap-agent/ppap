@@ -178,6 +178,31 @@ def test_native_preparation_save_and_promotion_have_one_revision_winner(task_sys
     assert client.get("/rounds").json()["rounds"] == []
 
 
+def test_native_preparation_saved_removal_reason_matches_the_recognition_normalization(task_system):
+    client, worker = task_system
+    selected, excluded = checked_file(client, worker), checked_file(client, worker, "本次移除.xlsx")
+    preparation = upload_preparation([selected, {**excluded, "selection": "unselected"}])
+    draft_id = str(uuid.uuid4())
+    assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
+    removed = {**excluded, "selection": "removed", "removal_reason": " 用户移除 \t"}
+    requested = {**preparation, "files": [selected, removed]}
+    saved = client.put(f"/drafts/{draft_id}", json={"expected_revision": 0, "upload_preparation": requested})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["upload_preparation"]["files"][1]["removal_reason"] == "用户移除"
+    assert client.get(f"/drafts/{draft_id}").json() == saved.json()
+    body = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "analysis_mode": "standard", "customer_preference": None, "files": requested["files"]}
+    promoted = client.post("/audit-tasks", json=body)
+    assert promoted.status_code == 202, promoted.text
+    task = promoted.json()
+    assert task["id"] == draft_id and task["input_revision"] == 0 and task["round_id"] is None
+    by_file = {row["file"]["id"]: row for row in task["files"]}
+    assert by_file[excluded["file_version_id"]]["selection"] == "removed"
+    assert by_file[excluded["file_version_id"]]["removal_reason"] == "用户移除"
+    assert by_file[selected["file_version_id"]]["selection"] == "selected"
+    assert client.post("/audit-tasks", json=body).json() == task
+    assert client.get("/rounds").json()["rounds"] == [] and client.get("/usage").json()["events"] == []
+
+
 @pytest.mark.parametrize("subject", ["bob", "carol"])
 def test_native_preparation_does_not_expand_creator_or_tenant_access(task_system, auth_store_factory, subject):
     client, worker = task_system
