@@ -2368,6 +2368,55 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
         self.assertEqual([item["state"] for item in recovered.json()["deliveries"]], ["sent", "sent"])
         self.assertEqual([item["receive_id"] for item in sends], ["ou_first", "ou_second"])
 
+    def test_missing_group_permission_does_not_block_the_freshly_verified_self_target(self):
+        import httpx
+
+        def effect(request):
+            self.assertEqual(request.url.path, "/open-apis/im/v1/chats")
+            return httpx.Response(400, json={"code": 99991672, "msg": "private provider diagnostic"})
+
+        client, _command, _task, _worker = self.prepared_share_transport(effect)
+        denied = client.get("/audit-share-targets", params={"kind": "group"})
+        self.assertEqual(denied.status_code, 503)
+        self.assertEqual(denied.json(), {"error": "share_directory_permission_missing"})
+        own = client.get("/audit-share-targets", params={"kind": "user"})
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual([(target["id"], target["eligibility"]) for target in own.json()["targets"]], [(self.alice.subject, "eligible")])
+
+    def test_attachment_permission_recovery_keeps_failed_targets_and_never_sends_during_readback(self):
+        import json
+
+        import httpx
+
+        granted, sends = [False], []
+
+        def effect(request):
+            if request.url.path.endswith("/im/v1/files"):
+                return httpx.Response(200, json={"code": 0, "data": {"file_key": "file_after_grant"}}) if granted[0] else httpx.Response(400, json={"code": 99991672})
+            self.assertEqual(request.url.path, "/open-apis/im/v1/messages")
+            sends.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_after_grant"}})
+
+        client, command, _task, _worker = self.prepared_share_transport(effect, file_mode=True)
+        path = "/audit-report-shares/" + command["request_id"]
+        first = client.post("/audit-report-shares", json=command)
+        self.assertEqual(first.status_code, 200, first.text)
+        failed = first.json()
+        self.assertEqual([row["state"] for row in failed["deliveries"]], ["failed", "failed"])
+        self.assertTrue(all("未授权上传飞书消息附件" in row["reason"] for row in failed["deliveries"]))
+        self.assertEqual(sends, [])
+        granted[0] = True
+        self.assertEqual(client.get(path).json(), failed)
+        self.assertEqual(client.post("/audit-report-shares", json=command).json(), failed)
+        self.assertEqual(sends, [])
+        attempt = {"target": command["targets"][0], "attempt_id": str(uuid.uuid4())}
+        recovered = client.post(path + "/retries", json=attempt)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual([row["state"] for row in recovered.json()["deliveries"]], ["sent", "failed"])
+        self.assertEqual(recovered.json()["request"], command)
+        self.assertEqual(client.post(path + "/retries", json=attempt).json(), recovered.json())
+        self.assertEqual([send["receive_id"] for send in sends], [command["targets"][0]["id"]])
+
     def test_report_zip_is_persistent_and_contains_the_exact_ready_pdfs_without_another_audit(self):
         from io import BytesIO
         from zipfile import ZipFile

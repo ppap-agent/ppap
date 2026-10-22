@@ -139,3 +139,29 @@ def test_group_directory_uses_the_bot_membership_not_the_user_chat_scope(query):
     with httpx.Client(transport=httpx.MockTransport(provider)) as http:
         page = list_report_targets(http, "user-token", "tenant-token", principal, {}, "group", query, None)
         assert page["targets"][0]["eligibility"] == "eligible"
+
+
+def test_ungranted_group_directory_is_distinct_from_a_temporary_provider_failure():
+    from types import SimpleNamespace
+
+    principal = SimpleNamespace(tenant_key="tenant-one", subject="ou_self", display_name="自己")
+    for status, code, expected in [(400, 99991672, "share_directory_permission_missing"), (503, 99991672, "share_directory_unavailable"), (400, 99991663, "share_directory_unavailable")]:
+        with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(status, json={"code": code, "msg": "private provider diagnostic"}))) as http:
+            with pytest.raises(ReportSharingError, match="^" + expected + "$"):
+                list_report_targets(http, "user-token", "tenant-token", principal, {}, "group", "", None)
+
+
+@pytest.mark.parametrize("content_type,filename", [("application/pdf", "审核报告.pdf"), ("application/zip", "审核报告.zip")])
+def test_missing_attachment_permission_is_not_an_unconfirmed_message_delivery(content_type, filename):
+    for status, expected in [(400, "share_upload_permission_missing"), (503, "share_upload_unconfirmed")]:
+        with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(status, json={"code": 99991672, "msg": "private provider diagnostic"}))) as http:
+            with pytest.raises(ReportSharingError, match="^" + expected + "$"):
+                upload_report_message_file(http, "tenant-token", {"filename": filename, "content_type": content_type}, b"frozen-report-content")
+
+
+def test_basic_contact_identity_without_name_or_status_never_becomes_an_eligible_recipient():
+    for user in [{"open_id": "ou_reader", "union_id": "on_reader"}, {"open_id": "ou_reader", "name": "组织成员"}]:
+        with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"code": 0, "data": {"user": user}}))) as http:
+            target = resolve_report_target(http, "tenant-token", "tenant-one", {"id": "ou_reader", "kind": "user"})
+            assert target["eligibility"] == "unknown"
+            assert target["reason"] == "未取得完整的成员姓名或账号状态，请检查通讯录字段权限与数据范围。"

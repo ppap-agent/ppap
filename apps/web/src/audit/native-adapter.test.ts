@@ -64,6 +64,15 @@ test('definite share rejection permits new composition but an in-flight conflict
   await assert.rejects(nativeSharingAdapter.send(input))
 })
 
+test('an ungranted directory reports organization authorization instead of a transient retry', async () => {
+  globalThis.fetch = async () => json({error: 'share_directory_permission_missing'}, 503)
+  await assert.rejects(nativeSharingAdapter.listTargets('', 'group'), {
+    code: 'share_directory_permission_missing',
+    status: 503,
+    message: '当前组织尚未授权所需的飞书目录权限，请联系管理员完成授权。',
+  })
+})
+
 test('a shared report is read only from its frozen artifact and checked against its response digest', async () => {
   const body = new TextEncoder().encode('%PDF-frozen-report')
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', body)), byte => byte.toString(16).padStart(2, '0')).join('')

@@ -39,7 +39,7 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
       }
       setNextPage(page.next_page_token || '')
       onReadyChange(true)
-    } catch {if (epoch.current === run) setError('无法读取人员或群组，请重试。')}
+    } catch (failure) {if (epoch.current === run) setError(failure instanceof Error && 'code' in failure && failure.code === 'share_directory_permission_missing' ? failure.message : '无法读取人员或群组，请重试。')}
     finally {if (epoch.current === run) setLoading(false)}
   }
   useEffect(() => {
