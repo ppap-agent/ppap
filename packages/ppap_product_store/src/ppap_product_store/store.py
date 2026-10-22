@@ -82,6 +82,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ppap_product_store.task_view import file_round_audit, has_execution_error, report_eligible, round_read_view, task_round_view
+from ppap_product_store.upload_preparation import PREPARATION_KEY, normalize_preparation, preparation_inputs, validate_preparation_update
 
 
 def _now() -> datetime:
@@ -1158,8 +1159,12 @@ class AuthStore:
     def create_audit_task(self, principal: Principal, body: dict, *, usage_policy=None) -> dict:
         request_id = _as_uuid(str(body.get("request_id") or ""))
         revising = "task_id" in body or "expected_revision" in body
-        task_id = _as_uuid(str(body.get("task_id") or "")) if revising else request_id
+        promoting = "source_draft_id" in body or "expected_draft_revision" in body
+        task_id = _as_uuid(str(body.get("task_id") or "")) if revising else _as_uuid(str(body.get("source_draft_id") or "")) if promoting else request_id
         expected = body.get("expected_revision")
+        preparation_revision = body.get("expected_draft_revision")
+        if promoting and (revising or type(preparation_revision) is not int or preparation_revision < 0):
+            raise ValueError("invalid_draft_revision")
         files = body.get("files")
         customer = body.get("customer_preference")
         predecessor = _as_uuid(str(body.get("predecessor_id") or ""))
@@ -1211,6 +1216,8 @@ class AuthStore:
             inputs["predecessor_id"] = predecessor
         if revising:
             inputs.update(task_id=task_id, expected_revision=expected)
+        if promoting:
+            inputs.update(source_draft_id=task_id, expected_draft_revision=preparation_revision)
         fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
         with self._conn() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("recognition-request:" + request_id,))
@@ -1245,12 +1252,37 @@ class AuthStore:
                 )
                 return self._recognition_public(conn, principal, task_id)
             existing = conn.execute("SELECT task_fingerprint FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
-            if existing:
+            if existing and existing[0] is not None:
                 self._recognition_owner(conn, principal, task_id)
                 if existing[0] != fingerprint:
                     raise ValueError("idempotency_conflict")
+                if promoting:
+                    receipt = conn.execute("SELECT kind, payload FROM engine.jobs WHERE id = %s AND tenant_id = %s", (request_id, principal.tenant_id)).fetchone()
+                    if not receipt or receipt[0] != "file_analysis" or receipt[1].get("task_id") != task_id or (receipt[1].get("recognition_request") or {}).get("fingerprint") != fingerprint:
+                        raise ValueError("idempotency_conflict")
                 return self._recognition_public(conn, principal, task_id)
-            if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
+            if promoting:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute("SELECT * FROM product.audit_drafts WHERE id = %s FOR UPDATE", (task_id,))
+                    preparation_draft = cur.fetchone()
+                if not preparation_draft or str(preparation_draft["tenant_id"]) != principal.tenant_id or str(preparation_draft["created_by"]) != principal.user_id:
+                    raise KeyError("missing")
+                self._require_preparation_owner(conn, principal, task_id)
+                preparation = (preparation_draft["case_context"] or {}).get(PREPARATION_KEY)
+                if preparation_draft["task_fingerprint"] is not None:
+                    raise ValueError("idempotency_conflict")
+                if not preparation or preparation_draft["status"] != DRAFT_OPEN:
+                    raise ValueError("task_input_locked")
+                if preparation_draft["input_revision"] != preparation_revision:
+                    raise ValueError("draft_revision_conflict")
+                submitted = {key: value for key, value in inputs.items() if key not in {"source_draft_id", "expected_draft_revision"}}
+                if preparation_inputs(preparation) != submitted:
+                    raise ValueError("upload_preparation_input_conflict")
+                if conn.execute("SELECT 1 FROM product.audit_rounds WHERE source_draft_id = %s", (task_id,)).fetchone():
+                    raise ValueError("draft_already_accepted")
+                if request_id != task_id and conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (request_id,)).fetchone():
+                    raise ValueError("idempotency_conflict")
+            elif conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
                 raise KeyError("missing")
             # Initial creation and rematching share the endpoint's request identity.
             prior_job = conn.execute("SELECT tenant_id FROM engine.jobs WHERE id = %s", (request_id,)).fetchone()
@@ -1266,14 +1298,24 @@ class AuthStore:
             sequence = cast(tuple, conn.execute("SELECT COALESCE(MAX(task_sequence), 0) + 1 FROM product.audit_drafts WHERE tenant_id = %s AND task_day = %s", (principal.tenant_id, day)).fetchone())[
                 0
             ]
-            conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')", (task_id, principal.tenant_id))
-            conn.execute(
-                """INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, analysis_mode, task_fingerprint, task_day, task_sequence, customer_preference, predecessor_id)
-                VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)""",
-                (task_id, principal.tenant_id, principal.user_id, mode, fingerprint, day, sequence, customer, predecessor),
-            )
-            conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read'), (%s, %s, 'review')", (task_id, principal.user_id, task_id, principal.user_id))
-            self._recognition_inputs(conn, principal, task_id, normalized, customer, 0)
+            if promoting:
+                conn.execute(
+                    """UPDATE product.audit_drafts SET analysis_mode = %s, task_fingerprint = %s, task_day = %s,
+                    task_sequence = %s, customer_preference = %s, predecessor_id = %s, input_revision = 0,
+                    recognition_request_id = %s, updated_at = now() WHERE id = %s""",
+                    (mode, fingerprint, day, sequence, customer, predecessor, request_id, task_id),
+                )
+            else:
+                conn.execute("INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_draft')", (task_id, principal.tenant_id))
+                conn.execute(
+                    """INSERT INTO product.audit_drafts (id, tenant_id, created_by, status, analysis_mode, task_fingerprint, task_day, task_sequence, customer_preference, predecessor_id)
+                    VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)""",
+                    (task_id, principal.tenant_id, principal.user_id, mode, fingerprint, day, sequence, customer, predecessor),
+                )
+                conn.execute(
+                    "INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read'), (%s, %s, 'review')", (task_id, principal.user_id, task_id, principal.user_id)
+                )
+            self._recognition_inputs(conn, principal, task_id, normalized, customer, 0, request_id if promoting else None, fingerprint if promoting else None)
             return self._recognition_public(conn, principal, task_id)
 
     def _recognition_inputs(self, conn, principal, task_id, files, customer, revision, request_id=None, fingerprint=None) -> None:
@@ -2115,8 +2157,12 @@ class AuthStore:
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             if task_id == request_id and not conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (task_id,)).fetchone():
                 return read
-            self._recognition_owner(conn, principal, task_id)
-            revision = 0 if task_id == request_id else None
+            preparation = conn.execute("SELECT task_fingerprint, case_context FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()
+            if preparation and preparation[0] is None and PREPARATION_KEY in (preparation[1] or {}):
+                self._require_preparation_owner(conn, principal, task_id)
+                return read
+            owned = self._recognition_owner(conn, principal, task_id)
+            revision = 0 if task_id == request_id and PREPARATION_KEY not in (owned["case_context"] or {}) else None
             if revision is None:
                 job = conn.execute("SELECT payload FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'file_analysis'", (request_id, principal.tenant_id)).fetchone()
                 if job and job[0].get("task_id") == task_id:
@@ -2565,13 +2611,48 @@ class AuthStore:
         ):
             raise ValueError("task_input_locked")
 
-    def create_draft(self, principal: Principal, predecessor_id: str | None = None, *, request_id: str | None = None, items: list[dict] | None = None, case_context: dict | None = None) -> dict:
+    def _require_preparation_owner(self, conn, principal: Principal, draft_id: str) -> None:
+        if not conn.execute(
+            """SELECT 1 FROM product.audit_drafts d JOIN product.resources r ON r.id = d.id
+            WHERE d.id = %s AND d.tenant_id = %s AND d.created_by = %s
+            AND r.tenant_id = d.tenant_id AND r.kind = 'audit_draft'
+            AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id
+                        AND g.user_id = %s AND g.capability IN ('read', 'review'))""",
+            (draft_id, principal.tenant_id, principal.user_id, principal.user_id),
+        ).fetchone():
+            raise KeyError("missing")
+
+    def _preparation_items(self, conn, principal: Principal, preparation: dict) -> list[dict]:
+        prepared = self._prepared_items(conn, principal, [{"file_version_id": row["file_version_id"], "role": "reference"} for row in preparation["files"]])
+        for row, source in zip(preparation["files"], prepared):
+            if row["validation_id"]:
+                validation = self.get_file_validation(principal, row["validation_id"])
+                if validation["source_file_version_id"] != row["file_version_id"] or validation["source_file_id"] != source["file_id"]:
+                    raise ValueError("precheck_required")
+        return prepared
+
+    def create_draft(
+        self,
+        principal: Principal,
+        predecessor_id: str | None = None,
+        *,
+        request_id: str | None = None,
+        items: list[dict] | None = None,
+        case_context: dict | None = None,
+        upload_preparation: dict | None = None,
+    ) -> dict:
         draft_id = str(uuid.uuid4()) if request_id is None else _as_uuid(request_id) if isinstance(request_id, str) else None
         if not draft_id or items is not None and not isinstance(items, list):
             raise ValueError("invalid_draft_request")
         context = {} if case_context is None else case_context
-        if not isinstance(context, dict) or len(json.dumps(context, ensure_ascii=False).encode()) > 262144:
+        if not isinstance(context, dict) or PREPARATION_KEY in context or len(json.dumps(context, ensure_ascii=False).encode()) > 262144:
             raise ValueError("invalid_case_context")
+        preparation = normalize_preparation(upload_preparation) if upload_preparation is not None else None
+        if preparation is not None:
+            if items is not None or case_context is not None or predecessor_id or request_id is None:
+                raise ValueError("invalid_upload_preparation")
+            self._offered_analysis_mode(preparation["analysis_mode"])
+            context = {PREPARATION_KEY: preparation}
         if predecessor_id:
             resource = self.resource(predecessor_id)
             if resource is None or resource.kind != "audit_round" or not can_read(principal, resource, self.grants(predecessor_id, principal.user_id)):
@@ -2592,6 +2673,12 @@ class AuthStore:
                     ):
                         raise KeyError("missing")
                     saved = cast(dict, self._draft_public(conn, draft_id))
+                    if preparation is not None:
+                        if saved.get("upload_preparation") != preparation or saved.get("task_id"):
+                            raise ValueError("idempotency_conflict")
+                        return saved
+                    if saved.get("upload_preparation") is not None:
+                        raise ValueError("idempotency_conflict")
                     if (str(existing[2]) if existing[2] else None) != predecessor_id or case_context is not None and saved["case_context"] != context:
                         raise ValueError("idempotency_conflict")
                     if items is not None:
@@ -2605,8 +2692,8 @@ class AuthStore:
                     return saved
                 if conn.execute("SELECT 1 FROM product.resources WHERE id = %s", (draft_id,)).fetchone():
                     raise KeyError("missing")
-                prepared = self._bound_audit_items(conn, principal, items or [], require_rules=False)
-                mode = ANALYSIS_STANDARD
+                prepared = self._preparation_items(conn, principal, preparation) if preparation is not None else self._bound_audit_items(conn, principal, items or [], require_rules=False)
+                mode = preparation["analysis_mode"] if preparation is not None else ANALYSIS_STANDARD
                 if predecessor_id:
                     inherited = conn.execute(
                         "SELECT analysis_mode FROM product.audit_rounds WHERE id = %s",
@@ -2640,7 +2727,7 @@ class AuthStore:
                 for row in prepared:
                     conn.execute(
                         "INSERT INTO product.draft_items (draft_id, file_version_id, role, rule_version_id) VALUES (%s, %s, %s, %s)",
-                        (draft_id, row["file_version_id"], row["role"], row["rule_version_id"]),
+                        (draft_id, row["file_version_id"], row["role"], row.get("rule_version_id")),
                     )
         return cast(dict, self.get_draft(draft_id))
 
@@ -2653,21 +2740,26 @@ class AuthStore:
                      AND d.task_fingerprint IS NULL
                      AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = d.id
                                  AND g.user_id = %s AND g.capability IN ('read', 'review'))
-                     AND EXISTS (SELECT 1 FROM product.draft_items i WHERE i.draft_id = d.id)
+                     AND (NOT (d.case_context ? '_native_upload_preparation') OR d.created_by = %s)
+                     AND (EXISTS (SELECT 1 FROM product.draft_items i WHERE i.draft_id = d.id)
+                          OR jsonb_array_length(COALESCE(d.case_context->'_native_upload_preparation'->'uploads', '[]'::jsonb)) > 0)
                      AND (%s = '' OR d.case_context::text ILIKE %s OR EXISTS (
                          SELECT 1 FROM product.draft_items i JOIN product.file_versions f ON f.id = i.file_version_id
                          WHERE i.draft_id = d.id AND f.original_filename ILIKE %s))
                    ORDER BY d.updated_at DESC, d.id DESC LIMIT %s OFFSET %s""",
-                (principal.tenant_id, DRAFT_OPEN, principal.user_id, q, needle, needle, limit, offset),
+                (principal.tenant_id, DRAFT_OPEN, principal.user_id, principal.user_id, q, needle, needle, limit, offset),
             ).fetchall()
             return [cast(dict, self._draft_public(conn, row[0])) for row in rows]
 
-    def get_draft(self, draft_id: str) -> dict | None:
+    def get_draft(self, draft_id: str, principal: Principal | None = None) -> dict | None:
         parsed = _as_uuid(draft_id)
         if not parsed:
             return None
         with self._conn() as conn:
-            return self._draft_public(conn, parsed)
+            draft = self._draft_public(conn, parsed)
+            if principal is not None and draft and draft.get("upload_preparation") is not None:
+                self._require_preparation_owner(conn, principal, parsed)
+            return draft
 
     def draft_round_id(self, draft_id: str) -> str | None:
         parsed = _as_uuid(draft_id)
@@ -2698,6 +2790,9 @@ class AuthStore:
         analysis_mode: str | None = None,
         writeback_target=None,
         case_context: dict | None = None,
+        *,
+        upload_preparation: dict | None = None,
+        expected_revision: int | None = None,
     ) -> dict:
         parsed = _as_uuid(draft_id)
         if not parsed:
@@ -2706,7 +2801,7 @@ class AuthStore:
             with conn.transaction():
                 draft = conn.execute(
                     """
-                    SELECT id, tenant_id, status, task_fingerprint FROM product.audit_drafts
+                    SELECT id, tenant_id, status, task_fingerprint, case_context, input_revision FROM product.audit_drafts
                     WHERE id = %s FOR UPDATE
                     """,
                     (parsed,),
@@ -2717,6 +2812,27 @@ class AuthStore:
                     raise ValueError("task_input_locked")
                 if draft[2] != DRAFT_OPEN:
                     raise ValueError("draft_already_accepted")
+                previous_preparation = (draft[4] or {}).get(PREPARATION_KEY)
+                if upload_preparation is not None or previous_preparation is not None:
+                    self._require_preparation_owner(conn, principal, parsed)
+                    if previous_preparation is None or upload_preparation is None or any(value is not None for value in (items, analysis_mode, writeback_target, case_context)):
+                        raise ValueError("invalid_upload_preparation")
+                    if type(expected_revision) is not int or expected_revision < 0:
+                        raise ValueError("invalid_draft_revision")
+                    if draft[5] != expected_revision:
+                        raise ValueError("draft_revision_conflict")
+                    preparation = normalize_preparation(upload_preparation)
+                    validate_preparation_update(previous_preparation, preparation)
+                    mode = self._offered_analysis_mode(preparation["analysis_mode"])
+                    prepared = self._preparation_items(conn, principal, preparation)
+                    conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
+                    for row in prepared:
+                        conn.execute("INSERT INTO product.draft_items (draft_id, file_version_id, role) VALUES (%s, %s, 'reference')", (parsed, row["file_version_id"]))
+                    conn.execute(
+                        "UPDATE product.audit_drafts SET case_context = %s, input_revision = input_revision + 1, analysis_mode = %s, updated_at = now() WHERE id = %s",
+                        (Jsonb({PREPARATION_KEY: preparation}), mode, parsed),
+                    )
+                    return cast(dict, self._draft_public(conn, parsed))
                 if items is not None:
                     prepared = self._bound_audit_items(conn, principal, items, require_rules=False)
                     conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
@@ -2740,7 +2856,7 @@ class AuthStore:
                     self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
                     conn.execute("UPDATE product.audit_drafts SET updated_at = now() WHERE id = %s", (parsed,))
                 if case_context is not None:
-                    if not isinstance(case_context, dict) or len(json.dumps(case_context, ensure_ascii=False).encode()) > 262144:
+                    if not isinstance(case_context, dict) or PREPARATION_KEY in case_context or len(json.dumps(case_context, ensure_ascii=False).encode()) > 262144:
                         raise ValueError("invalid_case_context")
                     conn.execute("UPDATE product.audit_drafts SET case_context = %s, updated_at = now() WHERE id = %s", (Jsonb(case_context), parsed))
                 return cast(dict, self._draft_public(conn, parsed))
@@ -3818,7 +3934,7 @@ class AuthStore:
         if source_draft_id:
             draft = conn.execute(
                 """
-                SELECT id, tenant_id, status, task_fingerprint FROM product.audit_drafts
+                SELECT id, tenant_id, status, task_fingerprint, case_context FROM product.audit_drafts
                 WHERE id = %s FOR UPDATE
                 """,
                 (source_draft_id,),
@@ -3826,6 +3942,8 @@ class AuthStore:
             if not draft or str(draft[1]) != principal.tenant_id:
                 raise KeyError("missing")
             if draft[3] is not None and task_revision is None:
+                raise ValueError("task_input_locked")
+            if draft[3] is None and PREPARATION_KEY in (draft[4] or {}):
                 raise ValueError("task_input_locked")
             draft_status = draft[2]
             if task_revision is not None:
@@ -3949,7 +4067,9 @@ class AuthStore:
                 ),
             )
         if source_draft_id:
-            conn.execute("UPDATE product.audit_rounds SET case_context = (SELECT case_context FROM product.audit_drafts WHERE id = %s) WHERE id = %s", (source_draft_id, round_id))
+            conn.execute(
+                "UPDATE product.audit_rounds SET case_context = (SELECT case_context - %s FROM product.audit_drafts WHERE id = %s) WHERE id = %s", (PREPARATION_KEY, source_draft_id, round_id)
+            )
         elif predecessor_id:
             conn.execute("UPDATE product.audit_rounds SET case_context = (SELECT case_context FROM product.audit_rounds WHERE id = %s) WHERE id = %s", (predecessor_id, round_id))
         target = self.draft_writeback(conn, source_draft_id) if source_draft_id else None
@@ -4049,7 +4169,7 @@ class AuthStore:
     def _draft_public(self, conn, draft_id: str) -> dict | None:
         row = conn.execute(
             """
-            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.analysis_mode, d.case_context
+            SELECT d.id, d.tenant_id, d.status, d.updated_at, d.predecessor_id, d.analysis_mode, d.case_context, d.input_revision, d.task_fingerprint
             FROM product.audit_drafts d
             WHERE d.id = %s
             """,
@@ -4074,7 +4194,10 @@ class AuthStore:
             "updated_at": row[3].isoformat(),
             "predecessor_id": str(row[4]) if row[4] else None,
             "analysis_mode": normalize_analysis_mode(row[5]),
-            "case_context": row[6] or {},
+            "case_context": {key: value for key, value in (row[6] or {}).items() if key != PREPARATION_KEY},
+            "upload_preparation": (row[6] or {}).get(PREPARATION_KEY),
+            "preparation_revision": row[7] if PREPARATION_KEY in (row[6] or {}) and row[8] is None else None,
+            "task_id": str(row[0]) if row[8] is not None else None,
             "writeback": public_target(self.draft_writeback(conn, str(row[0]))),
             "items": [
                 {

@@ -41,6 +41,9 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
             in {
                 "idempotency_conflict",
                 "draft_already_accepted",
+                "draft_revision_conflict",
+                "upload_preparation_identity_conflict",
+                "upload_preparation_input_conflict",
                 "file_not_ready",
                 "review_conflict",
                 "deep_not_available",
@@ -339,7 +342,15 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         try:
             value = body or {}
             return JSONResponse(
-                store.create_draft(principal, value.get("predecessor_id"), request_id=value.get("request_id"), items=value.get("items"), case_context=value.get("case_context")), status_code=201
+                store.create_draft(
+                    principal,
+                    value.get("predecessor_id"),
+                    request_id=value.get("request_id"),
+                    items=value.get("items"),
+                    case_context=value.get("case_context"),
+                    upload_preparation=value.get("upload_preparation"),
+                ),
+                status_code=201,
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)
@@ -419,7 +430,10 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         principal, denied = require_object(request, draft_id)
         if denied:
             return denied
-        draft = store.get_draft(draft_id)
+        try:
+            draft = store.get_draft(draft_id, principal)
+        except (KeyError, ValueError) as exc:
+            return fail(exc)
         if draft is None or cast(Any, store.resource(draft_id)).tenant_id != principal.tenant_id:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(draft)
@@ -435,7 +449,16 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         if "rule_version_id" in body:
             return JSONResponse({"error": "per_target_rules_required"}, status_code=400)
         try:
-            draft = store.save_draft(principal, draft_id, items, analysis_mode, writeback_target, body.get("case_context"))
+            draft = store.save_draft(
+                principal,
+                draft_id,
+                items,
+                analysis_mode,
+                writeback_target,
+                body.get("case_context"),
+                upload_preparation=body.get("upload_preparation"),
+                expected_revision=body.get("expected_revision"),
+            )
         except (KeyError, ValueError) as exc:
             return fail(exc)
         return JSONResponse(draft)

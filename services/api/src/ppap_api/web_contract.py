@@ -294,6 +294,41 @@ class Draft(TypedDict):
     analysis_mode: AnalysisMode
     writeback: WritebackTarget
     case_context: NotRequired[CaseContext]
+    upload_preparation: NotRequired[AuditUploadPreparation | None]
+    preparation_revision: NotRequired[int | None]
+    task_id: NotRequired[str | None]
+
+
+class AuditPreparedUpload(TypedDict):
+    request_id: str
+    kind: Literal["local", "feishu"]
+    name: str
+    removed: bool
+    byte_size: NotRequired[int]
+    content_type: NotRequired[str]
+    sha256: NotRequired[str]
+    folder: NotRequired[AuditUploadFolder]
+    drive_file: NotRequired[AuditUploadDriveFile]
+
+
+class AuditUploadFolder(TypedDict):
+    token: str
+    name: str
+
+
+class AuditUploadDriveFile(TypedDict):
+    token: str
+    name: str
+    type: str
+
+
+class AuditUploadPreparation(TypedDict):
+    version: Literal[1]
+    analysis_mode: AnalysisMode
+    customer_preference: str | None
+    predecessor_id: str | None
+    uploads: list[AuditPreparedUpload]
+    files: list[AuditRecognitionInput]
 
 
 class DraftCreateRequest(TypedDict, total=False):
@@ -301,6 +336,7 @@ class DraftCreateRequest(TypedDict, total=False):
     predecessor_id: str | None
     items: list[DraftInputItem]
     case_context: CaseContext
+    upload_preparation: AuditUploadPreparation
 
 
 class DraftInputItem(TypedDict):
@@ -320,6 +356,8 @@ class DraftSaveRequest(TypedDict, total=False):
     analysis_mode: AnalysisMode
     writeback_target: WritebackTargetRequest | None
     case_context: CaseContext
+    upload_preparation: AuditUploadPreparation
+    expected_revision: int
 
 
 class DraftAcceptRequest(TypedDict):
@@ -1038,6 +1076,8 @@ class AuditRecognitionRequest(TypedDict):
     task_id: NotRequired[str]
     expected_revision: NotRequired[int]
     predecessor_id: NotRequired[str]
+    source_draft_id: NotRequired[str]
+    expected_draft_revision: NotRequired[int]
 
 
 class AuditReauditInputs(TypedDict):
