@@ -115,7 +115,7 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
       if (epoch.current !== run) return
       if (!sameSnapshot(result.query, query) || new Set(result.documents.map(row => row.document_id)).size !== result.documents.length || result.documents.some(row => row.latest_completed && (row.latest_completed.document_id !== row.document_id || row.latest_completed.execution !== 'completed') || row.latest_activity && row.latest_activity.document_id !== row.document_id)) throw new Error('archive_query_mismatch')
       setPage(result)
-    }).catch(() => {if (epoch.current === run) setError('文件档案暂时无法读取，请重试。')}).finally(() => {if (epoch.current === run) setLoading(false)})
+    }).catch(failure => {if (epoch.current === run) setError(failure instanceof Error && failure.name === 'TimeoutError' ? '读取审核档案超时，请重新读取。' : '文件档案暂时无法读取，请重试。')}).finally(() => {if (epoch.current === run) setLoading(false)})
     return () => {epoch.current += 1}
   }, [adapter, query, reload, browsing])
   function filter(update: Partial<ArchiveQuery>) {setQuery(current => ({...current, ...update, page: 1}))}

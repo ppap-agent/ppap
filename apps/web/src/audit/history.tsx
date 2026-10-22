@@ -40,7 +40,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
       if (!initialAddress.reference && result.default_reference && (!initial || initial.execution !== 'completed')) throw new Error('history_default_mismatch')
       setHistory(result); setSelected(initial || null); setLoading(false)
       if (initial) onNavigate(initial.reference, initialAddress.report, true)
-    }).catch(() => {if (current) {setError('历史审核清单暂不可用，未打开其他文档。'); setLoading(false)}})
+    }).catch(failure => {if (current) {setError(failure instanceof Error && failure.name === 'TimeoutError' ? '读取审核档案超时，请重新读取。' : '历史审核清单暂不可用，未打开其他文档。'); setLoading(false)}})
     return () => {current = false; if (preliminary.current === early) preliminary.current = null}
   }, [adapter, documentId, listReload])
   useEffect(() => {
@@ -57,7 +57,7 @@ export function ArchiveHistory({document, documentId, initialAddress, onNavigate
       setDetail(result); setHistory(current => current ? {...current, entries: current.entries.map(row => sameSnapshot(row.reference, result.entry.reference) ? result.entry : row)} : current)
     }).catch(failure => {if (epoch.current === run) {
       const status = failure instanceof Error && 'status' in failure ? failure.status : null
-      setError(status === 401 ? '登录已失效。恢复登录后再读取这次记录。' : status === 403 ? '当前账号无权读取这次审核。未扩大来源任务或原件权限。' : status === 404 ? '这次审核记录不可用。未改开最新记录。' : '这次审核暂时无法读取。未用最新记录替换。')
+      setError(failure instanceof Error && failure.name === 'TimeoutError' ? '读取审核档案超时，请重新读取。' : status === 401 ? '登录已失效。恢复登录后再读取这次记录。' : status === 403 ? '当前账号无权读取这次审核。未扩大来源任务或原件权限。' : status === 404 ? '这次审核记录不可用。未改开最新记录。' : '这次审核暂时无法读取。未用最新记录替换。')
     }}).finally(() => {if (epoch.current === run) setLoading(false)})
     return () => {epoch.current += 1}
   }, [adapter, documentId, selected, reload])

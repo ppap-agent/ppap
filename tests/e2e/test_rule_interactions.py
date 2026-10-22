@@ -45,6 +45,51 @@ BODY = {
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class RuleInteractionTests(unittest.TestCase):
+    def test_native_history_timeout_offers_explicit_read_of_the_same_document(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.route(page)
+            page.clock.install()
+            reads, ready = [], False
+
+            def history(route):
+                reads.append(route.request.url)
+                if ready:
+                    route.fulfill(
+                        json={
+                            "document": {
+                                "document_id": "history-document",
+                                "provider": "feishu",
+                                "title": "历史原件.xlsx",
+                                "metadata": {},
+                                "document_type": None,
+                                "updated_at": "2026-10-01T00:00:00Z",
+                                "latest_completed": None,
+                                "latest_activity": None,
+                            },
+                            "entries": [],
+                            "default_reference": None,
+                        }
+                    )
+
+            page.route("**/api/audit-archive/history-document/history", history)
+            with page.expect_request("**/api/audit-archive/history-document/history"):
+                page.goto(WEB + "/files?archiveDoc=history-document")
+            expect(page.get_by_text("正在读取这次审核…", exact=True)).to_be_visible()
+            page.clock.fast_forward(45_000)
+            expect(page.get_by_role("alert")).to_contain_text("读取审核档案超时，请重新读取。")
+            self.assertEqual(len(reads), 1)
+            ready = True
+            page.get_by_role("button", name="重新读取这次审核", exact=True).click()
+            expect(page.get_by_role("heading", name="历史原件.xlsx", exact=True)).to_be_visible()
+            expect(page.get_by_text("尚无完成审核。可以选择已有记录查看进度或异常。", exact=True)).to_be_visible()
+            self.assertEqual(len(reads), 2)
+            self.assertEqual(reads[0], reads[1])
+            browser.close()
+
     def test_native_history_does_not_read_the_unused_customer_catalog(self):
         from playwright.sync_api import expect
 
