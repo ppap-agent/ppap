@@ -119,4 +119,6 @@ class Check(Artifact):
 
 
 class AuditReport(Artifact):
-    checks: list[Check] = Field(min_length=1, max_length=16384)
+    # A bundle with only failed rule plans has no business checks. The bundle
+    # validator still requires every frozen rule to have a plan or failure.
+    checks: list[Check] = Field(max_length=16384)

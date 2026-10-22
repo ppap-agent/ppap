@@ -102,7 +102,7 @@ def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str
         raise ValueError("Execution identity mismatch")
     if set(bundle.documents) != {item.audit_id for item in spec.documents}:
         raise ValueError("Result document set differs from frozen input")
-    if set(bundle.rule_sources) != {item.rule_id for item in spec.rules} or set(bundle.plans) != set(bundle.rule_sources):
+    if set(bundle.rule_sources) != {item.rule_id for item in spec.rules} or set(bundle.plans) & set(bundle.failed_rules) or set(bundle.plans) | set(bundle.failed_rules) != set(bundle.rule_sources):
         raise ValueError("Result rule set differs from frozen input")
     for document in spec.documents:
         validate_snapshot(bundle.documents[document.audit_id], document.sha256, document.format)
@@ -112,6 +112,13 @@ def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str
         validate_snapshot(snapshot, rule.sha256, rule.format)
         if rule.format == ".json" and (snapshot["clauses"] != rule.clauses or (rule.rule_version_id is not None and snapshot["rule_version_id"] != rule.rule_version_id)):
             raise ValueError("Published rule version or clause set mismatch")
+        failure = bundle.failed_rules.get(rule.rule_id)
+        if failure is not None:
+            if (failure.rule_id, failure.source_sha256, failure.plan_revision, failure.engine_revision) != (rule.rule_id, rule.sha256, rule.plan_revision, spec.semantic_engine_revision):
+                raise ValueError("Failed rule identity differs from frozen input")
+            if failure.clause_id is not None and failure.clause_id not in {str(clause.get("id") or index) for index, clause in enumerate(rule.clauses, 1)}:
+                raise ValueError("Failed clause does not belong to frozen rule")
+            continue
         plan = bundle.plans[rule.rule_id]
         ids = [str(item.get("id") or index) for index, item in enumerate(rule.clauses, 1)]
         if plan.source_sha256 != rule.sha256 or plan.plan_revision != rule.plan_revision or [item.id for item in plan.rules] != ids:
@@ -122,7 +129,7 @@ def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str
             observation = resolve(snapshot, planned.source_locator, source_budget)
             if not observation.known or not any(text.strip() for text in observation.values):
                 raise ValueError("Rule plan source is empty or unknown")
-    plans = {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items()}
+    plans = {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items() if rule_id in bundle.plans}
     evidence_gaps = validate_report(bundle.report, plans, bundle.documents)
     evidence_gaps.update(validate_trace(bundle.trace, bundle.report, bundle.documents, plans))
     return evidence_gaps
