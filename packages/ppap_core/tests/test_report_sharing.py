@@ -4,7 +4,7 @@ import json
 
 import httpx
 import pytest
-from ppap_core.report_sharing import ReportSharingError, list_report_targets, own_report_target, resolve_report_target, send_report_message, upload_report_message_file
+from ppap_core.report_sharing import ReportDirectoryHttp, ReportSharingError, list_report_targets, own_report_target, resolve_report_target, send_report_message, upload_report_message_file
 
 
 def test_message_processing_and_lost_receipts_remain_unknown():
@@ -165,3 +165,78 @@ def test_basic_contact_identity_without_name_or_status_never_becomes_an_eligible
             target = resolve_report_target(http, "tenant-token", "tenant-one", {"id": "ou_reader", "kind": "user"})
             assert target["eligibility"] == "unknown"
             assert target["reason"] == "未取得完整的成员姓名或账号状态，请检查通讯录字段权限与数据范围。"
+
+
+@pytest.mark.parametrize("kind", ["user", "group"])
+def test_directory_budget_keeps_verified_targets_and_never_accepts_late_or_unchecked_targets(monkeypatch, kind):
+    from types import SimpleNamespace
+
+    clock = [100.0]
+    monkeypatch.setattr("ppap_core.report_sharing.monotonic", lambda: clock[0])
+    principal = SimpleNamespace(tenant_key="tenant-one", subject="ou_self", display_name="自己")
+    ids = [("ou_" if kind == "user" else "oc_") + str(index) for index in range(20)]
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        if len(calls) == 1:
+            clock[0] += 5
+            key, rows_key = ("open_id", "users") if kind == "user" else ("chat_id", "items")
+            data = {rows_key: [{key: value} for value in ids], "has_more": True, "page_token": "next-page"}
+        else:
+            clock[0] += 10 if len(calls) == 2 else 20
+            identity = request.url.path.rsplit("/", 1)[1]
+            data = (
+                {"user": {"open_id": identity, "name": "组织成员", "status": {"is_activated": True, "is_resigned": False, "is_frozen": False, "is_exited": False, "is_unjoin": False}}}
+                if kind == "user"
+                else {"name": "内部群", "external": False, "tenant_key": "tenant-one", "chat_mode": "group"}
+            )
+        return httpx.Response(200, json={"code": 0, "data": data})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        budget = ReportDirectoryHttp(http)
+        page = list_report_targets(budget, "user-token", "tenant-token", principal, {}, kind, "查询", None)
+    assert len(calls) == 3
+    assert [request.extensions["timeout"]["read"] for request in calls] == [20, 20, 15]
+    assert budget.timed_out is True
+    assert [target["id"] for target in page["targets"]] == ids
+    assert page["next_page_token"] == "next-page"
+    assert page["targets"][0]["eligibility"] == "eligible"
+    assert all(target["eligibility"] == "unknown" and "超时" in target["reason"] for target in page["targets"][1:])
+
+
+def test_expired_directory_budget_never_starts_a_request(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("ppap_core.report_sharing.monotonic", lambda: clock[0])
+    calls = []
+    with httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(request))) as http:
+        budget = ReportDirectoryHttp(http)
+        clock[0] = 30.0
+        for method in (budget.get, budget.post):
+            with pytest.raises(ReportSharingError, match="^share_directory_timeout$"):
+                method("https://open.feishu.cn/open-apis/test", timeout=20)
+    assert calls == []
+
+
+def test_directory_timeouts_share_the_remaining_budget_without_retrying_details(monkeypatch):
+    from types import SimpleNamespace
+
+    clock = [0.0]
+    monkeypatch.setattr("ppap_core.report_sharing.monotonic", lambda: clock[0])
+    calls = []
+    principal = SimpleNamespace(tenant_key="tenant-one", subject="ou_self", display_name="自己")
+
+    def provider(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(200, json={"code": 0, "data": {"users": [{"open_id": "ou_" + str(index)} for index in range(20)], "has_more": False}})
+        clock[0] += request.extensions["timeout"]["read"]
+        raise httpx.ReadTimeout("private provider details", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        page = list_report_targets(ReportDirectoryHttp(http), "user-token", "tenant-token", principal, {}, "user", "查询", None)
+    assert len(calls) == 3
+    assert [request.extensions["timeout"]["read"] for request in calls] == [20, 20, 10]
+    assert all(target["eligibility"] == "unknown" for target in page["targets"])
+    assert all("超时" in target["reason"] for target in page["targets"][1:])
+    assert "private provider details" not in json.dumps(page)

@@ -10,7 +10,16 @@ from fastapi import Query, Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import ObjectMissing, attachment_content_disposition
-from ppap_core.report_sharing import ReportSharingError, list_report_targets, own_report_target, report_share_profile, resolve_report_target, send_report_message, upload_report_message_file
+from ppap_core.report_sharing import (
+    ReportDirectoryHttp,
+    ReportSharingError,
+    list_report_targets,
+    own_report_target,
+    report_share_profile,
+    resolve_report_target,
+    send_report_message,
+    upload_report_message_file,
+)
 from ppap_product_store.report_sharing import ReportShareStore
 from ppap_product_store.share_delivery import new_share_attempt, target_key
 from pydantic import TypeAdapter, ValidationError
@@ -35,18 +44,18 @@ def _target(value):
 def register_sharing_routes(app, store, session_of, http, settings):
     shares = ReportShareStore(store)
 
-    def authenticated(request):
+    def authenticated(request, provider=http):
         session = session_of(request)
         if not session:
             return None, None, JSONResponse({"error": "unauthenticated"}, status_code=401, headers=HEADERS)
         principal = session.principal
         if principal.provider != "feishu" or principal.app_id != settings.feishu_app_id or not session.access_token:
             raise KeyError("missing")
-        profile = report_share_profile(http, session.access_token, principal)
+        profile = report_share_profile(provider, session.access_token, principal)
         return session, profile, None
 
-    def token_for(principal):
-        return tenant_access_token(http, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", principal.tenant_key)
+    def token_for(principal, provider=http):
+        return tenant_access_token(provider, settings.feishu_app_id, settings.feishu_app_secret, store.app_ticket(settings.feishu_app_id) or "", principal.tenant_key)
 
     def target_for(principal, profile, token, reference):
         if reference["kind"] == "user" and reference["id"] == principal.subject:
@@ -66,20 +75,22 @@ def register_sharing_routes(app, store, session_of, http, settings):
         message = "invalid_share_request" if isinstance(error, ValidationError) else str(error)
         if status == 403:
             message = "access_denied"
-        elif status == 503 and not (isinstance(error, ReportSharingError) and message == "share_directory_permission_missing"):
+        elif status == 503 and not (isinstance(error, ReportSharingError) and message in {"share_directory_permission_missing", "share_directory_timeout"}):
             message = "share_unavailable"
         return JSONResponse({"error": message}, status_code=status, headers=HEADERS)
 
     @app.get("/audit-share-targets", response_model=wc.AuditShareTargetsPage)
     def targets(request: Request, kind: Literal["user", "group"] = "user", query: str = Query("", max_length=100), page_token: str | None = Query(None, max_length=2048)):
+        directory_http = ReportDirectoryHttp(http)
         try:
-            session, profile, denied = authenticated(request)
+            session, profile, denied = authenticated(request, directory_http)
             if denied:
                 return denied
-            token = token_for(session.principal) if query.strip() or kind == "group" else ""
-            return JSONResponse(list_report_targets(http, session.access_token, token, session.principal, profile, kind, query.strip(), page_token), headers=HEADERS)
+            token = token_for(session.principal, directory_http) if query.strip() or kind == "group" else ""
+            directory_http.check()
+            return JSONResponse(list_report_targets(directory_http, session.access_token, token, session.principal, profile, kind, query.strip(), page_token), headers=HEADERS)
         except (KeyError, ValueError, ReportSharingError, FeishuUsageError) as error:
-            return fail(error)
+            return fail(ReportSharingError("share_directory_timeout") if directory_http.timed_out else error)
 
     def dispatch(guard, row, session, token, keys):
         for key in keys:
