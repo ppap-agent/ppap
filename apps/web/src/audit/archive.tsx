@@ -1,5 +1,6 @@
 // Stitch: projects/13261964020862199279/screens/bfd8b8db93484b159a6ce9d171447c80
 import {useEffect, useRef, useState} from 'react'
+import {createPortal} from 'react-dom'
 import {ArrowRight, ChevronDown, FolderTree, ListFilter, RotateCw, Search, Upload, X} from 'lucide-react'
 import type {components} from '../generated/openapi'
 import {Alert, AlertDescription, AlertTitle} from '../components/ui/alert'
@@ -25,7 +26,7 @@ import type {ArchiveDocument, ArchiveQuery, AuditArchiveAdapter} from './archive
 
 const initialQuery: ArchiveQuery = {search: '', category_id: null, document_type: null, customer: null, initiator: null, from_date: null, through_date: null, page: 1, page_size: 10}
 
-export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, active = true}: {adapter: AuditArchiveAdapter; onUpload: () => void; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; active?: boolean}) {
+export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, reportAdapter, sharingAdapter, active = true, headerActions}: {adapter: AuditArchiveAdapter; onUpload: () => void; renderOriginal?: OriginalRenderer; onOpenTask: (id: string) => void; reportAdapter?: AuditReportAdapter; sharingAdapter?: AuditSharingAdapter; active?: boolean; headerActions?: HTMLElement | null}) {
   const [query, setQuery] = useState(initialQuery), [search, setSearch] = useState('')
   const [page, setPage] = useState<components['schemas']['AuditArchivePage'] | null>(null)
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0)
@@ -131,8 +132,9 @@ export function AuditArchive({adapter, onUpload, renderOriginal, onOpenTask, rep
   if (!active) return null
   if (!address.documentId && (address.reference || address.invalid || address.report)) return <Alert><AlertTitle>无法打开这次审核</AlertTitle><AlertDescription>链接缺少有效的文件或审核信息。<Button variant="outline" onClick={closeDocument}>返回文件档案</Button></AlertDescription></Alert>
   if (address.documentId) return <ArchiveHistory key={`${address.documentId}:${restore}`} documentId={address.documentId} document={page?.documents.find(row => row.document_id === address.documentId) || null} initialAddress={address} onNavigate={(reference, report, replace) => writeArchiveAddress(address.documentId, reference, report, replace)} adapter={adapter} renderOriginal={renderOriginal} onBack={closeDocument} onOpenTask={onOpenTask} reportAdapter={reportAdapter} sharingAdapter={sharingAdapter}/>
+  const upload = <Button onClick={onUpload}><Upload/>上传文件</Button>
   return <section className="space-y-4" aria-label="文件档案">
-    <header className="flex flex-wrap items-center justify-between gap-3 pb-1"><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold">审核文件</h1>{page && <Badge variant="outline">{page.document_count} 份文件</Badge>}</div><Button onClick={onUpload}><Upload/>上传文件</Button></header>
+    {headerActions ? <><h1 className="sr-only">审核文件</h1>{createPortal(upload, headerActions)}</> : <header className="flex flex-wrap items-center justify-between gap-3 pb-1"><h1 className="text-2xl font-semibold">审核文件</h1>{upload}</header>}
     <form role="search" aria-label="筛选审核文件" className="flex flex-wrap items-center gap-2 rounded-lg border p-3" onSubmit={event => {event.preventDefault(); filter({search})}}>
       <div className="relative min-w-0 flex-1 basis-60"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground"><Search aria-hidden="true" className="size-3.5"/></span><Input aria-label="搜索文档名" placeholder="搜索文件名…" iconStart value={search} onChange={event => setSearch(event.target.value)}/></div><Button type="submit" variant="outline">搜索</Button>
       <div className="w-44 max-sm:w-full">{choices('全部文件类型', query.document_type, page?.document_types || [], 'document_type')}</div>
