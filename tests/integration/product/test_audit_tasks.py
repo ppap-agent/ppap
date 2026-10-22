@@ -54,6 +54,150 @@ def checked_file(client, worker, name="控制计划.xlsx", document_type="控制
     return {"file_version_id": version["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}
 
 
+def upload_preparation(files=()):
+    return {"version": 1, "analysis_mode": "standard", "customer_preference": None, "predecessor_id": None, "uploads": [], "files": list(files)}
+
+
+def test_unknown_native_upload_is_a_discoverable_draft_not_a_task_and_survives_a_new_client(task_system):
+    client, worker = task_system
+    draft_id, upload_id = str(uuid.uuid4()), str(uuid.uuid4())
+    preparation = upload_preparation()
+    empty = client.post("/drafts", json={"request_id": str(uuid.uuid4()), "upload_preparation": preparation})
+    assert empty.status_code == 201
+    assert client.get("/drafts").json()["drafts"] == []
+    preparation["uploads"] = [{"request_id": upload_id, "kind": "local", "name": "上传结果未知.xlsx", "byte_size": 16, "sha256": "a" * 64, "removed": False}]
+    body = {"request_id": draft_id, "upload_preparation": preparation}
+    created = client.post("/drafts", json=body)
+    assert created.status_code == 201, created.text
+    saved = created.json()
+    assert saved["items"] == [] and saved["task_id"] is None and saved["preparation_revision"] == 0
+    assert client.post("/drafts", json=body).json() == saved
+    assert saved["case_context"] == {}
+    assert client.get("/audit-tasks").json()["tasks"] == []
+    assert client.get("/rounds").json()["rounds"] == []
+    assert client.get("/usage").json()["events"] == []
+    assert worker.claim_job("no-recognition-before-start") is None
+    # A fresh HTTP client/session can find the original unknown request without
+    # transmitting bytes or inventing an upload/Task result.
+    api = build_product_store(worker.settings, objects=worker.objects, role="api")
+    restored = TestClient(create_app(worker.settings, auth_store=api))
+    try:
+        assert restored.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+        assert restored.get(f"/drafts/{draft_id}").json() == saved
+        assert [row["id"] for row in restored.get("/drafts", params={"q": "上传结果未知"}).json()["drafts"]] == [draft_id]
+        receipt = restored.get(f"/file-uploads/{upload_id}").json()
+        assert receipt["state"] == "unknown" and receipt["file"] is None and not receipt["retry_allowed"]
+        read = restored.get(f"/audit-tasks/{draft_id}/recognitions/{str(uuid.uuid4())}")
+        assert read.status_code == 200 and read.json()["state"] == "unknown" and read.json()["task"] is None
+    finally:
+        restored.close()
+
+
+def test_native_preparation_saves_ready_selection_and_removal_with_compare_and_swap(task_system):
+    client, worker = task_system
+    first, second = checked_file(client, worker), checked_file(client, worker, "第二份控制计划.xlsx")
+    preparation = upload_preparation([first, second])
+    upload = {"request_id": str(uuid.uuid4()), "kind": "local", "name": "未读到回执.xlsx", "byte_size": 16, "sha256": "a" * 64, "removed": False}
+    preparation["uploads"] = [upload]
+    created = client.post("/drafts", json={"request_id": str(uuid.uuid4()), "upload_preparation": preparation}).json()
+    path = f"/drafts/{created['id']}"
+    choices = [
+        {**preparation, "files": [{**first, "selection": "removed", "removal_reason": "用户移除"}, second], "uploads": [{**upload, "removed": True}]},
+        {**preparation, "files": [first, {**second, "selection": "unselected"}]},
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(pool.map(lambda value: client.put(path, json={"expected_revision": 0, "upload_preparation": value}), choices))
+    assert sorted(reply.status_code for reply in replies) == [200, 409]
+    saved = next(reply.json() for reply in replies if reply.status_code == 200)
+    assert saved["preparation_revision"] == 1
+    assert {row["file_version_id"] for row in saved["items"]} == {first["file_version_id"], second["file_version_id"]}
+    assert saved["upload_preparation"] in choices
+    assert client.get(path).json() == saved
+    for invalid in ({**saved["upload_preparation"], "uploads": []}, {**saved["upload_preparation"], "files": [first]}):
+        reply = client.put(path, json={"expected_revision": 1, "upload_preparation": invalid})
+        assert reply.status_code == 409 and reply.json()["error"] == "upload_preparation_identity_conflict"
+    assert client.get(path).json() == saved
+    assert client.put(path, json={"items": []}).status_code == 400
+    assert client.post(path + "/accept", json={"idempotency_key": "cannot-bypass-recognition"}).status_code == 409
+    assert client.get("/rounds").json()["rounds"] == []
+    assert worker.claim_job("still-not-a-task") is None
+
+
+def test_native_preparation_promotes_the_same_draft_once_and_late_writes_cannot_replace_it(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    preparation = upload_preparation([file])
+    draft_id, request_id = str(uuid.uuid4()), str(uuid.uuid4())
+    assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
+    body = {"request_id": request_id, "source_draft_id": draft_id, "expected_draft_revision": 0, "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    assert client.post("/audit-tasks", json={**body, "files": [{**file, "selection": "unselected"}, file]}).status_code == 409
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(pool.map(lambda _: client.post("/audit-tasks", json=body), range(2)))
+    assert [reply.status_code for reply in replies] == [202, 202]
+    assert replies[0].json() == replies[1].json()
+    task = replies[0].json()
+    assert task["id"] == draft_id and task["recognition_request_id"] == request_id and task["input_revision"] == 0
+    assert task["round_id"] is None
+    draft = client.get(f"/drafts/{draft_id}").json()
+    assert draft["task_id"] == draft_id and draft["preparation_revision"] is None
+    assert draft["upload_preparation"] == preparation
+    assert client.get("/drafts").json()["drafts"] == []
+    assert [row["id"] for row in client.get("/audit-tasks").json()["tasks"]] == [draft_id]
+    for old_body in ({"items": []}, {"expected_revision": 0, "upload_preparation": preparation}):
+        assert client.put(f"/drafts/{draft_id}", json=old_body).json() == {"error": "task_input_locked"}
+    assert client.post("/audit-tasks", json={**body, "request_id": str(uuid.uuid4())}).status_code == 409
+    read = client.get(f"/audit-tasks/{draft_id}/recognitions/{request_id}").json()
+    assert read["state"] == "accepted" and read["task"]["id"] == draft_id and read["input_revision"] == 0
+    assert client.get(f"/audit-tasks/{draft_id}/recognitions/{draft_id}").json()["state"] == "unknown"
+    assert client.get(f"/audit-tasks/{draft_id}/recognitions/{str(uuid.uuid4())}").json()["state"] == "unknown"
+    job = worker.claim_job("one-recognition")
+    assert job.kind == "file_analysis" and job.id == request_id and job.payload["task_id"] == draft_id
+    assert worker.claim_job("no-duplicate-recognition") is None
+    assert client.get("/rounds").json()["rounds"] == [] and client.get("/usage").json()["events"] == []
+
+
+def test_native_preparation_save_and_promotion_have_one_revision_winner(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    preparation = upload_preparation([file])
+    draft_id = str(uuid.uuid4())
+    assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
+    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 0, "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        save = pool.submit(client.put, f"/drafts/{draft_id}", json={"expected_revision": 0, "upload_preparation": preparation})
+        promote = pool.submit(client.post, "/audit-tasks", json=request)
+        outcomes = save.result(), promote.result()
+    assert tuple(response.status_code for response in outcomes) in {(200, 409), (409, 202)}
+    restored = client.get(f"/drafts/{draft_id}").json()
+    if outcomes[0].status_code == 200:
+        assert restored["task_id"] is None and restored["preparation_revision"] == 1
+        assert client.get("/audit-tasks").json()["tasks"] == []
+    else:
+        assert restored["task_id"] == draft_id
+        assert len(client.get("/audit-tasks").json()["tasks"]) == 1
+    assert client.get("/rounds").json()["rounds"] == []
+
+
+@pytest.mark.parametrize("subject", ["bob", "carol"])
+def test_native_preparation_does_not_expand_creator_or_tenant_access(task_system, auth_store_factory, subject):
+    client, worker = task_system
+    preparation = upload_preparation([checked_file(client, worker)])
+    draft_id = str(uuid.uuid4())
+    assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
+    # Even a same-tenant read grant is not permission to borrow a private upload
+    # batch or promote it as its creator.
+    admin = auth_store_factory(worker.settings, reset=False)
+    with admin._conn() as conn:
+        conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read') ON CONFLICT DO NOTHING", (draft_id, USER_BOB))
+    assert client.post("/isolated-dev/sessions", json={"subject": subject}).status_code == 200
+    assert client.get(f"/drafts/{draft_id}").status_code == 403
+    assert client.get("/drafts").json()["drafts"] == []
+    assert client.put(f"/drafts/{draft_id}", json={"expected_revision": 0, "upload_preparation": preparation}).status_code == 403
+    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 0, "analysis_mode": "standard", "customer_preference": None, "files": preparation["files"]}
+    assert client.post("/audit-tasks", json=request).status_code == 403
+    assert client.get(f"/audit-tasks/{draft_id}/recognitions/{request['request_id']}").status_code == 403
+
+
 def assert_task_summary(summary, task):
     expected = {key: task[key] for key in ("id", "number", "state", "input_revision", "analysis_mode", "created_at", "round_id", "completion_reason")}
     expected["files"] = [{"file": row["file"], "selection": row["selection"]} for row in task["files"]]

@@ -111,6 +111,21 @@ class OpenAPIContractTests(unittest.TestCase):
         schema = app.openapi()["components"]["schemas"]["AuditClauseEvaluation"]
         self.assertIn("execution_error", schema["properties"]["coverage"]["enum"])
 
+    def test_native_preparation_reuses_draft_and_promotes_one_explicit_snapshot(self):
+        spec = app.openapi()
+        schemas = spec["components"]["schemas"]
+        self.assertEqual(schemas["Draft"]["properties"]["upload_preparation"]["anyOf"][0]["$ref"], "#/components/schemas/AuditUploadPreparation")
+        self.assertEqual(set(schemas["AuditUploadPreparation"]["required"]), {"version", "analysis_mode", "customer_preference", "predecessor_id", "uploads", "files"})
+        self.assertEqual(schemas["AuditPreparedUpload"]["properties"]["removed"]["type"], "boolean")
+        self.assertEqual(schemas["Draft"]["properties"]["task_id"]["anyOf"][0]["type"], "string")
+        create = _request_schema(spec["paths"]["/drafts"]["post"])
+        save = _request_schema(spec["paths"]["/drafts/{draft_id}"]["put"])
+        self.assertIn("upload_preparation", create["properties"])
+        self.assertEqual(save["properties"]["expected_revision"]["type"], "integer")
+        recognize = _request_schema(spec["paths"]["/audit-tasks"]["post"])
+        self.assertEqual(recognize["properties"]["source_draft_id"]["type"], "string")
+        self.assertEqual(recognize["properties"]["expected_draft_revision"]["type"], "integer")
+
     def test_file_report_recovery_binds_the_same_frozen_reference_and_original_request(self):
         paths = app.openapi()["paths"]
         path = "/audit-tasks/{task_id}/reports/{report_id}/regenerations"
