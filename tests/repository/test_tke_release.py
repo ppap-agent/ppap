@@ -37,6 +37,16 @@ def test_flow_source_requires_exact_selected_repository_and_commit(bad):
     assert not RELEASE["run_source"](observation, SHA)
 
 
+def test_flow_commit_history_does_not_replace_the_selected_head():
+    observation = source_run()
+    data = observation["sources"][0]["data"]
+    data["commit"] = json.dumps([{"commitId": SHA}, {"commitId": "0" * 40}])
+    assert RELEASE["run_source"](observation, SHA)
+    assert not RELEASE["run_source"](observation, "0" * 40)
+    data["commit"] = "[]"
+    assert not RELEASE["run_source"](observation, SHA)
+
+
 @pytest.mark.parametrize("status", ["FAIL", "SUCCESS"])
 def test_resume_never_dispatches_and_failed_build_never_resolves_images(tmp_path, status):
     calls = []

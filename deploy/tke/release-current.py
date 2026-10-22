@@ -111,7 +111,11 @@ def source_branch(sha: str, attempt: Path) -> str:
 
 def run_source(observation: dict, sha: str) -> bool:
     sources = observation.get("sources", [])
-    return len(sources) == 1 and sources[0].get("data", {}).get("repo") == CODEUP and [c.get("commitId") for c in json.loads(sources[0]["data"].get("commit") or "[]")] == [sha]
+    if len(sources) != 1 or sources[0].get("data", {}).get("repo") != CODEUP:
+        return False
+    # Flow reports the selected head first, followed by the changed commit history.
+    commits = json.loads(sources[0]["data"].get("commit") or "[]")
+    return bool(commits) and commits[0].get("commitId") == sha
 
 
 def yunxiao(sha: str, attempt: Path, resume_run: int | None) -> dict[str, str]:

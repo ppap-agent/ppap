@@ -60,12 +60,21 @@ stages:
                 test "$(git rev-parse HEAD)" = "$PPAP_BUILD_SHA"
                 git diff --exit-code
                 # Same image blobs, reusable inline cache; cache tags are never deployment pins.
+                # JSON tag overrides also work on the runner's older Buildx (no tags+=).
+                python3 - <<'PY'
+                import json, os
+                targets = {
+                    component: {'tags': [os.environ['PPAP_IMAGE_PREFIX'] + component + ':' + tag for tag in (os.environ['PPAP_BUILD_SHA'], 'build-cache')]}
+                    for component in ('api', 'worker', 'web', 'deep')
+                }
+                with open('/tmp/ppap-current-cache.json', 'w') as output:
+                    json.dump({'target': targets}, output)
+                PY
                 set -- --set '*.platform=linux/amd64' --set '*.cache-to=type=inline'
                 for component in api worker web deep; do
-                  set -- "$@" --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache" \
-                    --set "$component.tags+=${PPAP_IMAGE_PREFIX}${component}:build-cache"
+                  set -- "$@" --set "$component.cache-from=type=registry,ref=${PPAP_IMAGE_PREFIX}${component}:build-cache"
                 done
-                docker buildx bake release "$@" \
+                docker buildx bake -f docker-bake.hcl -f /tmp/ppap-current-cache.json release "$@" \
                   --provenance=false --metadata-file /tmp/ppap-current-images.json --push
                 python3 - <<'PY'
                 import json, os, re
