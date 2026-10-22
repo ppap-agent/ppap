@@ -189,6 +189,8 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
         expected = task.json()["files"][0]
         assert document["metadata"] == expected["display_info"]["values"]
         assert document["document_type"] == expected["match"]["document_type"] is None
+        assert archive.json()["customers"] == []
+        assert archive.json()["categories"][0]["label"] == "其他"
 
 
 def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):

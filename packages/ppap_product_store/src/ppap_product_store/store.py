@@ -1755,8 +1755,8 @@ class AuthStore:
     def _archive_rows(self, conn, principal: Principal) -> list:
         return conn.execute(
             """WITH history AS (SELECT d.id, i.file_version_id, s.object_kind, s.object_ref, a.created_at,
-                a.id AS round_id, f.file_id, f.original_filename, j.result->'metadata' AS metadata,
-                j.result->>'document_type' AS document_type, display.display_values,
+                a.id AS round_id, f.file_id, f.original_filename, matched.metadata,
+                matched.document_type, display.display_values,
                 GREATEST(a.created_at, display.created_at, (SELECT max(work.updated_at) FROM engine.jobs work WHERE work.audit_round_id = a.id)) AS archive_updated_at,
                 row_number() OVER (PARTITION BY s.object_kind, s.object_ref ORDER BY a.created_at, a.id, i.file_version_id) AS sequence
             FROM product.audit_drafts d JOIN product.audit_rounds a ON a.source_draft_id = d.id AND a.tenant_id = d.tenant_id
@@ -1765,6 +1765,12 @@ class AuthStore:
             JOIN product.file_version_sources s ON s.file_version_id = f.id AND s.provider = 'feishu'
             JOIN product.draft_items di ON di.draft_id = d.id AND di.file_version_id = f.id
             LEFT JOIN engine.jobs j ON j.id = di.analysis_job_id
+            LEFT JOIN LATERAL (SELECT j.result->'metadata' AS metadata, j.result->>'document_type' AS document_type
+                WHERE j.status IN ('succeeded', 'failed', 'cancelled')
+                AND j.payload->>'task_id' = d.id::text
+                AND COALESCE(j.payload->>'task_revision', '0') = d.input_revision::text
+                AND j.payload->>'source_file_version_id' = i.file_version_id::text
+                AND j.result->>'source_file_version_id' = i.file_version_id::text) matched ON true
             LEFT JOIN LATERAL (SELECT display_values, created_at FROM product.audit_display_requests x
                 WHERE x.task_id = d.id AND x.round_id = a.id AND x.file_version_id = f.id AND x.state = 'saved'
                 ORDER BY expected_revision DESC LIMIT 1) display ON true
