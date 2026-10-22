@@ -38,18 +38,22 @@ export const nativeUsageAdapter: AuditUsageAdapter = {
   readUsage: query => request(`/audit-usage?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
 }
 
-async function readArchive<T>(path: string): Promise<T> {
+async function readWithDeadline<T>(read: (signal: AbortSignal) => Promise<T>, message: string): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 45_000)
+  const timeout = Object.assign(new Error(message), {name: 'TimeoutError'})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_resolve, reject) => {timer = setTimeout(() => {controller.abort(); reject(timeout)}, 45_000)})
   try {
-    return await request<T>(path, 'GET', undefined, controller.signal)
+    return await Promise.race([read(controller.signal), expired])
   } catch (error) {
-    if (controller.signal.aborted) throw Object.assign(new Error('读取审核档案超时，请重新读取。'), {name: 'TimeoutError'})
+    if (controller.signal.aborted) throw timeout
     throw error
   } finally {
     clearTimeout(timer)
   }
 }
+
+const readArchive = <T>(path: string) => readWithDeadline(signal => request<T>(path, 'GET', undefined, signal), '读取审核档案超时，请重新读取。')
 
 export const nativeArchiveAdapter: AuditArchiveAdapter = {
   listDocuments(query) {
@@ -89,15 +93,17 @@ const nativeUploads: UploadAdapter = {
 }
 
 async function readFrozenBlob(path: string, expected: Pick<components['schemas']['FileVersion'], 'byte_size' | 'content_type'> & Partial<Pick<components['schemas']['FileVersion'], 'sha256'>>, label = '报告') {
-  const response = await fetch(`${apiUrl}${path}`, {method: 'GET', credentials: 'include'})
-  if (!response.ok) {
-    if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-    throw withResponseTrace(new Error(`${label}暂时无法读取，请核对飞书访问权限。`), response)
-  }
-  const blob = await response.blob()
-  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
-  if (blob.size !== expected.byte_size || blob.type !== expected.content_type || response.headers.get('X-Content-SHA256') !== digest || expected.sha256 !== undefined && expected.sha256 !== digest) throw new Error(`${label}内容与所选版本不同，请重新读取。`)
-  return blob
+  return readWithDeadline(async signal => {
+    const response = await fetch(`${apiUrl}${path}`, {method: 'GET', credentials: 'include', signal})
+    if (!response.ok) {
+      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+      throw withResponseTrace(new Error(`${label}暂时无法读取，请核对飞书访问权限。`), response)
+    }
+    const blob = await response.blob()
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('')
+    if (blob.size !== expected.byte_size || blob.type !== expected.content_type || response.headers.get('X-Content-SHA256') !== digest || expected.sha256 !== undefined && expected.sha256 !== digest) throw new Error(`${label}内容与所选版本不同，请重新读取。`)
+    return blob
+  }, `读取${label}超时，请重新读取。`)
 }
 
 export const readAuditCustomers = () => request<components['schemas']['AuditCustomerCatalog']>('/audit-customers')
@@ -165,21 +171,25 @@ export const nativeReportAdapter: AuditReportAdapter = {
   async readPackageFile(job) {
     if (!job.package_id || !job.artifact) throw new Error('ZIP 尚未就绪。')
     const params = new URLSearchParams({package_id: job.package_id, artifact_id: job.artifact.artifact_id})
-    const response = await fetch(`${apiUrl}/audit-report-packages/${encodeURIComponent(job.receipt.request_id)}/zip?${params}`, {method: 'GET', credentials: 'include'})
-    if (!response.ok) {
-      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-      throw withResponseTrace(new Error('ZIP 暂时无法读取。'), response)
-    }
-    return response.blob()
+    return readWithDeadline(async signal => {
+      const response = await fetch(`${apiUrl}/audit-report-packages/${encodeURIComponent(job.receipt.request_id)}/zip?${params}`, {method: 'GET', credentials: 'include', signal})
+      if (!response.ok) {
+        if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+        throw withResponseTrace(new Error('ZIP 暂时无法读取。'), response)
+      }
+      return response.blob()
+    }, '读取 ZIP 超时，请重新下载。')
   },
   async readPdf(reference, artifact) {
     const params = new URLSearchParams({round_id: reference.round_id, file_version_id: reference.file_version_id, result_attempt: String(reference.result_attempt), artifact_id: artifact.artifact_id})
-    const response = await fetch(`${apiUrl}/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/pdf?${params}`, {method: 'GET', credentials: 'include'})
-    if (!response.ok) {
-      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
-      throw withResponseTrace(new Error('审核报告暂时无法读取。'), response)
-    }
-    return response.blob()
+    return readWithDeadline(async signal => {
+      const response = await fetch(`${apiUrl}/audit-tasks/${encodeURIComponent(reference.task_id)}/reports/${encodeURIComponent(reference.report_id)}/pdf?${params}`, {method: 'GET', credentials: 'include', signal})
+      if (!response.ok) {
+        if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('ppap-session-expired'))
+        throw withResponseTrace(new Error('审核报告暂时无法读取。'), response)
+      }
+      return response.blob()
+    }, '读取审核报告超时，请重新读取。')
   },
 }
 export const nativeReviewAdapter: AuditReviewAdapter = {
