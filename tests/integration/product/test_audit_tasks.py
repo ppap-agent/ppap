@@ -228,7 +228,7 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
     assert client.get(round_path, params={"read_view": True}).json() == response.json()
     assert client.get(path).json() == task
     assert client.get("/usage").json() == usage
-    assert worker.get_round(accepted["round_id"]) == frozen
+    assert client.get(round_path).json() == frozen
     if report_state in {"ready", "failed"}:
         assert worker.claim_job("round-report-no-read-side-effect") is None
 
@@ -1024,13 +1024,16 @@ def test_linked_reaudit_keeps_original_rule_version_and_does_not_copy_results(ma
     assert client.get(f"/rounds/{original['id']}").json() == original
 
 
-def test_reaudit_replacement_is_explicit_and_matches_the_original_published_rule(matched_task):
+@pytest.mark.parametrize("rule_choice", ["original", "current", "auto"])
+def test_reaudit_replacement_respects_the_explicit_rule_choice(matched_task, rule_choice):
     client, worker, path, body, old = matched_task
     accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
     assert client.get(f"/rounds/{accepted['round_id']}/reaudit-inputs").status_code == 409
     job = worker.claim_job("old")
     worker.complete_job(job, "old", {"failure": {"code": "test", "message": "受控失败", "retryable": False}}, outcome="failed")
+    original_round = client.get(f"/rounds/{accepted['round_id']}").json()
     newer = publish_rule(client, body["files"][0], predecessor=old["id"])
+    expected_rule = old["id"] if rule_choice == "original" else newer["id"]
     replacement = checked_file(client, worker, "补件.xlsx")
     original = body["files"][0]
     command = {
@@ -1039,10 +1042,10 @@ def test_reaudit_replacement_is_explicit_and_matches_the_original_published_rule
         "predecessor_id": accepted["round_id"],
         "files": [
             {**original, "selection": "removed", "removal_reason": "本次补件替换"},
-            {**replacement, "replacement_of_file_version_id": original["file_version_id"], "preferred_rule_version_id": old["id"]},
+            {**replacement, "replacement_of_file_version_id": original["file_version_id"], **({"preferred_rule_version_id": expected_rule} if rule_choice != "auto" else {})},
         ],
     }
-    # A fabricated relation is not authority to select an old version.
+    # A fabricated relation cannot authorize a replacement, even with current rules.
     forged = {**command, "files": [command["files"][0], {**command["files"][1], "replacement_of_file_version_id": str(uuid.uuid4())}]}
     assert client.post("/audit-tasks", json=forged).status_code == 400
     task = client.post("/audit-tasks", json=command)
@@ -1052,12 +1055,15 @@ def test_reaudit_replacement_is_explicit_and_matches_the_original_published_rule
     current = client.get(next_path).json()
     actual = current["files"][1]
     assert actual["replacement_of_file_version_id"] == original["file_version_id"]
-    assert actual["match"]["rule"]["id"] == old["id"]
+    assert actual["match"]["rule"]["id"] == expected_rule
+    assert actual.get("preferred_rule_version_id") == (expected_rule if rule_choice != "auto" else None)
     assert {row["id"] for row in actual["rule_options"]} == {old["id"], newer["id"]}
     result = client.post(next_path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
     assert result.status_code == 201, result.text
-    assert [row["file_version_id"] for row in client.get(f"/rounds/{result.json()['round_id']}").json()["inputs"]] == [replacement["file_version_id"]]
+    frozen = client.get(f"/rounds/{result.json()['round_id']}").json()
+    assert [(row["file_version_id"], row["rule_version_id"]) for row in frozen["inputs"]] == [(replacement["file_version_id"], expected_rule)]
     assert client.get(path).json()["files"][0]["file"]["id"] == original["file_version_id"]
+    assert client.get(f"/rounds/{accepted['round_id']}").json() == original_round
 
 
 @pytest.mark.parametrize("selection", ["unselected", "removed"])

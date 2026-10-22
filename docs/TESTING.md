@@ -45,7 +45,7 @@ Controller 原件读取与 guest 暂存复用 `ppap_deep.limits` 中的文件数
 缓存用例在同一入口执行真实 XLSX → `SemanticRuntime` → `ContainerRuntime` → guest 解析、计划／结果验证和产品转换。进程替身在测试进程内调用真实 guest，模型 StageRunner／HTTPS 和对象存储为外部边界替身，不证明实际 Grok、S3 耐久性或 guest 权限隔离。两份目标共用规则，新 submission 复用有效 snapshot／plan 但重新审核；缓存中的无害解析注记区分实际复用与重新解析，错误摘要／计划 revision 分别重新解析／编译。原 submission 再读不执行新审核，gateway 记录的受控请求数与用量同步核对。这是执行与缓存合同，不是客户判定质量或生产费用证据；现有单 execution 的 Replay 模型不覆盖跨 submission 缓存。
 - **E2E**：少量关键客户路径和跨栈边界，覆盖当前上传、历史轮次、原件与人工复核；各入口区分受控交互和真实服务证据，不据此宣称全部客户流程完成。飞书 Drive 导入与文档关联文件的确定性回归在 `tests/integration/product/test_feishu_drive.py` 与 `services/api/tests/test_feishu_doc_links.py`（mocked Open API）。docs-addon 宿主登录到普通 round 的确定性回归在 `tests/integration/product/test_feishu_docs_addon.py`（mocked host code + Open API）。客户路径 `/addon`、`/audit-files` 与 `/usage` 由 nginx 自己检查：`nginx -t` 加上容器内的路由请求，在 `tests/repository/test_web_server.py`。Web 只调 Product API 的仓库边界、helper、路由、reducer 与 public-config 都由 `apps/web` 的 `pnpm test` 拥有；跨栈黑盒浏览器行为由 Python Playwright（`tests.e2e`）拥有。InsForge overlay 的 **static config contract** 由 `node deploy/insforge/verify-config.mjs` 拥有：Compose 语法与插值交给 `docker compose config`，再检查 Compose 无法知道的少量 PPAP invariant。**live native lifecycle** 是 `bash deploy/insforge/smoke-local.sh`（`@insforge/cli local start/status/db query/stop`），只在 InsForge 相关 path 变化、手动 `workflow_dispatch` 或每周 schedule 上运行。
 
-规则排列组合留在低层，不复制到 E2E。
+规则排列组合留在低层，不复制到 E2E。页面与历史轮次的读取经已授权的 Product API 验证；Worker 只用于驱动队列，不以 Worker 角色读取仅供 API 的页面元数据。
 
 `tests/e2e/test_ui_a11y.py` 从当前工作台与审核要求入口验证键盘导航、单一主标题、窄屏，以及原件侧栏和草稿确认弹窗的焦点约束与取消返回；API fixtures 只用于受控 UI 验证，不证明真实登录、发布或数据持久化。
 
@@ -61,7 +61,7 @@ Controller 原件读取与 guest 暂存复用 `ppap_deep.limits` 中的文件数
 
 `test_audit_flow.py` 的 Standard 结果写回故障用例通过公开受理、真实 Worker／PostgreSQL 和公开 Round 读回验证：首次 findings 写入事务回滚不能被误归为审核器异常，再提交伪 ERR。完成事务在审核器异常捕获之外；保存失败向调用者传播，原未完成 attempt 不被伪造终结，不自动创建新轮次或消费。此用例不证明持久模型结果缓存、provider 去重或完整技术恢复。
 
-原生关联重审的补件选择由 `test_reaudit_selection.py` 经界面和受控 HTTP 验证：改选／取消替换、取消勾选／移除补件时，只恢复明确记录为此前已选的自动排除原件；用户主动取消或移除的文件不恢复。旧草稿仅有自动移除原因、未保留此前选择时，解除替换后显示为未选，不猜测丢失的意图。“全不选”包含新自动排除项，刷新读回后仍可解除替换或重选补件。`test_audit_tasks.py` 的数据库回归验证未选／已移除补件的绑定保存在当前 revision 的既有关联 job 回执中；不为这些文件创建识别 job，不依赖回执所在文件仍 selected，也不读取旧 revision 的孤立 job。不新增数据库迁移、历史改写或浏览器账本。`ReauditReplacementSelection` 是两个冻结原件与一个补件、已知选择的有限 Safety 检查，覆盖重绑定、单选、移除和批量选择；三个故障配置保留不释放旧原件、单选不协调和批量取消遗漏的反例。旧格式的保守处理另由界面回归验证；模型不证明真实审核、持久化、收费或整系统 refinement。
+原生关联重审的补件选择由 `test_reaudit_selection.py` 经界面和受控 HTTP 验证：改选／取消替换、取消勾选／移除补件时，只恢复明确记录为此前已选的自动排除原件；用户主动取消或移除的文件不恢复。旧草稿仅有自动移除原因、未保留此前选择时，解除替换后显示为未选，不猜测丢失的意图。“全不选”包含新自动排除项，刷新读回后仍可解除替换或重选补件。补件保留原件明确选择的规则版本或“重新匹配当前规则”意图，不用首个候选覆盖空版本选择；受控回执也以本次输入为准，不回填准备页旧偏好。`test_audit_tasks.py` 的数据库回归验证未选／已移除补件的绑定保存在当前 revision 的既有关联 job 回执中；不为这些文件创建识别 job，不依赖回执所在文件仍 selected，也不读取旧 revision 的孤立 job。不新增数据库迁移、历史改写或浏览器账本。`ReauditReplacementSelection` 是两个冻结原件与一个补件、已知选择的有限 Safety 检查，覆盖重绑定、单选、移除和批量选择；三个故障配置保留不释放旧原件、单选不协调和批量取消遗漏的反例。旧格式的保守处理另由界面回归验证；模型不证明真实审核、持久化、收费或整系统 refinement。
 
 ## Runner capability
 
