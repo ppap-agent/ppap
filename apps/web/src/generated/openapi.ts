@@ -2179,8 +2179,15 @@ export interface components {
         AuditRoundReadView: {
             /** Files */
             files: components["schemas"]["AuditRoundReadFile"][];
+            report_source?: components["schemas"]["AuditRoundReportSource"];
             /** Unassigned Findings */
             unassigned_findings: components["schemas"]["Finding"][];
+        };
+        /** AuditRoundReportSource */
+        AuditRoundReportSource: {
+            access: components["schemas"]["AuditArchiveAccess"];
+            /** Task Id */
+            task_id: string | null;
         };
         /** AuditRuleMatch */
         AuditRuleMatch: {

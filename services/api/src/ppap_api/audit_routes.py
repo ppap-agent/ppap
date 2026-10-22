@@ -503,7 +503,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
         principal, denied = require_object(request, round_id)
         if denied:
             return denied
-        body = store.get_round(round_id, read_view=True) if read_view else store.get_round(round_id)
+        body = store.get_round(round_id, read_view=True, principal=principal) if read_view else store.get_round(round_id)
         if body is None:
             return JSONResponse({"error": "access_denied"}, status_code=403)
         return JSONResponse(body)

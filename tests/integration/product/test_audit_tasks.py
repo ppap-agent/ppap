@@ -13,13 +13,15 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from ppap_api import create_app
+from ppap_api import web_contract as wc
 from ppap_application import build_product_store
 from ppap_core.feishu import UserTokens
-from ppap_core.fixtures import USER_ALICE, USER_BOB
+from ppap_core.fixtures import RULE_A, USER_ALICE, USER_BOB
 from ppap_core.identity import SESSION_COOKIE
 from ppap_core.settings import Settings
 from ppap_worker import process_claimed
 from psycopg.types.json import Jsonb
+from pydantic import TypeAdapter
 
 
 @pytest.fixture
@@ -193,6 +195,117 @@ def test_archive_summary_keeps_task_readiness_and_bound_metadata(matched_task, a
         assert document["document_type"] == expected["match"]["document_type"] is None
         assert archive.json()["customers"] == []
         assert archive.json()["categories"][0]["label"] == "其他"
+
+
+@pytest.mark.parametrize("report_state", ["pending", "generating", "ready", "failed"])
+def test_round_read_view_projects_the_same_authorized_task_report_without_creating_work(matched_task, report_state):
+    client, worker, path, _body, _rule = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    audit_job = worker.claim_job("round-report-audit")
+    process_claimed(worker, audit_job, "round-report-audit")
+    if report_state != "pending":
+        report_job = worker.claim_job("round-report-pdf")
+        assert report_job.kind == "report_pdf"
+        if report_state == "ready":
+            process_claimed(worker, report_job, "round-report-pdf")
+        elif report_state == "failed":
+            assert worker.complete_job(report_job, "round-report-pdf", {"error": "controlled_report_failure"}, "failed")
+    task = client.get(path).json()
+    expected = task["files"][0]["audit"]
+    assert expected["report"]["state"] == report_state
+    round_path = f"/rounds/{accepted['round_id']}"
+    frozen = client.get(round_path).json()
+    usage = client.get("/usage").json()
+    response = client.get(round_path, params={"read_view": True})
+    assert response.status_code == 200, response.text
+    observed = TypeAdapter(wc.Round).validate_python(response.json())
+    view = observed["read_view"]
+    assert view["report_source"] == {"task_id": task["id"], "access": {"state": "allowed", "reason": None}}
+    assert len(view["files"]) == 1
+    assert view["files"][0]["file"] == task["files"][0]["file"]
+    assert view["files"][0]["audit"] == expected
+    assert {key: value for key, value in observed.items() if key != "read_view"} == frozen
+    assert client.get(round_path, params={"read_view": True}).json() == response.json()
+    assert client.get(path).json() == task
+    assert client.get("/usage").json() == usage
+    assert worker.get_round(accepted["round_id"]) == frozen
+    if report_state in {"ready", "failed"}:
+        assert worker.claim_job("round-report-no-read-side-effect") is None
+
+
+def test_round_report_projection_keeps_private_task_and_current_grant_authority(matched_task, auth_store_factory):
+    client, worker, path, _body, _rule = matched_task
+    accepted = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0}).json()
+    process_claimed(worker, worker.claim_job("private-report-audit"), "private-report-audit")
+    process_claimed(worker, worker.claim_job("private-report-pdf"), "private-report-pdf")
+    task = client.get(path).json()
+    audit = task["files"][0]["audit"]
+    report = audit["report"]
+    assert report["state"] == "ready"
+    round_path = f"/rounds/{accepted['round_id']}"
+    download_path = path + f"/reports/{report['report_id']}/pdf"
+    reference = {"round_id": task["round_id"], "file_version_id": audit["file_version_id"], "result_attempt": audit["result_attempt"], "artifact_id": report["artifact"]["artifact_id"]}
+    original_pdf = client.get(download_path, params=reference)
+    assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF-")
+    migrator = auth_store_factory(worker.settings, objects=worker.objects, reset=False)
+    # Explicit Round and Task grants still do not make Bob the private Task owner.
+    with migrator._conn() as conn:
+        for identity in (task["round_id"], task["id"]):
+            conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (identity, USER_BOB))
+
+    def read_denied_report():
+        response = client.get(round_path, params={"read_view": True})
+        assert response.status_code == 200, response.text
+        view = TypeAdapter(wc.Round).validate_python(response.json())["read_view"]
+        assert view["report_source"]["task_id"] is None
+        assert view["report_source"]["access"]["state"] == "denied"
+        assert view["report_source"]["access"]["reason"]
+        actual = view["files"][0]["audit"]
+        assert {key: value for key, value in actual.items() if key != "report"} == {key: value for key, value in audit.items() if key != "report"}
+        assert actual["report"]["report_id"] is None
+        assert not actual["report"].get("artifact")
+        assert report["report_id"] not in json.dumps(view)
+        assert report["artifact"]["artifact_id"] not in json.dumps(view)
+        assert client.get(path).status_code == 403
+        assert client.get(download_path, params=reference).status_code == 403
+
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "bob"}).status_code == 200
+    read_denied_report()
+    client.cookies.clear()
+    assert client.post("/isolated-dev/sessions", json={"subject": "carol"}).status_code == 200
+    assert client.get(round_path, params={"read_view": True}).status_code == 403
+    assert client.get(download_path, params=reference).status_code == 403
+    client.cookies.clear()
+    assert client.get(round_path, params={"read_view": True}).status_code == 401
+    assert client.post("/isolated-dev/sessions", json={"subject": "alice"}).status_code == 200
+    with migrator._conn() as conn:
+        conn.execute("DELETE FROM product.resource_grants WHERE resource_id = %s AND user_id = %s", (task["id"], USER_ALICE))
+    read_denied_report()
+    with migrator._conn() as conn:
+        conn.execute("INSERT INTO product.resource_grants (resource_id, user_id, capability) VALUES (%s, %s, 'read')", (task["id"], USER_ALICE))
+    restored = client.get(round_path, params={"read_view": True}).json()["read_view"]
+    assert restored["report_source"] == {"task_id": task["id"], "access": {"state": "allowed", "reason": None}}
+    assert restored["files"][0]["audit"]["report"] == report
+    assert client.get(download_path, params=reference).content == original_pdf.content
+    assert worker.claim_job("private-report-no-new-work") is None
+
+
+def test_legacy_round_read_view_does_not_invent_a_private_task_or_report(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker, "历史原件.xlsx")
+    draft = client.post("/drafts", json={"items": [{"file_version_id": file["file_version_id"], "role": "target", "rule_version_id": RULE_A}]}).json()
+    accepted = client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": "legacy-round-report-view"}).json()
+    path = f"/rounds/{accepted['id']}"
+    original = client.get(path).json()
+    response = client.get(path, params={"read_view": True})
+    assert response.status_code == 200, response.text
+    observed = TypeAdapter(wc.Round).validate_python(response.json())
+    assert "report_source" not in observed["read_view"]
+    assert observed["read_view"]["files"][0]["audit"]["report"]["state"] == "not_eligible"
+    assert {key: value for key, value in observed.items() if key != "read_view"} == original
+    assert client.get("/audit-tasks").json()["tasks"] == []
+    assert client.get(path).json() == original
 
 
 def test_concurrent_task_confirmation_and_cross_task_key_reuse(matched_task):

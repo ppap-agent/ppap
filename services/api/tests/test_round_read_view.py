@@ -11,7 +11,20 @@ def client_for(*, tenant="tenant", authenticated=True, private=False, grants=())
     store = Mock()
     store.resource.return_value = Resource("round", "tenant", "audit_round", grant_required=private)
     store.grants.return_value = set(grants)
-    store.get_round.side_effect = lambda identity, *, read_view=False: {"id": identity, **({"read_view": {"files": [], "unassigned_findings": []}} if read_view else {})}
+    store.get_round.side_effect = lambda identity, *, read_view=False, principal=None: {
+        "id": identity,
+        **(
+            {
+                "read_view": {
+                    "files": [],
+                    "unassigned_findings": [],
+                    "report_source": {"task_id": "private-task" if principal else None, "access": {"state": "allowed" if principal else "denied", "reason": None}},
+                }
+            }
+            if read_view
+            else {}
+        ),
+    }
     store.save_review.side_effect = lambda principal, identity, *args: {"id": identity}
     principal = SimpleNamespace(user_id="reader", tenant_id=tenant) if authenticated else None
     app = FastAPI()
@@ -24,7 +37,10 @@ def test_round_read_view_is_an_explicit_read_of_the_existing_authorized_round():
     assert client.get("/rounds/round").json() == {"id": "round"}
     response = client.get("/rounds/round?read_view=true")
     assert response.status_code == 200
-    assert response.json() == {"id": "round", "read_view": {"files": [], "unassigned_findings": []}}
+    assert response.json() == {
+        "id": "round",
+        "read_view": {"files": [], "unassigned_findings": [], "report_source": {"task_id": "private-task", "access": {"state": "allowed", "reason": None}}},
+    }
 
 
 def test_round_reader_keeps_tenant_and_private_task_grant_boundaries():

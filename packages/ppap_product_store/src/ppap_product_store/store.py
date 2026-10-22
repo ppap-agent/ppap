@@ -2826,12 +2826,16 @@ class AuthStore:
                 (status, document_id, error_code, ident, principal.tenant_id, principal.user_id),
             )
 
-    def get_round(self, round_id: str, *, read_view: bool = False) -> dict | None:
+    def get_round(self, round_id: str, *, read_view: bool = False, principal: Principal | None = None) -> dict | None:
         parsed = _as_uuid(round_id)
         if not parsed:
             return None
         with self._conn() as conn:
-            return self._round_public(conn, parsed, read_view=read_view)
+            if read_view:
+                with conn.transaction():
+                    conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    return self._round_public(conn, parsed, read_view=True, principal=principal)
+            return self._round_public(conn, parsed)
 
     def list_rounds(self, principal: Principal, limit: int = 50, offset: int = 0, q: str = "", execution: str = "", unreviewed: bool = False) -> list[dict]:
         needle = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -4171,7 +4175,7 @@ class AuthStore:
             "case_scope": " · ".join(filter(None, (labels.get("customer"), labels.get("supplier"), f"图纸 Rev {labels['revision']}" if labels.get("revision") else "", labels.get("plant")))),
         }
 
-    def _round_public(self, conn, round_id: str, *, read_view: bool = False) -> dict | None:
+    def _round_public(self, conn, round_id: str, *, read_view: bool = False, principal: Principal | None = None) -> dict | None:
         # These reads are independent. Send them together on the caller's connection.
         with conn.pipeline():
             round_read = conn.execute(
@@ -4290,7 +4294,24 @@ class AuthStore:
                 str(item[1]): {"id": str(item[1]), "file_id": str(item[2]), "original_filename": item[3], "status": item[4], "content_type": item[8], "byte_size": int(item[9]), "sha256": item[10]}
                 for item in inputs
             }
-            body["read_view"] = round_read_view(body, versions)
+            view = round_read_view(body, versions)
+            if row[9] and principal is not None:
+                task_id = str(row[4])
+                try:
+                    self._recognition_owner(conn, principal, task_id)
+                except KeyError:
+                    reason = "当前账号无权访问此任务报告。"
+                    view["report_source"] = {"task_id": None, "access": {"state": "denied", "reason": reason}}
+                    for file in view["files"]:
+                        if file["audit"]:
+                            file["audit"]["report"] = {"state": "not_eligible", "report_id": None, "reason": reason}
+                else:
+                    reports, _updated_at = self._task_file_reports(conn, principal.tenant_id, task_id, round_id, row[5])
+                    view["report_source"] = {"task_id": task_id, "access": {"state": "allowed", "reason": None}}
+                    for file in view["files"]:
+                        if file["audit"] and file["file"]["id"] in reports:
+                            file["audit"]["report"] = reports[file["file"]["id"]]
+            body["read_view"] = view
         return body
 
     def trial_consumed_points(self, tenant_id: str, ai_item_id: str) -> int:
