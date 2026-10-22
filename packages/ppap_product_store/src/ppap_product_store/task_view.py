@@ -6,6 +6,20 @@ import re
 from copy import deepcopy
 
 
+def has_execution_error(execution: str, coverage: dict, findings: list[dict]) -> bool:
+    """Execution faults are separate from terminal state and business verdicts."""
+    if execution != "completed":
+        return execution == "failed"
+    if any(finding.get("status") == "ERR" for finding in findings):
+        return True
+    for item in coverage.get("rule_items", []):
+        if isinstance(item, dict) and item.get("coverage") == "execution_error":
+            resolved, finding, _notice = _clause_result({"coverage": coverage, "findings": findings}, str(item.get("file_version_id")), str(item.get("id")))
+            if resolved and resolved.get("coverage") == "execution_error" and not finding:
+                return True
+    return False
+
+
 def _clause_result(round: dict, version_id: str, clause_id: str) -> tuple[dict | None, dict | None, str | None]:
     coverage = [item for item in (round.get("coverage") or {}).get("rule_items", []) if item.get("file_version_id") == version_id and str(item.get("id")) == clause_id]
     keys = {item["item_key"] for item in coverage if item.get("item_key")}
@@ -135,7 +149,11 @@ def _check(round: dict, version_id: str, rule_id: str, rule: dict, file_failed: 
     scope_gap = f"检查范围说明：已检查 {scope['checked']}/{scope['total']}，未知 {scope['unknown']}。" if scope and (scope["unknown"] or scope["checked"] < scope["total"]) else None
     return {
         "rule_item": rule,
-        "execution": "failed" if file_failed and not finding or round["execution"] == "failed" or finding and finding["status"] == "ERR" else "completed" if finished else round["execution"],
+        "execution": "failed"
+        if finished and not finding and (file_failed or (coverage or {}).get("coverage") == "execution_error") or round["execution"] == "failed" or finding and finding["status"] == "ERR"
+        else "completed"
+        if finished
+        else round["execution"],
         "coverage": "executed" if finding else (coverage or {}).get("coverage", "unsupported") if finished else "mapped",
         "finding": finding,
         "evidence_verified": verified,
@@ -266,6 +284,8 @@ def task_round_view(task: dict, round: dict, reports: dict[str, dict] | None = N
     return {
         **task,
         "round_id": round["id"],
+        "execution": round["execution"],
+        "has_execution_error": has_execution_error(round["execution"], round.get("coverage") or {}, round.get("findings", [])),
         "state": "completed" if task_finished else "reviewing",
         "completion_reason": "processed" if task_finished else None,
         "files": files,

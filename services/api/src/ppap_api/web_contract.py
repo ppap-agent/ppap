@@ -511,6 +511,7 @@ class RoundSummary(TypedDict):
     source_draft_id: NotRequired[str | None]
     task_id: NotRequired[str | None]
     execution: str
+    has_execution_error: NotRequired[bool]
     predecessor_id: str | None
     created_at: str | None
     updated_at: NotRequired[str | None]
@@ -1091,6 +1092,7 @@ class AuditTaskSummary(TypedDict):
     completion_reason: Literal["no_matching_rules", "processed"] | None
     files: list[AuditTaskSummaryFile]
     execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
+    has_execution_error: NotRequired[bool]
     result_counts: NotRequired[dict[str, int]]
     reviewed_count: NotRequired[int]
     uncovered_count: NotRequired[int]
@@ -1119,6 +1121,8 @@ class AuditTask(AuditTaskIdentity):
     """Persisted Task/Round view; optional delivery operations need their own API."""
 
     files: list[AuditTaskFile]
+    execution: NotRequired[Literal["queued", "running", "completed", "failed"]]
+    has_execution_error: NotRequired[bool]
     acceptance: NotRequired[AuditAcceptance]
     progress: NotRequired[AuditProgress]
     completion_estimate: NotRequired[AuditCompletionEstimate | None]
