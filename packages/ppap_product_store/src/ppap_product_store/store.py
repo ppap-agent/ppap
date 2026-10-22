@@ -81,7 +81,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from ppap_product_store.task_view import file_round_audit, report_eligible, round_read_view, task_round_view
+from ppap_product_store.task_view import file_round_audit, has_execution_error, report_eligible, round_read_view, task_round_view
 
 
 def _now() -> datetime:
@@ -2384,7 +2384,7 @@ class AuthStore:
                     "round_id": str(row[8]) if row[8] else None,
                     "state": row[9],
                     "files": grouped.get(str(row[0]), []),
-                    **({key: histories[str(row[8])][key] for key in ("execution", "result_counts", "reviewed_count", "uncovered_count")} if row[8] else {}),
+                    **({key: histories[str(row[8])][key] for key in ("execution", "has_execution_error", "result_counts", "reviewed_count", "uncovered_count")} if row[8] else {}),
                 }
                 for row in rows
             ]
@@ -4109,7 +4109,13 @@ class AuthStore:
                 WHERE i.round_id = ANY(%s::uuid[]) ORDER BY i.role, fv.original_filename""",
                 (round_ids,),
             )
-            counts = conn.execute("SELECT round_id, status, COUNT(*), array_agg(item_key) FROM product.findings WHERE round_id = ANY(%s::uuid[]) GROUP BY round_id, status", (round_ids,))
+            counts = conn.execute(
+                """SELECT round_id, status, COUNT(*), jsonb_agg(jsonb_build_object(
+                    'item_key', item_key, 'status', status, 'locator', jsonb_build_object(
+                        'file_version_id', locator->>'file_version_id', 'rule_item_id', locator->>'rule_item_id')))
+                FROM product.findings WHERE round_id = ANY(%s::uuid[]) GROUP BY round_id, status""",
+                (round_ids,),
+            )
             reviews = conn.execute("SELECT round_id, item_key, judgment, rationale, citations FROM product.reviews WHERE round_id = ANY(%s::uuid[])", (round_ids,))
         by_id = {str(row[0]): row for row in rounds.fetchall()}
         groups = []
@@ -4122,10 +4128,13 @@ class AuthStore:
 
     def _round_history(self, row, inputs, counts, reviews) -> dict:
         result_counts = {"PASS": 0, "NG": 0, "ERR": 0, "UNABLE": 0, "NA": 0}
+        findings = []
         finding_keys = set()
         reviewable_keys = set()
-        for status, n, keys in counts:
+        for status, n, items in counts:
+            keys = [item["item_key"] for item in items]
             finding_keys.update(keys)
+            findings.extend(items)
             if status in result_counts:
                 result_counts[status] = int(n)
                 if status != "NA":
@@ -4161,6 +4170,7 @@ class AuthStore:
         return {
             "id": str(row[0]),
             "execution": row[1],
+            "has_execution_error": has_execution_error(row[1], row[6] or {}, findings),
             "source_draft_id": str(row[7]) if row[7] else None,
             "task_id": str(row[8]) if row[8] else None,
             "updated_at": row[9].isoformat() if row[9] is not None else None,

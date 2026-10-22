@@ -2349,8 +2349,15 @@ export interface components {
             customer_preference: string | null;
             /** Estimated Points */
             estimated_points: number | null;
+            /**
+             * Execution
+             * @enum {string}
+             */
+            execution?: "queued" | "running" | "completed" | "failed";
             /** Files */
             files: components["schemas"]["AuditTaskFile"][];
+            /** Has Execution Error */
+            has_execution_error?: boolean;
             /** Id */
             id: string;
             /** Input Revision */
@@ -2430,6 +2437,8 @@ export interface components {
             execution?: "queued" | "running" | "completed" | "failed";
             /** Files */
             files: components["schemas"]["AuditTaskSummaryFile"][];
+            /** Has Execution Error */
+            has_execution_error?: boolean;
             /** Id */
             id: string;
             /** Input Revision */
@@ -3157,6 +3166,8 @@ export interface components {
             created_at: string | null;
             /** Execution */
             execution: string;
+            /** Has Execution Error */
+            has_execution_error?: boolean;
             /** Id */
             id: string;
             /** Inputs */

@@ -60,6 +60,8 @@ def assert_task_summary(summary, task):
     assert {key: summary[key] for key in expected} == expected
     if task["round_id"]:
         assert summary["execution"] in {"queued", "running", "completed", "failed"}
+        assert summary["execution"] == task["execution"]
+        assert summary["has_execution_error"] == task["has_execution_error"]
         assert all(value >= 0 for value in summary["result_counts"].values())
         assert summary["reviewed_count"] >= 0
     # Both projections observe input, execution and optional manual-review activity.
@@ -549,6 +551,62 @@ def test_zip_bulk_sources_keep_each_frozen_reference_and_reject_one_invalid_memb
     assert client.get(f"/rounds/{task['round_id']}").json() == frozen
     assert client.get("/usage").json() == usage
     assert worker.claim_job("bulk-source-no-new-work") is None
+
+
+@pytest.mark.parametrize(
+    "status,coverage,failed,locator_only",
+    [
+        ("NG", "executed", False, False),
+        ("ERR", "execution_error", True, False),
+        (None, "execution_error", True, False),
+        (None, "unsupported", False, False),
+        ("NG", "execution_error", False, False),
+        ("NG", "execution_error", False, True),
+    ],
+)
+def test_task_list_and_detail_keep_execution_faults_separate_from_round_completion(matched_task, status, coverage, failed, locator_only):
+    client, worker, path, _body, rule = matched_task
+    response = client.post(path + "/confirm", json={"request_id": str(uuid.uuid4()), "expected_revision": 0})
+    assert response.status_code == 201, response.text
+    task = response.json()
+    version = task["files"][0]["file"]["id"]
+    job = worker.claim_job("summary-fault")
+    item_key = f"{version}:rule:1"
+    finding = {
+        "item_key": item_key,
+        "classification": "身份",
+        "item": "必须填写零件号",
+        "priority": "P0",
+        "status": status,
+        "suggestions": "已记录的检查结果",
+        "locator": {"file_version_id": version, "rule_item_id": "1"},
+    }
+    result = {
+        "findings": [finding] if status else [],
+        "coverage": {"rule_items": [{"file_version_id": version, "id": "1", "rule_version_id": rule["id"], "item_key": "legacy-coverage-key" if locator_only else item_key, "coverage": coverage}]},
+    }
+    # Persist a known Worker result at the real Store boundary; not checker-quality evidence.
+    assert worker.complete_job(job, "summary-fault", result, "succeeded")
+    report = worker.claim_job("summary-report")
+    if report:
+        assert report.kind == "report_pdf"
+        process_claimed(worker, report, "summary-report")
+    loaded = client.get(path).json()
+    TypeAdapter(wc.AuditTask).validate_python(loaded)
+    summary = next(row for row in client.get("/audit-tasks").json()["tasks"] if row["id"] == task["id"])
+    TypeAdapter(wc.AuditTaskSummary).validate_python(summary)
+    assert_task_summary(summary, loaded)
+    assert loaded["state"] == loaded["execution"] == "completed"
+    assert loaded["has_execution_error"] is failed
+    assert loaded["files"][0]["audit"]["execution"] == ("review_failed" if failed else "completed")
+    round = client.get(f"/rounds/{loaded['round_id']}").json()
+    assert round["execution"] == "completed"
+    historical = next(row for row in client.get("/rounds").json()["rounds"] if row["id"] == round["id"])
+    assert historical["execution"] == "completed" and historical["has_execution_error"] is failed
+    assert client.get(path).json() == loaded
+    assert client.get("/audit-tasks").json()["tasks"] == [summary]
+    assert client.get("/usage").json()["events"] == []
+    assert worker.claim_job("summary-no-new-work") is None
 
 
 def test_charged_confirmation_records_a_split_file_once_and_replay_needs_no_quota(matched_task):

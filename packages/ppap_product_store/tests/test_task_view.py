@@ -1,7 +1,7 @@
 import unittest
 from copy import deepcopy
 
-from ppap_product_store.task_view import report_eligible, round_read_view, task_round_view
+from ppap_product_store.task_view import has_execution_error, report_eligible, round_read_view, task_round_view
 
 
 def frozen_round(execution="completed"):
@@ -69,6 +69,49 @@ def verified_round(status="NG"):
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_execution_fault_projection_keeps_round_state_and_valid_verdicts_separate(self):
+        for coverage in ("unsupported", "executed", "execution_error"):
+            for status in (None, "PASS", "NG", "NA", "UNABLE", "ERR"):
+                with self.subTest(coverage=coverage, status=status):
+                    round = frozen_round()
+                    row = round["coverage"]["rule_items"][0]
+                    row.update(coverage=coverage, item_key="version-a:rule:clause-a")
+                    if status:
+                        round["findings"] = [{"item_key": row["item_key"], "status": status, "locator": {"file_version_id": "version-a", "rule_item_id": "clause-a"}, "review": None}]
+                    before = deepcopy(round)
+                    view = task_round_view(task_input(), round)
+                    audit = view["files"][0]["audit"]
+                    failed = status == "ERR" or status is None and coverage == "execution_error"
+                    self.assertEqual(view["execution"], "completed")
+                    self.assertEqual(view["has_execution_error"], failed)
+                    self.assertEqual(audit["execution"], "review_failed" if failed else "completed")
+                    self.assertEqual(audit["checks"][0]["execution"], "failed" if failed else "completed")
+                    self.assertEqual(audit["checks"][0]["finding"]["status"] if status else audit["checks"][0]["finding"], status)
+                    self.assertEqual(audit["counts"]["error_count"], int(failed))
+                    self.assertEqual(round, before)
+        self.assertTrue(has_execution_error("failed", {}, []))
+        self.assertFalse(has_execution_error("running", {"rule_items": [{"coverage": "execution_error"}]}, []))
+        round = verified_round("PASS")
+        round["coverage"]["rule_items"][0].update(coverage="execution_error", item_key="legacy-coverage-key")
+        view = task_round_view(task_input(), round)
+        self.assertFalse(view["has_execution_error"])
+        self.assertEqual(view["files"][0]["audit"]["checks"][0]["finding"]["status"], "PASS")
+        round["execution"] = "running"
+        round["findings"] = []
+        running = task_round_view(task_input(), round)
+        self.assertFalse(running["has_execution_error"])
+        self.assertEqual(running["files"][0]["audit"]["checks"][0]["execution"], "running")
+        for duplicate in ("coverage", "findings"):
+            with self.subTest(duplicate=duplicate):
+                round = verified_round("PASS")
+                round["coverage"]["rule_items"][0]["coverage"] = "execution_error"
+                rows = round["coverage"]["rule_items"] if duplicate == "coverage" else round["findings"]
+                rows.append(deepcopy(rows[0]))
+                ambiguous = task_round_view(task_input(), round)
+                self.assertFalse(ambiguous["has_execution_error"])
+                self.assertEqual(ambiguous["files"][0]["audit"]["execution"], "completed")
+                self.assertEqual(ambiguous["files"][0]["audit"]["checks"][0]["coverage"], "unsupported")
+
     def test_frozen_reference_does_not_prevent_completion_or_create_an_audit(self):
         round = frozen_round()
         round["inputs"].append({"role": "reference", "file_version_id": "reference-v1", "rule": None})
