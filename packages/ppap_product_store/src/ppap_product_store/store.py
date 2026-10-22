@@ -3594,7 +3594,37 @@ class AuthStore:
             raise KeyError("missing")
         with self._conn() as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            task = self._recognition_public(conn, principal, reference["task_id"])
+            draft = self._recognition_owner(conn, principal, reference["task_id"])
+            task_id = str(draft["id"])
+            # Downloads retain the Task's complete file-access checks, but do not
+            # need recognition, reviews, display edits, ZIPs or sharing projections.
+            files = conn.execute(
+                """SELECT i.file_version_id FROM product.draft_items i
+                JOIN product.file_versions f ON f.id = i.file_version_id
+                WHERE i.draft_id = %s ORDER BY i.position""",
+                (task_id,),
+            ).fetchall()
+            self._prepared_items(conn, principal, [{"file_version_id": str(row[0]), "role": "reference"} for row in files])
+            rows = conn.execute(
+                """WITH current_round AS (
+                    SELECT id, result_attempt FROM product.audit_rounds
+                    WHERE source_draft_id = %s AND tenant_id = %s ORDER BY created_at LIMIT 1
+                )
+                SELECT r.id, r.result_attempt, i.file_version_id, i.rule_version_id, i.rule_title
+                FROM current_round r JOIN product.round_inputs i ON i.round_id = r.id
+                JOIN product.draft_items d ON d.draft_id = %s AND d.file_version_id = i.file_version_id
+                WHERE i.role = 'target' AND i.rule_version_id IS NOT NULL AND d.selection = 'selected'
+                AND EXISTS (SELECT 1 FROM product.resource_grants g WHERE g.resource_id = r.id
+                    AND g.user_id = %s AND g.capability IN ('read', 'review'))""",
+                (task_id, principal.tenant_id, task_id, principal.user_id),
+            ).fetchall()
+            if not rows:
+                raise KeyError("missing")
+            task = {
+                "id": task_id,
+                "round_id": str(rows[0][0]),
+                "files": [{"file": {"id": str(row[2])}, "audit": {"result_attempt": row[1], "rule": {"id": str(row[3]), "title": row[4]}}} for row in rows],
+            }
             source = self._report_source(conn, principal, task, reference, artifact_id)
         body = self.objects.get(source["object_key"])
         if not body.startswith(b"%PDF-") or len(body) != source["artifact"]["byte_size"] or sha256_bytes(body) != source["sha256"]:
