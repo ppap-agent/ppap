@@ -31,7 +31,17 @@ export function useUploads(adapter: UploadAdapter, onReady: (file: FileVersion, 
           save({...row, busy: false, receipt: {...row.receipt, state: 'failed', retry_allowed: false, reason: '文件超过 200 MB，未开始上传。'}})
           rows.splice(index--, 1); continue
         }
-        const sha256 = await localFileDigest(row.input.file)
+        let sha256: string
+        try {sha256 = await localFileDigest(row.input.file)}
+        catch {
+          if (started !== epoch.current) return
+          const latest = current.current.get(row.id)
+          if (latest) save({...latest, busy: false, inputIssue: row.input.sha256 ? '本地原件暂不可读取，请重新选择当时的原件。' : undefined, receipt: {...latest.receipt,
+            state: row.input.sha256 ? 'unknown' : 'failed', retry_allowed: false, resume_allowed: false,
+            reason: row.input.sha256 ? '未能读取本地原件，本次未继续传输。请读取原请求，不要新建上传。' : '本地原件无法读取，未开始上传。请排除此文件后重新选择。',
+          }})
+          rows.splice(index--, 1); continue
+        }
         if (started !== epoch.current) return
         const latest = current.current.get(row.id)
         if (latest) {rows[index] = {...latest, input: {...row.input, sha256}}; save(rows[index])}
