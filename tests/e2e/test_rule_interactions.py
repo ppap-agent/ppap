@@ -19,6 +19,7 @@ WEB = os.environ.get("PPAP_WEB_URL", "http://127.0.0.1:4173").rstrip("/")
 
 
 def open_rule_library(page):
+    page.get_by_role("banner").wait_for(state="visible")
     button = page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="审核规则", exact=True)
     if button.is_visible():
         button.click()

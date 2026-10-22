@@ -73,6 +73,7 @@ function sample(index: number): AuditTaskFile {
   return {file: scene.startsWith('original-') ? fixtureOriginalFile(file) : file, selection: 'selected', removal_reason: null, validation_id: `preview-validation-${id}`, validation: {state: 'valid', reasons: []}, match: null}
 }
 const adapter: AuditIntakeAdapter & Required<Pick<AuditIntakeAdapter, 'samples' | 'drive'>> = {
+  readRound: readHistoricalRound,
   notifications: {
     async read(id) {
       const task = taskStore.get(id)

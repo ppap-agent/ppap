@@ -13,6 +13,30 @@ PREVIEW = os.environ.get("PPAP_PREVIEW_URL", "").rstrip("/")
 
 @unittest.skipUnless(PREVIEW and sync_playwright, "requires the explicit UI preview and Playwright")
 class PageHeaderPreviewTests(unittest.TestCase):
+    def test_return_to_historical_round_removes_the_hidden_task_report_actions(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1057, "height": 853})
+            page.set_default_timeout(5000)
+            address = PREVIEW + "/preview/audit.html?scene=reports-ready&round=history-round"
+            page.goto(address)
+            expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
+            page.get_by_role("button", name="打开审核任务", exact=True).click()
+            page.get_by_role("navigation", name="任务列表", exact=True).get_by_role("button").filter(has_text="PPAP-报告示例").click()
+            page.get_by_role("button", name="报告中心", exact=True).click()
+            bar = page.get_by_role("banner")
+            expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_be_visible()
+            page.go_back()
+            expect(page).to_have_url(address)
+            expect(page.get_by_role("region", name="历史审核", exact=True)).to_be_visible()
+            expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_have_count(0)
+            page.set_viewport_size({"width": 390, "height": 844})
+            expect(bar.get_by_role("button", name="文件报告 · 3 份", exact=True)).to_have_count(0)
+            page.go_forward()
+            expect(page.get_by_role("region", name="当前报告", exact=True)).to_be_visible()
+            expect(bar.get_by_role("button", name="读取报告状态", exact=True)).to_be_visible()
+            browser.close()
+
     def test_report_reader_starts_under_the_page_bar_without_a_second_title_row(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
