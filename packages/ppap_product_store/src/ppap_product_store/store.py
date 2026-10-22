@@ -3345,6 +3345,10 @@ class AuthStore:
 
     def _report_source(self, conn, principal: Principal, task: dict, reference: dict, artifact_id: str | None = None) -> dict:
         row = conn.execute("SELECT payload, result, status FROM engine.jobs WHERE id = %s AND tenant_id = %s AND kind = 'report_pdf'", (reference["report_id"], principal.tenant_id)).fetchone()
+        return self._frozen_report_source(task, reference, row, artifact_id)
+
+    @staticmethod
+    def _frozen_report_source(task: dict, reference: dict, row, artifact_id: str | None = None) -> dict:
         if not row:
             raise KeyError("missing")
         payload, result, state = row
@@ -3374,12 +3378,17 @@ class AuthStore:
 
     def _report_package_sources(self, conn, principal, reports, task):
         tasks = {task["id"]: task}
+        rows = conn.execute(
+            "SELECT id, payload, result, status FROM engine.jobs WHERE id = ANY(%s::uuid[]) AND tenant_id = %s AND kind = 'report_pdf'",
+            ([reference["report_id"] for reference in reports], principal.tenant_id),
+        ).fetchall()
+        reports_by_id = {str(row[0]): row[1:] for row in rows}
         sources = []
         for reference in sorted(reports, key=lambda reference: (reference["file_version_id"], reference["report_id"])):
             task_id = reference["task_id"]
             if task_id not in tasks:
                 tasks[task_id] = self._recognition_public(conn, principal, task_id)
-            sources.append(self._report_source(conn, principal, tasks[task_id], reference))
+            sources.append(self._frozen_report_source(tasks[task_id], reference, reports_by_id.get(reference["report_id"])))
         return sources
 
     def accept_report_package(self, principal: Principal, body: dict) -> dict:
