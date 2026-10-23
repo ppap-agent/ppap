@@ -3040,7 +3040,19 @@ class AuthStore:
 
         return f"ppap-round-{work.round_id[:8]}.zip", chunks()
 
-    def save_review(self, principal: Principal, round_id: str, item_key: str, judgment: str, rationale: str, next_step: str, version: int, citations: list[dict] | None = None) -> dict:
+    def save_review(
+        self,
+        principal: Principal,
+        round_id: str,
+        item_key: str,
+        judgment: str,
+        rationale: str,
+        next_step: str,
+        version: int,
+        citations: list[dict] | None = None,
+        *,
+        mcp_operation_id: str | None = None,
+    ) -> dict:
         text, why, nxt, seen = normalize_review(judgment, rationale, next_step, version)
         parsed = _as_uuid(round_id)
         key = str(item_key or "").strip()
@@ -3048,6 +3060,27 @@ class AuthStore:
             raise KeyError("missing")
         with self._conn() as conn:
             with conn.transaction():
+                if mcp_operation_id is not None:
+                    # This identity arrives only through the in-process adapter.
+                    # The review and its transport receipt commit together, so a
+                    # process loss cannot turn a saved review into a version conflict.
+                    operation = conn.execute(
+                        """SELECT o.arguments,o.state,o.result,o.confirmed_by FROM product.mcp_operations o
+                           JOIN product.mcp_grants g ON g.id=o.grant_id
+                           WHERE o.id=%s AND o.tool='submit_review' AND g.user_id=%s AND g.tenant_id=%s
+                           AND g.revoked_at IS NULL AND g.expires_at>now() AND 'reviews:write'=ANY(g.scopes)
+                           FOR UPDATE OF o""",
+                        (mcp_operation_id, principal.user_id, principal.tenant_id),
+                    ).fetchone()
+                    command = {"item_key": item_key, "judgment": judgment, "rationale": rationale, "next_step": next_step, "version": version}
+                    if citations is not None:
+                        command["citations"] = citations
+                    if not operation or str(operation[3]) != principal.user_id or operation[0].get("path") != f"/rounds/{round_id}/reviews" or operation[0].get("body") != command:
+                        raise ValueError("invalid_review_confirmation")
+                    if operation[1] == "succeeded":
+                        return operation[2]["data"]
+                    if operation[1] != "running":
+                        raise ValueError("invalid_review_confirmation")
                 finding = conn.execute(
                     "SELECT 1 FROM product.findings WHERE round_id = %s AND item_key = %s",
                     (parsed, key),
@@ -3095,7 +3128,14 @@ class AuthStore:
                     ).fetchone()
                     if not row:
                         raise ValueError("review_conflict")
-                return cast(dict, self._round_public(conn, parsed))
+                result = cast(dict, self._round_public(conn, parsed))
+                if mcp_operation_id is not None:
+                    conn.execute(
+                        """UPDATE product.mcp_operations SET state='succeeded',updated_at=now(),result=%s
+                                    WHERE id=%s AND state='running'""",
+                        (Jsonb({"data": result, "http_status": 200, "probes": [f"/rounds/{round_id}"]}), mcp_operation_id),
+                    )
+                return result
 
     def round_work(self, round_id: str) -> RoundWork | None:
         parsed = _as_uuid(round_id)

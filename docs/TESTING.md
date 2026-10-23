@@ -337,3 +337,9 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 报告分享的物理连接失效回归仍由 `tests/schema/test_audit_bindings.py` 拥有。共用发送生命周期沿用 `ReportShareDispatch.tla`：两个接收人、各两次尝试的有限 Safety 检查；无公平性、状态约束、对称缩减或覆盖，静止终态不按死锁处理，不证明权限、文件内容、无限重试或最终送达。
 
 API owner tests validate that every major Web-consumed endpoint has an explicit successful JSON response schema and that JSON write endpoints have an explicit request schema. Repository CI then installs the frozen Web lockfile inside `apps/web`, runs `pnpm api-types` there, and fails if `apps/web/src/generated/openapi.ts` differs from the committed artifact. Web CI typechecks/tests/lints/builds the generated consumers.
+
+## MCP
+
+`tests/integration/product/test_mcp.py` 通过真实 PostgreSQL、API 数据库角色、OAuth 和 MCP HTTP 协议验证授权码单次兑换、刷新重放撤权、Scope、文件字节、对象权限、人工确认、原请求读回和新 API 实例恢复。复核场景在实际数据库提交后丢弃传输响应，验证同事务回执及原请求重放；网页并发修改后旧确认不能覆盖新复核。对象存储、隔离身份及识别模型元数据为受控边界，不能据此声称完成真实飞书、客户文件或外部客户端验收。
+
+`McpDelegation.tla` 只建模一个授权、两代刷新令牌、一个操作身份及两份载荷。正向配置检查单次效果与执行前授权；`-replay`、`-binding`、`-revocation` 分别保留未知结果重发、确认换绑和撤权后启动的反例。无公平性、状态约束或对称缩减，不检查最终完成，静止终态不视作死锁。它假定 claim 与令牌轮换原子化；SQL 并发测试必须独立证明这一假设，连接上下文本身不是证明。密码学、对象 ACL、可变事实的事务绑定和真实外部效果仍由对应实现与验收负责。

@@ -630,6 +630,7 @@ def register_audit_routes(app: FastAPI, store: AuthStore, principal_of, quota_fo
                 cast(str, body.get("next_step")),
                 cast(int, body.get("version")),
                 body.get("citations"),
+                mcp_operation_id=request.scope.get("ppap.mcp_operation_id"),
             )
         except (KeyError, ValueError) as exc:
             return fail(exc)
