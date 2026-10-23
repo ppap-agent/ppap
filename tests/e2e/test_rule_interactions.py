@@ -481,6 +481,36 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(state["saves"]), 2)
             browser.close()
 
+    def test_late_parse_acceptance_cannot_replace_a_completed_status_read(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            self.requirement_routes(page)
+            # Decode both real HTTP replies, then deliver completion just before
+            # the older acceptance reply, within the same browser task.
+            page.add_init_script("""
+                const realFetch = window.fetch.bind(window), replies = {};
+                let released = false;
+                window.fetch = async (url, init) => {
+                    const response = await realFetch(url, init);
+                    if (released || !/\\/rules\\/parse(?:\\/|$)/.test(String(url))) return response;
+                    const value = await response.json();
+                    const kind = init?.method === 'POST' ? 'post' : 'get';
+                    response.json = () => new Promise(resolve => {
+                        replies[kind] = () => resolve(value);
+                        if (replies.get && replies.post) {
+                            released = true;
+                            replies.get();
+                            queueMicrotask(() => queueMicrotask(() => replies.post()));
+                        }
+                    });
+                    return response;
+                };
+            """)
+            self.open_requirement(page)
+            self.check_requirement(page)
+            browser.close()
+
     def test_identical_source_read_after_version_confirmation_keeps_the_save_action_available(self):
         self.check_source_reply_after_version_confirmation(matching=True)
 
