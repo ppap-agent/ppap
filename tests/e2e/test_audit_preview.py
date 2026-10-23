@@ -1206,26 +1206,34 @@ class AuditPreviewTests(unittest.TestCase):
     def test_late_recognition_reply_cannot_replace_another_draft(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(5000)
-            page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late")
-            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
-            page.get_by_role("button", name="开始识别", exact=True).click()
-            expect(page.get_by_role("button", name="返回示例读取 1", exact=True)).to_be_visible()
-            new_task(page)
-            page.get_by_role("button", name="使用三类文件示例", exact=True).click()
-            page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
-            page.get_by_role("button", name="开始识别", exact=True).click()
-            close_workspace_panel(page)
-            page.get_by_role("button", name="返回示例读取 2", exact=True).click()
-            expect(page.get_by_text("预计点数：1000", exact=True)).to_be_visible()
-            address = page.url
-            close_workspace_panel(page)
-            page.get_by_role("button", name="返回示例读取 1", exact=True).click()
-            self.assertEqual(page.url, address)
-            expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_have_count(0)
-            expect(task_list(page).get_by_role("button")).to_have_count(2)
-            close_workspace_panel(page)
+            for first_reply in (1, 2):
+                with self.subTest(first_reply=first_reply):
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    page.set_default_timeout(5000)
+                    page.goto(PREVIEW + "/preview/audit.html?scene=recognition-late")
+                    page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                    page.get_by_role("button", name="开始识别", exact=True).click()
+                    expect(page.get_by_role("button", name="返回示例读取 1", exact=True)).to_be_visible()
+                    new_task(page)
+                    page.get_by_role("button", name="使用三类文件示例", exact=True).click()
+                    page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
+                    page.get_by_role("button", name="开始识别", exact=True).click()
+                    close_workspace_panel(page)
+                    address = page.url
+                    page.get_by_role("button", name=f"返回示例读取 {first_reply}", exact=True).click()
+                    if first_reply == 1:
+                        self.assertEqual(page.url, address)
+                        expect(page.get_by_role("button", name="正在提交识别…", exact=True)).to_be_disabled()
+                        expect(page.get_by_role("heading", name="确认每份文件的审核规则", exact=True)).to_have_count(0)
+                        page.get_by_role("button", name="返回示例读取 2", exact=True).click()
+                    expect(page.get_by_text("预计点数：1000", exact=True)).to_be_visible()
+                    if first_reply == 2:
+                        address = page.url
+                        page.get_by_role("button", name="返回示例读取 1", exact=True).click()
+                        self.assertEqual(page.url, address)
+                    expect(page.get_by_role("heading", name="控制计划.xlsx", exact=True)).to_have_count(0)
+                    expect(task_list(page).get_by_role("button")).to_have_count(2)
+                    page.close()
             browser.close()
 
     def test_superseded_recognition_preserves_inputs_for_an_explicit_new_recognition(self):
@@ -4198,6 +4206,7 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_role("button", name="上一步", exact=True).click()
             page.get_by_role("checkbox", name="选择 控制计划.xlsx", exact=True).uncheck()
             page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "附加.pdf", "mimeType": "application/pdf", "buffer": b"preview"})
+            expect(page.get_by_text("传输回执 · 附加.pdf", exact=True)).to_be_visible()
             task_url = page.url
             page.go_back()
             # The pre-match entry now opens the Task that consumed its draft,

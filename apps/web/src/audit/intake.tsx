@@ -203,8 +203,8 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const preparation = useRef<ReturnType<typeof createUploadPreparation> | null>(null)
   if (!preparation.current && adapter.preparation) preparation.current = createUploadPreparation({read: id => latestAdapter.current.preparation!.read(id), save: (...args) => latestAdapter.current.preparation!.save(...args), readFile: (...args) => latestAdapter.current.preparation!.readFile(...args)})
   const [preparationStatus, setPreparationStatus] = useState<{id: string | null; phase: 'idle' | 'reading' | 'saving' | 'ready' | 'error'; message: string; conflict?: boolean}>({id: null, phase: 'idle', message: ''})
-  const preparingMatch = useRef(false)
-  const [preparingMatchBusy, setPreparingMatchBusy] = useState(false)
+  const preparingMatch = useRef<number | null>(null)
+  const [preparingMatchEpoch, setPreparingMatchEpoch] = useState<number | null>(null)
   const preparationInput = useRef({files, mode, customer, predecessorId})
   preparationInput.current = {files, mode, customer, predecessorId}
   function preparationValue(rows: UploadRow[]): UploadPreparation {
@@ -291,9 +291,9 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
   const recognitionState = recognition.observations[recognitionKey]
   const recognitionLocked = Boolean(recognitionState && !['accepted', 'rejected', 'conflict'].includes(recognitionState.phase))
   const recognitionNeedsCurrent = recognitionState?.phase === 'conflict' && ((task?.input_revision ?? -1) < (recognitionState.currentRevision ?? Infinity) || task?.state !== recognitionState.currentState)
-  const inputLocked = recognitionLocked || preparingMatchBusy || !task && preparationStatus.id === activeUploadDraftId.current && ['reading', 'error'].includes(preparationStatus.phase) || Boolean(task && ['sending', 'unknown'].includes(endStatus[task.id]))
+  const inputLocked = recognitionLocked || preparingMatchEpoch === draftEpoch.current || !task && preparationStatus.id === activeUploadDraftId.current && ['reading', 'error'].includes(preparationStatus.phase) || Boolean(task && ['sending', 'unknown'].includes(endStatus[task.id]))
   useEffect(() => {
-    if (!preparation.current || task || surface !== 'audit' || !activeUploadDraftId.current || ['reading', 'error'].includes(preparationStatus.phase) || preparingMatch.current) return
+    if (!preparation.current || task || surface !== 'audit' || !activeUploadDraftId.current || ['reading', 'error'].includes(preparationStatus.phase) || preparingMatch.current === draftEpoch.current) return
     if (!files.length && !uploads.rows.length || uploads.rows.some(row => row.busy && row.input.kind === 'local' && !row.input.sha256)) return
     void persistPreparation(uploads.snapshot()).catch(() => {})
   }, [files, mode, customer, predecessorId, uploads.rows, task, surface])
@@ -555,20 +555,28 @@ export function AuditIntake({adapter, rules, onRefreshCustomers, autoObserve = t
     return () => {window.clearTimeout(timer); document.removeEventListener('visibilitychange', read)}
   }, [adapter, files, step, inputLocked])
   async function startMatching() {
-    if (blocked || confirmationLocked || inputLocked || recognitionNeedsCurrent || workbench || preparingMatch.current) return
-    preparingMatch.current = true
-    setPreparingMatchBusy(true)
+    if (blocked || confirmationLocked || inputLocked || recognitionNeedsCurrent || workbench || preparingMatch.current === draftEpoch.current) return
     const key = task?.id || activeUploadDraftId.current || crypto.randomUUID()
     if (!task && !activeUploadDraftId.current) activeUploadDraftId.current = key
     const epoch = draftEpoch.current, input = {files: structuredClone(files), mode, customer: customer === 'auto' ? null : customer, previous: task, predecessorId}
+    preparingMatch.current = epoch
+    setPreparingMatchEpoch(epoch)
+    let saved: components['schemas']['Draft'] | null = null
     try {
-      const saved = !task ? await persistPreparation(uploads.snapshot()) : null
-      if (epoch !== draftEpoch.current) return
-      recognitionTargets.current.set(key, {epoch, uploadId: activeUploadDraftId.current})
-      if (task) {taskReadEpoch.current.set(task.id, (taskReadEpoch.current.get(task.id) || 0) + 1); taskReads.current.delete(task.id)}
-      await recognition.start(key, {...input, ...(saved ? {preparation: {id: saved.id, revision: saved.preparation_revision!}} : {})})
-    } catch { /* The preparation error retains this input and offers readback. */ }
-    finally {preparingMatch.current = false; setPreparingMatchBusy(false)}
+      saved = !task ? await persistPreparation(uploads.snapshot()) : null
+    } catch {
+      // The preparation error retains this input and offers readback.
+      return
+    }
+    finally {
+      if (preparingMatch.current === epoch) preparingMatch.current = null
+      setPreparingMatchEpoch(current => current === epoch ? null : current)
+    }
+    if (epoch !== draftEpoch.current) return
+    // Recognition now owns the request lock; preparation no longer owns the page.
+    recognitionTargets.current.set(key, {epoch, uploadId: activeUploadDraftId.current})
+    if (task) {taskReadEpoch.current.set(task.id, (taskReadEpoch.current.get(task.id) || 0) + 1); taskReads.current.delete(task.id)}
+    await recognition.start(key, {...input, ...(saved ? {preparation: {id: saved.id, revision: saved.preparation_revision!}} : {})})
   }
   async function endTask(current: AuditTask) {
     if (recognitionDirty || recognitionState?.phase === 'conflict') {setStep('check'); setError('文件选择或输入版本已有变更。请读取当前任务并重新识别，再结束任务。'); return}
