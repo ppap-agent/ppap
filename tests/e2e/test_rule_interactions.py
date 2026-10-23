@@ -802,9 +802,16 @@ class RuleInteractionTests(unittest.TestCase):
             if route.request.method == "POST":
                 self.assertEqual(preparation, {})
                 preparation.update(
-                    id=value["request_id"], task_id=None, status="open", preparation_revision=0,
-                    items=[], analysis_mode="standard", predecessor_id=None, case_context={},
-                    writeback={"available": False}, updated_at="2026-10-22T00:00:00Z",
+                    id=value["request_id"],
+                    task_id=None,
+                    status="open",
+                    preparation_revision=0,
+                    items=[],
+                    analysis_mode="standard",
+                    predecessor_id=None,
+                    case_context={},
+                    writeback={"available": False},
+                    updated_at="2026-10-22T00:00:00Z",
                 )
             else:
                 self.assertEqual(route.request.method, "PUT")
