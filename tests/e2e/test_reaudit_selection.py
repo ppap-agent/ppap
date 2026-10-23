@@ -30,10 +30,11 @@ def reaudit_routes(page, *, accept=False):
     commands = []
     uploaded = {}
     task = None
+    preparation = None
     page.route("**/runtime-config.json", lambda route: route.fulfill(json={"api_url": WEB + "/api"}))
 
     def api(route):
-        nonlocal task
+        nonlocal task, preparation
         request = route.request
         path = urlsplit(request.url).path.removeprefix("/api")
         if path == "/public-config":
@@ -65,6 +66,32 @@ def reaudit_routes(page, *, accept=False):
             route.fulfill(json={"predecessor_id": ROUND, "analysis_mode": "standard", "customer_preference": None, "files": files})
         elif path == "/audit-tasks" and request.method == "GET":
             route.fulfill(json={"tasks": [], "next_offset": None})
+        elif path == "/drafts" and request.method == "POST":
+            body = request.post_data_json
+            assert preparation is None
+            assert body["upload_preparation"]["predecessor_id"] == ROUND
+            preparation = {
+                "id": body["request_id"],
+                "status": "open",
+                "task_id": None,
+                "upload_preparation": deepcopy(body["upload_preparation"]),
+                "preparation_revision": 0,
+                "items": [],
+                "analysis_mode": "standard",
+                "predecessor_id": ROUND,
+                "case_context": {},
+                "writeback": {"available": False},
+                "updated_at": "2026-10-22T00:00:00Z",
+            }
+            route.fulfill(status=201, json=deepcopy(preparation))
+        elif preparation and path == "/drafts/" + preparation["id"] and request.method in ("GET", "PUT"):
+            if request.method == "PUT":
+                body = request.post_data_json
+                assert preparation["task_id"] is None
+                assert body["expected_revision"] == preparation["preparation_revision"]
+                assert body["upload_preparation"]["predecessor_id"] == ROUND
+                preparation.update(upload_preparation=deepcopy(body["upload_preparation"]), preparation_revision=body["expected_revision"] + 1)
+            route.fulfill(json=deepcopy(preparation))
         elif task and path == "/audit-tasks/" + task["id"] and request.method == "GET":
             current = deepcopy(task)
             if accept == "legacy":
@@ -76,6 +103,8 @@ def reaudit_routes(page, *, accept=False):
             route.fulfill(json=current)
         elif path == "/files" and request.method == "POST":
             body = request.post_data_json
+            assert preparation is not None
+            assert any(row["request_id"] == body["request_id"] and row["sha256"] == body["sha256"] for row in preparation["upload_preparation"]["uploads"])
             uploaded.update(
                 {
                     "id": body["request_id"],
@@ -102,6 +131,10 @@ def reaudit_routes(page, *, accept=False):
             )
         elif path == "/audit-tasks" and request.method == "POST":
             body = request.post_data_json
+            assert preparation is not None
+            assert body["source_draft_id"] == preparation["id"]
+            assert body["expected_draft_revision"] == preparation["preparation_revision"]
+            assert body["files"] == preparation["upload_preparation"]["files"]
             commands.append(body)
             if not accept:
                 route.fulfill(status=422, json={"error": "controlled_no_acceptance"})
@@ -126,12 +159,12 @@ def reaudit_routes(page, *, accept=False):
                 )
                 returned.append(row)
             task = {
-                "id": body["request_id"],
+                "id": body["source_draft_id"],
                 "number": "PPAP-受控重审",
                 "state": "pending_confirm",
                 "recognition_request_id": body["request_id"],
                 "input_revision": 0,
-                "source_draft_id": body["request_id"],
+                "source_draft_id": body["source_draft_id"],
                 "predecessor_id": ROUND,
                 "round_id": None,
                 "analysis_mode": body["analysis_mode"],
@@ -144,6 +177,7 @@ def reaudit_routes(page, *, accept=False):
                 "acceptance": None,
                 "files": returned,
             }
+            preparation.update(task_id=task["id"], preparation_revision=None)
             route.fulfill(status=201, json=task)
         else:
             route.fulfill(status=404, json={"error": "unexpected_request"})
