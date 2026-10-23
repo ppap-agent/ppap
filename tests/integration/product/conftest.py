@@ -129,5 +129,17 @@ def auth_store_factory():
 
 
 @pytest.fixture
+def mcp_app(auth_store_factory):
+    from ppap_api import create_app
+    from ppap_core.fixtures import APP_ID
+
+    settings = Settings(mcp_enabled=True, feishu_app_id=APP_ID, usage_charge_enabled=False)
+    store = auth_store_factory(settings)
+    store.seed_isolated_dev()
+    store = build_product_store(settings, objects=store.objects, role="api")
+    return create_app(settings, auth_store=store), store
+
+
+@pytest.fixture
 def seed_usage_event_factory():
     return insert_usage_event

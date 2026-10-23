@@ -13,6 +13,7 @@ dev = [
     "pytest==7.4.3",
     "pytest-asyncio==0.21.1",
     "ppap-corpus-contracts",
+    "ppap-mcp-client",
     "ruff>=0.14.13,<0.15.0",
     "mypy>=1.7.1",
 ]
@@ -37,6 +38,7 @@ members = [
     "services/api",
     "services/worker",
     "packages/ppap_corpus_contracts",
+    "packages/ppap_mcp_client",
 ]
 
 [tool.uv.sources]
@@ -52,6 +54,7 @@ ppap-vision = { workspace = true }
 ppap-api = { workspace = true }
 ppap-worker = { workspace = true }
 ppap-corpus-contracts = { workspace = true }
+ppap-mcp-client = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
@@ -96,6 +99,7 @@ mypy_path = [
     "packages/ppap_pdf_to_excel/src",
     "packages/ppap_product_store/src",
     "packages/ppap_vision/src",
+    "packages/ppap_mcp_client/src",
     "services/api/src",
     "services/worker/src",
 ]
