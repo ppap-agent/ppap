@@ -957,6 +957,7 @@ def test_real_file_bytes_resources_object_authority_and_revocation(mcp_app):
         ids = {"file_id": version["file_id"], "version_id": version["id"]}
         uri = f"ppap://files/{version['file_id']}/versions/{version['id']}?pointer=%2Fsha256"
         resource = rpc(client, token, "resources/read", {"uri": uri}).json()
+        assert resource["result"]["contents"][0]["mimeType"] == "application/json"
         assert json.loads(resource["result"]["contents"][0]["text"])["value"] == hashlib.sha256(content).hexdigest()
         download = call(client, token, "download_file", **ids)["data"]["url"]
         assert client.get(download, headers={"Authorization": "Bearer " + token}).content == content
