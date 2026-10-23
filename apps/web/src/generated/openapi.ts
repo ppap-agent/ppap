@@ -3007,7 +3007,9 @@ export interface components {
             /** Available */
             available: boolean;
             /** Config */
-            config?: Record<string, never>;
+            config?: {
+                [key: string]: unknown;
+            };
             /** Notice */
             notice?: string;
             /** Script Url */
@@ -3767,6 +3769,8 @@ export interface operations {
                     }[];
                     /** Request Id */
                     request_id: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -3874,6 +3878,8 @@ export interface operations {
                     package_id: string;
                     /** Request Id */
                     request_id: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -3958,6 +3964,8 @@ export interface operations {
                          */
                         kind: "user" | "group";
                     }[];
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4102,6 +4110,8 @@ export interface operations {
                          */
                         kind: "user" | "group";
                     };
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4273,6 +4283,8 @@ export interface operations {
                     source_draft_id?: string;
                     /** Task Id */
                     task_id?: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4346,6 +4358,8 @@ export interface operations {
                     expected_revision: number;
                     /** Request Id */
                     request_id: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4409,6 +4423,8 @@ export interface operations {
                         /** Part Number */
                         part_number: string | null;
                     };
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4486,6 +4502,8 @@ export interface operations {
                         /** Removal Reason */
                         removal_reason: string;
                     }[];
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4557,6 +4575,8 @@ export interface operations {
                     enabled: boolean;
                     /** Expected Revision */
                     expected_revision: number;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4678,6 +4698,8 @@ export interface operations {
                     };
                     /** Request Id */
                     request_id: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -4939,7 +4961,9 @@ export interface operations {
                          */
                         version: 1;
                     };
-                } | Record<string, never> | null;
+                } | {
+                    [key: string]: unknown;
+                } | null;
             };
         };
         responses: {
@@ -5119,6 +5143,8 @@ export interface operations {
                          */
                         provider: "feishu";
                     } | null;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -5159,6 +5185,8 @@ export interface operations {
                     idempotency_key: string;
                     /** Predecessor Id */
                     predecessor_id?: string | null;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -5281,6 +5309,8 @@ export interface operations {
                     source_file_id: string;
                     /** Source File Version Id */
                     source_file_version_id: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -5414,6 +5444,8 @@ export interface operations {
                     source_file_id: string;
                     /** Source File Version Id */
                     source_file_version_id: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -5491,6 +5523,8 @@ export interface operations {
                     request_id?: string;
                     /** Sha256 */
                     sha256?: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -5539,6 +5573,8 @@ export interface operations {
                     request_id?: string;
                     /** Sha256 */
                     sha256?: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -5872,7 +5908,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -5958,7 +5996,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -6030,6 +6070,8 @@ export interface operations {
                     file_token: string;
                     /** Request Id */
                     request_id?: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -6239,7 +6281,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -6272,7 +6316,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": Record<string, never>;
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -6375,6 +6421,8 @@ export interface operations {
                     code: string;
                     /** Redirect Uri */
                     redirect_uri?: string;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -6766,6 +6814,8 @@ export interface operations {
                         /** Rule Version Id */
                         rule_version_id: string | null;
                     }[];
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };
@@ -6821,6 +6871,8 @@ export interface operations {
                     rationale: string;
                     /** Version */
                     version: number;
+                } & {
+                    [key: string]: unknown;
                 };
             };
         };

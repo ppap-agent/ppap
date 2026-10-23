@@ -21,18 +21,7 @@ from ppap_core.feishu import UserTokens
 from ppap_core.fixtures import APP_ID, RULE_A
 from ppap_core.identity import ProviderAuthError
 from ppap_core.mcp import SCOPES, pkce_challenge
-from ppap_core.settings import Settings
 from ppap_worker import process_claimed
-
-
-@pytest.fixture
-def mcp_app(auth_store_factory):
-    settings = Settings(mcp_enabled=True, feishu_app_id=APP_ID, usage_charge_enabled=False)
-    store = auth_store_factory(settings)
-    store.seed_isolated_dev()
-    store = build_product_store(settings, objects=store.objects, role="api")
-    app = create_app(settings, auth_store=store)
-    return app, store
 
 
 def connection(client, store, *, person="alice", scopes="identity:read files:read files:write audits:read", exchange_now=True, browser_session=None):

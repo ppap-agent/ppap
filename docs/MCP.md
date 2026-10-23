@@ -47,6 +47,44 @@ OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录，资源路径是其
 
 远程 MCP 服务不能读取客户端机器的路径。目标客户端必须具有可使用其 OAuth 凭据的字节传输能力；仅能调用 JSON 工具的客户端还需要传输适配，或选择 URL/飞书导入。不能因为服务器提供上传工具就宣称所有客户端的本地文件体验已完成。
 
+### 本地 stdio 适配器
+
+`packages/ppap_mcp_client` 是可独立安装的 Python 3.12 包，不依赖 PPAP 数据库、审核引擎或 API 包。它通过 FastMCP 代理远程工具、Resources 和 Prompts，并增加三个本地工具：
+
+- `local_file_roots`：读取用户配置的目录和传输上限。
+- `local_upload_file`：读取允许目录中的文件，固定字节快照和 SHA-256，创建文件或新版本，传输、固化，并按参数进行预校验。上传成功与预校验结果分别返回。
+- `local_download_file`：把当前连接取得的传输 URL 写入允许目录中的新文件，检查长度和摘要，不覆盖已有文件。
+
+从已核对的仓库版本安装。以下命令在仓库根目录执行，约束文件从同一版本的 `uv.lock` 导出：
+
+```sh
+uv export --locked --package ppap-mcp-client --no-dev --no-emit-workspace --no-hashes --output-file /tmp/ppap-mcp-client-constraints.txt
+uv tool install --python 3.12 --constraints /tmp/ppap-mcp-client-constraints.txt ./packages/ppap_mcp_client
+ppap-mcp-client --help
+```
+
+在支持 stdio 的 MCP 客户端中，将启动命令设为已安装的 `ppap-mcp-client` 的绝对路径。参数示例：
+
+```json
+{
+  "command": "/absolute/path/to/ppap-mcp-client",
+  "args": [
+    "--server", "https://ppap.icoastline.com/ppap/mcp",
+    "--directory", "/absolute/path/to/PPAP-files"
+  ]
+}
+```
+
+`--directory` 可重复；目录必须预先存在。该版本的本地文件访问要求 macOS/Linux 的目录描述符及 `O_NOFOLLOW` 支持；Windows 会明确拒绝启动，不宣称已经支持。目录外文件、路径穿越、符号链接和特殊文件被拒绝。上传上限为 200 MiB，快照占用本地临时磁盘空间。下载默认上限为 2 GiB，可用 `--max-download-mib` 设置；不自动创建父目录。异常中断不会将未完整下载的字节提交为目标文件。进程被强制结束后可能留下 `.ppap-download-*` 临时文件；确认对应适配器已退出后可删除。
+
+首次使用会打开浏览器，由用户登录并选择 Scope。系统钥匙串保存加密密钥，磁盘仅保存加密的 OAuth 凭据；macOS 使用 Keychain，Linux 使用 Secret Service，不回退到明文。`native_credential_store_unavailable` 表示系统凭据服务不可用，应恢复该服务后重新连接。`credential_key_missing` 表示已有密文的密钥不可用，不能自动覆盖；先在服务端撤销旧连接，再使用新的 `--profile` 重新授权。不同账号或权限组合应使用不同 profile。
+
+同一 profile 的进程串行刷新，并在发送前保存刷新标记。响应丢失后，如果新令牌已经保存则继续使用；否则重新打开授权流程，不重用可能已消耗的刷新令牌。OAuth 回调端口沿用已注册地址；重启不能随意改端口后复用旧注册。系统端口被其它进程占用时，恢复端口后重连，或撤销旧连接并使用新 profile。
+
+用户只需把本地路径交给 `local_upload_file`，无需把文件内容或 Bearer 交给模型。断线后保留同一 `request_id` 和原始文件；再次调用会核对原上传回执。换用新版本时提供 `file_id` 和新的请求 ID。下载 URL 必须由这个适配器代理的远程工具取得，另一个远程 MCP 连接的 URL 不能借用。更换授权委托后，应重新获取 URL。
+
+上述启动参数不表示任一桌面产品已完成兼容性验收。Codex、WorkBuddy 和豆包的实际入口、配置形式及完整用户路径仍按 #206 分别验证。
+
 ## Resources 与 Prompts
 
 Resources 包括固定文件版本、规则版本、轮次结果、报告包和已分享报告。每次读取都重新授权，不把 URI 当作权限。模板支持 `pointer`、`offset`、`limit` 查询参数；`pointer` 是 JSON Pointer，`limit` 上限为 100。返回正文上限为 96 KiB，过大时应选择具体字段或缩小分页，不能截断并声称结果完整。

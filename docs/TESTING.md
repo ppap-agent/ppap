@@ -347,3 +347,7 @@ API owner tests validate that every major Web-consumed endpoint has an explicit 
 `ProviderRefresh.tla` 是共享飞书续期的独立 Safety 检查：两个授权身份、各两代令牌、一个浏览器和两个客户端。模型保留 claim 与结果之间的丢失、延迟及新登录；检查每代最多一次刷新、结果不写入另一授权。正向为 20 个状态、深度 6；重复 claim、未知后重试、错误 owner 的故障配置分别在深度 3、4、4 违反预期不变量。没有公平性、状态约束、对称缩减或覆盖；静止状态不作死锁，不证明最终续期或真实服务商行为。模型中的 claim 包含外部发送边界；实现允许重试的连接建立失败必须证明请求尚未发送。新登录使用不同凭据；相同凭据别名的唯一性由数据库约束和实际测试负责。
 
 MCP 集成测试通过真实 PostgreSQL/HTTP 与受控飞书响应，验证 Web/多个客户端共享一次续期、未知状态跨 API 实例保留、过期 claim 不重试、旧响应与新登录隔离、同凭据并发归属，以及续期期间撤权仍生效。`services/api/tests/test_login_recovery.py` 区分连接建立失败与读超时/无效响应；后者不能假装可以重用旧刷新令牌。`tests/schema/test_provider_authorizations.py` 从旧 schema 迁移有数据的会话和 MCP 委托，核对精确绑定、歧义拒绝、未知结果保留、重复迁移及 Worker 无权读取。这些结果不代替真实飞书续期与现网迁移、回滚验收。
+
+`packages/ppap_mcp_client/tests` 检查本地 200 MiB 边界、快照、目录与符号链接约束、摘要、下载中断及并发覆盖、加密凭据重开、缺失密钥、未知刷新恢复，以及真实另一进程持有锁和退出后的恢复。分包验证通过 `uv run --no-sync python scripts/validate_distribution.py --member ppap-mcp-client` 在全新环境安装非 editable wheel 后运行这些测试。
+
+`tests/integration/product/test_mcp_client.py` 使用锁定的 FastMCP/MCP SDK，走实际 OAuth 发现、DCR、PKCE、续期和 PPAP API/PG。受控浏览器身份完成授权选择，独立认证对象竞争续期，丢弃刷新响应验证旧令牌不重放；创建文件、传输、固化三个响应丢失点均通过原请求恢复。代理检查工具、Resources、Prompts、独立版本、预校验及跨委托下载拒绝。另一个用例启动真实回环 HTTP 服务和独立 stdio 适配器进程，经过 CLI 参数处理完成上传、退出、重启续期和下载。系统钥匙串及真实浏览器交互在这些用例中受控；对象存储为内存边界，不能据此声称客户应用、飞书、生产存储或现网部署已经验收。客户端锁与恢复测试对应单代最多一次刷新和未知不重试的局部义务，不构成对完整系统的形式化 refinement 证明。
