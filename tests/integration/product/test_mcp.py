@@ -10,6 +10,7 @@ import secrets
 import threading
 import zipfile
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -60,8 +61,8 @@ def connection(client, store, *, person="alice", scopes="identity:read files:rea
     assert consent.status_code == 200, consent.text
     csrf = re.search(r'name="csrf" value="([^"]+)"', consent.text)[1]
     decided = client.post(path, data={"csrf": csrf, "decision": "approve", "scope": scopes.split()}, follow_redirects=False)
-    assert decided.status_code == 303, decided.text
-    returned = parse_qs(urlsplit(decided.headers["location"]).query)
+    assert decided.status_code == 200, decided.text
+    returned = parse_qs(urlsplit(unescape(re.search(r'<a href="([^"]+)"', decided.text)[1])).query)
     assert returned["state"] == ["contract-state"]
     exchange = {"grant_type": "authorization_code", "client_id": cid, "redirect_uri": args["redirect_uri"], "code": returned["code"][0], "code_verifier": verifier, "resource": args["resource"]}
     if not exchange_now:

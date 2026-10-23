@@ -310,7 +310,14 @@ def register_oauth(app, provider: OAuthProvider, session_of):
         except McpError as exc:
             return page("授权未保存", "<p>授权请求失效或校验未通过。请从客户端重新连接。</p>", exc.status)
         parts = urlsplit(result.pop("redirect_uri"))
-        return RedirectResponse(urlunsplit(parts._replace(query=urlencode([*parse_qsl(parts.query), *result.items()]))), 303)
+        target = escape(urlunsplit(parts._replace(query=urlencode([*parse_qsl(parts.query), *result.items()]))), quote=True)
+        # A 303 from this POST is still checked against the consent document's
+        # form-action 'self', which blocks external/loopback OAuth callbacks.
+        # Commit a new document before navigating; keep every form same-origin.
+        return page(
+            "返回客户端",
+            f'<meta http-equiv="refresh" content="0;url={target}"><p>授权请求已处理，正在返回客户端。</p><p>若没有自动返回，请<a href="{target}" rel="noreferrer">返回客户端</a>。</p>',
+        )
 
     # Mount after browser routes so /oauth/consent remains owned by the real session.
     oauth = OAuthGuard(Starlette(routes=[r for r in routes if not r.path.startswith("/.well-known")]), provider)
