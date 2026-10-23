@@ -42,8 +42,10 @@ from ppap_core.files import (
     READY,
     STAGING,
     FileVersion,
+    ImportedFile,
     ObjectExists,
     ObjectMissing,
+    UnsafeSource,
     original_filename,
     safe_content_type,
     sha256_bytes,
@@ -615,15 +617,44 @@ class AuthStore:
             return FileVersion(version_id, fid, principal.tenant_id, name, ctype, declared, key, STAGING)
 
     def receive_drive_upload(self, principal, request_id, file_token, doc_type, load) -> FileVersion:
+        def captured():
+            imported = load()
+            if imported.file_token != file_token or doc_type and imported.doc_type != doc_type:
+                raise ValueError("upload_request_conflict")
+            origin = {"provider": "feishu", "object_kind": imported.doc_type, "object_ref": file_token}
+            return ImportedFile(imported.data, imported.filename, imported.content_type, origin)
+
+        return self._receive_import_upload(principal, request_id, {"provider": "feishu", "file_token": file_token, "doc_type": doc_type}, captured)
+
+    def receive_url_upload(self, principal, request_id, url, load) -> FileVersion:
+        def captured():
+            data, content_type, name = load()
+            return ImportedFile(data, name, content_type)
+
+        return self._receive_import_upload(principal, request_id, {"provider": "url", "url": url}, captured)
+
+    def resume_url_upload(self, principal, request_id, load) -> FileVersion:
+        # Receipt ownership is stricter than a grant to read the imported file.
+        receipt = self.get_upload_request(principal, request_id)
+        with self._conn() as conn:
+            row = conn.execute("SELECT upload_request FROM product.file_versions WHERE id = %s", (request_id,)).fetchone()
+        source = (row[0] or {}).get("source", {}) if row else {}
+        if source.get("provider") != "url":
+            raise ValueError("url_import_not_found")
+        if receipt["state"] == "failed":
+            raise ValueError("upload_not_resumable")
+        url = source["url"]
+        return self.receive_url_upload(principal, request_id, url, lambda: load(url))
+
+    def _receive_import_upload(self, principal, request_id, source, load) -> FileVersion:
         version_id = _as_uuid(request_id) if isinstance(request_id, str) else None
         if not version_id:
             raise ValueError("invalid_upload_request")
-        source = {"provider": "feishu", "file_token": file_token, "doc_type": doc_type}
-        version = self._create_requested_upload(principal, "飞书文件导入中", "application/octet-stream", 0, None, version_id, None, source)
+        version = self._create_requested_upload(principal, "文件导入中", "application/octet-stream", 0, None, version_id, None, source)
         # This lock spans provider I/O, but no database transaction does. A second
         # handler observes the original request instead of exporting again.
         with self._conn() as guard:
-            key = "drive-import:" + version_id
+            key = ("drive-import:" if source["provider"] == "feishu" else "url-import:") + version_id
             lock_row = guard.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (key,)).fetchone()
             locked = bool(lock_row and lock_row[0])
             if not locked:
@@ -639,7 +670,14 @@ class AuthStore:
                     except ValueError as exc:
                         if str(exc) != "missing_object":
                             raise
-                imported = load()
+                try:
+                    imported = load()
+                except UnsafeSource:
+                    # A rejected URL/redirect/body is a definite source failure,
+                    # not an unfinished transfer. The original lock session must
+                    # still own this transition; a late handler cannot reconnect.
+                    guard.execute("UPDATE product.file_versions SET status = %s WHERE id = %s AND status = %s", (FAILED, version_id, STAGING))
+                    raise
                 if len(imported.data) > MAX_UPLOAD_BYTES:
                     raise ValueError("too_large")
                 captured = {
@@ -648,8 +686,6 @@ class AuthStore:
                     "byte_size": len(imported.data),
                     "sha256": sha256_bytes(imported.data),
                 }
-                if imported.file_token != file_token or doc_type and imported.doc_type != doc_type:
-                    raise ValueError("upload_request_conflict")
                 conflict = False
                 # A dead lock session cannot continue this transaction on a new
                 # connection. Re-read under a row lock; never trust pre-I/O input.
@@ -672,11 +708,12 @@ class AuthStore:
                         if updated.rowcount != 1:
                             raise ValueError("upload_request_conflict")
                         guard.execute("UPDATE product.files SET original_filename = %s WHERE id = %s", (captured["original_filename"], version.file_id))
-                        guard.execute(
-                            """INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref)
-                           VALUES (%s, 'feishu', %s, %s) ON CONFLICT DO NOTHING""",
-                            (version_id, imported.doc_type, file_token),
-                        )
+                        if imported.origin:
+                            guard.execute(
+                                """INSERT INTO product.file_version_sources (file_version_id, provider, object_kind, object_ref)
+                               VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                                (version_id, imported.origin["provider"], imported.origin["object_kind"], imported.origin["object_ref"]),
+                            )
                 if conflict:
                     raise ValueError("upload_content_conflict")
                 current = self.get_version(version.file_id, version_id)

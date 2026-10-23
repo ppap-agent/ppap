@@ -654,6 +654,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/file-uploads/{request_id}/resume-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Files Url Resume */
+        post: operations["files_url_resume_file_uploads__request_id__resume_url_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/file-validations": {
         parameters: {
             query?: never;
@@ -5415,6 +5432,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditUploadItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    files_url_resume_file_uploads__request_id__resume_url_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileVersion"];
                 };
             };
             /** @description Validation Error */

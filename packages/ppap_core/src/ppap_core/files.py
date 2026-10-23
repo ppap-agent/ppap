@@ -32,6 +32,16 @@ class ObjectTooLarge(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class ImportedFile:
+    """Captured source bytes and optional provider provenance, before storage."""
+
+    data: bytes
+    filename: str
+    content_type: str
+    origin: dict[str, str] | None = None
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

@@ -644,22 +644,45 @@ def create_app(
         except Exception:
             return JSONResponse({"available": False, "notice": "无法预览，请下载原件。"})
 
+    def url_import_response(load) -> JSONResponse:
+        try:
+            ready = load()
+        except UnsafeSource as exc:
+            return JSONResponse({"error": str(exc) or "unsafe_source"}, status_code=400)
+        except KeyError:
+            return JSONResponse({"error": "access_denied"}, status_code=403)
+        except ValueError as exc:
+            code = str(exc)
+            if code in {"upload_request_conflict", "upload_content_conflict", "upload_not_resumable", "url_import_not_found"}:
+                return JSONResponse({"error": code}, status_code=409)
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        except (ObjectExists, ObjectMissing):
+            return JSONResponse({"error": "invalid_upload"}, status_code=400)
+        return JSONResponse(ready.public(), status_code=201)
+
     @app.post("/files/from-url")
     def files_from_url(body: dict, request: Request) -> JSONResponse:
         principal = principal_of(request)
         if not principal:
             return JSONResponse({"error": "unauthenticated"}, status_code=401)
         url = str(body.get("url") or "")
-        try:
+
+        def receive():
+            if "request_id" in body:
+                return store.receive_url_upload(principal, body["request_id"], url, lambda: fetch_remote(url, http, MAX_UPLOAD_BYTES))
             data, content_type, name = fetch_remote(url, http, MAX_UPLOAD_BYTES)
             version = store.create_staging(principal, name, content_type, len(data))
             store.put_blob(version, data)
-            ready = store.finalize_version(version)
-        except UnsafeSource as exc:
-            return JSONResponse({"error": str(exc) or "unsafe_source"}, status_code=400)
-        except (ValueError, ObjectExists, ObjectMissing):
-            return JSONResponse({"error": "invalid_upload"}, status_code=400)
-        return JSONResponse(ready.public(), status_code=201)
+            return store.finalize_version(version)
+
+        return url_import_response(receive)
+
+    @app.post("/file-uploads/{request_id}/resume-url", response_model=wc.FileVersion, status_code=201)
+    def files_url_resume(request_id: str, request: Request) -> JSONResponse:
+        principal = principal_of(request)
+        if not principal:
+            return JSONResponse({"error": "unauthenticated"}, status_code=401)
+        return url_import_response(lambda: store.resume_url_upload(principal, request_id, lambda url: fetch_remote(url, http, MAX_UPLOAD_BYTES)))
 
     def persist_imported(principal, imported):
         version = store.create_staging(principal, imported.filename, imported.content_type, len(imported.data))
