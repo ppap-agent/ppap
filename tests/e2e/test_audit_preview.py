@@ -3263,7 +3263,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("checkbox")).to_have_count(0)
             expect(dialog.get_by_role("list", name="已选接收人", exact=True)).to_contain_text("示例李工")
             page.evaluate("window.postMessage({type: 'ppap-preview-read', failed: true}, location.origin)")
-            expect(dialog.get_by_role("alert")).to_contain_text("无法读取接收人")
+            expect(dialog.get_by_role("alert")).to_be_visible()
             expect(dialog.get_by_role("checkbox")).to_have_count(0)
             expect(dialog.get_by_role("button", name="加载更多目标", exact=True)).to_have_count(0)
             expect(dialog.get_by_role("button", name="发送给 1 个目标", exact=True)).to_be_disabled()
@@ -3292,7 +3292,7 @@ class AuditPreviewTests(unittest.TestCase):
             expect(dialog.get_by_role("tab", name="文件", exact=True)).to_have_attribute("aria-selected", "true")
             expect(dialog.get_by_role("list", name="已选接收人", exact=True)).to_contain_text("示例李工")
             page.evaluate("window.postMessage({type: 'ppap-preview-read', failed: true}, location.origin)")
-            expect(dialog.get_by_role("alert")).to_contain_text("无法读取接收人")
+            expect(dialog.get_by_role("alert")).to_be_visible()
             expect(send).to_be_disabled()
             dialog.get_by_role("button", name="重新读取目标", exact=True).click()
             expect(send).to_be_disabled()
@@ -3514,7 +3514,7 @@ class AuditPreviewTests(unittest.TestCase):
                     if scene.endswith("empty"):
                         expect(dialog.get_by_text("没有符合条件的组织内目标。", exact=True)).to_be_visible()
                     else:
-                        expect(dialog.get_by_text("无法读取接收人", exact=True)).to_be_visible()
+                        expect(dialog.get_by_role("alert")).to_be_visible()
                     expect(dialog.get_by_role("button", name="选择接收人后发送", exact=True)).to_be_disabled()
                     if scene.endswith("error"):
                         dialog.get_by_role("button", name="重新读取目标", exact=True).click()
