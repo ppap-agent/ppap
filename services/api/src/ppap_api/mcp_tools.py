@@ -18,7 +18,9 @@ from ppap_api.mcp_gateway import DataPage, PageRequest, Reply, page_result
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+UPDATE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
 EXTERNAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+EXTERNAL_UPDATE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True)
 EXTERNAL_READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 TRANSFER = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 Limit = Annotated[int, Field(ge=1, le=50)]
@@ -215,7 +217,7 @@ def register_tools(mcp, gateway, authority):
         """Read publishable source selections and provenance for an authorized original."""
         return await read("rules:read", f"/files/{file_id}/versions/{version_id}/rule-sources", page)
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=EXTERNAL)
     async def parse_rule(request_id: UUID, body: wc.RuleParseRequest) -> Reply[dict]:
         """Parse the selected rule original. It can call a model; publishing is a separate confirmation."""
         return await write(
@@ -248,7 +250,7 @@ def register_tools(mcp, gateway, authority):
         """Read the current customer catalog for preparation."""
         return await read("rules:read", "/audit-customers", page)
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=EXTERNAL_UPDATE)
     async def prepare_task(request_id: UUID, body: wc.AuditRecognitionRequest) -> Reply[dict]:
         """Create or revise recognition. Explicit task_id/expected_revision revises the same task; predecessor_id creates linked reaudit."""
         # The native prepare transaction authorizes every file_version_id.
@@ -275,7 +277,7 @@ def register_tools(mcp, gateway, authority):
         """Read a specific recognition revision; absent receipts do not authorize new request IDs."""
         return await read("audits:read", f"/audit-tasks/{task_id}/recognitions/{request_id}", page)
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=EXTERNAL)
     async def confirm_task(task_id: UUID, request_id: UUID, expected_revision: int) -> Reply[dict]:
         """Confirm the displayed files, frozen rule versions, mode and estimate. Requires a browser approval bound to this revision."""
         return await write(
@@ -288,7 +290,7 @@ def register_tools(mcp, gateway, authority):
             confirm=True,
         )
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=UPDATE)
     async def end_unmatched_task(task_id: UUID, request_id: UUID, body: wc.AuditTaskEndRequest) -> Reply[dict]:
         """End a zero-match task without audit, fees or reports. This is not audit cancellation."""
         return await write("audits:write", "end_unmatched_task", request_id, f"/audit-tasks/{task_id}/end", body, probes=[f"/audit-tasks/{task_id}"])
@@ -298,7 +300,7 @@ def register_tools(mcp, gateway, authority):
         """Read notification preferences for this task."""
         return await read("audits:read", f"/audit-tasks/{task_id}/notification")
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=UPDATE)
     async def set_notification(task_id: UUID, request_id: UUID, body: wc.AuditNotificationPreferenceRequest) -> Reply[dict]:
         """Set the current task's completion-notification preference."""
         return await write("audits:write", "set_notification", request_id, f"/audit-tasks/{task_id}/notification", body, method="PUT", probes=[f"/audit-tasks/{task_id}"])
@@ -313,7 +315,7 @@ def register_tools(mcp, gateway, authority):
         """Read frozen inputs, machine findings, evidence and separate human reviews."""
         return await read("audits:read", f"/rounds/{round_id}", page)
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=UPDATE)
     async def submit_review(round_id: UUID, request_id: UUID, body: wc.ReviewRequest) -> Reply[dict]:
         """Propose a review with expected version, judgment, rationale and citations. A human must approve the exact content."""
         return await write("reviews:write", "submit_review", request_id, f"/rounds/{round_id}/reviews", body, method="PUT", probes=[f"/rounds/{round_id}"], confirm=True)
@@ -396,7 +398,7 @@ def register_tools(mcp, gateway, authority):
         """Download the round's frozen originals as a ZIP; this is not a report package."""
         return await transfer("audits:read", f"/rounds/{round_id}/bundle", "GET", f"/rounds/{round_id}")
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=UPDATE)
     async def save_display_info(task_id: UUID, request_id: UUID, body: wc.AuditFileDisplayRequest) -> Reply[dict]:
         """Save revision-checked display metadata without changing frozen audit evidence."""
         return await write("audits:write", "save_display_info", request_id, f"/audit-tasks/{task_id}/display-info", {**body, "request_id": str(request_id)}, probes=[f"/audit-tasks/{task_id}"])
@@ -425,7 +427,7 @@ def register_tools(mcp, gateway, authority):
         path, params, probe = report_parts(reference)
         return await transfer("reports:read", path + "/pdf", "GET", probe, {**params, "artifact_id": artifact_id})
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=EXTERNAL)
     async def regenerate_report(request_id: UUID, reference: wc.AuditReportReference) -> Reply[dict]:
         """Explicitly request PDF regeneration under current business eligibility and quota rules."""
         path, _, probe = report_parts(reference)
@@ -456,7 +458,7 @@ def register_tools(mcp, gateway, authority):
         """Read package progress, failure eligibility and the exact ready artifact."""
         return await read("reports:read", f"/audit-report-packages/{request_id}", page)
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=EXTERNAL)
     async def retry_report_package(source_request_id: UUID, request_id: UUID, package_id: UUID, expected_attempt: Annotated[int, Field(ge=1)]) -> Reply[dict]:
         """Explicitly recover an eligible failed package. Preserve its original report set."""
         return await write(
@@ -548,7 +550,7 @@ def register_tools(mcp, gateway, authority):
 
     @mcp.tool(annotations=WRITE)
     async def create_draft(request_id: UUID, body: wc.DraftCreateRequest) -> Reply[dict]:
-        """Save resumable preparation, including explicit inputs and predecessor. This does not accept an audit."""
+        """Save resumable preparation. Use upload_preparation for a draft that prepare_task can promote; this does not accept an audit."""
         return await write("audits:write", "create_draft", request_id, "/drafts", {**body, "request_id": str(request_id)}, result_path=lambda v: f"/drafts/{v['id']}")
 
     @mcp.tool(annotations=READ)
@@ -561,9 +563,9 @@ def register_tools(mcp, gateway, authority):
         """Read saved preparation and its current revision before changing it."""
         return await read("audits:read", f"/drafts/{draft_id}", page)
 
-    @mcp.tool(annotations=WRITE)
+    @mcp.tool(annotations=UPDATE)
     async def save_draft(draft_id: UUID, request_id: UUID, body: wc.DraftSaveRequest) -> Reply[dict]:
-        """Save preparation with expected_revision. Include a verified Feishu writeback target when needed."""
+        """Save upload_preparation and expected_revision together. Optionally set a Feishu writeback_target in that same revision before prepare_task promotes the draft."""
         return await write("audits:write", "save_draft", request_id, f"/drafts/{draft_id}", body, method="PUT", probes=[f"/drafts/{draft_id}"])
 
     async def resource_read(scope, path, pointer, offset, limit, params=None):

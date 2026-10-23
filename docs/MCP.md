@@ -55,6 +55,10 @@ URL 导入同样绑定文件回执。首次调用 `import_url(request_id=A, url=
 
 `prepare_task` 首次创建时，Task ID 就是此次 `request_id`；回复丢失后调用 `get_task(task_id=request_id)`。重新识别时沿用提交的 `task_id`，从上传准备草稿开始识别时沿用 `source_draft_id`。使用 `get_recognition(task_id=原任务ID, request_id=原识别请求ID)` 核对具体识别修订。读回不存在时仍保留原请求，不能换 UUID 另建任务；MCP 回执未知不会阻止查询已经提交的业务任务。
 
+需要将审核结果写回飞书文档时，先用 `create_draft` 保存 `upload_preparation`，再用 `save_draft` 同时提交完整准备内容、当前 `expected_revision` 和明确选择的 `writeback_target`。保存仅记录目标，不调用飞书。目标与输入在同一修订事务保存；回复丢失后读取原 `get_draft`，不能用新请求覆盖未知保存。随后用 `prepare_task` 的 `source_draft_id` 和 `expected_draft_revision` 提升同一草稿，再确认审核。提升后不允许更换目标，受理时将目标复制到冻结轮次；结束后由 `writeback_feishu_report` 单独请求确认并执行写回。导入来源不会自动成为写回目标。
+
+写回响应丢失时，`get_operation` 保留原操作的运行中或未知状态，重放原请求不会再次写入文档。未知不证明未写入；应先核对目标文档，不能更换请求 ID 来重发。
+
 远程 MCP 服务不能读取客户端机器的路径。目标客户端必须具有可使用其 OAuth 凭据的字节传输能力；仅能调用 JSON 工具的客户端还需要传输适配，或选择 URL/飞书导入。不能因为服务器提供上传工具就宣称所有客户端的本地文件体验已完成。
 
 ### 本地 stdio 适配器
