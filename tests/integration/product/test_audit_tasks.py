@@ -58,6 +58,51 @@ def upload_preparation(files=()):
     return {"version": 1, "analysis_mode": "standard", "customer_preference": None, "predecessor_id": None, "uploads": [], "files": list(files)}
 
 
+def test_preparation_writeback_target_uses_the_same_revision_and_promotion_lock(task_system):
+    client, worker = task_system
+    file = checked_file(client, worker)
+    preparation = upload_preparation([file])
+    draft_id = str(uuid.uuid4())
+    assert client.post("/drafts", json={"request_id": draft_id, "upload_preparation": preparation}).status_code == 201
+    path = f"/drafts/{draft_id}"
+    targets = [{"provider": "feishu", "object_kind": "docx", "object_ref": "document-" + suffix} for suffix in ("a", "b", "c")]
+
+    def stored_target():
+        api = build_product_store(worker.settings, objects=worker.objects, role="api")
+        with api._conn() as conn:
+            return api.draft_writeback(conn, draft_id)
+
+    def save(target, revision):
+        return client.put(path, json={"expected_revision": revision, "upload_preparation": preparation, "writeback_target": target})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda target: save(target, 0), targets[:2]))
+    assert sorted(response.status_code for response in results) == [200, 409]
+    winner = targets[next(index for index, response in enumerate(results) if response.status_code == 200)]
+    assert stored_target() == winner
+    assert client.get(path).json()["preparation_revision"] == 1
+    request = {"request_id": str(uuid.uuid4()), "source_draft_id": draft_id, "expected_draft_revision": 1, "analysis_mode": "standard", "customer_preference": None, "files": [file]}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        saving = pool.submit(save, targets[2], 1)
+        promoting = pool.submit(client.post, "/audit-tasks", json=request)
+        saved, promoted = saving.result(), promoting.result()
+    assert sorted([saved.status_code, promoted.status_code]) in ([200, 409], [202, 409])
+    if saved.status_code == 200:
+        winner = targets[2]
+        assert promoted.json()["error"] == "draft_revision_conflict"
+        request = {**request, "request_id": str(uuid.uuid4()), "expected_draft_revision": 2}
+        promoted = client.post("/audit-tasks", json=request)
+    else:
+        assert saved.json()["error"] == "task_input_locked"
+    assert promoted.status_code == 202 and promoted.json()["id"] == draft_id
+    assert promoted.json()["round_id"] is None
+    assert stored_target() == winner
+    assert save(targets[0], 2).json()["error"] == "task_input_locked"
+    assert client.post("/audit-tasks", json=request).status_code == 202
+    assert stored_target() == winner
+    assert client.get("/usage").json()["events"] == []
+
+
 def test_unknown_native_upload_is_a_discoverable_draft_not_a_task_and_survives_a_new_client(task_system):
     client, worker = task_system
     draft_id, upload_id = str(uuid.uuid4()), str(uuid.uuid4())

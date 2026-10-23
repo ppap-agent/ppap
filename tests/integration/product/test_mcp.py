@@ -487,7 +487,7 @@ def test_prepare_task_reads_original_identity_after_reply_loss_and_restart(mcp_a
         assert rpc(restored, token, "tools/call", {"name": "get_task", "arguments": {"task_id": task_id}}).status_code == 401
 
 
-def completed_mcp_task(client, store, token, *, publish_new_rule=True):
+def completed_mcp_task(client, store, token, *, publish_new_rule=True, prepare_draft=None, fail_pdf=False):
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     file, _ = upload(client, token)
     validation_id = str(uuid4())
@@ -538,17 +538,20 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True):
         approve(client, call(client, token, "publish_rule", **publish))
         assert call(client, token, "publish_rule", **publish)["status"] == "ok"
     request_id = str(uuid4())
+    inputs = {
+        "request_id": request_id,
+        "analysis_mode": "standard",
+        "customer_preference": None,
+        "files": [{"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}],
+    }
+    if prepare_draft is not None:
+        inputs = prepare_draft(inputs)
     prepared = call(
         client,
         token,
         "prepare_task",
         request_id=request_id,
-        body={
-            "request_id": request_id,
-            "analysis_mode": "standard",
-            "customer_preference": None,
-            "files": [{"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}],
-        },
+        body=inputs,
     )
     assert prepared["status"] == "ok", prepared
 
@@ -565,14 +568,195 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True):
     process_claimed(worker, worker.claim_job("share-audit"), "share-audit")
     job = worker.claim_job("share-pdf")
     assert job.kind == "report_pdf"
-    process_claimed(worker, job, "share-pdf")
+    if fail_pdf:
+        assert worker.complete_job(job, "share-pdf", {"error": "controlled_pdf_failure"}, "failed")
+    else:
+        process_claimed(worker, job, "share-pdf")
     task = call(client, token, "get_task", task_id=task_id)["data"]["value"]
     assert task["state"] == "completed", task
     row = task["files"][0]
     report = row["audit"]["report"]
-    assert report["state"] == "ready", report
+    assert report["state"] == ("failed" if fail_pdf else "ready"), report
     reference = {"task_id": task_id, "round_id": task["round_id"], "file_version_id": file["id"], "result_attempt": row["audit"]["result_attempt"], "report_id": report["report_id"]}
     return worker, task, reference, report["artifact"]
+
+
+def test_mcp_pdf_and_zip_recovery_preserve_original_results_after_lost_replies(mcp_app, monkeypatch):
+    app, store = mcp_app
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
+        token = tokens["access_token"]
+        worker, first, reference, artifact = completed_mcp_task(client, store, token, fail_pdf=True)
+        assert artifact is None
+        _, second, second_reference, _ = completed_mcp_task(client, store, token, publish_new_rule=False)
+        rounds = {row["round_id"]: call(client, token, "get_round", round_id=row["round_id"])["data"]["value"] for row in (first, second)}
+        regeneration = {"request_id": str(uuid4()), "reference": reference}
+        approve(client, call(client, token, "regenerate_report", **regeneration))
+        original = app.state.mcp_gateway.request
+
+        async def lose_regeneration_reply(*args, **kwargs):
+            response = await original(*args, **kwargs)
+            if args[1:3] == ("POST", f"/audit-tasks/{reference['task_id']}/reports/{reference['report_id']}/regenerations"):
+                assert response.status_code == 201
+                raise ConnectionError("controlled loss after PDF regeneration accepted")
+            return response
+
+        monkeypatch.setattr(app.state.mcp_gateway, "request", lose_regeneration_reply)
+        assert call(client, token, "regenerate_report", **regeneration)["status"] == "unknown"
+    next_app = create_app(store.settings, auth_store=store)
+    with TestClient(next_app, base_url="http://127.0.0.1:8080") as restarted:
+        restarted.cookies.set("ppap_session", store.create_session(store.principal_for_fixture("alice")))
+        receipt = call(restarted, token, "get_report_regeneration", **regeneration)["data"]["value"]
+        assert receipt["receipt"]["request_id"] == regeneration["request_id"]
+        assert receipt["reference"] == reference and receipt["report"]["state"] == "pending"
+        assert call(restarted, token, "regenerate_report", **regeneration)["status"] in {"running", "unknown"}
+        pdf_job = worker.claim_job("recover-mcp-pdf")
+        assert pdf_job.id == reference["report_id"] and pdf_job.attempt == 2
+        assert worker.claim_job("no-second-pdf") is None
+        process_claimed(worker, pdf_job, "recover-mcp-pdf")
+        ready = call(restarted, token, "get_report_regeneration", **regeneration)["data"]["value"]
+        assert ready["report"]["state"] == "ready"
+        pdfs = []
+        for ref in (reference, second_reference):
+            task = call(restarted, token, "get_task", task_id=ref["task_id"])["data"]["value"]
+            artifact = task["files"][0]["audit"]["report"]["artifact"]
+            url = call(restarted, token, "download_report", reference=ref, artifact_id=artifact["artifact_id"])["data"]["url"]
+            response = restarted.get(url, headers={"Authorization": "Bearer " + token})
+            assert response.status_code == 200 and response.content.startswith(b"%PDF-")
+            pdfs.append(response.content)
+        package_request = str(uuid4())
+        reports = [reference, second_reference]
+        created = call(restarted, token, "create_report_package", request_id=package_request, reports=reports)
+        assert created["status"] == "ok"
+        zip_job = worker.claim_job("fail-mcp-zip")
+        assert zip_job.kind == "report_zip"
+        assert worker.complete_job(zip_job, "fail-mcp-zip", {"error": "controlled_zip_failure"}, "failed")
+        failed = call(restarted, token, "get_report_package", request_id=package_request)["data"]["value"]
+        assert failed["state"] == "failed" and failed["retry_allowed"]
+        retry = {"source_request_id": package_request, "request_id": str(uuid4()), "package_id": failed["package_id"], "expected_attempt": failed["attempt"]}
+        approve(restarted, call(restarted, token, "retry_report_package", **retry))
+        original_retry = next_app.state.mcp_gateway.request
+
+        async def lose_package_retry_reply(*args, **kwargs):
+            response = await original_retry(*args, **kwargs)
+            if args[1:3] == ("POST", f"/audit-report-packages/{package_request}/retries"):
+                assert response.status_code == 202
+                raise ConnectionError("controlled loss after ZIP recovery accepted")
+            return response
+
+        monkeypatch.setattr(next_app.state.mcp_gateway, "request", lose_package_retry_reply)
+        assert call(restarted, token, "retry_report_package", **retry)["status"] == "unknown"
+    with TestClient(create_app(store.settings, auth_store=store), base_url="http://127.0.0.1:8080") as restored:
+        pending = call(restored, token, "get_report_package", request_id=retry["request_id"])["data"]["value"]
+        assert pending["package_id"] == failed["package_id"] and pending["reports"] == failed["reports"]
+        assert pending["state"] == "pending"
+        assert call(restored, token, "retry_report_package", **retry)["status"] in {"running", "unknown"}
+        job = worker.claim_job("recover-mcp-zip")
+        assert job.id == zip_job.id and job.attempt == zip_job.attempt + 1
+        assert worker.claim_job("no-second-zip") is None
+        process_claimed(worker, job, "recover-mcp-zip")
+        package = call(restored, token, "get_report_package", request_id=retry["request_id"])["data"]["value"]
+        assert package["state"] == "ready" and not package["retry_allowed"]
+        transfer = call(restored, token, "download_report_package", request_id=retry["request_id"], package_id=package["package_id"], artifact_id=package["artifact"]["artifact_id"])
+        url = transfer["data"]["url"]
+        downloaded = restored.get(url, headers={"Authorization": "Bearer " + token})
+        assert downloaded.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(downloaded.content)) as archive:
+            assert sorted(archive.read(name) for name in archive.namelist() if name.endswith(".pdf")) == sorted(pdfs)
+        for round_id, frozen in rounds.items():
+            assert call(restored, token, "get_round", round_id=round_id)["data"]["value"] == frozen
+        assert call(restored, token, "list_usage_events")["data"]["value"]["events"] == []
+        assert len(call(restored, token, "list_tasks")["data"]["value"]["tasks"]) == 2
+        for person in ("bob", "carol"):
+            _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
+            assert call(restored, other["access_token"], "get_report_regeneration", **regeneration)["status"] == "error"
+            assert call(restored, other["access_token"], "get_report_package", request_id=retry["request_id"])["status"] == "error"
+        assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
+        assert restored.get(url, headers={"Authorization": "Bearer " + token}).status_code == 401
+
+
+def test_mcp_preparation_carries_writeback_target_through_restart_acceptance_and_lost_send_reply(mcp_app, monkeypatch):
+    """Use only MCP business tools from preparation to writeback; HTTP effects are controlled."""
+    _, store = mcp_app
+    target = {"provider": "feishu", "object_kind": "docx", "object_ref": "mcp-prepared-document"}
+    effects = []
+
+    def provider(request):
+        assert request.method == "POST"
+        assert target["object_ref"] in request.url.path
+        effects.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    now = datetime.now(timezone.utc)
+    session = store.create_session(store.principal_for_fixture("alice"), UserTokens("controlled-access", "controlled-refresh", now + timedelta(hours=1), now + timedelta(days=7)))
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        app = create_app(store.settings, auth_store=store, http=http)
+        with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+            cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES), browser_session=session)
+            token = tokens["access_token"]
+
+            def prepare_draft(inputs):
+                preparation = {"version": 1, "predecessor_id": None, "uploads": [], **{key: inputs[key] for key in ("files", "analysis_mode", "customer_preference")}}
+                draft_id = str(uuid4())
+                created = call(client, token, "create_draft", request_id=draft_id, body={"upload_preparation": preparation})
+                assert created["status"] == "ok" and created["data"]["id"] == draft_id
+                save = {"draft_id": draft_id, "request_id": str(uuid4()), "body": {"upload_preparation": preparation, "expected_revision": 0, "writeback_target": target}}
+                original = app.state.mcp_gateway.request
+
+                async def lose_saved_reply(*args, **kwargs):
+                    response = await original(*args, **kwargs)
+                    if args[1:3] == ("PUT", f"/drafts/{draft_id}"):
+                        assert response.status_code == 200
+                        raise ConnectionError("controlled loss after preparation and target committed")
+                    return response
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(app.state.mcp_gateway, "request", lose_saved_reply)
+                    assert call(client, token, "save_draft", **save)["status"] == "unknown"
+                with TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as restarted:
+                    saved = call(restarted, token, "get_draft", draft_id=draft_id)["data"]["value"]
+                    assert saved["preparation_revision"] == 1 and saved["writeback"]["available"]
+                    assert "object_ref" not in saved["writeback"]
+                    assert call(restarted, token, "save_draft", **save)["status"] in {"running", "unknown"}
+                    assert call(restarted, token, "get_draft", draft_id=draft_id)["data"]["value"] == saved
+                stale = call(client, token, "save_draft", **{**save, "request_id": str(uuid4()), "body": {**save["body"], "writeback_target": {**target, "object_ref": "stale-document"}}})
+                assert stale["status"] == "error" and stale["error"] == "draft_revision_conflict"
+                return {**inputs, "source_draft_id": draft_id, "expected_draft_revision": 1}
+
+            _, task, _, _ = completed_mcp_task(client, store, token, prepare_draft=prepare_draft)
+            round_id = task["round_id"]
+            assert store.round_writeback(round_id) == target
+            original_round = call(client, token, "get_round", round_id=round_id)["data"]["value"]
+            assert original_round["writeback"]["available"]
+            assert effects == []  # Saving, promoting and accepting never write externally.
+            arguments = {"round_id": round_id, "request_id": str(uuid4())}
+            approve(client, call(client, token, "writeback_feishu_report", **arguments))
+            original = app.state.mcp_gateway.request
+
+            async def lose_writeback_reply(*args, **kwargs):
+                response = await original(*args, **kwargs)
+                if args[1:3] == ("POST", f"/integrations/feishu/rounds/{round_id}/writeback"):
+                    assert response.status_code == 200
+                    raise ConnectionError("controlled loss after provider acknowledged writeback")
+                return response
+
+            monkeypatch.setattr(app.state.mcp_gateway, "request", lose_writeback_reply)
+            assert call(client, token, "writeback_feishu_report", **arguments)["status"] == "unknown"
+            assert effects and round_id in json.dumps(effects)
+            sent = list(effects)
+        with TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as restarted:
+            assert call(restarted, token, "get_operation", request_id=arguments["request_id"])["status"] in {"running", "unknown"}
+            assert call(restarted, token, "writeback_feishu_report", **arguments)["status"] in {"running", "unknown"}
+            assert effects == sent
+            assert store.round_writeback(round_id) == target
+            assert call(restarted, token, "get_round", round_id=round_id)["data"]["value"] == original_round
+            for person in ("bob", "carol"):
+                _, other, _ = connection(restarted, store, person=person, scopes=" ".join(SCOPES))
+                assert call(restarted, other["access_token"], "get_draft", draft_id=task["id"])["status"] == "error"
+                assert call(restarted, other["access_token"], "writeback_feishu_report", **arguments)["status"] == "error"
+            assert restarted.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
+            assert rpc(restarted, token, "tools/call", {"name": "writeback_feishu_report", "arguments": arguments}).status_code == 401
+            assert effects == sent
 
 
 @pytest.mark.parametrize("rule_choice", ["original", "newer"])
@@ -1127,6 +1311,12 @@ def test_registry_pagination_annotations_and_browser_revoke(mcp_app):
         assert tools["list_feishu_files"]["annotations"]["readOnlyHint"] is True
         assert tools["share_reports"]["annotations"]["readOnlyHint"] is False
         assert tools["share_reports"]["annotations"]["openWorldHint"] is True
+        # Scheduled model work and quota checks also cross the provider boundary.
+        for name in ("parse_rule", "prepare_task", "confirm_task", "regenerate_report", "retry_report_package"):
+            assert tools[name]["annotations"]["openWorldHint"] is True
+        # Replacing current choices or judgments is not an additive-only write.
+        for name in ("prepare_task", "end_unmatched_task", "set_notification", "submit_review", "save_display_info", "save_draft"):
+            assert tools[name]["annotations"]["destructiveHint"] is True
         templates = rpc(client, token, "resources/templates/list").json()["result"]["resourceTemplates"]
         assert len(templates) == 5 and all(t["mimeType"] == "application/json" for t in templates)
         prompts = rpc(client, token, "prompts/list").json()["result"]["prompts"]

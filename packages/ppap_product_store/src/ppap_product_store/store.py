@@ -2834,7 +2834,7 @@ class AuthStore:
                 previous_preparation = (draft[4] or {}).get(PREPARATION_KEY)
                 if upload_preparation is not None or previous_preparation is not None:
                     self._require_preparation_owner(conn, principal, parsed)
-                    if previous_preparation is None or upload_preparation is None or any(value is not None for value in (items, analysis_mode, writeback_target, case_context)):
+                    if previous_preparation is None or upload_preparation is None or any(value is not None for value in (items, analysis_mode, case_context)):
                         raise ValueError("invalid_upload_preparation")
                     if type(expected_revision) is not int or expected_revision < 0:
                         raise ValueError("invalid_draft_revision")
@@ -2844,6 +2844,11 @@ class AuthStore:
                     validate_preparation_update(previous_preparation, preparation)
                     mode = self._offered_analysis_mode(preparation["analysis_mode"])
                     prepared = self._preparation_items(conn, principal, preparation)
+                    if writeback_target is not None:
+                        # The target belongs to the same revision as the saved
+                        # inputs. Promotion holds this row lock too, so a late
+                        # save cannot replace the target of an accepted task.
+                        self.save_draft_writeback(conn, parsed, normalize_external_ref(writeback_target) if writeback_target else None)
                     conn.execute("DELETE FROM product.draft_items WHERE draft_id = %s", (parsed,))
                     for row in prepared:
                         conn.execute("INSERT INTO product.draft_items (draft_id, file_version_id, role) VALUES (%s, %s, 'reference')", (parsed, row["file_version_id"]))

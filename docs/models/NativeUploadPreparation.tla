@@ -4,7 +4,9 @@ EXTENDS Naturals, FiniteSets
 \* #165 focused Safety obligation, NOT full-system refinement. One private Draft
 \* retains one original upload request/digest, plus an already ready file. Two
 \* page instances can save choices or promote the SAME Draft concurrently.
-\* Choices 1/2 stand for distinct selection/removal snapshots, not file bytes.
+\* Choices 1/2 stand for distinct saved input/selection/writeback-target
+\* snapshots, not file bytes or provider addresses. #206 saves the target in
+\* the same locked revision transaction; it is retained when promoting.
 \* The server's row lock and revision comparison are represented by one atomic
 \* Save/Promote step; PostgreSQL durability/authorization are assumptions and
 \* need the public API/PG tests. The original upload ID/digest are held fixed.
