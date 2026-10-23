@@ -51,6 +51,8 @@ URL 导入同样绑定文件回执。首次调用 `import_url(request_id=A, url=
 
 `get_operation` 表示某次 MCP 调用的回执；响应丢失后它可能仍是 `running/unknown`，而原文件回执或持久 Task 已能证明业务结果。以这些有明确请求绑定的业务读回为准，不重复创建导入或受理。飞书导入沿用原有来源绑定与恢复规则，URL 导入与它共用内容捕获、对象写入和固化边界。
 
+`prepare_task` 首次创建时，Task ID 就是此次 `request_id`；回复丢失后调用 `get_task(task_id=request_id)`。重新识别时沿用提交的 `task_id`，从上传准备草稿开始识别时沿用 `source_draft_id`。使用 `get_recognition(task_id=原任务ID, request_id=原识别请求ID)` 核对具体识别修订。读回不存在时仍保留原请求，不能换 UUID 另建任务；MCP 回执未知不会阻止查询已经提交的业务任务。
+
 远程 MCP 服务不能读取客户端机器的路径。目标客户端必须具有可使用其 OAuth 凭据的字节传输能力；仅能调用 JSON 工具的客户端还需要传输适配，或选择 URL/飞书导入。不能因为服务器提供上传工具就宣称所有客户端的本地文件体验已完成。
 
 ### 本地 stdio 适配器

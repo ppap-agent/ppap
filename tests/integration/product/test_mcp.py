@@ -425,6 +425,67 @@ def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_a
         assert rpc(restored, token, "tools/call", {"name": "get_rule_parse", "arguments": {"parse_id": parse_id}}).status_code == 401
 
 
+@pytest.mark.parametrize("revision", [False, True])
+def test_prepare_task_reads_original_identity_after_reply_loss_and_restart(mcp_app, monkeypatch, revision):
+    app, store = mcp_app
+    worker = build_product_store(store.settings, objects=store.objects, role="worker")
+    request_id = str(uuid4())
+    task_id = request_id
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
+        token = tokens["access_token"]
+        file, _ = upload(client, token)
+        validation_id = str(uuid4())
+        validation = {"request_id": validation_id, "source_file_id": file["file_id"], "source_file_version_id": file["id"]}
+        assert call(client, token, "validate_file", request_id=validation_id, body=validation)["status"] == "ok"
+        process_claimed(worker, worker.claim_job("prepare-precheck"), "prepare-precheck")
+        body = {
+            "request_id": request_id,
+            "analysis_mode": "standard",
+            "customer_preference": None,
+            "files": [{"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}],
+        }
+        if revision:
+            initial = call(client, token, "prepare_task", request_id=request_id, body=body)
+            assert initial["status"] == "ok" and initial["data"]["id"] == task_id
+            request_id = str(uuid4())
+            body = {**body, "request_id": request_id, "task_id": task_id, "expected_revision": initial["data"]["input_revision"]}
+        original_request = app.state.mcp_gateway.request
+
+        async def lost_reply(*args, **kwargs):
+            response = await original_request(*args, **kwargs)
+            if args[1:3] == ("POST", "/audit-tasks"):
+                assert response.status_code == 202
+                raise ConnectionError("controlled loss after recognition was committed")
+            return response
+
+        monkeypatch.setattr(app.state.mcp_gateway, "request", lost_reply)
+        assert call(client, token, "prepare_task", request_id=request_id, body=body)["status"] == "unknown"
+    with TestClient(create_app(store.settings, auth_store=store), base_url="http://127.0.0.1:8080") as restored:
+        task = call(restored, token, "get_task", task_id=task_id)["data"]["value"]
+        assert task["id"] == task_id and task["input_revision"] == int(revision)
+        assert task["round_id"] is None
+        recognition = call(restored, token, "get_recognition", task_id=task_id, request_id=request_id)
+        assert recognition["status"] == "ok", recognition
+        assert call(restored, token, "prepare_task", request_id=request_id, body=body)["status"] in {"running", "unknown"}
+        assert call(restored, token, "get_task", task_id=task_id)["data"]["value"] == task
+        with store._conn() as conn:
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM engine.jobs WHERE kind = 'file_analysis' AND payload->>'task_id' = %s AND payload->>'task_revision' = %s",
+                    (task_id, str(int(revision))),
+                ).fetchone()[0]
+                == 1
+            )
+            assert conn.execute("SELECT count(*) FROM product.audit_drafts WHERE id = %s", (task_id,)).fetchone()[0] == 1
+        for person in ("bob", "carol"):
+            _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
+            assert call(restored, other["access_token"], "get_task", task_id=task_id)["status"] == "error"
+            assert call(restored, other["access_token"], "get_recognition", task_id=task_id, request_id=request_id)["status"] == "error"
+        assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
+        assert rpc(restored, token, "tools/call", {"name": "get_task", "arguments": {"task_id": task_id}}).status_code == 401
+
+
 def completed_mcp_task(client, store, token, *, publish_new_rule=True):
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     file, _ = upload(client, token)
