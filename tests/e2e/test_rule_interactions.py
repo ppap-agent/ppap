@@ -616,6 +616,7 @@ class RuleInteractionTests(unittest.TestCase):
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
             created, latest_reads = [], []
+            self.upload_preparation_routes(page)
 
             def latest(route):
                 latest_reads.append(route.request.url)
@@ -793,6 +794,30 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(len(state["saves"]), 1)
             browser.close()
 
+    def upload_preparation_routes(self, page):
+        preparation = {}
+
+        def save_preparation(route):
+            value = route.request.post_data_json
+            if route.request.method == "POST":
+                self.assertEqual(preparation, {})
+                preparation.update(
+                    id=value["request_id"], task_id=None, status="open", preparation_revision=0,
+                    items=[], analysis_mode="standard", predecessor_id=None, case_context={},
+                    writeback={"available": False}, updated_at="2026-10-22T00:00:00Z",
+                )
+            else:
+                self.assertEqual(route.request.method, "PUT")
+                self.assertEqual(route.request.url.rsplit("/", 1)[1], preparation["id"])
+                self.assertEqual(value["expected_revision"], preparation["preparation_revision"])
+                preparation["preparation_revision"] += 1
+            preparation["upload_preparation"] = value["upload_preparation"]
+            route.fulfill(json=preparation)
+
+        page.route("**/api/drafts", save_preparation)
+        page.route("**/api/drafts/*", save_preparation)
+        return preparation
+
     def test_native_rule_upload_keeps_unconfirmed_audit_files_and_selection(self):
         from playwright.sync_api import expect
 
@@ -801,31 +826,7 @@ class RuleInteractionTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             state = self.requirement_routes(page)
             self.native_rule_routes(page, state)
-            preparation = {}
-
-            def save_preparation(route):
-                value = route.request.post_data_json
-                if route.request.method == "POST":
-                    preparation.update(
-                        id=value["request_id"],
-                        task_id=None,
-                        status="open",
-                        preparation_revision=0,
-                        items=[],
-                        analysis_mode="standard",
-                        predecessor_id=None,
-                        case_context={},
-                        writeback={"available": False},
-                        updated_at="2026-10-22T00:00:00Z",
-                    )
-                else:
-                    self.assertEqual(value["expected_revision"], preparation["preparation_revision"])
-                    preparation["preparation_revision"] += 1
-                preparation["upload_preparation"] = value["upload_preparation"]
-                route.fulfill(json=preparation)
-
-            page.route("**/api/drafts", save_preparation)
-            page.route("**/api/drafts/*", save_preparation)
+            preparation = self.upload_preparation_routes(page)
 
             def validation(route):
                 version = state["source"]
@@ -1264,6 +1265,7 @@ class RuleInteractionTests(unittest.TestCase):
             page.set_default_timeout(5000)
             self.route(page)
             versions, reads, creates, writes = {}, [], [], []
+            self.upload_preparation_routes(page)
             page.on("request", lambda request: writes.append((request.method, urlsplit(request.url).path)) if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
             page.route("**/api/audit-customers", lambda route: route.fulfill(json={"customers": []}))
             page.route("**/api/audit-tasks?*", lambda route: route.fulfill(json={"tasks": [], "next_offset": None}))
@@ -1327,7 +1329,11 @@ class RuleInteractionTests(unittest.TestCase):
             flow = next(version for version in versions.values() if version["original_filename"] == "flow.xlsx")
             self.assertCountEqual(reads, [("GET", "latest", version["id"]) for version in versions.values()] + [("GET", "job", "validation-" + flow["id"])] * 2)
             self.assertEqual(creates, [])
-            self.assertCountEqual(writes, [("POST", "/api/files")] * 2 + [("PUT", f"/api/files/{version['file_id']}/versions/{version['id']}/blob") for version in versions.values()])
+            self.assertEqual(sum(method == "POST" and path == "/api/drafts" for method, path in writes), 1)
+            self.assertCountEqual(
+                [(method, path) for method, path in writes if not path.startswith("/api/drafts")],
+                [("POST", "/api/files")] * 2 + [("PUT", f"/api/files/{version['file_id']}/versions/{version['id']}/blob") for version in versions.values()],
+            )
             browser.close()
 
     def test_lost_or_invalid_blob_reply_reads_original_request_without_reupload(self):
