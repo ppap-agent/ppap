@@ -69,7 +69,13 @@ test('an ungranted directory reports organization authorization instead of a tra
   await assert.rejects(nativeSharingAdapter.listTargets('', 'group'), {
     code: 'share_directory_permission_missing',
     status: 503,
-    message: '当前组织尚未授权所需的飞书目录权限，请联系管理员完成授权。',
+    message: 'PPAP 尚未获得所需的飞书目录权限，无法读取成员或群组。请联系组织管理员检查 PPAP 的授权。你也可以切回“人员”，清空搜索后向自己发送。',
+  })
+  globalThis.fetch = async () => json({error: 'share_directory_user_permission_missing'}, 503)
+  await assert.rejects(nativeSharingAdapter.listTargets('张', 'user'), {
+    code: 'share_directory_user_permission_missing',
+    status: 503,
+    message: '当前飞书登录尚未授予 PPAP 所需的目录访问权限。请检查飞书登录授权；如无法授权，请联系组织管理员。你也可以切回“人员”，清空搜索后向自己发送。',
   })
 })
 

@@ -145,7 +145,13 @@ def test_ungranted_group_directory_is_distinct_from_a_temporary_provider_failure
     from types import SimpleNamespace
 
     principal = SimpleNamespace(tenant_key="tenant-one", subject="ou_self", display_name="自己")
-    for status, code, expected in [(400, 99991672, "share_directory_permission_missing"), (503, 99991672, "share_directory_unavailable"), (400, 99991663, "share_directory_unavailable")]:
+    for status, code, expected in [
+        (400, 99991672, "share_directory_permission_missing"),
+        (400, 99991679, "share_directory_user_permission_missing"),
+        (503, 99991679, "share_directory_unavailable"),
+        (503, 99991672, "share_directory_unavailable"),
+        (400, 99991663, "share_directory_unavailable"),
+    ]:
         with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(status, json={"code": code, "msg": "private provider diagnostic"}))) as http:
             with pytest.raises(ReportSharingError, match="^" + expected + "$"):
                 list_report_targets(http, "user-token", "tenant-token", principal, {}, "group", "", None)

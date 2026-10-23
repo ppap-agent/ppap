@@ -44,7 +44,7 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
       setNextPage(page.next_page_token || '')
       retry.current = null
       onReadyChange(true)
-    } catch (failure) {if (epoch.current === run) setError(failure instanceof Error && (failure.name === 'TimeoutError' || 'code' in failure && ['share_directory_permission_missing', 'share_directory_timeout'].includes(String(failure.code))) ? failure.message : '无法读取人员或群组，请重试。')}
+    } catch (failure) {if (epoch.current === run) setError(failure instanceof Error && (failure.name === 'TimeoutError' || 'code' in failure && ['share_directory_permission_missing', 'share_directory_user_permission_missing', 'share_directory_timeout'].includes(String(failure.code))) ? failure.message : '无法读取人员或群组，请重试。')}
     finally {if (epoch.current === run) setLoading(false)}
   }
   useEffect(() => {
@@ -71,7 +71,7 @@ export function ShareTargets({adapter, value, onChange, onReadyChange}: {adapter
     {value.length > 0 && <ItemGroup aria-label="已选接收人">{value.map(target => <Item role="listitem" size="xs" key={targetKey(target)}><ItemContent><span>{target.display_name}</span>{target.reason && <p className="text-xs text-muted-foreground">{target.reason}</p>}</ItemContent>{target.eligibility !== 'eligible' && <Button variant="outline" size="sm" disabled={loading} aria-label={`核对 ${target.display_name}`} onClick={() => verify(target)}>核对</Button>}<Button variant="ghost" size="sm" aria-label={`移除 ${target.display_name}`} onClick={() => toggle(target, false)}>移除</Button></Item>)}</ItemGroup>}
     <Tabs value={kind} onValueChange={value => setKind(value as ShareTarget['kind'])}><TabsList><TabsTrigger value="user">人员</TabsTrigger><TabsTrigger value="group">群组</TabsTrigger></TabsList><TabsContent value={kind}><div className="space-y-3">
     <form role="search" aria-label="搜索分享目标" className="flex gap-2" onSubmit={event => {event.preventDefault(); void load()}}><Input aria-label="搜索人员或群组" placeholder="搜索姓名或群组名称" value={query} onChange={event => setQuery(event.target.value)}/><Button type="submit" variant="outline" disabled={loading}>搜索</Button></form>
-    {error && <Alert variant="destructive"><AlertTitle>目录暂不可用</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => {const last = retry.current; if (last) void load(last.pageToken, last.lookup)}}>重新读取目标</Button></AlertDescription></Alert>}
+    {error && <Alert variant="destructive"><AlertTitle>无法读取接收人</AlertTitle><AlertDescription>{error}<Button variant="outline" onClick={() => {const last = retry.current; if (last) void load(last.pageToken, last.lookup)}}>重新读取目标</Button></AlertDescription></Alert>}
     {loading && <ReadSkeleton label="正在读取组织目录…" kind={targets.length ? 'inline' : 'list'} rows={3}/>}
     <ItemGroup>{targets.map(target => {
       const checked = value.some(row => targetKey(row) === targetKey(target))

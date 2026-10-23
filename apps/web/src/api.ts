@@ -107,7 +107,8 @@ const messages: Record<string,string> = {
   rule_source_unavailable: '暂时无法读取可定位的原文。请核对原文件是否可读取。',
   invalid_analysis_mode: '请选择标准或深度审核。',
   deep_not_available: '当前环境不提供深度审核。',
-  share_directory_permission_missing: '当前组织尚未授权所需的飞书目录权限，请联系管理员完成授权。',
+  share_directory_permission_missing: 'PPAP 尚未获得所需的飞书目录权限，无法读取成员或群组。请联系组织管理员检查 PPAP 的授权。你也可以切回“人员”，清空搜索后向自己发送。',
+  share_directory_user_permission_missing: '当前飞书登录尚未授予 PPAP 所需的目录访问权限。请检查飞书登录授权；如无法授权，请联系组织管理员。你也可以切回“人员”，清空搜索后向自己发送。',
   share_directory_timeout: '读取组织目录超时，请重新读取目标。',
   upload_request_conflict: '此传输请求已固定其他文件内容，不能替换。请核对原文件。',
 }

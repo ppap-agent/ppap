@@ -131,13 +131,16 @@ def test_a_new_explicit_directory_read_gets_a_new_budget_and_verified_self(monke
     assert store.ticket_reads == store.database_probes == 0
 
 
-@pytest.mark.parametrize("status,expected", [(400, "share_directory_permission_missing"), (503, "share_unavailable")])
-def test_directory_budget_preserves_permission_and_provider_failure_errors(monkeypatch, status, expected):
+@pytest.mark.parametrize(
+    "status,code,expected",
+    [(400, 99991672, "share_directory_permission_missing"), (400, 99991679, "share_directory_user_permission_missing"), (503, 99991679, "share_unavailable"), (503, 99991672, "share_unavailable")],
+)
+def test_directory_budget_preserves_permission_and_provider_failure_errors(monkeypatch, status, code, expected):
     monkeypatch.setattr("ppap_core.report_sharing.monotonic", lambda: 0.0)
 
     def provider(request):
         if request.url.path.endswith("/search/v1/user"):
-            return httpx.Response(status, json={"code": 99991672, "msg": "private provider details"})
+            return httpx.Response(status, json={"code": code, "msg": "private provider details"})
         return httpx.Response(200, json=provider_body(request.url.path))
 
     with directory_client(provider) as (client, _store):
