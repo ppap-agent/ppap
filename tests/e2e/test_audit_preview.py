@@ -1995,7 +1995,8 @@ class AuditPreviewTests(unittest.TestCase):
             page.go_back()
             page.get_by_role("button", name="重试传输 明确失败.xlsx", exact=True).click()
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
-            expect(page.get_by_text("明确失败.xlsx", exact=True)).to_be_visible()
+            waiting = page.locator("section").filter(has=page.get_by_role("heading", name="等待预检查 · 1 份", exact=True))
+            expect(waiting.get_by_text("明确失败.xlsx", exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name="待处理传输 · 1 份", exact=True)).to_have_count(0)
             browser.close()
 
