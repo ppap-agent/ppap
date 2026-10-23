@@ -87,6 +87,8 @@ def _get(http, token, path, params=None):
             http.check()
         if response.status_code == 400 and isinstance(body, dict) and body.get("code") == 99991672:
             raise ReportSharingError("share_directory_permission_missing")
+        if response.status_code == 400 and isinstance(body, dict) and body.get("code") == 99991679:
+            raise ReportSharingError("share_directory_user_permission_missing")
         if not 200 <= response.status_code < 300 or not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0 or not isinstance(body.get("data"), dict):
             raise ReportSharingError("share_directory_unavailable")
         return body["data"]
@@ -123,7 +125,9 @@ def resolve_report_target(http, token: str, organization_id: str, reference: Map
                 target.update(eligibility="eligible", reason=None)
     except ReportSharingError as error:
         if str(error) == "share_directory_permission_missing":
-            target["reason"] = "当前组织尚未授权所需的飞书目录权限，接收资格未确认。"
+            target["reason"] = "无法核对接收资格：PPAP 尚未获得所需的飞书目录权限。请联系组织管理员检查 PPAP 的授权。"
+        elif str(error) == "share_directory_user_permission_missing":
+            target["reason"] = "无法核对接收资格：当前飞书登录尚未授予所需的目录访问权限。请检查飞书登录授权；如无法授权，请联系组织管理员。"
         elif str(error) == "share_directory_timeout":
             target["reason"] = "读取接收对象超时，接收资格尚未确认，请重新核对。"
     return target

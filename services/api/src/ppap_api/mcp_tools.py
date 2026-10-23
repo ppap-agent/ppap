@@ -34,7 +34,11 @@ def register_tools(mcp, gateway, authority):
             value = await gateway.get(actor, scope, path, params=params)
             return Reply(status="ok", data=page_result(value, page or PageRequest()))
         except McpError as exc:
-            return Reply(status="error", error=exc.code, retry_after_seconds=5 if exc.status in {429, 503} else None)
+            return Reply(
+                status="error",
+                error=exc.code,
+                retry_after_seconds=5 if exc.status in {429, 503} and exc.code not in {"share_directory_permission_missing", "share_directory_user_permission_missing"} else None,
+            )
         except Exception:
             return Reply(status="error", error="service_unavailable")
 
@@ -482,7 +486,14 @@ def register_tools(mcp, gateway, authority):
     async def list_share_targets(
         kind: Literal["user", "group"] = "user", query: Annotated[str, Field(max_length=100)] = "", page_token: Annotated[str, Field(max_length=2048)] | None = None, page: PageRequest | None = None
     ) -> Reply[DataPage]:
-        """Find verified organization recipients. Unknown eligibility does not permit sending."""
+        """Find verified organization recipients. Unknown eligibility does not permit sending.
+
+        share_directory_permission_missing requires the organization administrator
+        to check PPAP's Feishu authorization, not repeated sign-in or polling.
+        share_directory_user_permission_missing requires checking the Feishu
+        user's directory grant; ask an administrator if the user cannot grant it.
+        An empty user query can still return the verified caller for sending to self.
+        """
         params = {"kind": kind, "query": query}
         if page_token:
             params["page_token"] = page_token
