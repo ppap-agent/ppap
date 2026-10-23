@@ -453,35 +453,38 @@ def test_backup_reuses_verified_images_without_build_or_duplicate_metadata_reads
     assert not (tmp_path / "source.tar").exists() and not (tmp_path / "source").exists()
 
 
-def test_routine_database_read_does_not_scan_history(monkeypatch, capsys):
-    from unittest.mock import MagicMock
+@pytest.mark.parametrize("full", [False, True])
+def test_database_observation_remains_available_with_api_stopped(full):
+    operation = RELEASE["database"]
+    observed = {"migrations": ["0001_start.sql"], "active_jobs": []}
+    calls = []
 
-    import ppap_core.db
-    import ppap_core.settings
+    def kube(*args, data=None):
+        calls.append(args)
+        assert "deployment/ppap-current-api" not in args
+        if args[0] == "get":
+            return json.dumps({"data": {"PPAP_PG_DATABASE": "ppap", "PPAP_PG_API_USER": "ppap_api"}}).encode()
+        assert "deployment/ppap-current-postgres" in args and "ON_ERROR_STOP=1" in args[-3]
+        query = data.decode()
+        assert "SET LOCAL ROLE ppap_api" in query and "REPEATABLE READ READ ONLY" in query
+        assert ("product.file_versions" in query) is full
+        assert ("string_agg" in query) is full, "routine deployment must not scan business tables"
+        return json.dumps(observed).encode()
 
-    queries = []
-    connection = MagicMock()
-    connection.__enter__.return_value = connection
+    with patch.dict(operation.__globals__, {"kube": kube}):
+        assert operation(full=full) == observed
+    assert len(calls) == 2
 
-    def execute(query):
-        queries.append(query)
-        result = MagicMock()
-        if "product.schema_migrations" in query:
-            result.fetchall.return_value = [("0001_start.sql",)]
-        elif "engine.jobs" in query:
-            result.fetchall.return_value = []
-        else:
-            assert "string_agg" not in query and "md5" not in query, "routine deployment must not scan business tables"
-        return result
 
-    connection.execute.side_effect = execute
-    monkeypatch.setattr(ppap_core.db, "connect", lambda *args: connection)
-    monkeypatch.setattr(ppap_core.settings, "load_settings", lambda: None)
-    monkeypatch.setattr("sys.argv", ["-", "routine"])
-    exec(RELEASE["DB_SNAPSHOT"], {})
-    state = json.loads(capsys.readouterr().out)
-    assert state == {"migrations": ["0001_start.sql"], "active_jobs": []}
-    assert len(queries) == 4
+def test_database_observation_rejects_an_unexpected_role():
+    operation = RELEASE["database"]
+
+    def kube(*args, **kwargs):
+        assert args[0] == "get", "do not execute a snapshot under another role"
+        return json.dumps({"data": {"PPAP_PG_DATABASE": "ppap", "PPAP_PG_API_USER": "ppap"}}).encode()
+
+    with patch.dict(operation.__globals__, {"kube": kube}), pytest.raises(ValueError, match="product API role"):
+        operation()
 
 
 def test_queued_build_waits_for_source_metadata_without_dispatching(tmp_path):

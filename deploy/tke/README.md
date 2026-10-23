@@ -129,6 +129,8 @@ Full checks add direct pulls/CRI identities and isolated `Never` startup on both
 
 Every path requires the migration payload/schema to match the numbered files. Schema upgrades remain a separately reviewed #15 operation with backups and stopped writes; completed init Jobs are not deleted or treated as proof that new migrations ran. Active business jobs block rollout. Notification jobs are never reset or resent.
 
+Database preflight and history readback use the existing PostgreSQL Pod, with `SET LOCAL ROLE ppap_api` inside a read-only, repeatable-read transaction. They do not require an API Pod to be running. A migration that requires stopping old API credential consumers can therefore keep them stopped until the reviewed Worker-first release starts the new API. This does not perform migrations or relax schema, image, CI or post-release API checks.
+
 No nodeSelector, node service/network reconfiguration, workload eviction or image pruning is part of release. The procedure keeps existing Secrets, PVCs, TLS/LB, default legacy route, Office and old UAC/Feishu callbacks. A healthy socket proves startup only, not a real Deep audit or stronger isolation.
 
 Each invocation prints a private temporary operation directory. It contains only recovery identity, hashes, the fixed render and readback results, not credentials or full environment/Secret dumps. If dispatch/apply response is lost, **do not rerun the mutation blindly**. Inspect Flow runs and resume the exact run, or read back the saved deployment attempt:

@@ -344,24 +344,22 @@ def build(sha: str, provider: str, attempt: Path, run_id: int | None) -> None:
 
 
 # The deploy operation is below; it consumes only reviewed configuration.
-DB_SNAPSHOT = """
-import json,sys
-from ppap_core.settings import load_settings
-from ppap_core.db import connect
-with connect(load_settings(), 'api') as c:
-    c.execute('SET default_transaction_read_only = on')
-    with c.transaction():
-        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        result = {}
-        if sys.argv[1] == 'full':
-            for name in ('file_versions','rule_versions','audit_drafts','audit_rounds','findings','report_exports','usage_events'):
-                query = 'SELECT count(*),md5(string_agg(fingerprint,chr(44) ORDER BY fingerprint)) '
-                query += 'FROM (SELECT md5(to_jsonb(t)::text) AS fingerprint FROM product.'+name+' t) rows'
-                result[name] = c.execute(query).fetchone()
-        result['migrations'] = [r[0] for r in c.execute('SELECT version FROM product.schema_migrations ORDER BY version').fetchall()]
-        result['active_jobs'] = c.execute("SELECT kind,status,count(*) FROM engine.jobs WHERE status IN ('queued','leased') GROUP BY kind,status ORDER BY kind,status").fetchall()
-    print(json.dumps(result))
-"""
+def database_sql(*, full: bool = False) -> bytes:
+    fields = {
+        "migrations": "(SELECT coalesce(jsonb_agg(version ORDER BY version), '[]'::jsonb) FROM product.schema_migrations)",
+        "active_jobs": """(SELECT coalesce(jsonb_agg(jsonb_build_array(kind,status,n) ORDER BY kind,status), '[]'::jsonb)
+            FROM (SELECT kind,status,count(*) n FROM engine.jobs WHERE status IN ('queued','leased') GROUP BY kind,status) jobs)""",
+    }
+    if full:
+        for name in ("file_versions", "rule_versions", "audit_drafts", "audit_rounds", "findings", "report_exports", "usage_events"):
+            fields[name] = f"""(SELECT jsonb_build_array(count(*),md5(string_agg(fingerprint,chr(44) ORDER BY fingerprint)))
+                FROM (SELECT md5(to_jsonb(t)::text) AS fingerprint FROM product.{name} t) rows)"""
+    pairs = ",\n".join(f"'{name}', {query}" for name, query in fields.items())
+    # Migration may require every old API process to be stopped. Observe through
+    # PostgreSQL itself, still under the API role and one read-only snapshot.
+    return ("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\nSET LOCAL ROLE ppap_api;\nSELECT jsonb_build_object(\n" + pairs + ");\nCOMMIT;\n").encode()
+
+
 LIVE_PROBE = """
 import json,socket,sys
 from ppap_core.settings import load_settings
@@ -385,7 +383,22 @@ print(json.dumps({'deep_socket':True,'model_called':False}))
 
 
 def database(*, full: bool = False) -> dict:
-    return json.loads(kube("exec", "-i", "deployment/ppap-current-api", "--", "python", "-", "full" if full else "routine", data=DB_SNAPSHOT.encode()))
+    config = json.loads(kube("get", "configmap", "ppap-current", "-o", "json"))["data"]
+    require(config["PPAP_PG_API_USER"] == "ppap_api", "database snapshot requires the product API role")
+    return json.loads(
+        kube(
+            "exec",
+            "-i",
+            "deployment/ppap-current-postgres",
+            "--",
+            "sh",
+            "-c",
+            'exec psql -XqAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1"',
+            "ppap-release-snapshot",
+            config["PPAP_PG_DATABASE"],
+            data=database_sql(full=full),
+        )
+    )
 
 
 def public(base: str, path: str, *, current: bool = False) -> bytes:
