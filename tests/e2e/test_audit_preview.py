@@ -4496,6 +4496,8 @@ class AuditPreviewTests(unittest.TestCase):
             page.set_default_timeout(5000)
             page.goto(PREVIEW + "/preview/audit.html?scene=reports-none&task=preview-report-task")
             expect(page.get_by_role("heading", name="审核结果", exact=True)).to_be_visible()
+            expect(page.get_by_text("审核异常", exact=True)).to_be_visible()
+            expect(page.get_by_text("审核完成", exact=True)).to_have_count(0)
             open_task_file(page)
             expect(page.get_by_text("本文件审核异常，未取得完整结果。", exact=True)).to_be_visible()
             expect(page.get_by_role("button", name="查看报告", exact=True)).to_be_disabled()
