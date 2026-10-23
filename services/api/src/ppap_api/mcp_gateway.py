@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 import httpx
 from ppap_core.logs import REQUEST_ID, emit
-from ppap_core.mcp import MAX_RESULT_BYTES, Delegation, McpError, fingerprint
+from ppap_core.mcp import MAX_RESULT_BYTES, ApprovedCall, Delegation, McpError, fingerprint
 from ppap_product_store.mcp import McpStore
 from pydantic import BaseModel, Field
 from starlette.responses import Response
@@ -104,12 +104,12 @@ class BusinessGateway:
 
         return TransferResponse()
 
-    async def request(self, delegation: Delegation, method: str, path: str, *, body=None, params=None, content=None, operation_id=None) -> httpx.Response:
+    async def request(self, delegation: Delegation, method: str, path: str, *, body=None, params=None, content=None, operation_id=None, approval=None) -> httpx.Response:
         if not path.startswith("/") or "?" in path or "#" in path:
             raise McpError("invalid_business_path")
 
         async def authorized(scope, receive, send):
-            scope = {**scope, "ppap.delegation": delegation, "ppap.mcp_operation_id": operation_id}
+            scope = {**scope, "ppap.delegation": delegation, "ppap.mcp_operation_id": operation_id, "ppap.mcp_approval": approval}
             await self.app(scope, receive, send)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=authorized), base_url="http://ppap.internal") as client:
@@ -158,7 +158,7 @@ class BusinessGateway:
         emit("mcp_write_claimed", **correlation)
         # Disconnect/cancellation never restores the right to issue this write.
         try:
-            response = await self.request(delegation, method, path, body=body, operation_id=operation["id"])
+            response = await self.request(delegation, method, path, body=body, operation_id=operation["id"], approval=ApprovedCall.from_operation(delegation.id, operation))
             value = response.json()
             checks = list(probes)
             if response.is_success and result_path is not None:

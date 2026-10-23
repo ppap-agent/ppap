@@ -425,8 +425,8 @@ def register_tools(mcp, gateway, authority):
         return await read("reports:read", path + f"/regenerations/{request_id}", params=params)
 
     @mcp.tool(annotations=WRITE)
-    async def create_report_package(request_id: UUID, reports: Annotated[list[wc.AuditReportReference], Field(min_length=1, max_length=100)]) -> Reply[dict]:
-        """Prepare a ZIP from exact report references; poll the original package request."""
+    async def create_report_package(request_id: UUID, reports: Annotated[list[wc.AuditReportReference], Field(min_length=2, max_length=100)]) -> Reply[dict]:
+        """Prepare a ZIP from 2–100 exact report references; poll the original package request."""
         probes = list(dict.fromkeys(report_parts(r)[2] for r in reports))
         return await write(
             "reports:write",

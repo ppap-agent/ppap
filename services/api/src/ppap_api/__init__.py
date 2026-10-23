@@ -69,6 +69,7 @@ from ppap_core.fixtures import SUBJECTS
 from ppap_core.identity import EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_read, can_review, new_token, safe_return_to
 from ppap_core.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
 from ppap_core.logs import configure as configure_logs
+from ppap_core.mcp import McpError
 from ppap_core.settings import Settings, load_settings
 from ppap_core.storage import object_store_ready
 from ppap_core.writeback_targets import public_target
@@ -76,6 +77,7 @@ from ppap_product_store import AuthStore
 
 from ppap_api import web_contract as wc
 from ppap_api.audit_routes import register_audit_routes
+from ppap_api.mcp_confirmation import require_approved_source
 from ppap_api.notifications import run_task_notifications
 from ppap_api.office_routes import register_office_routes
 from ppap_api.report_routes import register_report_routes
@@ -867,7 +869,10 @@ def create_app(
             return JSONResponse({"error": "writeback_target_missing"}, status_code=409)
         return_url = round_return_url(settings.canonical_web_url(), round_body["id"])
         try:
+            require_approved_source(request, f"/rounds/{round_id}", round_body)
             result = write_round_history(http, session.access_token, file_token, round_body, return_url)
+        except McpError as exc:
+            return JSONResponse({"error": exc.code}, status_code=exc.status)
         except FeishuWritebackError as exc:
             code = str(exc)
             if code == "invalid_file_token":
