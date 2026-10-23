@@ -1,8 +1,9 @@
 ------------------------- MODULE FeishuImportReceipts -------------------------
 EXTENDS Naturals, FiniteSets
 
-\* #165 focused Safety obligation, not a refinement or production proof.
-\* One private request, two competing handlers, two source tokens and two byte
+\* #165/#206 focused Safety obligation, not a refinement or production proof.
+\* The shared _receive_import_upload boundary binds Feishu sources and URLs.
+\* One private request, two competing handlers, two source identities and two byte
 \* digests. A source is bound before provider I/O. The first captured bytes bind
 \* the immutable version; a changed remote document cannot replace them.
 \* Reserve/capture, provider completion, object effect and READY are distinct.

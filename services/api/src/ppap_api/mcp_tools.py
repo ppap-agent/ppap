@@ -123,8 +123,20 @@ def register_tools(mcp, gateway, authority):
 
     @mcp.tool(annotations=EXTERNAL)
     async def import_url(request_id: UUID, url: Annotated[str, Field(max_length=2048)]) -> Reply[dict]:
-        """Import a public HTTPS source through PPAP network and size restrictions."""
-        return await write("files:write", "import_url", request_id, "/files/from-url", {"url": url}, result_path=lambda v: f"/files/{v['file_id']}/versions/{v['id']}")
+        """Import a public URL through PPAP network/size restrictions. After reply loss, use get_upload with this request_id to read the frozen version."""
+        return await write("files:write", "import_url", request_id, "/files/from-url", {"url": url, "request_id": str(request_id)}, result_path=lambda v: f"/files/{v['file_id']}/versions/{v['id']}")
+
+    @mcp.tool(annotations=EXTERNAL)
+    async def resume_url_import(request_id: UUID, upload_request_id: UUID) -> Reply[dict]:
+        """Resume an existing URL import after reading get_upload. Reuse its original source and frozen content; never create a replacement version."""
+        return await write(
+            "files:write",
+            "resume_url_import",
+            request_id,
+            f"/file-uploads/{upload_request_id}/resume-url",
+            probes=[f"/file-uploads/{upload_request_id}"],
+            result_path=lambda v: f"/files/{v['file_id']}/versions/{v['id']}",
+        )
 
     @mcp.tool(annotations=READ)
     async def get_file(file_id: UUID, version_id: UUID) -> Reply[DataPage]:

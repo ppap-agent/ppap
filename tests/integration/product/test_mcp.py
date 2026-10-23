@@ -141,7 +141,7 @@ def call(client, token, name, **arguments):
     return result["structuredContent"]
 
 
-def upload(client, token, content=None):
+def upload(client, token, content=None, *, file_id=None):
     if content is None:
         stream = io.BytesIO()
         book = Workbook()
@@ -156,10 +156,11 @@ def upload(client, token, content=None):
         "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "sha256": hashlib.sha256(content).hexdigest(),
     }
-    created = call(client, token, "create_file", request_id=rid, body=body)
+    tool, extra = ("create_file_version", {"file_id": file_id}) if file_id else ("create_file", {})
+    created = call(client, token, tool, request_id=rid, body=body, **extra)
     assert created["status"] == "ok", created
-    assert call(client, token, "create_file", request_id=rid, body=body)["data"] == created["data"]
-    changed = call(client, token, "create_file", request_id=rid, body={**body, "original_filename": "different.xlsx"})
+    assert call(client, token, tool, request_id=rid, body=body, **extra)["data"] == created["data"]
+    changed = call(client, token, tool, request_id=rid, body={**body, "original_filename": "different.xlsx"}, **extra)
     assert changed["error"] == "request_conflict"
     version = created["data"]
     ids = {"file_id": version["file_id"], "version_id": version["id"]}
@@ -196,6 +197,151 @@ def reviewed_round(client, store, token):
     saved = client.put(f"/rounds/{round_id}/reviews", json=review)
     assert saved.status_code == 200, saved.text
     return round_id, {**review, "version": 1, "rationale": "并发网页修改"}
+
+
+@pytest.mark.parametrize("fault", ["business_reply", "object_reply", "before_object", "source_reply"])
+def test_url_import_reads_original_version_and_recovers_without_replacing_content(mcp_app, monkeypatch, fault):
+    _, store = mcp_app
+    source = "https://imports.example.test/source.xlsx?signature=controlled-private-value"
+    original_bytes = b"original captured bytes"
+    remote_bytes, fetches, failures = [original_bytes], [], []
+    monkeypatch.setattr("ppap_core.files.public_addresses", lambda host, port: ("93.184.216.34",))
+
+    def provider(request):
+        assert request.method == "GET" and request.url.host == "93.184.216.34"
+        assert request.headers["Host"] == "imports.example.test" and "authorization" not in request.headers
+        fetches.append(request.url.path)
+        if fault == "source_reply" and len(fetches) == 1:
+            raise httpx.ReadTimeout("controlled source reply loss", request=request)
+        return httpx.Response(200, content=remote_bytes[0], headers={"Content-Type": "application/octet-stream"})
+
+    put = store.objects.put_exclusive
+
+    def object_fault(key, body, content_type):
+        if fault in {"object_reply", "before_object"} and not failures:
+            failures.append(key)
+            if fault == "object_reply":
+                put(key, body, content_type)
+            raise OSError("controlled object write interruption")
+        return put(key, body, content_type)
+
+    monkeypatch.setattr(store.objects, "put_exclusive", object_fault)
+    request_id = str(uuid4())
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        app = create_app(store.settings, auth_store=store, http=http)
+        with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+            cid, tokens, _ = connection(client, store)
+            token = tokens["access_token"]
+            if fault == "business_reply":
+                original = app.state.mcp_gateway.request
+
+                async def lost_reply(*a, **kw):
+                    response = await original(*a, **kw)
+                    if a[1:3] == ("POST", "/files/from-url"):
+                        raise ConnectionError("controlled reply loss after import commit")
+                    return response
+
+                monkeypatch.setattr(app.state.mcp_gateway, "request", lost_reply)
+            result = call(client, token, "import_url", request_id=request_id, url=source)
+            assert result["status"] == "unknown", result
+            before = call(client, token, "get_upload", request_id=request_id)["data"]["value"]
+            assert before["state"] == ("ready" if fault == "business_reply" else "uploading")
+            assert before["resume_allowed"] is (fault != "business_reply")
+            assert "controlled-private-value" not in json.dumps(before)
+            if fault == "source_reply":
+                assert before["file"] is None
+            else:
+                assert before["file"]["id"] == request_id
+
+        # Recreate the API and use only the original token/request. Nothing in
+        # the new process gets an in-memory map of imported files or sources.
+        remote_bytes[0] = b"source changed after the first attempt"
+        with TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as restored:
+            replay = call(restored, token, "import_url", request_id=request_id, url=source)
+            assert replay["status"] in {"running", "unknown"} and len(fetches) == 1
+            conflict = call(restored, token, "import_url", request_id=request_id, url=source + "-different")
+            assert conflict["error"] == "request_conflict"
+            resume = {"request_id": str(uuid4()), "upload_request_id": request_id}
+            continued = call(restored, token, "resume_url_import", **resume)
+            after = call(restored, token, "get_upload", request_id=request_id)["data"]["value"]
+            if fault == "before_object":
+                assert continued["error"] == "upload_content_conflict", continued
+                assert after["state"] == "failed" and after["resume_allowed"] is False
+                assert call(restored, token, "resume_url_import", request_id=str(uuid4()), upload_request_id=request_id)["error"] == "upload_not_resumable"
+            else:
+                assert continued["status"] == "ok" and after["state"] == "ready", (continued, after)
+                file = after["file"]
+                assert file["id"] == request_id
+                transfer = call(restored, token, "download_file", file_id=file["file_id"], version_id=file["id"])
+                downloaded = restored.get(transfer["data"]["url"], headers={"Authorization": "Bearer " + token})
+                expected = remote_bytes[0] if fault == "source_reply" else original_bytes
+                assert downloaded.status_code == 200 and downloaded.content == expected
+            assert len(fetches) == (2 if fault in {"source_reply", "before_object"} else 1)
+            count = len(fetches)
+            assert call(restored, token, "resume_url_import", **resume) == continued
+            for person in ("bob", "carol"):
+                _, other, _ = connection(restored, store, person=person)
+                assert call(restored, other["access_token"], "get_upload", request_id=request_id)["error"] == "access_denied"
+                assert call(restored, other["access_token"], "resume_url_import", request_id=str(uuid4()), upload_request_id=request_id)["error"] == "access_denied"
+            assert len(fetches) == count
+            assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
+            assert rpc(restored, token, "tools/call", {"name": "get_upload", "arguments": {"request_id": request_id}}).status_code == 401
+
+
+def test_overlapping_url_resume_observes_one_import_without_starting_a_second_fetch(mcp_app, monkeypatch):
+    _, store = mcp_app
+    entered, release = threading.Event(), threading.Event()
+    fetches = []
+    monkeypatch.setattr("ppap_core.files.public_addresses", lambda host, port: ("93.184.216.34",))
+
+    def provider(request):
+        fetches.append(request.url.path)
+        entered.set()
+        assert release.wait(10)
+        return httpx.Response(200, content=b"captured once", headers={"Content-Type": "text/plain"})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as client:
+        _, tokens, _ = connection(client, store)
+        token = tokens["access_token"]
+        request_id = str(uuid4())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            original = pool.submit(call, client, token, "import_url", request_id=request_id, url="https://imports.example.test/source.txt")
+            try:
+                assert entered.wait(10)
+                receipt = call(client, token, "get_upload", request_id=request_id)["data"]["value"]
+                assert receipt["state"] == "uploading" and receipt["file"] is None
+                resumed = call(client, token, "resume_url_import", request_id=str(uuid4()), upload_request_id=request_id)
+                assert resumed["status"] == "ok" and resumed["data"]["status"] == "staging", resumed
+                assert len(fetches) == 1
+            finally:
+                release.set()
+            assert original.result(timeout=10)["data"]["status"] == "ready"
+        assert call(client, token, "get_upload", request_id=request_id)["data"]["value"]["file"]["id"] == request_id
+        missing = call(client, token, "resume_url_import", request_id=str(uuid4()), upload_request_id=str(uuid4()))
+        assert missing["error"] == "url_import_not_found" and len(fetches) == 1
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_rejected_url_source_is_failed_and_cannot_be_resumed(mcp_app, monkeypatch, redirect):
+    _, store = mcp_app
+    fetches = []
+    if redirect:
+        monkeypatch.setattr("ppap_core.files.public_addresses", lambda host, port: ("93.184.216.34",))
+
+    def provider(request):
+        fetches.append(request.url.path)
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1/private"})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as client:
+        _, tokens, _ = connection(client, store)
+        token = tokens["access_token"]
+        request_id = str(uuid4())
+        result = call(client, token, "import_url", request_id=request_id, url="https://imports.example.test/source" if redirect else "http://127.0.0.1/private")
+        assert result["error"] == ("redirect_not_allowed" if redirect else "blocked_host"), result
+        receipt = call(client, token, "get_upload", request_id=request_id)["data"]["value"]
+        assert receipt["state"] == "failed" and receipt["file"] is None and receipt["resume_allowed"] is False
+        assert call(client, token, "resume_url_import", request_id=str(uuid4()), upload_request_id=request_id)["error"] == "upload_not_resumable"
+        assert len(fetches) == (1 if redirect else 0)
 
 
 def completed_mcp_task(client, store, token, *, publish_new_rule=True):
@@ -260,6 +406,146 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True):
     assert report["state"] == "ready", report
     reference = {"task_id": task_id, "round_id": task["round_id"], "file_version_id": file["id"], "result_attempt": row["audit"]["result_attempt"], "report_id": report["report_id"]}
     return worker, task, reference, report["artifact"]
+
+
+@pytest.mark.parametrize("rule_choice", ["original", "newer"])
+def test_mcp_review_replacement_and_linked_reaudit_preserve_frozen_history(mcp_app, monkeypatch, rule_choice):
+    app, store = mcp_app
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
+        token = tokens["access_token"]
+        worker, first_task, first_ref, _ = completed_mcp_task(client, store, token)
+        round_id = first_task["round_id"]
+        before = call(client, token, "get_round", round_id=round_id)["data"]["value"]
+        old_file = first_task["files"][0]["file"]
+        old_rule_id = first_task["files"][0]["audit"]["rule"]["id"]
+        old_rule = call(client, token, "get_rule", rule_version_id=old_rule_id)["data"]["value"]
+        old_transfer = call(client, token, "download_file", file_id=old_file["file_id"], version_id=old_file["id"])["data"]["url"]
+        original_bytes = client.get(old_transfer, headers={"Authorization": "Bearer " + token}).content
+        assert hashlib.sha256(original_bytes).hexdigest() == old_file["sha256"]
+        review = {
+            "round_id": round_id,
+            "request_id": str(uuid4()),
+            "body": {
+                "item_key": before["findings"][0]["item_key"],
+                "judgment": "需修改",
+                "rationale": "已核对原版本，需要补件",
+                "next_step": "补交新版控制计划",
+                "version": 0,
+                "citations": [{"file_version_id": old_file["id"], "location": "Sheet!A1", "excerpt": "控制计划"}],
+            },
+        }
+        approve(client, call(client, token, "submit_review", **review))
+        reviewed = call(client, token, "submit_review", **review)
+        assert reviewed["status"] == "ok" and reviewed["provenance"]["client_id"] == cid
+        assert reviewed["data"]["findings"][0]["status"] == before["findings"][0]["status"]
+        frozen_old = call(client, token, "get_round", round_id=round_id)["data"]["value"]
+        assert frozen_old["findings"][0]["review"]["citations"] == review["body"]["citations"]
+        publish = {
+            "request_id": str(uuid4()),
+            "body": {
+                "title": "补件审核规则第二版",
+                "source_file_version_id": old_rule["source_file_version_id"],
+                "predecessor_id": old_rule_id,
+                "body": {**old_rule["body"], "rules": [{**old_rule["body"]["rules"][0], "rule_to_check": "必须填写修订后的零件号"}]},
+            },
+        }
+        approve(client, call(client, token, "publish_rule", **publish))
+        newer = call(client, token, "publish_rule", **publish)
+        assert newer["status"] == "ok", newer
+        chosen_rule = old_rule_id if rule_choice == "original" else newer["data"]["id"]
+        prepared = call(client, token, "get_reaudit_inputs", round_id=round_id)["data"]["value"]
+        old_input = prepared["files"][0]
+        assert old_input["preferred_rule_version_id"] == old_rule_id
+        assert {row["id"] for row in old_input["rule_options"]} == {old_rule_id, newer["data"]["id"]}
+
+        content = io.BytesIO()
+        book = Workbook()
+        book.active.append(["控制计划", "测试客户", "零件号 P-1", "补件修订"])
+        book.save(content)
+        book.close()
+        replacement, _ = upload(client, token, content.getvalue(), file_id=old_file["file_id"])
+        assert replacement["id"] != old_file["id"] and replacement["sha256"] != old_file["sha256"]
+        validation_id = str(uuid4())
+        validated = call(
+            client, token, "validate_file", request_id=validation_id, body={"request_id": validation_id, "source_file_id": replacement["file_id"], "source_file_version_id": replacement["id"]}
+        )
+        assert validated["status"] == "ok", validated
+        process_claimed(worker, worker.claim_job("replacement-check"), "replacement-check")
+        request_id = str(uuid4())
+        body = {
+            "request_id": request_id,
+            "analysis_mode": "standard",
+            "customer_preference": prepared["customer_preference"],
+            "predecessor_id": round_id,
+            "files": [
+                {"file_version_id": old_file["id"], "validation_id": old_input["validation_id"], "selection": "removed", "removal_reason": "本次使用补件替换"},
+                {
+                    "file_version_id": replacement["id"],
+                    "validation_id": validation_id,
+                    "selection": "selected",
+                    "removal_reason": None,
+                    "replacement_of_file_version_id": old_file["id"],
+                    "preferred_rule_version_id": chosen_rule,
+                },
+            ],
+        }
+        linked = call(client, token, "prepare_task", request_id=request_id, body=body)
+        assert linked["status"] == "ok", linked
+        assert call(client, token, "prepare_task", request_id=request_id, body=body)["data"] == linked["data"]
+
+        class MetadataAI:
+            def structured_completion(self, **request):
+                return "控制计划" if request["operation"] == "document_classification" else json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
+
+        process_claimed(worker, worker.claim_job("replacement-match"), "replacement-match", rule_ai=MetadataAI())
+        next_task_id = linked["data"]["id"]
+        matched = call(client, token, "get_task", task_id=next_task_id)["data"]["value"]
+        assert matched["predecessor_id"] == round_id
+        assert matched["files"][1]["match"]["rule"]["id"] == chosen_rule
+        confirm = {"task_id": next_task_id, "request_id": str(uuid4()), "expected_revision": matched["input_revision"]}
+        approve(client, call(client, token, "confirm_task", **confirm))
+        original_request = app.state.mcp_gateway.request
+
+        async def lose_acceptance_reply(*a, **kw):
+            response = await original_request(*a, **kw)
+            if a[1:3] == ("POST", f"/audit-tasks/{next_task_id}/confirm"):
+                raise ConnectionError("controlled reply loss after reaudit acceptance")
+            return response
+
+        monkeypatch.setattr(app.state.mcp_gateway, "request", lose_acceptance_reply)
+        assert call(client, token, "confirm_task", **confirm)["status"] == "unknown"
+
+    with TestClient(create_app(store.settings, auth_store=store), base_url="http://127.0.0.1:8080") as restored:
+        # The persistent Task is the acceptance authority even if the MCP reply
+        # was lost. A second invocation must not enqueue another audit.
+        accepted = call(restored, token, "get_task", task_id=next_task_id)["data"]["value"]
+        next_round_id = accepted["round_id"]
+        assert next_round_id and next_round_id != round_id
+        assert call(restored, token, "confirm_task", **confirm)["status"] in {"running", "unknown"}
+        job = worker.claim_job("replacement-audit")
+        assert job.round_id == next_round_id and worker.claim_job("no-duplicate-audit") is None
+        process_claimed(worker, job, "replacement-audit")
+        process_claimed(worker, worker.claim_job("replacement-pdf"), "replacement-pdf")
+        finished = call(restored, token, "get_task", task_id=next_task_id)["data"]["value"]
+        assert finished["state"] == "completed"
+        current = call(restored, token, "get_round", round_id=next_round_id)["data"]["value"]
+        assert current["predecessor_id"] == round_id
+        assert [(row["file_version_id"], row["rule_version_id"]) for row in current["inputs"]] == [(replacement["id"], chosen_rule)]
+        assert all(finding["review"] is None for finding in current["findings"])
+        assert call(restored, token, "get_round", round_id=round_id)["data"]["value"] == frozen_old
+        assert call(restored, token, "get_rule", rule_version_id=old_rule_id)["data"]["value"] == old_rule
+        assert restored.get(old_transfer, headers={"Authorization": "Bearer " + token}).content == original_bytes
+        usage = call(restored, token, "list_usage_events")["data"]["value"]
+        assert usage["events"] == []  # This fixture explicitly disables charging.
+        tasks = call(restored, token, "list_tasks")["data"]["value"]["tasks"]
+        assert {task["id"] for task in tasks} == {first_task["id"], next_task_id}
+        for person in ("bob", "carol"):
+            _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
+            assert call(restored, other["access_token"], "get_reaudit_inputs", round_id=round_id)["error"] == "access_denied"
+            assert call(restored, other["access_token"], "get_round", round_id=next_round_id)["error"] == "access_denied"
+        assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
+        assert restored.get(old_transfer, headers={"Authorization": "Bearer " + token}).status_code == 401
 
 
 @pytest.mark.parametrize(("kind", "edit_at"), [("link", "none"), ("pdf", "none"), ("zip", "none"), ("link", "before_capture"), ("link", "after_capture")])
