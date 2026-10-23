@@ -235,7 +235,7 @@ def install_mcp(app, product, http, session_of):
             entry = await asyncio.to_thread(store.transfer, delegation, str(transfer_id), request.method)
             return gateway.transfer_response(delegation, entry)
         except McpError as exc:
-            return JSONResponse({"error": exc.code}, status_code=exc.status)
+            return JSONResponse({"error": exc.code}, status_code=exc.status, headers={"Retry-After": "5"} if exc.status in {429, 503} else None)
 
     app.state.mcp_provider = provider
     app.state.mcp_store = store

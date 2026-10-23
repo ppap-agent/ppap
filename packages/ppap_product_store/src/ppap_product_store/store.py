@@ -81,6 +81,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from ppap_product_store.provider_auth import ProviderAuthStore, create_authorization
 from ppap_product_store.task_view import file_round_audit, has_execution_error, report_eligible, round_read_view, task_round_view
 from ppap_product_store.upload_preparation import PREPARATION_KEY, normalize_preparation, preparation_inputs, validate_preparation_update
 
@@ -263,34 +264,25 @@ class AuthStore:
         raw = new_token()
         now = _now()
         expires_at = now + timedelta(seconds=ttl_seconds)
-        access_token = refresh_token = None
-        access_expires_at = refresh_expires_at = None
         if tokens is not None:
-            access_token = tokens.access_token
-            refresh_token = tokens.refresh_token or None
-            access_expires_at = tokens.access_expires_at
-            refresh_expires_at = tokens.refresh_expires_at
             bound = tokens.refresh_expires_at if tokens.refresh_token else tokens.access_expires_at
             if bound < expires_at:
                 expires_at = bound
-        with self._conn() as conn:
+        with self._conn() as conn, conn.transaction():
+            authorization_id = create_authorization(conn, principal, tokens)
             conn.execute(
                 """
                 INSERT INTO product.sessions (
-                    token_hash, user_id, tenant_id, expires_at,
-                    access_token, refresh_token, access_expires_at, refresh_expires_at
+                    token_hash, user_id, tenant_id, expires_at, provider_authorization_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
                     token_hash(raw),
                     principal.user_id,
                     principal.tenant_id,
                     expires_at,
-                    access_token,
-                    refresh_token,
-                    access_expires_at,
-                    refresh_expires_at,
+                    authorization_id,
                 ),
             )
         return raw
@@ -302,13 +294,16 @@ class AuthStore:
                 dict[str, Any] | None,
                 conn.execute(
                     """
-                SELECT s.user_id, s.tenant_id, s.expires_at, s.access_token, s.refresh_token,
-                       s.access_expires_at, s.refresh_expires_at,
+                SELECT s.user_id, s.tenant_id, s.expires_at, a.access_token, a.refresh_token,
+                       a.access_expires_at, a.refresh_expires_at, s.provider_authorization_id,
                        i.provider, i.app_id, i.tenant_key, i.subject, m.role, i.display_name
                 FROM product.sessions s
                 JOIN product.tenants t ON t.id = s.tenant_id
+                JOIN product.provider_authorizations a ON a.id=s.provider_authorization_id
+                    AND a.user_id=s.user_id AND a.tenant_id=s.tenant_id
                 JOIN product.identities i ON i.user_id = s.user_id
                     AND i.provider = t.provider AND i.tenant_key = t.external_key
+                    AND i.provider=a.provider AND i.app_id=a.app_id AND i.subject=a.subject
                 JOIN product.memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
                 WHERE s.token_hash = %s AND s.revoked_at IS NULL AND s.expires_at > now()
                 LIMIT 1
@@ -335,28 +330,15 @@ class AuthStore:
             session_row["refresh_token"] or "",
             session_row["access_expires_at"],
             session_row["refresh_expires_at"],
+            str(session_row["provider_authorization_id"]),
         )
 
     def principal_from_token(self, raw: str) -> Principal | None:
         session = self.load_session(raw)
         return session.principal if session else None
 
-    def update_provider_auth(self, raw: str, tokens: UserTokens) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                """
-                UPDATE product.sessions
-                SET access_token = %s, refresh_token = %s, access_expires_at = %s, refresh_expires_at = %s
-                WHERE token_hash = %s AND revoked_at IS NULL
-                """,
-                (
-                    tokens.access_token,
-                    tokens.refresh_token or None,
-                    tokens.access_expires_at,
-                    tokens.refresh_expires_at,
-                    token_hash(raw),
-                ),
-            )
+    def fresh_provider_session(self, session: Session, refresh) -> Session:
+        return ProviderAuthStore(self).fresh(session, refresh)
 
     def revoke_session(self, raw: str) -> None:
         with self._conn() as conn:
@@ -4706,10 +4688,21 @@ class AuthStore:
                 JOIN product.identities i ON i.user_id = u.user_id AND i.provider = t.provider
                     AND i.tenant_key = t.external_key AND i.app_id = %s
                 JOIN product.memberships m ON m.user_id = u.user_id AND m.tenant_id = u.tenant_id
-                JOIN LATERAL (SELECT access_token, expires_at, access_expires_at FROM product.sessions
-                    WHERE user_id = u.user_id AND tenant_id = u.tenant_id AND revoked_at IS NULL
-                    AND expires_at > now() AND access_expires_at > now() AND access_token <> ''
-                    ORDER BY access_expires_at DESC LIMIT 1) s ON true
+                JOIN LATERAL (
+                    SELECT a.access_token, authority.expires_at, a.access_expires_at
+                    FROM product.provider_authorizations a
+                    JOIN LATERAL (
+                        SELECT expires_at FROM product.sessions WHERE provider_authorization_id=a.id
+                        AND user_id=u.user_id AND tenant_id=u.tenant_id AND revoked_at IS NULL AND expires_at>now()
+                        UNION ALL
+                        SELECT expires_at FROM product.mcp_grants WHERE provider_authorization_id=a.id
+                        AND user_id=u.user_id AND tenant_id=u.tenant_id AND revoked_at IS NULL AND expires_at>now()
+                        AND 'audits:execute'=ANY(scopes)
+                    ) authority ON true
+                    WHERE a.user_id=u.user_id AND a.tenant_id=u.tenant_id AND a.provider=i.provider
+                    AND a.app_id=i.app_id AND a.subject=i.subject AND a.state='ready'
+                    AND a.access_expires_at>now() AND a.access_token<>''
+                    ORDER BY a.access_expires_at DESC LIMIT 1) s ON true
                 WHERE u.external_status = 'pending' AND NOT u.is_free_trial
                     AND u.debit_order_id IS NULL AND u.debited_at IS NULL
                     AND (%s::timestamptz IS NULL OR (u.created_at, u.id) > (%s::timestamptz, %s::uuid))

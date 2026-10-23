@@ -6,15 +6,20 @@ import io
 import json
 import re
 import secrets
+import threading
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from ppap_api import create_app
 from ppap_application import build_product_store
+from ppap_core.feishu import UserTokens
 from ppap_core.fixtures import APP_ID, RULE_A
+from ppap_core.identity import ProviderAuthError
 from ppap_core.mcp import SCOPES, pkce_challenge
 from ppap_core.settings import Settings
 from ppap_worker import process_claimed
@@ -30,9 +35,9 @@ def mcp_app(auth_store_factory):
     return app, store
 
 
-def connection(client, store, *, person="alice", scopes="identity:read files:read files:write audits:read", exchange_now=True):
+def connection(client, store, *, person="alice", scopes="identity:read files:read files:write audits:read", exchange_now=True, browser_session=None):
     principal = store.principal_for_fixture(person)
-    client.cookies.set("ppap_session", store.create_session(principal))
+    client.cookies.set("ppap_session", browser_session or store.create_session(principal))
     registered = client.post(
         "/oauth/register",
         json={
@@ -432,3 +437,217 @@ def test_concurrent_refresh_rotates_once_and_revokes_the_reused_family(mcp_app):
         assert sorted(r.status_code for r in replies) == [200, 400]
         winner = next(r.json() for r in replies if r.status_code == 200)
         assert rpc(client, winner["access_token"], "tools/list").status_code == 401
+
+
+def provider_tokens(label, *, expired=False):
+    at = datetime.now(timezone.utc)
+    return UserTokens("access-" + label, "refresh-" + label, at + timedelta(seconds=-1 if expired else 3600), at + timedelta(days=7))
+
+
+def expire_provider(store, raw):
+    session = store.load_session(raw)
+    with store._conn() as conn:
+        conn.execute("UPDATE product.provider_authorizations SET access_expires_at=now()-interval '1 second' WHERE id=%s", (session.provider_authorization_id,))
+    return store.load_session(raw)
+
+
+def test_web_and_multiple_mcp_clients_share_one_provider_refresh(mcp_app):
+    _, store = mcp_app
+    principal = store.principal_for_fixture("alice")
+    original = provider_tokens("shared")
+    raw = store.create_session(principal, original)
+    second_browser = store.create_session(principal, original)
+    assert store.load_session(raw).provider_authorization_id == store.load_session(second_browser).provider_authorization_id
+    entered, release = threading.Event(), threading.Event()
+    requests = []
+
+    def provider(request):
+        requests.append(json.loads(request.content)["refresh_token"])
+        entered.set()
+        assert release.wait(10), "refresh release was not delivered"
+        return httpx.Response(200, json={"code": 0, "access_token": "access-rotated", "refresh_token": "refresh-rotated", "expires_in": 3600, "refresh_token_expires_in": 604800})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as client:
+        first_id, first, _ = connection(client, store, browser_session=raw)
+        _, second, _ = connection(client, store, browser_session=raw)
+        expire_provider(store, raw)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            browser_request = pool.submit(client.get, "/me")
+            try:
+                assert entered.wait(5)
+                busy = call(client, second["access_token"], "get_identity")
+                assert busy["error"] == "provider_refresh_in_progress" and busy["retry_after_seconds"] == 5
+                # Authentication remains valid; this is not an OAuth token failure.
+                assert rpc(client, first["access_token"], "tools/list").status_code == 200
+            finally:
+                release.set()
+            assert browser_request.result(timeout=10).status_code == 200
+        assert call(client, first["access_token"], "get_identity")["status"] == "ok"
+        assert call(client, second["access_token"], "get_identity")["status"] == "ok"
+        assert store.load_session(second_browser).access_token == "access-rotated"
+        repeated_login = store.create_session(
+            principal, UserTokens("access-rotated", "refresh-rotated", datetime.now(timezone.utc) + timedelta(hours=1), datetime.now(timezone.utc) + timedelta(days=7))
+        )
+        assert store.load_session(repeated_login).provider_authorization_id == store.load_session(raw).provider_authorization_id
+        assert requests == ["refresh-shared"]
+        client.post("/oauth/revoke", data={"client_id": first_id, "token": first["access_token"]})
+        assert rpc(client, first["access_token"], "tools/list").status_code == 401
+        assert call(client, second["access_token"], "get_identity")["status"] == "ok"
+        assert client.get("/me").status_code == 200
+        store.revoke_session(raw)
+        # Browser logout revokes that session; it does not revoke separately
+        # confirmed MCP grants that share the underlying provider credentials.
+        assert client.get("/me").status_code == 401
+        assert call(client, second["access_token"], "get_identity")["status"] == "ok"
+
+
+def test_unknown_provider_refresh_survives_restart_and_does_not_bind_to_new_login(mcp_app):
+    _, store = mcp_app
+    principal = store.principal_for_fixture("alice")
+    raw = store.create_session(principal, provider_tokens("unknown"))
+    requests = []
+
+    def provider(request):
+        requests.append(request)
+        raise httpx.ReadTimeout("controlled lost token response", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        with TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as client:
+            _, tokens, _ = connection(client, store, browser_session=raw)
+            old_owner = expire_provider(store, raw).provider_authorization_id
+            assert call(client, tokens["access_token"], "get_identity")["error"] == "provider_reauthorization_required"
+        restarted_store = build_product_store(store.settings, objects=store.objects, role="api")
+        with TestClient(create_app(store.settings, auth_store=restarted_store, http=http), base_url="http://127.0.0.1:8080") as client:
+            assert call(client, tokens["access_token"], "get_identity")["error"] == "provider_reauthorization_required"
+            new_raw = restarted_store.create_session(principal, provider_tokens("new-login"))
+            assert restarted_store.load_session(new_raw).provider_authorization_id != old_owner
+            _, new_tokens, _ = connection(client, restarted_store, browser_session=new_raw)
+            assert call(client, new_tokens["access_token"], "get_identity")["status"] == "ok"
+            assert call(client, tokens["access_token"], "get_identity")["error"] == "provider_reauthorization_required"
+            assert len(requests) == 1
+
+
+def test_late_provider_refresh_cannot_overwrite_relogin_or_recover_timed_out_claim(mcp_app):
+    _, store = mcp_app
+    principal = store.principal_for_fixture("alice")
+    old_raw = store.create_session(principal, provider_tokens("late", expired=True))
+    old_session = store.load_session(old_raw)
+    entered, release = threading.Event(), threading.Event()
+
+    def refresh(token):
+        assert token == "refresh-late"
+        entered.set()
+        assert release.wait(10)
+        return provider_tokens("late-result")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(store.fresh_provider_session, old_session, refresh)
+        try:
+            assert entered.wait(5)
+            new_raw = store.create_session(principal, provider_tokens("replacement"))
+            with store._conn() as conn:
+                conn.execute("UPDATE product.provider_authorizations SET refresh_started_at=now()-interval '2 minutes' WHERE id=%s", (old_session.provider_authorization_id,))
+            # A second process observes a stale claim. It may require login,
+            # but cannot reset the claim and make a second provider call.
+            other = build_product_store(store.settings, objects=store.objects, role="api")
+            with pytest.raises(ProviderAuthError, match="provider_reauthorization_required"):
+                other.fresh_provider_session(old_session, lambda _: pytest.fail("unknown refresh was replayed"))
+        finally:
+            release.set()
+        with pytest.raises(ProviderAuthError, match="provider_reauthorization_required"):
+            pending.result(timeout=10)
+    assert store.load_session(new_raw).access_token == "access-replacement"
+    assert store.load_session(old_raw).access_token == "access-late"
+
+
+def test_provider_refresh_completion_cannot_restore_revoked_mcp_grant(mcp_app):
+    _, store = mcp_app
+    raw = store.create_session(store.principal_for_fixture("alice"), provider_tokens("revoke"))
+    entered, release = threading.Event(), threading.Event()
+
+    def provider(request):
+        entered.set()
+        assert release.wait(10)
+        return httpx.Response(200, json={"code": 0, "access_token": "access-next", "refresh_token": "refresh-next", "expires_in": 3600, "refresh_token_expires_in": 604800})
+
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(store.settings, auth_store=store, http=http), base_url="http://127.0.0.1:8080") as client:
+        cid, tokens, _ = connection(client, store, browser_session=raw)
+        expire_provider(store, raw)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            operation = pool.submit(call, client, tokens["access_token"], "get_identity")
+            try:
+                assert entered.wait(5)
+                assert client.post("/oauth/revoke", data={"client_id": cid, "token": tokens["access_token"]}).status_code == 200
+            finally:
+                release.set()
+            assert operation.result(timeout=10)["error"] == "invalid_token"
+        assert rpc(client, tokens["access_token"], "tools/list").status_code == 401
+        assert client.get("/me").status_code == 200
+
+
+def test_concurrent_login_owning_rotated_credentials_does_not_create_two_refresh_owners(mcp_app):
+    _, store = mcp_app
+    principal = store.principal_for_fixture("alice")
+    original = store.create_session(principal, provider_tokens("original", expired=True))
+    entered, release = threading.Event(), threading.Event()
+    rotated = provider_tokens("concurrent")
+
+    def refresh(_):
+        entered.set()
+        assert release.wait(10)
+        return rotated
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(store.fresh_provider_session, store.load_session(original), refresh)
+        try:
+            assert entered.wait(5)
+            # Provider delivers the same new credential through a fresh login
+            # before the older refresh response reaches this process.
+            newer = store.create_session(principal, rotated)
+        finally:
+            release.set()
+        with pytest.raises(ProviderAuthError, match="provider_reauthorization_required"):
+            pending.result(timeout=10)
+    assert store.fresh_provider_session(store.load_session(newer), lambda _: pytest.fail("fresh login unexpectedly refreshed")).access_token == rotated.access_token
+    with pytest.raises(ProviderAuthError, match="provider_reauthorization_required"):
+        store.fresh_provider_session(store.load_session(original), lambda _: pytest.fail("superseded credentials replayed"))
+
+
+def test_shared_provider_binding_rejects_foreign_user_even_with_valid_foreign_credentials(mcp_app):
+    app, store = mcp_app
+    alice = store.create_session(store.principal_for_fixture("alice"), provider_tokens("owner-alice"))
+    foreign = store.create_session(store.principal_for_fixture("carol"), provider_tokens("owner-carol"))
+    foreign_owner = store.load_session(foreign).provider_authorization_id
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        cid, tokens, _ = connection(client, store, browser_session=alice)
+        with store._conn() as conn:
+            conn.execute("UPDATE product.mcp_grants SET provider_authorization_id=%s WHERE client_id=%s", (foreign_owner, cid))
+        assert rpc(client, tokens["access_token"], "tools/list").status_code == 401
+        with store._conn() as conn:
+            from ppap_core.identity import token_hash
+
+            conn.execute("UPDATE product.sessions SET provider_authorization_id=%s WHERE token_hash=%s", (foreign_owner, token_hash(alice)))
+        assert client.get("/me").status_code == 401
+
+
+def test_pending_usage_uses_owner_mcp_authority_after_browser_logout(mcp_app, seed_usage_event_factory):
+    app, store = mcp_app
+    alice = store.principal_for_fixture("alice")
+    bob = store.principal_for_fixture("bob")
+    raw = store.create_session(alice, provider_tokens("payer"))
+    alice_event = seed_usage_event_factory(store, alice, "test-item", 1, False, "pending")
+    seed_usage_event_factory(store, bob, "test-item", 1, False, "pending")
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        _, _, _ = connection(client, store, browser_session=raw, scopes="identity:read usage:read")
+        store.revoke_session(raw)
+        # A usage reader cannot supply the payer's authorization to report it.
+        assert list(store.pending_usage_sessions(APP_ID)) == []
+        raw = store.create_session(alice, provider_tokens("payer-reauthorized"))
+        cid, tokens, _ = connection(client, store, browser_session=raw, scopes="identity:read audits:execute usage:read")
+        store.revoke_session(raw)
+        pending = list(store.pending_usage_sessions(APP_ID))
+        assert len(pending) == 1 and pending[0][0] == alice_event["id"]
+        assert pending[0][1].principal.user_id == alice.user_id
+        assert pending[0][1].access_token == "access-payer-reauthorized"
+        assert client.post("/oauth/revoke", data={"client_id": cid, "token": tokens["access_token"]}).status_code == 200
+        assert list(store.pending_usage_sessions(APP_ID)) == []

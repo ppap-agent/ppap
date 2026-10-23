@@ -117,8 +117,8 @@ def test_success_keeps_the_deep_link_and_untrusted_states_never_supply_a_return_
         assert refused.headers["location"] == "http://127.0.0.1:4173/?auth_error=cancelled"
 
 
-@pytest.mark.parametrize("failure", ["timeout", "invalid_json", "non_object", "invalid_credentials"])
-def test_temporary_refresh_failure_does_not_permanently_revoke_the_existing_session(auth_store_factory, failure):
+@pytest.mark.parametrize("failure", ["timeout", "invalid_json", "non_object", "invalid_credentials", "connect_timeout"])
+def test_provider_refresh_retries_only_when_transport_proves_it_was_not_sent(auth_store_factory, failure):
     settings = Settings(feishu_app_id="login-recovery-" + uuid.uuid4().hex, feishu_app_secret="test-secret")
     store = auth_store_factory(settings, reset=False, role="api")
     principal = store.upsert_feishu_identity("login-recovery-tenant-" + uuid.uuid4().hex, "test-user")
@@ -129,6 +129,8 @@ def test_temporary_refresh_failure_does_not_permanently_revoke_the_existing_sess
     def provider(request):
         assert request.method == "POST"
         if not recovered:
+            if failure == "connect_timeout":
+                raise httpx.ConnectTimeout("controlled failure before sending", request=request)
             if failure == "timeout":
                 raise httpx.ReadTimeout("controlled provider timeout", request=request)
             if failure == "invalid_json":
@@ -141,11 +143,14 @@ def test_temporary_refresh_failure_does_not_permanently_revoke_the_existing_sess
     with httpx.Client(transport=httpx.MockTransport(provider)) as http, TestClient(create_app(settings, auth_store=store, http=http), raise_server_exceptions=False) as client:
         client.cookies.set(SESSION_COOKIE, raw)
         first = client.get("/me")
-        assert first.status_code == (401 if failure == "invalid_credentials" else 500)
+        assert first.status_code == (503 if failure == "connect_timeout" else 401)
         recovered = True
         second = client.get("/me")
-        if failure == "invalid_credentials":
-            assert second.status_code == 401
-        else:
+        if failure == "connect_timeout":
+            assert first.headers["retry-after"] == "5"
             assert second.status_code == 200
             assert second.json()["user_id"] == principal.user_id
+        else:
+            # A lost/malformed response may already have consumed the rotating
+            # credential. Recovery is a new login, not replay of the old token.
+            assert second.status_code == 401

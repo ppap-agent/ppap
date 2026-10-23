@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from ppap_application import build_product_store
@@ -66,7 +66,7 @@ from ppap_core.files import (
     safe_content_type,
 )
 from ppap_core.fixtures import SUBJECTS
-from ppap_core.identity import EDITION_COOKIE, SESSION_COOKIE, can_read, can_review, new_token, safe_return_to
+from ppap_core.identity import EDITION_COOKIE, SESSION_COOKIE, ProviderAuthError, can_read, can_review, new_token, safe_return_to
 from ppap_core.logs import QUIET_PATHS, bind, emit, new_request_id, reset, round_id_from_path
 from ppap_core.logs import configure as configure_logs
 from ppap_core.settings import Settings, load_settings
@@ -172,26 +172,32 @@ def create_app(
                 current = app.state.mcp_store.delegation(delegated.id)
             except McpError:
                 return None
-            request.state.authenticated_principal = current.session.principal
-            return current.session
-        raw = request.cookies.get(SESSION_COOKIE, "")
-        if not raw:
-            return None
-        session = store.load_session(raw)
-        if not session:
-            return None
-        now = datetime.now(timezone.utc)
-        if session.needs_refresh(now):
-            try:
-                tokens = refresh_user_token(http, settings, session.refresh_token)
-            except FeishuError:
-                store.revoke_session(raw)
+            session = current.session
+            raw = ""
+        else:
+            raw = request.cookies.get(SESSION_COOKIE, "")
+            if not raw:
                 return None
-            store.update_provider_auth(raw, tokens)
             session = store.load_session(raw)
-        elif session.provider_auth_dead(now):
-            store.revoke_session(raw)
+            if not session:
+                return None
+        refresh_possible = session.needs_refresh(datetime.now(timezone.utc))
+        try:
+            session = store.fresh_provider_session(session, lambda token: refresh_user_token(http, settings, token))
+        except ProviderAuthError as exc:
+            if exc.status == 503:
+                raise HTTPException(503, exc.code, headers={"Retry-After": "5"}) from None
+            if raw:
+                store.revoke_session(raw)
             return None
+        if raw and refresh_possible:
+            # A concurrent logout or membership removal must not resurrect it.
+            session = store.load_session(raw)
+        elif isinstance(delegated, Delegation) and refresh_possible:
+            try:
+                session = app.state.mcp_store.delegation(delegated.id).session
+            except McpError:
+                return None
         if session:
             request.state.authenticated_principal = session.principal
         return session

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -60,8 +60,8 @@ class AppMismatch:
 
 @dataclass(frozen=True)
 class UserTokens:
-    access_token: str
-    refresh_token: str
+    access_token: str = field(repr=False)
+    refresh_token: str = field(repr=False)
     access_expires_at: datetime
     refresh_expires_at: datetime
 
@@ -163,6 +163,10 @@ class FeishuError(Exception):
     pass
 
 
+class RefreshNotSent(FeishuError):
+    """The transport failed before it could send the refresh request."""
+
+
 def _seconds(value: object) -> int:
     try:
         return max(0, int(cast(Any, value)))
@@ -230,15 +234,18 @@ def exchange_host_code(http, settings: Settings, code: str, redirect_uri: str | 
 def refresh_user_token(http, settings: Settings, refresh_token: str) -> UserTokens:
     if not refresh_token:
         raise FeishuError("refresh_token_missing")
-    return _user_tokens(
-        http,
-        {
-            "grant_type": "refresh_token",
-            "client_id": settings.feishu_app_id,
-            "client_secret": settings.feishu_app_secret,
-            "refresh_token": refresh_token,
-        },
-    )
+    try:
+        return _user_tokens(
+            http,
+            {
+                "grant_type": "refresh_token",
+                "client_id": settings.feishu_app_id,
+                "client_secret": settings.feishu_app_secret,
+                "refresh_token": refresh_token,
+            },
+        )
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+        raise RefreshNotSent("provider_temporarily_unavailable") from None
 
 
 def user_info(http, user_access_token: str) -> dict[str, str]:
