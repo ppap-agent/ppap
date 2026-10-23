@@ -499,20 +499,24 @@ def insert_history(http, access_token: str, document_id: str, content: str) -> N
     children = structured_blocks(content)
     if not children:
         raise FeishuWritebackError("feishu_writeback_failed")
-    try:
-        response = http.post(
-            docx_children_url(document_id),
-            headers={
-                "Authorization": "Bearer " + access_token,
-                "Content-Type": "application/json; charset=utf-8",
-            },
-            json={"index": 0, "children": children},
-            timeout=20,
-        )
-    except Exception as exc:
-        raise FeishuWritebackError("feishu_writeback_failed") from exc
-    if not _ok(response):
-        raise FeishuWritebackError("feishu_writeback_failed")
+    # Feishu accepts at most 50 children. Advance the insertion index so later
+    # batches follow the earlier ones while the whole history precedes old text.
+    # Any ambiguous batch stops the write; never replay an earlier batch.
+    for offset in range(0, len(children), 50):
+        try:
+            response = http.post(
+                docx_children_url(document_id),
+                headers={
+                    "Authorization": "Bearer " + access_token,
+                    "Content-Type": "application/json; charset=utf-8",
+                },
+                json={"index": offset, "children": children[offset : offset + 50]},
+                timeout=20,
+            )
+        except Exception as exc:
+            raise FeishuWritebackError("feishu_writeback_failed") from exc
+        if not _ok(response):
+            raise FeishuWritebackError("feishu_writeback_failed")
 
 
 def add_file_comment(http, access_token: str, file_token: str, content: str) -> bool:
