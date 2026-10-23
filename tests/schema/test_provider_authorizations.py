@@ -77,5 +77,33 @@ def test_provider_credential_upgrade_preserves_exact_bindings_and_unknown_outcom
             conn.execute("SELECT * FROM product.provider_authorizations")
         with connect(settings, "api") as conn:
             assert conn.execute("SELECT count(*) FROM product.provider_authorizations").fetchone()[0] == 2
+        # The documented rollback keeps the new schema, revokes migrated
+        # sessions/grants, and lets the old API require a fresh provider login.
+        # Emulate only that old session row format; no provider is contacted.
+        with store._conn() as conn, conn.transaction():
+            rules_before = conn.execute("SELECT id, body, created_at FROM product.rule_versions ORDER BY id").fetchall()
+            providers_before = conn.execute("SELECT id, state, access_token, refresh_token FROM product.provider_authorizations ORDER BY id").fetchall()
+            conn.execute("UPDATE product.sessions SET revoked_at=coalesce(revoked_at,now()) WHERE provider_authorization_id IS NOT NULL")
+            conn.execute("UPDATE product.mcp_grants SET revoked_at=coalesce(revoked_at,now()) WHERE provider_authorization_id IS NOT NULL")
+            p = people["alice"]
+            conn.execute(
+                """INSERT INTO product.sessions(token_hash,user_id,tenant_id,expires_at,access_token,refresh_token,access_expires_at,refresh_expires_at)
+                         VALUES(%s,%s,%s,now()+interval '1 hour','rollback-new-access','rollback-new-refresh',now()+interval '1 hour',now()+interval '1 day')""",
+                (token_hash("rollback-login"), p.user_id, p.tenant_id),
+            )
+        assert store.load_session("alice0") is None
+        assert store.load_session("carol0") is None
+        schema.require(schema.apply(database), "upgrade after fresh old-API login")
+        restored = store.load_session("rollback-login")
+        assert restored.access_token == "rollback-new-access"
+        assert restored.provider_authorization_id != alice.provider_authorization_id
+        assert store.load_session("alice0") is None
+        assert store.load_session("carol0") is None
+        with store._conn() as conn:
+            assert conn.execute("SELECT bool_and(revoked_at IS NOT NULL) FROM product.mcp_grants").fetchone()[0]
+            assert conn.execute("SELECT count(*) FROM product.sessions WHERE access_token IS NOT NULL OR refresh_token IS NOT NULL").fetchone()[0] == 0
+            assert conn.execute("SELECT id, body, created_at FROM product.rule_versions ORDER BY id").fetchall() == rules_before
+            for row in providers_before:
+                assert conn.execute("SELECT id, state, access_token, refresh_token FROM product.provider_authorizations WHERE id=%s", (row[0],)).fetchone() == row
     finally:
         schema.require(schema.psql(schema.bootstrap_user(), schema.bootstrap_password(), "postgres", "-c", f"DROP DATABASE {database} WITH (FORCE)"), "drop provider upgrade DB")
