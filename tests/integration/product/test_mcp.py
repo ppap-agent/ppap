@@ -1,5 +1,6 @@
 """Actual PostgreSQL + public OAuth/MCP wire contract. Feishu sign-in is separate live evidence."""
 
+import asyncio
 import concurrent.futures
 import hashlib
 import io
@@ -7,6 +8,7 @@ import json
 import re
 import secrets
 import threading
+import zipfile
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -178,6 +180,320 @@ def approve(client, operation):
     csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
     assert client.post(operation["confirmation_url"], data={"csrf": "wrong", "decision": "approve"}).status_code == 403
     assert client.post(operation["confirmation_url"], data={"csrf": csrf, "decision": "approve"}).status_code == 200
+
+
+def reviewed_round(client, store, token):
+    file, _ = upload(client, token)
+    draft = client.post("/drafts", json={"items": [{"file_version_id": file["id"], "role": "target", "rule_version_id": RULE_A}]}).json()
+    bound = client.put(f"/drafts/{draft['id']}", json={"writeback_target": {"provider": "feishu", "object_kind": "docx", "object_ref": "approved-document"}})
+    assert bound.status_code == 200, bound.text
+    accepted = client.post(f"/drafts/{draft['id']}/accept", json={"idempotency_key": str(uuid4())})
+    assert accepted.status_code == 201, accepted.text
+    round_id = accepted.json()["id"]
+    process_claimed(store, store.claim_job("presence-audit"), "presence-audit")
+    finding = client.get(f"/rounds/{round_id}").json()["findings"][0]
+    review = {"item_key": finding["item_key"], "judgment": "同意", "rationale": "原批准复核", "next_step": "", "version": 0}
+    saved = client.put(f"/rounds/{round_id}/reviews", json=review)
+    assert saved.status_code == 200, saved.text
+    return round_id, {**review, "version": 1, "rationale": "并发网页修改"}
+
+
+def completed_mcp_task(client, store, token, *, publish_new_rule=True):
+    worker = build_product_store(store.settings, objects=store.objects, role="worker")
+    file, _ = upload(client, token)
+    validation_id = str(uuid4())
+    checked = call(client, token, "validate_file", request_id=validation_id, body={"request_id": validation_id, "source_file_id": file["file_id"], "source_file_version_id": file["id"]})
+    assert checked["status"] == "ok", checked
+    process_claimed(worker, worker.claim_job("share-precheck"), "share-precheck")
+    publish = {
+        "request_id": str(uuid4()),
+        "body": {
+            "title": "分享测试规则",
+            "source_file_version_id": file["id"],
+            "body": {
+                "kind": "engine",
+                "type": "控制计划",
+                "rule_profile": "v3",
+                "customers": ["测试客户"],
+                "models": [],
+                "parts": [],
+                "rules": [{"id": "1", "category": "身份", "priority": None, "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
+            },
+        },
+    }
+    if publish_new_rule:
+        approve(client, call(client, token, "publish_rule", **publish))
+        assert call(client, token, "publish_rule", **publish)["status"] == "ok"
+    request_id = str(uuid4())
+    prepared = call(
+        client,
+        token,
+        "prepare_task",
+        request_id=request_id,
+        body={
+            "request_id": request_id,
+            "analysis_mode": "standard",
+            "customer_preference": None,
+            "files": [{"file_version_id": file["id"], "validation_id": validation_id, "selection": "selected", "removal_reason": None}],
+        },
+    )
+    assert prepared["status"] == "ok", prepared
+
+    class MetadataAI:
+        def structured_completion(self, **request):
+            return "控制计划" if request["operation"] == "document_classification" else json.dumps({"customer": "测试客户", "model": "M1", "part": "零件A", "part_number": "P-1"})
+
+    process_claimed(worker, worker.claim_job("share-match"), "share-match", rule_ai=MetadataAI())
+    task_id = prepared["data"]["id"]
+    confirm = {"task_id": task_id, "request_id": str(uuid4()), "expected_revision": 0}
+    approve(client, call(client, token, "confirm_task", **confirm))
+    accepted = call(client, token, "confirm_task", **confirm)
+    assert accepted["status"] == "ok", accepted
+    process_claimed(worker, worker.claim_job("share-audit"), "share-audit")
+    job = worker.claim_job("share-pdf")
+    assert job.kind == "report_pdf"
+    process_claimed(worker, job, "share-pdf")
+    task = call(client, token, "get_task", task_id=task_id)["data"]["value"]
+    assert task["state"] == "completed", task
+    row = task["files"][0]
+    report = row["audit"]["report"]
+    assert report["state"] == "ready", report
+    reference = {"task_id": task_id, "round_id": task["round_id"], "file_version_id": file["id"], "result_attempt": row["audit"]["result_attempt"], "report_id": report["report_id"]}
+    return worker, task, reference, report["artifact"]
+
+
+@pytest.mark.parametrize(("kind", "edit_at"), [("link", "none"), ("pdf", "none"), ("zip", "none"), ("link", "before_capture"), ("link", "after_capture")])
+def test_mcp_report_delivery_freezes_approved_sources_and_retries_only_failed(mcp_app, monkeypatch, kind, edit_at):
+    """Real PG, workers, PDF/ZIP bytes and MCP; only Feishu HTTP is controlled."""
+    _, store = mcp_app
+    principal = store.principal_for_fixture("alice")
+    store.settings.feishu_app_secret = "controlled-secret"
+    store.save_app_ticket(APP_ID, "controlled-ticket")
+    messages, attachments = [], []
+
+    def provider(request):
+        path = request.url.path
+        if path.endswith("/authen/v1/user_info"):
+            data = {"open_id": principal.subject, "tenant_key": principal.tenant_key, "name": "受控接收人"}
+        elif path.endswith("/auth/v3/app_access_token"):
+            return httpx.Response(200, json={"code": 0, "app_access_token": "controlled-app"})
+        elif path.endswith("/auth/v3/tenant_access_token"):
+            return httpx.Response(200, json={"code": 0, "tenant_access_token": "controlled-tenant"})
+        elif "/contact/v3/users/" in path:
+            data = {
+                "user": {
+                    "open_id": path.rsplit("/", 1)[1],
+                    "tenant_key": principal.tenant_key,
+                    "name": "受控接收人",
+                    "status": {
+                        "is_activated": True,
+                        "is_resigned": False,
+                        "is_frozen": False,
+                        "is_exited": False,
+                        "is_unjoin": False,
+                    },
+                }
+            }
+        elif path.endswith("/im/v1/files"):
+            attachments.append(request.content)
+            data = {"file_key": "controlled-file-key"}
+        elif path.endswith("/im/v1/messages"):
+            message = json.loads(request.content)
+            messages.append(message)
+            target = message["receive_id"]
+            if target == "ou_unknown":
+                raise httpx.ReadTimeout("controlled lost provider reply", request=request)
+            if target == "ou_failed" and sum(m["receive_id"] == target for m in messages) == 1:
+                return httpx.Response(400, json={"code": 230013})
+            data = {"message_id": "controlled-message-" + str(len(messages))}
+        else:
+            raise AssertionError("unexpected provider path: " + path)
+        return httpx.Response(200, json={"code": 0, "data": data})
+
+    now = datetime.now(timezone.utc)
+    session = store.create_session(principal, UserTokens("controlled-access", "controlled-refresh", now + timedelta(hours=1), now + timedelta(days=7)))
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        app = create_app(store.settings, auth_store=store, http=http)
+        with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+            _, tokens, _ = connection(client, store, scopes=" ".join(SCOPES), browser_session=session)
+            token = tokens["access_token"]
+            worker, task, reference, artifact = completed_mcp_task(client, store, token)
+            pdf_transfer = call(client, token, "download_report", reference=reference, artifact_id=artifact["artifact_id"])
+            assert pdf_transfer["status"] == "ok", pdf_transfer
+            pdf = client.get(pdf_transfer["data"]["url"], headers={"Authorization": "Bearer " + token})
+            assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-")
+            content = {"kind": kind, "artifact": artifact if kind == "pdf" else None, "package_id": None}
+            reports = [reference]
+            if kind == "zip":
+                _, _, second_reference, _ = completed_mcp_task(client, store, token, publish_new_rule=False)
+                reports.append(second_reference)
+                package_request = str(uuid4())
+                created = call(client, token, "create_report_package", request_id=package_request, reports=reports)
+                assert created["status"] == "ok", created
+                process_claimed(worker, worker.claim_job("share-zip"), "share-zip")
+                package = call(client, token, "get_report_package", request_id=package_request)["data"]["value"]
+                assert package["state"] == "ready", package
+                content.update(artifact=package["artifact"], package_id=package["package_id"])
+                transfer = call(client, token, "download_report_package", request_id=package_request, package_id=package["package_id"], artifact_id=package["artifact"]["artifact_id"])
+                archive = client.get(transfer["data"]["url"], headers={"Authorization": "Bearer " + token})
+                assert archive.status_code == 200
+                with zipfile.ZipFile(io.BytesIO(archive.content)) as zipped:
+                    assert any(zipped.read(name) == pdf.content for name in zipped.namelist() if name.endswith(".pdf"))
+
+            request_id = str(uuid4())
+            targets = [{"kind": "user", "id": value} for value in (principal.subject, "ou_failed", "ou_unknown")]
+            args = {"request_id": request_id, "body": {"request_id": request_id, "organization_id": principal.tenant_key, "reports": reports, "targets": targets, "content": content}}
+            approve(client, call(client, token, "share_reports", **args))
+            edits = []
+
+            def edit():
+                if not edits:
+                    finding = client.get(f"/rounds/{task['round_id']}").json()["findings"][0]
+                    response = client.put(
+                        f"/rounds/{task['round_id']}/reviews", json={"item_key": finding["item_key"], "judgment": "需修改", "rationale": "分享期间网页复核", "next_step": "", "version": 0}
+                    )
+                    assert response.status_code == 200, response.text
+                    edits.append(response.json())
+
+            if edit_at == "before_capture":
+                original = app.state.mcp_gateway.request
+
+                async def edit_before_share(*a, **kw):
+                    if kw.get("operation_id") and a[2] == "/audit-report-shares":
+                        await asyncio.to_thread(edit)
+                    return await original(*a, **kw)
+
+                monkeypatch.setattr(app.state.mcp_gateway, "request", edit_before_share)
+            elif edit_at == "after_capture":
+                from ppap_product_store.report_sharing import ReportShareStore
+
+                original_accept = ReportShareStore.accept
+
+                def edit_after_share(self, *a, **kw):
+                    accepted = original_accept(self, *a, **kw)
+                    edit()
+                    return accepted
+
+                monkeypatch.setattr(ReportShareStore, "accept", edit_after_share)
+
+            sent = call(client, token, "share_reports", **args)
+            if edit_at == "before_capture":
+                assert sent["status"] == "error" and sent["error"] == "confirmation_content_changed", sent
+                assert messages == [] and attachments == [] and len(edits) == 1
+                return
+            assert sent["status"] == "ok", sent
+            assert [item["state"] for item in sent["data"]["deliveries"]] == ["sent", "failed", "unknown"]
+            assert len(messages) == 3 and len(attachments) == (0 if kind == "link" else 1)
+            if kind == "pdf":
+                assert pdf.content in attachments[0]
+            elif kind == "zip":
+                assert archive.content in attachments[0]
+            if edit_at == "after_capture":
+                assert len(edits) == 1
+                assert "分享期间网页复核" not in json.dumps(messages, ensure_ascii=False)
+            assert call(client, token, "share_reports", **args)["data"] == sent["data"]
+            receipt = call(client, token, "get_share_receipt", request_id=request_id)["data"]["value"]
+            assert receipt["deliveries"] == sent["data"]["deliveries"] and len(messages) == 3
+            retry = {"share_request_id": request_id, "request_id": str(uuid4()), "target": targets[1]}
+            approve(client, call(client, token, "retry_share_target", **retry))
+            recovered = call(client, token, "retry_share_target", **retry)
+            assert recovered["status"] == "ok", recovered
+            assert [item["state"] for item in recovered["data"]["deliveries"]] == ["sent", "sent", "unknown"]
+            assert len(messages) == 4 and messages[-1]["receive_id"] == "ou_failed"
+            assert call(client, token, "retry_share_target", **retry)["data"] == recovered["data"]
+            for target in (targets[0], targets[2]):
+                refused = {"share_request_id": request_id, "request_id": str(uuid4()), "target": target}
+                approve(client, call(client, token, "retry_share_target", **refused))
+                assert call(client, token, "retry_share_target", **refused)["error"] == "share_attempt_unconfirmed"
+            assert len(messages) == 4
+
+
+@pytest.mark.parametrize("tool", ["create_feishu_report", "writeback_feishu_report"])
+@pytest.mark.parametrize("edit_at", ["before_capture", "after_capture"])
+def test_external_report_uses_approved_content_at_effect_boundary(mcp_app, monkeypatch, tool, edit_at):
+    """The gateway check alone cannot close a concurrent Web-edit race."""
+    _, store = mcp_app
+    effects, captured_rounds = [], []
+
+    def provider(request):
+        assert request.method == "POST", request.url.path
+        effects.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"code": 0, "data": {"document": {"document_id": "approved-report"}}})
+
+    now = datetime.now(timezone.utc)
+    session = store.create_session(store.principal_for_fixture("alice"), UserTokens("controlled-access", "controlled-refresh", now + timedelta(hours=1), now + timedelta(days=7)))
+    with httpx.Client(transport=httpx.MockTransport(provider)) as http:
+        app = create_app(store.settings, auth_store=store, http=http)
+        with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+            _, tokens, _ = connection(client, store, scopes=" ".join(SCOPES), browser_session=session)
+            token = tokens["access_token"]
+            round_id, new_review = reviewed_round(client, store, token)
+            arguments = {"round_id": round_id, "request_id": str(uuid4())}
+            approve(client, call(client, token, tool, **arguments))
+            edits = []
+
+            def edit():
+                if not edits:
+                    saved = client.put(f"/rounds/{round_id}/reviews", json=new_review)
+                    assert saved.status_code == 200, saved.text
+                    edits.append(saved.json())
+
+            if edit_at == "before_capture":
+                original = app.state.mcp_gateway.request
+
+                async def edit_after_gateway_check(*args, **kwargs):
+                    if kwargs.get("operation_id") and args[1] == "POST":
+                        await asyncio.to_thread(edit)
+                    return await original(*args, **kwargs)
+
+                monkeypatch.setattr(app.state.mcp_gateway, "request", edit_after_gateway_check)
+            elif tool == "create_feishu_report":
+                from ppap_api import report_routes
+
+                original_blocks = report_routes.report_blocks
+
+                def edit_after_materialization(body, return_url):
+                    blocks = original_blocks(body, return_url)
+                    edit()
+                    return blocks
+
+                monkeypatch.setattr(report_routes, "report_blocks", edit_after_materialization)
+            else:
+                import ppap_api
+
+                original_write = ppap_api.write_round_history
+
+                def edit_after_read(http, access_token, file_token, body, return_url):
+                    captured_rounds.append(body)
+                    edit()
+                    return original_write(http, access_token, file_token, body, return_url)
+
+                monkeypatch.setattr(ppap_api, "write_round_history", edit_after_read)
+
+            result = call(client, token, tool, **arguments)
+            assert len(edits) == 1
+            current = client.get(f"/rounds/{round_id}").json()["findings"][0]["review"]
+            assert current["version"] == 2 and current["rationale"] == "并发网页修改"
+            if edit_at == "before_capture":
+                assert result["status"] == "error" and result["error"] == "confirmation_content_changed", result
+                assert effects == []
+            else:
+                assert result["status"] == "ok", result
+                if tool == "create_feishu_report":
+                    assert len(effects) == 2
+                    assert result["data"]["report"]["status"] == "ready"
+                    sent = json.dumps(effects, ensure_ascii=False)
+                    assert "原批准复核" in sent and "并发网页修改" not in sent
+                else:
+                    assert len(effects) == 1  # All-PASS rounds need no NG comment.
+                    assert result["data"]["inserted"] is True
+                    assert captured_rounds[0]["findings"][0]["review"]["rationale"] == "原批准复核"
+                    assert all("approved-document" in path for path, _ in effects)
+            # A terminal receipt can be read and replayed despite later edits.
+            count = len(effects)
+            assert call(client, token, "get_operation", request_id=arguments["request_id"])["status"] == result["status"]
+            assert call(client, token, tool, **arguments)["status"] == result["status"]
+            assert len(effects) == count
 
 
 def test_real_file_bytes_resources_object_authority_and_revocation(mcp_app):

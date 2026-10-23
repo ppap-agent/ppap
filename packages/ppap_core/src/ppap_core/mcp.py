@@ -50,6 +50,37 @@ class Delegation:
             raise McpError("insufficient_scope", 403)
 
 
+@dataclass(frozen=True)
+class ApprovedCall:
+    """Internal approval evidence for the exact business call and source values.
+
+    A business adapter checks its materialized source before freezing an effect.
+    Later source edits do not change those local bytes. Network headers cannot
+    construct this value or move it to another request/grant.
+    """
+
+    grant_id: str
+    operation_id: str
+    method: str
+    path: str
+    sources: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def from_operation(cls, grant_id: str, operation: dict) -> ApprovedCall | None:
+        confirmation = operation["confirmation"]
+        if confirmation is None:
+            return None
+        arguments = operation["arguments"]
+        paths, values = arguments["probes"], confirmation["sources"]
+        if len(paths) != len(values) or not operation["confirmed_by"]:
+            raise McpError("invalid_confirmation", 403)
+        return cls(grant_id, operation["id"], arguments["method"], arguments["path"], tuple((path, fingerprint(value)) for path, value in zip(paths, values)))
+
+    def require_source(self, path: str, value: object) -> None:
+        if (path, fingerprint(value)) not in self.sources:
+            raise McpError("confirmation_content_changed", 409)
+
+
 def parse_scopes(value: str) -> list[str]:
     scopes = sorted(set(value.split()))
     if not scopes or not set(scopes).issubset(SCOPES):

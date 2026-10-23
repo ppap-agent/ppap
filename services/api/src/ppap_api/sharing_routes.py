@@ -10,6 +10,7 @@ from fastapi import Query, Request
 from fastapi.responses import JSONResponse, Response
 from ppap_core.feishu_usage import FeishuUsageError, tenant_access_token
 from ppap_core.files import ObjectMissing, attachment_content_disposition
+from ppap_core.mcp import McpError
 from ppap_core.report_sharing import (
     ReportDirectoryHttp,
     ReportSharingError,
@@ -25,6 +26,7 @@ from ppap_product_store.share_delivery import new_share_attempt, target_key
 from pydantic import TypeAdapter, ValidationError
 
 from ppap_api import web_contract as wc
+from ppap_api.mcp_confirmation import approval_for, require_approved_source
 
 HEADERS = {"Cache-Control": "private, no-store"}
 
@@ -63,6 +65,8 @@ def register_sharing_routes(app, store, session_of, http, settings):
         return resolve_report_target(http, token, principal.tenant_key, reference)
 
     def fail(error):
+        if isinstance(error, McpError):
+            return JSONResponse({"error": error.code}, status_code=error.status, headers=HEADERS)
         status = (
             403
             if isinstance(error, KeyError) or str(error) == "share_identity_mismatch"
@@ -162,7 +166,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 selected = [target_for(session.principal, _profile, token, target) for target in command["targets"]]
                 if any(target["eligibility"] != "eligible" for target in selected):
                     raise ValueError("share_target_unverified")
-                row = shares.accept(guard, session.principal, command, selected)
+                row = shares.accept(guard, session.principal, command, selected, approval=approval_for(request))
                 dispatch(guard, row, session, token, list(row["result"]["attempts"]))
                 return JSONResponse(shares.public(row), headers=HEADERS)
         except (KeyError, ValueError, ReportSharingError, FeishuUsageError, ObjectMissing) as error:
@@ -221,6 +225,7 @@ def register_sharing_routes(app, store, session_of, http, settings):
                 if guard is None:
                     raise ValueError("share_request_pending")
                 shares.recover(guard, row)
+                require_approved_source(request, f"/audit-report-shares/{request_id}", shares.public(row))
                 if (
                     history[-1]["phase"] != "failed"
                     or command["attempt_id"] == request_id

@@ -13,8 +13,10 @@ from ppap_core.feishu_writeback import (
     round_return_url,
 )
 from ppap_core.identity import can_read
+from ppap_core.mcp import McpError
 
 from ppap_api import web_contract as wc
+from ppap_api.mcp_confirmation import require_approved_source
 
 
 def register_report_routes(app, store, session_of, http, settings):
@@ -28,7 +30,11 @@ def register_report_routes(app, store, session_of, http, settings):
             return None, None, None, JSONResponse({"error": "access_denied"}, status_code=403)
         body = store.get_round(round_id)
         try:
+            if request.method == "POST":
+                require_approved_source(request, f"/rounds/{round_id}", body)
             blocks = report_blocks(body, round_return_url(settings.canonical_web_url(), round_id))
+        except McpError as exc:
+            return None, None, None, JSONResponse({"error": exc.code}, status_code=exc.status)
         except FeishuWritebackError as exc:
             return None, None, None, JSONResponse({"error": str(exc)}, status_code=409)
         fingerprint = hashlib.sha256(json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
