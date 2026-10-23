@@ -93,6 +93,31 @@ ppap-mcp-client --help
 
 上述启动参数不表示客户端已完成兼容性验收。按用户在 2026-10-23 的范围订正，本次必须验收的客户端为 Codex；其实际入口、配置、授权恢复、文件操作及完整业务路径仍按 #206 验证。WorkBuddy 和豆包不再作为完成条件。
 
+### Codex 配置
+
+以下参数已核对 Codex CLI 0.163.0 的实际命令帮助。需要本地文件上传和下载时，先按上节安装适配器，再配置 stdio 服务；将示例中的程序和文件目录改为实际绝对路径：
+
+```sh
+codex mcp add ppap-files -- /absolute/path/to/ppap-mcp-client \
+  --server https://ppap.icoastline.com/ppap/mcp \
+  --directory /absolute/path/to/PPAP-files \
+  --profile codex
+codex mcp get ppap-files
+```
+
+此连接的 OAuth 由适配器管理，首次连接时打开授权页；不对 stdio 服务执行 `codex mcp login`。在 Codex 中先调用 `get_identity` 核对用户和租户，再调用 `local_file_roots` 取得允许目录的规范路径，之后使用该目录内的绝对路径上传。`mcp get` 只显示配置；成功调用工具才证明已连接。发布、受理、人工复核和发送仍须完成对应网页确认。
+
+只使用远程业务工具、URL 或飞书导入时，也可直接配置原生 HTTP 连接：
+
+```sh
+codex mcp add ppap --url https://ppap.icoastline.com/ppap/mcp
+codex mcp login ppap --oauth-client-registration dcr
+```
+
+如果添加服务时已完成登录，无须重复执行登录命令。原生 HTTP 连接不会获得适配器的三个本地文件工具。两种连接各自取得委托，不共享传输 URL；通常选择符合文件输入方式的一种即可。授权页只勾选此次工作需要的范围。
+
+停止使用时，先在 PPAP 连接管理页撤销对应委托。原生 HTTP 连接随后可执行 `codex mcp logout ppap` 清除 Codex 保存的凭据；适配器的凭据由其独立 profile 管理。仅退出客户端或删除配置不会撤销服务端委托。续期或访问失败时，先读取错误与原业务回执，按上节恢复步骤处理，不改变原请求 ID。
+
 ## Resources 与 Prompts
 
 Resources 包括固定文件版本、规则版本、轮次结果、报告包和已分享报告。每次读取都重新授权，不把 URI 当作权限。模板支持 `pointer`、`offset`、`limit` 查询参数；`pointer` 是 JSON Pointer，`limit` 上限为 100。返回正文上限为 96 KiB，过大时应选择具体字段或缩小分页，不能截断并声称结果完整。
