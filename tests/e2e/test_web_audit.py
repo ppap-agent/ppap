@@ -180,15 +180,31 @@ class WebAuditLoopTests(unittest.TestCase):
             self.assertEqual(page.request.get(f"{api}/rounds/{original['id']}").json(), saved_original)
             page.keyboard.press("Escape")
             writes = []
-            page.on("request", lambda request: writes.append(request.url) if request.method == "POST" and ("/audit-tasks" in request.url or request.url.endswith("/drafts")) else None)
-            page.get_by_role("button", name="历史操作", exact=True).click()
-            page.get_by_role("menuitem", name="补件／重新审核", exact=True).click()
+            page.on("request", lambda request: writes.append(request.url) if request.method == "POST" else None)
+            with page.expect_response(lambda reply: reply.request.method == "POST" and reply.url == f"{api}/drafts") as preparation_saved:
+                page.get_by_role("button", name="历史操作", exact=True).click()
+                page.get_by_role("menuitem", name="补件／重新审核", exact=True).click()
+            self.assertEqual(preparation_saved.value.status, 201)
+            preparation = preparation_saved.value.json()
+            self.assertIsNone(preparation["task_id"])
+            self.assertIsNone(preparation["predecessor_id"])
+            snapshot = preparation["upload_preparation"]
+            self.assertEqual(snapshot["predecessor_id"], original["id"])
+            self.assertEqual(snapshot["analysis_mode"], original["analysis_mode"])
+            self.assertEqual(snapshot["uploads"], [])
+            prepared = {row["file_version_id"]: row for row in snapshot["files"]}
+            self.assertEqual(set(prepared), {target["file_version_id"], reference["file_version_id"]})
+            self.assertTrue(all(row["selection"] == "selected" for row in prepared.values()))
+            self.assertEqual(prepared[target["file_version_id"]]["preferred_rule_version_id"], RULE_A)
+            self.assertTrue(prepared[reference["file_version_id"]]["reference_only"])
+            self.assertIsNone(page.request.get(f"{api}/drafts/{preparation['id']}/round").json())
             expect(page.get_by_role("heading", name="核对本次文件", exact=True)).to_be_visible()
             expect(page.get_by_role("region", name="重审文件与规则", exact=True)).to_contain_text(name)
             expect(page.get_by_role("region", name="重审文件与规则", exact=True)).to_contain_text(context)
             self.assertEqual(urlsplit(page.url).path, "/tasks/new")
             self.assertEqual(parse_qs(urlsplit(page.url).query)["fromRound"], [original["id"]])
-            self.assertEqual(writes, [])
+            # Persisting preparation is allowed; recognition, acceptance, confirm and resubmit are not.
+            self.assertEqual(writes, [f"{api}/drafts"])
             self.assertEqual(page.request.get(f"{api}/rounds/{original['id']}").json(), saved_original)
             browser.close()
 
