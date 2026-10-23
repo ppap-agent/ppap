@@ -8,7 +8,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from ppap_core.identity import Principal, Session, new_token, token_hash
+from ppap_core.identity import Principal, ProviderAuthError, Session, new_token, token_hash
 from ppap_core.mcp import Delegation, McpError, fingerprint, parse_scopes, pkce_challenge, valid_redirect
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -140,8 +140,8 @@ class McpStore:
                 expires = min(now() + timedelta(days=30), session.refresh_expires_at or session.access_expires_at or session.expires_at)
                 grant = conn.execute(
                     """INSERT INTO product.mcp_grants(client_id,user_id,tenant_id,provider,app_id,subject,scopes,resource,
-                       access_token,refresh_token,access_expires_at,refresh_expires_at,expires_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                       provider_authorization_id,expires_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                     (
                         row["client_id"],
                         p.user_id,
@@ -151,10 +151,7 @@ class McpStore:
                         p.subject,
                         selected,
                         row["resource"],
-                        session.access_token,
-                        session.refresh_token,
-                        session.access_expires_at,
-                        session.refresh_expires_at,
+                        session.provider_authorization_id,
                         expires,
                     ),
                 ).fetchone()
@@ -238,7 +235,11 @@ class McpStore:
 
     def _delegation(self, conn, grant_id: str) -> Delegation:
         row = conn.execute(
-            """SELECT g.*, m.role, i.display_name, i.tenant_key FROM product.mcp_grants g
+            """SELECT g.*, a.access_token,a.refresh_token,a.access_expires_at,a.refresh_expires_at,
+                      m.role, i.display_name, i.tenant_key FROM product.mcp_grants g
+               JOIN product.provider_authorizations a ON a.id=g.provider_authorization_id
+                 AND a.user_id=g.user_id AND a.tenant_id=g.tenant_id AND a.provider=g.provider
+                 AND a.app_id=g.app_id AND a.subject=g.subject
                JOIN product.memberships m ON m.user_id=g.user_id AND m.tenant_id=g.tenant_id
                JOIN product.tenants t ON t.id=g.tenant_id AND t.provider=g.provider
                JOIN product.identities i ON i.user_id=g.user_id AND i.app_id=g.app_id AND i.provider=g.provider
@@ -246,10 +247,10 @@ class McpStore:
                WHERE g.id=%s AND g.revoked_at IS NULL AND g.expires_at>now()""",
             (grant_id,),
         ).fetchone()
-        if not row or not self.settings.tenant_allowed(row["tenant_key"]) or row["app_id"] != self.settings.feishu_app_id or row["provider_refresh_state"] != "ready":
+        if not row or not self.settings.tenant_allowed(row["tenant_key"]) or row["app_id"] != self.settings.feishu_app_id:
             raise McpError("invalid_token", 401)
         p = Principal(str(row["user_id"]), str(row["tenant_id"]), row["provider"], row["app_id"], row["tenant_key"], row["subject"], row["role"], row["display_name"])
-        session = Session(p, row["expires_at"], row["access_token"] or "", row["refresh_token"] or "", row["access_expires_at"], row["refresh_expires_at"])
+        session = Session(p, row["expires_at"], row["access_token"] or "", row["refresh_token"] or "", row["access_expires_at"], row["refresh_expires_at"], str(row["provider_authorization_id"]))
         return Delegation(str(row["id"]), row["client_id"], frozenset(row["scopes"]), session)
 
     def authenticate(self, token: str, resource: str, refresh_provider=None) -> Delegation:
@@ -262,40 +263,15 @@ class McpStore:
             if not row:
                 raise McpError("invalid_token", 401)
             result = self._delegation(conn, row["grant_id"])
-        if result.session.needs_refresh(now()):
-            if refresh_provider is None:
-                raise McpError("reauthorization_required", 401)
-            self.refresh_provider(result.id, refresh_provider)
+        if refresh_provider is not None:
+            try:
+                self.product.fresh_provider_session(result.session, refresh_provider)
+            except ProviderAuthError as exc:
+                raise McpError(exc.code, exc.status) from None
+            # Revocation or membership removal during a provider call still wins.
             with self.connection() as conn:
                 result = self._delegation(conn, result.id)
-        if result.session.provider_auth_dead(now()):
-            raise McpError("reauthorization_required", 401)
         return result
-
-    def refresh_provider(self, grant_id: str, refresh) -> None:
-        # Persist the external effect boundary before calling Feishu. A crash or
-        # ambiguous response requires sign-in, never a blind second refresh.
-        with self.connection() as conn:
-            row = conn.execute(
-                """UPDATE product.mcp_grants SET provider_refresh_state='refreshing'
-                                  WHERE id=%s AND revoked_at IS NULL AND provider_refresh_state='ready'
-                                  AND access_expires_at<=now() RETURNING refresh_token""",
-                (grant_id,),
-            ).fetchone()
-        if not row:
-            raise McpError("reauthorization_required", 401)
-        try:
-            tokens = refresh(row["refresh_token"])
-        except Exception:
-            with self.connection() as conn:
-                conn.execute("UPDATE product.mcp_grants SET provider_refresh_state='reauthorize' WHERE id=%s", (grant_id,))
-            raise McpError("reauthorization_required", 401) from None
-        with self.connection() as conn:
-            conn.execute(
-                """UPDATE product.mcp_grants SET provider_refresh_state='ready',access_token=%s,refresh_token=%s,
-                            access_expires_at=%s,refresh_expires_at=%s WHERE id=%s AND revoked_at IS NULL""",
-                (tokens.access_token, tokens.refresh_token, tokens.access_expires_at, tokens.refresh_expires_at, grant_id),
-            )
 
     def connections(self, principal: Principal) -> list[dict]:
         with self.connection() as conn:

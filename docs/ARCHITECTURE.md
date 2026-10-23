@@ -32,6 +32,8 @@ MCP 表只保存客户端授权、确认、传输凭证和调用回执。写入�
 
 PostgreSQL 中 `product` 保存产品事实，`engine` 保存执行任务/尝试。两者不是两套产品台账。对象存储保存文件版本引用的字节；数据库保存文件版本、对象位置和授权关系。
 
+`product.provider_authorizations` 是飞书凭据的唯一续期入口，由 `ppap_product_store.provider_auth` 保存并发 claim 和结果。浏览器 Session 与 MCP Grant 各自拥有有效期、撤销和授权范围，引用精确的 provider/app/tenant/subject 凭据记录。新登录取得不同凭据时创建新记录；不按用户查找“最新令牌”替换旧委托。此表只保存身份凭据生命周期，不保存审核或报告执行状态，Worker 不可读取。
+
 一个历史审核只需要稳定引用它当时使用的 `file_version_id` 和规则版本。新上传创建新文件版本，不重定向旧版本。内容 hash 可以作为辅助字段保留，但不是产品版本 identity 的前提。
 
 派生工作簿、页面图像或 OCR 结果只有当前消费者需要时才缓存，并明确指向来源文件版本。浏览器不获得对象存储管理凭据。

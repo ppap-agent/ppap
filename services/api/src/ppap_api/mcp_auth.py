@@ -135,7 +135,10 @@ class OAuthProvider(TokenVerifier):
 
     async def load_access_token(self, token):
         try:
-            delegation = await asyncio.to_thread(self.delegation, token)
+            # Authentication verifies the PPAP grant. Provider refresh happens
+            # at tool/transfer execution, where a busy result is retryable and
+            # does not incorrectly tell the client its OAuth token is invalid.
+            delegation = await asyncio.to_thread(self.store.authenticate, token, self.resource)
             row = await asyncio.to_thread(self.store.token, token, "access")
             if not row:
                 return None

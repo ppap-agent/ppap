@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -88,10 +88,11 @@ class Principal:
 class Session:
     principal: Principal
     expires_at: datetime
-    access_token: str = ""
-    refresh_token: str = ""
+    access_token: str = field(default="", repr=False)
+    refresh_token: str = field(default="", repr=False)
     access_expires_at: datetime | None = None
     refresh_expires_at: datetime | None = None
+    provider_authorization_id: str = ""
 
     def needs_refresh(self, at: datetime) -> bool:
         if self.access_expires_at is None:
@@ -108,6 +109,13 @@ class Session:
         if self.access_expires_at > at:
             return False
         return not self.needs_refresh(at)
+
+
+class ProviderAuthError(ValueError):
+    def __init__(self, code: str, status: int = 401):
+        super().__init__(code)
+        self.code = code
+        self.status = status
 
 
 @dataclass(frozen=True)

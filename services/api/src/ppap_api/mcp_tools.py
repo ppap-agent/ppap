@@ -31,7 +31,7 @@ def register_tools(mcp, gateway, authority):
             value = await gateway.get(actor, scope, path, params=params)
             return Reply(status="ok", data=page_result(value, page or PageRequest()))
         except McpError as exc:
-            return Reply(status="error", error=exc.code)
+            return Reply(status="error", error=exc.code, retry_after_seconds=5 if exc.status in {429, 503} else None)
         except Exception:
             return Reply(status="error", error="service_unavailable")
 
@@ -46,7 +46,7 @@ def register_tools(mcp, gateway, authority):
                     snapshot["sources"].append(await gateway.get(actor, scope, probe))
             return await gateway.write(actor, scope, name, str(rid), method, path, body, probes=probes or [], confirmation=snapshot, result_path=result_path)
         except McpError as exc:
-            return Reply(status="error", error=exc.code, request_id=str(rid))
+            return Reply(status="error", error=exc.code, request_id=str(rid), retry_after_seconds=5 if exc.status in {429, 503} else None)
         except Exception:
             return Reply(status="unknown", error="read_original_operation", request_id=str(rid))
 
@@ -61,7 +61,7 @@ def register_tools(mcp, gateway, authority):
                 data={"url": gateway.store.settings.public_api_url.rstrip("/") + "/mcp/transfers/" + ident, "method": method, "authorization": "OAuth Bearer header required", "expires_in": 900},
             )
         except McpError as exc:
-            return Reply(status="error", error=exc.code)
+            return Reply(status="error", error=exc.code, retry_after_seconds=5 if exc.status in {429, 503} else None)
         except Exception:
             return Reply(status="error", error="service_unavailable")
 
@@ -83,7 +83,7 @@ def register_tools(mcp, gateway, authority):
             operation = await asyncio.to_thread(gateway.store.operation, actor, str(request_id))
             return await gateway.operation_reply(actor, operation)
         except McpError as exc:
-            return Reply(status="error", error=exc.code)
+            return Reply(status="error", error=exc.code, retry_after_seconds=5 if exc.status in {429, 503} else None)
 
     @mcp.tool(annotations=WRITE)
     async def create_file(request_id: UUID, body: wc.FileCreateRequest) -> Reply[dict]:
