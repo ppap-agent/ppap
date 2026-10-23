@@ -141,7 +141,7 @@ def call(client, token, name, **arguments):
     return result["structuredContent"]
 
 
-def upload(client, token, content=None, *, file_id=None):
+def upload(client, token, content=None, *, file_id=None, filename="控制计划.xlsx", content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
     if content is None:
         stream = io.BytesIO()
         book = Workbook()
@@ -151,9 +151,9 @@ def upload(client, token, content=None, *, file_id=None):
         content = stream.getvalue()
     rid = str(uuid4())
     body = {
-        "original_filename": "控制计划.xlsx",
+        "original_filename": filename,
         "byte_size": len(content),
-        "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content_type": content_type,
         "sha256": hashlib.sha256(content).hexdigest(),
     }
     tool, extra = ("create_file_version", {"file_id": file_id}) if file_id else ("create_file", {})
@@ -344,6 +344,87 @@ def test_rejected_url_source_is_failed_and_cannot_be_resumed(mcp_app, monkeypatc
         assert len(fetches) == (1 if redirect else 0)
 
 
+@pytest.mark.parametrize("extension", ["json", "xlsx", "docx"])
+def test_rule_parse_recovers_original_job_after_reply_loss_and_api_restart(mcp_app, monkeypatch, extension):
+    app, store = mcp_app
+    body = {
+        "kind": "engine",
+        "type": "控制计划",
+        "rule_profile": "v3",
+        "customers": ["测试客户"],
+        "models": [],
+        "parts": [],
+        "rules": [{"id": "1", "category": "身份", "priority": None, "rule_to_check": "必须填写零件号", "type_of_rule": "table"}],
+    }
+    stream = io.BytesIO()
+    if extension == "xlsx":
+        document = Workbook()
+        document.active.append(["规则编号", "审核要求"])
+        document.active.append(["1", "必须填写零件号"])
+        document.save(stream)
+        document.close()
+    elif extension == "docx":
+        from docx import Document
+
+        document = Document()
+        document.add_paragraph("控制计划规则：必须填写零件号")
+        document.save(stream)
+    else:
+        stream.write(json.dumps(body, ensure_ascii=False).encode())
+    content = stream.getvalue()
+    parse_id = str(uuid4())
+    with TestClient(app, base_url="http://127.0.0.1:8080") as client:
+        cid, tokens, _ = connection(client, store, scopes=" ".join(SCOPES))
+        token = tokens["access_token"]
+        source, _ = upload(client, token, content, filename="控制计划规则." + extension, content_type="application/octet-stream")
+        arguments = {"request_id": parse_id, "body": {"request_id": parse_id, "source_file_id": source["file_id"], "source_file_version_id": source["id"], "document_type": "控制计划"}}
+        original_request = app.state.mcp_gateway.request
+
+        async def lost_reply(*args, **kwargs):
+            response = await original_request(*args, **kwargs)
+            if args[1:3] == ("POST", "/rules/parse"):
+                raise ConnectionError("controlled loss after durable parse acceptance")
+            return response
+
+        monkeypatch.setattr(app.state.mcp_gateway, "request", lost_reply)
+        assert call(client, token, "parse_rule", **arguments)["status"] == "unknown"
+    requests = []
+
+    class ParseAI:
+        def structured_completion(self, **request):
+            requests.append(request)
+            return "控制计划" if request["operation"] == "document_classification" else json.dumps(body, ensure_ascii=False)
+
+    worker = build_product_store(store.settings, objects=store.objects, role="worker")
+    with TestClient(create_app(store.settings, auth_store=store), base_url="http://127.0.0.1:8080") as restored:
+        pending = call(restored, token, "get_rule_parse", parse_id=parse_id)["data"]["value"]
+        assert pending["id"] == parse_id and pending["status"] == "queued"
+        assert call(restored, token, "parse_rule", **arguments)["status"] in {"running", "unknown"}
+        job = worker.claim_job("mcp-rule-parse")
+        assert job.id == parse_id and job.kind == "rule_parse"
+        assert worker.claim_job("no-duplicate-parser") is None
+        process_claimed(worker, job, "mcp-rule-parse", rule_ai=ParseAI())
+        parsed = call(restored, token, "get_rule_parse", parse_id=parse_id)["data"]["value"]
+        assert parsed["status"] == "succeeded" and parsed["result"]["body"] == body
+        assert parsed["result"]["source_file_version_id"] == source["id"]
+        if extension == "json":
+            assert requests == []
+        else:
+            assert sum(row["operation"] == "rule_extraction" for row in requests) == 1
+            assert "必须填写零件号" in requests[-1]["user_prompt"]
+        sources = call(restored, token, "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["data"]["value"]
+        assert any("必须填写零件号" in unit["excerpt"] for unit in sources["units"])
+        # Parsing alone does not publish its candidate.
+        with store._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM product.rule_versions WHERE source_file_version_id = %s", (source["id"],)).fetchone()[0] == 0
+        for person in ("bob", "carol"):
+            _, other, _ = connection(restored, store, person=person, scopes=" ".join(SCOPES))
+            assert call(restored, other["access_token"], "get_rule_parse", parse_id=parse_id)["error"] == "access_denied"
+            assert call(restored, other["access_token"], "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["error"] == "access_denied"
+        assert restored.post("/oauth/revoke", data={"client_id": cid, "token": token}).status_code == 200
+        assert rpc(restored, token, "tools/call", {"name": "get_rule_parse", "arguments": {"parse_id": parse_id}}).status_code == 401
+
+
 def completed_mcp_task(client, store, token, *, publish_new_rule=True):
     worker = build_product_store(store.settings, objects=store.objects, role="worker")
     file, _ = upload(client, token)
@@ -368,6 +449,30 @@ def completed_mcp_task(client, store, token, *, publish_new_rule=True):
         },
     }
     if publish_new_rule:
+        source, _ = upload(client, token, json.dumps(publish["body"]["body"], ensure_ascii=False).encode(), filename="审核规则.json", content_type="application/json")
+        parse_id = str(uuid4())
+        parsing = {"request_id": parse_id, "body": {"request_id": parse_id, "source_file_id": source["file_id"], "source_file_version_id": source["id"], "document_type": "控制计划"}}
+        assert call(client, token, "parse_rule", **parsing)["status"] == "ok"
+        assert call(client, token, "parse_rule", **parsing)["status"] == "ok"
+        job = worker.claim_job("share-rule-parse")
+        assert job.kind == "rule_parse" and job.id == parse_id
+        process_claimed(worker, job, "share-rule-parse")
+        parsed = call(client, token, "get_rule_parse", parse_id=parse_id)["data"]["value"]
+        assert parsed["status"] == "succeeded" and parsed["result"]["source_file_version_id"] == source["id"]
+        assert worker.claim_job("no-duplicate-rule-parse") is None
+        sources = call(client, token, "get_rule_sources", file_id=source["file_id"], version_id=source["id"])["data"]["value"]
+        unit = sources["units"][0]
+        clause = {
+            "id": "1",
+            "title": "身份",
+            "text": unit["excerpt"],
+            "source": source["original_filename"],
+            "original": unit["excerpt"],
+            "location": unit["location"],
+            "checked": True,
+            "provenance": {**unit, "fileVersionId": source["id"]},
+        }
+        publish["body"] = {**parsed["result"], "case_context": {"registration": json.dumps({"basis": {"source": {"filename": source["original_filename"]}, "clauses": [clause]}})}}
         approve(client, call(client, token, "publish_rule", **publish))
         assert call(client, token, "publish_rule", **publish)["status"] == "ok"
     request_id = str(uuid4())
