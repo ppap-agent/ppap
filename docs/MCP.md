@@ -8,6 +8,8 @@
 
 客户端使用远程 Streamable HTTP 和 OAuth。授权服务器为 API 地址下的 `/oauth`，支持客户端注册、授权码与 S256 PKCE、Scope 选择、刷新和撤销。授权及令牌请求的 `resource` 必须精确等于 MCP 服务器地址。通过飞书登录后，用户核对客户端回调和权限。飞书凭据始终留在服务端。
 
+批准或拒绝后，浏览器会自动返回已注册的客户端回调。若没有自动返回，可点击完成页上的“返回客户端”；不要重复提交授权表单。
+
 原生客户端不依赖浏览器 CORS。需要直接从其它网页调用 MCP 时，将该网页的完整 HTTPS Origin 加入 `PPAP_MCP_ALLOWED_ORIGINS` 的 JSON 数组；不能使用通配符。OAuth 发现及令牌接口公开支持 CORS，MCP 与字节接口只允许明确配置的 Origin，均不把浏览器 Cookie 当作 Bearer。
 
 OAuth 发现地址按 RFC 8414 / 9728 放在域名根目录，资源路径是其后缀。例如：

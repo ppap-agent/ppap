@@ -13,6 +13,7 @@ import socket
 import sys
 import threading
 import time
+from html import unescape
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -79,9 +80,10 @@ def consent_oauth(browser, *, approved=None):
             csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
             offered = parse_qs(urlsplit(authorization_url).query)["scope"][0].split()
             decision = browser.post(path, data={"csrf": csrf, "decision": "approve", "scope": approved or offered}, follow_redirects=False)
-            assert decision.status_code == 303
-            location = urlsplit(decision.headers["location"])
-            assert str(self.context.client_metadata.redirect_uris[0]).split("?", 1)[0] == decision.headers["location"].split("?", 1)[0]
+            assert decision.status_code == 200
+            callback = unescape(re.search(r'<a href="([^"]+)"', decision.text)[1])
+            location = urlsplit(callback)
+            assert str(self.context.client_metadata.redirect_uris[0]).split("?", 1)[0] == callback.split("?", 1)[0]
             result = parse_qs(location.query)
             self.returned = result["code"][0], result["state"][0]
 
