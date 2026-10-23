@@ -16,6 +16,12 @@ PostgreSQL  object storage
 
 PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入同一套 round / findings / review。
 
+MCP 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。MCP Tasks 扩展关闭；长任务继续使用现有 Task、Round 和 engine job。
+
+`mcp_gateway` 通过进程内 ASGI 调用同一 Product API 入口，保留路由中的对象授权、来源校验及分享编排。只有该适配器可在 ASGI scope 写入实际 `Delegation` 对象；网络请求头不构成身份。字节传输直接转发 ASGI 流，继续使用文件 owner 的 200 MiB 限制，不额外把整份文件缓存到 MCP JSON 或 HTTP 客户端响应中。
+
+MCP 表只保存客户端授权、确认、传输凭证和调用回执。写入先持久 claim，再执行原业务入口；响应丢失不自动恢复执行权。人工复核的回执与复核内容在同一事务提交，并通过授权记录关联实际确认人及客户端。其它业务操作仍以各自的原生回执和恢复合同为准，不能从一个通用 `unknown` 状态推导可重试。配置、传输与客户端边界见 [MCP](MCP.md)，交付状态由 [#206](https://github.com/ppap-agent/ppap/issues/206) 维护。
+
 生产部署可以把 API/Worker 放到 self-hosted InsForge Custom Compute 上，由 InsForge 提供 PostgreSQL 集群与容器生命周期；PPAP 仍是唯一 Product API 与领域 authority。Web 不直连 InsForge Database/PostgREST。细节见 [deploy/insforge/README.md](../deploy/insforge/README.md)。
 
 ## 所有权

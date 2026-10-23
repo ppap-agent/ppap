@@ -14,6 +14,8 @@ dependencies = [
     "python-multipart>=0.0.20",
     "pydantic>=2.10.6",
     "Pillow>=10.1.0",
+    "mcp>=1.26,<2",
+    "fastmcp>=3,<4",
 ]
 
 [tool.uv.sources]

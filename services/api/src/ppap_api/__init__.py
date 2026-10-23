@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -126,6 +126,7 @@ def create_app(
     object_store_probe = object_store_probe or object_store_ready
     store = auth_store or build_product_store(settings)
     http = http or httpx.Client()
+    mcp_server = None
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -139,7 +140,10 @@ def create_app(
             usage_reporter = threading.Thread(target=run_pending_usage, args=(store, settings, stop), name="ppap-usage", daemon=True)
             usage_reporter.start()
         try:
-            yield
+            async with AsyncExitStack() as stack:
+                if mcp_server is not None:
+                    await stack.enter_async_context(mcp_server.lifespan(mcp_server))
+                yield
         finally:
             stop.set()
             if notifier:
@@ -160,6 +164,16 @@ def create_app(
 
     def session_of(request: Request):
         request.state.authenticated_principal = None
+        from ppap_core.mcp import Delegation, McpError
+
+        delegated = request.scope.get("ppap.delegation")
+        if isinstance(delegated, Delegation):
+            try:
+                current = app.state.mcp_store.delegation(delegated.id)
+            except McpError:
+                return None
+            request.state.authenticated_principal = current.session.principal
+            return current.session
         raw = request.cookies.get(SESSION_COOKIE, "")
         if not raw:
             return None
@@ -897,6 +911,10 @@ def create_app(
     register_support_routes(app, principal_of, settings)
     register_sharing_routes(app, store, session_of, http, settings)
     wc.add_ui_contract(app)
+    if settings.mcp_enabled:
+        from ppap_api.mcp_server import install_mcp
+
+        mcp_server = install_mcp(app, store, http, session_of)
     return app
 
 

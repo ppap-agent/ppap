@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from functools import lru_cache
 from typing import ClassVar, Literal, Optional, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,6 +75,8 @@ class Settings(BaseSettings):
     deep_customer_enabled: bool = Field(default=False, alias="PPAP_DEEP_CUSTOMER_ENABLED")
     current_tenant_allowlist: str = Field(default="", alias="PPAP_CURRENT_TENANT_ALLOWLIST")
     usage_charge_enabled: bool = Field(default=True, alias="PPAP_USAGE_CHARGE_ENABLED")
+    mcp_enabled: bool = Field(default=False, alias="PPAP_MCP_ENABLED")
+    mcp_allowed_origins: list[str] = Field(default_factory=list, alias="PPAP_MCP_ALLOWED_ORIGINS")
     support_phone: str = Field(default="", alias="PPAP_SUPPORT_PHONE", max_length=200)
     support_email: str = Field(default="", alias="PPAP_SUPPORT_EMAIL", max_length=320)
     support_service_hours: str = Field(default="", alias="PPAP_SUPPORT_SERVICE_HOURS", max_length=200)
@@ -117,6 +120,28 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def production_must_not_inherit_isolated_dev(self) -> Self:
+        if self.mcp_enabled:
+            api = urlsplit(self.public_api_url)
+            if (
+                not api.hostname
+                or api.username
+                or api.password
+                or api.query
+                or api.fragment
+                or (api.scheme != "https" and not (self.profile != "production" and api.scheme == "http" and api.hostname in {"127.0.0.1", "localhost", "::1"}))
+            ):
+                raise ValueError("MCP requires a public HTTPS API URL; HTTP is permitted only on a development loopback address")
+            for origin in self.mcp_allowed_origins:
+                parsed = urlsplit(origin)
+                if (
+                    not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or "*" in origin
+                    or origin != f"{parsed.scheme}://{parsed.netloc}"
+                    or (parsed.scheme != "https" and not (self.profile != "production" and parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}))
+                ):
+                    raise ValueError("MCP browser origins must be explicit HTTPS origins, or development loopback origins")
         if self.profile == "isolated-dev":
             if not self.llm_base_url.strip():
                 self.llm_base_url = ISOLATED_DEV_LLM_BASE_URL
