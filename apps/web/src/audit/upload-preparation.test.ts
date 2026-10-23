@@ -17,6 +17,27 @@ test('preparation saves are ordered by acknowledged server revision', async () =
   assert.equal(controller.peek('original-draft')?.preparation_revision, 1)
 })
 
+test('a pending preparation does not block or release another draft', async () => {
+  let started!: () => void, finish!: (value: ReturnType<typeof draft>) => void
+  const firstStarted = new Promise<void>(resolve => {started = resolve})
+  const firstReply = new Promise<ReturnType<typeof draft>>(resolve => {finish = resolve})
+  const calls: string[] = []
+  const controller = createUploadPreparation({readFile: noFile, read: async () => {throw new Error('unexpected_read')}, save: async (id, _revision, input) => {
+    calls.push(id)
+    if (id === 'draft-a') {started(); return firstReply}
+    return {...draft(0, input), id}
+  }})
+  const first = controller.save('draft-a', value)
+  await firstStarted
+  const second = await controller.save('draft-b', {...value, customer_preference: '客户 B'})
+  assert.equal(second.id, 'draft-b')
+  assert.equal(controller.peek('draft-a'), undefined)
+  finish({...draft(0), id: 'draft-a'})
+  await first
+  assert.deepEqual(calls, ['draft-a', 'draft-b'])
+  assert.equal(controller.peek('draft-b')?.upload_preparation?.customer_preference, '客户 B')
+})
+
 test('a lost preparation write reply reads the same draft without repeating the write', async () => {
   const calls: string[] = []
   const controller = createUploadPreparation({readFile: noFile, save: async id => {calls.push(`write:${id}`); throw new Error('reply_lost')}, read: async id => {calls.push(`read:${id}`); return draft(0)}})
