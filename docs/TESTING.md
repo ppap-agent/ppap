@@ -340,6 +340,15 @@ Deep gateway 将业务完成与 provider 用量回执分开：`response.complete
 
 API owner tests validate that every major Web-consumed endpoint has an explicit successful JSON response schema and that JSON write endpoints have an explicit request schema. Repository CI then installs the frozen Web lockfile inside `apps/web`, runs `pnpm api-types` there, and fails if `apps/web/src/generated/openapi.ts` differs from the committed artifact. Web CI typechecks/tests/lints/builds the generated consumers.
 
+## CI Web Preview 有界并发与 Corpus profiling
+
+Web `V3.1 preview browser contracts` 使用原来单一的本地 Vite Preview 服务和全部已有用例。`e2e` 组锁定 `pytest-xdist==3.8.0`；默认 `PPAP_PREVIEW_WORKERS=2` 启用 `-n 2 --dist=load`，仅 Web Preview 运行两个 pytest worker。设为 `0` 立即恢复原有串行行为（需要新 CI 运行）；不支持其他值，以免静默变更验证范围。并发下各浏览器由测试单独创建，共享同一个只读 UI 预览服务器；任何测试互相污染或资源竞争导致的失败不得用串行自动重跑掩盖。
+
+Corpus pytest 仅增加 `--durations=25` 来标出 PDF 等慢用例，不开启 `-n`。PDF 仍使用 `tests/corpus/conftest.py` 规定的 OCR 缓存，`test_product_round.py` 的单个测试内部仍有文件循环；在证明并发读写隔离前不改变 PDF 运行方式。Product PostgreSQL、PSW、Browser E2E 和 `CI Gate` 均不改动。
+
+验证标准：检查 `uv sync --locked --group e2e`、完整 Preview 收集数/通过数（改动前为 257）、所有 Repository tests 和相同 commit 的严格 CI Gate。至少连续比较三次完整 CI，记录 wall-clock、Web/PDF 耗时、队列时长与 Runner 的峰值 CPU/内存/Swap；若有 OOM、Chromium 异常、新增 flaky 或其他 Job 严重退化，先设置 `PPAP_PREVIEW_WORKERS=0` 回退。两台 Runner 是否为不同物理主机仍需部署侧确认。
+
+
 ## MCP
 
 新任务写回回归从 MCP 上传、规则解析/发布和预校验开始，经上传准备草稿、同修订目标保存、提升、审核和 PDF，最后调用写回；不再用旧草稿受理替代新任务路径。保存及外部写回回复丢失后，新 API 实例读回同一记录，重复请求不重发。实际 PostgreSQL 的并发保存/提升测试核对只接受一个修订及提升后目标不可变。飞书 HTTP 仍受控，不证明真实文档送达。`NativeUploadPreparation` 的两种选择同时抽象输入与写回目标快照：正向 517 状态/深度 11，迟到保存与未持久化发送分别在深度 6/2 违反原不变量；无公平性、状态约束、对称压缩或完整 refinement 声明。

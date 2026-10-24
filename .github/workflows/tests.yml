@@ -64,6 +64,8 @@ jobs:
         working-directory: apps/web
         env:
           PPAP_PREVIEW: "1"
+          # Set to "0" to restore the previous serial preview run.
+          PPAP_PREVIEW_WORKERS: "2"
         run: |
           pnpm exec node --input-type=module <<'JS'
           import {spawn} from 'node:child_process'
@@ -82,7 +84,12 @@ jobs:
             if (!address || typeof address === 'string' || address.address !== '127.0.0.1') throw new Error('Preview did not bind to loopback')
             const preview = `http://127.0.0.1:${address.port}`
             console.log(`UI-only preview: ${preview}`)
-            const child = spawn('uv', ['run', '--no-sync', 'pytest', ...tests], {cwd: root, stdio: 'inherit', env: {...process.env, PPAP_PREVIEW_URL: preview}})
+            // Fail closed on typos and keep a one-line serial rollback switch.
+          const workers = process.env.PPAP_PREVIEW_WORKERS ?? '0'
+          if (!['0', '2'].includes(workers)) throw new Error('PPAP_PREVIEW_WORKERS must be 0 or 2')
+          const pytestArgs = ['run', '--no-sync', 'pytest', ...(workers === '2' ? ['-n', '2', '--dist=load'] : []), '--durations=25', ...tests]
+          console.log(`Preview pytest workers: ${workers}; test files: ${tests.length}`)
+          const child = spawn('uv', pytestArgs, {cwd: root, stdio: 'inherit', env: {...process.env, PPAP_PREVIEW_URL: preview}})
             const [code] = await once(child, 'exit')
             process.exitCode = code ?? 1
           } finally {
@@ -291,7 +298,7 @@ jobs:
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
-        run: uv run --no-sync pytest ${{ matrix.args }}
+        run: uv run --no-sync pytest ${{ matrix.args }} --durations=25
       - name: Assert Docker
         if: ${{ matrix.mode == 'psw' }}
         uses: ./.github/actions/assert-docker
