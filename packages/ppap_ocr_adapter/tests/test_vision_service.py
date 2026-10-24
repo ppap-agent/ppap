@@ -36,12 +36,14 @@ def test_page_requests_overlap_but_results_preserve_pdf_page_order(tmp_path):
 
 @pytest.mark.parametrize(
     "payload",
-    [{"tables": [], "paragraphs": [], "seals": ["ok"], "extra": 1},
-     {"tables": [{"rows": [["ok", 12]]}], "paragraphs": [], "seals": []},
-     {"tables": "broken", "paragraphs": [], "seals": []}],
+    [
+        {"tables": [], "paragraphs": [], "seals": ["ok"], "extra": 1},
+        {"tables": [{"rows": [["ok", 12]]}], "paragraphs": [], "seals": []},
+        {"tables": "broken", "paragraphs": [], "seals": []},
+    ],
 )
 def test_schema_deviations_fail_closed(payload):
-    with pytest.raises(ValueError, match='Invalid Responses'):
+    with pytest.raises(ValueError, match="Invalid Responses"):
         vision_service._validate_page(payload)
 
 

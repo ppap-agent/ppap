@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from scripts.ci_heartbeat import run_with_heartbeat
