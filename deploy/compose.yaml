@@ -118,6 +118,12 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      # Acceptance and execution must identify the same non-secret tool policy.
+      OCR_ADAPTER_MODE: ${OCR_ADAPTER_MODE:-auto}
+      OCR_REMOTE_URL: ${OCR_REMOTE_URL:-}
+      OCR_OPENAI_BASE_URL: ${OCR_OPENAI_BASE_URL:-}
+      OCR_MODEL_NAME: ${OCR_MODEL_NAME:-}
+      PADDLE_OCR_URL: ${PADDLE_OCR_URL:-}
       FEISHU_APP_ID: ${FEISHU_APP_ID:-}
       PPAP_FEISHU_NOTIFICATIONS_ENABLED: ${PPAP_FEISHU_NOTIFICATIONS_ENABLED:-false}
       FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
@@ -177,6 +183,7 @@ services:
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY:-}
       OCR_ADAPTER_MODE: ${OCR_ADAPTER_MODE:-auto}
+      OCR_REMOTE_URL: ${OCR_REMOTE_URL:-}
       OCR_ENGINE: ${OCR_ENGINE:-easyocr}
       OCR_LANGUAGES: ${OCR_LANGUAGES:-ch_sim,en}
       OCR_OPENAI_API_KEY: ${OCR_OPENAI_API_KEY:-}

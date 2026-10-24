@@ -12,13 +12,16 @@ from pathlib import Path
 from ppap_application import analyze_file, build_product_store, parse_rule_file, run_standard_round, validate_file
 from ppap_core.audits import (
     ANALYSIS_DEEP,
+    EXECUTOR_STANDARD,
+    STANDARD_EXECUTOR_REVISION,
     evaluate_round,
 )
 from ppap_core.db import connect
 from ppap_core.logs import bind, emit, reset
 from ppap_core.logs import configure as configure_logs
 from ppap_core.rules import FILE_PREPARATION_KINDS
-from ppap_core.settings import load_settings
+from ppap_core.settings import get_settings
+from ppap_core.standard_policy import StandardExecutionPolicy
 from ppap_product_store import AuthStore
 
 STOP = False
@@ -151,6 +154,21 @@ def process_claimed(store: AuthStore, claimed, ident: str, *, rule_ai=None) -> d
             )
             return result
 
+        # Legacy jobs retain their original label; no invented configuration is
+        # backfilled. New jobs must match before reading original bytes or AI IO.
+        payload = claimed.payload or {}
+        if payload.get("execution_policy") is not None or payload.get("executor_revision") != STANDARD_EXECUTOR_REVISION:
+            try:
+                policy = StandardExecutionPolicy.model_validate(payload.get("execution_policy"))
+                matched = payload.get("executor") == EXECUTOR_STANDARD and payload.get("executor_revision") == policy.engine_revision() and policy == store.settings.standard_execution_policy()
+            except ValueError:
+                matched = False
+            if not matched:
+                result = {"findings": [], "coverage": {}, "failure": {"code": "executor_revision_mismatch", "retryable": False}, "note": "executor_revision_mismatch"}
+                accepted = store.complete_job(claimed, ident, result, "failed")
+                emit("job_completed" if accepted else "job_result_discarded", outcome="failed", note="executor_revision_mismatch")
+                return result
+
         def runner(current):
             return engine_runner(current, store)
 
@@ -282,7 +300,9 @@ def run_deep_round(store: AuthStore, claimed, work, ident: str = "") -> tuple[di
 def run() -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
-    settings = load_settings()
+    # Engine/OCR clients read this same process-lifetime settings object.
+    # Configuration changes require a new process, not a hot mutation.
+    settings = get_settings()
     configure_logs(settings)
     ident = worker_id(settings.worker_id)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Literal, NotRequired, TypedDict
 
 from fastapi import FastAPI
+from ppap_core.standard_policy import StandardExecutionPolicy
 from pydantic import TypeAdapter
 
 AnalysisMode = Literal["standard", "deep"]
@@ -530,6 +531,7 @@ class Round(TypedDict):
     read_view: NotRequired[AuditRoundReadView]
     executor: NotRequired[str]
     executor_revision: NotRequired[str]
+    execution_policy: NotRequired[StandardExecutionPolicy]
 
 
 class RoundSummaryRule(TypedDict):
