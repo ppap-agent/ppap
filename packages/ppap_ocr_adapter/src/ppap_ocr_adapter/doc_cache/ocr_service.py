@@ -248,11 +248,11 @@ def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
         paragraphs = page["paragraphs"]
         seals = page["seals"]
         if paragraphs or seals:
-            html_parts.append(f"<section data-page=\"{page_idx}\">")
+            html_parts.append(f'<section data-page="{page_idx}">')
             for text in paragraphs:
                 html_parts.append(f"<p>{html.escape(text, quote=True)}</p>")
             for text in seals:
-                html_parts.append(f"<p class=\"seal\">印章/签署：{html.escape(text, quote=True)}</p>")
+                html_parts.append(f'<p class="seal">印章/签署：{html.escape(text, quote=True)}</p>')
             html_parts.append("</section>")
 
     if not table_number and not html_parts:

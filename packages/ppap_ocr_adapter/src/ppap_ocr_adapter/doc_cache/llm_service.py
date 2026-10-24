@@ -1,9 +1,9 @@
-# src/llm_service.py
+"""One Responses client for local multimodal document evidence."""
 
 import base64
-import mimetypes
 import json
 import logging
+import mimetypes
 import os
 import re
 from functools import lru_cache
@@ -68,7 +68,7 @@ def call_llm(
     response_schema: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, Any]]:
     """
-    通用 Gemma 调用入口
+    Responses 多模态模型调用入口
     :param json_mode: 是否强制输出 JSON (Tagging 阶段使用)
     :param response_schema: 如果 json_mode 为 True，可传入具体的 Schema 约束
     """
@@ -104,11 +104,11 @@ def call_llm(
                     # === 这里调用清洗函数 ===
                     clean_content = _clean_json_response(content_text)
                     parsed = json.loads(clean_content)
-                    return parsed if isinstance(parsed, dict) else {"error": "Invalid JSON", "raw": content_text}
+                    return parsed if isinstance(parsed, dict) else {"error": "Invalid JSON"}
                 except json.JSONDecodeError:
-                    logger.warning(f"LLM returned invalid JSON: {content_text}")
+                    logger.warning("Responses returned invalid JSON; rejecting untrusted model output")
                     # 可以在这里做简单的清理重试，或者直接抛出
-                    return {"error": "Invalid JSON", "raw": content_text}
+                    return {"error": "Invalid JSON"}
 
             return content_text
 

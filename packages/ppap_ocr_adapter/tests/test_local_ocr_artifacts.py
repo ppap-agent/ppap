@@ -42,7 +42,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
         first_copy = Path(first.excel_path)
         copies.append(first_copy)
         assert first.raw_meta["vision_protocol"] == "responses_multimodal_v1"
-        provider_path = Path(first.raw_meta['excel_path'])
+        provider_path = Path(first.raw_meta["excel_path"])
         original_bytes = provider_path.read_bytes()
         assert first_copy != provider_path
         loaded = load_workbook(first_copy)
@@ -52,7 +52,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
             loaded.save(first_copy)
         finally:
             loaded.close()
-        html = Path(first.raw_meta['html_path']).read_text()
+        html = Path(first.raw_meta["html_path"]).read_text()
         assert "&lt;private text&gt;" in html
         assert "&lt;signed &amp; stamped&gt;" in html
 
