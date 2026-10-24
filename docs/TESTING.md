@@ -344,7 +344,7 @@ API owner tests validate that every major Web-consumed endpoint has an explicit 
 
 Web `V3.1 preview browser contracts` 使用原来单一的本地 Vite Preview 服务和全部已有用例。`e2e` 组锁定 `pytest-xdist==3.8.0`；默认 `PPAP_PREVIEW_WORKERS=2` 启用 `-n 2 --dist=load`，仅 Web Preview 运行两个 pytest worker。设为 `0` 立即恢复原有串行行为（需要新 CI 运行）；不支持其他值，以免静默变更验证范围。并发下各浏览器由测试单独创建，共享同一个只读 UI 预览服务器；任何测试互相污染或资源竞争导致的失败不得用串行自动重跑掩盖。
 
-PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定，但从一个循环重构为每个文件独立的 pytest 参数用例；一个失败不会掩盖其他文件。`PPAP_CORPUS_PRODUCT_WORKERS=2` 时，其他 PDF Corpus 继续串行跑（`-k` 排除 Product Round），只让 Product Round 采用 `pytest-xdist -n 2 --dist=load --max-worker-restart=0`。每个 xdist worker 在 `tests/corpus/conftest.py` 里复制原 OCR SQLite 和 Excel/HTML fixture 到独立临时目录，单独写入，并在退出时删除。缓存机制本身会修改 SQLite，直接在多个 worker 之间共享目录不安全。设为 `0` 恢复完整 PDF Corpus 单进程串行运行。其他 Excel、scanned、Pairs、V3、PSW 仍保持原执行方式。
+PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定。`PPAP_CORPUS_PDF_WORKERS=2` 时，PDF Corpus 的全部 173 个测试（含 88 个原 V2、85 个 Product Round）进入**同一个** `pytest-xdist -n 2 --dist=load` 池，不再让慢 V2 阶段和 Product Round 彼此等待。两个 worker 分别复制 OCR SQLite/产物缓存，绝不共享可写目录；`=0` 则完整串行。其他 Excel、scanned、Pairs、V3、PSW 保持原验证范围。长测试通过 `scripts/ci_heartbeat.py` 每 30 秒向 Runner 输出进度，`-vv` 与 `faulthandler_timeout=120` 记录卡住的用例与 Python 线程栈；超时明确失败，不通过自动重跑掩盖。
 
 Product Browser E2E 在本次 **all-suite concurrency stress experiment** 中不再区分受控与真实服务用例。`PPAP_E2E_WORKERS=4` 在同一个 isolated-dev Docker Compose 环境中，对整个 `tests/e2e` 调用一次 `pytest-xdist -n 4 --dist=load --max-worker-restart=0 -vv --durations=25`，没有 `--ignore`、静默重跑或跳过任何原有可运行测试。真实 API/PostgreSQL/Worker 测试同样进入调度池：跨 worker 的共同 `alice` 身份、数据库/对象存储、服务端全局状态可能造成 race 或污染，这正是本实验要揭示的，不应解释成已实现生产级测试隔离。`PPAP_E2E_WORKERS=0` 恢复原完整 E2E 单进程测试。`-vv` 标出 `[gwN]` 和逐项执行结果，`--durations=25` 捕获慢项。原先独立运行的 9 项历史报告测试也包含在这一个调用中。CI Gate、Product 集成数据库测试和 Production runtime 测试没有放宽。若失败，先按失败用例和共享资源类型归类，然后改造 per-worker 用户身份、唯一记录或独立 DB/Compose project；不要自动忽略失败。
 
@@ -379,3 +379,15 @@ CI Run 40063063124 中 `cursor`、`cursor-ppap` 两个 runner 名称都上报相
 ### Product E2E teardown 的 CI-only 修复
 
 Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 108 项及独立历史报告 9 项均通过；随后 `Isolated-dev browser E2E` step 在重复的 `docker compose down` 过程中收到 `The operation was canceled`，该 step 被标记为取消，整个 Job 为 failure。现将 E2E 的 Compose 清理明确交给既有的 `if: always()` 末尾步骤：测试步骤只负责测试、失败必须传播；末尾三个 Compose 清理操作全部尝试，清理失败也必须让 CI Gate 失败。取消信号的外部来源仍不能从旧日志证明，不把测试已通过等同于完整 CI 绿色。已在串行 Browser E2E 中增加 `-vv` 供 GitHub timestamps 精确定位单例运行和非 call 时间的长时间空档；`test_round_reports.py` 在失败的运行中 9 项用例以 4.70s 通过，不是本次 E2E 慢段。完整 CI 在精确新 HEAD 上重新验证后才能合并。
+
+### CR-01：以 Responses 多模态统一 PDF fallback，移除重复 OCR 管线
+
+针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 是 `LocalOcrAdapter -> doc_cache/ocr_service.py -> vision_service.py -> llm_service.py`：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、普通正文和印章文字。表格写成独立 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。每页最多一次 Responses 请求，且每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
+
+为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v1` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 保留；此项变更只替换默认 `auto/local` 的 PDF 路径，不改变原来的手工 linegrid 优先次序。
+
+外部模型会接收 PDF 页面内容，属于既有客户文档出站处理边界；只发送到配置的可信 Responses 服务，使用 `store=False`，不在日志中写页面文本、图像或密钥。CI 本地单元测试 mock 模型接口，真实远程模型可用性和输出质量需由完整 Corpus/PSW baseline 再验证。若模型能力不支持严格 schema，必须报错并确认端点能力，而不是退回旧 OCR 静默通过。
+
+### CI 长任务并发与可观测性
+
+`scripts/ci_heartbeat.py` 对长时间无输出的 Python owner、Distribution、Corpus 和 PSW 子进程提供有限时执行和约 30 秒的 heartbeat，向 Linux 子进程组发送 TERM，必要时升级 KILL，并保留原退出码。`pytest` 采用 `-vv --durations=25` 和 `faulthandler_timeout=120` 定位慢用例；不能将 Runner 平台误报失败当作测试通过证据。CI Gate、Worker/DB 权限与所有原测试项目数继续保持严格检查。运行时服务器任务仍是被测对象的自身串行行为，不应与 pytest-xdist 的四进程并发混为一谈。

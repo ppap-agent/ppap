@@ -18,6 +18,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from scripts.ci_heartbeat import run_with_heartbeat
 from scripts.validate_distribution import production_members
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +73,7 @@ def partition(targets: list[Target], shard_count: int) -> list[list[Target]]:
 
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", shlex.join(command), flush=True)
-    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    run_with_heartbeat(command, cwd=ROOT, env=env, timeout=1800)
 
 
 def with_postgres(command: list[str], project: str) -> None:

@@ -1,6 +1,7 @@
 # src/llm_service.py
 
 import base64
+import mimetypes
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ def _get_llm_client() -> OpenAI:
     return OpenAI(
         api_key=settings.get_ocr_openai_api_key(),
         base_url=settings.get_ocr_openai_base_url(),
+        max_retries=0,
     )
 
 
@@ -33,26 +35,38 @@ def encode_image(path: str) -> str:
         return base64.b64encode(img.read()).decode("utf-8")
 
 
-def _prepare_messages(image_input: Union[str, List[str]], text_prompt: str) -> List[Dict[str, Any]]:
+def _prepare_messages(image_input: str | bytes | list[str | bytes], text_prompt: str) -> List[Dict[str, Any]]:
     """构建标准的多模态消息体"""
-    if isinstance(image_input, str):
+    if isinstance(image_input, (str, bytes)):
         paths = [image_input]
     else:
         paths = image_input
 
     images_content = []
     for path in paths:
-        if os.path.exists(path):
+        if isinstance(path, bytes):
+            b64 = base64.b64encode(path).decode("ascii")
+            mime = "image/png"
+        elif os.path.exists(path):
             b64 = encode_image(path)
-            images_content.append({"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"})
+            mime = mimetypes.guess_type(path)[0] or "image/jpeg"
+            if mime not in {"image/jpeg", "image/png", "image/webp"}:
+                raise ValueError(f"Unsupported vision image type: {mime}")
         else:
-            logger.warning(f"Image not found: {path}")
+            raise FileNotFoundError(f"Vision input image does not exist: {path}")
+        images_content.append({"type": "input_image", "image_url": f"data:{mime};base64,{b64}", "detail": "high"})
 
     content_payload = [{"type": "input_text", "text": text_prompt}, *images_content]
     return [{"role": "user", "content": content_payload}]
 
 
-def call_llm(image_paths: Union[str, List[str]], prompt: str, retry_count: int = 3, json_mode: bool = False, response_schema: Optional[Dict[str, Any]] = None) -> Union[str, Dict[str, Any]]:
+def call_llm(
+    image_paths: str | bytes | list[str | bytes],
+    prompt: str,
+    retry_count: int = 3,
+    json_mode: bool = False,
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> Union[str, Dict[str, Any]]:
     """
     通用 Gemma 调用入口
     :param json_mode: 是否强制输出 JSON (Tagging 阶段使用)
@@ -64,10 +78,8 @@ def call_llm(image_paths: Union[str, List[str]], prompt: str, retry_count: int =
     kwargs: dict[str, Any] = {
         "model": _get_llm_model_name(),
         "input": messages,
-        "temperature": 0.1 if json_mode else 0.0,  # Tagging 需要严谨，内容提取需要稳定
-        "top_p": 0.95,
         "store": False,
-        "timeout": 600,
+        "timeout": 120,
     }
 
     # 处理 Response Format

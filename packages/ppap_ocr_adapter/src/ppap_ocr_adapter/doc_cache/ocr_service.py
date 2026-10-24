@@ -1,11 +1,10 @@
-"""Minimal in-process OCR workflow ported from doc-cache.
+"""Responses multimodal PDF to Excel/HTML conversion with content cache.
 
 Scope kept intentionally small (KISS):
 - download/resolve PDF
 - optional sqlite cache
-- call Paddle layout OCR
-- extract tables to xlsx
-- optionally write seal metadata html
+- render pages and request structured multimodal Responses outputs
+- validate and write tables to xlsx, text and seals to safe HTML
 """
 
 from __future__ import annotations
@@ -21,36 +20,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-import fitz
 import openpyxl
 import requests
 from ppap_core.settings import get_settings
 from ppap_docops.excel.loader import load_excel_workbook
 from ppap_docops.files import parse_file_size
 
-from .layout_utils import build_layout_structure
-from .paddle_service import PaddleStructureService
-from .processors.base_processor import ProcessingContext
-from .processors.gemma_processor import GemmaProcessor
-from .processors.paragraph_processor import ParagraphProcessor
-from .processors.seal_processor import SealProcessor
-from .processors.table_processor import TableProcessor
+from .vision_service import VisionLayoutService
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_IMG_WIDTH = 1654
-DEFAULT_IMG_HEIGHT = 2339
-
-
-def _coerce_table_rows(rows: object) -> list[list[Any]] | None:
-    if not isinstance(rows, list):
-        return None
-    normalized: list[list[Any]] = []
-    for row in rows:
-        if not isinstance(row, list):
-            return None
-        normalized.append(list(row))
-    return normalized
+VISION_CACHE_VERSION = "responses_multimodal_v1"
 
 
 def _source_hash(source: str) -> str:
@@ -92,6 +72,8 @@ def _max_file_size_bytes() -> int:
 
 def _compute_md5(path: str) -> str:
     md5 = hashlib.md5()
+    md5.update(VISION_CACHE_VERSION.encode())
+    md5.update(get_settings().get_ocr_model_name().encode())
     with open(path, "rb") as file:
         for chunk in iter(lambda: file.read(8192), b""):
             md5.update(chunk)
@@ -137,7 +119,7 @@ def _load_content(conn: sqlite3.Connection, file_id: str) -> dict[str, Any] | No
 
 def _is_cacheable_result(payload: dict[str, Any]) -> bool:
     """Cache only successful OCR payloads."""
-    return "error" not in payload
+    return "error" not in payload and payload.get("vision_protocol") == VISION_CACHE_VERSION
 
 
 def _resolve_cached_artifact_path(path: str) -> str | None:
@@ -229,193 +211,86 @@ def _store_cache(source_hash: str, file_id: str, payload: dict[str, Any]) -> Non
         )
 
 
-def _extract_rows(pdf: fitz.Document, box: dict[str, Any], *, img_w: int, img_h: int, padding: int) -> list[list[Any]] | None:
-    page_idx = int(box["page_idx"])
-    x0, y0, x1, y1 = box["coordinate"]
-
-    page = pdf[page_idx]
-    scale_x = page.rect.width / img_w
-    scale_y = page.rect.height / img_h
-
-    clip = fitz.Rect(
-        max(0, x0 - padding) * scale_x,
-        max(0, y0 - padding) * scale_y,
-        min(img_w, x1 + padding) * scale_x,
-        min(img_h, y1 + padding) * scale_y,
-    )
-
-    try:
-        tabs = page.find_tables(clip=clip)
-        if tabs.tables:
-            return _coerce_table_rows(tabs[0].extract())
-        return None
-    except Exception:
-        logger.warning("table crop failed page=%s box=%s", page_idx, box.get("coordinate"))
-        return None
-
-
-def _write_tables(pdf_path: str, items: list[dict[str, Any] | list[dict[str, Any]]], output_excel: str, *, img_w: int, img_h: int) -> bool:
-    workbook = openpyxl.Workbook()
-    default_sheet = workbook.active
-
-    table_count = 0
-    with fitz.open(pdf_path) as pdf:
-        for item in items:
-            if isinstance(item, list):
-                merged_rows: list[list[Any]] = []
-                for box in item:
-                    rows = _extract_rows(pdf, box, img_w=img_w, img_h=img_h, padding=15)
-                    if rows:
-                        merged_rows.extend(rows)
-                rows = merged_rows
-            elif isinstance(item, dict) and item.get("label") == "table":
-                rows = _extract_rows(pdf, item, img_w=img_w, img_h=img_h, padding=15)
-            else:
-                continue
-
-            if not rows:
-                continue
-
-            table_count += 1
-            sheet = workbook.create_sheet(f"Table_{table_count}")
-            for row in rows:
-                sheet.append([cell if cell is not None else "" for cell in row])
-
-    if table_count == 0:
-        workbook.close()
-        return False
-
-    if default_sheet is not None:
-        workbook.remove(default_sheet)
-    workbook.save(output_excel)
-    workbook.close()
-    return True
-
-
-def _write_seals_html(raw_data: dict[str, Any], items: list[dict[str, Any] | list[dict[str, Any]]], output_html: str) -> bool:
-    seal_pages: set[int] = set()
-    for item in items:
-        if not isinstance(item, dict) or item.get("label") != "seal":
-            continue
-        page_idx = item.get("page_idx")
-        if page_idx is not None:
-            seal_pages.add(int(page_idx))
-    if not seal_pages:
-        return False
-
-    results = raw_data.get("layoutParsingResults", [])
-    lines: list[str] = []
-    for page_idx in sorted(seal_pages):
-        if page_idx >= len(results):
-            lines.append(f"Page {page_idx + 1} 检测到印章 (内容未识别)")
-            continue
-
-        seal_res = results[page_idx].get("prunedResult", {}).get("seal_res_list", [])
-        texts: list[str] = []
-        for seal in seal_res:
-            if "rec_texts" in seal:
-                texts.extend(seal["rec_texts"])
-
-        if texts:
-            lines.append(f"Page {page_idx + 1} 印章: {' '.join(texts)}")
-        else:
-            lines.append(f"Page {page_idx + 1} 检测到印章 (内容未识别)")
-
-    if not lines:
-        return False
-
-    html_content = '<div class="seal-section" style="color:red; border:1px solid red; padding:10px; margin:10px 0;">\n'
-    html_content += "  <h4>🛑 印章/签署信息 (Seal/Signature)</h4>\n"
-    html_content += "  <ul>\n"
-    for line in lines:
-        html_content += f"    <li>{html.escape(line, quote=True)}</li>\n"
-    html_content += "  </ul>\n"
-    html_content += "</div>\n"
-
-    with open(output_html, "w", encoding="utf-8") as file:
-        file.write(html_content)
-    return True
-
-
 def _is_valid_excel_artifact(path: str) -> bool:
     try:
         workbook = load_excel_workbook(path)
     except Exception as exc:
-        logger.error("Generated OCR Excel is invalid (%s): %s", path, exc)
+        logger.error("Generated vision workbook is invalid (%s): %s", path, exc)
         return False
-
     close = getattr(workbook, "close", None)
     if callable(close):
         close()
     return True
 
-
 def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
-    """
-    KISS 风格的主流程：只负责组装，不负责实现细节。
-    """
+    """One Responses vision pass per PDF page; build auditable workbook/HTML."""
+    pages = VisionLayoutService().analyze_full_pdf(pdf_path)
+    if not pages:
+        return {"file_id": file_id, "error": "vision_empty_result"}
 
-    raw_data = PaddleStructureService().analyze_full_pdf(pdf_path)
-    if not raw_data:
-        return {"file_id": file_id, "error": "empty_paddle_result"}
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    html_parts: list[str] = []
+    table_number = 0
+    for page_idx, page in enumerate(pages, 1):
+        for table in page["tables"]:
+            rows = table["rows"]
+            if not rows:
+                continue
+            table_number += 1
+            sheet = workbook.create_sheet(f"Table_{table_number}")
+            for row in rows:
+                if not isinstance(row, list) or not row:
+                    raise ValueError("Invalid multimodal table row")
+                if any(not isinstance(cell, str) or len(cell) > 32767 for cell in row):
+                    raise ValueError("Invalid multimodal table cells")
+                sheet.append(row)
+        paragraphs = page["paragraphs"]
+        seals = page["seals"]
+        if paragraphs or seals:
+            html_parts.append(f"<section data-page=\"{page_idx}\">")
+            for text in paragraphs:
+                html_parts.append(f"<p>{html.escape(text, quote=True)}</p>")
+            for text in seals:
+                html_parts.append(f"<p class=\"seal\">印章/签署：{html.escape(text, quote=True)}</p>")
+            html_parts.append("</section>")
 
-    # 1. 准备路径
-    output_dir = _results_dir()
-    os.makedirs(output_dir, exist_ok=True)
-    excel_path = os.path.join(output_dir, f"{file_id}.xlsx")
-    html_path = os.path.join(output_dir, f"{file_id}.html")
-    _safe_remove(excel_path)
-    _safe_remove(html_path)
+    if not table_number and not html_parts:
+        workbook.close()
+        return {"file_id": file_id, "error": "vision_empty_result"}
+    if not table_number:
+        sheet = workbook.create_sheet("Text")
+        for page in pages:
+            for text in [*page["paragraphs"], *page["seals"]]:
+                if len(text) > 32767:
+                    raise ValueError("Multimodal text exceeds Excel cell limit")
+                sheet.append([text])
 
-    # 2. 预处理数据 (Layout Structure)
-    final_layout = build_layout_structure(raw_data)
-
-    # 3. 初始化上下文
-    # 获取图片尺寸信息
-    page_info = (raw_data.get("dataInfo", {}).get("pages", []) or [{}])[0]
-    img_w = int(page_info.get("width") or 1654)
-    img_h = int(page_info.get("height") or 2339)
-
-    ctx = ProcessingContext(
-        pdf_path=pdf_path, raw_structures_data=raw_data, final_layout_structure=final_layout, output_excel_path=excel_path, output_html_path=html_path, img_w=img_w, img_h=img_h, padding=15
-    )
-
-    # 4. 初始化 HTML (清空)
+    directory = _results_dir()
+    os.makedirs(directory, exist_ok=True)
+    excel_path = os.path.join(directory, f"{file_id}.xlsx")
+    html_path = os.path.join(directory, f"{file_id}.html")
     try:
-        open(html_path, "w", encoding="utf-8").close()
-    except Exception as e:
-        logger.error(f"Failed to init HTML file: {e}")
-
-    # 5. 定义责任链 (清晰明了)
-    chain = [
-        TableProcessor(),  # 负责表格 -> Excel
-        SealProcessor(),  # 负责印章 -> HTML
-        ParagraphProcessor(),  # 负责切图 -> 待处理列表
-        GemmaProcessor(),  # 负责视觉理解 -> HTML
-    ]
-
-    # 6. 执行
-    logger.info("Starting processing chain...")
-    for processor in chain:
-        try:
-            processor.process(ctx)
-        except Exception as e:
-            logger.error(f"Processor {processor.__class__.__name__} failed: {e}")
-            # 可以选择 continue 或 break
-
-    # 7. 构造返回结果
-    result = {"file_id": file_id}
-    if os.path.exists(excel_path) and os.path.getsize(excel_path) > 0 and _is_valid_excel_artifact(excel_path):
-        result["excel_path"] = excel_path
-    else:
+        workbook.save(excel_path)
+        workbook.close()
+        if not _is_valid_excel_artifact(excel_path):
+            raise ValueError("Multimodal workbook failed validation")
+        result: dict[str, Any] = {
+            "file_id": file_id,
+            "excel_path": excel_path,
+            "vision_protocol": VISION_CACHE_VERSION,
+            "vision_model": get_settings().get_ocr_model_name(),
+        }
+        if html_parts:
+            with open(html_path, "w", encoding="utf-8") as target:
+                target.write("\n".join(html_parts))
+            result["html_path"] = html_path
+        return result
+    except BaseException:
+        workbook.close()
         _safe_remove(excel_path)
-    if os.path.exists(html_path) and os.path.getsize(html_path) > 0:
-        result["html_path"] = html_path
-    else:
         _safe_remove(html_path)
-
-    return result
-
+        raise
 
 def _process_pdf(pdf_path: str, source_hash: str, enable_cache: bool) -> dict[str, Any]:
     file_id = _compute_md5(pdf_path)
