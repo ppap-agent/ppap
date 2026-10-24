@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
+from scripts.ci_shards import Target, discover_distributions, discover_modules, partition, with_postgres
+
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
-from ci_shards import Target, discover_distributions, discover_modules, partition, with_postgres  # noqa: E402
 
 
 @pytest.mark.parametrize("discover", [discover_modules, discover_distributions])
@@ -50,9 +50,9 @@ def test_reject_invalid_partition_sizes_and_duplicate_targets():
 def test_postgres_fixture_cleans_up_after_failed_test():
     failure = subprocess.CalledProcessError(1, ["uv", "run", "pytest"])
     with (
-        patch("ci_shards.run", side_effect=[None, None, failure]) as execute,
-        patch("ci_shards.subprocess.check_output", return_value="0.0.0.0:45678"),
-        patch("ci_shards.subprocess.run") as direct,
+        patch("scripts.ci_shards.run", side_effect=[None, None, failure]) as execute,
+        patch("scripts.ci_shards.subprocess.check_output", return_value="0.0.0.0:45678"),
+        patch("scripts.ci_shards.subprocess.run") as direct,
     ):
         direct.return_value.returncode = 0
         with pytest.raises(subprocess.CalledProcessError):
@@ -60,3 +60,15 @@ def test_postgres_fixture_cleans_up_after_failed_test():
     assert execute.call_count == 3
     assert execute.call_args.kwargs["env"]["PGPORT"] == "45678"
     assert any(call.args[0][-3:] == ["down", "-v", "--remove-orphans"] for call in direct.call_args_list)
+
+
+def test_ci_cli_module_invocation_discovers_all_targets():
+    completed = subprocess.run(
+        [sys.executable, "-m", "scripts.ci_shards", "plan"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert f"modules: {len(discover_modules())} targets in 3 shards" in completed.stdout
+    assert f"distributions: {len(discover_distributions())} targets in 3 shards" in completed.stdout
