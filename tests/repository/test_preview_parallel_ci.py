@@ -75,10 +75,23 @@ def test_only_controlled_browser_report_tests_are_parallelized():
     assert 'PPAP_E2E_ROUND_REPORT_WORKERS: "2"' in workflow
     assert 'case "${PPAP_E2E_ROUND_REPORT_WORKERS:-0}" in' in script
     assert 'pytest "$suite" --durations=25' in script
-    assert 'pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25' in script
+    assert 'pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25 -vv' in script
     assert 'pytest tests/e2e/test_round_reports.py -n 2 --dist=load --max-worker-restart=0 --durations=25' in script
     assert 'PPAP_E2E_ROUND_REPORT_WORKERS must be 0 or 2' in script
     assert 'uv run --no-sync pytest "$suite"' in script
     controlled = (ROOT / "tests/e2e/test_round_reports.py").read_text()
     assert 'page.route("**/api/**", api)' in controlled
     assert 'with sync_playwright() as playwright:' in controlled
+
+
+def test_browser_cleanup_is_owned_by_always_step_and_failures_are_reported():
+    workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+    section = workflow.split("  integration:\n", 1)[1].split("  ci_gate:\n", 1)[0]
+    e2e = section.split("      - name: Isolated-dev browser E2E\n", 1)[1].split("      - name: Dump Compose diagnostics\n", 1)[0]
+    cleanup = section.split("      - name: Clean Compose stacks\n", 1)[1]
+    assert "bash scripts/run-compose-tests.sh tests/e2e" in e2e
+    assert "down -v --remove-orphans" not in e2e
+    assert "if: always()" in cleanup
+    assert 'exit "$failed"' in cleanup
+    assert "down -v --remove-orphans || failed=1" in cleanup
+    assert cleanup.count("down -v --remove-orphans || failed=1") == 3
