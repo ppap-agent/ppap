@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 from functools import lru_cache
 from typing import ClassVar, Literal, Optional, Self
 from urllib.parse import urlsplit
@@ -11,6 +13,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ppap_core.deep_policy import DeepExecutionPolicy
+from ppap_core.standard_policy import StandardExecutionPolicy, config_digest
 
 ISOLATED_DEV_SECRET = "ppap_isolated_dev"
 ISOLATED_DEV_S3_ENDPOINT = "http://127.0.0.1:9000"
@@ -195,6 +198,45 @@ class Settings(BaseSettings):
 
     def deep_execution_revision(self) -> str:
         return self.deep_execution_policy().engine_revision()
+
+    def standard_execution_policy(self) -> StandardExecutionPolicy:
+        # Match AIClient's effective override handling. Never persist credentials,
+        # raw endpoints, local cache paths, or arbitrary provider extra-body data.
+        try:
+            extra = json.loads(self.OPENAI_EXTRA_BODY_JSON)
+        except (ValueError, TypeError):
+            extra = None
+        if not isinstance(extra, dict):
+            extra = None
+        return StandardExecutionPolicy(
+            app_revision=self.git_sha or None,
+            model=self.MODEL_NAME,
+            model_config_revision=config_digest(
+                {
+                    "endpoint": self.OPENAI_BASE_URL,
+                    "model": self.MODEL_NAME,
+                    "reasoning_effort": self.OPENAI_REASONING_EFFORT,
+                    "temperature": self.OPENAI_TEMPERATURE,
+                    "top_p": self.OPENAI_TOP_P,
+                    "extra_body": extra,
+                }
+            ),
+            tool_config_revision=config_digest(
+                {
+                    "ocr_adapter": self.get_ocr_adapter_mode(),
+                    "ocr_endpoint": self.OCR_REMOTE_URL.strip(),
+                    "ocr_model_endpoint": self.get_ocr_openai_base_url(),
+                    "ocr_model": self.get_ocr_model_name(),
+                    "paddle_endpoint": self.get_ocr_paddle_url(),
+                    "max_file_size": self.MAX_FILE_SIZE,
+                    "ng_topn": os.environ.get("PPAP_NG_TOPN", ""),
+                    "ocr_concurrency": os.environ.get("CONCURRENT_SIZE", "5"),
+                    "doc_converter": os.environ.get("LEGACY_DOC_CONVERTER_EXECUTABLE", ""),
+                    "doc_sandbox": os.environ.get("LEGACY_DOC_SANDBOX_EXECUTABLE", "ppap-local-converter-sandbox"),
+                    "doc_broker": os.environ.get("LEGACY_DOC_CONVERTER_SOCKET", ""),
+                }
+            ),
+        )
 
     def get_ocr_languages(self) -> list[str]:
         return [lang.strip() for lang in self.OCR_LANGUAGES.split(",")]

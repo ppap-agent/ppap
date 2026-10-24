@@ -24,6 +24,8 @@ PDF 委托器通过既有执行结束钩子主动关闭委托工作簿并清理�
 
 ## 测试层级
 
+`test_standard_policy.py` 检查 Standard 非敏感配置身份、选项等价与密钥排除。Product `test_standard_execution_policy.py` 复用真实 API／PostgreSQL／Worker，验证受理、配置变化后的终态拒绝、原请求重放、旧标签兼容及历史读回；presence fixture 只隔离执行配置合同，不证明模型质量。`StandardExecutionPolicy.tla` 是两个轮次、两个进程配置的有限 Safety 模型：正向 162 个状态；移除执行守卫与重放覆盖分别触发 `ExecutedAcceptedPolicy` 和 `FrozenHistory`。它假设一个执行进程内配置不热更新，不证明数据库持久性、外部工具版本、模型质量、缓存来源或整个系统 refinement。
+
 - **logic / unit**：稳定规则和数据不变量。
 - **corpus regression**：完整 engine parity；baseline 原有 failure 不属于 migration regression。
 - **integration**：数据库、对象存储、Worker、授权和必要外部接口。Deep 的受理、版本、fencing 与传输边界由 `tests/integration/product/test_deep_mode.py` 验证；语义 guest 与容器权限/模型 grant 的确定性逻辑由 `packages/ppap_deep/tests/test_deep_runtime.py`、`packages/ppap_deep/tests/test_deep_semantic.py`、`packages/ppap_deep/tests/test_deep_isolation.py` 验证。脚本化 runtime 只证明协议，不证明真实审核。同文件的局部计划失败用例使用实际 semantic guest，经 Product API／Worker／真实 PostgreSQL 与 UDS，核对当前任务和冻结历史的逐条结果、原件及独立文件的报告入队；模型、S3 边界受控，薄进程内适配不证明容器隔离、模型质量、飞书档案身份或 PDF 生成完成。`tests/live/test_deep_isolated.py` 使用独立 `ppap-deep` 容器、真实 Grok 和模型，但仅是玩具 XLSX 的真实模型协议 smoke，不是客户 A1–A12 样例验收；它不进入默认 merge contract。

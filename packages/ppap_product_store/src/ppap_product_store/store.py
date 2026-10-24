@@ -107,6 +107,8 @@ def _executor_public(payload) -> dict:
         extra["executor"] = payload["executor"]
     if payload.get("executor_revision"):
         extra["executor_revision"] = payload["executor_revision"]
+    if payload.get("execution_policy"):
+        extra["execution_policy"] = payload["execution_policy"]
     return extra
 
 
@@ -119,6 +121,8 @@ def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> di
     if payload.get("executor"):
         diagnostic["executor"] = payload["executor"]
         diagnostic["executor_revision"] = payload.get("executor_revision")
+        if payload.get("execution_policy"):
+            diagnostic["execution_policy"] = payload["execution_policy"]
     for key in ("failure", "usage"):
         if key in result:
             diagnostic[key] = result[key]
@@ -4087,9 +4091,12 @@ class AuthStore:
         analysis_mode = self._offered_analysis_mode(analysis_mode)
         if source_draft_id and draft_status == DRAFT_ACCEPTED:
             raise ValueError("draft_already_accepted")
-        executor_revision = self.settings.deep_execution_revision() if analysis_mode == ANALYSIS_DEEP else self.settings.deep_executor_revision
-        self._check_usage_policy(conn, principal, usage_policy)
         round_id = str(uuid.uuid4())
+        execution_payload: dict[str, Any] = job_payload(round_id, analysis_mode, self.settings.deep_execution_revision() if analysis_mode == ANALYSIS_DEEP else "")
+        if analysis_mode == ANALYSIS_STANDARD:
+            policy = self.settings.standard_execution_policy()
+            execution_payload.update(executor_revision=policy.engine_revision(), execution_policy=policy.model_dump(mode="json"))
+        self._check_usage_policy(conn, principal, usage_policy)
         job_id = str(uuid.uuid4())
         conn.execute(
             "INSERT INTO product.resources (id, tenant_id, kind) VALUES (%s, %s, 'audit_round')",
@@ -4157,7 +4164,7 @@ class AuthStore:
                 job_id,
                 principal.tenant_id,
                 round_id,
-                Jsonb(job_payload(round_id, analysis_mode, executor_revision)),
+                Jsonb(execution_payload),
             ),
         )
         if source_draft_id:

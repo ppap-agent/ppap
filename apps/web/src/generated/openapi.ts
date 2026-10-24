@@ -3199,6 +3199,7 @@ export interface components {
             created_at: string | null;
             /** Execution */
             execution: string;
+            execution_policy?: components["schemas"]["StandardExecutionPolicy"];
             /** Executor */
             executor?: string;
             /** Executor Revision */
@@ -3542,6 +3543,23 @@ export interface components {
              * @enum {string}
              */
             role: "target" | "reference";
+        };
+        /** StandardExecutionPolicy */
+        StandardExecutionPolicy: {
+            /** App Revision */
+            app_revision: string | null;
+            /**
+             * Executor Label
+             * @default in-repo-engine-v1
+             * @constant
+             */
+            executor_label: "in-repo-engine-v1";
+            /** Model */
+            model: string;
+            /** Model Config Revision */
+            model_config_revision: string;
+            /** Tool Config Revision */
+            tool_config_revision: string;
         };
         /** UsageEvent */
         UsageEvent: {
