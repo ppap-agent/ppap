@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ppap_core.audits import RoundInput, RoundWork
+from ppap_core.audits import STANDARD_EXECUTOR_REVISION, RoundInput, RoundWork
 from ppap_core.contracts import AuditEvidence, AuditResultItem, EvidenceSource
 
 
@@ -214,7 +214,7 @@ class EngineRunnerTests(unittest.TestCase):
                 raise RuntimeError("private engine details")
             return [AuditResultItem(status="PASS", classification="规则", item="健康文件检查", priority="P0", suggestions="")]
 
-        claimed = SimpleNamespace(id="job-partial", kind="audit", round_id=work.round_id, tenant_id=work.tenant_id, payload={}, attempt=1)
+        claimed = SimpleNamespace(id="job-partial", kind="audit", round_id=work.round_id, tenant_id=work.tenant_id, payload={"executor_revision": STANDARD_EXECUTOR_REVISION}, attempt=1)
         with patch.object(app_runtime, "run_audit_engine", run):
             result = process_claimed(self.store, claimed, "test-worker")
         by_file = {row["locator"]["file_version_id"]: row["status"] for row in result["findings"]}

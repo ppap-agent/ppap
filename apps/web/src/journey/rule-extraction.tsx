@@ -78,8 +78,8 @@ export function RuleExtraction({basis, onChange, readonly = false}: {basis: Requ
     const next = {...basis, source: {...basis.source, state: 'unparsed' as const}, server: {...basis.server, parseId: id}}
     onChange(next)
     try {
-      const value = await request<RuleParseJob>('/rules/parse', 'POST', {request_id: id, source_file_id: basis.server.material.file_id, source_file_version_id: basis.server.material.file_version_id, document_type: basis.server.body.type})
-      if (latest.current.server?.parseId === id && !['ready', 'manual'].includes(latest.current.source.state)) job.setValue(value)
+      // GET owns job state: a delayed acceptance receipt may predate its terminal result.
+      await request<RuleParseJob>('/rules/parse', 'POST', {request_id: id, source_file_id: basis.server.material.file_id, source_file_version_id: basis.server.material.file_version_id, document_type: basis.server.body.type})
     } catch (cause) {if (latest.current.server?.parseId === id && !['ready', 'manual'].includes(latest.current.source.state)) {setError(message(cause)); job.refresh()}}
     finally {working.current = false; setBusy(false)}
   }

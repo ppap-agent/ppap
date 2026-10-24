@@ -409,6 +409,58 @@ class RuleInteractionTests(unittest.TestCase):
             self.assertEqual(state["saves"], [])
             browser.close()
 
+    def test_terminal_rule_read_survives_a_late_queued_acceptance_receipt(self):
+        from playwright.sync_api import expect
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for status in ("succeeded", "failed"):
+                with self.subTest(status=status):
+                    page = browser.new_page()
+                    # Deliver both decoded responses in one microtask turn, before
+                    # React can commit the terminal GET to the requirement basis.
+                    page.add_init_script("""(() => {
+                        const fetch = window.fetch; let release;
+                        window.parseReceiptOrder = [];
+                        window.fetch = async (...args) => {
+                            const response = await fetch(...args), url = String(args[0]);
+                            const json = response.json.bind(response);
+                            if (url.endsWith('/rules/parse') && args[1]?.method === 'POST') {
+                                response.json = async () => {
+                                    const value = await json();
+                                    return await new Promise(resolve => {release = () => {
+                                        window.parseReceiptOrder.push(value.status); resolve(value);
+                                    }});
+                                };
+                            } else if (url.includes('/rules/parse/')) {
+                                response.json = async () => {
+                                    const value = await json();
+                                    if (['succeeded', 'failed'].includes(value.status) && release) {
+                                        window.parseReceiptOrder.push(value.status);
+                                        const complete = release; release = null; queueMicrotask(complete);
+                                    }
+                                    return value;
+                                };
+                            }
+                            return response;
+                        };
+                    })()""")
+                    state = self.requirement_routes(page, status=status)
+                    self.open_requirement(page, "/audit?view=requirements")
+                    page.wait_for_function("window.parseReceiptOrder.length === 2")
+                    self.assertEqual(page.evaluate("window.parseReceiptOrder"), [status, "queued"])
+                    if status == "succeeded":
+                        expect(page.get_by_label("要求名称", exact=True)).to_have_value("规则 A")
+                        expect(page.get_by_role("article", name="条款 1", exact=True)).to_be_visible()
+                    else:
+                        expect(page.get_by_role("alert").filter(has_text="要求提取失败")).to_be_visible()
+                        expect(page.get_by_role("button", name="重新提取条款", exact=True)).to_be_enabled()
+                    expect(page.get_by_text("正在提取条款，完成后逐条核对原文。", exact=True)).to_have_count(0)
+                    self.assertEqual(len(state["parses"]), 1)
+                    self.assertEqual(state["saves"], [])
+                    page.close()
+            browser.close()
+
     def test_late_rule_publication_keeps_the_current_surface_and_navigation_generation(self):
         from playwright.sync_api import expect
 
