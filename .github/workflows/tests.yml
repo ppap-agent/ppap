@@ -145,136 +145,46 @@ jobs:
           /tmp/actionlint -color
           deploy/tke/render-current.sh \
             | docker run --rm -i ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary -kubernetes-version 1.28.0 -
+          python3 scripts/ci_shards.py plan
           uv run --no-sync pytest tests/repository
 
-  discover_python_owners:
-    name: Discover Python owners
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 5
-    outputs:
-      matrix: ${{ steps.discover.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - id: discover
-        name: Find owner test directories
-        run: |
-          set -euo pipefail
-          matrix="$(python3 - <<'PY'
-          import json
-          from pathlib import Path
-          rows = []
-          for base in (Path("packages"), Path("services")):
-              for tests in sorted(base.glob("*/tests")):
-                  if not any(tests.rglob("test_*.py")):
-                      continue
-                  owner = tests.parent.name
-                  rows.append({
-                      "id": owner.replace("_", "-"),
-                      "name": owner,
-                      "path": tests.as_posix(),
-                      "postgres": base.name == "services",
-                  })
-          if not rows:
-              raise SystemExit("no owner test directories")
-          print(json.dumps(rows))
-          PY
-          )"
-          {
-            echo "matrix<<EOF"
-            echo "$matrix"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-  discover_distributions:
-    name: Discover distributions
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 5
-    outputs:
-      matrix: ${{ steps.discover.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - id: discover
-        name: Find production distributions
-        run: |
-          set -euo pipefail
-          matrix="$(python3 scripts/validate_distribution.py --discover)"
-          {
-            echo "matrix<<EOF"
-            echo "$matrix"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
+  # Each shard discovers targets from the checked-out tree. Individual modules
+  # keep their own pytest process; distribution runs retain isolated wheel venvs.
   distribution_closure:
-    name: Distribution closure / ${{ matrix.name }}
-    needs: discover_distributions
+    name: Distribution closure / shard ${{ matrix.shard }}
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
-    env:
-      COMPOSE_PROJECT_NAME: ppap-ci-dist-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.discover_distributions.outputs.matrix) }}
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - name: Assert Docker
-        if: ${{ matrix.postgres }}
         uses: ./.github/actions/assert-docker
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Start service PostgreSQL fixture
-        if: ${{ matrix.postgres }}
-        env:
-          PPAP_TEST_POSTGRES_PORT: "0"
-        run: |
-          set -euo pipefail
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
-          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
-          echo "PGPORT=${binding##*:}" >> "$GITHUB_ENV"
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
-      - name: Build, install, import, and test clean distribution closure
-        run: python3 scripts/validate_distribution.py --member "${{ matrix.name }}"
-      - name: Prove missing dependency fails closed
-        if: ${{ matrix.name == 'ppap-product-store' }}
-        run: python3 scripts/validate_distribution.py --prove-missing-dependency
-      - name: Dump PostgreSQL diagnostics
-        if: failure() && matrix.postgres
-        run: |
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            logs --no-color --timestamps postgres init-db || true
-      - name: Clean PostgreSQL fixture
-        if: always() && matrix.postgres
-        run: |
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans || true
+      - name: Build, install and test isolated distributions
+        run: python3 scripts/ci_shards.py distributions --shard "${{ matrix.shard }}"
 
   python_modules:
-    name: Python modules / ${{ matrix.name }}
-    needs: discover_python_owners
+    name: Python modules / shard ${{ matrix.shard }}
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
-    env:
-      COMPOSE_PROJECT_NAME: ppap-ci-modules-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.discover_python_owners.outputs.matrix) }}
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - name: Assert Docker
-        if: ${{ matrix.postgres }}
         uses: ./.github/actions/assert-docker
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
@@ -283,31 +193,8 @@ jobs:
           enable-cache: true
       - name: Canonical install
         run: uv sync --locked
-      - name: Start service PostgreSQL fixture
-        if: ${{ matrix.postgres }}
-        env:
-          PPAP_TEST_POSTGRES_PORT: "0"
-        run: |
-          set -euo pipefail
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
-          binding=$(docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml port postgres 5432)
-          echo "PGPORT=${binding##*:}" >> "$GITHUB_ENV"
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
-      - name: Run module tests
-        run: uv run --no-sync pytest ${{ matrix.path }}
-      - name: Dump PostgreSQL diagnostics
-        if: failure() && matrix.postgres
-        run: |
-          echo "=== ${COMPOSE_PROJECT_NAME} ps ==="
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml ps -a || true
-          echo "=== ${COMPOSE_PROJECT_NAME} logs ==="
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            logs --no-color --timestamps postgres init-db || true
-      - name: Clean PostgreSQL fixture
-        if: always() && matrix.postgres
-        run: |
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans || true
+      - name: Run complete Python owner tests
+        run: python3 scripts/ci_shards.py modules --shard "${{ matrix.shard }}"
 
   schema:
     name: Schema
