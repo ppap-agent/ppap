@@ -20,7 +20,6 @@ from ppap_core.settings import Settings
         ("OCR_REMOTE_URL", "https://ocr.invalid"),
         ("OCR_MODEL_NAME", "ocr-other"),
         ("OCR_OPENAI_BASE_URL", "https://ocr-model.invalid/v1"),
-        ("PADDLE_OCR_URL", "https://paddle.invalid"),
         ("MAX_FILE_SIZE", "10MB"),
     ],
 )
@@ -58,7 +57,7 @@ def test_equivalent_extra_body_and_unconfigured_build_remain_truthful():
     assert settings.standard_execution_policy() == invalid
 
 
-@pytest.mark.parametrize("name", ["PPAP_NG_TOPN", "CONCURRENT_SIZE", "LEGACY_DOC_CONVERTER_EXECUTABLE", "LEGACY_DOC_SANDBOX_EXECUTABLE", "LEGACY_DOC_CONVERTER_SOCKET"])
+@pytest.mark.parametrize("name", ["PPAP_NG_TOPN", "LEGACY_DOC_CONVERTER_EXECUTABLE", "LEGACY_DOC_SANDBOX_EXECUTABLE", "LEGACY_DOC_CONVERTER_SOCKET"])
 def test_tool_environment_changes_identity_without_disclosing_paths(monkeypatch, name):
     monkeypatch.delenv(name, raising=False)
     settings = Settings()
@@ -67,3 +66,21 @@ def test_tool_environment_changes_identity_without_disclosing_paths(monkeypatch,
     changed = settings.standard_execution_policy()
     assert changed.engine_revision() != original.engine_revision()
     assert "private-alternate" not in changed.model_dump_json()
+
+
+@pytest.mark.parametrize("field,value", [("PADDLE_OCR_URL", "https://retired.invalid")])
+def test_retired_local_ocr_configuration_no_longer_changes_revision(field, value):
+    """Retired providers cannot silently become part of the active Standard tool identity."""
+    settings = Settings(OPENAI_API_KEY="not-serialized", OCR_MODEL_NAME="vision-model")
+    original = settings.standard_execution_policy()
+    changed = settings.model_copy(update={field: value}).standard_execution_policy()
+    assert changed == original
+    assert value not in changed.model_dump_json()
+
+
+def test_retired_ocr_concurrency_env_no_longer_changes_revision(monkeypatch):
+    monkeypatch.delenv("CONCURRENT_SIZE", raising=False)
+    settings = Settings()
+    original = settings.standard_execution_policy()
+    monkeypatch.setenv("CONCURRENT_SIZE", "private-old-worker-count")
+    assert settings.standard_execution_policy() == original

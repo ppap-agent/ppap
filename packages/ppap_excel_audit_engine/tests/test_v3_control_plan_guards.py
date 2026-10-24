@@ -130,3 +130,17 @@ def test_unreadable_plan_is_still_a_system_error(tmp_path):
 
     assert result is not None
     assert result.status == "ERR"
+
+
+def test_v3_special_characteristic_can_use_genuinely_merged_product_evidence(tmp_path):
+    workbook = control_plan()
+    worksheet = workbook.active
+    worksheet["G16"] = "SC"
+    result_unmerged = check_rule(tmp_path, workbook, 4)
+    assert result_unmerged.status == "NG"
+    workbook = control_plan()
+    worksheet = workbook.active
+    worksheet["G16"] = "SC"
+    worksheet.merge_cells("E15:E16")
+    result_merged = check_rule(tmp_path, workbook, 4)
+    assert result_merged.status == "PASS"

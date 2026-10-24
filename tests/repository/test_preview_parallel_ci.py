@@ -34,6 +34,8 @@ def test_preview_workers_are_bounded_with_serial_rollback():
     assert "PPAP_PREVIEW_URL: preview" in workflow
     assert "if (!tests.length) throw new Error('No preview browser contracts found')" in workflow
     assert "process.exitCode = code ?? 1" in workflow
+    assert "Preview heartbeat: child pid=" in workflow
+    assert "clearInterval(heartbeat)" in workflow
 
 
 def test_pdf_all_oracles_share_one_bounded_xdist_pool():
@@ -94,6 +96,8 @@ def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():
     assert 'uv run --no-sync pytest "$suite"' in script
     # Runtime tests remain serial and the same CI Gate still requires integration.
     assert "bash scripts/run-compose-tests.sh tests/integration/runtime" in integration
+    assert "pytest tests/integration/product -vv --durations=25" in integration
+    assert "python3 -m scripts.ci_heartbeat --timeout 2400" in integration
     assert "      - integration" in workflow
 
 

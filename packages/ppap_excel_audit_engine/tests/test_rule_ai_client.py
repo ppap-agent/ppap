@@ -255,6 +255,8 @@ class RuleAIClientTests(unittest.TestCase):
         )
         request = sdk.calls[0]
         self.assertEqual(request["text"], {"format": {"type": "json_object"}})
+        self.assertEqual(request["timeout"], 120)
+        self.assertEqual(sdk.options, [{"max_retries": 0}])
         self.assertEqual(
             request["input"][1]["content"],
             [
@@ -274,3 +276,21 @@ class RuleAIClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_visual_provider_timeout_is_one_failed_attempt_without_hidden_retries():
+    from ppap_excel_audit_engine.checkers.client import AIClient
+
+    sdk = SDK(error=TimeoutError("private-visual-provider"))
+    client = RuleAIClientTests().client(sdk)
+    with tracked_request() as request_id:
+        with unittest.TestCase().assertLogs("ppap_excel_audit_engine.checkers.client", level="ERROR") as logs:
+            with unittest.TestCase().assertRaises(TimeoutError):
+                client.image_analysis_completion("system", "private-document", ["data:image/png;base64,AAAA"])
+        usage = get_token_tracker().end_request_tracking(request_id).to_dict()
+    assert len(sdk.calls) == 1
+    assert sdk.calls[0]["timeout"] == 120
+    assert sdk.options == [{"max_retries": 0}]
+    assert usage["unreported_calls_count"] == 1
+    assert "private-visual-provider" not in "\n".join(logs.output)
+    assert "private-document" not in "\n".join(logs.output)

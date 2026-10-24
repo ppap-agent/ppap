@@ -26,7 +26,7 @@ def test_page_requests_overlap_but_results_preserve_pdf_page_order(tmp_path):
         assert page_count == 2
         seen.append(page_number)
         gate.wait()
-        return {"tables": [{"rows": [[str(page_number)]]}], "paragraphs": [], "seals": []}
+        return {"tables": [{"rows": [[str(page_number)]], "merges": []}], "paragraphs": [], "seals": []}
 
     with patch.object(vision_service, "_read_page", side_effect=read_page):
         pages = vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path))
@@ -38,7 +38,7 @@ def test_page_requests_overlap_but_results_preserve_pdf_page_order(tmp_path):
     "payload",
     [
         {"tables": [], "paragraphs": [], "seals": ["ok"], "extra": 1},
-        {"tables": [{"rows": [["ok", 12]]}], "paragraphs": [], "seals": []},
+        {"tables": [{"rows": [["ok", 12]], "merges": []}], "paragraphs": [], "seals": []},
         {"tables": "broken", "paragraphs": [], "seals": []},
     ],
 )
@@ -60,3 +60,31 @@ def test_reads_png_image_using_responses_schema(tmp_path):
     assert calls[0]["json_mode"] is True
     assert calls[0]["retry_count"] == 1
     assert calls[0]["response_schema"]["name"] == "ppap_multimodal_pdf_page"
+
+
+def test_multimodal_merge_rejects_fake_or_overlapping_evidence():
+    valid = {
+        "tables": [{"rows": [["外观"], [""], [""]], "merges": [
+            {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0}
+        ]}],
+        "paragraphs": [],
+        "seals": [],
+    }
+    assert vision_service._validate_page(valid) == valid
+    overlapping = {
+        **valid,
+        "tables": [{"rows": [["外观"], [""], [""]], "merges": [
+            {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0},
+            {"start_row": 1, "start_col": 0, "end_row": 2, "end_col": 0},
+        ]}],
+    }
+    with pytest.raises(ValueError, match="overlapping"):
+        vision_service._validate_page(overlapping)
+    invalid_cover = {
+        **valid,
+        "tables": [{"rows": [["外观"], ["另一个真实单元格"], [""]], "merges": [
+            {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0}
+        ]}],
+    }
+    with pytest.raises(ValueError, match="nonempty evidence"):
+        vision_service._validate_page(invalid_cover)

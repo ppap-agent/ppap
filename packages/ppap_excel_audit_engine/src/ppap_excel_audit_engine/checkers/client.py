@@ -490,10 +490,16 @@ class AIClient:
 
         text_format = {"type": "json_object"} if json_format else None
 
+        # Visual evidence is slow and potentially billed. A single bounded
+        # Responses attempt prevents hidden SDK retries and multi-minute
+        # stalls under concurrent PDF oracle execution. Never convert a timeout
+        # into PASS or silently reuse an older observation.
         return self.response_text(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
             text_format=text_format,
             operation=operation,
+            request_timeout=120,
+            retry_limit=0,
         )
