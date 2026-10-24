@@ -133,7 +133,10 @@ jobs:
           git show --format= --check HEAD -- . ':!assets' ':!tests/corpus/fixtures'
           uv run --no-sync python -m compileall -q packages services tests scripts
           uv run --no-sync ruff check packages services tests scripts
-          uv run --no-sync ruff format --check packages services tests scripts
+          if ! uv run --no-sync ruff format --check packages services tests scripts; then
+            uv run --no-sync ruff format --diff packages services tests scripts
+            exit 1
+          fi
           uv run --no-sync mypy --no-incremental
           (
             cd apps/web

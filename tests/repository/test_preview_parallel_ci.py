@@ -55,7 +55,13 @@ def test_product_round_cases_are_separate_items_without_changing_oracle():
     assert "build_cases_from_long_feedback(" in source
     assert "def test_v2_product_round_respects_oracle_baseline(product_case:" in source
     assert "for case in cases:" not in source
-    for rule in ("bound_type_name(", "execute_product_round(", "compare_file(", "classify_v2_baseline_outcomes(", "format_verdicts("):
+    for rule in (
+        "bound_type_name(",
+        "execute_product_round(",
+        "compare_file(",
+        "classify_v2_baseline_outcomes(",
+        "format_verdicts(",
+    ):
         assert rule in source
 
 
