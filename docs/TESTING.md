@@ -369,6 +369,13 @@ MCP 集成测试通过真实 PostgreSQL/HTTP 与受控飞书响应，验证 Web/
 
 `tests/integration/product/test_mcp_client.py` 使用锁定的 FastMCP/MCP SDK，走实际 OAuth 发现、DCR、PKCE、续期和 PPAP API/PG。受控浏览器身份完成授权选择，独立认证对象竞争续期，丢弃刷新响应验证旧令牌不重放；创建文件、传输、固化三个响应丢失点均通过原请求恢复。代理检查工具、Resources、Prompts、独立版本、预校验及跨委托下载拒绝。另一个用例启动真实回环 HTTP 服务和独立 stdio 适配器进程，经过 CLI 参数处理完成上传、退出、重启续期和下载。系统钥匙串及真实浏览器交互在这些用例中受控；对象存储为内存边界，不能据此声称客户应用、飞书、生产存储或现网部署已经验收。客户端锁与恢复测试对应单代最多一次刷新和未知不重试的局部义务，不构成对完整系统的形式化 refinement 证明。
 
+
+### 共享 self-hosted workspace 的隔离修复
+
+CI Run 40063063124 中 `cursor`、`cursor-ppap` 两个 runner 名称都上报相同的 checkout 工作目录 `/home/ubuntu/actions-runner-ppap/_work/ppap/ppap`（Machine name 均为 `cursor`）。Web 04:38:45 安装完 e2e 依赖后，Product integration 04:38:50 在此目录执行 `git clean -ffdx`，明确删除 `.venv/`；Web 04:38:51 随即在同一共享目录运行 xdist，最终没有 pytest 完成汇总。根因级缺陷是 Runner 之间工作区未隔离，而非 Python GIL。对应修复将全部 7 种真实执行 Job 的 `actions/checkout.path`、每个 `run` 的默认工作目录、Node 版本文件路径与 uv 缓存依赖 glob 改为按 `github.run_id`、`github.run_attempt`、Job 与 matrix cell 唯一的子目录，禁止同时运行的不同 Job 删除彼此的 `.venv` / `node_modules` / Python 缓存。由于本地 composite action 只能从 `GITHUB_WORKSPACE` 根目录解析，Docker 检测改为从独立 checkout 调用同等的 `scripts/ci_assert_docker.sh`；不弱化能力校验。Corepack HOME 也按运行与 Job 唯一化。 各 Job 在 checkout 后还会调用 `scripts/ci_assert_worktree.sh`，验证工作目录位于 `.ci-checkouts` 下且具备独立 `.git`，不满足则立即失败。最终 `CI Gate` 仍依赖所有原 Job，保持 fail-closed。
+
+此项是 **仓库侧止血**：真正的 Runner 运维修复仍必须将两套 GitHub Actions runner 服务配置为完全不同的 WorkingFolder，避免不使用本 workflow 的旧流程对 `GITHUB_WORKSPACE` 根目录执行 `git clean -ffdx`，进而清掉新的 `.ci-checkouts` 子目录。由于新 checkout 路径按 run ID 区分，Runner 管理员还需建立保守的历史 checkout 清理与磁盘水位策略，不得清除正在运行的 checkout。`Repository contract` 的 Ruff 引号格式问题独立修正。原 Distribution shard 2 的日志末尾已经输出全部 5 项目标通过，但 GitHub 却标记 Job failure，旧证据不足以区分 Runner 作业状态上报故障与文件系统交叉写入；需要在隔离后重复验证。
+
 ### Product E2E teardown 的 CI-only 修复
 
 Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 108 项及独立历史报告 9 项均通过；随后 `Isolated-dev browser E2E` step 在重复的 `docker compose down` 过程中收到 `The operation was canceled`，该 step 被标记为取消，整个 Job 为 failure。现将 E2E 的 Compose 清理明确交给既有的 `if: always()` 末尾步骤：测试步骤只负责测试、失败必须传播；末尾三个 Compose 清理操作全部尝试，清理失败也必须让 CI Gate 失败。取消信号的外部来源仍不能从旧日志证明，不把测试已通过等同于完整 CI 绿色。已在串行 Browser E2E 中增加 `-vv` 供 GitHub timestamps 精确定位单例运行和非 call 时间的长时间空档；`test_round_reports.py` 在失败的运行中 9 项用例以 4.70s 通过，不是本次 E2E 慢段。完整 CI 在精确新 HEAD 上重新验证后才能合并。
