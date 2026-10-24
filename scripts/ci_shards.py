@@ -18,7 +18,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from validate_distribution import production_members
+from scripts.validate_distribution import production_members
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = "deploy/isolated-dev/compose.yaml"

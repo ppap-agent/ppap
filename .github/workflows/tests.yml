@@ -145,8 +145,8 @@ jobs:
           /tmp/actionlint -color
           deploy/tke/render-current.sh \
             | docker run --rm -i ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary -kubernetes-version 1.28.0 -
-          python3 scripts/ci_shards.py plan
-          uv run --no-sync pytest tests/repository
+          python3 -m scripts.ci_shards plan
+          uv run --no-sync python -m pytest tests/repository
 
   # Each shard discovers targets from the checked-out tree. Individual modules
   # keep their own pytest process; distribution runs retain isolated wheel venvs.
@@ -170,7 +170,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
       - name: Build, install and test isolated distributions
-        run: python3 scripts/ci_shards.py distributions --shard "${{ matrix.shard }}"
+        run: python3 -m scripts.ci_shards distributions --shard "${{ matrix.shard }}"
 
   python_modules:
     name: Python modules / shard ${{ matrix.shard }}
@@ -194,7 +194,7 @@ jobs:
       - name: Canonical install
         run: uv sync --locked
       - name: Run complete Python owner tests
-        run: python3 scripts/ci_shards.py modules --shard "${{ matrix.shard }}"
+        run: python3 -m scripts.ci_shards modules --shard "${{ matrix.shard }}"
 
   schema:
     name: Schema
