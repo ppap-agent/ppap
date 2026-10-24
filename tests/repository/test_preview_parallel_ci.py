@@ -36,8 +36,49 @@ def test_preview_workers_are_bounded_with_serial_rollback():
     assert "process.exitCode = code ?? 1" in workflow
 
 
-def test_corpus_profiling_preserves_serial_execution():
+def test_pdf_product_oracle_is_the_only_parallel_corpus_slice():
     workflow = (ROOT / ".github/workflows/tests.yml").read_text()
     corpus = workflow.split("  corpus:\n", 1)[1].split("  integration:\n", 1)[0]
+    assert 'PPAP_CORPUS_PRODUCT_WORKERS: "2"' in corpus
+    assert 'PPAP_CORPUS_PRODUCT_WORKERS must be 0 or 2' in corpus
+    assert "uv sync --locked --group e2e" in corpus
+    assert "uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q --durations=25 -k 'not test_v2_product_round_respects_oracle_baseline'" in corpus
+    assert "PPAP_CORPUS_XDIST_ISOLATE_OCR=1" in corpus
+    assert "pytest tests/corpus/v2_assets/test_product_round.py --ftype pdf -q --durations=25 -n 2 --dist=load --max-worker-restart=0" in corpus
     assert "uv run --no-sync pytest ${{ matrix.args }} --durations=25" in corpus
-    assert " -n " not in corpus
+    assert corpus.count(" -n 2 ") == 1
+
+
+def test_product_round_cases_are_separate_items_without_changing_oracle():
+    source = (ROOT / "tests/corpus/v2_assets/test_product_round.py").read_text()
+    assert 'metafunc.parametrize("product_case", cases, ids=lambda case: case.file_name)' in source
+    assert "build_cases_from_long_feedback(" in source
+    assert "def test_v2_product_round_respects_oracle_baseline(product_case:" in source
+    assert "for case in cases:" not in source
+    for rule in ("bound_type_name(", "execute_product_round(", "compare_file(", "classify_v2_baseline_outcomes(", "format_verdicts("):
+        assert rule in source
+
+
+def test_corpus_xdist_uses_separate_writable_ocr_caches():
+    source = (ROOT / "tests/corpus/conftest.py").read_text()
+    assert 'PPAP_CORPUS_XDIST_ISOLATE_OCR' in source
+    assert 'hasattr(config, "workerinput")' in source
+    assert 'shutil.copytree(seed, worker_cache)' in source
+    assert 'os.environ["OCR_LOCAL_OSS_DIR"] = str(worker_cache)' in source
+    assert 'os.environ["OCR_LOCAL_SQLITE_DB"] = str(worker_cache / "ocr_cache.db")' in source
+    assert 'shutil.rmtree(_WORKER_CACHE_DIR, ignore_errors=True)' in source
+
+
+def test_only_controlled_browser_report_tests_are_parallelized():
+    workflow = (ROOT / ".github/workflows/tests.yml").read_text()
+    script = (ROOT / "scripts/run-compose-tests.sh").read_text()
+    assert 'PPAP_E2E_ROUND_REPORT_WORKERS: "2"' in workflow
+    assert 'case "${PPAP_E2E_ROUND_REPORT_WORKERS:-0}" in' in script
+    assert 'pytest "$suite" --durations=25' in script
+    assert 'pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25' in script
+    assert 'pytest tests/e2e/test_round_reports.py -n 2 --dist=load --max-worker-restart=0 --durations=25' in script
+    assert 'PPAP_E2E_ROUND_REPORT_WORKERS must be 0 or 2' in script
+    assert 'uv run --no-sync pytest "$suite"' in script
+    controlled = (ROOT / "tests/e2e/test_round_reports.py").read_text()
+    assert 'page.route("**/api/**", api)' in controlled
+    assert 'with sync_playwright() as playwright:' in controlled

@@ -344,9 +344,11 @@ API owner tests validate that every major Web-consumed endpoint has an explicit 
 
 Web `V3.1 preview browser contracts` 使用原来单一的本地 Vite Preview 服务和全部已有用例。`e2e` 组锁定 `pytest-xdist==3.8.0`；默认 `PPAP_PREVIEW_WORKERS=2` 启用 `-n 2 --dist=load`，仅 Web Preview 运行两个 pytest worker。设为 `0` 立即恢复原有串行行为（需要新 CI 运行）；不支持其他值，以免静默变更验证范围。并发下各浏览器由测试单独创建，共享同一个只读 UI 预览服务器；任何测试互相污染或资源竞争导致的失败不得用串行自动重跑掩盖。
 
-Corpus pytest 仅增加 `--durations=25` 来标出 PDF 等慢用例，不开启 `-n`。PDF 仍使用 `tests/corpus/conftest.py` 规定的 OCR 缓存，`test_product_round.py` 的单个测试内部仍有文件循环；在证明并发读写隔离前不改变 PDF 运行方式。Product PostgreSQL、PSW、Browser E2E 和 `CI Gate` 均不改动。
+PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build_cases_from_long_feedback`、逐文件执行和 baseline mismatch / drift / stale 判定，但从一个循环重构为每个文件独立的 pytest 参数用例；一个失败不会掩盖其他文件。`PPAP_CORPUS_PRODUCT_WORKERS=2` 时，其他 PDF Corpus 继续串行跑（`-k` 排除 Product Round），只让 Product Round 采用 `pytest-xdist -n 2 --dist=load --max-worker-restart=0`。每个 xdist worker 在 `tests/corpus/conftest.py` 里复制原 OCR SQLite 和 Excel/HTML fixture 到独立临时目录，单独写入，并在退出时删除。缓存机制本身会修改 SQLite，直接在多个 worker 之间共享目录不安全。设为 `0` 恢复完整 PDF Corpus 单进程串行运行。其他 Excel、scanned、Pairs、V3、PSW 仍保持原执行方式。
 
-验证标准：检查 `uv sync --locked --group e2e`、完整 Preview 收集数/通过数（改动前为 257）、所有 Repository tests 和相同 commit 的严格 CI Gate。至少连续比较三次完整 CI，记录 wall-clock、Web/PDF 耗时、队列时长与 Runner 的峰值 CPU/内存/Swap；若有 OOM、Chromium 异常、新增 flaky 或其他 Job 严重退化，先设置 `PPAP_PREVIEW_WORKERS=0` 回退。两台 Runner 是否为不同物理主机仍需部署侧确认。
+Product Browser E2E 原日志显示 `test_round_reports.py` 的文件级执行区间一次从约 7 秒增长到 7 分 32 秒，但没有逐用例耗时，不能推断根因。`PPAP_E2E_ROUND_REPORT_WORKERS=2` 时，仅对这个全部 API 请求受控的历史报告文件使用 `pytest-xdist -n 2`，其余 `tests/e2e` 测试在同一 isolated-dev Compose stack 上单独串行运行。两段测试都有 `--durations=25` 精确列出慢案例且任一失败即失败整个 CI。设为 `0` 恢复原单进程 E2E。Product PostgreSQL 集成测试、生产 Runtime 和最终 `CI Gate` 保持不变。若异常再次发生，应先根据单例计时定位，再使用 Playwright 的 `context.tracing.start(screenshots=True, snapshots=True)` / `stop(path=...)` 捕获复现场景；手动 `sync_playwright()` 的测试不能假定 pytest-playwright 插件会自动记录 trace。
+
+验证标准：检查 `uv sync --locked --group e2e`、完整 Preview 收集数/通过数（改动前为 257），并核对 PDF Product Round 的逐文件收集数及新旧 baseline 判定无减损、Browser E2E 两段通过/跳过总数与原测试对应、所有 Repository tests 和相同 commit 的严格 CI Gate。至少连续比较三次完整 CI，记录 wall-clock、Web/PDF 耗时、队列时长与 Runner 的峰值 CPU/内存/Swap；若有 OOM、Chromium 异常、新增 flaky 或其他 Job 严重退化，先设置 `PPAP_PREVIEW_WORKERS=0` 回退。两台 Runner 是否为不同物理主机仍需部署侧确认。
 
 
 ## MCP
