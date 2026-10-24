@@ -27,7 +27,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
         assert json_mode is True and retry_count == 1
         calls.append(1)
         return {
-            "tables": [{"rows": [["ocr"], ["fallback"]]}],
+            "tables": [{"rows": [["ocr"], ["fallback"]], "merges": []}],
             "paragraphs": ["<private text>"],
             "seals": ["<signed & stamped>"],
         }
@@ -41,7 +41,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
         assert first.excel_path is not None
         first_copy = Path(first.excel_path)
         copies.append(first_copy)
-        assert first.raw_meta["vision_protocol"] == "responses_multimodal_v1"
+        assert first.raw_meta["vision_protocol"] == "responses_multimodal_v2"
         provider_path = Path(first.raw_meta["excel_path"])
         original_bytes = provider_path.read_bytes()
         assert first_copy != provider_path
@@ -88,4 +88,43 @@ def test_multimodal_failure_never_caches_an_excel_artifact(tmp_path, monkeypatch
         assert artifact.raw_meta["error"] == "vision_empty_result"
         assert not list((tmp_path / "cache" / "results").glob("*.xlsx"))
     finally:
+        get_settings.cache_clear()
+
+
+def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_path, monkeypatch):
+    """A visually merged product column must not become an empty rule-evidence row."""
+    source = tmp_path / "merged.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(source)
+    monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "merge-cache"))
+    monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "merge-cache" / "cache.db"))
+    get_settings.cache_clear()
+    model_table = {
+        "rows": [
+            ["特性", "产品", "过程", "特殊特性分类"],
+            ["", "外观", "", ""],
+            ["", "", "", "SC"],
+        ],
+        "merges": [{"start_row": 1, "start_col": 1, "end_row": 2, "end_col": 1}],
+    }
+    monkeypatch.setattr(
+        vision_service, "call_llm",
+        lambda **kwargs: {"tables": [model_table], "paragraphs": [], "seals": []},
+    )
+    artifact = None
+    try:
+        artifact = LocalOcrAdapter().ocr_pdf_to_excel(str(source))
+        assert artifact.excel_path is not None
+        book = load_workbook(artifact.excel_path)
+        try:
+            sheet = book.active
+            assert str(sheet["B2"].value) == "外观"
+            assert "B2:B3" in {str(merge) for merge in sheet.merged_cells.ranges}
+            assert sheet["D3"].value == "SC"
+        finally:
+            book.close()
+    finally:
+        if artifact and artifact.excel_path:
+            Path(artifact.excel_path).unlink(missing_ok=True)
         get_settings.cache_clear()

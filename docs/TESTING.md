@@ -382,12 +382,22 @@ Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 1
 
 ### CR-01：以 Responses 多模态统一 PDF fallback，移除重复 OCR 管线
 
-针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 是 `LocalOcrAdapter -> doc_cache/ocr_service.py -> vision_service.py -> llm_service.py`：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、普通正文和印章文字。表格写成独立 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。每页最多一次 Responses 请求，且每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
+针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 是 `LocalOcrAdapter -> doc_cache/ocr_service.py -> vision_service.py -> llm_service.py`：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。每页最多一次 Responses 请求，且每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
 
-为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v1` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 保留；此项变更只替换默认 `auto/local` 的 PDF 路径，不改变原来的手工 linegrid 优先次序。
+为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 保留；此项变更只替换默认 `auto/local` 的 PDF 路径，不改变原来的手工 linegrid 优先次序。
 
 外部模型会接收 PDF 页面内容，属于既有客户文档出站处理边界；只发送到配置的可信 Responses 服务，使用 `store=False`，不在日志中写页面文本、图像或密钥。CI 本地单元测试 mock 模型接口，真实远程模型可用性和输出质量需由完整 Corpus/PSW baseline 再验证。若模型能力不支持严格 schema，必须报错并确认端点能力，而不是退回旧 OCR 静默通过。
 
 ### CI 长任务并发与可观测性
 
 `scripts/ci_heartbeat.py` 对长时间无输出的 Python owner、Distribution、Corpus 和 PSW 子进程提供有限时执行和约 30 秒的 heartbeat，向 Linux 子进程组发送 TERM，必要时升级 KILL，并保留原退出码。`pytest` 采用 `-vv --durations=25` 和 `faulthandler_timeout=120` 定位慢用例；不能将 Runner 平台误报失败当作测试通过证据。CI Gate、Worker/DB 权限与所有原测试项目数继续保持严格检查。运行时服务器任务仍是被测对象的自身串行行为，不应与 pytest-xdist 的四进程并发混为一谈。
+
+### 2026-10-24：CI 回归修复与验收边界
+
+Run #40119017530 的确定性失败包括 `test_ci_heartbeat.py` 的 Ruff 导入排序和 `ppap_core` 指纹测试仍要求已停用的 Paddle 端点与 `CONCURRENT_SIZE` 改变执行身份。本次让测试只跟踪实际生效的配置，并增设负向测试确保旧配置不能污染 Standard 修订标识；核心执行契约未改变。
+
+PDF/V3 的 19-BLANC 控制计划规则 4 曾返回 `NG`：第 13 行存在特殊特性分类，但产品/过程列为空。本次增强多模态结构化输入，只允许模型声明在 PDF 上真实可见的跨行或跨列合并单元格；验证不重叠、不越界且不覆盖独立非空证据，随后将合并范围写回生成的 XLSX，使审核规则能够像处理原始 Excel 一样读取合并单元格上的锚点内容。**不修改 PASS/NG oracle，不把空字段推断为已填。** 原样本是否恢复 PASS 必须由新 CI 验证。
+
+PDF 的长耗时堆栈指向 `ppap_excel_audit_engine/checkers/client.py` 的视觉模型 Responses HTTP，而非 xdist 或新 `vision_service.py` 进程池。视觉审核现在每次请求最长等待 120 秒并禁用 SDK/应用层重试；超时保持显式错误，不重放已经接收但回复未知的请求，也不凭空写入 PASS。文本模型调用继续保持既有行为。Web Preview 保留双 worker，但 Node 控制器每 30 秒输出心跳；Product DB 集成测试加上 `-vv`、Python faulthandler 与 30 秒心跳，避免 Runner 长时间没有输出时无法判断是否仍在运行。日志不写入原始用户文件或模型输出。
+
+后续验收必须检查同一 HEAD 下 Repository、Core wheel、V3 Corpus、V2 PDF 和 E2E 的完整结果以及 CI Gate，区分确定性逻辑回归与 self-hosted Runner 错误状态；不能借由恢复旧 Paddle 路径或调整 oracle 让检查变绿。

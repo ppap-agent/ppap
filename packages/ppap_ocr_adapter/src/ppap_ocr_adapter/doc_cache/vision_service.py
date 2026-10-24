@@ -29,8 +29,24 @@ PAGE_SCHEMA: dict[str, Any] = {
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "properties": {"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}},
-                    "required": ["rows"],
+                    "properties": {
+                        "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                        "merges": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "start_row": {"type": "integer"},
+                                    "start_col": {"type": "integer"},
+                                    "end_row": {"type": "integer"},
+                                    "end_col": {"type": "integer"},
+                                },
+                                "required": ["start_row", "start_col", "end_row", "end_col"],
+                            },
+                        },
+                    },
+                    "required": ["rows", "merges"],
                 },
             },
             "paragraphs": {"type": "array", "items": {"type": "string"}},
@@ -43,7 +59,10 @@ PAGE_SCHEMA: dict[str, Any] = {
 PAGE_PROMPT = (
     "Read this PPAP document page visually. Output JSON only, using the supplied schema. "
     "Preserve table row and column order exactly as shown and transcribe text without inventing values. "
-    "Each visible table becomes an object with a rows array. Preserve empty cells as empty strings. "
+    "Each visible table contains rows and merges. Preserve empty cells as empty strings. "
+    "Use zero-based start_row/start_col/end_row/end_col for rectangular, genuinely merged cells "
+    "whose physical borders span multiple rows or columns. Never infer merges from repeated text. "
+    "Leave subordinate cells of each merge blank, and put its value only in the upper-left anchor. "
     "Capture non-table paragraphs separately in reading order. Put legible stamp/signature text "
     "in seals; if the mark is visible but unreadable, use an empty string. "
     "Return empty arrays for categories not present. Do not infer a PASS, approval, or signature."
@@ -60,11 +79,35 @@ def _validate_page(payload: Any) -> dict[str, Any]:
     if any(not isinstance(x, str) for x in [*paragraphs, *seals]):
         raise ValueError("Invalid Responses page text")
     for table in tables:
-        if not isinstance(table, dict) or set(table) != {"rows"} or not isinstance(table["rows"], list):
+        if not isinstance(table, dict) or set(table) != {"rows", "merges"}:
             raise ValueError("Invalid Responses table schema")
-        for row in table["rows"]:
+        rows, merges = table["rows"], table["merges"]
+        if not isinstance(rows, list) or not isinstance(merges, list):
+            raise ValueError("Invalid Responses table dimensions")
+        for row in rows:
             if not isinstance(row, list) or any(not isinstance(cell, str) for cell in row):
                 raise ValueError("Invalid Responses table cell")
+        occupied: set[tuple[int, int]] = set()
+        for merge in merges:
+            if not isinstance(merge, dict) or set(merge) != {"start_row", "start_col", "end_row", "end_col"}:
+                raise ValueError("Invalid Responses merged-cell structure")
+            r0, c0, r1, c1 = (merge[key] for key in ("start_row", "start_col", "end_row", "end_col"))
+            if any(type(index) is not int for index in (r0, c0, r1, c1)):
+                raise ValueError("Invalid Responses merged-cell coordinate")
+            if r0 < 0 or c0 < 0 or r0 > r1 or c0 > c1 or r1 >= len(rows):
+                raise ValueError("Invalid Responses merged-cell range")
+            if r0 == r1 and c0 == c1:
+                raise ValueError("Invalid Responses single-cell merge")
+            for row_index in range(r0, r1 + 1):
+                if c1 >= len(rows[row_index]):
+                    raise ValueError("Invalid Responses merged-cell width")
+                for column_index in range(c0, c1 + 1):
+                    coordinate = (row_index, column_index)
+                    if coordinate in occupied:
+                        raise ValueError("Invalid Responses overlapping merges")
+                    occupied.add(coordinate)
+                    if coordinate != (r0, c0) and rows[row_index][column_index]:
+                        raise ValueError("Invalid Responses merge covers nonempty evidence")
     return payload
 
 

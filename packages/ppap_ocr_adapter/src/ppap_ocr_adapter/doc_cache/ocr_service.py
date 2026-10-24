@@ -30,7 +30,7 @@ from .vision_service import VisionLayoutService
 
 logger = logging.getLogger(__name__)
 
-VISION_CACHE_VERSION = "responses_multimodal_v1"
+VISION_CACHE_VERSION = "responses_multimodal_v2"
 
 
 def _source_hash(source: str) -> str:
@@ -245,6 +245,13 @@ def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
                 if any(not isinstance(cell, str) or len(cell) > 32767 for cell in row):
                     raise ValueError("Invalid multimodal table cells")
                 sheet.append(row)
+            for merge in table["merges"]:
+                sheet.merge_cells(
+                    start_row=merge["start_row"] + 1,
+                    start_column=merge["start_col"] + 1,
+                    end_row=merge["end_row"] + 1,
+                    end_column=merge["end_col"] + 1,
+                )
         paragraphs = page["paragraphs"]
         seals = page["seals"]
         if paragraphs or seals:

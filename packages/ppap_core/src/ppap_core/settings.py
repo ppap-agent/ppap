@@ -227,7 +227,7 @@ class Settings(BaseSettings):
                     "ocr_endpoint": self.OCR_REMOTE_URL.strip(),
                     "ocr_model_endpoint": self.get_ocr_openai_base_url(),
                     "ocr_model": self.get_ocr_model_name(),
-                    "vision_protocol": "responses_multimodal_v1",
+                    "vision_protocol": "responses_multimodal_v2",
                     "max_file_size": self.MAX_FILE_SIZE,
                     "ng_topn": os.environ.get("PPAP_NG_TOPN", ""),
                     "vision_page_workers": 2,
