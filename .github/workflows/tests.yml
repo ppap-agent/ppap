@@ -253,6 +253,9 @@ jobs:
     name: Corpus / ${{ matrix.name }}
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 120
+    env:
+      # "0" restores serial execution of the complete PDF Corpus suite.
+      PPAP_CORPUS_PRODUCT_WORKERS: "2"
     strategy:
       fail-fast: false
       matrix:
@@ -286,7 +289,15 @@ jobs:
           enable-cache: true
       - name: Canonical install
         if: ${{ matrix.mode == 'pytest' }}
-        run: uv sync --locked
+        run: |
+          set -euo pipefail
+          case "$PPAP_CORPUS_PRODUCT_WORKERS" in 0|2) ;; *) echo "PPAP_CORPUS_PRODUCT_WORKERS must be 0 or 2" >&2; exit 2 ;; esac
+          if [[ "${{ matrix.name }}" == "PDF" && "$PPAP_CORPUS_PRODUCT_WORKERS" == "2" ]]; then
+            # xdist is pinned in e2e; browser binaries are not installed here.
+            uv sync --locked --group e2e
+          else
+            uv sync --locked
+          fi
       - name: Run in-repo corpus pytest
         if: ${{ matrix.mode == 'pytest' }}
         env:
@@ -298,7 +309,17 @@ jobs:
           OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
           OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
           OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
-        run: uv run --no-sync pytest ${{ matrix.args }} --durations=25
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.name }}" == "PDF" && "$PPAP_CORPUS_PRODUCT_WORKERS" == "2" ]]; then
+            # Keep mutable OCR-backed PDF oracle tests serial.
+            uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q --durations=25 -k 'not test_v2_product_round_respects_oracle_baseline'
+            # Only the per-file product-round oracle runs in bounded xdist.
+            # Each worker copies its writable OCR SQLite/artifact cache.
+            PPAP_CORPUS_XDIST_ISOLATE_OCR=1 uv run --no-sync pytest tests/corpus/v2_assets/test_product_round.py --ftype pdf -q --durations=25 -n 2 --dist=load --max-worker-restart=0
+          else
+            uv run --no-sync pytest ${{ matrix.args }} --durations=25
+          fi
       - name: Assert Docker
         if: ${{ matrix.mode == 'psw' }}
         uses: ./.github/actions/assert-docker
@@ -400,6 +421,9 @@ jobs:
       - name: Isolated-dev browser E2E
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_E2E }}
+          # Only the controlled, API-routed Round report file is eligible.
+          # "0" restores the previous single-process full E2E suite.
+          PPAP_E2E_ROUND_REPORT_WORKERS: "2"
         run: |
           set -euo pipefail
           bash scripts/run-compose-tests.sh tests/e2e \
