@@ -424,9 +424,10 @@ jobs:
       - name: Isolated-dev browser E2E
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_E2E }}
-          # Only the controlled, API-routed Round report file is eligible.
-          # "0" restores the previous single-process full E2E suite.
-          PPAP_E2E_ROUND_REPORT_WORKERS: "2"
+          # Intentional all-suite concurrency experiment on isolated-dev.
+          # Includes real API/PostgreSQL/Worker E2E to surface state races.
+          # "0" restores serial execution of exactly the same full test set.
+          PPAP_E2E_WORKERS: "4"
         run: |
           set -euo pipefail
           # The always() cleanup step owns teardown. No duplicate Compose down
