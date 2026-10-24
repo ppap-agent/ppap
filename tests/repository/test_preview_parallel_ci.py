@@ -40,7 +40,7 @@ def test_pdf_product_oracle_is_the_only_parallel_corpus_slice():
     workflow = (ROOT / ".github/workflows/tests.yml").read_text()
     corpus = workflow.split("  corpus:\n", 1)[1].split("  integration:\n", 1)[0]
     assert 'PPAP_CORPUS_PRODUCT_WORKERS: "2"' in corpus
-    assert 'PPAP_CORPUS_PRODUCT_WORKERS must be 0 or 2' in corpus
+    assert "PPAP_CORPUS_PRODUCT_WORKERS must be 0 or 2" in corpus
     assert "uv sync --locked --group e2e" in corpus
     assert "uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q --durations=25 -k 'not test_v2_product_round_respects_oracle_baseline'" in corpus
     assert "PPAP_CORPUS_XDIST_ISOLATE_OCR=1" in corpus
@@ -67,12 +67,12 @@ def test_product_round_cases_are_separate_items_without_changing_oracle():
 
 def test_corpus_xdist_uses_separate_writable_ocr_caches():
     source = (ROOT / "tests/corpus/conftest.py").read_text()
-    assert 'PPAP_CORPUS_XDIST_ISOLATE_OCR' in source
+    assert "PPAP_CORPUS_XDIST_ISOLATE_OCR" in source
     assert 'hasattr(config, "workerinput")' in source
-    assert 'shutil.copytree(seed, worker_cache)' in source
+    assert "shutil.copytree(seed, worker_cache)" in source
     assert 'os.environ["OCR_LOCAL_OSS_DIR"] = str(worker_cache)' in source
     assert 'os.environ["OCR_LOCAL_SQLITE_DB"] = str(worker_cache / "ocr_cache.db")' in source
-    assert 'shutil.rmtree(_WORKER_CACHE_DIR, ignore_errors=True)' in source
+    assert "shutil.rmtree(_WORKER_CACHE_DIR, ignore_errors=True)" in source
 
 
 def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():
@@ -81,18 +81,18 @@ def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():
     integration = workflow.split("  integration:\n", 1)[1].split("  ci_gate:\n", 1)[0]
     browser = integration.split("      - name: Isolated-dev browser E2E\n", 1)[1].split("      - name: Dump Compose diagnostics\n", 1)[0]
     assert 'PPAP_E2E_WORKERS: "4"' in browser
-    assert 'PPAP_E2E_ROUND_REPORT_WORKERS' not in workflow
+    assert "PPAP_E2E_ROUND_REPORT_WORKERS" not in workflow
     assert 'case "${PPAP_E2E_WORKERS:-0}" in' in script
-    assert 'PPAP_E2E_WORKERS must be 0 or 4' in script
+    assert "PPAP_E2E_WORKERS must be 0 or 4" in script
     assert 'uv run --no-sync pytest "$suite" --durations=25 -vv' in script
     assert 'uv run --no-sync pytest "$suite" -n 4 --dist=load --max-worker-restart=0 --durations=25 -vv' in script
     assert 'if [[ "$suite" == "tests/e2e" ]]; then' in script
-    assert '--ignore=' not in script
-    assert 'pytest tests/e2e/test_round_reports.py' not in script
+    assert "--ignore=" not in script
+    assert "pytest tests/e2e/test_round_reports.py" not in script
     assert 'uv run --no-sync pytest "$suite"' in script
     # Runtime tests remain serial and the same CI Gate still requires integration.
-    assert 'bash scripts/run-compose-tests.sh tests/integration/runtime' in integration
-    assert '      - integration' in workflow
+    assert "bash scripts/run-compose-tests.sh tests/integration/runtime" in integration
+    assert "      - integration" in workflow
 
 
 def test_browser_cleanup_is_owned_by_always_step_and_failures_are_reported():
