@@ -42,7 +42,6 @@ def _outcome(verdict: RuleVerdict) -> ExecutionOutcome:
     return ExecutionOutcome(status="ERR", execution_class=EXECUTION_FAILURE)
 
 
-
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """One immutable oracle case per pytest item: xdist can distribute files."""
     if "product_case" not in metafunc.fixturenames:
