@@ -426,10 +426,10 @@ jobs:
           PPAP_E2E_ROUND_REPORT_WORKERS: "2"
         run: |
           set -euo pipefail
+          # The always() cleanup step owns teardown. No duplicate Compose down
+          # may obscure a successful browser test result.
           bash scripts/run-compose-tests.sh tests/e2e \
             -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml
-          docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans
       - name: Dump Compose diagnostics
         if: failure()
         run: |
@@ -449,11 +449,16 @@ jobs:
       - name: Clean Compose stacks
         if: always()
         run: |
-          docker compose -p "$PPAP_COMPOSE_TEST" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans || true
+          # Attempt every stack even after one cleanup error. Never mask failure.
+          set +e
+          failed=0
+          docker compose -p "$PPAP_COMPOSE_TEST" -f deploy/isolated-dev/compose.yaml \
+            down -v --remove-orphans || failed=1
           docker compose -p "$PPAP_COMPOSE_PROD" -f deploy/compose.yaml --env-file deploy/compose.env.example \
-            down -v --remove-orphans || true
+            down -v --remove-orphans || failed=1
           docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \
-            down -v --remove-orphans || true
+            down -v --remove-orphans || failed=1
+          exit "$failed"
 
   ci_gate:
     name: CI Gate

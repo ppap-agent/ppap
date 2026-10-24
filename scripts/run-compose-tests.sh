@@ -32,7 +32,7 @@ if [[ "$suite" == "tests/e2e" ]]; then
       uv run --no-sync pytest "$suite" --durations=25
       ;;
     2)
-      uv run --no-sync pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25
+      uv run --no-sync pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25 -vv
       uv run --no-sync pytest tests/e2e/test_round_reports.py -n 2 --dist=load --max-worker-restart=0 --durations=25
       ;;
     *)

@@ -368,3 +368,7 @@ MCP 集成测试通过真实 PostgreSQL/HTTP 与受控飞书响应，验证 Web/
 `packages/ppap_mcp_client/tests` 检查本地 200 MiB 边界、快照、目录与符号链接约束、摘要、下载中断及并发覆盖、加密凭据重开、缺失密钥、未知刷新恢复，以及真实另一进程持有锁和退出后的恢复。分包验证通过 `uv run --no-sync python scripts/validate_distribution.py --member ppap-mcp-client` 在全新环境安装非 editable wheel 后运行这些测试。
 
 `tests/integration/product/test_mcp_client.py` 使用锁定的 FastMCP/MCP SDK，走实际 OAuth 发现、DCR、PKCE、续期和 PPAP API/PG。受控浏览器身份完成授权选择，独立认证对象竞争续期，丢弃刷新响应验证旧令牌不重放；创建文件、传输、固化三个响应丢失点均通过原请求恢复。代理检查工具、Resources、Prompts、独立版本、预校验及跨委托下载拒绝。另一个用例启动真实回环 HTTP 服务和独立 stdio 适配器进程，经过 CLI 参数处理完成上传、退出、重启续期和下载。系统钥匙串及真实浏览器交互在这些用例中受控；对象存储为内存边界，不能据此声称客户应用、飞书、生产存储或现网部署已经验收。客户端锁与恢复测试对应单代最多一次刷新和未知不重试的局部义务，不构成对完整系统的形式化 refinement 证明。
+
+### Product E2E teardown 的 CI-only 修复
+
+Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 108 项及独立历史报告 9 项均通过；随后 `Isolated-dev browser E2E` step 在重复的 `docker compose down` 过程中收到 `The operation was canceled`，该 step 被标记为取消，整个 Job 为 failure。现将 E2E 的 Compose 清理明确交给既有的 `if: always()` 末尾步骤：测试步骤只负责测试、失败必须传播；末尾三个 Compose 清理操作全部尝试，清理失败也必须让 CI Gate 失败。取消信号的外部来源仍不能从旧日志证明，不把测试已通过等同于完整 CI 绿色。已在串行 Browser E2E 中增加 `-vv` 供 GitHub timestamps 精确定位单例运行和非 call 时间的长时间空档；`test_round_reports.py` 在失败的运行中 9 项用例以 4.70s 通过，不是本次 E2E 慢段。完整 CI 在精确新 HEAD 上重新验证后才能合并。
