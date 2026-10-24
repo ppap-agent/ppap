@@ -434,7 +434,8 @@ def test_round_read_view_projects_the_same_authorized_task_report_without_creati
     usage = client.get("/usage").json()
     response = client.get(round_path, params={"read_view": True})
     assert response.status_code == 200, response.text
-    observed = TypeAdapter(wc.Round).validate_python(response.json())
+    observed = response.json()
+    TypeAdapter(wc.Round).validate_python(observed)
     view = observed["read_view"]
     assert view["report_source"] == {"task_id": task["id"], "access": {"state": "allowed", "reason": None}}
     assert len(view["files"]) == 1
@@ -516,7 +517,8 @@ def test_legacy_round_read_view_does_not_invent_a_private_task_or_report(task_sy
     original = client.get(path).json()
     response = client.get(path, params={"read_view": True})
     assert response.status_code == 200, response.text
-    observed = TypeAdapter(wc.Round).validate_python(response.json())
+    observed = response.json()
+    TypeAdapter(wc.Round).validate_python(observed)
     assert "report_source" not in observed["read_view"]
     assert observed["read_view"]["files"][0]["audit"]["report"]["state"] == "not_eligible"
     assert {key: value for key, value in observed.items() if key != "read_view"} == original
