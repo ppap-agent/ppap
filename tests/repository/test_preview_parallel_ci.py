@@ -75,19 +75,24 @@ def test_corpus_xdist_uses_separate_writable_ocr_caches():
     assert 'shutil.rmtree(_WORKER_CACHE_DIR, ignore_errors=True)' in source
 
 
-def test_only_controlled_browser_report_tests_are_parallelized():
+def test_all_browser_e2e_items_join_one_xdist_pool_without_exclusion():
     workflow = (ROOT / ".github/workflows/tests.yml").read_text()
     script = (ROOT / "scripts/run-compose-tests.sh").read_text()
-    assert 'PPAP_E2E_ROUND_REPORT_WORKERS: "2"' in workflow
-    assert 'case "${PPAP_E2E_ROUND_REPORT_WORKERS:-0}" in' in script
-    assert 'pytest "$suite" --durations=25' in script
-    assert 'pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25 -vv' in script
-    assert 'pytest tests/e2e/test_round_reports.py -n 2 --dist=load --max-worker-restart=0 --durations=25' in script
-    assert 'PPAP_E2E_ROUND_REPORT_WORKERS must be 0 or 2' in script
+    integration = workflow.split("  integration:\n", 1)[1].split("  ci_gate:\n", 1)[0]
+    browser = integration.split("      - name: Isolated-dev browser E2E\n", 1)[1].split("      - name: Dump Compose diagnostics\n", 1)[0]
+    assert 'PPAP_E2E_WORKERS: "4"' in browser
+    assert 'PPAP_E2E_ROUND_REPORT_WORKERS' not in workflow
+    assert 'case "${PPAP_E2E_WORKERS:-0}" in' in script
+    assert 'PPAP_E2E_WORKERS must be 0 or 4' in script
+    assert 'uv run --no-sync pytest "$suite" --durations=25 -vv' in script
+    assert 'uv run --no-sync pytest "$suite" -n 4 --dist=load --max-worker-restart=0 --durations=25 -vv' in script
+    assert 'if [[ "$suite" == "tests/e2e" ]]; then' in script
+    assert '--ignore=' not in script
+    assert 'pytest tests/e2e/test_round_reports.py' not in script
     assert 'uv run --no-sync pytest "$suite"' in script
-    controlled = (ROOT / "tests/e2e/test_round_reports.py").read_text()
-    assert 'page.route("**/api/**", api)' in controlled
-    assert 'with sync_playwright() as playwright:' in controlled
+    # Runtime tests remain serial and the same CI Gate still requires integration.
+    assert 'bash scripts/run-compose-tests.sh tests/integration/runtime' in integration
+    assert '      - integration' in workflow
 
 
 def test_browser_cleanup_is_owned_by_always_step_and_failures_are_reported():

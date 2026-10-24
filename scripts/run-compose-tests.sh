@@ -23,20 +23,21 @@ export PPAP_WEB_URL="http://$web_binding"
 [[ "$("${compose[@]}" port api 8080)" == "$api_binding" ]]
 [[ "$("${compose[@]}" port web 4173)" == "$web_binding" ]]
 printf 'Test stack API: %s; Web: %s\n' "$PPAP_PUBLIC_API_URL" "$PPAP_WEB_URL"
-# The Round report browser tests route their entire API surface and launch
-# independent Chromium contexts. Run only that file through bounded xdist;
-# keep all other Product E2E (including real API/PG) strictly serial.
+# Deliberately stress all E2E cases, including real API/Postgres/Worker paths,
+# against the same isolated-dev stack. A failing test is evidence; never
+# silently rerun it in serial or exclude it from the required CI Gate.
 if [[ "$suite" == "tests/e2e" ]]; then
-  case "${PPAP_E2E_ROUND_REPORT_WORKERS:-0}" in
+  case "${PPAP_E2E_WORKERS:-0}" in
     0)
-      uv run --no-sync pytest "$suite" --durations=25
+      # Fast rollback: one process, same complete test collection.
+      uv run --no-sync pytest "$suite" --durations=25 -vv
       ;;
-    2)
-      uv run --no-sync pytest "$suite" --ignore=tests/e2e/test_round_reports.py --durations=25 -vv
-      uv run --no-sync pytest tests/e2e/test_round_reports.py -n 2 --dist=load --max-worker-restart=0 --durations=25
+    4)
+      # All tests are eligible; load balances cases within large unittest classes.
+      uv run --no-sync pytest "$suite" -n 4 --dist=load --max-worker-restart=0 --durations=25 -vv
       ;;
     *)
-      echo "PPAP_E2E_ROUND_REPORT_WORKERS must be 0 or 2" >&2
+      echo "PPAP_E2E_WORKERS must be 0 or 4" >&2
       exit 2
       ;;
   esac
