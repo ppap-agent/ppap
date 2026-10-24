@@ -1,0 +1,110 @@
+"""Structured multimodal PDF-page reading through the Responses protocol."""
+
+from __future__ import annotations
+
+import logging
+import os
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
+
+import fitz
+from ppap_core.settings import get_settings
+from ppap_docops.files import parse_file_size
+
+from .llm_service import call_llm
+
+logger = logging.getLogger(__name__)
+
+# One schema and one Responses request per page. Never guess missing evidence.
+PAGE_SCHEMA: dict[str, Any] = {
+    "name": "ppap_multimodal_pdf_page",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "tables": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}},
+                    "required": ["rows"],
+                },
+            },
+            "paragraphs": {"type": "array", "items": {"type": "string"}},
+            "seals": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["tables", "paragraphs", "seals"],
+    },
+}
+
+PAGE_PROMPT = (
+    "Read this PPAP document page visually. Output JSON only, using the supplied schema. "
+    "Preserve table row and column order exactly as shown and transcribe text without inventing values. "
+    "Each visible table becomes an object with a rows array. Preserve empty cells as empty strings. "
+    "Capture non-table paragraphs separately in reading order. Put legible stamp/signature text "
+    "in seals; if the mark is visible but unreadable, use an empty string. "
+    "Return empty arrays for categories not present. Do not infer a PASS, approval, or signature."
+)
+
+
+def _validate_page(payload: Any) -> dict[str, Any]:
+    """Fail closed on provider incompatibility rather than emitting false evidence."""
+    if not isinstance(payload, dict) or set(payload) != {"tables", "paragraphs", "seals"}:
+        raise ValueError("Invalid Responses page schema")
+    tables, paragraphs, seals = payload["tables"], payload["paragraphs"], payload["seals"]
+    if not isinstance(tables, list) or not isinstance(paragraphs, list) or not isinstance(seals, list):
+        raise ValueError("Invalid Responses page collections")
+    if any(not isinstance(x, str) for x in [*paragraphs, *seals]):
+        raise ValueError("Invalid Responses page text")
+    for table in tables:
+        if not isinstance(table, dict) or set(table) != {"rows"} or not isinstance(table["rows"], list):
+            raise ValueError("Invalid Responses table schema")
+        for row in table["rows"]:
+            if not isinstance(row, list) or any(not isinstance(cell, str) for cell in row):
+                raise ValueError("Invalid Responses table cell")
+    return payload
+
+
+def _read_page(image: bytes, page_number: int, page_count: int) -> dict[str, Any]:
+    logger.info("Responses vision page %d/%d starting", page_number, page_count)
+    payload = call_llm(
+        image_paths=image,
+        prompt=PAGE_PROMPT,
+        retry_count=1,
+        json_mode=True,
+        response_schema=PAGE_SCHEMA,
+    )
+    result = _validate_page(payload)
+    logger.info("Responses vision page %d/%d complete", page_number, page_count)
+    return result
+
+
+class VisionLayoutService:
+    """Render safely in the owning thread; overlap only bounded HTTP I/O."""
+
+    def analyze_full_pdf(self, file_path: str) -> list[dict[str, Any]]:
+        if os.path.getsize(file_path) > parse_file_size(get_settings().MAX_FILE_SIZE):
+            raise ValueError("PDF exceeds MAX_FILE_SIZE")
+        with fitz.open(file_path) as document:
+            page_count = len(document)
+            if not page_count:
+                raise ValueError("PDF contains no pages")
+            results: list[dict[str, Any] | None] = [None] * page_count
+            # Bound in-flight images and API requests; rendering is not shared across threads.
+            pending: deque[tuple[int, Future[dict[str, Any]]]] = deque()
+            with ThreadPoolExecutor(max_workers=min(2, page_count)) as executor:
+                for index in range(page_count):
+                    pix = document[index].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+                    pending.append((index, executor.submit(_read_page, pix.tobytes("png"), index + 1, page_count)))
+                    if len(pending) >= 2:
+                        completed_index, future = pending.popleft()
+                        results[completed_index] = future.result()
+                while pending:
+                    completed_index, future = pending.popleft()
+                    results[completed_index] = future.result()
+            if any(page is None for page in results):
+                raise RuntimeError("Missing Responses page result")
+            return [page for page in results if page is not None]

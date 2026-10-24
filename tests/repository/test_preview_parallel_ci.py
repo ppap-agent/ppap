@@ -36,16 +36,18 @@ def test_preview_workers_are_bounded_with_serial_rollback():
     assert "process.exitCode = code ?? 1" in workflow
 
 
-def test_pdf_product_oracle_is_the_only_parallel_corpus_slice():
+def test_pdf_all_oracles_share_one_bounded_xdist_pool():
     workflow = (ROOT / ".github/workflows/tests.yml").read_text()
     corpus = workflow.split("  corpus:\n", 1)[1].split("  integration:\n", 1)[0]
-    assert 'PPAP_CORPUS_PRODUCT_WORKERS: "2"' in corpus
-    assert "PPAP_CORPUS_PRODUCT_WORKERS must be 0 or 2" in corpus
+    assert 'PPAP_CORPUS_PDF_WORKERS: "2"' in corpus
+    assert "PPAP_CORPUS_PDF_WORKERS must be 0 or 2" in corpus
     assert "uv sync --locked --group e2e" in corpus
-    assert "uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q --durations=25 -k 'not test_v2_product_round_respects_oracle_baseline'" in corpus
     assert "PPAP_CORPUS_XDIST_ISOLATE_OCR=1" in corpus
-    assert "pytest tests/corpus/v2_assets/test_product_round.py --ftype pdf -q --durations=25 -n 2 --dist=load --max-worker-restart=0" in corpus
-    assert "uv run --no-sync pytest ${{ matrix.args }} --durations=25" in corpus
+    assert "pytest tests/corpus/v2_assets --ftype pdf -q -n 2" in corpus
+    assert "--dist=load --max-worker-restart=0 --durations=25 -vv" in corpus
+    assert "-k 'not test_v2_product_round_respects_oracle_baseline'" not in corpus
+    assert "python3 -m scripts.ci_heartbeat --timeout 2400" in corpus
+    assert "uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv" in corpus
     assert corpus.count(" -n 2 ") == 1
 
 

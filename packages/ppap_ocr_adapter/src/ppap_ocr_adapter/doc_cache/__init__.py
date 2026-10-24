@@ -1,4 +1,4 @@
-"""Local in-process OCR runtime ported from doc-cache."""
+"""Local Responses multimodal PDF conversion and artifact cache."""
 
 from .ocr_service import process_file_url, process_local_pdf
 

@@ -23,7 +23,10 @@ class OCRResponsesTests(TestCase):
             patch.object(llm_service.os.path, "exists", return_value=True),
             patch.object(llm_service, "encode_image", return_value="AAAA"),
         ):
-            self.assertEqual(llm_service.call_llm("image.jpg", "inspect", json_mode=True, response_schema=schema), {"has_checkboxes": True})
+            self.assertEqual(
+                llm_service.call_llm("image.jpg", "inspect", json_mode=True, response_schema=schema),
+                {"has_checkboxes": True},
+            )
 
         self.assertEqual(calls[0]["text"], {"format": {"type": "json_schema", **schema}})
         self.assertEqual(
@@ -33,7 +36,7 @@ class OCRResponsesTests(TestCase):
                     "role": "user",
                     "content": [
                         {"type": "input_text", "text": "inspect"},
-                        {"type": "input_image", "image_url": "data:image/jpeg;base64,AAAA"},
+                        {"type": "input_image", "image_url": "data:image/jpeg;base64,AAAA", "detail": "high"},
                     ],
                 }
             ],
@@ -41,11 +44,13 @@ class OCRResponsesTests(TestCase):
         self.assertFalse(calls[0]["store"])
 
     def test_incomplete_response_is_not_accepted(self):
-        sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(status="incomplete", output_text="partial")))
+        def create(**kwargs):
+            return SimpleNamespace(status="incomplete", output_text="partial")
+
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=create))
         with (
             patch.object(llm_service, "_get_llm_client", return_value=sdk),
             patch.object(llm_service, "_get_llm_model_name", return_value="test"),
-            patch.object(llm_service.os.path, "exists", return_value=False),
         ):
             with self.assertRaises(RuntimeError):
-                llm_service.call_llm("missing.jpg", "inspect", retry_count=1)
+                llm_service.call_llm(b"\x89PNG", "inspect", retry_count=1)
