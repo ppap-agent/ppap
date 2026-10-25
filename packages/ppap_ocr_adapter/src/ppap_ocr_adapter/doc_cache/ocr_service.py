@@ -223,6 +223,7 @@ def _is_valid_excel_artifact(path: str) -> bool:
         close()
     return True
 
+
 def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
     """One Responses vision pass per PDF page; build auditable workbook/HTML."""
     pages = VisionLayoutService().analyze_full_pdf(pdf_path)
@@ -302,6 +303,7 @@ def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
         _safe_remove(excel_path)
         _safe_remove(html_path)
         raise
+
 
 def _process_pdf(pdf_path: str, source_hash: str, enable_cache: bool) -> dict[str, Any]:
     file_id = _compute_md5(pdf_path)
