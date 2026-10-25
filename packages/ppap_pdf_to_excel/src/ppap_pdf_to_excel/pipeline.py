@@ -45,7 +45,8 @@ from ppap_docops.pdf import (
     TitleSectionRule,
 )
 from ppap_docops.pdf import convert_pdf_to_excel as docops_convert_pdf_to_excel
-from ppap_ocr_adapter import get_ocr_adapter
+from .remote import RemoteOcrAdapter
+from .vision.local import convert_local_pdf_to_excel
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,10 @@ def _attempt_ocr(
     enable_cache: bool,
 ) -> tuple[str | None, dict[str, object] | None]:
     try:
-        artifact = get_ocr_adapter().ocr_pdf_to_excel(source, enable_cache=enable_cache)
+        if get_settings().get_ocr_adapter_mode() == "remote":
+            artifact = RemoteOcrAdapter().ocr_pdf_to_excel(source, enable_cache=enable_cache)
+        else:
+            artifact = convert_local_pdf_to_excel(source, enable_cache=enable_cache)
         if artifact.excel_path:
             return artifact.excel_path, None
         raw_error = str((artifact.raw_meta or {}).get("error", "") or "")

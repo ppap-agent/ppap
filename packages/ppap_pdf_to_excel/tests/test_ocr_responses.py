@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from ppap_ocr_adapter.doc_cache import llm_service
+from ppap_pdf_to_excel.vision import client as llm_service
 
 
 class OCRResponsesTests(TestCase):
@@ -88,7 +88,7 @@ class OCRResponsesTests(TestCase):
         with (
             patch.object(llm_service, "_get_llm_client", return_value=sdk),
             patch.object(llm_service, "_get_llm_model_name", return_value="test"),
-            self.assertLogs("ppap_ocr_adapter.doc_cache.llm_service", level="WARNING") as logs,
+            self.assertLogs("ppap_pdf_to_excel.vision.client", level="WARNING") as logs,
         ):
             with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
                 llm_service.call_llm(b"image", "inspect", retry_count=1, json_mode=True)

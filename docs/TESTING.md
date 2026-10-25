@@ -382,9 +382,9 @@ Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 1
 
 ### CR-01：以 Responses 多模态统一 PDF fallback，移除重复 OCR 管线
 
-针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 是 `LocalOcrAdapter -> doc_cache/ocr_service.py -> vision_service.py -> llm_service.py`：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。每页最多一次 Responses 请求，且每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
+针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 位于 `ppap_pdf_to_excel/vision/{local,cache,page,client}.py`，由统一 PDF pipeline 直接调用：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。每页最多一次 Responses 请求，且每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
 
-为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 保留；此项变更只替换默认 `auto/local` 的 PDF 路径，不改变原来的手工 linegrid 优先次序。
+为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 已归入 `ppap_pdf_to_excel/remote.py`；默认 `auto/local` 的 PDF 路径只保留一套本地视觉转换，不改变原来的手工 linegrid 优先次序。
 
 外部模型会接收 PDF 页面内容，属于既有客户文档出站处理边界；只发送到配置的可信 Responses 服务，使用 `store=False`，不在日志中写页面文本、图像或密钥。CI 本地单元测试 mock 模型接口，真实远程模型可用性和输出质量需由完整 Corpus/PSW baseline 再验证。若模型能力不支持严格 schema，必须报错并确认端点能力，而不是退回旧 OCR 静默通过。
 

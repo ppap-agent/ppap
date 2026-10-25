@@ -12,7 +12,7 @@ import fitz
 from ppap_core.settings import get_settings
 from ppap_docops.files import parse_file_size
 
-from .llm_service import ResponsesEvidenceError, call_llm
+from .client import ResponsesEvidenceError, call_llm
 
 logger = logging.getLogger(__name__)
 

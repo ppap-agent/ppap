@@ -115,6 +115,8 @@ class ArchitectureTests(unittest.TestCase):
         self.assertFalse((ROOT / "requirements.txt").exists())
         members = {ROOT / path for path in root["tool"]["uv"]["workspace"]["members"]}
         self.assertEqual(members, _member_dirs())
+        # One PDF conversion owner; no duplicate OCR adapter distribution.
+        self.assertFalse((ROOT / "packages/ppap_ocr_adapter").exists())
         sources = root["tool"]["uv"]["sources"]
         for member in members:
             project = _pyproject(member / "pyproject.toml")

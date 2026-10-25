@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import fitz
 import pytest
-from ppap_ocr_adapter.doc_cache import vision_service
+from ppap_pdf_to_excel.vision import page as vision_service
 
 
 def _pdf(tmp_path, pages=2):

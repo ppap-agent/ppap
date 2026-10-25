@@ -1,19 +1,20 @@
 [project]
 name = "ppap-pdf-to-excel"
 version = "0.1.0"
-description = "PPAP PDF to Excel pipeline (OCR first, geometry fallback)"
+description = "PPAP PDF to Excel: geometry extraction and validated vision fallback"
 requires-python = "==3.12.*"
 dependencies = [
     "ppap-core",
     "ppap-docops",
-    "ppap-ocr-adapter",
+    "openai>=1.95.0",
     "openpyxl>=3.1.2",
+    "pymupdf>=1.26.0",
+    "requests>=2.31.0",
 ]
 
 [tool.uv.sources]
 ppap-core = { workspace = true }
 ppap-docops = { workspace = true }
-ppap-ocr-adapter = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
