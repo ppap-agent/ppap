@@ -1327,7 +1327,9 @@ name = "ppap-pdf-to-excel"
 version = "0.1.0"
 source = { editable = "packages/ppap_pdf_to_excel" }
 dependencies = [
+    { name = "numpy" },
     { name = "openai" },
+    { name = "opencv-python-headless" },
     { name = "openpyxl" },
     { name = "ppap-core" },
     { name = "ppap-docops" },
@@ -1337,7 +1339,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=1.26.0,<2" },
     { name = "openai", specifier = ">=1.95.0" },
+    { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "openpyxl", specifier = ">=3.1.2" },
     { name = "ppap-core", editable = "packages/ppap_core" },
     { name = "ppap-docops", editable = "packages/ppap_docops" },

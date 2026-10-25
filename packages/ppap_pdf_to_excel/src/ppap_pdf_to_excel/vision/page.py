@@ -13,7 +13,9 @@ import fitz
 from ppap_core.settings import get_settings
 from ppap_docops.files import parse_file_size
 
+from .cell_ocr import recover_scan_page
 from .client import ResponsesEvidenceError, call_llm_async
+from .raster import detect_raster_grids
 
 logger = logging.getLogger(__name__)
 
@@ -348,11 +350,23 @@ async def _read_page_async(image: bytes, page_number: int, page_count: int, nati
         # A model's alleged merge must not destroy a different nonempty cell.
         # Recover only when the original PDF's drawn cell grid and independent
         # text witnesses uniquely prove the correct merge ranges.
-        repaired = _reconcile_physical_merges(payload, native_tables)
+        vectors = [candidate for candidate in native_tables if "rows" in candidate]
+        raster_grids = [candidate["raster_grid"] for candidate in native_tables if "raster_grid" in candidate]
+        repaired = _reconcile_physical_merges(payload, vectors) if vectors else None
+        if repaired is None and raster_grids and str(exc).startswith("Invalid Responses merge covers nonempty evidence"):
+            try:
+                repaired = await recover_scan_page(image, payload, raster_grids)
+            except ResponsesEvidenceError as recovery_error:
+                raise ResponsesEvidenceError(
+                    recovery_error.code,
+                    f"Responses page {page_number}/{page_count}: {recovery_error}",
+                ) from recovery_error
         if repaired is None:
-            raise ResponsesEvidenceError("responses_invalid_schema", f"Responses page {page_number}/{page_count}: {exc}") from exc
+            raise ResponsesEvidenceError(
+                "responses_invalid_schema", f"Responses page {page_number}/{page_count}: {exc}"
+            ) from exc
         result = _validate_page(repaired)
-        logger.info("Responses page %d/%d repaired from verified PDF vector geometry", page_number, page_count)
+        logger.info("Responses page %d/%d recovered from source-grounded table evidence", page_number, page_count)
     logger.info("Responses vision page %d/%d complete", page_number, page_count)
     return result
 
@@ -408,6 +422,13 @@ class VisionLayoutService:
                     page = document[index]
                     native_tables = _native_table_candidates(page)
                     image = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).tobytes("png")
+                    if not native_tables:
+                        try:
+                            raster_grids = detect_raster_grids(image)
+                        except ValueError as exc:
+                            logger.warning("Raster image source unavailable: error_type=%s", type(exc).__name__)
+                            raster_grids = []
+                        native_tables.extend({"raster_grid": grid} for grid in raster_grids)
                     images.append((index + 1, image, native_tables))
                 results.extend(_run_batch_sync(images, page_count))
             return results

@@ -28,6 +28,7 @@ def _no_real_network_in_local_ocr_tests(monkeypatch):
     monkeypatch.setattr(httpx.Client, "send", forbidden)
     monkeypatch.setattr(httpx.AsyncClient, "send", forbidden_async)
 
+
 def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatch):
     source = tmp_path / "source.pdf"
     with fitz.open() as document:
@@ -99,6 +100,7 @@ def test_multimodal_failure_never_caches_an_excel_artifact(tmp_path, monkeypatch
     monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "cache" / "cache.db"))
     get_settings.cache_clear()
+
     async def empty_page(**kwargs):
         return {"tables": [], "paragraphs": [], "seals": []}
 
@@ -129,6 +131,7 @@ def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_pat
         ],
         "merges": [{"start_row": 1, "start_col": 1, "end_row": 2, "end_col": 1}],
     }
+
     async def merged_page(**kwargs):
         return {"tables": [model_table], "paragraphs": [], "seals": []}
 
