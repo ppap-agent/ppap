@@ -55,18 +55,8 @@ def _canonical(value: str) -> str:
 
 def _source_coverage(model_table: dict[str, Any], source_table: dict[str, Any]) -> bool:
     """Never discard nonempty original-model evidence on a raster recovery."""
-    model = Counter(
-        _canonical(cell)
-        for row in model_table["rows"]
-        for cell in row
-        if isinstance(cell, str) and _canonical(cell)
-    )
-    source = [
-        _canonical(cell)
-        for row in source_table["rows"]
-        for cell in row
-        if isinstance(cell, str) and _canonical(cell)
-    ]
+    model = Counter(_canonical(cell) for row in model_table["rows"] for cell in row if isinstance(cell, str) and _canonical(cell))
+    source = [_canonical(cell) for row in source_table["rows"] for cell in row if isinstance(cell, str) and _canonical(cell)]
     for fragment, count in model.items():
         witnesses = sum(cell.count(fragment) for cell in source)
         if witnesses < count:
@@ -82,7 +72,7 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
         for offset in range(0, len(panels), PANELS_PER_REQUEST):
             requested = grid.cells[offset * 8 : (offset + PANELS_PER_REQUEST) * 8]
             expected = {cell.index for cell in requested}
-            images = panels[offset : offset + PANELS_PER_REQUEST]
+            images: list[str | bytes] = [panel for panel in panels[offset : offset + PANELS_PER_REQUEST]]
             result = await call_llm_async(
                 image_paths=images,
                 prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
@@ -112,10 +102,7 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
         rows[cell.row][cell.col] = values[cell.index]
     return {
         "rows": rows,
-        "merges": [
-            {"start_row": r0, "start_col": c0, "end_row": r1, "end_col": c1}
-            for r0, c0, r1, c1 in grid.merges
-        ],
+        "merges": [{"start_row": r0, "start_col": c0, "end_row": r1, "end_col": c1} for r0, c0, r1, c1 in grid.merges],
     }
 
 
@@ -153,9 +140,7 @@ async def recover_scan_page(
                 grid.row_count,
                 grid.col_count,
             )
-            raise ResponsesEvidenceError(
-                "raster_text_unverified", "Original model evidence cannot be located in independently cropped source cells"
-            )
+            raise ResponsesEvidenceError("raster_text_unverified", "Original model evidence cannot be located in independently cropped source cells")
         built.append(physical)
         logger.info(
             "Raster source grid verified: table=%d physical_rows=%d physical_cols=%d cells=%d merges=%d",

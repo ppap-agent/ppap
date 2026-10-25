@@ -8,7 +8,6 @@ cropped, coordinate-bound physical cells after this grid passes validation.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 
 import cv2
@@ -17,7 +16,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 MAX_IMAGE_PIXELS = 12_000_000
-MAX_GRID_CELLS = 400
+MAX_GRID_CELLS = 4096
 
 
 @dataclass(frozen=True)
@@ -39,20 +38,16 @@ class RasterGrid:
     bbox: tuple[int, int, int, int]
 
 
-def _clusters(scores: np.ndarray, minimum: float) -> list[int]:
-    indices = np.flatnonzero(scores >= minimum)
-    if not indices.size:
-        return []
-    groups: list[tuple[int, int]] = []
-    first = last = int(indices[0])
-    for index in indices[1:]:
-        position = int(index)
-        if position - last > 4:
-            groups.append((first, last))
-            first = position
-        last = position
-    groups.append((first, last))
-    return [(low + high) // 2 for low, high in groups]
+def _boundaries(values: list[int], line_scores: np.ndarray) -> list[int]:
+    groups: list[list[int]] = []
+    for value in sorted(values):
+        previous = groups[-1][-1] if groups else value
+        same_border = value > previous and float(np.mean(line_scores[previous:value])) >= 0.5
+        if not groups or value - previous > 5 and not same_border:
+            groups.append([value])
+        else:
+            groups[-1].append(value)
+    return [int(np.median(group)) for group in groups]
 
 
 def _line_fraction(mask: np.ndarray, left: int, top: int, right: int, bottom: int, *, vertical: bool) -> float:
@@ -62,117 +57,90 @@ def _line_fraction(mask: np.ndarray, left: int, top: int, right: int, bottom: in
     return float(np.mean(np.any(clipped != 0, axis=1 if vertical else 0)))
 
 
-def detect_raster_grids(png: bytes) -> list[RasterGrid]:
-    """Detect only unambiguous rectangular scan grids with physical borders.
-
-    Intermediate boundaries with uncertain line continuity reject the entire
-    grid, rather than silently manufacturing merged cells from noisy pixels.
-    """
-    raw = np.frombuffer(png, dtype=np.uint8)
-    gray = cv2.imdecode(raw, cv2.IMREAD_GRAYSCALE)
-    if gray is None or len(gray.shape) != 2:
-        raise ValueError("Invalid scanned PDF page image")
+def _line_masks(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     height, width = gray.shape
-    if height * width > MAX_IMAGE_PIXELS:
-        logger.warning("Raster grid unavailable: reason=image_size_limit")
-        return []
-    if height < 120 or width < 120:
-        return []
-
-    black = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 12
-    )
-    horizontal = cv2.morphologyEx(
-        black, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(24, width // 65), 1))
-    )
-    vertical = cv2.morphologyEx(
-        black, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(24, height // 80)))
-    )
+    black = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 12)
+    horizontal = cv2.morphologyEx(black, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(24, width // 65), 1)))
+    vertical = cv2.morphologyEx(black, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(24, height // 80))))
     horizontal = cv2.dilate(horizontal, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3)))
     vertical = cv2.dilate(vertical, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1)))
     drawing = cv2.bitwise_or(horizontal, vertical)
     drawing = cv2.morphologyEx(drawing, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
-    contours, _hierarchy = cv2.findContours(drawing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return horizontal, vertical, drawing
+
+
+def detect_raster_grids(png: bytes) -> list[RasterGrid]:
+    """Use closed physical cell faces, not missing global line segments.
+
+    A long table can have different columns in its header and body. Every
+    accepted face must have four supported borders, and its grid slots must
+    form a complete, non-overlapping partition. Uncertain faces fail closed.
+    """
+    gray = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if gray is None or len(gray.shape) != 2:
+        raise ValueError("Invalid scanned PDF page image")
+    height, width = gray.shape
+    if height * width > MAX_IMAGE_PIXELS or height < 120 or width < 120:
+        return []
+    horizontal, vertical, drawing = _line_masks(gray)
+    contours, hierarchy = cv2.findContours(drawing, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return []
 
     grids: list[RasterGrid] = []
-    for contour in contours:
+    for parent_index, contour in enumerate(contours):
+        if hierarchy[0][parent_index][3] != -1:
+            continue
         left, top, span_x, span_y = cv2.boundingRect(contour)
         if span_x < max(120, width * 0.27) or span_y < max(60, height * 0.06):
             continue
-        hscore = np.count_nonzero(horizontal[top : top + span_y, left : left + span_x], axis=1)
-        vscore = np.count_nonzero(vertical[top : top + span_y, left : left + span_x], axis=0)
-        ys = [top + coordinate for coordinate in _clusters(hscore, max(16, span_x * 0.16))]
-        xs = [left + coordinate for coordinate in _clusters(vscore, max(16, span_y * 0.035))]
+        faces: list[tuple[int, int, int, int]] = []
+        valid = True
+        for index, face_contour in enumerate(contours):
+            if hierarchy[0][index][3] != parent_index:
+                continue
+            x, y, sx, sy = cv2.boundingRect(face_contour)
+            if sx < 8 or sy < 8:
+                continue
+            right, bottom = x + sx - 1, y + sy - 1
+            borders = [_line_fraction(vertical, edge - 3, y + 3, edge + 4, bottom - 2, vertical=True) for edge in (x, right)] + [
+                _line_fraction(horizontal, x + 3, edge - 3, right - 2, edge + 4, vertical=False) for edge in (y, bottom)
+            ]
+            if min(borders) < 0.73:
+                valid = False
+                break
+            faces.append((x, y, right, bottom))
+        if not valid or not faces or len(faces) > MAX_GRID_CELLS:
+            continue
+        xs = _boundaries([value for face in faces for value in (face[0], face[2])], np.mean(vertical[top : top + span_y] != 0, axis=0))
+        ys = _boundaries([value for face in faces for value in (face[1], face[3])], np.mean(horizontal[:, left : left + span_x] != 0, axis=1))
         rows, cols = len(ys) - 1, len(xs) - 1
         if not 2 <= rows <= 250 or not 2 <= cols <= 70 or rows * cols > MAX_GRID_CELLS:
             continue
-        parent = list(range(rows * cols))
-
-        def root(value: int) -> int:
-            while parent[value] != value:
-                parent[value] = parent[parent[value]]
-                value = parent[value]
-            return value
-
-        def join(one: int, two: int) -> None:
-            parent[root(one)] = root(two)
-
-        valid = True
-        for row in range(rows):
-            for col in range(cols):
-                if col + 1 < cols:
-                    x = xs[col + 1]
-                    fraction = _line_fraction(
-                        vertical, x - 2, ys[row] + 3, x + 3, ys[row + 1] - 3, vertical=True
-                    )
-                    if fraction <= 0.20:
-                        join(row * cols + col, row * cols + col + 1)
-                    elif fraction < 0.73:
-                        valid = False
-                if row + 1 < rows:
-                    y = ys[row + 1]
-                    fraction = _line_fraction(
-                        horizontal, xs[col] + 3, y - 2, xs[col + 1] - 3, y + 3, vertical=False
-                    )
-                    if fraction <= 0.20:
-                        join(row * cols + col, (row + 1) * cols + col)
-                    elif fraction < 0.73:
-                        valid = False
-        if not valid:
-            continue
-
-        grouped: dict[int, list[tuple[int, int]]] = defaultdict(list)
-        for row in range(rows):
-            for col in range(cols):
-                grouped[root(row * cols + col)].append((row, col))
-        candidate_cells = []
-        merges = []
-        for coordinates in grouped.values():
-            row0 = min(row for row, _col in coordinates)
-            row1 = max(row for row, _col in coordinates)
-            col0 = min(col for _row, col in coordinates)
-            col1 = max(col for _row, col in coordinates)
-            if len(coordinates) != (row1 - row0 + 1) * (col1 - col0 + 1):
+        occupied: set[tuple[int, int]] = set()
+        candidate_cells: list[tuple[int, int, int, int, tuple[int, int, int, int]]] = []
+        for face in faces:
+            col0, row0, col1, row1 = [min(range(len(axis)), key=lambda i: abs(axis[i] - coordinate)) for coordinate, axis in zip(face, (xs, ys, xs, ys), strict=True)]
+            slots = {(row, col) for row in range(row0, row1) for col in range(col0, col1)}
+            if not slots or occupied.intersection(slots):
                 valid = False
                 break
-            candidate_cells.append(
-                (row0, col0, row1, col1, (xs[col0], ys[row0], xs[col1 + 1], ys[row1 + 1]))
-            )
-            if len(coordinates) > 1:
-                merges.append((row0, col0, row1, col1))
+            occupied.update(slots)
+            candidate_cells.append((row0, col0, row1 - 1, col1 - 1, face))
         if not valid:
             continue
+        expected = {(row, col) for row in range(rows) for col in range(cols)}
+        if occupied != expected:
+            continue
+
         candidate_cells.sort(key=lambda cell: (cell[0], cell[1]))
-        cells = tuple(
-            RasterCell(index, row0, col0, row1, col1, bounds)
-            for index, (row0, col0, row1, col1, bounds) in enumerate(candidate_cells)
-        )
+        cells = tuple(RasterCell(index, row0, col0, row1, col1, bounds) for index, (row0, col0, row1, col1, bounds) in enumerate(candidate_cells))
         grids.append(
             RasterGrid(
                 row_count=rows,
                 col_count=cols,
                 cells=cells,
-                merges=tuple(sorted(merges)),
+                merges=tuple((r0, c0, r1, c1) for r0, c0, r1, c1, _box in candidate_cells if r0 != r1 or c0 != c1),
                 bbox=(left, top, span_x, span_y),
             )
         )
@@ -194,6 +162,66 @@ def detect_raster_grids(png: bytes) -> list[RasterGrid]:
             len(grids),
         )
     return grids
+
+
+def read_raster_page(png: bytes) -> tuple[bytes, list[RasterGrid]]:
+    """Rectify a visibly skewed outer border only when direct topology fails.
+
+    Return the same pixels used for both geometry and transcription. The
+    full page is retained, including content outside the table rectangle.
+    """
+    grids = detect_raster_grids(png)
+    if grids:
+        return png, grids
+    image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Invalid scanned PDF page image")
+    height, width = image.shape[:2]
+    if height * width > MAX_IMAGE_PIXELS or min(height, width) < 120:
+        return png, []
+    drawing = _line_masks(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))[2]
+    contours, _ = cv2.findContours(drawing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return png, []
+    outer = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(outer) < width * height * 0.15:
+        return png, []
+    corners = cv2.approxPolyDP(outer, 0.005 * cv2.arcLength(outer, True), True)
+    if len(corners) != 4 or not cv2.isContourConvex(corners):
+        return png, []
+    points = corners.reshape(4, 2).astype(np.float32)
+    points = points[np.argsort(points[:, 1])]
+    top = points[:2][np.argsort(points[:2, 0])]
+    bottom = points[2:][np.argsort(points[2:, 0])]
+    source = np.array([top[0], top[1], bottom[1], bottom[0]], dtype=np.float32)
+    widths = [float(np.linalg.norm(source[1] - source[0])), float(np.linalg.norm(source[2] - source[3]))]
+    heights = [float(np.linalg.norm(source[3] - source[0])), float(np.linalg.norm(source[2] - source[1]))]
+    if min(*widths, *heights) < 60 or max(widths) / min(widths) > 1.15 or max(heights) / min(heights) > 1.15:
+        return png, []
+    if any(abs(float(source[b][1] - source[a][1])) > length * 0.1 for a, b, length in ((0, 1, widths[0]), (3, 2, widths[1]))):
+        return png, []
+    if any(abs(float(source[b][0] - source[a][0])) > length * 0.1 for a, b, length in ((0, 3, heights[0]), (1, 2, heights[1]))):
+        return png, []
+    x, y = source[0]
+    sx, sy = max(widths), max(heights)
+    target = np.array([[x, y], [x + sx, y], [x + sx, y + sy], [x, y + sy]], dtype=np.float32)
+    transform = cv2.getPerspectiveTransform(source, target)
+    page = np.array([[[0, 0], [width, 0], [width, height], [0, height]]], dtype=np.float32)
+    mapped = cv2.perspectiveTransform(page, transform)[0]
+    if not np.isfinite(mapped).all():
+        return png, []
+    low, high = np.floor(mapped.min(axis=0)), np.ceil(mapped.max(axis=0))
+    output_width, output_height = (int(value) for value in high - low)
+    if min(output_width, output_height) < 120 or output_width * output_height > MAX_IMAGE_PIXELS:
+        return png, []
+    translation = np.array([[1, 0, -low[0]], [0, 1, -low[1]], [0, 0, 1]])
+    rectified = cv2.warpPerspective(image, translation @ transform, (output_width, output_height), borderValue=(255, 255, 255))
+    encoded, result = cv2.imencode(".png", rectified)
+    if not encoded:
+        raise ValueError("Raster rectification encoding failed")
+    normalized = result.tobytes()
+    grids = detect_raster_grids(normalized)
+    return (normalized, grids) if grids else (png, [])
 
 
 def make_cell_panels(png: bytes, cells: tuple[RasterCell, ...]) -> list[bytes]:
@@ -220,10 +248,7 @@ def make_cell_panels(png: bytes, cells: tuple[RasterCell, ...]) -> list[bytes]:
                 interpolation=cv2.INTER_CUBIC if ratio > 1 else cv2.INTER_AREA,
             )
             tile = np.full((resized.shape[0] + 30, 1024, 3), 255, dtype=np.uint8)
-            cv2.putText(
-                tile, f"CELL ID {cell.index}", (12, 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 1, cv2.LINE_AA
-            )
+            cv2.putText(tile, f"CELL ID {cell.index}", (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 1, cv2.LINE_AA)
             tile[30 : 30 + resized.shape[0], : resized.shape[1]] = resized
             tiles.append(tile)
         board = np.full((sum(tile.shape[0] + 5 for tile in tiles), 1024, 3), 255, dtype=np.uint8)
