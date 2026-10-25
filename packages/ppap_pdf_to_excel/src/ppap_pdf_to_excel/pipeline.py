@@ -171,7 +171,7 @@ def _attempt_ocr(
         raw_error = str((artifact.raw_meta or {}).get("error", "") or "")
         if raw_error:
             error_code = str((artifact.raw_meta or {}).get("error_code", "") or "")
-            if not error_code.startswith("responses_"):
+            if not error_code.startswith(("responses_", "raster_")):
                 error_code = ERROR_OCR_EXCEPTION
             return None, {"error_code": error_code, "error": raw_error}
         return None, {

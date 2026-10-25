@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from typing import Any
 
 from .client import ResponsesEvidenceError, call_llm_async
-from .raster import RasterGrid, make_cell_panels
+from .raster import RasterGrid, make_cell_panel
 
 logger = logging.getLogger(__name__)
 
 MAX_RASTER_EVIDENCE_SECONDS = 180
-PANELS_PER_REQUEST = 4
+CELLS_PER_REQUEST = 64
 CELL_SCHEMA: dict[str, Any] = {
     "name": "ppap_raster_cell_evidence",
     "strict": True,
@@ -34,8 +35,9 @@ CELL_SCHEMA: dict[str, Any] = {
 }
 
 CELL_PROMPT = (
-    "These images are groups of physically cropped table cells from a scanned "
-    "document. Each crop has a printed CELL ID label OUTSIDE its original "
+    "This image is a packed sheet of physically cropped table cells from a "
+    "scanned document. Its packing order is not the document layout. "
+    "Each crop has a printed CELL ID label OUTSIDE its original "
     "contents. For every requested ID, transcribe ONLY legible text inside "
     "that cell's crop, preserving all characters and reading order. "
     "Return exactly one object per requested integer ID. For a genuinely "
@@ -47,20 +49,30 @@ CELL_PROMPT = (
 
 
 async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
-    panels = make_cell_panels(png, grid.cells)
     values: dict[int, str] = {}
 
-    for offset in range(0, len(panels), PANELS_PER_REQUEST):
-        requested = grid.cells[offset * 8 : (offset + PANELS_PER_REQUEST) * 8]
+    for offset in range(0, len(grid.cells), CELLS_PER_REQUEST):
+        requested = grid.cells[offset : offset + CELLS_PER_REQUEST]
         expected = {cell.index for cell in requested}
-        images: list[str | bytes] = [panel for panel in panels[offset : offset + PANELS_PER_REQUEST]]
-        result = await call_llm_async(
-            image_paths=images,
-            prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
-            retry_count=1,
-            json_mode=True,
-            response_schema=CELL_SCHEMA,
-        )
+        panel = make_cell_panel(png, requested)
+        started = monotonic()
+        try:
+            result = await call_llm_async(
+                image_paths=panel,
+                prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
+                retry_count=1,
+                json_mode=True,
+                response_schema=CELL_SCHEMA,
+            )
+        except BaseException as exc:
+            logger.warning(
+                "Raster OCR batch stopped: cells=%d png_bytes=%d elapsed_ms=%d error_type=%s",
+                len(requested),
+                len(panel),
+                round((monotonic() - started) * 1000),
+                type(exc).__name__,
+            )
+            raise
         entries = result.get("cells") if isinstance(result, dict) else None
         if not isinstance(entries, list) or len(entries) != len(expected):
             raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR omitted or duplicated cell evidence")

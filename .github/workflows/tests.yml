@@ -29,25 +29,26 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 35
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/web
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/web
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Use runner-local Corepack cache
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/web/.node-version
+          node-version-file: .ci-checkouts/${{ runner.name }}/.node-version
+          package-manager-cache: false
       - name: Typecheck, test, lint, and production build
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/web/apps/web
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}/apps/web
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
@@ -61,17 +62,18 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/web
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install preview browser dependencies
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
           uv sync --locked --group e2e
           uv run --no-sync python -m playwright install chromium
       - name: V3.1 preview browser contracts
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/web/apps/web
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}/apps/web
         env:
           PPAP_PREVIEW: "1"
           # Set to "0" to restore the previous serial preview run.
@@ -119,33 +121,36 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/repository
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/repository
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Use runner-local Corepack cache
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/repository/.node-version
+          node-version-file: .ci-checkouts/${{ runner.name }}/.node-version
+          package-manager-cache: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/repository
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Assert Docker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_docker.sh
       - name: Repository, config, and tooling contracts
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
@@ -192,31 +197,32 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/distribution-${{ matrix.shard }}
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/distribution-${{ matrix.shard }}
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Assert Docker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_docker.sh
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/distribution-${{ matrix.shard }}
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Build, install and test isolated distributions
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: python3 -m scripts.ci_shards distributions --shard "${{ matrix.shard }}"
 
   python_modules:
@@ -224,33 +230,35 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/modules-${{ matrix.shard }}
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/modules-${{ matrix.shard }}
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Assert Docker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_docker.sh
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/modules-${{ matrix.shard }}
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Canonical install
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: uv sync --locked
       - name: Run complete Python owner tests
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: python3 -m scripts.ci_shards modules --shard "${{ matrix.shard }}"
 
   schema:
@@ -258,29 +266,30 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/schema
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     env:
       COMPOSE_PROJECT_NAME: ppap-ci-schema-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/schema
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Assert Docker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_docker.sh
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/schema
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Schema PostgreSQL contracts
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         env:
           PPAP_TEST_POSTGRES_PORT: "0"
         run: |
@@ -296,6 +305,7 @@ jobs:
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans
       - name: Dump Compose diagnostics
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: failure()
         run: |
           echo "=== ${COMPOSE_PROJECT_NAME} ps ==="
@@ -304,6 +314,7 @@ jobs:
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
             logs --no-color --timestamps postgres init-db || true
       - name: Clean Compose stack
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: always()
         run: |
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml \
@@ -314,10 +325,8 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 120
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/corpus-${{ matrix.name }}
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     env:
       # 0: serial complete PDF corpus; 2: all PDF items in one xdist pool.
       PPAP_CORPUS_PDF_WORKERS: "2"
@@ -343,21 +352,23 @@ jobs:
           - name: PSW
             mode: psw
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/corpus-${{ matrix.name }}
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Install uv
         if: ${{ matrix.mode == 'pytest' }}
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/corpus-${{ matrix.name }}
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Canonical install
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: ${{ matrix.mode == 'pytest' }}
         run: |
           set -euo pipefail
@@ -369,6 +380,7 @@ jobs:
             uv sync --locked
           fi
       - name: Run in-repo corpus pytest
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: ${{ matrix.mode == 'pytest' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -392,9 +404,11 @@ jobs:
               uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           fi
       - name: Assert Docker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: ${{ matrix.mode == 'psw' }}
         run: bash scripts/ci_assert_docker.sh
       - name: Run PSW corpus in purpose-built test image
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: ${{ matrix.mode == 'psw' }}
         env:
           PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -432,10 +446,10 @@ jobs:
 
       - name: Upload corpus failure evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: corpus-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/corpus-${{ matrix.name }}/ci-report/
+          path: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}/ci-report/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -444,37 +458,39 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 80
     # Runners cursor and cursor-ppap share a physical checkout root.
-    # Job/matrix-scoped repositories protect .venv, node_modules and git clean.
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/integration
+    # Each runner owns one reusable checkout; its jobs run serially.
+    # This isolates active jobs without retaining a full clone per run/cell.
     env:
       PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       PPAP_COMPOSE_TEST: ppap-ci-product-tests-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_COMPOSE_PROD: ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_COMPOSE_E2E: ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: .ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/integration
-      - name: Assert job-scoped worktree
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_worktree.sh
       - name: Assert Docker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: bash scripts/ci_assert_docker.sh
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/integration
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install Python deps and browser
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
           uv sync --locked --group e2e
           uv run --no-sync python -m playwright install chromium
       - name: Cross-owner product contracts
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
           PPAP_TEST_POSTGRES_PORT: "0"
@@ -495,6 +511,7 @@ jobs:
             uv run --no-sync pytest tests/integration/product -vv --durations=25 -o faulthandler_timeout=120 --junitxml=ci-report/product.xml
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake canonical api, worker, and web images
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
           docker buildx bake
@@ -510,6 +527,7 @@ jobs:
           test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fxc "ppap-worker:${PPAP_BUILD_SHA}")" -eq 1
           test "$(docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --images | grep -Fxc "ppap-web:${PPAP_BUILD_SHA}")" -eq 1
       - name: Production runtime and backup
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_PROD }}
         run: |
@@ -519,6 +537,7 @@ jobs:
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/compose.yaml --env-file deploy/compose.env.example \
             down -v --remove-orphans
       - name: Isolated-dev browser E2E
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_E2E }}
           # Intentional all-suite concurrency experiment on isolated-dev.
@@ -532,6 +551,7 @@ jobs:
           bash scripts/run-compose-tests.sh tests/e2e \
             -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml
       - name: Dump Compose diagnostics
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: failure()
         run: |
           dump() {
@@ -548,6 +568,7 @@ jobs:
           dump "$PPAP_COMPOSE_PROD" deploy/compose.yaml --env-file deploy/compose.env.example
           dump "$PPAP_COMPOSE_E2E" deploy/isolated-dev/compose.yaml
       - name: Clean Compose stacks
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: always()
         run: |
           # Attempt every stack even after one cleanup error. Never mask failure.
@@ -563,10 +584,10 @@ jobs:
 
       - name: Upload integration failure evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/integration/ci-report/
+          path: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}/ci-report/
           if-no-files-found: ignore
           retention-days: 7
 

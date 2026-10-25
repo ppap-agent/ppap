@@ -372,9 +372,9 @@ MCP 集成测试通过真实 PostgreSQL/HTTP 与受控飞书响应，验证 Web/
 
 ### 共享 self-hosted workspace 的隔离修复
 
-CI Run 40063063124 中 `cursor`、`cursor-ppap` 两个 runner 名称都上报相同的 checkout 工作目录 `/home/ubuntu/actions-runner-ppap/_work/ppap/ppap`（Machine name 均为 `cursor`）。Web 04:38:45 安装完 e2e 依赖后，Product integration 04:38:50 在此目录执行 `git clean -ffdx`，明确删除 `.venv/`；Web 04:38:51 随即在同一共享目录运行 xdist，最终没有 pytest 完成汇总。根因级缺陷是 Runner 之间工作区未隔离，而非 Python GIL。对应修复将全部 7 种真实执行 Job 的 `actions/checkout.path`、每个 `run` 的默认工作目录、Node 版本文件路径与 uv 缓存依赖 glob 改为按 `github.run_id`、`github.run_attempt`、Job 与 matrix cell 唯一的子目录，禁止同时运行的不同 Job 删除彼此的 `.venv` / `node_modules` / Python 缓存。由于本地 composite action 只能从 `GITHUB_WORKSPACE` 根目录解析，Docker 检测改为从独立 checkout 调用同等的 `scripts/ci_assert_docker.sh`；不弱化能力校验。Corepack HOME 也按运行与 Job 唯一化。 各 Job 在 checkout 后还会调用 `scripts/ci_assert_worktree.sh`，验证工作目录位于 `.ci-checkouts` 下且具备独立 `.git`，不满足则立即失败。最终 `CI Gate` 仍依赖所有原 Job，保持 fail-closed。
+CI Run 40063063124 中 `cursor`、`cursor-ppap` 两个 runner 名称都上报相同的 checkout 工作目录 `/home/ubuntu/actions-runner-ppap/_work/ppap/ppap`（Machine name 均为 `cursor`）。Web 04:38:45 安装完 e2e 依赖后，Product integration 04:38:50 在此目录执行 `git clean -ffdx`，明确删除 `.venv/`；Web 04:38:51 随即在同一共享目录运行 xdist，最终没有 pytest 完成汇总。根因级缺陷是 Runner 之间工作区未隔离，而非 Python GIL。原按 run/attempt/Job/matrix 分配目录的方案隔离了活动任务，却为每轮保留多个完整 clone，存储随运行次数持续增长。当前 Tests、InsForge lifecycle 和显式 V3 Live 统一使用 `.ci-checkouts/${{ runner.name }}`：GitHub 对同一 Runner 串行分配 Job，因此只需每个 Runner 一个可复用 checkout，不让并行 Runner 共享 `.venv` / `node_modules`。所有 shell step 显式指定此目录（`runner` context 不能放入 Job defaults），Node 版本文件、uv 工作目录和上传工件路径保持一致；其他 workflow 也不再清理共享仓库根目录。Docker 检测调用原 `scripts/ci_assert_docker.sh`；`scripts/ci_assert_worktree.sh` 校验当前 Runner 的物理目录与独立 `.git`，拒绝邻居目录和符号链接别名。最终 `CI Gate` 仍依赖所有原 Job，保持 fail-closed。
 
-此项是 **仓库侧止血**：真正的 Runner 运维修复仍必须将两套 GitHub Actions runner 服务配置为完全不同的 WorkingFolder，避免不使用本 workflow 的旧流程对 `GITHUB_WORKSPACE` 根目录执行 `git clean -ffdx`，进而清掉新的 `.ci-checkouts` 子目录。由于新 checkout 路径按 run ID 区分，Runner 管理员还需建立保守的历史 checkout 清理与磁盘水位策略，不得清除正在运行的 checkout。`Repository contract` 的 Ruff 引号格式问题独立修正。原 Distribution shard 2 的日志末尾已经输出全部 5 项目标通过，但 GitHub 却标记 Job failure，旧证据不足以区分 Runner 作业状态上报故障与文件系统交叉写入；需要在隔离后重复验证。
+此项是 **仓库侧止血**：真正的 Runner 运维修复仍须将两套服务配置为完全不同的 WorkingFolder，以隔离 Runner 自己的 `_temp`、`_tool` 和旧 workflow。Run 40242280810 的 PSW Job 在 checkout 时因 `_diag` 所在磁盘 `No space left on device` 崩溃，未执行 PSW；不要把它记为 PSW 规则回归。新路径限制未来 checkout 数量，不能自动回收旧目录或证明磁盘占用来源；历史 clone、Docker/cache 水位仍由宿主机维护，不能删除活动目录或业务卷。`checkout` v7.0.1、`setup-node` v7.1.0、`upload-artifact` v7.0.2 已按官方 tag 的完整 commit SHA 固定，其 `action.yml` 均使用 Node 24；保留 `persist-credentials: false`、关闭新增的自动 package-manager cache，工件保持原 ZIP 语义。原 Distribution shard 2 的状态上报故障仍保留其原证据边界，不以本次改动宣称宿主机全部问题已解决。
 
 ### Product E2E teardown 的 CI-only 修复
 
@@ -436,7 +436,7 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 
 `ppap_pdf_to_excel/vision/raster.py` 在 PyMuPDF 未提取到原生矢量表格时分析已渲染的页面 PNG。使用 OpenCV 自适应阈值与水平／垂直形态学定位封闭物理单元格；每个区域必须有四边支持，并且能构成完整、无重叠的逻辑网格。表头与正文可以有不同列宽；粗线或双线只在有实际线条像素支持时合并为同一边界，不推测缺失数据格。直接提取失败时，仅对具有明确凸四边形外框、轻微倾斜的页面做透视校正，保留整页内容，并将同一校正图像用于网格和裁图识别；原件不变。页面仍限制为 1200 万像素，逻辑网格最多 4096 格；密集真实表格不再被原 400 格上限拒绝。边界不完整、分区重叠或存在未覆盖区域时仍拒绝，不按模型的 `merges` 猜测。
 
-有可靠物理网格时直接使用 `vision/cell_ocr.py`，不先让模型生成整页表格 JSON 再等待 merge 冲突。每个物理单元格都裁成图像，在图像**之外**加唯一 ID，按最多 32 个单元格一批转录。模型仅返回 `(id, text)`，不能重定义位置、边界或合并范围；ID 必须唯一、完整、与请求集合一致，响应乱序按 ID 归位。扫描渲染保留主要原始图像的分辨率，最多 3 倍页面缩放、1200 万像素；不能先缩小文字再通过放大裁图声称恢复字符。
+有可靠物理网格时直接使用 `vision/cell_ocr.py`，不先让模型生成整页表格 JSON 再等待 merge 冲突。每个物理单元格都裁成图像，在图像**之外**加唯一 ID。每批最多 64 格，按实际裁图宽度紧凑排成一张 PNG，不把小单元格统一放大、填充为 1024 像素宽长条；逐批生成，避免先为整页创建所有裁图。三个真实代表批次在原 32 格范围内由 466–573 万像素降至 59–108 万；使用 64 格后两页的请求数由 18/23 次降至 9/12 次。模型仅返回 `(id, text)`，不能重定义位置、边界或合并范围；ID 必须唯一、完整、与请求集合一致，响应乱序按 ID 归位。扫描渲染保留主要原始图像的分辨率，最多 3 倍页面缩放、1200 万像素；不能先缩小文字再通过放大裁图声称恢复字符。不用像素噪声阈值猜测空格，也不省略任何物理单元格的 ID 校验。
 
 正文与印章使用独立的小 schema：同时提供原页和仅遮白已验证表格的页面，读取遮白页上的普通正文及原页上包括表格内部的印章。遮白页若仍有表格则明确失败，不能把未覆盖表格当作普通正文丢弃。整个扫描页（全部单元格及正文/印章）共用原 180 秒预算；失败取消在途请求，不自动重试，也不修补损坏 JSON。原整页模型与裁图模型的文字交叉比较已删除：它把另一次模型生成误作原件见证，并使可靠物理网格仍依赖整页 JSON。当前原件身份由完整物理格分区、源像素裁图与精确 ID 集合绑定；文字正确性仍须真实 oracle 验收，不能声称几何证明文字质量。任何缺失、结构冲突或不完整响应均返回专用错误，不发布 XLSX/缓存；文字及完整原始响应不得进入诊断日志。
 
@@ -444,4 +444,4 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 
 独立回归必须覆盖：纯图像 PDF 不含原生文字或绘图、扫描件的真实横向合并与分离边界、裁图 ID 的缺失/重复/伪造拒绝和响应乱序、整页生成依赖消除、未覆盖表格拒绝、正文/印章保留、整个页面预算及无栅格线冲突的 fail-closed 行为。最终验收仍是未经修改的 Corpus V3 `19-BLANC` 原始 11 条 oracle，以及 Product API/Worker 和四 worker E2E。
 
-真实四页扫描件的几何回归位于 `tests/corpus/v3_poc/test_scanned_geometry.py`，验证原图分辨率、完整无重叠物理格分区及原件字节不变；owner 测试只用合成扫描件，覆盖倾斜的 480 格表格和破损外框拒绝，不读取根目录 corpus。该无网络验证只证明几何，不替代真实文字识别和 oracle 验收。`ResponsesEvidenceError` 的 `raster_*` 与 `responses_*` 类型码均传到转换结果，失败不发布缓存。
+真实四页扫描件的几何回归位于 `tests/corpus/v3_poc/test_scanned_geometry.py`，验证原图分辨率、完整无重叠物理格分区及原件字节不变；owner 测试只用合成扫描件，覆盖倾斜的 480 格表格和破损外框拒绝，不读取根目录 corpus。该无网络验证只证明几何、绑定和请求成本，不替代真实文字识别和 oracle 验收。单次 Responses 请求超时记 `responses_timeout`，整页 180 秒预算耗尽才记 `raster_cell_timeout`；取消继续传播，不自动重试。两类前缀均经过 local adapter 和统一 pipeline 保留，不再被改成笼统的 `ocr_exception`；失败只记录格数、PNG 字节数、耗时及异常类型，不记录原件/响应文字，也不发布缓存。
