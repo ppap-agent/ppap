@@ -77,8 +77,12 @@ def provider(request, monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "usage-test")
     monkeypatch.setenv("LLM_BASE_URL", "https://provider.invalid/v1")
     monkeypatch.setenv("DEVELOPMENT", "false")
+    async def send_async(client, request, **kwargs):
+        return send(client, request, **kwargs)
+
     monkeypatch.setattr(AIClient, "_instance", None)
     monkeypatch.setattr(httpx.Client, "send", send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", send_async)
     get_settings.cache_clear()
     try:
         yield calls

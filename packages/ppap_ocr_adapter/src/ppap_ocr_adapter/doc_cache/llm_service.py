@@ -16,7 +16,7 @@ from ppap_core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-class ResponsesEvidenceError(ValueError):
+class ResponsesEvidenceError(RuntimeError):
     """A failed provider evidence contract, with a stable non-secret failure code."""
 
     def __init__(self, code: str, message: str) -> None:
