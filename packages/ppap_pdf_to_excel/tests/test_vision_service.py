@@ -1,6 +1,9 @@
 """Multimodal page extraction keeps order, bounded concurrency and refusal safety."""
 
-from threading import Barrier
+import asyncio
+import json
+import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import fitz
@@ -18,17 +21,19 @@ def _pdf(tmp_path, pages=2):
 
 
 def test_page_requests_overlap_but_results_preserve_pdf_page_order(tmp_path):
-    gate = Barrier(2, timeout=5)
+    both_started = asyncio.Event()
     seen = []
 
-    def read_page(image, page_number, page_count):
-        assert image.startswith(b"\x89PNG")
+    async def read_page(image, page_number, page_count, native_tables):
+        assert image.startswith(bytes((137, 80, 78, 71)))
         assert page_count == 2
         seen.append(page_number)
-        gate.wait()
+        if len(seen) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=5)
         return {"tables": [{"rows": [[str(page_number)]], "merges": []}], "paragraphs": [], "seals": []}
 
-    with patch.object(vision_service, "_read_page", side_effect=read_page):
+    with patch.object(vision_service, "_read_page_async", side_effect=read_page):
         pages = vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path))
     assert sorted(seen) == [1, 2]
     assert [page["tables"][0]["rows"][0][0] for page in pages] == ["1", "2"]
@@ -50,11 +55,11 @@ def test_schema_deviations_fail_closed(payload):
 def test_reads_png_image_using_responses_schema(tmp_path):
     calls = []
 
-    def create(**kwargs):
+    async def create(**kwargs):
         calls.append(kwargs)
         return {"tables": [], "paragraphs": ["readable text"], "seals": []}
 
-    with patch.object(vision_service, "call_llm", side_effect=create):
+    with patch.object(vision_service, "call_llm_async", side_effect=create):
         results = vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, 1))
     assert results[0]["paragraphs"] == ["readable text"]
     assert calls[0]["json_mode"] is True
@@ -116,3 +121,188 @@ def test_page_error_preserves_invalid_json_type_without_contents():
         with pytest.raises(vision_service.ResponsesEvidenceError, match="Responses page 4/4") as error:
             vision_service._read_page(b"image", 4, 4)
     assert error.value.code == "responses_invalid_json"
+
+
+def test_failed_page_cancels_sibling_provider_request_without_waiting_for_deadline(tmp_path):
+    started = asyncio.Event()
+    seen: list[int] = []
+    cancelled: list[bool] = []
+
+    async def respond(**kwargs):
+        number = len(seen) + 1
+        seen.append(number)
+        if number == 1:
+            await started.wait()
+            return {"tables": [{"rows": [["private", "other"]], "merges": [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}]}], "paragraphs": [], "seals": []}
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    before = time.monotonic()
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        with pytest.raises(vision_service.ResponsesEvidenceError, match="merge covers nonempty evidence"):
+            vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, pages=2))
+    assert time.monotonic() - before < 2
+    assert seen == [1, 2]
+    assert cancelled == [True]
+
+
+def test_pdf_vision_batch_works_inside_existing_event_loop(tmp_path):
+    async def respond(**kwargs):
+        return {"tables": [], "paragraphs": ["visible"], "seals": []}
+
+    async def inside_loop():
+        return vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, pages=1))
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        result = asyncio.run(inside_loop())
+    assert result == [{"tables": [], "paragraphs": ["visible"], "seals": []}]
+
+
+def _vector_grid_pdf(tmp_path, *, merged_header=False):
+    path = tmp_path / ("true-merge.pdf" if merged_header else "separate-cells.pdf")
+    with fitz.open() as document:
+        page = document.new_page(width=360, height=220)
+        for y in (30, 70, 110, 150):
+            page.draw_line((20, y), (320, y))
+        for x in (20, 220, 320):
+            page.draw_line((x, 30), (x, 150))
+        page.draw_line((120, 70 if merged_header else 30), (120, 150))
+        source = [
+            ("ALPHA", (26, 49)),
+            ("GAMMA", (235, 49)),
+            ("A2", (26, 89)),
+            ("B2", (140, 89)),
+            ("C2", (240, 89)),
+            ("A3", (26, 129)),
+            ("B3", (140, 129)),
+            ("C3", (240, 129)),
+        ]
+        if not merged_header:
+            source.append(("BETA", (140, 49)))
+        for word, where in source:
+            page.insert_text(where, word, fontsize=10)
+        document.save(path)
+    return str(path)
+
+
+def _contradictory_table():
+    return {
+        "tables": [
+            {
+                "rows": [["ALPHA", "BETA", "GAMMA"], ["A2", "B2", "C2"], ["A3", "B3", "C3"]],
+                "merges": [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}],
+            }
+        ],
+        "paragraphs": [],
+        "seals": [],
+    }
+
+
+def test_native_vector_grid_corrects_model_merge_without_losing_text(tmp_path):
+    path = _vector_grid_pdf(tmp_path)
+    with fitz.open(path) as pdf:
+        tables = vision_service._native_table_candidates(pdf[0])
+    assert len(tables) == 1
+    assert tables[0]["merges"] == []
+    evidence = _contradictory_table()
+
+    async def respond(**kwargs):
+        return evidence
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        result = vision_service.VisionLayoutService().analyze_full_pdf(path)
+    assert result[0]["tables"][0]["rows"] == evidence["tables"][0]["rows"]
+    assert result[0]["tables"][0]["merges"] == []
+    assert evidence["tables"][0]["merges"] != []
+
+
+def test_real_pdf_merged_geometry_must_not_erase_independent_model_text(tmp_path):
+    path = _vector_grid_pdf(tmp_path, merged_header=True)
+    with fitz.open(path) as pdf:
+        tables = vision_service._native_table_candidates(pdf[0])
+    assert len(tables) == 1
+    assert tables[0]["merges"] == [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}]
+
+    async def respond(**kwargs):
+        return _contradictory_table()
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        with pytest.raises(vision_service.ResponsesEvidenceError, match=r"page 1/1: Invalid Responses merge covers nonempty evidence"):
+            vision_service.VisionLayoutService().analyze_full_pdf(path)
+
+
+def test_without_source_geometry_conflicting_merge_still_fails_closed(tmp_path):
+    async def respond(**kwargs):
+        return _contradictory_table()
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        with pytest.raises(vision_service.ResponsesEvidenceError, match="merge covers nonempty evidence"):
+            vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, pages=1))
+
+
+def test_real_async_responses_cancellation_closes_sibling_provider(tmp_path):
+    from ppap_pdf_to_excel.vision import client as response_client
+
+    start_sibling = asyncio.Event()
+    called: list[int] = []
+    cancelled: list[int] = []
+    closed: list[int] = []
+
+    class StubClient:
+        def __init__(self):
+            self.identity = len(called) + 1
+            self.responses = self
+
+        async def create(self, **kwargs):
+            number = len(called) + 1
+            called.append(number)
+            if number == 1:
+                await start_sibling.wait()
+                return SimpleNamespace(status="completed", output_text=json.dumps(_contradictory_table()))
+            start_sibling.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(number)
+                raise
+
+        async def close(self):
+            closed.append(self.identity)
+
+    before = time.monotonic()
+    with (
+        patch.object(response_client, "_get_llm_client", side_effect=StubClient),
+        patch.object(response_client, "_get_llm_model_name", return_value="unit-test"),
+    ):
+        with pytest.raises(vision_service.ResponsesEvidenceError, match="merge covers nonempty evidence"):
+            vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, pages=2))
+    assert time.monotonic() - before < 3
+    assert called == [1, 2]
+    assert cancelled == [2]
+    assert sorted(closed) == [1, 2]
+
+
+def test_four_pdf_pages_never_exceed_two_concurrent_model_requests(tmp_path):
+    active = 0
+    peak = 0
+    completed = []
+
+    async def respond(**kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.01)
+            completed.append(1)
+            return {"tables": [], "paragraphs": ["visible"], "seals": []}
+        finally:
+            active -= 1
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        pages = vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, pages=4))
+    assert len(pages) == len(completed) == 4
+    assert peak == 2

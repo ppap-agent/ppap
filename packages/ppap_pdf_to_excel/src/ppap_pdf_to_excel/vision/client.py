@@ -88,7 +88,7 @@ def _prepare_messages(image_input: str | bytes | list[str | bytes], text_prompt:
     return [{"role": "user", "content": content_payload}]
 
 
-def call_llm(
+async def call_llm_async(
     image_paths: str | bytes | list[str | bytes],
     prompt: str,
     retry_count: int = 3,
@@ -122,7 +122,7 @@ def call_llm(
 
     for attempt in range(retry_count):
         try:
-            response = asyncio.run(_request_response(kwargs))
+            response = await _request_response(kwargs)
             status = getattr(response, "status", None)
             if status != "completed":
                 raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {str(status)[:40]}")
@@ -168,6 +168,25 @@ def call_llm(
                 raise e
 
     return ""
+
+
+def call_llm(
+    image_paths: str | bytes | list[str | bytes],
+    prompt: str,
+    retry_count: int = 3,
+    json_mode: bool = False,
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> Union[str, Dict[str, Any]]:
+    """Synchronous compatibility entrypoint for non-batched callers."""
+    return asyncio.run(
+        call_llm_async(
+            image_paths=image_paths,
+            prompt=prompt,
+            retry_count=retry_count,
+            json_mode=json_mode,
+            response_schema=response_schema,
+        )
+    )
 
 
 def _clean_json_response(content: str) -> str:
