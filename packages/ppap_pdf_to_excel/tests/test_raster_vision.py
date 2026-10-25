@@ -7,9 +7,24 @@ from unittest.mock import patch
 
 import cv2
 import fitz
+import httpx
 import numpy as np
 import pytest
+from ppap_core.settings import get_settings
 from ppap_pdf_to_excel.vision import page, raster
+from ppap_pdf_to_excel.vision.local import convert_local_pdf_to_excel
+
+
+@pytest.fixture(autouse=True)
+def _forbid_network(monkeypatch):
+    def reject(*args, **kwargs):
+        raise AssertionError("Scan-owner tests must not request a real model")
+
+    async def reject_async(*args, **kwargs):
+        raise AssertionError("Scan-owner tests must not request a real model")
+
+    monkeypatch.setattr(httpx.Client, "send", reject)
+    monkeypatch.setattr(httpx.AsyncClient, "send", reject_async)
 
 
 def _scan(tmp_path, *, merge_header: bool = False, ruled: bool = True):
@@ -165,3 +180,21 @@ def test_raster_model_text_must_have_cropped_source_witness(tmp_path):
             page.VisionLayoutService().analyze_full_pdf(str(path))
     assert error.value.code == "raster_text_unverified"
     assert "private hallucinated field" not in str(error.value)
+
+
+def test_unverifiable_raster_cell_ocr_does_not_cache_partial_results(tmp_path, monkeypatch):
+    path, _ = _scan(tmp_path)
+    monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "raster-cache"))
+    monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "raster-cache" / "cache.db"))
+    get_settings.cache_clear()
+    fake, _calls = _fake_vision(merged=False, corrupt=True)
+    try:
+        with patch.object(page, "call_llm_async", side_effect=fake), patch(
+            "ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake
+        ):
+            artifact = convert_local_pdf_to_excel(str(path))
+        assert artifact.excel_path is None
+        assert artifact.raw_meta["error_code"] == "raster_cells_invalid_schema"
+        assert not list((tmp_path / "raster-cache" / "results").glob("*.xlsx"))
+    finally:
+        get_settings.cache_clear()

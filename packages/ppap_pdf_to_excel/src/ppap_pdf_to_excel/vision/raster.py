@@ -178,13 +178,21 @@ def detect_raster_grids(png: bytes) -> list[RasterGrid]:
         )
 
     grids.sort(key=lambda grid: (grid.bbox[1], grid.bbox[0]))
-    logger.info(
-        "Raster source grid scan: image_width=%d image_height=%d connected_regions=%d verified_grids=%d",
-        width,
-        height,
-        len(contours),
-        len(grids),
-    )
+    if not grids:
+        logger.warning(
+            "Raster source grid unavailable: image_width=%d image_height=%d connected_regions=%d reason=no_reliable_line_grid",
+            width,
+            height,
+            len(contours),
+        )
+    else:
+        logger.info(
+            "Raster source grid scan: image_width=%d image_height=%d connected_regions=%d verified_grids=%d",
+            width,
+            height,
+            len(contours),
+            len(grids),
+        )
     return grids
 
 
