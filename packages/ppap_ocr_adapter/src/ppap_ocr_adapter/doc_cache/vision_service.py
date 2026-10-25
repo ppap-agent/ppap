@@ -78,7 +78,7 @@ def _validate_page(payload: Any) -> dict[str, Any]:
         raise ValueError("Invalid Responses page collections")
     if any(not isinstance(x, str) for x in [*paragraphs, *seals]):
         raise ValueError("Invalid Responses page text")
-    for table in tables:
+    for table_index, table in enumerate(tables, 1):
         if not isinstance(table, dict) or set(table) != {"rows", "merges"}:
             raise ValueError("Invalid Responses table schema")
         rows, merges = table["rows"], table["merges"]
@@ -107,7 +107,11 @@ def _validate_page(payload: Any) -> dict[str, Any]:
                         raise ValueError("Invalid Responses overlapping merges")
                     occupied.add(coordinate)
                     if coordinate != (r0, c0) and rows[row_index][column_index]:
-                        raise ValueError("Invalid Responses merge covers nonempty evidence")
+                        raise ValueError(
+                            "Invalid Responses merge covers nonempty evidence "
+                            f"(table={table_index}, anchor=({r0},{c0}), "
+                            f"cell=({row_index},{column_index}))"
+                        )
     return payload
 
 
@@ -120,7 +124,10 @@ def _read_page(image: bytes, page_number: int, page_count: int) -> dict[str, Any
         json_mode=True,
         response_schema=PAGE_SCHEMA,
     )
-    result = _validate_page(payload)
+    try:
+        result = _validate_page(payload)
+    except ValueError as exc:
+        raise ValueError(f"Responses page {page_number}/{page_count}: {exc}") from exc
     logger.info("Responses vision page %d/%d complete", page_number, page_count)
     return result
 

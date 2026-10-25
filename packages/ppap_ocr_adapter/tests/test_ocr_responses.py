@@ -1,5 +1,6 @@
 """OCR vision requests use the Responses API contract."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
@@ -54,3 +55,29 @@ class OCRResponsesTests(TestCase):
         ):
             with self.assertRaises(RuntimeError):
                 llm_service.call_llm(b"\x89PNG", "inspect", retry_count=1)
+
+    def test_wall_deadline_cancels_slow_responses_body_without_retry(self):
+        calls = []
+        cancelled = []
+
+        async def slow_create(**kwargs):
+            calls.append(kwargs)
+            try:
+                # Data or keep-alives can arrive frequently enough that a
+                # per-read socket timeout would never bound the full response.
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=slow_create))
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", return_value="test"),
+            patch.object(llm_service, "RESPONSE_WALL_TIMEOUT_SECONDS", 0.02),
+        ):
+            with self.assertRaises(TimeoutError):
+                llm_service.call_llm(b"image", "inspect", retry_count=1)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(cancelled, [True])
