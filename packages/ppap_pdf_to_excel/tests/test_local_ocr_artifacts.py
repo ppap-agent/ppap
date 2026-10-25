@@ -6,12 +6,27 @@ from threading import Barrier, Event, current_thread
 
 import fitz
 import openpyxl
+import pytest
 from openpyxl import load_workbook
 from ppap_core.settings import get_settings
 from ppap_pdf_to_excel.vision import cache as ocr_service
 from ppap_pdf_to_excel.vision import page as vision_service
 from ppap_pdf_to_excel.vision.local import convert_local_pdf_to_excel
 
+
+@pytest.fixture(autouse=True)
+def _no_real_network_in_local_ocr_tests(monkeypatch):
+    """Never allow owner tests to call a live provider after a transport refactor."""
+    import httpx
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("PDF owner tests must stub their network provider")
+
+    async def forbidden_async(*args, **kwargs):
+        raise AssertionError("PDF owner tests must stub their async network provider")
+
+    monkeypatch.setattr(httpx.Client, "send", forbidden)
+    monkeypatch.setattr(httpx.AsyncClient, "send", forbidden_async)
 
 def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatch):
     source = tmp_path / "source.pdf"
@@ -24,7 +39,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
     get_settings.cache_clear()
     calls = []
 
-    def respond(*, image_paths, prompt, response_schema, json_mode, retry_count):
+    async def respond(*, image_paths, prompt, response_schema, json_mode, retry_count):
         assert image_paths.startswith(b"\x89PNG\r\n")
         assert "table" in prompt.lower()
         assert response_schema["strict"]
@@ -36,7 +51,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
             "seals": ["<signed & stamped>"],
         }
 
-    monkeypatch.setattr(vision_service, "call_llm", respond)
+    monkeypatch.setattr(vision_service, "call_llm_async", respond)
     copies: list[Path] = []
     try:
         first = convert_local_pdf_to_excel(str(source), enable_cache=True)
@@ -84,7 +99,10 @@ def test_multimodal_failure_never_caches_an_excel_artifact(tmp_path, monkeypatch
     monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "cache" / "cache.db"))
     get_settings.cache_clear()
-    monkeypatch.setattr(vision_service, "call_llm", lambda **kwargs: {"tables": [], "paragraphs": [], "seals": []})
+    async def empty_page(**kwargs):
+        return {"tables": [], "paragraphs": [], "seals": []}
+
+    monkeypatch.setattr(vision_service, "call_llm_async", empty_page)
     try:
         artifact = convert_local_pdf_to_excel(str(source))
         assert artifact.excel_path is None
@@ -111,11 +129,10 @@ def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_pat
         ],
         "merges": [{"start_row": 1, "start_col": 1, "end_row": 2, "end_col": 1}],
     }
-    monkeypatch.setattr(
-        vision_service,
-        "call_llm",
-        lambda **kwargs: {"tables": [model_table], "paragraphs": [], "seals": []},
-    )
+    async def merged_page(**kwargs):
+        return {"tables": [model_table], "paragraphs": [], "seals": []}
+
+    monkeypatch.setattr(vision_service, "call_llm_async", merged_page)
     artifact = None
     try:
         artifact = convert_local_pdf_to_excel(str(source))
