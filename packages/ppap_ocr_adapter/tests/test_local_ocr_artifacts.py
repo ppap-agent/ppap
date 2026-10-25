@@ -232,3 +232,16 @@ def test_identical_cache_misses_use_single_flight(tmp_path, monkeypatch):
     finally:
         release.set()
         get_settings.cache_clear()
+
+
+def test_conversion_lock_tracks_physical_sqlite_cache_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "separate-artifacts"))
+    monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "shared" / "ocr.db"))
+    get_settings.cache_clear()
+    try:
+        (tmp_path / "shared").mkdir()
+        with ocr_service._conversion_lock("verified-hash"):
+            assert (tmp_path / "shared" / "locks" / "verified-hash.lock").is_file()
+        assert not (tmp_path / "separate-artifacts" / "locks").exists()
+    finally:
+        get_settings.cache_clear()

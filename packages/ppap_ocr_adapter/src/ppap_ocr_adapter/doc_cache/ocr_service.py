@@ -86,7 +86,8 @@ def _compute_md5(path: str) -> str:
 @contextmanager
 def _conversion_lock(file_id: str) -> Iterator[None]:
     """Serialize a cache key across threads and processes, including the cache recheck."""
-    lock_dir = os.path.join(_oss_dir(), "locks")
+    # Lock ownership follows the physical SQLite cache, not an optional OSS alias.
+    lock_dir = os.path.join(os.path.dirname(os.path.realpath(_db_path())), "locks")
     os.makedirs(lock_dir, exist_ok=True)
     with open(os.path.join(lock_dir, f"{file_id}.lock"), "a+b") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
