@@ -382,7 +382,7 @@ Run 40059336983 中 Product API/PG 289 项、生产 runtime 4 项、正常 E2E 1
 
 ### CR-01：以 Responses 多模态统一 PDF fallback，移除重复 OCR 管线
 
-针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 位于 `ppap_pdf_to_excel/vision/{local,cache,page,client}.py`，由统一 PDF pipeline 直接调用：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。每页最多一次 Responses 请求，且每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
+针对 `catalog/engineering/context-reduce/SKILL.md` 的审查，明确发现历史 Paddle 布局分析 → 本地表格裁图 → Gemma 二次视觉 Tagging → HTML 的重复解析层，让一份 PDF 必须维护多个来源的中间结构。当前唯一的 PDF fallback 位于 `ppap_pdf_to_excel/vision/{local,cache,page,client}.py`，由统一 PDF pipeline 直接调用：每页渲染 PNG，用配置的 OCR/产品 Responses 模型端点提交 `input_image`，以严格 JSON Schema 读回表格行、可验证的合并单元格范围、普通正文和印章文字。合并范围必须落在表格边界内，不得覆盖独立非空证据；保留真实合并范围后写入 XLSX，正文及印章写为 HTML（所有模型文字 HTML 转义）。没有可靠扫描网格的页面每页一次 Responses 请求；有可靠网格的扫描页按下文的固定单元格路径读取。每份 PDF 最多 2 个在途请求；旧 Paddle 布局客户端、裁图/二次 Gemma processor 与 tag prompt 不再是当前执行路径。
 
 为避免把旧 Paddle 识别结果误认为新模型证据，缓存以模型名及 `responses_multimodal_v2` 版本重新生成 file identity，只缓存完整、有效、可读取的输出。模型拒绝、API 超时、JSON 不符合 schema、无图像证据均明确失败，绝不凭空判为 PASS。显式 `OCR_ADAPTER_MODE=remote` 的远程兼容 API 已归入 `ppap_pdf_to_excel/remote.py`；默认 `auto/local` 的 PDF 路径只保留一套本地视觉转换，不改变原来的手工 linegrid 优先次序。
 
@@ -436,10 +436,12 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 
 `ppap_pdf_to_excel/vision/raster.py` 在 PyMuPDF 未提取到原生矢量表格时分析已渲染的页面 PNG。使用 OpenCV 自适应阈值与水平／垂直形态学定位封闭物理单元格；每个区域必须有四边支持，并且能构成完整、无重叠的逻辑网格。表头与正文可以有不同列宽；粗线或双线只在有实际线条像素支持时合并为同一边界，不推测缺失数据格。直接提取失败时，仅对具有明确凸四边形外框、轻微倾斜的页面做透视校正，保留整页内容，并将同一校正图像用于网格和裁图识别；原件不变。页面仍限制为 1200 万像素，逻辑网格最多 4096 格；密集真实表格不再被原 400 格上限拒绝。边界不完整、分区重叠或存在未覆盖区域时仍拒绝，不按模型的 `merges` 猜测。
 
-当 Responses 页面表格声称合并区域覆盖另一非空单元格，且扫描页确实存在独立、无歧义的物理网格时，`vision/cell_ocr.py` 将每个原始物理单元格裁成图像，在单元格图像**之外**加唯一 ID，按小批量交由现有视觉模型独立转录。模型仅返回 `(id, text)`，不能重定义单元格位置、边界或合并范围。全部 ID 必须唯一、完整、与请求集合一致；原模型已经识别的每段非空文字必须在独立裁图结果中有对应来源；任何缺失、歧义或结构冲突均返回专用错误，不发布 XLSX/缓存。文字及完整原始响应不得进入诊断日志。
+有可靠物理网格时直接使用 `vision/cell_ocr.py`，不先让模型生成整页表格 JSON 再等待 merge 冲突。每个物理单元格都裁成图像，在图像**之外**加唯一 ID，按最多 32 个单元格一批转录。模型仅返回 `(id, text)`，不能重定义位置、边界或合并范围；ID 必须唯一、完整、与请求集合一致，响应乱序按 ID 归位。扫描渲染保留主要原始图像的分辨率，最多 3 倍页面缩放、1200 万像素；不能先缩小文字再通过放大裁图声称恢复字符。
+
+正文与印章使用独立的小 schema：同时提供原页和仅遮白已验证表格的页面，读取遮白页上的普通正文及原页上包括表格内部的印章。遮白页若仍有表格则明确失败，不能把未覆盖表格当作普通正文丢弃。整个扫描页（全部单元格及正文/印章）共用原 180 秒预算；失败取消在途请求，不自动重试，也不修补损坏 JSON。原整页模型与裁图模型的文字交叉比较已删除：它把另一次模型生成误作原件见证，并使可靠物理网格仍依赖整页 JSON。当前原件身份由完整物理格分区、源像素裁图与精确 ID 集合绑定；文字正确性仍须真实 oracle 验收，不能声称几何证明文字质量。任何缺失、结构冲突或不完整响应均返回专用错误，不发布 XLSX/缓存；文字及完整原始响应不得进入诊断日志。
 
 这是一条面向有清晰栅格线条扫描页的兜底修复路径；**无表格线、旋转过大、边界不完整或不可靠的扫描件仍需明确失败**，不可将视觉模型对行列或 merge 的猜测伪装成来源事实。额外的裁图请求受每页总预算与一次请求一次调用约束，保留每两页最多两个在途页面请求和无自动重试的行为。当前以现有协议缓存的二进制 fixture 为基线；未来如变更缓存主键版本，必须同时提交可验证的 fixture 迁移，不能只清理旧缓存来制造新的收费请求。
 
-独立回归必须覆盖：纯图像 PDF 不含原生文字或绘图、扫描件的真实横向合并与分离边界、裁剪图像 ID 的不可伪造校验、原始非空证据完整性、无栅格线与不可信文字的 fail-closed 行为。最终验收仍是未经修改的 Corpus V3 `19-BLANC` 原始 11 条 oracle，以及 Product API/Worker 和四 worker E2E。
+独立回归必须覆盖：纯图像 PDF 不含原生文字或绘图、扫描件的真实横向合并与分离边界、裁图 ID 的缺失/重复/伪造拒绝和响应乱序、整页生成依赖消除、未覆盖表格拒绝、正文/印章保留、整个页面预算及无栅格线冲突的 fail-closed 行为。最终验收仍是未经修改的 Corpus V3 `19-BLANC` 原始 11 条 oracle，以及 Product API/Worker 和四 worker E2E。
 
-`test_raster_vision.py` 另以真实四页扫描件验证完整、无重叠的物理格分区与原件字节不变，并覆盖倾斜的 480 格表格和破损外框拒绝。该无网络验证只证明几何，不替代真实文字识别和 oracle 验收。`ResponsesEvidenceError` 的 `raster_*` 与 `responses_*` 类型码均传到转换结果，错误 ID 或未验证文字不丢失分类，失败不发布缓存。
+真实四页扫描件的几何回归位于 `tests/corpus/v3_poc/test_scanned_geometry.py`，验证原图分辨率、完整无重叠物理格分区及原件字节不变；owner 测试只用合成扫描件，覆盖倾斜的 480 格表格和破损外框拒绝，不读取根目录 corpus。该无网络验证只证明几何，不替代真实文字识别和 oracle 验收。`ResponsesEvidenceError` 的 `raster_*` 与 `responses_*` 类型码均传到转换结果，失败不发布缓存。
