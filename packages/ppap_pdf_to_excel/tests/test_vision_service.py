@@ -107,6 +107,7 @@ def test_invalid_merge_diagnostic_identifies_pdf_page_without_exposing_cell_text
         "paragraphs": [],
         "seals": [],
     }
+
     async def respond(**kwargs):
         return invalid
 
@@ -120,6 +121,7 @@ def test_invalid_merge_diagnostic_identifies_pdf_page_without_exposing_cell_text
 
 def test_page_error_preserves_invalid_json_type_without_contents():
     failure = vision_service.ResponsesEvidenceError("responses_invalid_json", "Responses invalid JSON (output_chars=34)")
+
     async def fail(**kwargs):
         raise failure
 
