@@ -107,11 +107,7 @@ def _validate_page(payload: Any) -> dict[str, Any]:
                         raise ValueError("Invalid Responses overlapping merges")
                     occupied.add(coordinate)
                     if coordinate != (r0, c0) and rows[row_index][column_index]:
-                        raise ValueError(
-                            "Invalid Responses merge covers nonempty evidence "
-                            f"(table={table_index}, anchor=({r0},{c0}), "
-                            f"cell=({row_index},{column_index}))"
-                        )
+                        raise ValueError(f"Invalid Responses merge covers nonempty evidence (table={table_index}, anchor=({r0},{c0}), cell=({row_index},{column_index}))")
     return payload
 
 

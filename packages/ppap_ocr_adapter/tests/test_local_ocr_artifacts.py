@@ -112,7 +112,8 @@ def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_pat
         "merges": [{"start_row": 1, "start_col": 1, "end_row": 2, "end_col": 1}],
     }
     monkeypatch.setattr(
-        vision_service, "call_llm",
+        vision_service,
+        "call_llm",
         lambda **kwargs: {"tables": [model_table], "paragraphs": [], "seals": []},
     )
     artifact = None
