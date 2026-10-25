@@ -32,7 +32,6 @@ members = [
     "packages/ppap_deep",
     "packages/ppap_docops",
     "packages/ppap_excel_audit_engine",
-    "packages/ppap_ocr_adapter",
     "packages/ppap_pdf_to_excel",
     "packages/ppap_product_store",
     "packages/ppap_vision",
@@ -48,7 +47,6 @@ ppap-core = { workspace = true }
 ppap-deep = { workspace = true }
 ppap-docops = { workspace = true }
 ppap-excel-audit-engine = { workspace = true }
-ppap-ocr-adapter = { workspace = true }
 ppap-pdf-to-excel = { workspace = true }
 ppap-product-store = { workspace = true }
 ppap-vision = { workspace = true }
@@ -96,7 +94,6 @@ mypy_path = [
     "packages/ppap_deep/src",
     "packages/ppap_docops/src",
     "packages/ppap_excel_audit_engine/src",
-    "packages/ppap_ocr_adapter/src",
     "packages/ppap_pdf_to_excel/src",
     "packages/ppap_product_store/src",
     "packages/ppap_vision/src",

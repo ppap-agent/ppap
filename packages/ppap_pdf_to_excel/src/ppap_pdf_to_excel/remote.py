@@ -13,12 +13,11 @@ import requests
 from ppap_core.contracts import FileRef, OcrArtifact
 from ppap_core.settings import get_settings
 
-from .base import OcrAdapter
 
 log = logging.getLogger(__name__)
 
 
-class RemoteOcrAdapter(OcrAdapter):
+class RemoteOcrAdapter:
     """Remote OCR implementation backed by HTTP API."""
 
     def __init__(self, host: Optional[str] = None) -> None:
@@ -76,41 +75,6 @@ class RemoteOcrAdapter(OcrAdapter):
                 files={"file": (local_path.name, fp, "application/octet-stream")},
                 timeout=300,
             )
-
-    def ocr_document_content(self, file_ref: FileRef | str, host: Optional[str] = None) -> OcrArtifact:
-        ref = self._to_file_ref(file_ref)
-        active_host = host or self.host
-        last_request_error: Optional[requests.exceptions.RequestException] = None
-
-        for candidate_host in self._candidate_hosts(active_host):
-            try:
-                log.info("%s -> OCR", unquote(ref.location.split("/")[-1]))
-                response = self._request_process(
-                    candidate_host,
-                    ref,
-                    enable_cache=None,
-                )
-                response.raise_for_status()
-                raw_data = response.json()
-                data = raw_data if isinstance(raw_data, dict) else {"raw": raw_data}
-                text = str(data.get("text", "") or "")
-                return OcrArtifact(
-                    text=text,
-                    provider="remote_ocr",
-                    raw_meta=data,
-                )
-            except requests.exceptions.RequestException as exc:
-                last_request_error = exc
-                log.warning("OCR request failed via %s: %s", candidate_host, exc)
-                continue
-            except Exception as exc:
-                log.error("OCR processing failed: %s", exc)
-                raise
-
-        if last_request_error is not None:
-            log.error("OCR request failed: %s", last_request_error)
-            raise last_request_error
-        raise RuntimeError("OCR request failed without a captured request exception")
 
     def ocr_pdf_to_excel(self, file_ref: FileRef | str, enable_cache: bool = True) -> OcrArtifact:
         ref = self._to_file_ref(file_ref)

@@ -8,8 +8,9 @@ import fitz
 import openpyxl
 from openpyxl import load_workbook
 from ppap_core.settings import get_settings
-from ppap_ocr_adapter import LocalOcrAdapter
-from ppap_ocr_adapter.doc_cache import ocr_service, vision_service
+from ppap_pdf_to_excel.vision import cache as ocr_service
+from ppap_pdf_to_excel.vision import page as vision_service
+from ppap_pdf_to_excel.vision.local import convert_local_pdf_to_excel
 
 
 def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatch):
@@ -38,8 +39,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
     monkeypatch.setattr(vision_service, "call_llm", respond)
     copies: list[Path] = []
     try:
-        adapter = LocalOcrAdapter()
-        first = adapter.ocr_pdf_to_excel(str(source), enable_cache=True)
+        first = convert_local_pdf_to_excel(str(source), enable_cache=True)
         assert first.provider == "local_ocr_doc_cache"
         assert first.excel_path is not None
         first_copy = Path(first.excel_path)
@@ -59,7 +59,7 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
         assert "&lt;private text&gt;" in html
         assert "&lt;signed &amp; stamped&gt;" in html
 
-        second = adapter.ocr_pdf_to_excel(str(source), enable_cache=True)
+        second = convert_local_pdf_to_excel(str(source), enable_cache=True)
         assert second.excel_path is not None
         copies.append(Path(second.excel_path))
         assert copies[1] not in {copies[0], provider_path}
@@ -86,7 +86,7 @@ def test_multimodal_failure_never_caches_an_excel_artifact(tmp_path, monkeypatch
     get_settings.cache_clear()
     monkeypatch.setattr(vision_service, "call_llm", lambda **kwargs: {"tables": [], "paragraphs": [], "seals": []})
     try:
-        artifact = LocalOcrAdapter().ocr_pdf_to_excel(str(source))
+        artifact = convert_local_pdf_to_excel(str(source))
         assert artifact.excel_path is None
         assert artifact.raw_meta["error"] == "vision_empty_result"
         assert not list((tmp_path / "cache" / "results").glob("*.xlsx"))
@@ -118,7 +118,7 @@ def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_pat
     )
     artifact = None
     try:
-        artifact = LocalOcrAdapter().ocr_pdf_to_excel(str(source))
+        artifact = convert_local_pdf_to_excel(str(source))
         assert artifact.excel_path is not None
         book = load_workbook(artifact.excel_path)
         try:

@@ -18,7 +18,6 @@ members = [
     "ppap-docops",
     "ppap-excel-audit-engine",
     "ppap-mcp-client",
-    "ppap-ocr-adapter",
     "ppap-pdf-to-excel",
     "ppap-product-store",
     "ppap-vision",
@@ -1324,14 +1323,12 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ppap-ocr-adapter"
+name = "ppap-pdf-to-excel"
 version = "0.1.0"
-source = { editable = "packages/ppap_ocr_adapter" }
+source = { editable = "packages/ppap_pdf_to_excel" }
 dependencies = [
     { name = "openai" },
     { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pillow" },
     { name = "ppap-core" },
     { name = "ppap-docops" },
     { name = "pymupdf" },
@@ -1342,31 +1339,10 @@ dependencies = [
 requires-dist = [
     { name = "openai", specifier = ">=1.95.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
-    { name = "pandas", specifier = ">=2.1.4" },
-    { name = "pillow", specifier = ">=10.2.0" },
     { name = "ppap-core", editable = "packages/ppap_core" },
     { name = "ppap-docops", editable = "packages/ppap_docops" },
     { name = "pymupdf", specifier = ">=1.26.0" },
     { name = "requests", specifier = ">=2.31.0" },
-]
-
-[[package]]
-name = "ppap-pdf-to-excel"
-version = "0.1.0"
-source = { editable = "packages/ppap_pdf_to_excel" }
-dependencies = [
-    { name = "openpyxl" },
-    { name = "ppap-core" },
-    { name = "ppap-docops" },
-    { name = "ppap-ocr-adapter" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "openpyxl", specifier = ">=3.1.2" },
-    { name = "ppap-core", editable = "packages/ppap_core" },
-    { name = "ppap-docops", editable = "packages/ppap_docops" },
-    { name = "ppap-ocr-adapter", editable = "packages/ppap_ocr_adapter" },
 ]
 
 [[package]]

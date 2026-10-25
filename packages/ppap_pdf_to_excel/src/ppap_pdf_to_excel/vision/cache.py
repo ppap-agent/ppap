@@ -29,7 +29,7 @@ from ppap_core.settings import get_settings
 from ppap_docops.excel.loader import load_excel_workbook
 from ppap_docops.files import parse_file_size
 
-from .vision_service import VisionLayoutService
+from .page import VisionLayoutService
 
 logger = logging.getLogger(__name__)
 
