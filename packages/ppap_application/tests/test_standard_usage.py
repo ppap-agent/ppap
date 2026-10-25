@@ -77,6 +77,7 @@ def provider(request, monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "usage-test")
     monkeypatch.setenv("LLM_BASE_URL", "https://provider.invalid/v1")
     monkeypatch.setenv("DEVELOPMENT", "false")
+
     async def send_async(client, request, **kwargs):
         return send(client, request, **kwargs)
 

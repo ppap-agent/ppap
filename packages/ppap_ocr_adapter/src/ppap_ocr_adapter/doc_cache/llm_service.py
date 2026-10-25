@@ -107,6 +107,7 @@ def call_llm(
         "model": _get_llm_model_name(),
         "input": messages,
         "store": False,
+        "max_output_tokens": 16384,
         "timeout": 120,
     }
 
@@ -137,8 +138,23 @@ def call_llm(
                     parsed = json.loads(clean_content)
                 except json.JSONDecodeError as exc:
                     # Never log or persist provider output: it may include document data.
-                    logger.warning("Responses invalid JSON: output_chars=%d", len(clean_content))
-                    raise ResponsesEvidenceError("responses_invalid_json", f"Responses invalid JSON (output_chars={len(clean_content)})") from exc
+                    details = getattr(response, "incomplete_details", None)
+                    usage = getattr(response, "usage", None)
+                    output_tokens = getattr(usage, "output_tokens", None)
+                    logger.warning(
+                        "Responses invalid JSON: reason=%s line=%d col=%d pos=%d output_chars=%d output_tokens=%s incomplete=%s",
+                        exc.msg,
+                        exc.lineno,
+                        exc.colno,
+                        exc.pos,
+                        len(clean_content),
+                        output_tokens if type(output_tokens) is int else "unknown",
+                        getattr(details, "reason", None),
+                    )
+                    raise ResponsesEvidenceError(
+                        "responses_invalid_json",
+                        f"Responses invalid JSON (line={exc.lineno}, col={exc.colno}, pos={exc.pos}, output_chars={len(clean_content)})",
+                    ) from exc
                 if not isinstance(parsed, dict):
                     raise ResponsesEvidenceError("responses_non_object", "Responses JSON root is not an object")
                 return parsed
