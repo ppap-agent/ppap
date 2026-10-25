@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import unicodedata
-from collections import Counter
 from typing import Any
 
 from .client import ResponsesEvidenceError, call_llm_async
@@ -49,53 +46,37 @@ CELL_PROMPT = (
 )
 
 
-def _canonical(value: str) -> str:
-    return "".join(unicodedata.normalize("NFKC", value).split()).casefold()
-
-
-def _source_coverage(model_table: dict[str, Any], source_table: dict[str, Any]) -> bool:
-    """Never discard nonempty original-model evidence on a raster recovery."""
-    model = Counter(_canonical(cell) for row in model_table["rows"] for cell in row if isinstance(cell, str) and _canonical(cell))
-    source = [_canonical(cell) for row in source_table["rows"] for cell in row if isinstance(cell, str) and _canonical(cell)]
-    for fragment, count in model.items():
-        witnesses = sum(cell.count(fragment) for cell in source)
-        if witnesses < count:
-            return False
-    return True
-
-
 async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
     panels = make_cell_panels(png, grid.cells)
     values: dict[int, str] = {}
 
-    async with asyncio.timeout(MAX_RASTER_EVIDENCE_SECONDS):
-        for offset in range(0, len(panels), PANELS_PER_REQUEST):
-            requested = grid.cells[offset * 8 : (offset + PANELS_PER_REQUEST) * 8]
-            expected = {cell.index for cell in requested}
-            images: list[str | bytes] = [panel for panel in panels[offset : offset + PANELS_PER_REQUEST]]
-            result = await call_llm_async(
-                image_paths=images,
-                prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
-                retry_count=1,
-                json_mode=True,
-                response_schema=CELL_SCHEMA,
-            )
-            entries = result.get("cells") if isinstance(result, dict) else None
-            if not isinstance(entries, list) or len(entries) != len(expected):
-                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR omitted or duplicated cell evidence")
-            seen: set[int] = set()
-            for entry in entries:
-                if not isinstance(entry, dict) or set(entry) != {"id", "text"}:
-                    raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned unsupported cell fields")
-                index, text = entry["id"], entry["text"]
-                if type(index) is not int or index not in expected or index in seen:
-                    raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell identity")
-                if not isinstance(text, str) or len(text) > 32767:
-                    raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell text")
-                seen.add(index)
-                values[index] = text
-            if seen != expected:
-                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned incomplete cell identities")
+    for offset in range(0, len(panels), PANELS_PER_REQUEST):
+        requested = grid.cells[offset * 8 : (offset + PANELS_PER_REQUEST) * 8]
+        expected = {cell.index for cell in requested}
+        images: list[str | bytes] = [panel for panel in panels[offset : offset + PANELS_PER_REQUEST]]
+        result = await call_llm_async(
+            image_paths=images,
+            prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
+            retry_count=1,
+            json_mode=True,
+            response_schema=CELL_SCHEMA,
+        )
+        entries = result.get("cells") if isinstance(result, dict) else None
+        if not isinstance(entries, list) or len(entries) != len(expected):
+            raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR omitted or duplicated cell evidence")
+        seen: set[int] = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {"id", "text"}:
+                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned unsupported cell fields")
+            index, text = entry["id"], entry["text"]
+            if type(index) is not int or index not in expected or index in seen:
+                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell identity")
+            if not isinstance(text, str) or len(text) > 32767:
+                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell text")
+            seen.add(index)
+            values[index] = text
+        if seen != expected:
+            raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned incomplete cell identities")
 
     rows = [["" for _col in range(grid.col_count)] for _row in range(grid.row_count)]
     for cell in grid.cells:
@@ -106,42 +87,17 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
     }
 
 
-async def recover_scan_page(
-    png: bytes,
-    payload: dict[str, Any],
-    grids: list[RasterGrid],
-) -> dict[str, Any]:
-    """Recover model merge conflicts using source pixels and fixed-cell OCR.
+async def read_scan_tables(png: bytes, grids: list[RasterGrid]) -> list[dict[str, Any]]:
+    """Transcribe every physical cell; the model never supplies table topology.
 
-    Every model text fragment must be independently located in cropped source
-    cells. An unproven fragment or ambiguous table association fails closed.
+    Complete, non-overlapping pixel partitions are the source of row/column
+    identity. Do not first generate a second, potentially malformed model grid
+    and then compare two model transcriptions as if one were source truth.
+    The caller owns the whole page deadline, including its remainder request.
     """
-    tables = payload.get("tables")
-    if not isinstance(tables, list) or not grids or len(tables) != len(grids):
-        logger.warning(
-            "Raster recovery refused: reason=table_count_mismatch model_tables=%d raster_tables=%d",
-            len(tables) if isinstance(tables, list) else -1,
-            len(grids),
-        )
-        raise ResponsesEvidenceError("raster_source_unavailable", "Scanned table cannot be uniquely identified")
-
     built = []
-    for index, (original, grid) in enumerate(zip(tables, grids, strict=True), 1):
-        if not isinstance(original, dict) or not isinstance(original.get("rows"), list):
-            raise ResponsesEvidenceError("raster_source_unavailable", "Model table structure is incomplete")
-        try:
-            physical = await _read_grid(png, grid)
-        except TimeoutError as exc:
-            raise ResponsesEvidenceError("raster_cell_timeout", "Raster cell transcription exceeded its budget") from exc
-        if not _source_coverage(original, physical):
-            logger.warning(
-                "Raster recovery refused: reason=original_text_unverified table=%d source_rows=%d source_cols=%d",
-                index,
-                grid.row_count,
-                grid.col_count,
-            )
-            raise ResponsesEvidenceError("raster_text_unverified", "Original model evidence cannot be located in independently cropped source cells")
-        built.append(physical)
+    for index, grid in enumerate(grids, 1):
+        built.append(await _read_grid(png, grid))
         logger.info(
             "Raster source grid verified: table=%d physical_rows=%d physical_cols=%d cells=%d merges=%d",
             index,
@@ -150,4 +106,4 @@ async def recover_scan_page(
             len(grid.cells),
             len(grid.merges),
         )
-    return {**payload, "tables": built}
+    return built

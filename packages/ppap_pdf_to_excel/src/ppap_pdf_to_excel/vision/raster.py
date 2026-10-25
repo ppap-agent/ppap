@@ -224,6 +224,23 @@ def read_raster_page(png: bytes) -> tuple[bytes, list[RasterGrid]]:
     return (normalized, grids) if grids else (png, [])
 
 
+def mask_raster_tables(png: bytes, grids: list[RasterGrid]) -> bytes:
+    """Expose page remainder without asking a model to reconstruct known grids."""
+    image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Invalid scanned PDF page image")
+    height, width = image.shape[:2]
+    for grid in grids:
+        x, y, sx, sy = grid.bbox
+        if x < 0 or y < 0 or sx <= 0 or sy <= 0 or x + sx > width or y + sy > height:
+            raise ValueError("Raster source table lies outside its page")
+        image[y : y + sy, x : x + sx] = 255
+    encoded, masked = cv2.imencode(".png", image)
+    if not encoded:
+        raise ValueError("Raster page remainder encoding failed")
+    return masked.tobytes()
+
+
 def make_cell_panels(png: bytes, cells: tuple[RasterCell, ...]) -> list[bytes]:
     """Label scanned cell crops *outside* their image evidence for OCR.
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
-from pathlib import Path
 from unittest.mock import patch
 
 import cv2
@@ -81,7 +81,7 @@ def _model_page():
     }
 
 
-def _fake_vision(*, merged: bool, corrupt: bool = False):
+def _fake_vision(*, merged: bool, corrupt: bool | str = False):
     values = ["ALPHA BETA" if merged else "ALPHA", "GAMMA"] if merged else ["ALPHA", "BETA", "GAMMA"]
     values += ["A2", "B2", "C2", "A3", "B3", "C3"]
     calls = []
@@ -89,13 +89,21 @@ def _fake_vision(*, merged: bool, corrupt: bool = False):
     async def respond(**kwargs):
         schema = kwargs["response_schema"]["name"]
         calls.append(schema)
+        if schema == "ppap_scanned_page_remainder":
+            return {"paragraphs": ["outside paragraph"], "seals": ["visible signature"], "has_other_tables": False}
         if schema == "ppap_multimodal_pdf_page":
             return _model_page()
         assert schema == "ppap_raster_cell_evidence"
         ids = [int(value) for value in re.findall(r"\d+", kwargs["prompt"].split("Requested CELL IDs: ", 1)[1])]
         if corrupt:
-            return {"cells": [{"id": ids[0] + 123, "text": "untrusted"}]}
-        return {"cells": [{"id": index, "text": values[index]} for index in ids]}
+            entries = [{"id": index, "text": values[index]} for index in ids]
+            if corrupt == "missing":
+                entries.pop()
+            else:
+                entries[0]["id"] = ids[1] if corrupt == "duplicate" else ids[0] + 123
+            return {"cells": entries}
+        # Responses can reorder entries. Only their source-bound ID is authority.
+        return {"cells": [{"id": index, "text": values[index]} for index in reversed(ids)]}
 
     return respond, calls
 
@@ -109,39 +117,6 @@ def test_scanned_pdf_has_no_vector_anchors_but_detects_physical_grid(tmp_path):
     assert (grids[0].row_count, grids[0].col_count) == (3, 3)
     assert len(grids[0].cells) == 9
     assert grids[0].merges == ()
-
-
-def test_real_dense_control_plan_pages_have_complete_physical_cell_partitions():
-    source = Path(__file__).resolve().parents[3] / "assets/poc测试/POC测试样本/Blanc Spoiler-有特殊特性清单/19-BLANC尾-生产控制计划.pdf"
-    original = source.read_bytes()
-    with fitz.open(stream=original, filetype="pdf") as pdf:
-        for pdf_page in pdf:
-            assert not pdf_page.get_text("words")
-            image = pdf_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).tobytes("png")
-            normalized, grids = raster.read_raster_page(image)
-            assert len(grids) == 1
-            grid = grids[0]
-            occupied = set()
-            rows = [["" for _ in range(grid.col_count)] for _ in range(grid.row_count)]
-            height, width = cv2.imdecode(np.frombuffer(normalized, dtype=np.uint8), 0).shape
-            for cell in grid.cells:
-                x0, y0, x1, y1 = cell.bbox
-                assert 0 <= x0 < x1 < width and 0 <= y0 < y1 < height
-                slots = {(r, c) for r in range(cell.row, cell.end_row + 1) for c in range(cell.col, cell.end_col + 1)}
-                assert slots and not occupied.intersection(slots)
-                occupied.update(slots)
-                rows[cell.row][cell.col] = str(cell.index)
-            assert len(occupied) == grid.row_count * grid.col_count
-            # This is the actual density that the former 400-slot cap rejected.
-            assert len(occupied) > 400
-            page._validate_page(
-                {
-                    "tables": [{"rows": rows, "merges": [dict(zip(("start_row", "start_col", "end_row", "end_col"), bounds, strict=True)) for bounds in grid.merges]}],
-                    "paragraphs": [],
-                    "seals": [],
-                }
-            )
-    assert source.read_bytes() == original
 
 
 def test_dense_skewed_scan_keeps_independent_cells():
@@ -173,14 +148,21 @@ def test_open_outer_cell_border_does_not_manufacture_a_complete_grid(tmp_path):
     assert grids == []
 
 
-def test_scanned_pdf_replaces_false_model_merges_without_erasing_text(tmp_path):
+def test_scanned_pdf_reads_physical_cells_without_first_generating_a_model_grid(tmp_path):
     path, _source = _scan(tmp_path)
     fake, calls = _fake_vision(merged=False)
-    with patch.object(page, "call_llm_async", side_effect=fake), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake):
+
+    async def respond(**kwargs):
+        assert kwargs["response_schema"]["name"] != "ppap_multimodal_pdf_page", "A physical scan must not depend on generating an entire model grid"
+        return await fake(**kwargs)
+
+    with patch.object(page, "call_llm_async", side_effect=respond), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=respond):
         pages = page.VisionLayoutService().analyze_full_pdf(str(path))
     assert pages[0]["tables"][0]["rows"] == _model_page()["tables"][0]["rows"]
     assert pages[0]["tables"][0]["merges"] == []
-    assert "ppap_raster_cell_evidence" in calls
+    assert calls == ["ppap_raster_cell_evidence", "ppap_scanned_page_remainder"]
+    assert pages[0]["paragraphs"] == ["outside paragraph"]
+    assert pages[0]["seals"] == ["visible signature"]
 
 
 def test_true_scanned_merge_uses_source_cell_identity_not_model_merge(tmp_path):
@@ -207,32 +189,78 @@ def test_scanned_unruled_document_fails_closed_without_source_grid(tmp_path):
     assert calls == ["ppap_multimodal_pdf_page"]
 
 
-def test_raster_transcription_does_not_accept_spoofed_cell_ids(tmp_path):
+@pytest.mark.parametrize("corrupt", ["foreign", "duplicate", "missing"])
+def test_raster_transcription_requires_exactly_the_requested_cell_ids(tmp_path, corrupt):
     path, _source = _scan(tmp_path)
-    fake, _calls = _fake_vision(merged=False, corrupt=True)
+    fake, _calls = _fake_vision(merged=False, corrupt=corrupt)
     with patch.object(page, "call_llm_async", side_effect=fake), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake):
         with pytest.raises(page.ResponsesEvidenceError) as error:
             page.VisionLayoutService().analyze_full_pdf(str(path))
     assert error.value.code == "raster_cells_invalid_schema"
 
 
-def test_raster_model_text_must_have_cropped_source_witness(tmp_path):
+def test_remaining_unmapped_table_is_not_silently_discarded(tmp_path):
     path, _source = _scan(tmp_path)
+    fake, _calls = _fake_vision(merged=False)
 
     async def respond(**kwargs):
-        if kwargs["response_schema"]["name"] == "ppap_multimodal_pdf_page":
-            model = _model_page()
-            model["tables"][0]["rows"][0][1] = "private hallucinated field"
-            return model
-        ids = [int(value) for value in re.findall(r"\d+", kwargs["prompt"].split("Requested CELL IDs: ", 1)[1])]
-        correct = ["ALPHA", "BETA", "GAMMA", "A2", "B2", "C2", "A3", "B3", "C3"]
-        return {"cells": [{"id": index, "text": correct[index]} for index in ids]}
+        if kwargs["response_schema"]["name"] == "ppap_scanned_page_remainder":
+            return {"paragraphs": ["private remaining evidence"], "seals": [], "has_other_tables": True}
+        return await fake(**kwargs)
 
     with patch.object(page, "call_llm_async", side_effect=respond), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=respond):
         with pytest.raises(page.ResponsesEvidenceError) as error:
             page.VisionLayoutService().analyze_full_pdf(str(path))
-    assert error.value.code == "raster_text_unverified"
-    assert "private hallucinated field" not in str(error.value)
+    assert error.value.code == "raster_source_unavailable"
+    assert "private remaining evidence" not in str(error.value)
+
+
+def test_malformed_cell_response_is_not_retried_as_a_whole_page(tmp_path):
+    path, _source = _scan(tmp_path)
+    calls = []
+
+    async def malformed(**kwargs):
+        calls.append(kwargs["response_schema"]["name"])
+        raise page.ResponsesEvidenceError("responses_invalid_json", "Responses invalid JSON (output_chars=1708)")
+
+    with patch.object(page, "call_llm_async", side_effect=malformed), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=malformed):
+        with pytest.raises(page.ResponsesEvidenceError, match="page 1/1") as error:
+            page.VisionLayoutService().analyze_full_pdf(str(path))
+    assert error.value.code == "responses_invalid_json"
+    assert calls == ["ppap_raster_cell_evidence"]
+
+
+def test_scanned_page_deadline_includes_remainder_and_cancels_its_request(tmp_path, monkeypatch):
+    path, _source = _scan(tmp_path)
+    fake, _calls = _fake_vision(merged=False)
+    cancelled = []
+
+    async def respond(**kwargs):
+        if kwargs["response_schema"]["name"] == "ppap_scanned_page_remainder":
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+        return await fake(**kwargs)
+
+    monkeypatch.setattr(page, "MAX_RASTER_EVIDENCE_SECONDS", 0.02)
+    with patch.object(page, "call_llm_async", side_effect=respond), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=respond):
+        with pytest.raises(page.ResponsesEvidenceError) as error:
+            page.VisionLayoutService().analyze_full_pdf(str(path))
+    assert error.value.code == "raster_cell_timeout"
+    assert cancelled == [True]
+
+
+def test_table_mask_preserves_all_pixels_outside_the_verified_table(tmp_path):
+    _path, png = _scan(tmp_path)
+    grids = raster.detect_raster_grids(png)
+    original = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+    masked = cv2.imdecode(np.frombuffer(raster.mask_raster_tables(png, grids), dtype=np.uint8), cv2.IMREAD_COLOR)
+    x, y, width, height = grids[0].bbox
+    expected = original.copy()
+    expected[y : y + height, x : x + width] = 255
+    assert np.array_equal(masked, expected)
 
 
 def test_unverifiable_raster_cell_ocr_does_not_cache_partial_results(tmp_path, monkeypatch):

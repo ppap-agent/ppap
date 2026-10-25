@@ -7,19 +7,20 @@ import logging
 import os
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from math import sqrt
 from typing import Any
 
 import fitz
 from ppap_core.settings import get_settings
 from ppap_docops.files import parse_file_size
 
-from .cell_ocr import recover_scan_page
+from .cell_ocr import MAX_RASTER_EVIDENCE_SECONDS, read_scan_tables
 from .client import ResponsesEvidenceError, call_llm_async
-from .raster import read_raster_page
+from .raster import MAX_IMAGE_PIXELS, RasterGrid, mask_raster_tables, read_raster_page
 
 logger = logging.getLogger(__name__)
 
-# One schema and one Responses request per page. Never guess missing evidence.
+# Unruled pages use one strict page request. Ruled scans use bounded cell reads.
 PAGE_SCHEMA: dict[str, Any] = {
     "name": "ppap_multimodal_pdf_page",
     "strict": True,
@@ -70,6 +71,59 @@ PAGE_PROMPT = (
     "in seals; if the mark is visible but unreadable, use an empty string. "
     "Return empty arrays for categories not present. Do not infer a PASS, approval, or signature."
 )
+
+SCAN_REMAINDER_SCHEMA: dict[str, Any] = {
+    "name": "ppap_scanned_page_remainder",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "paragraphs": {"type": "array", "items": {"type": "string"}},
+            "seals": {"type": "array", "items": {"type": "string"}},
+            "has_other_tables": {"type": "boolean"},
+        },
+        "required": ["paragraphs", "seals", "has_other_tables"],
+    },
+}
+
+SCAN_REMAINDER_PROMPT = (
+    "Image 1 is the original scanned document page. Image 2 is the SAME page "
+    "with independently detected physical tables masked white. Those table "
+    "cells are transcribed separately; do not recreate their rows or merges. "
+    "Read non-table paragraphs visible in image 2 in reading order. "
+    "Read legible stamp/signature text from image 1, including marks inside "
+    "tables; use an empty string for a visible but unreadable mark. "
+    "Set has_other_tables=true if ANY table remains visible in image 2. "
+    "Never discard remaining table evidence as ordinary paragraphs. "
+    "Return empty arrays for absent categories. Never infer a PASS, approval, "
+    "signature, or missing document text. Output only the supplied JSON schema."
+)
+
+
+async def _read_scan_page(image: bytes, grids: list[RasterGrid]) -> dict[str, Any]:
+    try:
+        async with asyncio.timeout(MAX_RASTER_EVIDENCE_SECONDS):
+            tables = await read_scan_tables(image, grids)
+            remainder = await call_llm_async(
+                image_paths=[image, mask_raster_tables(image, grids)],
+                prompt=SCAN_REMAINDER_PROMPT,
+                retry_count=1,
+                json_mode=True,
+                response_schema=SCAN_REMAINDER_SCHEMA,
+            )
+    except TimeoutError as exc:
+        raise ResponsesEvidenceError("raster_cell_timeout", "Scanned page transcription exceeded its budget") from exc
+    if (
+        not isinstance(remainder, dict)
+        or set(remainder) != {"paragraphs", "seals", "has_other_tables"}
+        or type(remainder["has_other_tables"]) is not bool
+        or any(not isinstance(remainder[key], list) or any(not isinstance(value, str) for value in remainder[key]) for key in ("paragraphs", "seals"))
+    ):
+        raise ResponsesEvidenceError("raster_remainder_invalid_schema", "Scanned page remainder is incomplete")
+    if remainder["has_other_tables"]:
+        raise ResponsesEvidenceError("raster_source_unavailable", "Scanned page contains a table without a verified source grid")
+    return {"tables": tables, "paragraphs": remainder["paragraphs"], "seals": remainder["seals"]}
 
 
 def _validate_page(payload: Any) -> dict[str, Any]:
@@ -334,14 +388,19 @@ def _reconcile_physical_merges(payload: Any, native_tables: list[dict[str, Any]]
 async def _read_page_async(image: bytes, page_number: int, page_count: int, native_tables: list[dict[str, Any]]) -> dict[str, Any]:
     """Use the same strict validator on cancellable shared-loop requests."""
     logger.info("Responses vision page %d/%d starting", page_number, page_count)
+    payload: str | dict[str, Any]
     try:
-        payload = await call_llm_async(
-            image_paths=image,
-            prompt=PAGE_PROMPT,
-            retry_count=1,
-            json_mode=True,
-            response_schema=PAGE_SCHEMA,
-        )
+        raster_grids = [candidate["raster_grid"] for candidate in native_tables if "raster_grid" in candidate]
+        if raster_grids:
+            payload = await _read_scan_page(image, raster_grids)
+        else:
+            payload = await call_llm_async(
+                image_paths=image,
+                prompt=PAGE_PROMPT,
+                retry_count=1,
+                json_mode=True,
+                response_schema=PAGE_SCHEMA,
+            )
     except ResponsesEvidenceError as exc:
         raise ResponsesEvidenceError(exc.code, f"Responses page {page_number}/{page_count}: {exc}") from exc
     try:
@@ -351,16 +410,7 @@ async def _read_page_async(image: bytes, page_number: int, page_count: int, nati
         # Recover only when the original PDF's drawn cell grid and independent
         # text witnesses uniquely prove the correct merge ranges.
         vectors = [candidate for candidate in native_tables if "rows" in candidate]
-        raster_grids = [candidate["raster_grid"] for candidate in native_tables if "raster_grid" in candidate]
         repaired = _reconcile_physical_merges(payload, vectors) if vectors else None
-        if repaired is None and raster_grids and isinstance(payload, dict) and str(exc).startswith("Invalid Responses merge covers nonempty evidence"):
-            try:
-                repaired = await recover_scan_page(image, payload, raster_grids)
-            except ResponsesEvidenceError as recovery_error:
-                raise ResponsesEvidenceError(
-                    recovery_error.code,
-                    f"Responses page {page_number}/{page_count}: {recovery_error}",
-                ) from recovery_error
         if repaired is None:
             raise ResponsesEvidenceError("responses_invalid_schema", f"Responses page {page_number}/{page_count}: {exc}") from exc
         result = _validate_page(repaired)
@@ -401,6 +451,19 @@ def _run_batch_sync(images: list[tuple[int, bytes, list[dict[str, Any]]]], page_
         return worker.submit(asyncio.run, operation).result()
 
 
+def _render_page_image(page: fitz.Page, *, scanned: bool) -> bytes:
+    zoom = 1.5
+    if scanned:
+        # Preserve native scan detail before cropping tiny cells. Enlarging a
+        # low-resolution page crop later cannot recover discarded characters.
+        for info in page.get_image_info():
+            bounds = fitz.Rect(info["bbox"])
+            if bounds.width > 0 and bounds.height > 0 and (bounds & page.rect).get_area() >= page.rect.get_area() * 0.5:
+                zoom = max(zoom, min(3.0, info["width"] / bounds.width, info["height"] / bounds.height))
+    zoom = min(zoom, sqrt(MAX_IMAGE_PIXELS / page.rect.get_area()))
+    return page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False).tobytes("png")
+
+
 class VisionLayoutService:
     """Render on the PDF owner; make at most two concurrent Responses calls."""
 
@@ -419,7 +482,7 @@ class VisionLayoutService:
                 for index in range(first, min(first + 2, page_count)):
                     page = document[index]
                     native_tables = _native_table_candidates(page)
-                    image = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).tobytes("png")
+                    image = _render_page_image(page, scanned=not native_tables)
                     if not native_tables:
                         try:
                             image, raster_grids = read_raster_page(image)
