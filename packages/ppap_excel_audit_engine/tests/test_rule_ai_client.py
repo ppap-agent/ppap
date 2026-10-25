@@ -336,6 +336,7 @@ def test_visual_async_request_cancels_response_body_with_one_provider_call():
 
 
 def test_visual_provider_uses_bounded_async_path_with_real_sdk_type_simulated():
+    import asyncio
     from unittest.mock import patch
 
     from ppap_excel_audit_engine.checkers import client as client_module
@@ -350,8 +351,41 @@ def test_visual_provider_uses_bounded_async_path_with_real_sdk_type_simulated():
 
     with (
         patch.object(client_module, "BaseOpenAI", SDK),
-        patch.object(client_module, "_bounded_visual_request", side_effect=provider),
+        patch.object(client_module, "_run_bounded_visual_sync", side_effect=lambda settings, kwargs, timeout: asyncio.run(provider(settings, kwargs, timeout))),
     ):
         assert client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"]) == "verified"
     assert sdk.direct_calls == 0
     assert sdk.options == [{"max_retries": 0}]
+
+
+def test_bounded_visual_request_from_running_event_loop_uses_isolated_loop():
+    import asyncio
+    from unittest.mock import patch
+
+    from ppap_excel_audit_engine.checkers import client as client_module
+
+    closed = []
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            closed.append(True)
+
+        class responses:
+            @staticmethod
+            async def create(**kwargs):
+                return SimpleNamespace(status="completed", output_text="verified")
+
+    async def inside_event_loop():
+        return client_module._run_bounded_visual_sync(
+            SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/v1"),
+            {"model": "unit-test"},
+            1,
+        )
+
+    with patch.object(client_module, "AsyncOpenAI", return_value=FakeAsyncClient()):
+        response = asyncio.run(inside_event_loop())
+    assert response.output_text == "verified"
+    assert closed == [True]

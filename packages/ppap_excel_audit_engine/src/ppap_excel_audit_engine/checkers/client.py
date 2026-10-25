@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
@@ -30,6 +31,19 @@ async def _bounded_visual_request(settings: Any, kwargs: dict[str, Any], timeout
             max_retries=0,
         ) as client:
             return await client.responses.create(**kwargs)
+
+
+def _run_bounded_visual_sync(settings: Any, kwargs: dict[str, Any], timeout: float) -> Any:
+    """The synchronous audit API can also be invoked from an already-running event loop."""
+    operation = _bounded_visual_request(settings, kwargs, timeout)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(operation)
+    # asyncio.run() cannot nest in the caller's event loop. Keep the same
+    # request cancellation budget while isolating its own event loop.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, operation).result()
 
 
 def _parse_extra_body(raw: str) -> Dict[str, Any] | None:
@@ -247,7 +261,7 @@ class AIClient:
                     if request_timeout is not None and isinstance(self.client, BaseOpenAI):
                         # Only real SDK clients take the cancellable transport path.
                         # Lightweight injected test clients preserve their public stub API.
-                        response = asyncio.run(_bounded_visual_request(self.settings, request_kwargs, request_timeout))
+                        response = _run_bounded_visual_sync(self.settings, request_kwargs, request_timeout)
                     else:
                         response = request_client.responses.create(**request_kwargs)
                 except Exception:
