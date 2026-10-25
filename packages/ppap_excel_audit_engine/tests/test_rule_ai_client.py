@@ -279,8 +279,6 @@ if __name__ == "__main__":
 
 
 def test_visual_provider_timeout_is_one_failed_attempt_without_hidden_retries():
-    from ppap_excel_audit_engine.checkers.client import AIClient
-
     sdk = SDK(error=TimeoutError("private-visual-provider"))
     client = RuleAIClientTests().client(sdk)
     with tracked_request() as request_id:

@@ -1,12 +1,15 @@
 """PDF fallback is Responses multimodal and returns independent caller workbooks."""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, Event, current_thread
 
 import fitz
+import openpyxl
 from openpyxl import load_workbook
 from ppap_core.settings import get_settings
 from ppap_ocr_adapter import LocalOcrAdapter
-from ppap_ocr_adapter.doc_cache import vision_service
+from ppap_ocr_adapter.doc_cache import ocr_service, vision_service
 
 
 def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatch):
@@ -127,4 +130,76 @@ def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_pat
     finally:
         if artifact and artifact.excel_path:
             Path(artifact.excel_path).unlink(missing_ok=True)
+        get_settings.cache_clear()
+
+
+def test_racing_cache_publish_never_exposes_partial_workbook(tmp_path, monkeypatch):
+    """A second producer may write while a third caller reads an earlier hit."""
+    source = tmp_path / "source.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(source)
+    monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "cache" / "cache.db"))
+    get_settings.cache_clear()
+    # DDL initialization is not the concurrency behavior under test.
+    ocr_service._ensure_db()
+    two_producers = Barrier(2, timeout=10)
+    begin_second_write = Event()
+    second_write_opened = Event()
+    finish_second_write = Event()
+    original_save = openpyxl.Workbook.save
+
+    def analyze_page(self, pdf_path):
+        two_producers.wait()
+        return [{"tables": [{"rows": [[current_thread().name]], "merges": []}], "paragraphs": [], "seals": []}]
+
+    def staggered_save(self, filename):
+        if current_thread().name == "ocr-B":
+            if not begin_second_write.wait(10):
+                raise TimeoutError("First producer did not publish")
+            # Simulate a writer exposing a truncated destination before save.
+            Path(filename).write_bytes(b"unfinished xlsx")
+            second_write_opened.set()
+            if not finish_second_write.wait(10):
+                raise TimeoutError("Cache reader did not finish")
+        return original_save(self, filename)
+
+    def produce(label):
+        current_thread().name = label
+        return ocr_service.process_local_pdf(str(source))
+
+    monkeypatch.setattr(ocr_service.VisionLayoutService, "analyze_full_pdf", analyze_page)
+    monkeypatch.setattr(openpyxl.Workbook, "save", staggered_save)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(produce, "ocr-A")
+            second_future = pool.submit(produce, "ocr-B")
+            try:
+                first = first_future.result(timeout=10)
+                before = Path(first["excel_path"]).read_bytes()
+                begin_second_write.set()
+                assert second_write_opened.wait(10)
+                cached = ocr_service.process_local_pdf(str(source))
+                assert cached["excel_path"] == first["excel_path"]
+                book = load_workbook(cached["excel_path"])
+                try:
+                    assert book.active["A1"].value == "ocr-A"
+                finally:
+                    book.close()
+            finally:
+                begin_second_write.set()
+                finish_second_write.set()
+            second = second_future.result(timeout=10)
+        assert first["excel_path"] != second["excel_path"]
+        assert Path(first["excel_path"]).read_bytes() == before
+        for result, expected in ((first, "ocr-A"), (second, "ocr-B")):
+            book = load_workbook(result["excel_path"])
+            try:
+                assert book.active["A1"].value == expected
+            finally:
+                book.close()
+    finally:
+        begin_second_write.set()
+        finish_second_write.set()
         get_settings.cache_clear()

@@ -1,28 +1,48 @@
 """One Responses client for local multimodal document evidence."""
 
+import asyncio
 import base64
+import inspect
 import json
 import logging
 import mimetypes
 import os
 import re
-from functools import lru_cache
 from typing import Any, Dict, List, Optional, Union
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from ppap_core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
-def _get_llm_client() -> OpenAI:
+# A request's client is owned by one event loop and always closed at completion.
+# Sharing an async client's connection pool across per-page thread event loops is unsafe.
+RESPONSE_WALL_TIMEOUT_SECONDS = 120
+
+
+def _get_llm_client() -> AsyncOpenAI:
     settings = get_settings()
-    return OpenAI(
+    return AsyncOpenAI(
         api_key=settings.get_ocr_openai_api_key(),
         base_url=settings.get_ocr_openai_base_url(),
         max_retries=0,
     )
+
+
+async def _request_response(kwargs: dict[str, Any]) -> Any:
+    """Bound the whole asynchronous response body, not just each socket read."""
+    client = _get_llm_client()
+    async with asyncio.timeout(RESPONSE_WALL_TIMEOUT_SECONDS):
+        try:
+            response = client.responses.create(**kwargs)
+            return await response if inspect.isawaitable(response) else response
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                closing = close()
+                if inspect.isawaitable(closing):
+                    await closing
 
 
 def _get_llm_model_name() -> str:
@@ -93,7 +113,7 @@ def call_llm(
 
     for attempt in range(retry_count):
         try:
-            response = _get_llm_client().responses.create(**kwargs)
+            response = asyncio.run(_request_response(kwargs))
             if response.status != "completed" or not response.output_text.strip():
                 raise RuntimeError("AI response did not complete with text")
             content_text = response.output_text

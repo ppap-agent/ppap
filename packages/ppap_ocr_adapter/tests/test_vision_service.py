@@ -64,27 +64,46 @@ def test_reads_png_image_using_responses_schema(tmp_path):
 
 def test_multimodal_merge_rejects_fake_or_overlapping_evidence():
     valid = {
-        "tables": [{"rows": [["外观"], [""], [""]], "merges": [
-            {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0}
-        ]}],
+        "tables": [{"rows": [["外观"], [""], [""]], "merges": [{"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0}]}],
         "paragraphs": [],
         "seals": [],
     }
     assert vision_service._validate_page(valid) == valid
     overlapping = {
         **valid,
-        "tables": [{"rows": [["外观"], [""], [""]], "merges": [
-            {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0},
-            {"start_row": 1, "start_col": 0, "end_row": 2, "end_col": 0},
-        ]}],
+        "tables": [
+            {
+                "rows": [["外观"], [""], [""]],
+                "merges": [
+                    {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0},
+                    {"start_row": 1, "start_col": 0, "end_row": 2, "end_col": 0},
+                ],
+            }
+        ],
     }
     with pytest.raises(ValueError, match="overlapping"):
         vision_service._validate_page(overlapping)
     invalid_cover = {
         **valid,
-        "tables": [{"rows": [["外观"], ["另一个真实单元格"], [""]], "merges": [
-            {"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0}
-        ]}],
+        "tables": [
+            {
+                "rows": [["外观"], ["另一个真实单元格"], [""]],
+                "merges": [{"start_row": 0, "start_col": 0, "end_row": 2, "end_col": 0}],
+            }
+        ],
     }
-    with pytest.raises(ValueError, match="nonempty evidence"):
+    with pytest.raises(ValueError, match=r"nonempty evidence .*table=1, anchor=\(0,0\), cell=\(1,0\)"):
         vision_service._validate_page(invalid_cover)
+
+
+def test_invalid_merge_diagnostic_identifies_pdf_page_without_exposing_cell_text():
+    invalid = {
+        "tables": [{"rows": [["private value"], ["other evidence"]], "merges": [{"start_row": 0, "start_col": 0, "end_row": 1, "end_col": 0}]}],
+        "paragraphs": [],
+        "seals": [],
+    }
+    with patch.object(vision_service, "call_llm", return_value=invalid):
+        with pytest.raises(ValueError, match=r"Responses page 2/3: Invalid Responses merge covers nonempty evidence") as error:
+            vision_service._read_page(b"image", 2, 3)
+    assert "private value" not in str(error.value)
+    assert "other evidence" not in str(error.value)

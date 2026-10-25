@@ -16,6 +16,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -275,8 +276,11 @@ def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
 
     directory = _results_dir()
     os.makedirs(directory, exist_ok=True)
-    excel_path = os.path.join(directory, f"{file_id}.xlsx")
-    html_path = os.path.join(directory, f"{file_id}.html")
+    # Each conversion owns immutable artifacts. A second producer for the same
+    # file hash must never truncate a workbook already published in SQLite.
+    artifact_id = f"{file_id}-{uuid.uuid4().hex}"
+    excel_path = os.path.join(directory, f"{artifact_id}.xlsx")
+    html_path = os.path.join(directory, f"{artifact_id}.html")
     try:
         workbook.save(excel_path)
         workbook.close()
