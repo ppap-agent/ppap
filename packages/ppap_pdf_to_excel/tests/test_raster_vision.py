@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from unittest.mock import patch
 
 import cv2
@@ -94,7 +95,7 @@ def _fake_vision(*, merged: bool, corrupt: bool = False):
         ids = [int(value) for value in re.findall(r"\d+", kwargs["prompt"].split("Requested CELL IDs: ", 1)[1])]
         if corrupt:
             return {"cells": [{"id": ids[0] + 123, "text": "untrusted"}]}
-        return {"cells": [{"id": index, "text": values[index]} for index in ids]
+        return {"cells": [{"id": index, "text": values[index]} for index in ids]}
 
     return respond, calls
 
@@ -110,12 +111,72 @@ def test_scanned_pdf_has_no_vector_anchors_but_detects_physical_grid(tmp_path):
     assert grids[0].merges == ()
 
 
+def test_real_dense_control_plan_pages_have_complete_physical_cell_partitions():
+    source = Path(__file__).resolve().parents[3] / "assets/poc测试/POC测试样本/Blanc Spoiler-有特殊特性清单/19-BLANC尾-生产控制计划.pdf"
+    original = source.read_bytes()
+    with fitz.open(stream=original, filetype="pdf") as pdf:
+        for pdf_page in pdf:
+            assert not pdf_page.get_text("words")
+            image = pdf_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).tobytes("png")
+            normalized, grids = raster.read_raster_page(image)
+            assert len(grids) == 1
+            grid = grids[0]
+            occupied = set()
+            rows = [["" for _ in range(grid.col_count)] for _ in range(grid.row_count)]
+            height, width = cv2.imdecode(np.frombuffer(normalized, dtype=np.uint8), 0).shape
+            for cell in grid.cells:
+                x0, y0, x1, y1 = cell.bbox
+                assert 0 <= x0 < x1 < width and 0 <= y0 < y1 < height
+                slots = {(r, c) for r in range(cell.row, cell.end_row + 1) for c in range(cell.col, cell.end_col + 1)}
+                assert slots and not occupied.intersection(slots)
+                occupied.update(slots)
+                rows[cell.row][cell.col] = str(cell.index)
+            assert len(occupied) == grid.row_count * grid.col_count
+            # This is the actual density that the former 400-slot cap rejected.
+            assert len(occupied) > 400
+            page._validate_page(
+                {
+                    "tables": [{"rows": rows, "merges": [dict(zip(("start_row", "start_col", "end_row", "end_col"), bounds, strict=True)) for bounds in grid.merges]}],
+                    "paragraphs": [],
+                    "seals": [],
+                }
+            )
+    assert source.read_bytes() == original
+
+
+def test_dense_skewed_scan_keeps_independent_cells():
+    image = np.full((1000, 1300, 3), 255, dtype=np.uint8)
+    for y in range(100, 901, 40):
+        cv2.line(image, (100, y), (1180, y), (0, 0, 0), 3)
+    for x in range(100, 1181, 45):
+        cv2.line(image, (x, 100), (x, 900), (0, 0, 0), 3)
+    transform = cv2.getPerspectiveTransform(
+        np.float32([[100, 100], [1180, 100], [1180, 900], [100, 900]]),
+        np.float32([[108, 95], [1185, 105], [1174, 910], [95, 895]]),
+    )
+    image = cv2.warpPerspective(image, transform, (1300, 1000), borderValue=(255, 255, 255))
+    encoded, png = cv2.imencode(".png", image)
+    assert encoded
+    _normalized, grids = raster.read_raster_page(png.tobytes())
+    assert len(grids) == 1
+    assert (grids[0].row_count, grids[0].col_count, len(grids[0].cells)) == (20, 24, 480)
+    assert not grids[0].merges
+
+
+def test_open_outer_cell_border_does_not_manufacture_a_complete_grid(tmp_path):
+    _path, png = _scan(tmp_path)
+    image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+    cv2.line(image, (75, 140), (75, 195), (255, 255, 255), 12)
+    encoded, damaged = cv2.imencode(".png", image)
+    assert encoded
+    _normalized, grids = raster.read_raster_page(damaged.tobytes())
+    assert grids == []
+
+
 def test_scanned_pdf_replaces_false_model_merges_without_erasing_text(tmp_path):
     path, _source = _scan(tmp_path)
     fake, calls = _fake_vision(merged=False)
-    with patch.object(page, "call_llm_async", side_effect=fake), patch(
-        "ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake
-    ):
+    with patch.object(page, "call_llm_async", side_effect=fake), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake):
         pages = page.VisionLayoutService().analyze_full_pdf(str(path))
     assert pages[0]["tables"][0]["rows"] == _model_page()["tables"][0]["rows"]
     assert pages[0]["tables"][0]["merges"] == []
@@ -131,14 +192,10 @@ def test_true_scanned_merge_uses_source_cell_identity_not_model_merge(tmp_path):
     assert len(grids) == 1
     assert grids[0].merges == ((0, 0, 0, 1),)
 
-    with patch.object(page, "call_llm_async", side_effect=fake), patch(
-        "ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake
-    ):
+    with patch.object(page, "call_llm_async", side_effect=fake), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake):
         pages = page.VisionLayoutService().analyze_full_pdf(str(path))
     assert pages[0]["tables"][0]["rows"][0] == ["ALPHA BETA", "", "GAMMA"]
-    assert pages[0]["tables"][0]["merges"] == [
-        {"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}
-    ]
+    assert pages[0]["tables"][0]["merges"] == [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}]
 
 
 def test_scanned_unruled_document_fails_closed_without_source_grid(tmp_path):
@@ -153,9 +210,7 @@ def test_scanned_unruled_document_fails_closed_without_source_grid(tmp_path):
 def test_raster_transcription_does_not_accept_spoofed_cell_ids(tmp_path):
     path, _source = _scan(tmp_path)
     fake, _calls = _fake_vision(merged=False, corrupt=True)
-    with patch.object(page, "call_llm_async", side_effect=fake), patch(
-        "ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake
-    ):
+    with patch.object(page, "call_llm_async", side_effect=fake), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake):
         with pytest.raises(page.ResponsesEvidenceError) as error:
             page.VisionLayoutService().analyze_full_pdf(str(path))
     assert error.value.code == "raster_cells_invalid_schema"
@@ -173,9 +228,7 @@ def test_raster_model_text_must_have_cropped_source_witness(tmp_path):
         correct = ["ALPHA", "BETA", "GAMMA", "A2", "B2", "C2", "A3", "B3", "C3"]
         return {"cells": [{"id": index, "text": correct[index]} for index in ids]}
 
-    with patch.object(page, "call_llm_async", side_effect=respond), patch(
-        "ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=respond
-    ):
+    with patch.object(page, "call_llm_async", side_effect=respond), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=respond):
         with pytest.raises(page.ResponsesEvidenceError) as error:
             page.VisionLayoutService().analyze_full_pdf(str(path))
     assert error.value.code == "raster_text_unverified"
@@ -189,9 +242,7 @@ def test_unverifiable_raster_cell_ocr_does_not_cache_partial_results(tmp_path, m
     get_settings.cache_clear()
     fake, _calls = _fake_vision(merged=False, corrupt=True)
     try:
-        with patch.object(page, "call_llm_async", side_effect=fake), patch(
-            "ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake
-        ):
+        with patch.object(page, "call_llm_async", side_effect=fake), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=fake):
             artifact = convert_local_pdf_to_excel(str(path))
         assert artifact.excel_path is None
         assert artifact.raw_meta["error_code"] == "raster_cells_invalid_schema"

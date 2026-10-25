@@ -10,6 +10,7 @@ import tempfile
 from ppap_core.contracts import OcrArtifact
 
 from .cache import process_local_pdf
+from .client import ResponsesEvidenceError
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ def convert_local_pdf_to_excel(path: str, *, enable_cache: bool = True) -> OcrAr
     except Exception as exc:
         logger.error("Local PDF vision fallback failed: %s", exc)
         payload: dict[str, str] = {"error": str(exc)}
-        code = getattr(exc, "code", None)
-        if isinstance(code, str) and code.startswith("responses_"):
-            payload["error_code"] = code
+        if isinstance(exc, ResponsesEvidenceError):
+            payload["error_code"] = exc.code
         return OcrArtifact(provider="local_ocr_doc_cache", raw_meta=payload)
