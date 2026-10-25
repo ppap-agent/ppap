@@ -43,6 +43,7 @@ class OCRResponsesTests(TestCase):
             ],
         )
         self.assertFalse(calls[0]["store"])
+        self.assertEqual(calls[0]["max_output_tokens"], 16384)
 
     def test_incomplete_response_is_not_accepted(self):
         def create(**kwargs):
