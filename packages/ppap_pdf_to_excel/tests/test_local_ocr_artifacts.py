@@ -262,3 +262,32 @@ def test_conversion_lock_tracks_physical_sqlite_cache_path(tmp_path, monkeypatch
         assert not (tmp_path / "separate-artifacts" / "locks").exists()
     finally:
         get_settings.cache_clear()
+
+
+def test_invalid_model_merge_never_publishes_cache_artifact(tmp_path, monkeypatch):
+    """Contradictory evidence must fail closed without a cache publication."""
+    source = tmp_path / "without-grid.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(source)
+    monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "bad-merge-cache"))
+    monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "bad-merge-cache" / "cache.db"))
+    get_settings.cache_clear()
+
+    async def invalid_page(**kwargs):
+        return {
+            "tables": [{"rows": [["independent A", "independent B"]], "merges": [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}]}],
+            "paragraphs": [],
+            "seals": [],
+        }
+
+    monkeypatch.setattr(vision_service, "call_llm_async", invalid_page)
+    try:
+        result = convert_local_pdf_to_excel(str(source))
+        assert result.excel_path is None
+        assert result.raw_meta["error_code"] == "responses_invalid_schema"
+        assert "independent A" not in str(result.raw_meta)
+        assert "independent B" not in str(result.raw_meta)
+        assert not list((tmp_path / "bad-merge-cache" / "results").glob("*.xlsx"))
+    finally:
+        get_settings.cache_clear()
