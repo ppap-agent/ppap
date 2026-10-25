@@ -13,7 +13,6 @@ import requests
 from ppap_core.contracts import FileRef, OcrArtifact
 from ppap_core.settings import get_settings
 
-
 log = logging.getLogger(__name__)
 
 

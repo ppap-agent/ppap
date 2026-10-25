@@ -45,6 +45,7 @@ from ppap_docops.pdf import (
     TitleSectionRule,
 )
 from ppap_docops.pdf import convert_pdf_to_excel as docops_convert_pdf_to_excel
+
 from .remote import RemoteOcrAdapter
 from .vision.local import convert_local_pdf_to_excel
 
