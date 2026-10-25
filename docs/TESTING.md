@@ -421,3 +421,12 @@ checkout/post-job 使用的临时目录。管理员必须在宿主机执行以�
 
 Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误及 JUnit 工件保留失败证据。
 被平台取消的 Job 不保证 pytest 有机会写出最终 JUnit，因此仍需 Runner `_diag` 和心跳时间线。
+
+
+### 2026-10-25：Responses PDF 合并范围的源证据与快速取消
+
+`ppap_pdf_to_excel/vision/page.py` 对每两页构建一组共享 event loop 的异步 Responses 调用；任一页的模型结果无效，即取消另一在途请求并等待其网络客户端关闭。PDF 页面渲染仍在所属线程进行，最多两个在途请求，不修改产品 E2E 或 PDF Corpus 的 pytest worker 设置。客户端取消不等于供应商没有处理或计费；不自动重试超时或无效输出。
+
+对模型产生的“合并区域覆盖非空单元格”冲突，保留原有 fail-closed validator。只有 PDF 原生矢量边框解析能够定位唯一表格、行列尺寸一致、至少三个独立原文证据跨越两行两列严格匹配，并且修复后的每一个 merge 仍符合非空单元格保护时，才采用确定性绘制边界纠正模型的 `merges`。保留模型已有全部单元格文字，不补写缺失内容。对扫描图片、无可提取物理表格边界、表格匹配不唯一、边界解析失败或独立文本证据不吻合的情况保持 `responses_invalid_schema`，不得静默删除冲突 merge、猜测业务字段或更改 PASS/NG oracle。
+
+受控回归包含物理独立单元格纠正错误 merge、真实物理合并拒绝覆盖文字、无边框 fail closed、四页最多两个模型请求、第一页错误触发第二页 SDK 请求取消及客户端关闭。真实 `19-BLANC` PDF 必须在保持原始 oracle 的 CI 中验收，不能把受控向量图测试代替真实样本质量声明。
