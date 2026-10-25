@@ -62,6 +62,8 @@ def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) ->
     client = None
     try:
         settings = Settings(usage_charge_enabled=False)
+        if not settings.get_ocr_openai_api_key():
+            pytest.fail("setup_failure: V3 worker oracle requires an explicit OCR provider credential")
         store = auth_store_factory(settings)
         store.seed_isolated_dev()
         client = TestClient(create_app(settings, lambda _s: {"state": "ok"}, lambda _s: {"state": "ok"}, store))

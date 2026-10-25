@@ -134,8 +134,8 @@ def test_multimodal_merged_product_evidence_survives_workbook_conversion(tmp_pat
         get_settings.cache_clear()
 
 
-def test_racing_cache_publish_never_exposes_partial_workbook(tmp_path, monkeypatch):
-    """A second producer may write while a third caller reads an earlier hit."""
+def test_uncached_writer_cannot_truncate_published_cache(tmp_path, monkeypatch):
+    """A concurrent uncached writer must not change a published cached XLSX."""
     source = tmp_path / "source.pdf"
     with fitz.open() as document:
         document.new_page()
@@ -143,64 +143,92 @@ def test_racing_cache_publish_never_exposes_partial_workbook(tmp_path, monkeypat
     monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "cache" / "cache.db"))
     get_settings.cache_clear()
-    # DDL initialization is not the concurrency behavior under test.
-    ocr_service._ensure_db()
-    two_producers = Barrier(2, timeout=10)
-    begin_second_write = Event()
-    second_write_opened = Event()
-    finish_second_write = Event()
+    opened = Event()
+    finish = Event()
     original_save = openpyxl.Workbook.save
 
-    def analyze_page(self, pdf_path):
-        two_producers.wait()
+    def analyze(self, pdf_path):
         return [{"tables": [{"rows": [[current_thread().name]], "merges": []}], "paragraphs": [], "seals": []}]
 
-    def staggered_save(self, filename):
+    def pause_second_writer(self, filename):
         if current_thread().name == "ocr-B":
-            if not begin_second_write.wait(10):
-                raise TimeoutError("First producer did not publish")
-            # Simulate a writer exposing a truncated destination before save.
             Path(filename).write_bytes(b"unfinished xlsx")
-            second_write_opened.set()
-            if not finish_second_write.wait(10):
-                raise TimeoutError("Cache reader did not finish")
+            opened.set()
+            assert finish.wait(10)
         return original_save(self, filename)
 
-    def produce(label):
-        current_thread().name = label
-        return ocr_service.process_local_pdf(str(source))
-
-    monkeypatch.setattr(ocr_service.VisionLayoutService, "analyze_full_pdf", analyze_page)
-    monkeypatch.setattr(openpyxl.Workbook, "save", staggered_save)
+    monkeypatch.setattr(ocr_service.VisionLayoutService, "analyze_full_pdf", analyze)
+    monkeypatch.setattr(openpyxl.Workbook, "save", pause_second_writer)
     try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first_future = pool.submit(produce, "ocr-A")
-            second_future = pool.submit(produce, "ocr-B")
+        first = ocr_service.process_local_pdf(str(source))
+        original_bytes = Path(first["excel_path"]).read_bytes()
+
+        def produce_uncached():
+            current_thread().name = "ocr-B"
+            return ocr_service.process_local_pdf(str(source), enable_cache=False)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            second_future = executor.submit(produce_uncached)
             try:
-                first = first_future.result(timeout=10)
-                before = Path(first["excel_path"]).read_bytes()
-                begin_second_write.set()
-                assert second_write_opened.wait(10)
+                assert opened.wait(10)
                 cached = ocr_service.process_local_pdf(str(source))
                 assert cached["excel_path"] == first["excel_path"]
                 book = load_workbook(cached["excel_path"])
                 try:
-                    assert book.active["A1"].value == "ocr-A"
+                    assert book.active["A1"].value == "MainThread"
                 finally:
                     book.close()
             finally:
-                begin_second_write.set()
-                finish_second_write.set()
+                finish.set()
             second = second_future.result(timeout=10)
         assert first["excel_path"] != second["excel_path"]
-        assert Path(first["excel_path"]).read_bytes() == before
-        for result, expected in ((first, "ocr-A"), (second, "ocr-B")):
-            book = load_workbook(result["excel_path"])
-            try:
-                assert book.active["A1"].value == expected
-            finally:
-                book.close()
+        assert Path(first["excel_path"]).read_bytes() == original_bytes
     finally:
-        begin_second_write.set()
-        finish_second_write.set()
+        finish.set()
+        get_settings.cache_clear()
+
+
+def test_identical_cache_misses_use_single_flight(tmp_path, monkeypatch):
+    source = tmp_path / "source.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(source)
+    monkeypatch.setenv("OCR_LOCAL_OSS_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("OCR_LOCAL_SQLITE_DB", str(tmp_path / "cache" / "cache.db"))
+    get_settings.cache_clear()
+    caller_gate = Barrier(2, timeout=10)
+    started = Event()
+    release = Event()
+    conversions = []
+
+    def analyze(self, pdf_path):
+        conversions.append(1)
+        started.set()
+        assert release.wait(10)
+        return [{"tables": [{"rows": [["verified"]], "merges": []}], "paragraphs": [], "seals": []}]
+
+    def convert():
+        caller_gate.wait()
+        return ocr_service.process_local_pdf(str(source))
+
+    monkeypatch.setattr(ocr_service.VisionLayoutService, "analyze_full_pdf", analyze)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first_future = executor.submit(convert)
+            second_future = executor.submit(convert)
+            try:
+                assert started.wait(10)
+            finally:
+                release.set()
+            first = first_future.result(timeout=10)
+            second = second_future.result(timeout=10)
+        assert len(conversions) == 1
+        assert first["excel_path"] == second["excel_path"]
+        book = load_workbook(first["excel_path"])
+        try:
+            assert book.active["A1"].value == "verified"
+        finally:
+            book.close()
+    finally:
+        release.set()
         get_settings.cache_clear()

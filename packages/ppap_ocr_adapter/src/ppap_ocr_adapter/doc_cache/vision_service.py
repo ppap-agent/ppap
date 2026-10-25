@@ -12,7 +12,7 @@ import fitz
 from ppap_core.settings import get_settings
 from ppap_docops.files import parse_file_size
 
-from .llm_service import call_llm
+from .llm_service import ResponsesEvidenceError, call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -113,17 +113,20 @@ def _validate_page(payload: Any) -> dict[str, Any]:
 
 def _read_page(image: bytes, page_number: int, page_count: int) -> dict[str, Any]:
     logger.info("Responses vision page %d/%d starting", page_number, page_count)
-    payload = call_llm(
-        image_paths=image,
-        prompt=PAGE_PROMPT,
-        retry_count=1,
-        json_mode=True,
-        response_schema=PAGE_SCHEMA,
-    )
+    try:
+        payload = call_llm(
+            image_paths=image,
+            prompt=PAGE_PROMPT,
+            retry_count=1,
+            json_mode=True,
+            response_schema=PAGE_SCHEMA,
+        )
+    except ResponsesEvidenceError as exc:
+        raise ResponsesEvidenceError(exc.code, f"Responses page {page_number}/{page_count}: {exc}") from exc
     try:
         result = _validate_page(payload)
     except ValueError as exc:
-        raise ValueError(f"Responses page {page_number}/{page_count}: {exc}") from exc
+        raise ResponsesEvidenceError("responses_invalid_schema", f"Responses page {page_number}/{page_count}: {exc}") from exc
     logger.info("Responses vision page %d/%d complete", page_number, page_count)
     return result
 

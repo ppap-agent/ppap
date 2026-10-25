@@ -22,6 +22,7 @@ def run_with_heartbeat(
     if interval <= 0 or timeout <= 0:
         raise ValueError("Heartbeat interval and timeout must be positive")
     started = time.monotonic()
+    wall_started = time.time()
     process = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
     try:
         while True:
@@ -38,7 +39,11 @@ def run_with_heartbeat(
             try:
                 return_code = process.wait(timeout=min(interval, timeout - elapsed))
             except subprocess.TimeoutExpired:
-                print(f"CI heartbeat: child PID={process.pid}, elapsed={time.monotonic() - started:.0f}s", flush=True)
+                elapsed_mono = time.monotonic() - started
+                elapsed_wall = time.time() - wall_started
+                print(f"CI heartbeat: child PID={process.pid}, elapsed={elapsed_mono:.0f}s, wall_elapsed={elapsed_wall:.0f}s", flush=True)
+                if abs(elapsed_wall - elapsed_mono) >= 45:
+                    print(f"CI clock anomaly: wall_minus_monotonic={elapsed_wall - elapsed_mono:+.0f}s", flush=True)
                 continue
             if return_code:
                 raise subprocess.CalledProcessError(return_code, command)

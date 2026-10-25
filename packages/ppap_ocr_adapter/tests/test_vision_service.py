@@ -103,7 +103,16 @@ def test_invalid_merge_diagnostic_identifies_pdf_page_without_exposing_cell_text
         "seals": [],
     }
     with patch.object(vision_service, "call_llm", return_value=invalid):
-        with pytest.raises(ValueError, match=r"Responses page 2/3: Invalid Responses merge covers nonempty evidence") as error:
+        with pytest.raises(vision_service.ResponsesEvidenceError, match=r"Responses page 2/3: Invalid Responses merge covers nonempty evidence") as error:
             vision_service._read_page(b"image", 2, 3)
+    assert error.value.code == "responses_invalid_schema"
     assert "private value" not in str(error.value)
     assert "other evidence" not in str(error.value)
+
+
+def test_page_error_preserves_invalid_json_type_without_contents():
+    failure = vision_service.ResponsesEvidenceError("responses_invalid_json", "Responses invalid JSON (output_chars=34)")
+    with patch.object(vision_service, "call_llm", side_effect=failure):
+        with pytest.raises(vision_service.ResponsesEvidenceError, match="Responses page 4/4") as error:
+            vision_service._read_page(b"image", 4, 4)
+    assert error.value.code == "responses_invalid_json"

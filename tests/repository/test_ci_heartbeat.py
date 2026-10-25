@@ -33,3 +33,15 @@ def test_heartbeat_fails_closed_when_deadline_expires(tmp_path):
             timeout=0.12,
         )
     assert error.value.returncode == 124
+
+
+def test_heartbeat_emits_wall_time_alongside_monotonic_elapsed(tmp_path, capfd):
+    run_with_heartbeat(
+        [sys.executable, "-c", "import time; time.sleep(.13)"],
+        cwd=tmp_path,
+        interval=0.04,
+        timeout=2,
+    )
+    output = capfd.readouterr().out
+    assert "CI heartbeat:" in output
+    assert "wall_elapsed=" in output
