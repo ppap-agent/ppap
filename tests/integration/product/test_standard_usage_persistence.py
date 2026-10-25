@@ -156,7 +156,11 @@ def test_standard_sdk_receipts_survive_worker_writeback_and_read_only_recovery(s
             },
         )
 
+    async def provider_async(transport, request):
+        return provider(transport, request)
+
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", provider)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", provider_async)
     content = psw_bytes()
     target, frozen = publish_and_accept(client, worker, content)
     assert provider_calls == []

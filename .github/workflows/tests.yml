@@ -478,6 +478,12 @@ jobs:
         env:
           COMPOSE_PROJECT_NAME: ${{ env.PPAP_COMPOSE_TEST }}
           PPAP_TEST_POSTGRES_PORT: "0"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          OCR_OPENAI_API_KEY: ${{ secrets.OCR_OPENAI_API_KEY }}
+          OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
+          OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
         run: |
           set -euo pipefail
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml up -d postgres --wait --wait-timeout 120
