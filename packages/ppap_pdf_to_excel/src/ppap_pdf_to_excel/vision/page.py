@@ -291,8 +291,11 @@ async def _read_batch(images: list[tuple[int, bytes, list[dict[str, Any]]]], pag
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
         for task in tasks:
-            if task.done() and not task.cancelled() and task.exception() is not None:
-                raise task.exception()
+            if not task.done() or task.cancelled():
+                continue
+            failure = task.exception()
+            if failure is not None:
+                raise failure
         return [task.result() for task in tasks]
     finally:
         for task in tasks:
