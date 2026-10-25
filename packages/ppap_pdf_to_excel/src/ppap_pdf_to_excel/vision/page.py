@@ -13,7 +13,7 @@ import fitz
 from ppap_core.settings import get_settings
 from ppap_docops.files import parse_file_size
 
-from .client import ResponsesEvidenceError, call_llm, call_llm_async
+from .client import ResponsesEvidenceError, call_llm_async
 
 logger = logging.getLogger(__name__)
 
@@ -327,26 +327,6 @@ def _reconcile_physical_merges(payload: Any, native_tables: list[dict[str, Any]]
             logger.info("Responses geometry attested: table=%d mode=%s", index + 1, alignment)
 
     return {**payload, "tables": revised} if repaired else None
-
-
-def _read_page(image: bytes, page_number: int, page_count: int) -> dict[str, Any]:
-    logger.info("Responses vision page %d/%d starting", page_number, page_count)
-    try:
-        payload = call_llm(
-            image_paths=image,
-            prompt=PAGE_PROMPT,
-            retry_count=1,
-            json_mode=True,
-            response_schema=PAGE_SCHEMA,
-        )
-    except ResponsesEvidenceError as exc:
-        raise ResponsesEvidenceError(exc.code, f"Responses page {page_number}/{page_count}: {exc}") from exc
-    try:
-        result = _validate_page(payload)
-    except ValueError as exc:
-        raise ResponsesEvidenceError("responses_invalid_schema", f"Responses page {page_number}/{page_count}: {exc}") from exc
-    logger.info("Responses vision page %d/%d complete", page_number, page_count)
-    return result
 
 
 async def _read_page_async(image: bytes, page_number: int, page_count: int, native_tables: list[dict[str, Any]]) -> dict[str, Any]:

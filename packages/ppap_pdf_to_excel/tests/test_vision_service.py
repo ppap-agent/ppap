@@ -107,9 +107,12 @@ def test_invalid_merge_diagnostic_identifies_pdf_page_without_exposing_cell_text
         "paragraphs": [],
         "seals": [],
     }
-    with patch.object(vision_service, "call_llm", return_value=invalid):
+    async def respond(**kwargs):
+        return invalid
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
         with pytest.raises(vision_service.ResponsesEvidenceError, match=r"Responses page 2/3: Invalid Responses merge covers nonempty evidence") as error:
-            vision_service._read_page(b"image", 2, 3)
+            asyncio.run(vision_service._read_page_async(b"image", 2, 3, []))
     assert error.value.code == "responses_invalid_schema"
     assert "private value" not in str(error.value)
     assert "other evidence" not in str(error.value)
@@ -117,9 +120,12 @@ def test_invalid_merge_diagnostic_identifies_pdf_page_without_exposing_cell_text
 
 def test_page_error_preserves_invalid_json_type_without_contents():
     failure = vision_service.ResponsesEvidenceError("responses_invalid_json", "Responses invalid JSON (output_chars=34)")
-    with patch.object(vision_service, "call_llm", side_effect=failure):
+    async def fail(**kwargs):
+        raise failure
+
+    with patch.object(vision_service, "call_llm_async", side_effect=fail):
         with pytest.raises(vision_service.ResponsesEvidenceError, match="Responses page 4/4") as error:
-            vision_service._read_page(b"image", 4, 4)
+            asyncio.run(vision_service._read_page_async(b"image", 4, 4, []))
     assert error.value.code == "responses_invalid_json"
 
 
