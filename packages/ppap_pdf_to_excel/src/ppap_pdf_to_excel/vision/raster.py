@@ -241,40 +241,46 @@ def mask_raster_tables(png: bytes, grids: list[RasterGrid]) -> bytes:
     return masked.tobytes()
 
 
-def make_cell_panels(png: bytes, cells: tuple[RasterCell, ...]) -> list[bytes]:
+def make_cell_panel(png: bytes, cells: tuple[RasterCell, ...]) -> bytes:
     """Label scanned cell crops *outside* their image evidence for OCR.
 
-    Up to eight full-width crops per image; each label is a physical cell ID.
-    A vision model may transcribe these crops but cannot change their layout.
+    Pack native cell crops on one compact sheet. Do not turn every small cell
+    into a 1024-pixel-wide strip or multiply the request's white padding.
+    Labels stay outside the source crop; IDs, not packing order, bind results.
     """
     image = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("Invalid scanned PDF page image")
-    panels = []
-    for start in range(0, len(cells), 8):
-        tiles: list[np.ndarray] = []
-        for cell in cells[start : start + 8]:
-            x0, y0, x1, y1 = cell.bbox
-            crop = image[y0 + 3 : y1 - 3, x0 + 3 : x1 - 3]
-            if not crop.size:
-                raise ValueError("Raster source cell is too small to transcribe")
-            ratio = min(1000 / crop.shape[1], 140 / crop.shape[0])
-            resized = cv2.resize(
-                crop,
-                (max(1, int(crop.shape[1] * ratio)), max(1, int(crop.shape[0] * ratio))),
-                interpolation=cv2.INTER_CUBIC if ratio > 1 else cv2.INTER_AREA,
-            )
-            tile = np.full((resized.shape[0] + 30, 1024, 3), 255, dtype=np.uint8)
-            cv2.putText(tile, f"CELL ID {cell.index}", (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 1, cv2.LINE_AA)
-            tile[30 : 30 + resized.shape[0], : resized.shape[1]] = resized
-            tiles.append(tile)
-        board = np.full((sum(tile.shape[0] + 5 for tile in tiles), 1024, 3), 255, dtype=np.uint8)
-        y = 0
-        for tile in tiles:
-            board[y : y + tile.shape[0]] = tile
-            y += tile.shape[0] + 5
-        encoded, result = cv2.imencode(".png", board, [cv2.IMWRITE_PNG_COMPRESSION, 4])
-        if not encoded:
-            raise ValueError("Raster crop encoding failed")
-        panels.append(result.tobytes())
-    return panels
+    placed: list[tuple[np.ndarray, int, int]] = []
+    x, y, row_height, width = 6, 6, 0, 0
+    for cell in cells:
+        x0, y0, x1, y1 = cell.bbox
+        crop = image[y0 + 3 : y1 - 3, x0 + 3 : x1 - 3]
+        if not crop.size:
+            raise ValueError("Raster source cell is too small to transcribe")
+        ratio = min(1.0, 1000 / crop.shape[1], 140 / crop.shape[0])
+        resized = cv2.resize(
+            crop,
+            (max(1, int(crop.shape[1] * ratio)), max(1, int(crop.shape[0] * ratio))),
+            interpolation=cv2.INTER_AREA,
+        )
+        label = f"CELL ID {cell.index}"
+        label_width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0][0]
+        tile = np.full((resized.shape[0] + 30, max(resized.shape[1], label_width) + 12, 3), 255, dtype=np.uint8)
+        cv2.putText(tile, label, (6, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
+        tile[25 : 25 + resized.shape[0], 6 : 6 + resized.shape[1]] = resized
+        if x + tile.shape[1] + 6 > 1024 and x > 6:
+            x, y, row_height = 6, y + row_height + 6, 0
+        placed.append((tile, x, y))
+        row_height = max(row_height, tile.shape[0])
+        width = max(width, x + tile.shape[1] + 6)
+        x += tile.shape[1] + 6
+    if not placed:
+        raise ValueError("Raster source panel has no cells")
+    board = np.full((y + row_height + 6, width, 3), 255, dtype=np.uint8)
+    for tile, left, top in placed:
+        board[top : top + tile.shape[0], left : left + tile.shape[1]] = tile
+    encoded, result = cv2.imencode(".png", board, [cv2.IMWRITE_PNG_COMPRESSION, 4])
+    if not encoded:
+        raise ValueError("Raster crop encoding failed")
+    return result.tobytes()

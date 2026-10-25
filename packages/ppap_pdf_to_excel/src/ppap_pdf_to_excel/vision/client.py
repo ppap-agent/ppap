@@ -10,7 +10,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Union
 
-from openai import AsyncOpenAI
+from openai import APITimeoutError, AsyncOpenAI
 from ppap_core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -41,16 +41,19 @@ def _get_llm_client() -> AsyncOpenAI:
 async def _request_response(kwargs: dict[str, Any]) -> Any:
     """Bound the whole asynchronous response body, not just each socket read."""
     client = _get_llm_client()
-    async with asyncio.timeout(RESPONSE_WALL_TIMEOUT_SECONDS):
-        try:
-            response = client.responses.create(**kwargs)
-            return await response if inspect.isawaitable(response) else response
-        finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                closing = close()
-                if inspect.isawaitable(closing):
-                    await closing
+    try:
+        async with asyncio.timeout(RESPONSE_WALL_TIMEOUT_SECONDS):
+            try:
+                response = client.responses.create(**kwargs)
+                return await response if inspect.isawaitable(response) else response
+            finally:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    closing = close()
+                    if inspect.isawaitable(closing):
+                        await closing
+    except (TimeoutError, APITimeoutError) as exc:
+        raise ResponsesEvidenceError("responses_timeout", "Responses request exceeded its deadline") from exc
 
 
 def _get_llm_model_name() -> str:

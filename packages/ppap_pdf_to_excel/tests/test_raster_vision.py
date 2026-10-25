@@ -12,6 +12,7 @@ import httpx
 import numpy as np
 import pytest
 from ppap_core.settings import get_settings
+from ppap_pdf_to_excel import pipeline
 from ppap_pdf_to_excel.vision import page, raster
 from ppap_pdf_to_excel.vision.local import convert_local_pdf_to_excel
 
@@ -215,18 +216,25 @@ def test_remaining_unmapped_table_is_not_silently_discarded(tmp_path):
     assert "private remaining evidence" not in str(error.value)
 
 
-def test_malformed_cell_response_is_not_retried_as_a_whole_page(tmp_path):
+@pytest.mark.parametrize("code", ["responses_invalid_json", "responses_timeout", "raster_cell_timeout"])
+def test_cell_failure_preserves_its_code_across_the_pipeline_without_retry(tmp_path, monkeypatch, code):
     path, _source = _scan(tmp_path)
     calls = []
 
     async def malformed(**kwargs):
         calls.append(kwargs["response_schema"]["name"])
-        raise page.ResponsesEvidenceError("responses_invalid_json", "Responses invalid JSON (output_chars=1708)")
+        raise page.ResponsesEvidenceError(code, "Controlled evidence failure")
 
-    with patch.object(page, "call_llm_async", side_effect=malformed), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=malformed):
-        with pytest.raises(page.ResponsesEvidenceError, match="page 1/1") as error:
-            page.VisionLayoutService().analyze_full_pdf(str(path))
-    assert error.value.code == "responses_invalid_json"
+    monkeypatch.setenv("OCR_ADAPTER_MODE", "local")
+    get_settings.cache_clear()
+    try:
+        with patch.object(page, "call_llm_async", side_effect=malformed), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=malformed):
+            result, error = pipeline._attempt_ocr(str(path), enable_cache=False)
+        assert result is None
+        assert error["error_code"] == code
+        assert "page 1/1" in error["error"]
+    finally:
+        get_settings.cache_clear()
     assert calls == ["ppap_raster_cell_evidence"]
 
 

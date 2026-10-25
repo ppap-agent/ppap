@@ -77,9 +77,10 @@ class OCRResponsesTests(TestCase):
             patch.object(llm_service, "_get_llm_model_name", return_value="test"),
             patch.object(llm_service, "RESPONSE_WALL_TIMEOUT_SECONDS", 0.02),
         ):
-            with self.assertRaises(TimeoutError):
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
                 llm_service.call_llm(b"image", "inspect", retry_count=1)
 
+        self.assertEqual(error.exception.code, "responses_timeout")
         self.assertEqual(len(calls), 1)
         self.assertEqual(cancelled, [True])
 

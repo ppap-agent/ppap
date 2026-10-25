@@ -25,15 +25,22 @@ jobs:
       OCR_OPENAI_BASE_URL: ${{ secrets.OCR_OPENAI_BASE_URL }}
       OCR_MODEL_NAME: ${{ secrets.OCR_MODEL_NAME }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          path: .ci-checkouts/${{ runner.name }}
+      - name: Assert runner-owned worktree
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
+        run: bash scripts/ci_assert_worktree.sh
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
+          working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
           version: "0.9.26"
           enable-cache: true
-      - uses: ./.github/actions/assert-docker
+      - run: bash scripts/ci_assert_docker.sh
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
       - name: Deterministic prerequisites and candidate images
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
           : "${PADDLE_OCR_URL:?canonical PDF sample needs a real Paddle endpoint, not only cached OCR}"
@@ -45,6 +52,7 @@ jobs:
             test "$revision" = "$PPAP_BUILD_SHA"
           done
       - name: Start only the independent candidate API and Worker
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
           docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml up -d --no-build --wait --wait-timeout 180 api worker
@@ -53,6 +61,7 @@ jobs:
           echo "PPAP_LIVE_API=http://$binding" >> "$GITHUB_ENV"
           docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml images --format json
       - name: One complete proof invocation, eight group acceptances maximum
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
           set -euo pipefail
           timeout 120m uv run --no-sync python -m ppap_corpus_contracts.live_poc \
@@ -60,12 +69,13 @@ jobs:
             --isolated-login --output "$RUNNER_TEMP/ppap-v3-live-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
       - name: Upload JSON and Markdown, including incomplete proof
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: v3-poc-live-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ppap-v3-live-${{ github.run_id }}-${{ github.run_attempt }}/report.*
           if-no-files-found: warn
       - name: Safe diagnostics before stopping a failed stack
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: failure()
         run: |
           set -euo pipefail
@@ -74,5 +84,6 @@ jobs:
           docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml logs --no-color --no-log-prefix --tail 100 api worker 2>&1 \
             | jq -Rc 'fromjson? | select(.event == "job_claimed" or .event == "job_completed" or .event == "job_result_discarded" or .event == "audit_lease_unknown") | {ts,level,event,git_sha,kind,outcome,error_type,round_id,job_id}'
       - name: Stop this isolated stack, retain its named test-data volumes
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: always()
         run: docker compose -f deploy/isolated-dev/compose.yaml -f deploy/isolated-dev/v3-live.yaml down --remove-orphans
