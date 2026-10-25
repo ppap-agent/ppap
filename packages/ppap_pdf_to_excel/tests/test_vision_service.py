@@ -306,3 +306,92 @@ def test_four_pdf_pages_never_exceed_two_concurrent_model_requests(tmp_path):
         pages = vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, pages=4))
     assert len(pages) == len(completed) == 4
     assert peak == 2
+
+
+def test_flattened_model_grid_uses_native_pdf_text_without_losing_any_fragment(tmp_path):
+    path = _vector_grid_pdf(tmp_path)
+    evidence = _contradictory_table()
+    # The model may create a spurious blank header row; PDF physical rows
+    # and source text, rather than the model's invented row shape, then own the grid.
+    evidence["tables"][0]["rows"].insert(3, ["", "", ""])
+
+    async def respond(**kwargs):
+        return evidence
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        pages = vision_service.VisionLayoutService().analyze_full_pdf(path)
+    assert pages[0]["tables"][0]["rows"] == [["ALPHA", "BETA", "GAMMA"], ["A2", "B2", "C2"], ["A3", "B3", "C3"]]
+    assert pages[0]["tables"][0]["merges"] == []
+
+
+def test_source_cell_alignment_rejects_unmatched_or_ambiguous_model_evidence(caplog):
+    source = [["ALPHA", "BETA", "GAMMA"], ["A2", "B2", "C2"], ["A3", "B3", "C3"]]
+    table = _contradictory_table()["tables"][0]
+    table["rows"][0][1] = "private hallucinated evidence"
+    with caplog.at_level("WARNING"):
+        result = vision_service._reconcile_physical_merges(
+            {"tables": [table], "paragraphs": [], "seals": []},
+            [{"rows": source, "merges": []}],
+        )
+    assert result is None
+    assert "missing_or_ambiguous_source_text" in caplog.text
+    assert "private hallucinated evidence" not in caplog.text
+
+
+def test_source_cell_alignment_keeps_original_merged_cell_text():
+    native = [
+        ["ALPHA BETA", None, "GAMMA"],
+        ["A2", "B2", "C2"],
+        ["A3", "B3", "C3"],
+    ]
+    attested = {"tables": [_contradictory_table()["tables"][0]], "paragraphs": [], "seals": []}
+    repaired = vision_service._reconcile_physical_merges(
+        attested,
+        [{"rows": native, "merges": [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}]}],
+    )
+    assert repaired is not None
+    assert repaired["tables"][0]["rows"][0] == ["ALPHA BETA", "", "GAMMA"]
+    assert repaired["tables"][0]["merges"] == [{"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1}]
+
+
+def test_staggered_source_columns_preserve_native_colspans_without_model_guess(tmp_path):
+    path = tmp_path / "staggered.pdf"
+    with fitz.open() as document:
+        page = document.new_page(width=360, height=220)
+        for y in (30, 70, 110, 150):
+            page.draw_line((20, y), (320, y))
+        for x in (20, 220, 320):
+            page.draw_line((x, 30), (x, 150))
+        page.draw_line((170, 30), (170, 70))
+        page.draw_line((120, 70), (120, 150))
+        for word, position in (
+            ("ALPHA", (26, 49)),
+            ("BETA", (177, 49)),
+            ("GAMMA", (238, 49)),
+            ("A2", (26, 89)),
+            ("B2", (145, 89)),
+            ("C2", (235, 89)),
+            ("A3", (26, 129)),
+            ("B3", (145, 129)),
+            ("C3", (235, 129)),
+        ):
+            page.insert_text(position, word, fontsize=10)
+        document.save(path)
+
+    with fitz.open(path) as original:
+        sources = vision_service._native_table_candidates(original[0])
+    assert len(sources) == 1
+    assert sources[0]["rows"] == [
+        ["ALPHA", "", "BETA", "GAMMA"],
+        ["A2", "B2", "", "C2"],
+        ["A3", "B3", "", "C3"],
+    ]
+    assert {"start_row": 0, "start_col": 0, "end_row": 0, "end_col": 1} in sources[0]["merges"]
+    assert {"start_row": 1, "start_col": 1, "end_row": 1, "end_col": 2} in sources[0]["merges"]
+
+    async def respond(**kwargs):
+        return _contradictory_table()
+
+    with patch.object(vision_service, "call_llm_async", side_effect=respond):
+        pages = vision_service.VisionLayoutService().analyze_full_pdf(str(path))
+    assert pages[0]["tables"][0] == sources[0]

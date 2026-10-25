@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -125,115 +126,206 @@ def _boundary_index(value: float, bounds: list[float]) -> int:
 
 
 def _native_table_candidates(page: fitz.Page) -> list[dict[str, Any]]:
-    """Accept only real PDF vector-table cell rectangles as merge evidence.
+    """Build complete fine-grained cell grids from the PDF's drawn rectangles.
 
-    Geometry extraction and source text reading occur on the PDF owning thread.
-    Model output is never allowed to create borders; unidentifiable grids stay
-    unverified rather than being mapped to the wrong table.
+    This is deliberately independent of the language model's row/column count.
+    A PDF with staggered header/body column boundaries can contain genuine
+    physical spans even when the model flattens those rows differently.
     """
     try:
         tables = page.find_tables(strategy="lines").tables
     except Exception as exc:
-        logger.info("PDF vector table geometry unavailable: error_type=%s", type(exc).__name__)
+        logger.warning("PDF source-grid extraction failed: error_type=%s", type(exc).__name__)
         return []
 
     candidates: list[dict[str, Any]] = []
     for table in tables:
-        height, width = table.row_count, table.col_count
-        if not 0 < height <= 500 or not 0 < width <= 100:
+        if not 0 < table.row_count <= 500 or not 0 < table.col_count <= 100:
             continue
         cells = [list(row.cells) for row in table.rows]
-        if len(cells) != height or any(len(row) != width for row in cells):
+        if len(cells) != table.row_count or any(len(row) != table.col_count for row in cells):
             continue
         rectangles = [rect for row in cells for rect in row if rect is not None]
         if not rectangles:
             continue
         xs = _grid_bounds([float(rect[i]) for rect in rectangles for i in (0, 2)])
         ys = _grid_bounds([float(rect[i]) for rect in rectangles for i in (1, 3)])
-        if len(xs) != width + 1 or len(ys) != height + 1:
-            continue
-
-        merges: list[dict[str, int]] = []
-        covered: set[tuple[int, int]] = set()
-        valid = True
-        for row_index, row in enumerate(cells):
-            for col_index, rect in enumerate(row):
-                if rect is None:
-                    continue
-                left, top, right, bottom = (_boundary_index(float(rect[i]), axis) for i, axis in ((0, xs), (1, ys), (2, xs), (3, ys)))
-                if left != col_index or top != row_index or right <= left or bottom <= top:
-                    valid = False
-                    break
-                if right > width or bottom > height:
-                    valid = False
-                    break
-                for r in range(top, bottom):
-                    for c in range(left, right):
-                        if (r, c) in covered or ((r, c) != (row_index, col_index) and cells[r][c] is not None):
-                            valid = False
-                            break
-                        covered.add((r, c))
-                    if not valid:
-                        break
-                if not valid:
-                    break
-                if right > left + 1 or bottom > top + 1:
-                    merges.append({"start_row": top, "start_col": left, "end_row": bottom - 1, "end_col": right - 1})
-            if not valid:
-                break
-        if not valid or len(covered) != height * width:
+        height, width = len(ys) - 1, len(xs) - 1
+        if not 0 < height <= 500 or not 0 < width <= 100:
             continue
         try:
             extracted = table.extract()
         except Exception as exc:
             logger.info("PDF vector table text unavailable: error_type=%s", type(exc).__name__)
             continue
-        if len(extracted) != height or any(len(row) != width for row in extracted):
+        if len(extracted) != len(cells) or any(len(row) != len(original) for row, original in zip(cells, extracted, strict=True)):
             continue
-        candidates.append({"rows": extracted, "merges": merges})
+
+        # Rebuild from original rectangle coordinates, not from the table
+        # finder's inferred column indices. Header and body can have distinct
+        # subdivisions: the union of physical bounds is the common fine grid.
+        rows = [["" for _ in range(width)] for _ in range(height)]
+        merges: list[dict[str, int]] = []
+        covered: set[tuple[int, int]] = set()
+        valid = True
+        for rectangles_row, text_row in zip(cells, extracted, strict=True):
+            for rect, content in zip(rectangles_row, text_row, strict=True):
+                if rect is None:
+                    if content:
+                        valid = False
+                    continue
+                left, top, right, bottom = (_boundary_index(float(rect[i]), axis) for i, axis in ((0, xs), (1, ys), (2, xs), (3, ys)))
+                if left < 0 or top < 0 or not (left < right <= width) or not (top < bottom <= height):
+                    valid = False
+                    break
+                for row_index in range(top, bottom):
+                    for col_index in range(left, right):
+                        if (row_index, col_index) in covered:
+                            valid = False
+                            break
+                        covered.add((row_index, col_index))
+                    if not valid:
+                        break
+                if not valid:
+                    break
+                if rows[top][left]:
+                    valid = False
+                    break
+                rows[top][left] = str(content or "")
+                if right - left > 1 or bottom - top > 1:
+                    merges.append({"start_row": top, "start_col": left, "end_row": bottom - 1, "end_col": right - 1})
+            if not valid:
+                break
+        if not valid or len(covered) != height * width:
+            continue
+        # Prohibit double-writing any independently positioned source text.
+        try:
+            _validate_page({"tables": [{"rows": rows, "merges": merges}], "paragraphs": [], "seals": []})
+        except ValueError:
+            continue
+        candidates.append({"rows": rows, "merges": merges})
+
+    if not candidates:
+        # Safe metadata only; extraction APIs may themselves fail on bad PDFs.
+        try:
+            drawings_count = len(page.get_drawings())
+            word_count = len(page.get_text("words"))
+        except Exception:
+            drawings_count = word_count = -1
+        logger.warning("PDF source grid unavailable: found_tables=%d vector_drawings=%d text_words=%d", len(tables), drawings_count, word_count)
     return candidates
 
 
+def _canonical_source_text(value: str | None) -> str:
+    """Normalize transport whitespace only; never generate missing evidence."""
+    return "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold()
+
+
 def _geometry_text_matches(rows: list[list[str]], native: list[list[str | None]]) -> bool:
-    """Require multiple independent original-PDF text witnesses for alignment."""
+    """Exact row/column mapping with every nonempty original text accounted for."""
     if len(rows) != len(native) or any(len(row) != len(source) for row, source in zip(rows, native, strict=True)):
         return False
     matched: list[tuple[int, int]] = []
     for row_index, (row, source) in enumerate(zip(rows, native, strict=True)):
         for col_index, (cell, original) in enumerate(zip(row, source, strict=True)):
-            original_text = "".join(str(original or "").split()).casefold()
+            original_text = _canonical_source_text(original)
             if not original_text:
                 continue
-            if not isinstance(cell, str) or "".join(cell.split()).casefold() != original_text:
+            if not isinstance(cell, str) or _canonical_source_text(cell) != original_text:
                 return False
             matched.append((row_index, col_index))
     return len(matched) >= 3 and len({r for r, _ in matched}) >= 2 and len({c for _, c in matched}) >= 2
 
 
+def _source_cell_alignment(model_rows: list[list[str]], native_rows: list[list[str | None]]) -> tuple[bool, str]:
+    """Prove text survival across a flattened/model-resegmented native PDF grid.
+
+    A source cell can legitimately contain multiple textual fragments that the
+    model incorrectly placed into distinct rows/columns. Every nonempty model
+    fragment must have exactly one source-PDF cell as a witness; otherwise we
+    cannot replace its model grid without risking a document-evidence loss.
+    """
+    if not model_rows or not native_rows:
+        return False, "empty_grid"
+    source = [(row, col, _canonical_source_text(value)) for row, cells in enumerate(native_rows) for col, value in enumerate(cells) if _canonical_source_text(value)]
+    model = [_canonical_source_text(value) for row in model_rows for value in row if isinstance(value, str) and _canonical_source_text(value)]
+    if len(source) < 4 or len(model) < 4:
+        return False, "insufficient_witnesses"
+
+    matched: set[tuple[int, int]] = set()
+    for value in model:
+        # Fragment matches are permitted only within a longer source-PDF text
+        # cell, and not for very short ambiguous labels such as 'SC' or '产品'.
+        occurrences = [(row, col) for row, col, candidate in source if candidate == value or (len(value) >= 4 and value in candidate)]
+        if len(occurrences) != 1:
+            return False, "missing_or_ambiguous_source_text"
+        matched.add(occurrences[0])
+
+    if len(matched) < 4 or len({r for r, _ in matched}) < 2 or len({c for _, c in matched}) < 2:
+        return False, "insufficient_independent_coordinates"
+    return True, "source_cell_text_proven"
+
+
 def _reconcile_physical_merges(payload: Any, native_tables: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Replace conflicting model merges only if one real PDF grid proves them wrong."""
-    if not native_tables or not isinstance(payload, dict) or not isinstance(payload.get("tables"), list):
+    """Use uniquely attested native cell geometry, never a guessed model span."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("tables"), list):
         return None
+    if not native_tables:
+        logger.warning("Responses geometry repair unavailable: reason=no_native_vector_grid, model_tables=%d", len(payload["tables"]))
+        return None
+
     revised = list(payload["tables"])
     repaired = 0
     for index, table in enumerate(payload["tables"]):
-        if not isinstance(table, dict):
+        if not isinstance(table, dict) or not isinstance(table.get("rows"), list):
             return None
         try:
             _validate_page({"tables": [table], "paragraphs": [], "seals": []})
         except ValueError as exc:
             if not str(exc).startswith("Invalid Responses merge covers nonempty evidence"):
+                logger.warning("Responses geometry repair refused: reason=non_merge_schema_error, table=%d", index + 1)
                 return None
-            matches = [item for item in native_tables if _geometry_text_matches(table["rows"], item["rows"])]
-            if len(matches) != 1:
+
+            strict = [item for item in native_tables if _geometry_text_matches(table["rows"], item["rows"])]
+            if len(strict) > 1:
+                logger.warning("Responses geometry repair refused: reason=multiple_exact_source_grids table=%d", index + 1)
                 return None
-            candidate = {**table, "merges": matches[0]["merges"]}
+            if len(strict) == 1:
+                # Same grid: retain every model cell; only physical merge ranges
+                # are authoritative.
+                candidate = {**table, "merges": strict[0]["merges"]}
+                alignment = "same_grid"
+            else:
+                # Different row/column segmentation: use the actual original-PDF
+                # text and cell geometry only if all model evidence survives.
+                evaluations = [(item, *_source_cell_alignment(table["rows"], item["rows"])) for item in native_tables]
+                verified = [item for item, accepted, _reason in evaluations if accepted]
+                if len(verified) != 1:
+                    reasons = sorted({reason for _item, accepted, reason in evaluations if not accepted})
+                    if len(verified) > 1:
+                        reasons.append("multiple_native_grids")
+                    logger.warning(
+                        "Responses geometry repair refused: reasons=%s table=%d native_candidates=%d model_rows=%d source_shapes=%s",
+                        reasons,
+                        index + 1,
+                        len(native_tables),
+                        len(table["rows"]),
+                        [(len(item["rows"]), max((len(row) for row in item["rows"]), default=0)) for item in native_tables[:6]],
+                    )
+                    return None
+                native = verified[0]
+                candidate = {**table, "rows": [[str(value or "") for value in row] for row in native["rows"]], "merges": native["merges"]}
+                alignment = "source_grid"
+
             try:
                 _validate_page({"tables": [candidate], "paragraphs": [], "seals": []})
-            except ValueError:
+            except ValueError as invalid:
+                logger.warning("Responses geometry repair refused: reason=source_grid_validation_failed error_type=%s table=%d", type(invalid).__name__, index + 1)
                 return None
             revised[index] = candidate
             repaired += 1
+            logger.info("Responses geometry attested: table=%d mode=%s", index + 1, alignment)
+
     return {**payload, "tables": revised} if repaired else None
 
 
