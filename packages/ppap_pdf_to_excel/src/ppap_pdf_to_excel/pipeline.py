@@ -165,10 +165,10 @@ def _attempt_ocr(
             return artifact.excel_path, None
         raw_error = str((artifact.raw_meta or {}).get("error", "") or "")
         if raw_error:
-            return None, {
-                "error_code": ERROR_OCR_EXCEPTION,
-                "error": raw_error,
-            }
+            error_code = str((artifact.raw_meta or {}).get("error_code", "") or "")
+            if not error_code.startswith("responses_"):
+                error_code = ERROR_OCR_EXCEPTION
+            return None, {"error_code": error_code, "error": raw_error}
         return None, {
             "error_code": ERROR_OCR_EMPTY,
             "error": "empty_result",

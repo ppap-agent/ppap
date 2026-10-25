@@ -81,3 +81,27 @@ class OCRResponsesTests(TestCase):
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(cancelled, [True])
+
+    def test_invalid_json_returns_typed_error_without_retried_or_logged_evidence(self):
+        private = "secret-document-evidence"
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(status="completed", output_text='{"text":"' + private)))
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", return_value="test"),
+            self.assertLogs("ppap_ocr_adapter.doc_cache.llm_service", level="WARNING") as logs,
+        ):
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
+                llm_service.call_llm(b"image", "inspect", retry_count=1, json_mode=True)
+        self.assertEqual(error.exception.code, "responses_invalid_json")
+        self.assertNotIn(private, str(error.exception))
+        self.assertNotIn(private, "\n".join(logs.output))
+
+    def test_non_object_json_fails_closed(self):
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(status="completed", output_text="[1, 2]")))
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", return_value="test"),
+        ):
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
+                llm_service.call_llm(b"image", "inspect", retry_count=1, json_mode=True)
+        self.assertEqual(error.exception.code, "responses_non_object")

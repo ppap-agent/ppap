@@ -9,6 +9,7 @@ Scope kept intentionally small (KISS):
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import html
 import json
@@ -17,8 +18,9 @@ import os
 import sqlite3
 import tempfile
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import unquote, urlparse
 
 import openpyxl
@@ -79,6 +81,19 @@ def _compute_md5(path: str) -> str:
         for chunk in iter(lambda: file.read(8192), b""):
             md5.update(chunk)
     return md5.hexdigest()
+
+
+@contextmanager
+def _conversion_lock(file_id: str) -> Iterator[None]:
+    """Serialize a cache key across threads and processes, including the cache recheck."""
+    lock_dir = os.path.join(_oss_dir(), "locks")
+    os.makedirs(lock_dir, exist_ok=True)
+    with open(os.path.join(lock_dir, f"{file_id}.lock"), "a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _safe_remove(path: str | None) -> None:
@@ -308,19 +323,27 @@ def _run_pipeline(pdf_path: str, file_id: str) -> dict[str, Any]:
 def _process_pdf(pdf_path: str, source_hash: str, enable_cache: bool) -> dict[str, Any]:
     file_id = _compute_md5(pdf_path)
 
-    if enable_cache:
-        _ensure_db()
+    if not enable_cache:
+        return _run_pipeline(pdf_path, file_id)
+
+    _ensure_db()
+    with _conversion_lock(file_id):
+        # Recheck while holding the process-wide lock. Only the winner converts.
         cached = _lookup_cache(source_hash, file_id)
         if cached is not None:
             logger.info("OCR cache hit: %s", source_hash)
             return cached
 
-    result = _run_pipeline(pdf_path, file_id)
-
-    if enable_cache and _is_cacheable_result(result):
-        _store_cache(source_hash, file_id, result)
-
-    return result
+        result = _run_pipeline(pdf_path, file_id)
+        if _is_cacheable_result(result):
+            try:
+                _store_cache(source_hash, file_id, result)
+            except BaseException:
+                # An uncommitted result must not leave unreferenced artifacts.
+                _safe_remove(str(result.get("excel_path", "") or ""))
+                _safe_remove(str(result.get("html_path", "") or ""))
+                raise
+        return result
 
 
 def process_local_pdf(pdf_path: str, enable_cache: bool = True) -> dict[str, Any]:

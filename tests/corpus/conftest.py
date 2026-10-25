@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -106,3 +107,13 @@ def pytest_make_parametrize_id(config: Any, val: Any, argname: Any) -> Any:
     if hasattr(val, "file_name"):
         return val.file_name
     return None
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Write assertion evidence immediately; canceled xdist runs lose the final summary."""
+    if report.when != "call" or not report.failed:
+        return
+    # No raw provider response payload: only pytest's existing failure traceback.
+    detail = str(report.longreprtext)
+    print(f"\nCI corpus case failure: {report.nodeid}\n{detail[:12000]}\n", file=sys.stderr, flush=True)

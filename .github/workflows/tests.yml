@@ -386,10 +386,10 @@ jobs:
             # test_v2_assets cases. Per-worker writable extraction caches are isolated.
             PPAP_CORPUS_XDIST_ISOLATE_OCR=1 python3 -m scripts.ci_heartbeat --timeout 2400 -- \
               uv run --no-sync pytest tests/corpus/v2_assets --ftype pdf -q -n 2 \
-                --dist=load --max-worker-restart=0 --durations=25 -vv -o faulthandler_timeout=120
+                --dist=load --max-worker-restart=0 --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           else
             python3 -m scripts.ci_heartbeat --timeout 1800 -- \
-              uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120
+              uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           fi
       - name: Assert Docker
         if: ${{ matrix.mode == 'psw' }}
@@ -416,7 +416,9 @@ jobs:
             -f tests/corpus/Dockerfile.psw \
             -t "ppap-psw-test:${PPAP_BUILD_SHA}" \
             .
+          mkdir -p ci-report
           python3 -m scripts.ci_heartbeat --timeout 1800 -- docker run --rm \
+            -v "$PWD/ci-report:/ci-report" \
             -e OPENAI_API_KEY \
             -e OPENAI_BASE_URL \
             -e MODEL_NAME \
@@ -426,7 +428,16 @@ jobs:
             -e OCR_OPENAI_BASE_URL \
             -e OCR_MODEL_NAME \
             "ppap-psw-test:${PPAP_BUILD_SHA}" \
-            pytest tests/corpus/psw -vv --durations=25 -o faulthandler_timeout=120
+            pytest tests/corpus/psw -vv --durations=25 -o faulthandler_timeout=120 --junitxml=/ci-report/junit.xml
+
+      - name: Upload corpus failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: corpus-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/corpus-${{ matrix.name }}/ci-report/
+          if-no-files-found: ignore
+          retention-days: 7
 
   integration:
     name: Product integration
@@ -475,7 +486,7 @@ jobs:
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml run --rm init-db
           # Keep the long DB suite visible to the runner and cap its lifetime.
           python3 -m scripts.ci_heartbeat --timeout 2400 -- \
-            uv run --no-sync pytest tests/integration/product -vv --durations=25 -o faulthandler_timeout=120
+            uv run --no-sync pytest tests/integration/product -vv --durations=25 -o faulthandler_timeout=120 --junitxml=ci-report/product.xml
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
       - name: Bake canonical api, worker, and web images
         run: |
@@ -543,6 +554,15 @@ jobs:
           docker compose -p "$PPAP_COMPOSE_E2E" -f deploy/isolated-dev/compose.yaml \
             down -v --remove-orphans || failed=1
           exit "$failed"
+
+      - name: Upload integration failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/.ci-checkouts/${{ github.run_id }}-${{ github.run_attempt }}/integration/ci-report/
+          if-no-files-found: ignore
+          retention-days: 7
 
   ci_gate:
     name: CI Gate

@@ -401,3 +401,23 @@ PDF/V3 的 19-BLANC 控制计划规则 4 曾返回 `NG`：第 13 行存在特殊
 PDF 的长耗时堆栈指向 `ppap_excel_audit_engine/checkers/client.py` 的视觉模型 Responses HTTP，而非 xdist 或新 `vision_service.py` 进程池。视觉审核现在每次请求最长等待 120 秒并禁用 SDK/应用层重试；超时保持显式错误，不重放已经接收但回复未知的请求，也不凭空写入 PASS。文本模型调用继续保持既有行为。Web Preview 保留双 worker，但 Node 控制器每 30 秒输出心跳；Product DB 集成测试加上 `-vv`、Python faulthandler 与 30 秒心跳，避免 Runner 长时间没有输出时无法判断是否仍在运行。日志不写入原始用户文件或模型输出。
 
 后续验收必须检查同一 HEAD 下 Repository、Core wheel、V3 Corpus、V2 PDF 和 E2E 的完整结果以及 CI Gate，区分确定性逻辑回归与 self-hosted Runner 错误状态；不能借由恢复旧 Paddle 路径或调整 oracle 让检查变绿。
+
+
+### Runner `_work/_temp` 隔离与时间异常的宿主机验收
+
+CI Runs 40144000524、40191627479 证明 `cursor` 与 `cursor-ppap` 注册实例都曾引用
+`/home/ubuntu/actions-runner-ppap/_work/_temp`；job-specific checkout 并不能隔离 Runner 初始化、
+checkout/post-job 使用的临时目录。管理员必须在宿主机执行以下维护，不能用 job 内
+`RUNNER_TEMP` 覆盖替代：
+
+1. 暂停将新 Job 分配给两个 Runner；等待活动 Job 结束。通过 `systemctl list-units '*actions.runner*'` 和各服务 `systemctl cat` 确认实际安装目录及服务账号。
+2. 用 `readlink -f`、`stat -Lc '%d:%i %n'` 比较两实例的 `_work`、`_work/_temp`、`_work/_tool` 与 checkout 根目录；**不同 Runner 不能共享这些可写路径**，符号链接也算共享。
+3. 在维护窗口为每个 Runner 指定独立 work root（通过该 Runner 的受支持配置或重新注册参数设置），迁移前保存诊断并验证目录所有权、磁盘空间以及旧 checkout 的安全清理；不得在有 Job 运行时直接删除共享目录。
+4. 重新启动后同时运行两个只写各自临时路径的受控 Job，验证 `RUNNER_TEMP` 的物理路径/inode 不相同，彼此的文件在另一个 Job 初始化、checkout、cleanup 期间仍存在。收集两个服务的 `_diag` 及 `journalctl`、`date -u`、`timedatectl`、`/proc/uptime`；不得把日志时钟跳跃直接认定为系统休眠。
+5. 新 `scripts/ci_heartbeat.py` 同时输出 monotonic 与 wall-clock elapsed，在两者差距超过 45 秒时留下显式诊断。对照 GitHub 时间戳、宿主机日志及 NTP 记录后才能归因于时钟、Runner 或虚拟化暂停。
+
+宿主机服务配置没有纳入仓库 Git 历史；只有运维完成上述独立工作根验收，才可声明 Runner
+共享临时目录风险关闭。不要以减少 PDF/浏览器 pytest worker、跳过 oracle 或放宽 CI Gate 作为替代。
+
+Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误及 JUnit 工件保留失败证据。
+被平台取消的 Job 不保证 pytest 有机会写出最终 JUnit，因此仍需 Runner `_diag` 和心跳时间线。

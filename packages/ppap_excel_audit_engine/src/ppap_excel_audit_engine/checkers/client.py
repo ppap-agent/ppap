@@ -1,5 +1,6 @@
 """AI客户端 - 统一管理OpenAI连接和基础配置"""
 
+import asyncio
 import atexit
 import json
 import logging
@@ -8,6 +9,7 @@ import time
 from collections import deque
 from typing import Any, Dict, List, Optional
 
+from openai import AsyncOpenAI
 from openai import OpenAI as BaseOpenAI
 from ppap_core.settings import get_settings
 from ppap_core.token_tracker import record_token_usage, record_unreported_usage
@@ -17,6 +19,17 @@ logger = logging.getLogger(__name__)
 
 class _InvalidAIResponseError(RuntimeError):
     """Raised when AI response schema is incomplete and may be transient."""
+
+
+async def _bounded_visual_request(settings: Any, kwargs: dict[str, Any], timeout: float) -> Any:
+    """Use cancellation to bound an entire provider response, not one socket read."""
+    async with asyncio.timeout(timeout):
+        async with AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL or None,
+            max_retries=0,
+        ) as client:
+            return await client.responses.create(**kwargs)
 
 
 def _parse_extra_body(raw: str) -> Dict[str, Any] | None:
@@ -231,7 +244,12 @@ class AIClient:
                 # 应用速率限制（每次请求都需要遵守）
                 self._wait_for_rate_limit()
                 try:
-                    response = request_client.responses.create(**request_kwargs)
+                    if request_timeout is not None and isinstance(self.client, BaseOpenAI):
+                        # Only real SDK clients take the cancellable transport path.
+                        # Lightweight injected test clients preserve their public stub API.
+                        response = asyncio.run(_bounded_visual_request(self.settings, request_kwargs, request_timeout))
+                    else:
+                        response = request_client.responses.create(**request_kwargs)
                 except Exception:
                     record_unreported_usage()
                     raise

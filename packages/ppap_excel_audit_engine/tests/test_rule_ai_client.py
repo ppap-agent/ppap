@@ -292,3 +292,66 @@ def test_visual_provider_timeout_is_one_failed_attempt_without_hidden_retries():
     assert usage["unreported_calls_count"] == 1
     assert "private-visual-provider" not in "\n".join(logs.output)
     assert "private-document" not in "\n".join(logs.output)
+
+
+def test_visual_async_request_cancels_response_body_with_one_provider_call():
+    import asyncio
+    from unittest.mock import patch
+
+    from ppap_excel_audit_engine.checkers import client as client_module
+
+    calls = []
+    cancelled = []
+    closed = []
+
+    async def slow_create(**kwargs):
+        calls.append(kwargs)
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    class FakeAsyncClient:
+        responses = SimpleNamespace(create=slow_create)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            closed.append(True)
+
+    with patch.object(client_module, "AsyncOpenAI", return_value=FakeAsyncClient()):
+        with unittest.TestCase().assertRaises(TimeoutError):
+            asyncio.run(
+                client_module._bounded_visual_request(
+                    SimpleNamespace(OPENAI_API_KEY="unit-test-token", OPENAI_BASE_URL="https://example.invalid/v1"),
+                    {"model": "unit-test"},
+                    0.02,
+                )
+            )
+    assert calls == [{"model": "unit-test"}]
+    assert cancelled == [True]
+    assert closed == [True]
+
+
+def test_visual_provider_uses_bounded_async_path_with_real_sdk_type_simulated():
+    from unittest.mock import patch
+
+    from ppap_excel_audit_engine.checkers import client as client_module
+
+    sdk = SDK(SimpleNamespace(status="completed", output_text="verified"))
+    client = RuleAIClientTests().client(sdk)
+
+    async def provider(settings, kwargs, timeout):
+        assert timeout == 120
+        assert kwargs["timeout"] == 120
+        return SimpleNamespace(status="completed", output_text="verified")
+
+    with (
+        patch.object(client_module, "BaseOpenAI", SDK),
+        patch.object(client_module, "_bounded_visual_request", side_effect=provider),
+    ):
+        assert client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"]) == "verified"
+    assert sdk.direct_calls == 0
+    assert sdk.options == [{"max_retries": 0}]

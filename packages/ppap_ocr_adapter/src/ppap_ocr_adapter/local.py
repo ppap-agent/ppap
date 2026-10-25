@@ -110,7 +110,11 @@ class LocalOcrAdapter(OcrAdapter):
             )
         except Exception as exc:
             log.error("Local OCR PDF->Excel failed: %s", exc)
+            diagnostics = {"error": str(exc)}
+            code = getattr(exc, "code", None)
+            if isinstance(code, str) and code.startswith("responses_"):
+                diagnostics["error_code"] = code
             return OcrArtifact(
                 provider="local_ocr_doc_cache",
-                raw_meta={"error": str(exc)},
+                raw_meta=diagnostics,
             )

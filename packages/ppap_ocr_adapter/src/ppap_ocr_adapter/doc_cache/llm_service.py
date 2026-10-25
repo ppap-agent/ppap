@@ -16,6 +16,14 @@ from ppap_core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+class ResponsesEvidenceError(ValueError):
+    """A failed provider evidence contract, with a stable non-secret failure code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
 # A request's client is owned by one event loop and always closed at completion.
 # Sharing an async client's connection pool across per-page thread event loops is unsafe.
 RESPONSE_WALL_TIMEOUT_SECONDS = 120
@@ -114,9 +122,12 @@ def call_llm(
     for attempt in range(retry_count):
         try:
             response = asyncio.run(_request_response(kwargs))
-            if response.status != "completed" or not response.output_text.strip():
-                raise RuntimeError("AI response did not complete with text")
-            content_text = response.output_text
+            status = getattr(response, "status", None)
+            if status != "completed":
+                raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {str(status)[:40]}")
+            content_text = getattr(response, "output_text", None)
+            if not isinstance(content_text, str) or not content_text.strip():
+                raise ResponsesEvidenceError("responses_empty_text", "Responses completed without nonempty text")
 
             # 如果是 JSON 模式，尝试解析为字典返回
             if json_mode:
@@ -124,11 +135,13 @@ def call_llm(
                     # === 这里调用清洗函数 ===
                     clean_content = _clean_json_response(content_text)
                     parsed = json.loads(clean_content)
-                    return parsed if isinstance(parsed, dict) else {"error": "Invalid JSON"}
-                except json.JSONDecodeError:
-                    logger.warning("Responses returned invalid JSON; rejecting untrusted model output")
-                    # 可以在这里做简单的清理重试，或者直接抛出
-                    return {"error": "Invalid JSON"}
+                except json.JSONDecodeError as exc:
+                    # Never log or persist provider output: it may include document data.
+                    logger.warning("Responses invalid JSON: output_chars=%d", len(clean_content))
+                    raise ResponsesEvidenceError("responses_invalid_json", f"Responses invalid JSON (output_chars={len(clean_content)})") from exc
+                if not isinstance(parsed, dict):
+                    raise ResponsesEvidenceError("responses_non_object", "Responses JSON root is not an object")
+                return parsed
 
             return content_text
 
