@@ -24,6 +24,15 @@ class ResponsesEvidenceError(RuntimeError):
         super().__init__(message)
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ResponsesEvidenceError("responses_duplicate_key", "Responses JSON contains a repeated object key")
+        result[key] = value
+    return result
+
+
 # A request's client is owned by one event loop and always closed at completion.
 # Sharing an async client's connection pool across per-page thread event loops is unsafe.
 RESPONSE_WALL_TIMEOUT_SECONDS = 120
@@ -138,7 +147,7 @@ async def call_llm_async(
                 try:
                     # === 这里调用清洗函数 ===
                     clean_content = _clean_json_response(content_text)
-                    parsed = json.loads(clean_content)
+                    parsed = json.loads(clean_content, object_pairs_hook=_unique_object)
                 except json.JSONDecodeError as exc:
                     # Never log or persist provider output: it may include document data.
                     details = getattr(response, "incomplete_details", None)

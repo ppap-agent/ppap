@@ -2357,7 +2357,18 @@ class AuditPreviewTests(unittest.TestCase):
             page.set_default_timeout(5000)
             page.clock.install()
             page.goto(PREVIEW + "/preview/audit.html?scene=restore-observe-unresolved&task=preview-recovery-task")
-            expect(page.get_by_role("status").filter(has_text="审核中 · 文件已结束 1/3")).to_be_visible()
+            try:
+                expect(page.get_by_role("status").filter(has_text="审核中 · 文件已结束 1/3")).to_be_visible()
+            except AssertionError as failure:
+                # Fixed UI-only fixture labels, never production page content.
+                initial = {
+                    "document": page.evaluate("({ready: document.readyState, visibility: document.visibilityState})"),
+                    "statuses": page.get_by_role("status", include_hidden=True).all_text_contents(),
+                    "alerts": page.get_by_role("alert").all_text_contents(),
+                    "headings": page.get_by_role("heading").all_text_contents(),
+                    "pending_fixture_reads": page.get_by_role("button", name=re.compile("返回示例读取")).all_text_contents(),
+                }
+                raise AssertionError("Unknown-report initial fixture state: " + json.dumps(initial, ensure_ascii=False)) from failure
             page.clock.fast_forward(30000)
             page.evaluate("window.dispatchEvent(new Event('focus'))")
             expect(page.get_by_role("button", name=re.compile("返回示例读取"))).to_have_count(0)
