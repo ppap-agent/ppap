@@ -15,7 +15,8 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from ppap_core.audits import ANALYSIS_DEEP, ANALYSIS_MODES, ANALYSIS_STANDARD, EXECUTOR_DEEP, EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION
+from ppap_core.audits import ANALYSIS_DEEP, ANALYSIS_MODES, ANALYSIS_STANDARD, EXECUTOR_DEEP, EXECUTOR_STANDARD
+from ppap_core.standard_policy import StandardExecutionPolicy
 
 from ppap_corpus_contracts.acceptance_report import write_acceptance_report
 from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, REPO_ROOT, build_bundle_map, load_poc_cases
@@ -144,15 +145,25 @@ def _publish(client, seq, cases, run, save, timeout, interval):
     return published
 
 
-def _frozen_inputs(result, draft_id, items, rules, analysis_mode, frozen_execution=None):
+def _frozen_inputs(result, draft_id, items, rules, analysis_mode, candidate_sha, frozen_execution=None):
     if result.get("source_draft_id") != draft_id or result.get("analysis_mode") != analysis_mode:
         raise LiveError("round_identity_mismatch")
     executor = EXECUTOR_DEEP if analysis_mode == ANALYSIS_DEEP else EXECUTOR_STANDARD
     revision = result.get("executor_revision")
-    revision_valid = isinstance(revision, str) and bool(re.fullmatch(r"[0-9a-f]{64}", revision)) if analysis_mode == ANALYSIS_DEEP else revision == STANDARD_EXECUTOR_REVISION
-    if result.get("executor") != executor or not revision_valid:
+    if result.get("executor") != executor:
         raise LiveError("frozen_executor_mismatch")
     execution = {"analysis_mode": analysis_mode, "executor": executor, "executor_revision": revision}
+    if analysis_mode == ANALYSIS_DEEP:
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+            raise LiveError("frozen_executor_mismatch")
+    else:
+        try:
+            policy = StandardExecutionPolicy.model_validate(result.get("execution_policy"))
+        except ValueError:
+            raise LiveError("frozen_executor_mismatch") from None
+        if policy.app_revision != candidate_sha or revision != policy.engine_revision():
+            raise LiveError("frozen_executor_mismatch")
+        execution["execution_policy"] = policy.model_dump(mode="json")
     if frozen_execution is not None and execution != frozen_execution:
         raise LiveError("frozen_executor_mismatch")
     actual = result.get("inputs") or []
@@ -326,13 +337,13 @@ def run_live(
                 round_id = accepted["id"]
                 run["operations"][-1]["round_id"] = round_id
                 save()
-                execution = _frozen_inputs(accepted, draft_id, items, by_rule, analysis_mode)
+                execution = _frozen_inputs(accepted, draft_id, items, by_rule, analysis_mode, candidate_sha)
                 run["operations"][-1].update(execution)
                 save()
                 stage = "audit"
                 result = _poll(client, "/rounds/" + round_id, "execution", {"completed", "failed"}, timeout, poll_interval)
                 run["operations"][-1]["job_id"] = result.get("result_job_id")
-                _frozen_inputs(result, draft_id, items, by_rule, analysis_mode, execution)
+                _frozen_inputs(result, draft_id, items, by_rule, analysis_mode, candidate_sha, execution)
                 if result["execution"] != "completed" or not result.get("result_job_id"):
                     raise LiveError("audit_not_completed")
                 _rule_results(result, items, by_rule)

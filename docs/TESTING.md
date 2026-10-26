@@ -122,6 +122,8 @@ uv run --no-sync python -m ppap_corpus_contracts.live_poc \
 
 `--analysis-mode standard|deep` 显式选择执行模式，缺省仍为 Standard；现有远端 Live workflow 未因此改为 Deep。若另获授权使用具备当前候选 Deep sidecar 的独立栈，可在同一命令加入 `--analysis-mode deep`，并使用新的输出目录。runner 将所选模式写入报告，核对受理与完成读回的冻结模式、executor 和 revision；Deep 要求实际策略摘要，不能静默回退 Standard。这里仍只比较同一 canonical 27 样例／220 条人工预期，不代表 #166 的独立保留集、完整质量、成本、隔离或恢复验收已完成，也不构成执行 Live 的授权。
 
+Standard 使用受理返回的 `StandardExecutionPolicy` 验证配置结构、构建 SHA 和 `standard-v1:` 策略摘要，并在终态读回时比较完整冻结策略。不能用旧固定标签或任意格式正确的摘要替代这些检查；HTTP 夹具同样使用当前策略模型。JSON 字段顺序变化不改变策略身份，缺失、篡改或终态漂移仍拒绝。
+
 可重复传入 `--bundle 'Aries Spoiler' --bundle 'POC测试样本'`，精确选择 `build_bundle_map` 中已有的完整文件组；不按文件或规则拆组。省略参数仍执行全部 8 组，显式选择全部 8 组也记为 `scope=full`；其他选择记为 `scope=subset`。报告的 `selected_bundles` 与 `denominators.full/selected` 明确列出总计及所选的组数、文件数、规则数。子集全部对齐只返回 `SUBSET_PROVEN` 和成功退出码，不返回完整 `PROVEN`，不代表完整 corpus 或产品验收。无效、空或重复选择在登录及任何 HTTP 请求之前失败。组名可用以下纯离线命令查看，不会启动审核：
 
 ```sh

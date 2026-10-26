@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from ppap_core.audits import EXECUTOR_DEEP, EXECUTOR_STANDARD, STANDARD_EXECUTOR_REVISION
+from ppap_core.audits import EXECUTOR_DEEP, EXECUTOR_STANDARD
+from ppap_core.standard_policy import StandardExecutionPolicy
 from ppap_corpus_contracts.live_poc import RULE_DOCS, main, run_live
 from ppap_corpus_contracts.poc_oracle import build_bundle_map, load_poc_cases
 
@@ -41,6 +42,7 @@ class ProductAPI:
 
     def __init__(self, failure=""):
         self.failure = failure
+        self.policy = StandardExecutionPolicy(app_revision="a" * 40, model="fixture-model", model_config_revision="c" * 64, tool_config_revision="d" * 64)
         self.changed_round_id = None
         self.changed_file_name = None
         self.changed_rule_index = None
@@ -108,13 +110,15 @@ class ProductAPI:
                     "source_draft_id": draft["id"],
                     "analysis_mode": draft["analysis_mode"],
                     "executor": EXECUTOR_DEEP if draft["analysis_mode"] == "deep" else EXECUTOR_STANDARD,
-                    "executor_revision": "b" * 64 if draft["analysis_mode"] == "deep" else STANDARD_EXECUTOR_REVISION,
+                    "executor_revision": "b" * 64 if draft["analysis_mode"] == "deep" else self.policy.engine_revision(),
                     "execution": "completed",
                     "result_job_id": str(uuid4()),
                     "inputs": draft["items"],
                     "coverage": {"rule_items": []},
                     "findings": [],
                 }
+                if draft["analysis_mode"] == "standard":
+                    result["execution_policy"] = self.policy.model_dump(mode="json")
                 for item in draft["items"]:
                     version = self.files[item["file_version_id"]]
                     item["rule"] = {"id": item["rule_version_id"], "body": self.rules[item["rule_version_id"]]["body"]}
@@ -197,6 +201,19 @@ class ProductAPI:
                             result["executor"] = EXECUTOR_STANDARD if draft["analysis_mode"] == "deep" else EXECUTOR_DEEP
                         elif self.failure == "accepted_revision":
                             result["executor_revision"] = "ppap-deep-v2" if draft["analysis_mode"] == "deep" else "another-standard-revision"
+                        elif self.failure == "accepted_missing_policy":
+                            result.pop("execution_policy")
+                        elif self.failure == "accepted_invalid_policy":
+                            result["execution_policy"]["model_config_revision"] = "invalid-digest"
+                        elif self.failure == "accepted_extra_policy_field":
+                            result["execution_policy"]["secret"] = "private-policy-value"
+                        elif self.failure == "accepted_policy_tampering":
+                            result["execution_policy"]["model"] = "other-model"
+                        elif self.failure == "accepted_wrong_build":
+                            changed = self.policy.model_copy(update={"app_revision": "e" * 40})
+                            result.update(execution_policy=changed.model_dump(mode="json"), executor_revision=changed.engine_revision())
+                        elif self.failure == "accepted_legacy_revision":
+                            result["executor_revision"] = "in-repo-engine-v1"
                         elif self.failure == "execution_error":
                             result["coverage"]["rule_items"][0].update(coverage="execution_error", status="ERR")
                             result["findings"][0]["status"] = "ERR"
@@ -226,6 +243,15 @@ class ProductAPI:
                     result["executor"] = "another-executor"
                 elif self.failure == "completed_revision":
                     result["executor_revision"] = "c" * 64 if result["analysis_mode"] == "deep" else "another-standard-revision"
+                elif self.failure == "completed_missing_policy":
+                    result.pop("execution_policy")
+                elif self.failure == "completed_policy_tampering":
+                    result["execution_policy"]["model"] = "other-model"
+                elif self.failure == "completed_policy_drift":
+                    changed = self.policy.model_copy(update={"model": "other-model"})
+                    result.update(execution_policy=changed.model_dump(mode="json"), executor_revision=changed.engine_revision())
+                elif self.failure == "completed_policy_reordered" and result.get("execution_policy"):
+                    result["execution_policy"] = dict(reversed(result["execution_policy"].items()))
             if self.failure == "profile_drift_readback" and result["id"] == self.changed_round_id:
                 body = result["inputs"][0]["rule"]["body"]
                 result["inputs"][0]["rule"]["body"] = {**body, "rule_profile": "v2"}
@@ -249,6 +275,7 @@ class ProductAPI:
         ("reordered_inputs", "PROVEN"),
         ("different_explanation", "PROVEN"),
         ("one_status_mismatch", "NOT_PROVEN"),
+        ("completed_policy_reordered", "PROVEN"),
     ],
 )
 @pytest.mark.parametrize("analysis_mode", ["standard", "deep"])
@@ -269,7 +296,9 @@ def test_full_public_flow_keeps_all_cases_and_never_reaccepts(tmp_path, failure,
     assert {operation["analysis_mode"] for operation in accepted} == {analysis_mode}
     frozen = [operation for operation in accepted if "executor" in operation]
     assert all(operation["executor"] == (EXECUTOR_DEEP if analysis_mode == "deep" else EXECUTOR_STANDARD) for operation in frozen)
-    assert all(operation["executor_revision"] == ("b" * 64 if analysis_mode == "deep" else STANDARD_EXECUTOR_REVISION) for operation in frozen)
+    assert all(operation["executor_revision"] == ("b" * 64 if analysis_mode == "deep" else api.policy.engine_revision()) for operation in frozen)
+    if analysis_mode == "standard":
+        assert all(operation["execution_policy"] == api.policy.model_dump(mode="json") for operation in frozen)
     if outcome == "PROVEN":
         assert len(frozen) == 8
     assert "private transport" not in (output / "report.json").read_text()
@@ -382,7 +411,7 @@ def test_selected_whole_bundles_publish_only_required_rules_and_never_claim_full
     accepts = [operation for operation in result["operations"] if operation["stage"] == "accept"]
     assert [operation["bundle"] for operation in accepts] == sorted(bundle_ids)
     assert len({path for _method, path in api.writes if path.endswith("/accept")}) == len(bundle_ids)
-    assert all(operation["analysis_mode"] == analysis_mode and operation["executor_revision"] == ("b" * 64 if analysis_mode == "deep" else STANDARD_EXECUTOR_REVISION) for operation in accepts)
+    assert all(operation["analysis_mode"] == analysis_mode and operation["executor_revision"] == ("b" * 64 if analysis_mode == "deep" else api.policy.engine_revision()) for operation in accepts)
     for draft in api.drafts.values():
         names = {api.files[item["file_version_id"]]["original_filename"] for item in draft["items"]}
         bundle = next(bundle for bundle in bundle_ids if names & {case.file_name for case in bundles[bundle]})
@@ -480,6 +509,45 @@ def test_mode_policy_and_exact_rule_output_are_frozen_without_reaccepting(tmp_pa
     assert report["summary"]["selected_cases"] == 27
     assert report["summary"]["total_rules"] == 220
     assert all(row["kind"] == "match" for row in report["rule_results"] if row["round_id"] != api.changed_round_id)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "accepted_missing_policy",
+        "accepted_invalid_policy",
+        "accepted_extra_policy_field",
+        "accepted_policy_tampering",
+        "accepted_wrong_build",
+        "accepted_legacy_revision",
+        "completed_missing_policy",
+        "completed_policy_tampering",
+        "completed_policy_drift",
+    ],
+)
+def test_standard_policy_rejects_tampering_and_terminal_drift_without_reaccepting(tmp_path, failure):
+    api = ProductAPI(failure)
+    output = tmp_path / "run"
+    with httpx.Client(base_url="http://test", transport=httpx.MockTransport(api)) as client:
+        result = run_live(client, candidate_sha="a" * 40, output=output, timeout=0.001, poll_interval=0)
+
+    assert result["outcome"] == "NOT_PROVEN"
+    stage = "accept" if failure.startswith("accepted_") else "audit"
+    assert result["errors"] == [{"stage": stage, "bundle": "Aries Spoiler", "code": "frozen_executor_mismatch", "round_id": api.changed_round_id}]
+    accepts = [path for _method, path in api.writes if path.endswith("/accept")]
+    assert len(accepts) == len(set(accepts)) == 8
+    report = json.loads((output / "report.json").read_text())
+    assert report["summary"]["selected_cases"] == 27
+    assert report["summary"]["total_rules"] == 220
+    affected = [row for row in report["rule_results"] if row["round_id"] == api.changed_round_id]
+    assert affected
+    assert {row["kind"] for row in affected} == {"setup_failure" if stage == "accept" else "execution_failure"}
+    assert all(row["kind"] == "match" for row in report["rule_results"] if row["round_id"] != api.changed_round_id)
+    assert "private-policy-value" not in (output / "report.json").read_text()
+    if stage == "audit":
+        frozen = next(operation for operation in result["operations"] if operation.get("round_id") == api.changed_round_id)
+        assert frozen["execution_policy"] == api.policy.model_dump(mode="json")
+        assert frozen["executor_revision"] == api.policy.engine_revision()
 
 
 @pytest.mark.parametrize("analysis_mode", ["standard", "deep"])

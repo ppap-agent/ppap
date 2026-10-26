@@ -8,14 +8,16 @@ from ppap_application import parse_rule_file, run_round_from_bytes
 from ppap_application.rule_sources import rule_sources
 from ppap_core.audits import RoundInput, RoundWork
 from ppap_corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, load_poc_cases
-from ppap_corpus_contracts.product_round import compare_file, failing_verdicts, format_verdicts
+from ppap_corpus_contracts.product_round import compare_file, engine_rule_body, failing_verdicts, format_verdicts
 from ppap_excel_audit_engine.checkers.rule_declarations import freeze_target_rule_execution
 
 RULE_ROOT = Path(__file__).resolve().parents[3] / "assets" / "poc测试" / "poc规则"
 SOURCES = {
+    "1": "1-2规则-尺寸检验报告.docx",
     "8": "8规则-过程流程图.docx",
     "9": "9规则-潜在过程失效模式及后果分析（PFMEA）.docx",
     "10": "10规则-控制计划.docx",
+    "11": "11规则-特殊特性清单.docx",
 }
 
 
@@ -32,7 +34,7 @@ def uploaded_rules(seq):
     return body
 
 
-@pytest.mark.parametrize("seq, count", [("8", 9), ("9", 7), ("10", 11)])
+@pytest.mark.parametrize("seq, count", [("1", 11), ("8", 9), ("9", 7), ("10", 11), ("11", 2)])
 def test_original_docx_keeps_confirmed_order_without_interpreting_text_or_filename(seq, count):
     body = uploaded_rules(seq)
     assert body["rule_profile"] == "v3"
@@ -50,6 +52,19 @@ def test_original_docx_keeps_confirmed_order_without_interpreting_text_or_filena
     for item in changed["rules"]:
         item["rule_to_check"] += "；另需满足客户新增条件，否则不通过"
     assert all(item["coverage"] == "mapped" for item in freeze_target_rule_execution(changed, "unrelated-name.xlsx")["items"])
+
+
+def test_original_docx_bindings_match_the_existing_worker_oracle_for_all_cases():
+    bodies = {seq: uploaded_rules(seq) for seq in SOURCES}
+    cases = load_poc_cases()
+    assert len(cases) == 27
+    assert sum(len(case.expected) for case in cases) == 220
+    for case in cases:
+        actual = freeze_target_rule_execution(bodies[case.file_seq], case.file_name)
+        _body, existing = engine_rule_body(POC_SEQ_TO_DOC_TYPE[case.file_seq].get_type_name(), case.file_name, "v3")
+        identity = ("id", "coverage", "checker_method", "checker_index")
+        assert [tuple(item.get(key) for key in identity) for item in actual["items"]] == [tuple(item.get(key) for key in identity) for item in existing["items"]], case.file_name
+        assert [item["id"] for item in actual["items"]] == [str(index) for index in sorted(case.expected)], case.file_name
 
 
 @pytest.mark.usefixtures("ocr_transport_diagnostics")
