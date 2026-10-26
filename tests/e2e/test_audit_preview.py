@@ -2158,6 +2158,8 @@ class AuditPreviewTests(unittest.TestCase):
             page.get_by_label("选择审核文件", exact=True).set_input_files({"name": "草稿B.pdf", "mimeType": "application/pdf", "buffer": b"draft-b"})
             expect(page.get_by_role("heading", name="等待预检查 · 1 份", exact=True)).to_be_visible()
             page.get_by_role("navigation", name="产品导航", exact=True).get_by_role("button", name="用量记录", exact=True).click()
+            # The task count below requires the usage fixture's archive initialization.
+            expect(page.get_by_role("table", name="逐文件用量记录", exact=True)).to_be_visible()
             page.go_back()
             expect(page.get_by_text("草稿B.pdf", exact=True)).to_be_visible()
             page.go_back()
