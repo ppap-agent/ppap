@@ -14,6 +14,7 @@ from ppap_corpus_contracts.product_round import (
 )
 
 
+@pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_v3_product_round_matches_oracle() -> None:
     bundles = build_bundle_map(load_poc_cases())
     failures = []

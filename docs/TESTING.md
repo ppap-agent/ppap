@@ -445,3 +445,5 @@ Corpus PDF/V3/PSW 和 Product integration 通过原测试、逐例即时错误�
 独立回归必须覆盖：纯图像 PDF 不含原生文字或绘图、扫描件的真实横向合并与分离边界、裁图 ID 的缺失/重复/伪造拒绝和响应乱序、整页生成依赖消除、未覆盖表格拒绝、正文/印章保留、整个页面预算及无栅格线冲突的 fail-closed 行为。最终验收仍是未经修改的 Corpus V3 `19-BLANC` 原始 11 条 oracle，以及 Product API/Worker 和四 worker E2E。
 
 真实四页扫描件的几何回归位于 `tests/corpus/v3_poc/test_scanned_geometry.py`，验证原图分辨率、完整无重叠物理格分区及原件字节不变；owner 测试只用合成扫描件，覆盖倾斜的 480 格表格和破损外框拒绝，不读取根目录 corpus。该无网络验证只证明几何、绑定和请求成本，不替代真实文字识别和 oracle 验收。单次 Responses 请求超时记 `responses_timeout`，整页 180 秒预算耗尽才记 `raster_cell_timeout`；取消继续传播，不自动重试。两类前缀均经过 local adapter 和统一 pipeline 保留，不再被改成笼统的 `ocr_exception`；失败只记录格数、PNG 字节数、耗时及异常类型，不记录原件/响应文字，也不发布缓存。
+
+`tests/conftest.py` 对现有 V3 oracle 门禁提供只读 HTTPX 阶段诊断：保留原请求、响应和 trace callback，只记录请求序号、最后的网络阶段、耗时及异常类型，区分连接、响应头与响应体等待；不记录 URL、header、trace info 或正文，也不触发额外请求。预览测试仅在失败时收集最近 3 页的 DOM 计数及每页最多 12 条脚本/资源事件；只保留同源代码资源路径，去掉查询参数，不记录页面文字、异常消息或控制台正文。诊断不能把供应商不响应或未复现的浏览器启动失败判成已修复。

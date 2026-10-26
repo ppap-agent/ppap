@@ -81,6 +81,7 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
         for key, text in entries.items():
             if not isinstance(text, str) or len(text) > 32767:
                 raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell text")
+        logger.info("Raster OCR batch complete: batch=%d cells=%d elapsed_ms=%d", offset // CELLS_PER_REQUEST + 1, len(expected), round((monotonic() - started) * 1000))
         return {int(key): text for key, text in entries.items()}
 
     async def worker() -> None:

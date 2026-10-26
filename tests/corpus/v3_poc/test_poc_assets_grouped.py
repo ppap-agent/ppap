@@ -227,6 +227,7 @@ def mismatch_only(request: Any) -> Any:
     return request.config.getoption("--mismatch-only", default=False)
 
 
+@pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_poc_assets_grouped(case: PocCase, verbose_check: bool, mismatch_only: bool) -> None:
     bundle_cases = _ALL_BUNDLE_CASES.get(case.bundle_id)
     if not bundle_cases:

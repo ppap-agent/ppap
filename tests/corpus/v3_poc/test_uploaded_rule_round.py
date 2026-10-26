@@ -52,6 +52,7 @@ def test_original_docx_keeps_confirmed_order_without_interpreting_text_or_filena
     assert all(item["coverage"] == "mapped" for item in freeze_target_rule_execution(changed, "unrelated-name.xlsx")["items"])
 
 
+@pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_original_docx_three_file_round_matches_all_27_oracle_results():
     cases = [case for case in load_poc_cases(bundle="Cetus Spoiler-特殊特性清单见原文件夹") if case.file_seq in SOURCES]
     assert len(cases) == 3
