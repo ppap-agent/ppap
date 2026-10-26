@@ -62,9 +62,8 @@ def test_reads_png_image_using_responses_schema(tmp_path):
     with patch.object(vision_service, "call_llm_async", side_effect=create):
         results = vision_service.VisionLayoutService().analyze_full_pdf(_pdf(tmp_path, 1))
     assert results[0]["paragraphs"] == ["readable text"]
-    assert calls[0]["json_mode"] is True
-    assert calls[0]["retry_count"] == 1
     assert calls[0]["response_schema"]["name"] == "ppap_multimodal_pdf_page"
+    assert calls[0]["response_schema"]["strict"] is True
 
 
 def test_multimodal_merge_rejects_fake_or_overlapping_evidence():

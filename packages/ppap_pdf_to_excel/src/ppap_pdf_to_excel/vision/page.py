@@ -108,8 +108,6 @@ async def _read_scan_page(image: bytes, grids: list[RasterGrid]) -> dict[str, An
             remainder = await call_llm_async(
                 image_paths=[image, mask_raster_tables(image, grids)],
                 prompt=SCAN_REMAINDER_PROMPT,
-                retry_count=1,
-                json_mode=True,
                 response_schema=SCAN_REMAINDER_SCHEMA,
             )
     except TimeoutError as exc:
@@ -388,7 +386,7 @@ def _reconcile_physical_merges(payload: Any, native_tables: list[dict[str, Any]]
 async def _read_page_async(image: bytes, page_number: int, page_count: int, native_tables: list[dict[str, Any]]) -> dict[str, Any]:
     """Use the same strict validator on cancellable shared-loop requests."""
     logger.info("Responses vision page %d/%d starting", page_number, page_count)
-    payload: str | dict[str, Any]
+    payload: dict[str, Any]
     try:
         raster_grids = [candidate["raster_grid"] for candidate in native_tables if "raster_grid" in candidate]
         if raster_grids:
@@ -397,8 +395,6 @@ async def _read_page_async(image: bytes, page_number: int, page_count: int, nati
             payload = await call_llm_async(
                 image_paths=image,
                 prompt=PAGE_PROMPT,
-                retry_count=1,
-                json_mode=True,
                 response_schema=PAGE_SCHEMA,
             )
     except ResponsesEvidenceError as exc:

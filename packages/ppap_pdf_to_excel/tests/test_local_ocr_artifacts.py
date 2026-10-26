@@ -40,11 +40,10 @@ def test_multimodal_workbook_cache_and_html_are_independent(tmp_path, monkeypatc
     get_settings.cache_clear()
     calls = []
 
-    async def respond(*, image_paths, prompt, response_schema, json_mode, retry_count):
+    async def respond(*, image_paths, prompt, response_schema):
         assert image_paths.startswith(b"\x89PNG\r\n")
         assert "table" in prompt.lower()
         assert response_schema["strict"]
-        assert json_mode is True and retry_count == 1
         calls.append(1)
         return {
             "tables": [{"rows": [["ocr"], ["fallback"]], "merges": []}],

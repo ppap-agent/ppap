@@ -54,8 +54,6 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
             result = await call_llm_async(
                 image_paths=panel,
                 prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
-                retry_count=1,
-                json_mode=True,
                 response_schema=schema,
             )
         except BaseException as exc:
