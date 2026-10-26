@@ -249,8 +249,10 @@ class AIClient:
             )
             if request_timeout is not None:
                 request_kwargs["timeout"] = request_timeout
-            # Per-call SDK options do not mutate the shared client or its defaults.
-            request_client = self.client if retry_limit is None else self.client.with_options(max_retries=max(0, retry_limit))
+            # The bounded async path does not use a copy of the synchronous client.
+            request_client = self.client
+            if retry_limit is not None and not (request_timeout is not None and isinstance(self.client, BaseOpenAI)):
+                request_client = self.client.with_options(max_retries=max(0, retry_limit))
             max_retries = max(0, int(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRIES", 2) if retry_limit is None else retry_limit))
             base_retry_delay = float(getattr(self.settings, "OPENAI_EMPTY_CHOICES_RETRY_DELAY_SECONDS", 1.0))
 

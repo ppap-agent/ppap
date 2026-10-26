@@ -284,7 +284,6 @@ def test_scan_batches_complete_out_of_order_with_two_requests_and_keep_page_iden
 
         async def respond(**kwargs):
             nonlocal active, peak, page_index
-            assert kwargs["retry_count"] == 1
             active += 1
             peak = max(peak, active)
             try:

@@ -2,13 +2,10 @@
 
 import asyncio
 import base64
-import inspect
 import json
 import logging
-import mimetypes
-import os
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from openai import APITimeoutError, AsyncOpenAI
 from ppap_core.settings import get_settings
@@ -53,14 +50,9 @@ async def _request_response(kwargs: dict[str, Any]) -> Any:
     try:
         async with asyncio.timeout(RESPONSE_WALL_TIMEOUT_SECONDS):
             try:
-                response = client.responses.create(**kwargs)
-                return await response if inspect.isawaitable(response) else response
+                return await client.responses.create(**kwargs)
             finally:
-                close = getattr(client, "close", None)
-                if callable(close):
-                    closing = close()
-                    if inspect.isawaitable(closing):
-                        await closing
+                await client.close()
     except (TimeoutError, APITimeoutError) as exc:
         raise ResponsesEvidenceError("responses_timeout", "Responses request exceeded its deadline") from exc
 
@@ -69,136 +61,67 @@ def _get_llm_model_name() -> str:
     return get_settings().get_ocr_model_name()
 
 
-def encode_image(path: str) -> str:
-    """将本地图片路径转换为 Base64 字符串"""
-    with open(path, "rb") as img:
-        return base64.b64encode(img.read()).decode("utf-8")
-
-
-def _prepare_messages(image_input: str | bytes | list[str | bytes], text_prompt: str) -> List[Dict[str, Any]]:
-    """构建标准的多模态消息体"""
-    if isinstance(image_input, (str, bytes)):
-        paths = [image_input]
-    else:
-        paths = image_input
-
-    images_content = []
-    for path in paths:
-        if isinstance(path, bytes):
-            b64 = base64.b64encode(path).decode("ascii")
-            mime = "image/png"
-        elif os.path.exists(path):
-            b64 = encode_image(path)
-            mime = mimetypes.guess_type(path)[0] or "image/jpeg"
-            if mime not in {"image/jpeg", "image/png", "image/webp"}:
-                raise ValueError(f"Unsupported vision image type: {mime}")
-        else:
-            raise FileNotFoundError(f"Vision input image does not exist: {path}")
-        images_content.append({"type": "input_image", "image_url": f"data:{mime};base64,{b64}", "detail": "high"})
-
+def _prepare_messages(image_input: bytes | list[bytes], text_prompt: str) -> list[dict[str, Any]]:
+    """Use the PNG bytes rendered by the page and cell readers."""
+    images = [image_input] if isinstance(image_input, bytes) else image_input
+    images_content = [{"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(image).decode("ascii"), "detail": "high"} for image in images]
     content_payload = [{"type": "input_text", "text": text_prompt}, *images_content]
     return [{"role": "user", "content": content_payload}]
 
 
 async def call_llm_async(
-    image_paths: str | bytes | list[str | bytes],
+    image_paths: bytes | list[bytes],
     prompt: str,
-    retry_count: int = 3,
-    json_mode: bool = False,
-    response_schema: Optional[Dict[str, Any]] = None,
-) -> Union[str, Dict[str, Any]]:
-    """
-    Responses 多模态模型调用入口
-    :param json_mode: 是否强制输出 JSON (Tagging 阶段使用)
-    :param response_schema: 如果 json_mode 为 True，可传入具体的 Schema 约束
-    """
+    *,
+    response_schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Make one bounded schema-constrained request and decode one JSON object."""
     messages = _prepare_messages(image_paths, prompt)
 
-    # 构造参数
     kwargs: dict[str, Any] = {
         "model": _get_llm_model_name(),
         "input": messages,
         "store": False,
         "max_output_tokens": 16384,
         "timeout": 120,
+        "text": {"format": {"type": "json_schema", **response_schema}},
     }
-
-    # 处理 Response Format
-    if json_mode:
-        if response_schema:
-            # 如果平台支持 strict schema (如 Vertex AI / OpenAI 最新版)
-            kwargs["text"] = {"format": {"type": "json_schema", **response_schema}}
-        else:
-            # 通用 JSON 模式
-            kwargs["text"] = {"format": {"type": "json_object"}}
-
-    for attempt in range(retry_count):
+    try:
+        response = await _request_response(kwargs)
+        status = getattr(response, "status", None)
+        if status != "completed":
+            raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {str(status)[:40]}")
+        content_text = getattr(response, "output_text", None)
+        if not isinstance(content_text, str) or not content_text.strip():
+            raise ResponsesEvidenceError("responses_empty_text", "Responses completed without nonempty text")
+        clean_content = _clean_json_response(content_text)
         try:
-            response = await _request_response(kwargs)
-            status = getattr(response, "status", None)
-            if status != "completed":
-                raise ResponsesEvidenceError("responses_incomplete", f"Responses status is {str(status)[:40]}")
-            content_text = getattr(response, "output_text", None)
-            if not isinstance(content_text, str) or not content_text.strip():
-                raise ResponsesEvidenceError("responses_empty_text", "Responses completed without nonempty text")
-
-            # 如果是 JSON 模式，尝试解析为字典返回
-            if json_mode:
-                try:
-                    # === 这里调用清洗函数 ===
-                    clean_content = _clean_json_response(content_text)
-                    parsed = json.loads(clean_content, object_pairs_hook=_unique_object)
-                except json.JSONDecodeError as exc:
-                    # Never log or persist provider output: it may include document data.
-                    details = getattr(response, "incomplete_details", None)
-                    usage = getattr(response, "usage", None)
-                    output_tokens = getattr(usage, "output_tokens", None)
-                    logger.warning(
-                        "Responses invalid JSON: reason=%s line=%d col=%d pos=%d output_chars=%d output_tokens=%s incomplete=%s",
-                        exc.msg,
-                        exc.lineno,
-                        exc.colno,
-                        exc.pos,
-                        len(clean_content),
-                        output_tokens if type(output_tokens) is int else "unknown",
-                        getattr(details, "reason", None),
-                    )
-                    raise ResponsesEvidenceError(
-                        "responses_invalid_json",
-                        f"Responses invalid JSON (line={exc.lineno}, col={exc.colno}, pos={exc.pos}, output_chars={len(clean_content)})",
-                    ) from exc
-                if not isinstance(parsed, dict):
-                    raise ResponsesEvidenceError("responses_non_object", "Responses JSON root is not an object")
-                return parsed
-
-            return content_text
-
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1}/{retry_count} failed. Error: {e}")
-            if attempt == retry_count - 1:
-                logger.error("Max retries reached.")
-                raise e
-
-    return ""
-
-
-def call_llm(
-    image_paths: str | bytes | list[str | bytes],
-    prompt: str,
-    retry_count: int = 3,
-    json_mode: bool = False,
-    response_schema: Optional[Dict[str, Any]] = None,
-) -> Union[str, Dict[str, Any]]:
-    """Synchronous compatibility entrypoint for non-batched callers."""
-    return asyncio.run(
-        call_llm_async(
-            image_paths=image_paths,
-            prompt=prompt,
-            retry_count=retry_count,
-            json_mode=json_mode,
-            response_schema=response_schema,
-        )
-    )
+            parsed = json.loads(clean_content, object_pairs_hook=_unique_object)
+        except json.JSONDecodeError as exc:
+            # Never log or persist provider output: it may include document data.
+            details = getattr(response, "incomplete_details", None)
+            usage = getattr(response, "usage", None)
+            output_tokens = getattr(usage, "output_tokens", None)
+            logger.warning(
+                "Responses invalid JSON: reason=%s line=%d col=%d pos=%d output_chars=%d output_tokens=%s incomplete=%s",
+                exc.msg,
+                exc.lineno,
+                exc.colno,
+                exc.pos,
+                len(clean_content),
+                output_tokens if type(output_tokens) is int else "unknown",
+                getattr(details, "reason", None),
+            )
+            raise ResponsesEvidenceError(
+                "responses_invalid_json",
+                f"Responses invalid JSON (line={exc.lineno}, col={exc.colno}, pos={exc.pos}, output_chars={len(clean_content)})",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ResponsesEvidenceError("responses_non_object", "Responses JSON root is not an object")
+        return parsed
+    except ResponsesEvidenceError as exc:
+        logger.warning("Responses evidence rejected: code=%s", exc.code)
+        raise
 
 
 def _clean_json_response(content: str) -> str:

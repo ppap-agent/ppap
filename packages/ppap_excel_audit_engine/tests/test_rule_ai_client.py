@@ -355,7 +355,7 @@ def test_visual_provider_uses_bounded_async_path_with_real_sdk_type_simulated():
     ):
         assert client.image_analysis_completion("system", "inspect", ["data:image/png;base64,AAAA"]) == "verified"
     assert sdk.direct_calls == 0
-    assert sdk.options == [{"max_retries": 0}]
+    assert sdk.options == []
 
 
 def test_bounded_visual_request_from_running_event_loop_uses_isolated_loop():
