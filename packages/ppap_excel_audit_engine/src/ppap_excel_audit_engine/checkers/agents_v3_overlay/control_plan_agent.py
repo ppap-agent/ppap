@@ -77,6 +77,7 @@ _CP_SELECTED_MARKS = frozenset(
         "▄",
     }
 )
+_CP_UNSELECTED_MARKS = frozenset({"□", "☐", "▢"})
 
 _CP_STAGE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("prototype", ("样件", "prototype", "ots", "pp")),
@@ -1776,6 +1777,15 @@ class ControlPlanAgent(ExcelAgent):
         stages = cls._extract_stage_occurrences(normalized)
         if not stages:
             return []
+
+        # A complete checkbox list fixes the label/mark order. Looking only
+        # at selected marks binds a prefix checkbox to the preceding label.
+        boxes = [(index, char in _CP_SELECTED_MARKS) for index, char in enumerate(normalized) if char in _CP_SELECTED_MARKS or char in _CP_UNSELECTED_MARKS]
+        if len(boxes) == len(stages):
+            prefix = all((stages[index - 1][1] if index else 0) <= position < start for index, ((position, _), (start, _, _)) in enumerate(zip(boxes, stages)))
+            suffix = all(end <= position < (stages[index + 1][0] if index + 1 < len(stages) else len(normalized)) for index, ((position, _), (_, end, _)) in enumerate(zip(boxes, stages)))
+            if prefix or suffix:
+                return list(dict.fromkeys(stage for (_, checked), (_, _, stage) in zip(boxes, stages) if checked))
 
         selected: List[str] = []
         for mark_pos in mark_positions:

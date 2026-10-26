@@ -116,6 +116,22 @@ def test_readable_plan_without_stage_information_is_ng_not_a_system_error(tmp_pa
     assert "适用阶段" in result.suggestions
 
 
+@pytest.mark.parametrize("prefix", [True, False], ids=["prefix", "suffix"])
+@pytest.mark.parametrize("chosen", [0, 1, 2, None], ids=["prototype", "pre-launch", "production", "none"])
+@pytest.mark.parametrize("empty", ["□", "☐", "▢"])
+def test_stage_checkbox_stays_with_its_label(tmp_path, prefix, chosen, empty):
+    stages = ["样件", "试生产", "批量生产"]
+    boxes = ["■" if index == chosen else empty for index in range(3)]
+    workbook = Workbook()
+    workbook.active["A1"] = " ".join(box + label if prefix else label + box for label, box in zip(stages, boxes))
+
+    result = check_rule(tmp_path, workbook, 1)
+
+    assert result.status == ("PASS" if chosen == 2 else "NG")
+    selected = [] if chosen is None else [["prototype", "pre_launch", "production"][chosen]]
+    assert ControlPlanAgent._extract_selected_stages_from_cell(" ".join(box + label if prefix else label + box for label, box in zip(stages, boxes))) == selected
+
+
 def test_unreadable_plan_is_still_a_system_error(tmp_path):
     path = tmp_path / "broken.xlsx"
     path.write_bytes(b"not an Excel archive")

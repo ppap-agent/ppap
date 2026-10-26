@@ -24,16 +24,21 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger="ppap_pdf_to_excel.vision.cell_ocr")
     original = httpx.AsyncClient.send
     original_close = httpx.AsyncClient.aclose
+    original_read = httpx.Response.aread
     sequence = itertools.count(1)
     clients = {}
+    requests = {}
 
     async def send(client, request, *args, **kwargs):
         number, started, phase = next(sequence), monotonic(), "dispatch"
         clients[id(client)] = number
+        state = {"number": number, "last_event": "dispatch"}
+        requests[id(request)] = state
         previous = request.extensions.get("trace")
 
         async def trace(event_name, info):
             nonlocal phase
+            state["last_event"] = event_name
             # Preserve the waiting phase when cancellation emits later close events.
             if event_name.endswith(".started") and "close" not in event_name:
                 phase = event_name
@@ -48,7 +53,9 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
             logger.info("OCR transport complete: request=%d stage=%s elapsed_ms=%d", number, phase, round((monotonic() - started) * 1000))
             return response
         except BaseException as error:
-            logger.warning("OCR transport stopped: request=%d stage=%s elapsed_ms=%d error_type=%s", number, phase, round((monotonic() - started) * 1000), type(error).__name__)
+            logger.warning(
+                "OCR transport stopped: request=%d stage=%s last_event=%s elapsed_ms=%d error_type=%s", number, phase, state["last_event"], round((monotonic() - started) * 1000), type(error).__name__
+            )
             raise
 
     async def close(client):
@@ -61,8 +68,33 @@ def ocr_transport_diagnostics(monkeypatch, caplog):
             logger.warning("OCR transport close stopped: request=%d elapsed_ms=%d error_type=%s", number, round((monotonic() - started) * 1000), type(error).__name__)
             raise
 
+    async def read(response):
+        try:
+            return await original_read(response)
+        except BaseException as error:
+            try:
+                state = requests.get(id(response.request), {})
+            except RuntimeError:
+                state = {}
+            content_type = response.headers.get("content-type", "").lower()
+            kind = "event-stream" if "text/event-stream" in content_type else "json" if "json" in content_type else "other"
+            length = response.headers.get("content-length", "")
+            declared_bytes = int(length) if length.isdecimal() and len(length) < 20 else None
+            logger.warning(
+                "OCR body stopped: request=%d last_event=%s status=%d downloaded_bytes=%d declared_bytes=%s kind=%s error_type=%s",
+                state.get("number", 0),
+                state.get("last_event", "unknown"),
+                response.status_code,
+                response.num_bytes_downloaded,
+                declared_bytes,
+                kind,
+                type(error).__name__,
+            )
+            raise
+
     monkeypatch.setattr(httpx.AsyncClient, "send", send)
     monkeypatch.setattr(httpx.AsyncClient, "aclose", close)
+    monkeypatch.setattr(httpx.Response, "aread", read)
 
 
 @pytest.fixture(autouse=True)

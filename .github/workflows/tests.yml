@@ -403,6 +403,14 @@ jobs:
             python3 -m scripts.ci_heartbeat --timeout 1800 -- \
               uv run --no-sync pytest ${{ matrix.args }} --durations=25 -vv -o faulthandler_timeout=120 --junitxml=ci-report/junit.xml
           fi
+      - name: Preserve current-protocol OCR evidence
+        if: ${{ always() && matrix.name == 'V3' }}
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
+        run: |
+          uv run --no-sync python -m scripts.export_vision_fixture \
+            tests/corpus/fixtures/ocr_cache \
+            "assets/poc测试/POC测试样本/Blanc Spoiler-有特殊特性清单/19-BLANC尾-生产控制计划.pdf" \
+            ci-report/vision-fixture-candidate
       - name: Assert Docker
         working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         if: ${{ matrix.mode == 'psw' }}
@@ -510,6 +518,14 @@ jobs:
           python3 -m scripts.ci_heartbeat --timeout 2400 -- \
             uv run --no-sync pytest tests/integration/product -vv --durations=25 -o faulthandler_timeout=120 --junitxml=ci-report/product.xml
           docker compose -p "$COMPOSE_PROJECT_NAME" -f deploy/isolated-dev/compose.yaml down -v --remove-orphans
+      - name: Preserve current-protocol OCR evidence
+        if: always()
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
+        run: |
+          uv run --no-sync python -m scripts.export_vision_fixture \
+            tests/corpus/fixtures/ocr_cache \
+            "assets/poc测试/POC测试样本/Blanc Spoiler-有特殊特性清单/19-BLANC尾-生产控制计划.pdf" \
+            ci-report/vision-fixture-candidate
       - name: Bake canonical api, worker, and web images
         working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
