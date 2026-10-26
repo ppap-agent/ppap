@@ -421,6 +421,10 @@ async def _read_page_async(image: bytes, page_number: int, page_count: int, nati
 
 async def _read_batch(images: list[tuple[int, bytes, list[dict[str, Any]]]], page_count: int) -> list[dict[str, Any]]:
     """Cancel sibling provider I/O when any page's evidence fails."""
+    if any("raster_grid" in table for _index, _image, tables in images for table in tables):
+        # Spend the two-request allowance on independent cells in one scan page.
+        # Its deadline starts when it runs, not while waiting behind another page.
+        return [await _read_page_async(image, index, page_count, tables) for index, image, tables in images]
     tasks = [asyncio.create_task(_read_page_async(image, index, page_count, tables)) for index, image, tables in images]
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
