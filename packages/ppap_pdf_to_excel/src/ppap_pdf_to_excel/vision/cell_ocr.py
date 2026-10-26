@@ -13,34 +13,15 @@ logger = logging.getLogger(__name__)
 
 MAX_RASTER_EVIDENCE_SECONDS = 180
 CELLS_PER_REQUEST = 64
-CELL_SCHEMA: dict[str, Any] = {
-    "name": "ppap_raster_cell_evidence",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "cells": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {"id": {"type": "integer"}, "text": {"type": "string"}},
-                    "required": ["id", "text"],
-                },
-            },
-        },
-        "required": ["cells"],
-    },
-}
-
 CELL_PROMPT = (
     "This image is a packed sheet of physically cropped table cells from a "
     "scanned document. Its packing order is not the document layout. "
     "Each crop has a printed CELL ID label OUTSIDE its original "
     "contents. For every requested ID, transcribe ONLY legible text inside "
     "that cell's crop, preserving all characters and reading order. "
-    "Return exactly one object per requested integer ID. For a genuinely "
+    "Return cells as an object whose keys are exactly the requested decimal "
+    "CELL ID strings and whose values are their text. Do not repeat, add, or "
+    "omit a key. For a genuinely "
     "blank or unreadable cell, return an empty string. Never transcribe "
     "the CELL ID labels; do not infer omitted values, copy adjacent cells, "
     "decide whether cells are merged, or report PASS/NG. "
@@ -53,7 +34,17 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
 
     for offset in range(0, len(grid.cells), CELLS_PER_REQUEST):
         requested = grid.cells[offset : offset + CELLS_PER_REQUEST]
-        expected = {cell.index for cell in requested}
+        expected = [str(cell.index) for cell in requested]
+        schema: dict[str, Any] = {
+            "name": "ppap_raster_cell_evidence",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"cells": {"type": "object", "additionalProperties": False, "properties": {key: {"type": "string"} for key in expected}, "required": expected}},
+                "required": ["cells"],
+            },
+        }
         panel = make_cell_panel(png, requested)
         started = monotonic()
         try:
@@ -62,7 +53,7 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
                 prompt=CELL_PROMPT + "Requested CELL IDs: " + ", ".join(str(cell.index) for cell in requested) + ".",
                 retry_count=1,
                 json_mode=True,
-                response_schema=CELL_SCHEMA,
+                response_schema=schema,
             )
         except BaseException as exc:
             logger.warning(
@@ -73,22 +64,19 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
                 type(exc).__name__,
             )
             raise
-        entries = result.get("cells") if isinstance(result, dict) else None
-        if not isinstance(entries, list) or len(entries) != len(expected):
-            raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR omitted or duplicated cell evidence")
-        seen: set[int] = set()
-        for entry in entries:
-            if not isinstance(entry, dict) or set(entry) != {"id", "text"}:
-                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned unsupported cell fields")
-            index, text = entry["id"], entry["text"]
-            if type(index) is not int or index not in expected or index in seen:
-                raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell identity")
+        entries = result.get("cells") if isinstance(result, dict) and set(result) == {"cells"} else None
+        if not isinstance(entries, dict) or set(entries) != set(expected):
+            logger.warning(
+                "Raster OCR identity mismatch: requested_cells=%d returned_cells=%d collection_type=%s",
+                len(expected),
+                len(entries) if isinstance(entries, (list, dict)) else -1,
+                type(entries).__name__,
+            )
+            raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR did not return exactly the requested cell identities")
+        for key, text in entries.items():
             if not isinstance(text, str) or len(text) > 32767:
                 raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell text")
-            seen.add(index)
-            values[index] = text
-        if seen != expected:
-            raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned incomplete cell identities")
+            values[int(key)] = text
 
     rows = [["" for _col in range(grid.col_count)] for _row in range(grid.row_count)]
     for cell in grid.cells:

@@ -96,15 +96,14 @@ def _fake_vision(*, merged: bool, corrupt: bool | str = False):
             return _model_page()
         assert schema == "ppap_raster_cell_evidence"
         ids = [int(value) for value in re.findall(r"\d+", kwargs["prompt"].split("Requested CELL IDs: ", 1)[1])]
+        entries = {str(index): values[index] for index in reversed(ids)}
         if corrupt:
-            entries = [{"id": index, "text": values[index]} for index in ids]
             if corrupt == "missing":
-                entries.pop()
+                entries.pop(str(ids[0]))
             else:
-                entries[0]["id"] = ids[1] if corrupt == "duplicate" else ids[0] + 123
-            return {"cells": entries}
+                entries[str(ids[0] + 123)] = entries.pop(str(ids[0]))
         # Responses can reorder entries. Only their source-bound ID is authority.
-        return {"cells": [{"id": index, "text": values[index]} for index in reversed(ids)]}
+        return {"cells": entries}
 
     return respond, calls
 
@@ -190,7 +189,7 @@ def test_scanned_unruled_document_fails_closed_without_source_grid(tmp_path):
     assert calls == ["ppap_multimodal_pdf_page"]
 
 
-@pytest.mark.parametrize("corrupt", ["foreign", "duplicate", "missing"])
+@pytest.mark.parametrize("corrupt", ["foreign", "missing"])
 def test_raster_transcription_requires_exactly_the_requested_cell_ids(tmp_path, corrupt):
     path, _source = _scan(tmp_path)
     fake, _calls = _fake_vision(merged=False, corrupt=corrupt)

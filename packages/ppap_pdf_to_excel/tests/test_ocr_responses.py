@@ -107,3 +107,24 @@ class OCRResponsesTests(TestCase):
             with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
                 llm_service.call_llm(b"image", "inspect", retry_count=1, json_mode=True)
         self.assertEqual(error.exception.code, "responses_non_object")
+
+    def test_repeated_cell_key_fails_before_json_can_overwrite_evidence(self):
+        calls = []
+        private = "private-cell-evidence"
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(status="completed", output_text='{"cells":{"7":"' + private + '","7":"replacement"}}')
+
+        sdk = SimpleNamespace(responses=SimpleNamespace(create=create))
+        with (
+            patch.object(llm_service, "_get_llm_client", return_value=sdk),
+            patch.object(llm_service, "_get_llm_model_name", return_value="test"),
+            self.assertLogs("ppap_pdf_to_excel.vision.client", level="WARNING") as logs,
+        ):
+            with self.assertRaises(llm_service.ResponsesEvidenceError) as error:
+                llm_service.call_llm(b"image", "inspect", retry_count=1, json_mode=True)
+        self.assertEqual(error.exception.code, "responses_duplicate_key")
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn(private, str(error.exception))
+        self.assertNotIn(private, "\n".join(logs.output))
