@@ -55,6 +55,7 @@ def _upload(client: TestClient, name: str, body: bytes) -> dict:
     return version
 
 
+@pytest.mark.usefixtures("ocr_transport_diagnostics")
 def test_v3_api_worker_matches_poc_oracle(auth_store_factory, tmp_path: Path) -> None:
     env = _worker_env()
     env.start()
