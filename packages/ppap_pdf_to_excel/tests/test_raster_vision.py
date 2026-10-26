@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from ppap_core.settings import get_settings
 from ppap_pdf_to_excel import pipeline
-from ppap_pdf_to_excel.vision import page, raster
+from ppap_pdf_to_excel.vision import cell_ocr, page, raster
 from ppap_pdf_to_excel.vision.local import convert_local_pdf_to_excel
 
 
@@ -237,26 +237,129 @@ def test_cell_failure_preserves_its_code_across_the_pipeline_without_retry(tmp_p
     assert calls == ["ppap_raster_cell_evidence"]
 
 
-def test_scanned_page_deadline_includes_remainder_and_cancels_its_request(tmp_path, monkeypatch):
+def test_scanned_page_deadline_includes_remainder_and_cancels_its_request(tmp_path):
     path, _source = _scan(tmp_path)
     fake, _calls = _fake_vision(merged=False)
     cancelled = []
+    original_timeout = asyncio.timeout
+    deadline = None
+
+    def controlled_deadline(seconds):
+        nonlocal deadline
+        assert seconds == 180
+        deadline = original_timeout(None)
+        return deadline
 
     async def respond(**kwargs):
         if kwargs["response_schema"]["name"] == "ppap_scanned_page_remainder":
             try:
-                await asyncio.sleep(10)
+                # Expire the real page timer at this cut point, independent of crop CPU time.
+                deadline.reschedule(asyncio.get_running_loop().time())
+                await asyncio.Future()
             except asyncio.CancelledError:
                 cancelled.append(True)
                 raise
         return await fake(**kwargs)
 
-    monkeypatch.setattr(page, "MAX_RASTER_EVIDENCE_SECONDS", 0.02)
-    with patch.object(page, "call_llm_async", side_effect=respond), patch("ppap_pdf_to_excel.vision.cell_ocr.call_llm_async", side_effect=respond):
+    with (
+        patch.object(page.asyncio, "timeout", side_effect=controlled_deadline),
+        patch.object(page, "call_llm_async", side_effect=respond),
+        patch.object(cell_ocr, "call_llm_async", side_effect=respond),
+    ):
         with pytest.raises(page.ResponsesEvidenceError) as error:
             page.VisionLayoutService().analyze_full_pdf(str(path))
     assert error.value.code == "raster_cell_timeout"
     assert cancelled == [True]
+
+
+def test_scan_batches_complete_out_of_order_with_two_requests_and_keep_page_identity(tmp_path, monkeypatch):
+    _path, png = _scan(tmp_path)
+    grids = raster.detect_raster_grids(png)
+    monkeypatch.setattr(cell_ocr, "CELLS_PER_REQUEST", 3)
+
+    async def scenario():
+        active = peak = page_index = 0
+        releases = [asyncio.Event(), asyncio.Event()]
+        started, completed = [], []
+
+        async def respond(**kwargs):
+            nonlocal active, peak, page_index
+            assert kwargs["retry_count"] == 1
+            active += 1
+            peak = max(peak, active)
+            try:
+                if kwargs["response_schema"]["name"] == "ppap_scanned_page_remainder":
+                    assert active == 1
+                    page_index += 1
+                    return {"paragraphs": [], "seals": [], "has_other_tables": False}
+                current_page = page_index
+                ids = kwargs["response_schema"]["schema"]["properties"]["cells"]["required"]
+                key = (current_page, ids[0])
+                assert key not in started
+                started.append(key)
+                if ids[0] == "0":
+                    await releases[current_page].wait()
+                else:
+                    releases[current_page].set()
+                completed.append(key)
+                return {"cells": {index: f"{current_page}:{index}" for index in reversed(ids)}}
+            finally:
+                active -= 1
+
+        with patch.object(page, "call_llm_async", side_effect=respond), patch.object(cell_ocr, "call_llm_async", side_effect=respond):
+            results = await asyncio.wait_for(page._read_batch([(index, png, [{"raster_grid": grids[0]}]) for index in (1, 2)], 2), timeout=2)
+        assert peak == 2 and active == 0
+        assert len(started) == len(set(started)) == 6
+        assert completed[:2] == [(0, "3"), (0, "6")]
+        for index, result in enumerate(results):
+            assert result["tables"][0]["rows"] == [[f"{index}:{row * 3 + col}" for col in range(3)] for row in range(3)]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["provider", "deadline", "cancel"])
+def test_scan_batch_failure_drains_both_requests_without_starting_another(tmp_path, monkeypatch, failure):
+    _path, png = _scan(tmp_path)
+    grids = raster.detect_raster_grids(png)
+    monkeypatch.setattr(cell_ocr, "CELLS_PER_REQUEST", 3)
+    if failure == "deadline":
+        monkeypatch.setattr(page, "MAX_RASTER_EVIDENCE_SECONDS", 0.5)
+
+    async def scenario():
+        both_started = asyncio.Event()
+        started, closed = [], []
+
+        async def respond(**kwargs):
+            assert kwargs["response_schema"]["name"] == "ppap_raster_cell_evidence"
+            ids = kwargs["response_schema"]["schema"]["properties"]["cells"]["required"]
+            started.append(ids[0])
+            if len(started) == 2:
+                both_started.set()
+            try:
+                await both_started.wait()
+                if failure == "provider" and ids[0] == "0":
+                    raise page.ResponsesEvidenceError("responses_invalid_json", "Controlled provider failure")
+                await asyncio.Future()
+            finally:
+                await asyncio.sleep(0)  # Async client cleanup must finish before return.
+                closed.append(ids[0])
+
+        with patch.object(cell_ocr, "call_llm_async", side_effect=respond):
+            operation = asyncio.create_task(page._read_scan_page(png, grids))
+            await asyncio.wait_for(both_started.wait(), timeout=2)
+            if failure == "cancel":
+                operation.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await operation
+            else:
+                with pytest.raises(page.ResponsesEvidenceError) as error:
+                    await operation
+                assert error.value.code == ("responses_invalid_json" if failure == "provider" else "raster_cell_timeout")
+        assert started == ["0", "3"]
+        assert sorted(closed) == ["0", "3"]
+        assert not [task for task in asyncio.all_tasks() if task is not asyncio.current_task() and not task.done()]
+
+    asyncio.run(scenario())
 
 
 def test_table_mask_preserves_all_pixels_outside_the_verified_table(tmp_path):

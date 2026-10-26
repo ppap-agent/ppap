@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from time import monotonic
 from typing import Any
@@ -31,8 +32,10 @@ CELL_PROMPT = (
 
 async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
     values: dict[int, str] = {}
+    offsets = iter(range(0, len(grid.cells), CELLS_PER_REQUEST))
+    stopped = False
 
-    for offset in range(0, len(grid.cells), CELLS_PER_REQUEST):
+    async def read_batch(offset: int) -> dict[int, str]:
         requested = grid.cells[offset : offset + CELLS_PER_REQUEST]
         expected = [str(cell.index) for cell in requested]
         schema: dict[str, Any] = {
@@ -57,7 +60,9 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
             )
         except BaseException as exc:
             logger.warning(
-                "Raster OCR batch stopped: cells=%d png_bytes=%d elapsed_ms=%d error_type=%s",
+                "Raster OCR batch stopped: batch=%d/%d cells=%d png_bytes=%d elapsed_ms=%d error_type=%s",
+                offset // CELLS_PER_REQUEST + 1,
+                (len(grid.cells) + CELLS_PER_REQUEST - 1) // CELLS_PER_REQUEST,
                 len(requested),
                 len(panel),
                 round((monotonic() - started) * 1000),
@@ -76,7 +81,29 @@ async def _read_grid(png: bytes, grid: RasterGrid) -> dict[str, Any]:
         for key, text in entries.items():
             if not isinstance(text, str) or len(text) > 32767:
                 raise ResponsesEvidenceError("raster_cells_invalid_schema", "Raster OCR returned invalid cell text")
-            values[int(key)] = text
+        return {int(key): text for key, text in entries.items()}
+
+    async def worker() -> None:
+        nonlocal stopped
+        try:
+            # Claim one disjoint batch before awaiting; no queue or task per cell.
+            for offset in offsets:
+                if stopped:
+                    return
+                values.update(await read_batch(offset))
+        except BaseException:
+            stopped = True
+            raise
+
+    tasks = [asyncio.create_task(worker()) for _ in range(2)]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        # A page cannot return or publish a partial grid with provider I/O detached.
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     rows = [["" for _col in range(grid.col_count)] for _row in range(grid.row_count)]
     for cell in grid.cells:
