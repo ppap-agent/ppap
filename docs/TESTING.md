@@ -104,6 +104,8 @@ V2 Standard round 的失败日志保留公开 finding 的判定说明：只采�
 
 V2 单文件回归也保留实际业务结果的公开 `suggestions`，最多 1024 字符并按单行 JSON 字符串转义，供 required corpus 的失败说明使用。说明不参与 outcome 或 baseline equality；ERR 仍只使用已有稳定 diagnostic code，不新增异常原文。未返回业务说明时不编造原因，也不据一次重跑通过认定模型判定波动已修复。
 
+当前 Grok 配置在 Corpus、Product、API 和 Worker 中显式使用 `OPENAI_REASONING_EFFORT=low`，避免让供应商的默认推理量占满视觉事实提取的 120 秒期限。该设置进入已有 Standard 执行配置摘要；API 与 Worker 必须一致，旧受理和历史不回填。其他模型须按其能力配置此字段，不支持时留空。单次视觉调用仍最多 12000 输出 token、无隐藏重试，超时仍为 ERR；降低推理量的正确性由相同人工预期的完整回归核对，不修改预期或 baseline。
+
 Standard 的 `run_round_from_bytes` 用独立、执行后即清理的跟踪范围收集 SDK 可见用量，返回到已有 Worker `usage`／attempt 诊断边界，不新增客户用量 API。已报告的输入／输出 token 不因模型输出无效而丢失；任一 SDK 调用缺少有效输入／输出回执时，`usage_complete=false`、总量为 `null`，已知调用明细保留。`usage_complete` 只表示可见 SDK 调用的输入／输出回执完整性；可选 reasoning 拆分缺失／无效时显示 `null`，不丢弃已知输入／输出，也不重复加入总量。正常返回或异常退出均恢复调用前的范围，下一次执行不继承旧统计。Core Tracker、真实 Word／审核器和外部 HTTP／SDK 边界测试保护此行为；它不改变 PASS／NG、既有重试或每份 500 点业务账，也不证明 SDK 内部全部 HTTP 尝试、实际扣费订单或当前候选的 PG 持久化已验收。
 
 `tests/integration/product/test_standard_usage_persistence.py` 在隔离 Product 数据库中补充公开上传、JSON 规则解析／发布、显式冻结受理、实际 Standard Worker／Word 审核器与 PostgreSQL attempt 诊断读回。对象存储和 SDK 外部 HTTP 响应受控，分别检查完整、混合及缺失回执；已知明细与未知总量保持，实际 PASS／NG、冻结版本、原件和重复只读不执行保持。数据库场景须由隔离 CI 实际执行，收集不算通过；不新增开发者回执 API，不证明真实视觉质量、SDK 隐藏重试、结算订单或旧自动技术重排。

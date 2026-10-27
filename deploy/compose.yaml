@@ -118,6 +118,7 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
       # Acceptance and execution must identify the same non-secret tool policy.
       OCR_ADAPTER_MODE: ${OCR_ADAPTER_MODE:-auto}
       OCR_REMOTE_URL: ${OCR_REMOTE_URL:-}
@@ -182,6 +183,7 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
       OCR_ADAPTER_MODE: ${OCR_ADAPTER_MODE:-auto}
       OCR_REMOTE_URL: ${OCR_REMOTE_URL:-}
       OCR_ENGINE: ${OCR_ENGINE:-easyocr}

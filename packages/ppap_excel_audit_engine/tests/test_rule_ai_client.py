@@ -81,6 +81,7 @@ class RuleAIClientTests(unittest.TestCase):
         self.assertEqual(sdk.calls[0]["input"], [{"role": "system", "content": "system"}, {"role": "user", "content": "source"}])
         self.assertEqual(sdk.calls[0]["max_output_tokens"], 1000)
         self.assertFalse(sdk.calls[0]["store"])
+        self.assertNotIn("reasoning", sdk.calls[0])
         self.assertIs(client.client, sdk)
         sdk.response = SimpleNamespace(status="completed", output_text="ok")
         self.assertEqual(client.structured_completion("system", "source"), "ok")
@@ -281,6 +282,7 @@ if __name__ == "__main__":
 def test_visual_provider_timeout_is_one_failed_attempt_without_hidden_retries():
     sdk = SDK(error=TimeoutError("private-visual-provider"))
     client = RuleAIClientTests().client(sdk)
+    client.settings.OPENAI_REASONING_EFFORT = "low"
     with tracked_request() as request_id:
         with unittest.TestCase().assertLogs("ppap_excel_audit_engine.checkers.client", level="ERROR") as logs:
             with unittest.TestCase().assertRaises(TimeoutError):
@@ -288,6 +290,8 @@ def test_visual_provider_timeout_is_one_failed_attempt_without_hidden_retries():
         usage = get_token_tracker().end_request_tracking(request_id).to_dict()
     assert len(sdk.calls) == 1
     assert sdk.calls[0]["timeout"] == 120
+    assert sdk.calls[0]["max_output_tokens"] == 12000
+    assert sdk.calls[0]["reasoning"] == {"effort": "low"}
     assert sdk.options == [{"max_retries": 0}]
     assert usage["unreported_calls_count"] == 1
     assert "private-visual-provider" not in "\n".join(logs.output)

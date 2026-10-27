@@ -23,6 +23,7 @@ data:
   PPAP_S3_REGION: us-east-1
   PPAP_S3_BUCKET: ppap-objects
   LLM_MODEL: grok-4.6
+  OPENAI_REASONING_EFFORT: low
   FEISHU_APP_ID: cli_a961a27719b81cc9
   FEISHU_AI_ITEM_ID: OpenApp_Lcoastline_PPAPAuditAgent
   FEISHU_FREE_TRIAL_QUOTA_POINTS: "10000"
