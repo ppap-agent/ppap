@@ -116,6 +116,25 @@ def preview_failure_diagnostics(request, monkeypatch):
         def new_page(*args, **kwargs):
             page = create(*args, **kwargs)
             events = deque(maxlen=12)
+            first_asset_failure = {}
+
+            def failed_asset(event):
+                if path := asset_path(event.url):
+                    # Chromium failure messages can contain URLs. Keep only its
+                    # error code and the already-filtered same-origin path.
+                    code = re.search(r"\bnet::[A-Z_]+\b", event.failure or "")
+                    failure = {"request_failed": path, "error_code": code.group() if code else "unknown"}
+                    if not first_asset_failure:
+                        first_asset_failure.update(failure)
+                    events.append(failure)
+
+            def failed_response(event):
+                if event.status >= 400 and (path := asset_path(event.url)):
+                    failure = {"status": event.status, "asset": path}
+                    if not first_asset_failure:
+                        first_asset_failure.update(failure)
+                    events.append(failure)
+
             page.on(
                 "pageerror",
                 lambda error: events.append(
@@ -126,9 +145,9 @@ def preview_failure_diagnostics(request, monkeypatch):
                 ),
             )
             page.on("console", lambda event: events.append({"console_error": True}) if event.type == "error" else None)
-            page.on("requestfailed", lambda event: events.append({"request_failed": path}) if (path := asset_path(event.url)) else None)
-            page.on("response", lambda event: events.append({"status": event.status, "asset": path}) if event.status >= 400 and (path := asset_path(event.url)) else None)
-            pages.append((page, events))
+            page.on("requestfailed", failed_asset)
+            page.on("response", failed_response)
+            pages.append((page, events, first_asset_failure))
             return page
 
         return new_page
@@ -139,8 +158,8 @@ def preview_failure_diagnostics(request, monkeypatch):
             try:
                 yield playwright
             except BaseException:
-                for page, events in pages:
-                    result = {"events": list(events), "closed": page.is_closed()}
+                for page, events, first_asset_failure in pages:
+                    result = {"first_asset_failure": first_asset_failure, "events": list(events), "closed": page.is_closed()}
                     if not page.is_closed():
                         try:
                             result["document"] = page.locator("body").evaluate(
