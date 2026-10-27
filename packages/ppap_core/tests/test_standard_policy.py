@@ -13,6 +13,7 @@ from ppap_core.settings import Settings
         ("MODEL_NAME", "another-model"),
         ("OPENAI_BASE_URL", "https://another.invalid/v1"),
         ("OPENAI_REASONING_EFFORT", "high"),
+        ("OPENAI_REASONING_EFFORT", "low"),
         ("OPENAI_TEMPERATURE", 0.7),
         ("OPENAI_TOP_P", 0.3),
         ("OPENAI_EXTRA_BODY_JSON", '{"provider":{"order":["other"]}}'),

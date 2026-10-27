@@ -330,6 +330,7 @@ jobs:
     env:
       # 0: serial complete PDF corpus; 2: all PDF items in one xdist pool.
       PPAP_CORPUS_PDF_WORKERS: "2"
+      OPENAI_REASONING_EFFORT: low
     strategy:
       fail-fast: false
       matrix:
@@ -444,6 +445,7 @@ jobs:
             -e OPENAI_API_KEY \
             -e OPENAI_BASE_URL \
             -e MODEL_NAME \
+            -e OPENAI_REASONING_EFFORT \
             -e PADDLE_OCR_URL \
             -e PADDLE_TOKEN \
             -e OCR_OPENAI_API_KEY \
@@ -470,6 +472,7 @@ jobs:
     # This isolates active jobs without retaining a full clone per run/cell.
     env:
       PPAP_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      OPENAI_REASONING_EFFORT: low
       PPAP_COMPOSE_TEST: ppap-ci-product-tests-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_COMPOSE_PROD: ppap-ci-prod-${{ github.run_id }}-${{ github.run_attempt }}
       PPAP_COMPOSE_E2E: ppap-ci-e2e-${{ github.run_id }}-${{ github.run_attempt }}

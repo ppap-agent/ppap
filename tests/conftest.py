@@ -122,7 +122,7 @@ def preview_failure_diagnostics(request, monkeypatch):
                 if path := asset_path(event.url):
                     # Chromium failure messages can contain URLs. Keep only its
                     # error code and the already-filtered same-origin path.
-                    code = re.search(r"\bnet::[A-Z_]+\b", event.failure or "")
+                    code = re.match(r"net::ERR_[A-Z0-9_]+\b", event.failure or "")
                     failure = {"request_failed": path, "error_code": code.group() if code else "unknown"}
                     if not first_asset_failure:
                         first_asset_failure.update(failure)
