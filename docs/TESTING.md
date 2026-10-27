@@ -352,6 +352,8 @@ PDF Corpus 的 `test_v2_product_round_respects_oracle_baseline` 保留原 `build
 
 Product Browser E2E 在本次 **all-suite concurrency stress experiment** 中不再区分受控与真实服务用例。`PPAP_E2E_WORKERS=4` 在同一个 isolated-dev Docker Compose 环境中，对整个 `tests/e2e` 调用一次 `pytest-xdist -n 4 --dist=load --max-worker-restart=0 -vv --durations=25`，没有 `--ignore`、静默重跑或跳过任何原有可运行测试。真实 API/PostgreSQL/Worker 测试同样进入调度池：跨 worker 的共同 `alice` 身份、数据库/对象存储、服务端全局状态可能造成 race 或污染，这正是本实验要揭示的，不应解释成已实现生产级测试隔离。`PPAP_E2E_WORKERS=0` 恢复原完整 E2E 单进程测试。`-vv` 标出 `[gwN]` 和逐项执行结果，`--durations=25` 捕获慢项。原先独立运行的 9 项历史报告测试也包含在这一个调用中。CI Gate、Product 集成数据库测试和 Production runtime 测试没有放宽。若失败，先按失败用例和共享资源类型归类，然后改造 per-worker 用户身份、唯一记录或独立 DB/Compose project；不要自动忽略失败。
 
+共享租户允许其他测试合法发布已确认规则。未确认解析的无副作用检查按本次原件版本核对，不能要求整个租户的规则列表保持不变；同时检查本页面未发送发布请求，并拒绝本次来源提前出现在已发布版本中。
+
 验证标准：检查 `uv sync --locked --group e2e`、完整 Preview 收集数/通过数（改动前为 257），并核对 PDF Product Round 的逐文件收集数及新旧 baseline 判定无减损、Browser E2E 两段通过/跳过总数与原测试对应、所有 Repository tests 和相同 commit 的严格 CI Gate。至少连续比较三次完整 CI，记录 wall-clock、Web/PDF 耗时、队列时长与 Runner 的峰值 CPU/内存/Swap；若有 OOM、Chromium 异常、新增 flaky 或其他 Job 严重退化，先设置 `PPAP_PREVIEW_WORKERS=0` 回退。两台 Runner 是否为不同物理主机仍需部署侧确认。
 
 
