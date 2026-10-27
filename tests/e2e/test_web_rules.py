@@ -39,10 +39,10 @@ class RulePreparationTests(unittest.TestCase):
                     title = original.stem + " " + uuid.uuid4().hex[:8]
                     context = browser.new_context()
                     page = context.new_page()
+                    publication_requests = []
+                    page.on("request", lambda request, observed=publication_requests: observed.append(True) if request.method == "POST" and urlsplit(request.url).path.endswith("/rules") else None)
                     api = isolated_dev_login(page, WEB)
                     page.goto(WEB + "/audit?view=requirements")
-                    before = page.request.get(f"{api}/rules")
-                    self.assertEqual(before.status, 200)
                     page.get_by_label("上传共用要求文件").set_input_files(original)
                     page.get_by_label("适用资料类型").select_option(document_type)
                     with page.expect_response(lambda response: response.request.method == "POST" and urlsplit(response.url).path.endswith("/rules/parse")) as parsing:
@@ -65,7 +65,15 @@ class RulePreparationTests(unittest.TestCase):
                     for identity, text in expected:
                         self.assertIn(text, excerpts)
                         expect(clauses.get_by_role("article", name=f"条款 {identity}", exact=True)).to_contain_text(text)
-                    self.assertEqual(page.request.get(f"{api}/rules").json(), before.json(), "Parsing must not publish an unconfirmed rule")
+                    self.assertEqual(publication_requests, [], "Parsing must not submit a publication")
+                    listed = page.request.get(f"{api}/rules")
+                    self.assertEqual(listed.status, 200)
+                    # Other tests can publish confirmed rules in this tenant.
+                    # This parse must not publish a version from its own source.
+                    for rule in listed.json()["rules"]:
+                        detail = page.request.get(f"{api}/rules/{rule['id']}")
+                        self.assertEqual(detail.status, 200)
+                        self.assertNotEqual(detail.json()["source_file_version_id"], source["source_file_version_id"], "Parsing must not publish an unconfirmed rule")
                     page.get_by_label("要求名称", exact=True).fill(title)
                     for label in ("不限定客户", "不限定零件", "不限定图纸修订"):
                         page.get_by_label(label, exact=True).check()
