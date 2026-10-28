@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
+from itertools import islice
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, model_validator
 
-from .document_tools import col_number, effective
+from .document_tools import col_number, effective, ref
 from .evidence import EvidenceBudget, resolve_optional
-from .models import Artifact, AuditReport, Citation, ExcelCell, PlannedRule, Predicate, QueryProgram, RulePlan, Scalar, SemanticProgram, WordCell
+from .models import Artifact, AuditReport, Check, Citation, Diagnostic, ExcelCell, PlannedRule, Predicate, QueryProgram, RulePlan, Scalar, SemanticProgram, WordCell
 
 TableRowLocator = Annotated[ExcelCell | WordCell, Field(discriminator="kind")]
 
@@ -50,6 +51,7 @@ class Observation(Artifact):
     status: Literal["PASS", "NG", "UNABLE", "NA"]
     reason: str = Field(min_length=1)
     evidence: list[Citation] = Field(default_factory=list, max_length=64)
+    diagnostic: Diagnostic | None = None
 
     @model_validator(mode="after")
     def explained_role(self) -> Observation:
@@ -76,11 +78,6 @@ Proof = Annotated[QueryProof | SemanticProof, Field(discriminator="kind")]
 class AuditTrace(Artifact):
     bindings: list[Binding] = Field(default_factory=list, max_length=256)
     proofs: list[Proof] = Field(max_length=16384)
-
-
-class AuditExecution(Artifact):
-    report: AuditReport
-    trace: AuditTrace
 
 
 def semantic_summary(proof: SemanticProof, planned: PlannedRule) -> tuple[Literal["PASS", "NG", "UNABLE", "NA"], int, int, int]:
@@ -116,7 +113,7 @@ def predicate_result(predicate: Predicate, value: Scalar) -> bool | None:
     return {"gt": left > right, "ge": left >= right, "lt": left < right, "le": left <= right}[predicate.op]
 
 
-def query_counts(program: QueryProgram, binding: Binding, document: dict[str, Any], budget: EvidenceBudget) -> tuple[str, int, int, int, dict[int, set[int]]]:
+def query_counts(program: QueryProgram, binding: Binding, document: dict[str, Any], budget: EvidenceBudget) -> tuple[Literal["PASS", "NG", "UNABLE", "NA"], int, int, int, dict[int, set[int]]]:
     if not binding.mapping_basis.strip() or not binding.boundary_basis.strip():
         raise ValueError("Binding lacks scope/mapping justification")
     if document["source"]["sha256"] != binding.source_sha256:
@@ -162,6 +159,7 @@ def query_counts(program: QueryProgram, binding: Binding, document: dict[str, An
             unknown += 1
         else:
             matched += 1
+    status: Literal["PASS", "NG", "UNABLE", "NA"]
     if total == 0:
         status = "UNABLE"
     elif program.quantifier == "forall":
@@ -172,6 +170,119 @@ def query_counts(program: QueryProgram, binding: Binding, document: dict[str, An
     if status == "PASS" and unknown:
         status = "UNABLE"
     return status, total, total - unknown, unknown, failed
+
+
+def _query_support(
+    program: QueryProgram, binding: Binding, document: dict[str, Any], status: str, total: int, failures: dict[int, set[int]], budget: EvidenceBudget
+) -> tuple[list[Citation], Diagnostic | None]:
+    """Locate replayed facts; no model-authored aggregate or inferred cause."""
+    cells: list[tuple[int, int]] = []
+    diagnostic: Diagnostic | None = None
+    if status == "NG":
+        cells = list(islice(((row, column) for row, columns in failures.items() for column in sorted(columns)), 64))
+    elif not total:
+        return [Citation(document_id=binding.document_id, locator=item.evidence_locator) for item in binding.excluded_rows[:64]], "rule_ambiguity"
+    else:
+        table = next(table for table in document["tables"] if table["id"] == binding.table)
+        excluded = {item.row for item in binding.excluded_rows}
+        columns = [col_number(binding.columns[item.field]) for item in program.predicates]
+        for row in range(binding.first_row, binding.last_row + 1):
+            budget.consume(1)
+            if row in excluded:
+                continue
+            observations = []
+            results = []
+            for predicate, column in zip(program.predicates, columns, strict=True):
+                budget.consume(len(table.get("merges", [])) + 1)
+                observation = effective(table, row, column)
+                observations.append(observation)
+                results.append(predicate_result(predicate, observation["value"]) if observation["state"] == "known" else None)
+            if status == "PASS" and all(result is True for result in results):
+                cells = [(row, column) for column in columns]
+                break
+            if status == "UNABLE" and False not in results and None in results:
+                cells = [(row, column) for column, result in zip(columns, results, strict=True) if result is None]
+                first_unknown = observations[results.index(None)]
+                diagnostic = "parser_unknown" if first_unknown["state"] != "known" else "unsupported_structure"
+                break
+    evidence = []
+    for row, column in cells:
+        locator = (
+            WordCell(kind="docx_cell", table=int(binding.table.removeprefix("table:")), row=row, column=column)
+            if document["source"]["format"] == ".docx"
+            else ExcelCell(kind="xlsx_cell", sheet=binding.table, cell=ref(row, column))
+        )
+        evidence.append(Citation(document_id=binding.document_id, locator=locator))
+    return evidence, diagnostic
+
+
+def _semantic_support(proof: SemanticProof, planned: PlannedRule, status: str, unknown: int) -> tuple[str, list[Citation], Diagnostic | None]:
+    for record in proof.records:
+        if record.status == "UNABLE" and record.diagnostic is None:
+            raise ValueError(f"UNABLE observation lacks diagnostic: {proof.audit_id}/{proof.rule_id}/{record.record_id}")
+        if record.status != "UNABLE" and record.diagnostic is not None:
+            raise ValueError(f"Known observation has an UNABLE diagnostic: {proof.audit_id}/{proof.rule_id}/{record.record_id}")
+    empty_scope = not any(record.role == "applicable" for record in proof.records) and not unknown and status != "NG"
+    supporting = [record for record in proof.records if record.status == status or empty_scope]
+    reason = f"未发现适用记录；{planned.empty_scope_basis}" if empty_scope else "；".join(record.reason for record in supporting[:3])
+    if unknown and status != "UNABLE":
+        unresolved = next(record for record in proof.records if record.status == "UNABLE")
+        reason += f"；另有 {unknown} 项未知：{unresolved.reason}"
+    if len(supporting) > 3:
+        reason += f"；其余 {len(supporting) - 3} 项同类观察见执行记录"
+    if status == "UNABLE" and not empty_scope:
+        reason += f"；共 {unknown} 项未知"
+    evidence: dict[str, Citation] = {}
+    for record in supporting:
+        for citation in record.evidence:
+            evidence.setdefault(citation.model_dump_json(), citation)
+            if len(evidence) == 64:
+                break
+        if len(evidence) == 64:
+            break
+    diagnostic = "rule_ambiguity" if empty_scope and status == "UNABLE" else next((record.diagnostic for record in supporting if record.status == "UNABLE"), None)
+    return reason, list(evidence.values()), diagnostic
+
+
+def derive_report(trace: AuditTrace, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan]) -> AuditReport:
+    """Project execution facts into the existing report; bundle validation remains mandatory."""
+    expected = {(audit_id, rule.id): rule for audit_id, plan in plans.items() for rule in plan.rules}
+    proofs = {(proof.audit_id, proof.rule_id): proof for proof in trace.proofs}
+    if len(proofs) != len(trace.proofs) or set(proofs) != set(expected):
+        raise ValueError("Every planned target/clause needs exactly one execution proof")
+    bindings = {binding.id: binding for binding in trace.bindings}
+    if len(bindings) != len(trace.bindings):
+        raise ValueError("Duplicate binding identity")
+    budget = EvidenceBudget()
+    support_budget = EvidenceBudget()
+    checks = []
+    for identity, planned in expected.items():
+        proof = proofs[identity]
+        if isinstance(proof, QueryProof):
+            if not isinstance(planned.predicate, QueryProgram):
+                raise ValueError("Query proof contradicts the planned rule program")
+            binding = bindings.get(proof.binding_id)
+            if binding is None or binding.document_id not in documents or binding.document_id != proof.audit_id:
+                raise ValueError("Missing query binding")
+            document = documents[binding.document_id]
+            status, total, checked, unknown, failures = query_counts(planned.predicate, binding, document, budget)
+            evidence, diagnostic = _query_support(planned.predicate, binding, document, status, total, failures, support_budget)
+            conclusion = {
+                "PASS": "全部记录满足条件" if planned.predicate.quantifier == "forall" else "存在满足条件的记录",
+                "NG": f"有 {len(failures)} 条记录不满足条件" if planned.predicate.quantifier == "forall" else "没有记录满足条件",
+                "UNABLE": "范围内没有可检查记录" if not total else "存在无法确认条件的记录",
+            }[status]
+            addresses = "、".join(f"{binding.table}!{ref(row, column)}" for row, columns in list(failures.items())[:3] for column in sorted(columns)[:3])
+            reason = f"{planned.description}：{conclusion}。共 {total} 条记录，已检查 {checked} 条，未知 {unknown} 条。"
+            if status == "NG" and addresses:
+                reason += f"不符合位置：{addresses}。"
+        else:
+            if not isinstance(planned.predicate, SemanticProgram):
+                raise ValueError("Semantic proof contradicts the planned rule program")
+            status, total, checked, unknown = semantic_summary(proof, planned)
+            reason, evidence, diagnostic = _semantic_support(proof, planned, status, unknown)
+        checks.append(Check(audit_id=proof.audit_id, rule_id=proof.rule_id, status=status, reason=reason, total=total, checked=checked, unknown=unknown, evidence=evidence, diagnostic=diagnostic))
+    return AuditReport(checks=checks)
 
 
 def query_witness(citation: Citation, binding: Binding, failures: dict[int, set[int]], budget: EvidenceBudget) -> bool:

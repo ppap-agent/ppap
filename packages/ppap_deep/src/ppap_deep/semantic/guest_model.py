@@ -81,7 +81,7 @@ class GrokRunner:
         artifact_prompt = (
             prompt + "\nComplete this stage through file tools before the final response. "
             "Read the supplied inputs and artifact_schema.json, then write the complete output as valid JSON to execution.json. "
-            "Re-open execution.json and verify coverage, evidence, counts, diagnostics, and proof kinds. "
+            "Re-open execution.json and verify proof coverage, evidence, observation diagnostics, roles, and proof kinds. Do not add a report or aggregate counts. "
             'After finishing the work, your final response must be exactly {"completed":true,"artifact":"execution.json"}. '
             "This is only a completion receipt; it must not contain the business output. "
             "A receipt without a complete execution.json fails the stage."

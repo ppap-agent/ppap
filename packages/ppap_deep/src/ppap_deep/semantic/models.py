@@ -51,6 +51,7 @@ class PublishedClause(Artifact):
 
 Locator = Annotated[ExcelCell | ExcelRange | WordParagraph | WordCell | PdfBlock | PublishedClause, Field(discriminator="kind")]
 Scalar: TypeAlias = str | int | float | bool | None
+Diagnostic: TypeAlias = Literal["parser_unknown", "unresolved_relation", "visual_only_evidence", "budget_exhausted", "unsupported_structure", "rule_ambiguity"]
 
 
 class Predicate(Artifact):
@@ -115,7 +116,7 @@ class Check(Artifact):
     checked: int = Field(ge=0, strict=True)
     unknown: int = Field(ge=0, strict=True)
     evidence: list[Citation] = Field(default_factory=list, max_length=64)
-    diagnostic: Literal["parser_unknown", "unresolved_relation", "visual_only_evidence", "budget_exhausted", "unsupported_structure", "rule_ambiguity"] | None = None
+    diagnostic: Diagnostic | None = None
 
 
 class AuditReport(Artifact):

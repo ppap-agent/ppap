@@ -32,7 +32,7 @@ from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.guest import Manifest, execute
 from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
-from ppap_deep.semantic.trace import AuditExecution
+from ppap_deep.semantic.trace import AuditTrace
 
 COMPLETED_EVENT = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5}}}\n\n'
 
@@ -453,29 +453,27 @@ class ContainerCacheTests(unittest.TestCase):
                             ],
                         }
                     )
-                owner.assertIs(schema, AuditExecution)
+                owner.assertIs(schema, AuditTrace)
                 documents = json.loads((work / "documents.json").read_text())
                 owner.model_snapshots.append(documents[owner.target])
-                checks, proofs = [], []
+                proofs = []
                 for target in owner.targets:
                     address = "A999" if owner.evidence_mode == "unresolved" else "A2"
                     evidence = [] if owner.evidence_mode == "missing" else [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}]
                     if owner.evidence_mode == "unlocated":
                         evidence = [{"document_id": target}]
-                    checks.append({"audit_id": target, "rule_id": "R1", "status": "PASS", "reason": "正文频次为每批。", "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
                     proofs.append(
                         {
                             "kind": "semantic",
                             "audit_id": target,
                             "rule_id": "R1",
                             "scope_basis": "正文第 2 行",
-                            "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "正文频次记录", "status": "PASS", "reason": "频次为每批。", "evidence": evidence}],
+                            "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "正文频次记录", "status": "PASS", "reason": "正文频次为每批。", "evidence": evidence}],
                         }
                     )
                     if owner.evidence_mode == "omitted":
-                        del checks[-1]["evidence"]
                         del proofs[-1]["records"][0]["evidence"]
-                return AuditExecution.model_validate({"report": {"checks": checks}, "trace": {"proofs": proofs}})
+                return AuditTrace.model_validate({"proofs": proofs})
 
         class Guest:
             pid = 99_999_999

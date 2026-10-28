@@ -20,11 +20,11 @@ from ppap_deep.auditor import SemanticRuntime, product_response
 from ppap_deep.client import DeepError
 from ppap_deep.controller import Controller, ExecutionContext
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
-from ppap_deep.semantic.guest import Manifest, execute
+from ppap_deep.semantic.guest import CompilationReview, Manifest, execute
 from ppap_deep.semantic.guest_model import ModelBudgetError, ModelProtocolError
 from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ResultBundle, SubmissionSpec
-from ppap_deep.semantic.trace import AuditExecution
+from ppap_deep.semantic.trace import AuditTrace, QueryProof
 
 ENGINE = "a" * 64
 BAD_TARGET = "bad-file-version"
@@ -120,11 +120,11 @@ class ModelResponses:
                 self.after_plan(version, self.plan_attempts[version], _deadline)
             return RulePlan.model_validate({"source_sha256": digest, "plan_revision": rule.plan_revision, "rules": planned})
 
-        assert schema is AuditExecution
+        assert schema is AuditTrace
         self.audit_calls += 1
         targets = json.loads((work / "targets.json").read_text())
         self.audit_targets.append(targets)
-        checks, proofs = [], []
+        proofs = []
         for target, version in targets.items():
             prefix = "B" if version == BAD_RULE else "G"
             for index, (cell, status, reason) in enumerate(
@@ -136,7 +136,6 @@ class ModelResponses:
             ):
                 rule_id = f"{prefix}{index}"
                 evidence = [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "数据", "cell": cell}}]
-                checks.append({"audit_id": target, "rule_id": rule_id, "status": status, "reason": reason, "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
                 proofs.append(
                     {
                         "kind": "semantic",
@@ -147,9 +146,8 @@ class ModelResponses:
                     }
                 )
         if self.incomplete_audit_once and self.audit_calls == 1:
-            checks.pop()
             proofs.pop()
-        return AuditExecution.model_validate({"report": {"checks": checks}, "trace": {"proofs": proofs}})
+        return AuditTrace.model_validate({"proofs": proofs})
 
 
 class InProcessGuest:
@@ -419,6 +417,47 @@ def test_audit_repair_keeps_failed_rules_and_repairs_only_the_independent_target
     assert set(bundle.failed_rules) == {BAD_RULE}
     assert set(bundle.plans) == {GOOD_RULE}
     assert [(check.audit_id, check.rule_id) for check in bundle.report.checks] == [(GOOD_TARGET, "G1"), (GOOD_TARGET, "G2")]
+    assert product_response(case.spec, bundle, submission) == result
+
+
+@pytest.mark.parametrize("fault", ["proof_kind", "unknown_diagnostic"])
+def test_trace_derivation_preserves_bounded_repair_and_compilation_review(monkeypatch, fault):
+    case = frozen_case()
+    original_run = case.model.run
+    reviewed = []
+    feedback = []
+
+    def run(work, prompt, schema, deadline, *, reasoning_effort):
+        if schema is CompilationReview:
+            requests = json.loads((work / "review-request.json").read_text())["requests"]
+            reviewed.extend(requests)
+            return CompilationReview.model_validate(
+                {"reviews": [{"rule_file_id": request["rule_file_id"], "clause": request["planned_clause"], "reason": "原编译忠实于有效条款，修正执行记录类型。"} for request in requests]}
+            )
+        if work.name == "audit-repair":
+            feedback.append(json.loads((work / "validation-feedback.json").read_text()))
+            previous = json.loads((work / "previous-execution.json").read_text())
+            assert set(previous) == {"bindings", "proofs"}
+        output = original_run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
+        if schema is AuditTrace and work.name == "audit":
+            proof = output.proofs[0]
+            if fault == "proof_kind":
+                output.proofs[0] = QueryProof(kind="query", audit_id=proof.audit_id, rule_id=proof.rule_id, binding_id="missing")
+            else:
+                proof.records[0].status = "UNABLE"
+                proof.records[0].reason = "缺少分类映射，无法确认适用性。"
+        return output
+
+    monkeypatch.setattr(case.model, "run", run)
+    result = handle_case(case)
+    assert [row.status for row in result.findings] == ["ERR", "ERR", "PASS", "NG"]
+    assert case.model.audit_calls == 2
+    assert len(reviewed) == (1 if fault == "proof_kind" else 0)
+    assert len(feedback) == 1
+    expected_message = "Query proof contradicts" if fault == "proof_kind" else f"UNABLE observation lacks diagnostic: {GOOD_TARGET}/G1/row-2"
+    assert expected_message in feedback[0]["message"]
+    bundle, submission = persisted_bundle(case)
+    assert set(bundle.failed_rules) == {BAD_RULE}
     assert product_response(case.spec, bundle, submission) == result
 
 

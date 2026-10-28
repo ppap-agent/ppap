@@ -58,11 +58,11 @@ description: 审核 PPAP 的 PDF、Excel 或 Word 文件时，将用户规则转
 
 ### 4. 完成验收
 
-调用方要求 AuditExecution 时，按 [执行产物](references/execution-trace.md) 返回可重放的 query proof 或逐记录 semantic proof，保持报告与执行产物一致。
+按 [执行产物](references/execution-trace.md) 返回 AuditTrace：被查询引用的 bindings，以及每个目标/条款唯一的 query proof 或逐记录 semantic proof。可信代码从这些事实派生公开报告、状态、计数和引用。
 
-若调用方提供先前的 schema-valid execution 和校验反馈，本调用是一次受限修复：复用已有 snapshots 和 plans，按反馈修正并重新返回完整 AuditExecution。计划已决定 proof kind；修复调用不能在审核阶段改换类型。一次修复仍失败时保留真实失败，不自行递归重试。
+若调用方提供先前的 schema-valid AuditTrace 和校验反馈，本调用是一次受限修复：复用已有 snapshots 和 plans，按反馈修正并重新返回完整 AuditTrace。计划已决定 proof kind；修复调用不能在审核阶段改换类型。一次修复仍失败时保留真实失败，不自行递归重试。
 
-通过调用方指定的结构化输出 schema 返回结果，并为每项保留规则 ID、结论、来源证据、实际覆盖范围和限制。证据使用 output schema 中的 typed locator，不自行生成 quote。段落、页、表和 PDF block 都从 1 开始；UNABLE 必须给结构化 diagnostic。检查目标文件与规则组合无遗漏、重复或越界；最终结论能回指计划和查询/语义判断。
+通过调用方指定的结构化输出 schema 返回执行记录，并为每项保留规则 ID、实际覆盖范围和限制。语义观察保存原始判定理由及决定性来源；公开报告直接使用这些理由与来源。证据使用 output schema 中的 typed locator，不自行生成 quote。段落、页、表和 PDF block 都从 1 开始；每个 UNABLE 观察必须给实际原因的结构化 diagnostic；已知观察不填 diagnostic。检查目标文件与规则组合无遗漏、重复或越界；最终结论能回指计划和查询/语义判断。
 
 在时间或轮次耗尽前返回完整结构化结果；重读 `rule-sources.json`、`clauses.json`、`obligations.json`、`plans.json` 和 `documents.json` 恢复完整范围。未完成的条款给 UNABLE 并写原因。结束时报告真实完成范围。CLI 成功退出、合法 JSON 和有证据字段都不等于审核完成或证据正确。
 
