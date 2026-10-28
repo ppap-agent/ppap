@@ -155,7 +155,13 @@ class FullDocumentResult(Typed):
             if not set(check.required_hole_ids) <= holes.keys() or not set(check.record_ids) <= set(records) or not set(check.unknown_record_ids) <= set(check.record_ids):
                 raise ValueError("unknown_hole_or_record_reference")
             unresolved = any(holes[key].status != "resolved" for key in check.required_hole_ids)
-            empty = any(isinstance(holes[key], ValueHole) and (holes[key].value == [] or (isinstance(holes[key].value, str) and not holes[key].value.strip())) for key in check.required_hole_ids)
+
+            def blank(value: object) -> bool:
+                if isinstance(value, str):
+                    return not value.strip()
+                return isinstance(value, list) and (not value or any(isinstance(item, str) and not item.strip() for item in value))
+
+            empty = any(isinstance(holes[key], ValueHole) and blank(holes[key].value) for key in check.required_hole_ids)
             if check.status == "PASS" and (check.unknown_record_ids or unresolved or empty):
                 raise ValueError("PASS_requires_resolved_dependencies_and_no_unknown_records")
         return self
