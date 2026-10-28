@@ -92,7 +92,7 @@ def _word_table_images(source: Path, relationships: dict[str, dict[str, str]]) -
     from docx import Document
 
     result = []
-    for table_index, table in enumerate(Document(source).tables, 1):
+    for table_index, table in enumerate(Document(str(source)).tables, 1):
         seen = set()
         for row_index, row in enumerate(table.rows, 1):
             for column_index, cell in enumerate(row.cells, 1):
