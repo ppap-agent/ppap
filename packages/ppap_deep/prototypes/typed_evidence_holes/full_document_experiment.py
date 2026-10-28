@@ -26,6 +26,7 @@ from full_document_contract import FullDocumentResult, validate_result
 from hole_experiment import MODEL, REASONING_EFFORT
 
 HERE = Path(__file__).resolve().parent
+RUNNER_SOURCE = Path(__file__).read_bytes()
 ROOT = HERE.parents[3]
 SOURCES = {
     "jifeng": "1-全功能检验报告_继峰.xlsx",
@@ -51,7 +52,7 @@ def append(path, value):
 def scrub(value, secrets, blobs):
     """Keep observable actions, not reasoning blocks; images become local blobs."""
     if isinstance(value, dict):
-        if value.get("type") in {"thinking", "redacted_thinking", "reasoning", "reasoning_text", "reasoning_summary_text"}:
+        if isinstance(value.get("type"), str) and value["type"] in {"thinking", "redacted_thinking", "reasoning", "reasoning_text", "reasoning_summary_text"}:
             return {"type": "reasoning_omitted"}
         if value.get("type") == "base64" and str(value.get("media_type", "")).startswith("image/"):
             return scrub("data:" + value["media_type"] + ";base64," + value["data"], secrets, blobs)
@@ -117,6 +118,7 @@ def run_case(case_id, args, settings):
 
     output = args.output / case_id
     output.mkdir(mode=0o700)
+    (output / "runner.py").write_bytes(RUNNER_SOURCE)
     blobs = output / "image-blobs"
     secrets = [settings.llm_api_key]
 
@@ -124,12 +126,15 @@ def run_case(case_id, args, settings):
         def authorize(self, token, body, request_bytes):
             # One declared model/effort policy also covers auxiliary core calls.
             body["reasoning"] = {"effort": REASONING_EFFORT}
+            sanitized = scrub(body, secrets, blobs)
             lease = super().authorize(token, body, request_bytes)
-            append(output / "model-inputs.jsonl", {"request_index": len(lease.request_hashes), "body": scrub(body, secrets, blobs)})
+            sanitized["store"] = body["store"]
+            sanitized["max_output_tokens"] = body["max_output_tokens"]
+            append(output / "model-inputs.jsonl", {"request_index": len(lease.request_hashes), "body": sanitized})
             print(json.dumps({"case": case_id, "event": "model_request", "request": len(lease.request_hashes)}), flush=True)
             return lease
 
-    grants = RecordedGrants(MODEL, ttl=args.seconds, requests=args.max_requests, input_tokens=500_000, output_tokens=60_000)
+    grants = RecordedGrants(MODEL, ttl=args.seconds, requests=args.max_requests, input_tokens=1_500_000, output_tokens=100_000)
     gateway = Gateway(("127.0.0.1", 0), grants, settings.llm_base_url, settings.llm_api_key)
     gateway_thread = threading.Thread(target=gateway.serve_forever, daemon=True)
     gateway_thread.start()
@@ -137,7 +142,14 @@ def run_case(case_id, args, settings):
     token = grants.issue(execution_id)
     secrets.append(token)
     started = time.monotonic()
-    summary = {"case_id": case_id, "model": MODEL, "reasoning_effort": REASONING_EFFORT, "execution_id": str(execution_id), "label": {"eligible": False, "reason": "no_independent_binding_gold"}}
+    summary = {
+        "case_id": case_id,
+        "model": MODEL,
+        "reasoning_effort": REASONING_EFFORT,
+        "execution_id": str(execution_id),
+        "run_completed": False,
+        "label": {"eligible": False, "reason": "no_independent_binding_gold"},
+    }
     process = None
     try:
         with tempfile.TemporaryDirectory(prefix="ppap-hole-") as temporary:
@@ -155,6 +167,7 @@ def run_case(case_id, args, settings):
             for filename in ("inspect_original.py", "full_document_contract.py"):
                 shutil.copy2(HERE / filename, helper / filename)
             shutil.copy2(ROOT / "packages/ppap_deep/src/ppap_deep/semantic/document_tools.py", helper / "document_tools.py")
+            shutil.copytree(helper, output / "tools")
             dump(work / "output-schema.json", FullDocumentResult.model_json_schema())
             prompt = (HERE / "full_document_prompt.md").read_text().replace("{{PYTHON}}", sys.executable).replace("{{TOOLS}}", str(helper)).replace("{{INPUTS}}", str(inputs))
             (work / "prompt.txt").write_text(prompt)
@@ -171,9 +184,11 @@ def run_case(case_id, args, settings):
                 summary
                 | {
                     "max_requests": args.max_requests,
+                    "input_token_budget": 1_500_000,
+                    "output_token_budget": 100_000,
                     "seconds_limit": args.seconds,
                     "schema_sha256": sha(work / "output-schema.json"),
-                    "runner_sha256": sha(Path(__file__)),
+                    "runner_sha256": hashlib.sha256(RUNNER_SOURCE).hexdigest(),
                     "contract_sha256": sha(helper / "full_document_contract.py"),
                     "reader_sha256": sha(helper / "inspect_original.py"),
                 },
@@ -190,9 +205,32 @@ def run_case(case_id, args, settings):
                 Path("/Users/bef0rewind/.cache/codex-runtimes/codex-primary-runtime/dependencies"),
             ]
             read_paths = [str(path) for path in read_paths if path.exists()]
-            (grok_config / "sandbox.toml").write_text(
-                '[profiles.ppap_research]\nextends = "strict"\nrestrict_network = true\nread_only = ' + json.dumps(read_paths) + "\nread_write = " + json.dumps([str(work)]) + "\n"
-            )
+            # The installed core rejects this host's runtime-socket symlink
+            # before applying its profile. Use an outer native Seatbelt policy;
+            # do not continue with an unenforced inner sandbox.
+            if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+                raise RuntimeError("This research launcher requires macOS Seatbelt")
+            system_reads = ["/System", "/usr", "/bin", "/sbin", "/Library", "/private/etc", "/dev", str(Path(args.grok).resolve().parent)]
+            policy = "(version 1)\n(deny default)\n(allow process* signal sysctl-read mach-lookup ipc-posix-shm iokit-open)\n"
+            policy += "(allow file-read-metadata)\n"
+            policy += '(allow file-read* (literal "/") (literal "/private") (literal "/private/var"))\n'
+            policy += '(allow file-write* (literal "/dev/null"))\n'
+            for path in system_reads + read_paths:
+                policy += "(allow file-read* (subpath " + json.dumps(str(Path(path).resolve())) + "))\n"
+            policy += "(allow file-read* file-write* (subpath " + json.dumps(str(work)) + ") (subpath " + json.dumps(str(grok_config)) + "))\n"
+            policy += '(allow network-outbound (remote ip "localhost:' + str(gateway.server_address[1]) + '"))\n'
+            seatbelt = scratch / "research.sb"
+            seatbelt.write_text(policy)
+            shutil.copy2(seatbelt, output / "research.sb")
+            canary = scratch / "denied-canary.txt"
+            canary.write_text("research-only canary")
+            probe = subprocess.run(["/usr/bin/sandbox-exec", "-f", str(seatbelt), "/bin/cat", str(canary)], capture_output=True)
+            allowed = subprocess.run(["/usr/bin/sandbox-exec", "-f", str(seatbelt), "/bin/cat", str(document)], capture_output=True)
+            summary["local_boundary_probe"] = {"denied_returncode": probe.returncode, "allowed_returncode": allowed.returncode, "diagnostic": allowed.stderr.decode(errors="replace")[:1000]}
+            if probe.returncode == 0 or allowed.returncode != 0:
+                raise RuntimeError("Local file-access boundary probe failed")
+            summary["local_file_boundary"] = {"mechanism": "macOS Seatbelt", "allowed_original_read": True, "outside_canary_denied": True}
+            shutil.copy2(seatbelt, output / "research.sb")
             command = [
                 args.grok,
                 "--agent",
@@ -210,7 +248,7 @@ def run_case(case_id, args, settings):
                 "--max-turns",
                 str(args.max_requests),
                 "--sandbox",
-                "ppap_research",
+                "off",
                 "--permission-mode",
                 "bypassPermissions",
                 "--tools",
@@ -221,6 +259,7 @@ def run_case(case_id, args, settings):
                 "--deny",
                 "MCPTool",
             ]
+            command = ["/usr/bin/sandbox-exec", "-f", str(seatbelt), *command]
             environment = {
                 "PATH": os.environ["PATH"],
                 "GROK_HOME": str(grok_config),
@@ -276,7 +315,7 @@ def run_case(case_id, args, settings):
                 process.wait(timeout=10)
             summary.update(returncode=process.returncode, tool_calls=tools_started, tool_results=tools_finished, terminal=terminal)
             summary["source_unchanged"] = sha(document) == summary["document_sha256"] and sha(rules) == summary["rules_sha256"]
-            shutil.copytree(work, output / "work")
+            shutil.copytree(work, output / "work", ignore=shutil.ignore_patterns("grok-sessions-*"))
             artifact = work / "execution.json"
             if artifact.is_file():
                 raw = json.loads(artifact.read_text())
@@ -307,6 +346,7 @@ def run_case(case_id, args, settings):
             process.wait()
     finally:
         summary["usage"] = grants.usage(execution_id)
+        summary["run_completed"] = summary["run_completed"] and not summary["usage"]["uncertain"]
         grants.revoke(execution_id)
         gateway.shutdown()
         gateway.server_close()
@@ -331,7 +371,7 @@ def main():
     parser.add_argument("--assets-root", type=Path, default=ROOT)
     parser.add_argument("--settings-root", type=Path, required=True)
     parser.add_argument("--grok", default=shutil.which("grok"))
-    parser.add_argument("--max-requests", type=int, default=24)
+    parser.add_argument("--max-requests", type=int, default=32)
     parser.add_argument("--seconds", type=int, default=1200)
     args = parser.parse_args()
     if args.output.exists() or not args.grok or not 1 <= args.max_requests <= 32 or not 1 <= args.seconds <= 1800:
@@ -347,7 +387,8 @@ def main():
         dump(args.output / "summary.json", {"runs": summaries, "training_eligible": 0, "product_acceptance": False})
         if summaries[-1]["usage"].get("uncertain"):
             break
+    return 0 if len(summaries) == len(args.case or SOURCES) and all(run["run_completed"] for run in summaries) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
