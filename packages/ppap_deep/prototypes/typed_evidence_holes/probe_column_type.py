@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from cases import build_cases
-from hole_experiment import compare_reference, digest, encode, usage_of, validate_answer, write_event
+from hole_experiment import MODEL, REASONING_EFFORT, compare_reference, digest, encode, usage_of, validate_answer, write_event
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
@@ -65,6 +65,8 @@ def main():
     args.output.mkdir(parents=True, mode=0o700)
     plan = {
         "kind": "adaptive_column_schema_probe",
+        "model": MODEL,
+        "reasoning_effort": REASONING_EFFORT,
         "planned_calls": 4,
         "planned_comparisons": 12,
         "source_events_sha256": digest(source_events),
@@ -81,12 +83,12 @@ def main():
             task = source["task"]
             started = time.monotonic()
             usage = {"input_tokens": None, "output_tokens": None, "total_tokens": None}
-            raw, normalized, error, reported_model = None, None, None, settings.llm_model
+            raw, normalized, error, reported_model = None, None, None, MODEL
             try:
                 response = client.responses.create(
-                    model=settings.llm_model,
+                    model=MODEL,
                     input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": encode(task)}],
-                    reasoning={"effort": "low"},
+                    reasoning={"effort": REASONING_EFFORT},
                     max_output_tokens=2400,
                     store=False,
                     text={"format": {"type": "json_schema", "name": "column_bindings", "strict": True, "schema": Columns.model_json_schema()}},
@@ -120,12 +122,12 @@ def main():
                 "checks": checks,
                 "errors": errors,
                 "reference_comparisons": compare_reference(answer, case, ["specification", "measured", "judgment"], valid=not errors),
-                "model_requested": settings.llm_model,
+                "model_requested": MODEL,
                 "model_reported": reported_model,
                 "prompt_hash": digest({"system": SYSTEM, "task": task}),
                 "usage": usage,
                 "seconds": round(time.monotonic() - started, 3),
-                "request_policy": {"max_retries": 0, "max_output_tokens": 2400, "reasoning": "low", "timeout_seconds": 90},
+                "request_policy": {"max_retries": 0, "max_output_tokens": 2400, "reasoning": REASONING_EFFORT, "timeout_seconds": 90},
                 "label": {"eligible": False, "reason": "no_independent_binding_annotation"},
             }
             write_event(args.output / "events.jsonl", event)

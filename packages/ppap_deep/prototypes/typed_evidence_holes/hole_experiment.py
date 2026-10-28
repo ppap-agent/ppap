@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+MODEL = "grok-4.7"
+REASONING_EFFORT = "medium"
 NAMES = ("headers", "records", "specification", "measured", "judgment")
 STRATEGIES = {
     "independent": [("tolerance", ["records", "specification", "measured", "judgment"]), ("duplicates", ["records", "measured"])],
@@ -160,11 +162,11 @@ def usage_of(response):
     return {key: getattr(usage, key, None) for key in ("input_tokens", "output_tokens", "total_tokens")}
 
 
-def call_model(client, model, task):
+def call_model(client, task):
     response = client.responses.create(
-        model=model,
+        model=MODEL,
         input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": encode(task)}],
-        reasoning={"effort": "low"},
+        reasoning={"effort": REASONING_EFFORT},
         max_output_tokens=2400,
         store=False,
         text={"format": {"type": "json_schema", "name": "evidence_binding", "strict": True, "schema": Answer.model_json_schema()}},
@@ -173,10 +175,10 @@ def call_model(client, model, task):
     try:
         raw = json.loads(response.output_text)
     except (ValueError, TypeError):
-        return None, usage, "invalid_json", getattr(response, "model", model)
+        return None, usage, "invalid_json", getattr(response, "model", MODEL)
     status = getattr(response, "status", None)
     error = None if status == "completed" else "response_not_completed"
-    return raw, usage, error, getattr(response, "model", model)
+    return raw, usage, error, getattr(response, "model", MODEL)
 
 
 def write_event(path, event):
@@ -303,7 +305,7 @@ def main():
     if args.max_calls < 1 or planned > args.max_calls:
         parser.error("planned requests exceed max-calls")
     settings = Settings(_env_file=args.settings_root / ".env")
-    if not settings.llm_api_key or not settings.llm_base_url or not settings.llm_model:
+    if not settings.llm_api_key or not settings.llm_base_url:
         parser.error("configured model endpoint is unavailable")
     args.output.mkdir(parents=True, mode=0o700)
     # Annotations are local-only and are deliberately absent from every model task.
@@ -315,7 +317,8 @@ def main():
         "cases_source_sha256": hashlib.sha256(Path(__file__).with_name("cases.py").read_bytes()).hexdigest(),
         "system_prompt_sha256": digest(SYSTEM),
         "schema_sha256": digest(Answer.model_json_schema()),
-        "model": settings.llm_model,
+        "model": MODEL,
+        "reasoning_effort": REASONING_EFFORT,
         "max_calls": args.max_calls,
         "expected_requests": planned,
         "expected_hole_comparisons": len(cases) * sum(len(names) for strategy in strategies for _, names in STRATEGIES[strategy]),
@@ -332,9 +335,9 @@ def main():
                     task = make_task(case, stage, names, previous)
                     started = time.monotonic()
                     usage = {"input_tokens": None, "output_tokens": None, "total_tokens": None}
-                    raw, model_reported, error = None, settings.llm_model, None
+                    raw, model_reported, error = None, MODEL, None
                     try:
-                        raw, usage, error, model_reported = call_model(client, settings.llm_model, task)
+                        raw, usage, error, model_reported = call_model(client, task)
                     except Exception as exc:
                         # Exceptions may include URLs/provider bodies. Persist only the class.
                         error = type(exc).__name__
@@ -361,10 +364,10 @@ def main():
                         "reference_comparisons": compare_reference(answer, case, names, valid=not errors),
                         "usage": usage,
                         "seconds": seconds,
-                        "model_requested": settings.llm_model,
+                        "model_requested": MODEL,
                         "model_reported": model_reported,
                         "prompt_hash": digest({"system": SYSTEM, "task": task}),
-                        "request_policy": {"reasoning": "low", "max_output_tokens": 2400, "max_retries": 0, "timeout_seconds": 90},
+                        "request_policy": {"reasoning": REASONING_EFFORT, "max_output_tokens": 2400, "max_retries": 0, "timeout_seconds": 90},
                         "label": {"eligible": False, "reason": "no_independent_binding_annotation"},
                     }
                     write_event(args.output / "events.jsonl", event)
