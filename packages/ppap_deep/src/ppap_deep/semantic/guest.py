@@ -16,7 +16,7 @@ from .guest_model import ModelBudgetError, ModelProtocolError, ReasoningEffort
 from .models import Artifact, AuditReport, PlannedRule, RulePlan
 from .protocol import CompileBundle, CompileDiagnostic, CompileFailureRecord, CompileSpec, CompileValidationReason, GuestFault, ResultBundle, RuleRef, SnapshotBundle, SnapshotSpec, SubmissionSpec
 from .secure_files import read_json, read_regular
-from .trace import AuditExecution, AuditTrace
+from .trace import AuditTrace, derive_report
 from .validation import validate_bundle, validate_snapshot
 
 T = TypeVar("T", bound=BaseModel)
@@ -49,12 +49,12 @@ class StageRunner(Protocol):
     def run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T: ...
 
 
-def run_audit_stage(runner: StageRunner, work: Path, prompt: str, deadline: float) -> AuditExecution:
+def run_audit_stage(runner: StageRunner, work: Path, prompt: str, deadline: float) -> AuditTrace:
     artifact_runner = getattr(runner, "run_artifact", None)
     if artifact_runner is not None:
-        execution = artifact_runner(work, prompt, AuditExecution, deadline, reasoning_effort="xhigh")
+        execution = artifact_runner(work, prompt, AuditTrace, deadline, reasoning_effort="xhigh")
     else:
-        execution = runner.run(work, prompt, AuditExecution, deadline, reasoning_effort="xhigh")
+        execution = runner.run(work, prompt, AuditTrace, deadline, reasoning_effort="xhigh")
     return execution
 
 
@@ -83,12 +83,12 @@ AUDIT_PROMPT = (
     + "If genuine applicability remains unknown, record UNABLE for that observation, not NG. "
     "A proven independent violation can still make the clause NG, but the explanation must separate confirmed violations from unresolved conditions. "
     "Table title, grouping and section rows are not automatically business records. Establish their role from surrounding cells before counting blanks as violations; retain uncertain rows as unknown rather than silently excluding them. "  # noqa: E501
-    "Return every target/clause exactly once using AuditExecution: report plus trace. "
-    "Write report.checks[].reason in concise Simplified Chinese for the product reviewer. Preserve source quotations, filenames, identifiers and coordinates exactly; do not translate or rewrite evidence. "  # noqa: E501
-    "When locations are available for a data-dependent NG or UNABLE, report.checks[].evidence should cite the decisive row or field, page block or paragraph; header-only citations support only header conclusions. Incomplete optional citations do not change an actual business verdict and do not require another model call. Report the location gap without inventing a citation. Keep available decisive evidence in trace records even when the public reason is concise. "  # noqa: E501
+    "Return every target/clause exactly once using AuditTrace: bindings and proofs only. Trusted code derives the public report from these execution facts. "
+    "Write semantic record reasons in concise Simplified Chinese for the product reviewer. Preserve source quotations, filenames, identifiers and coordinates exactly; do not translate or rewrite evidence. "  # noqa: E501
+    "When locations are available for a data-dependent NG or UNABLE, semantic records should cite the decisive row or field, page block or paragraph; header-only citations support only header conclusions. Incomplete optional citations do not change an actual business verdict and do not require another model call. Keep available decisive evidence in trace records; never invent a citation. The derived public report uses these same observations and citations. "  # noqa: E501
     "Each proof kind must match the compiled predicate.kind; query proofs reference that exact program by rule id. "
     "Include only bindings referenced by query proofs. Semantic proofs use independent typed evidence and scope_basis, not unused bindings. "
-    "A semantic proof contains one observation per actual check. Report counts and status must agree with replay. "
+    "A semantic proof contains one observation per actual check. Each UNABLE observation needs its actual structured diagnostic and reason. Do not output aggregate status or counts. "
     "Unknown records count as unknown, not checked. Do not use scalar equality to coerce text into numbers."
 )
 
@@ -171,8 +171,8 @@ def audit_prompt(plans: dict[str, RulePlan], targets: dict[str, str]) -> str:
     expected = [{"audit_id": audit_id, "rule_id": rule.id} for audit_id, file_id in targets.items() for rule in plans[file_id].rules]
     return (
         AUDIT_PROMPT
-        + " Complete all reading and checks before returning structured output. Empty or placeholder reports are invalid. "
-        + "Return exactly these check and proof identities: "
+        + " Complete all reading and checks before returning structured output. Empty or placeholder traces are invalid. "
+        + "Return exactly these proof identities: "
         + json.dumps(expected)
     )
 
@@ -351,9 +351,11 @@ def compile_plans(
 
 def validate_or_repair(bundle: ResultBundle, spec: SubmissionSpec, work: Path, runner: StageRunner, deadline: float) -> ResultBundle:
     """One bounded recovery cycle; the same validator is the completion gate."""
-    execution = AuditExecution(report=bundle.report, trace=bundle.trace)
+    execution = bundle.trace
     save(work / "audit/execution.json", execution.model_dump(mode="json"))
     try:
+        plans_by_target = {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items() if rule_id in bundle.plans}
+        bundle = bundle.model_copy(update={"report": derive_report(bundle.trace, bundle.documents, plans_by_target)})
         validate_bundle(bundle, spec)
         return bundle
     except ValueError as exc:
@@ -434,15 +436,15 @@ def validate_or_repair(bundle: ResultBundle, spec: SubmissionSpec, work: Path, r
         audit_prompt(plans, targets) + " This is the single repair attempt. Read validation-feedback.json and previous-execution.json. "
         "Reuse observations that remain valid under plans.json; correct only what is needed for faithful execution and complete coverage. "
         "plans.json is authoritative and may contain reviewed clauses. Recheck every changed clause against the document evidence. "
-        "Return the complete corrected execution. A validation error is not evidence of PASS or NG.",
+        "Return the complete corrected AuditTrace. A validation error is not evidence of PASS or NG.",
         deadline,
     )
     save(stage / "execution.json", repaired.model_dump(mode="json"))
     result = bundle.model_copy(
         update={
             "plans": plans,
-            "report": repaired.report,
-            "trace": repaired.trace,
+            "report": derive_report(repaired, bundle.documents, {audit_id: plans[rule_id] for audit_id, rule_id in targets.items()}),
+            "trace": repaired,
             "input_tokens": runner.input_tokens,
             "output_tokens": runner.output_tokens,
             "tool_calls": getattr(runner, "tool_calls", 0),
@@ -513,7 +515,7 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float) -> R
         obligations=sum(len(plans[rule_id].rules) for rule_id in targets.values()),
     )  # noqa: E501
     write_progress(work, "checking", total=total)
-    execution = run_audit_stage(runner, stage, audit_prompt(plans, targets), deadline) if targets else AuditExecution(report=AuditReport(checks=[]), trace=AuditTrace(proofs=[]))
+    execution = run_audit_stage(runner, stage, audit_prompt(plans, targets), deadline) if targets else AuditTrace(proofs=[])
     bundle = ResultBundle(
         execution_id=spec.execution_id,
         semantic_engine_revision=spec.semantic_engine_revision,
@@ -521,8 +523,8 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float) -> R
         rule_sources=rules,
         plans=plans,
         failed_rules=failed_rules,
-        report=execution.report,
-        trace=execution.trace,
+        report=AuditReport(checks=[]),
+        trace=execution,
         input_tokens=runner.input_tokens,
         output_tokens=runner.output_tokens,
         tool_calls=getattr(runner, "tool_calls", 0),

@@ -47,7 +47,7 @@ from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
 from ppap_deep.semantic.guest import Manifest
 from ppap_deep.semantic.guest import execute as execute_guest
 from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.trace import AuditExecution
+from ppap_deep.semantic.trace import AuditTrace
 from ppap_deep.source import authorize_execution, object_file_source
 from ppap_worker import process_claimed
 from pydantic import TypeAdapter, ValidationError
@@ -336,14 +336,13 @@ class DeepModeTests(unittest.TestCase):
                         else:
                             planned.pop()
                     return RulePlan.model_validate({"source_sha256": digest, "plan_revision": rule.plan_revision, "rules": planned})
-                owner.assertIs(schema, AuditExecution)
+                owner.assertIs(schema, AuditTrace)
                 targets = json.loads((work / "targets.json").read_text())
                 self.audit_targets.append(targets)
                 owner.assertEqual(targets, {good_target: good_rule})
-                checks, proofs = [], []
+                proofs = []
                 for clause_id, cell, status, reason in [("G1", "A2", "PASS", "正文频次为每批。"), ("G2", "B2", "NG", "正文样本数为 1，小于 2。")]:
                     evidence = [{"document_id": good_target, "locator": {"kind": "xlsx_cell", "sheet": "数据", "cell": cell}}]
-                    checks.append({"audit_id": good_target, "rule_id": clause_id, "status": status, "reason": reason, "total": 1, "checked": 1, "unknown": 0, "evidence": evidence})
                     proofs.append(
                         {
                             "kind": "semantic",
@@ -353,7 +352,7 @@ class DeepModeTests(unittest.TestCase):
                             "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "已读取正文记录", "status": status, "reason": reason, "evidence": evidence}],
                         }
                     )
-                return AuditExecution.model_validate({"report": {"checks": checks}, "trace": {"proofs": proofs}})
+                return AuditTrace.model_validate({"proofs": proofs})
 
         model = Model()
         frozen_revision = self.settings.deep_execution_revision()

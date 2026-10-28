@@ -19,9 +19,9 @@ from ppap_deep.semantic.document_tools import bind, run_queries, snapshot
 from ppap_deep.semantic.evidence import EvidenceBudget
 from ppap_deep.semantic.guest import _compile_prompt, audit_prompt, validate_plan
 from ppap_deep.semantic.guest_model import GrokRunner, ModelProtocolError, sandbox_profile
-from ppap_deep.semantic.models import AuditReport, RulePlan
+from ppap_deep.semantic.models import AuditReport, QueryProgram, RulePlan
 from ppap_deep.semantic.protocol import RuleRef
-from ppap_deep.semantic.trace import AuditTrace, validate_trace
+from ppap_deep.semantic.trace import AuditTrace, derive_report, validate_trace
 from ppap_deep.semantic.validation import validate_report
 
 REVISION = "a" * 64
@@ -129,6 +129,140 @@ FIELD_DOCUMENT = {
 
 
 class SemanticBoundaryTests(unittest.TestCase):
+    def test_query_report_replays_counts_and_cites_the_actual_violation(self) -> None:
+        selected_plan = plan()
+        selected_plan.rules[0].predicate = QueryProgram.model_validate({"kind": "query", "quantifier": "forall", "predicates": [{"field": "frequency", "op": "not_empty"}]})
+        trace = AuditTrace.model_validate({"bindings": [field_check_request()["binding"]], "proofs": [{"kind": "query", "audit_id": "target-1", "rule_id": "R1", "binding_id": "data"}]})
+        report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+        check = report.checks[0]
+        self.assertEqual((check.status, check.total, check.checked, check.unknown), ("NG", 3, 2, 1))
+        self.assertEqual(check.evidence[0].locator.model_dump(), {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A3"})
+        self.assertIn("Sheet1!A3", check.reason)
+        self.assertIn("未知 1", check.reason)
+        self.assertIsNone(check.diagnostic)
+        self.assertEqual(validate_report(report, {"target-1": selected_plan}, {"target-1": FIELD_DOCUMENT}), set())
+        self.assertEqual(validate_trace(trace, report, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan}), set())
+
+    def test_query_unable_diagnostic_comes_from_the_unknown_cell(self) -> None:
+        for field, first, predicate, diagnostic, cell in [
+            ("frequency", 4, {"op": "not_empty"}, "parser_unknown", "A4"),
+            ("measurement", 3, {"op": "ge", "value": 2}, "unsupported_structure", "B3"),
+        ]:
+            with self.subTest(field=field):
+                selected_plan = plan()
+                selected_plan.rules[0].predicate = QueryProgram.model_validate({"kind": "query", "quantifier": "forall", "predicates": [{"field": field, **predicate}]})
+                binding = field_check_request()["binding"]
+                binding.update(first_row=first, last_row=first)
+                trace = AuditTrace.model_validate({"bindings": [binding], "proofs": [{"kind": "query", "audit_id": "target-1", "rule_id": "R1", "binding_id": "data"}]})
+                report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+                check = report.checks[0]
+                self.assertEqual((check.status, check.total, check.checked, check.unknown), ("UNABLE", 1, 0, 1))
+                self.assertEqual(check.diagnostic, diagnostic)
+                self.assertEqual(check.evidence[0].locator.cell, cell)
+                validate_report(report, {"target-1": selected_plan}, {"target-1": FIELD_DOCUMENT})
+                validate_trace(trace, report, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+
+    def test_exists_report_keeps_unknown_and_cites_a_matching_row_when_complete(self) -> None:
+        selected_plan = plan()
+        selected_plan.rules[0].predicate = QueryProgram.model_validate({"kind": "query", "quantifier": "exists", "predicates": [{"field": "frequency", "op": "empty"}]})
+        trace = AuditTrace.model_validate({"bindings": [field_check_request()["binding"]], "proofs": [{"kind": "query", "audit_id": "target-1", "rule_id": "R1", "binding_id": "data"}]})
+        report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+        self.assertEqual((report.checks[0].status, report.checks[0].unknown), ("UNABLE", 1))
+        self.assertEqual(report.checks[0].evidence[0].locator.cell, "A4")
+        trace.bindings[0].last_row = 3
+        report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+        self.assertEqual((report.checks[0].status, report.checks[0].checked), ("PASS", 2))
+        self.assertEqual(report.checks[0].evidence[0].locator.cell, "A3")
+        validate_report(report, {"target-1": selected_plan}, {"target-1": FIELD_DOCUMENT})
+        validate_trace(trace, report, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+
+    def test_empty_query_keeps_existing_unable_result_and_exclusion_sources(self) -> None:
+        selected_plan = plan()
+        selected_plan.rules[0].predicate = QueryProgram.model_validate({"kind": "query", "quantifier": "forall", "predicates": [{"field": "frequency", "op": "not_empty"}]})
+        binding = field_check_request()["binding"]
+        binding["excluded_rows"] = [
+            {"row": row, "reason_type": "non_record", "reason": "已核对非正文记录", "evidence_locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": f"A{row}"}} for row in (2, 3, 4)
+        ]
+        trace = AuditTrace.model_validate({"bindings": [binding], "proofs": [{"kind": "query", "audit_id": "target-1", "rule_id": "R1", "binding_id": "data"}]})
+        report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+        check = report.checks[0]
+        self.assertEqual((check.status, check.total, check.checked, check.unknown, check.diagnostic), ("UNABLE", 0, 0, 0, "rule_ambiguity"))
+        self.assertEqual([citation.locator.cell for citation in check.evidence], ["A2", "A3", "A4"])
+        validate_report(report, {"target-1": selected_plan}, {"target-1": FIELD_DOCUMENT})
+        validate_trace(trace, report, {"target-1": FIELD_DOCUMENT}, {"target-1": selected_plan})
+
+    def test_semantic_report_keeps_decisive_reasons_and_separate_unknowns(self) -> None:
+        violation = {"document_id": "target-1", "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A3"}}
+        trace = AuditTrace.model_validate(
+            {
+                "proofs": [
+                    {
+                        "kind": "semantic",
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "scope_basis": "正文第 2 至 4 行",
+                        "records": [
+                            {"record_id": "known", "role": "applicable", "applicability_basis": "正文记录", "status": "NG", "reason": "第 3 行频次为空。", "evidence": [violation]},
+                            {"record_id": "unknown", "role": "applicable", "applicability_basis": "正文记录", "status": "UNABLE", "reason": "第 4 行公式没有缓存。", "diagnostic": "parser_unknown"},
+                        ],
+                    }
+                ],
+            }
+        )
+        report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": plan()})
+        check = report.checks[0]
+        self.assertEqual((check.status, check.total, check.checked, check.unknown), ("NG", 2, 1, 1))
+        self.assertIn("第 3 行频次为空", check.reason)
+        self.assertIn("第 4 行公式没有缓存", check.reason)
+        self.assertEqual([item.model_dump() for item in check.evidence], [violation])
+        self.assertIsNone(check.diagnostic)
+        validate_report(report, {"target-1": plan()}, {"target-1": FIELD_DOCUMENT})
+        validate_trace(trace, report, {"target-1": FIELD_DOCUMENT}, {"target-1": plan()})
+        trace.proofs[0].records.pop(0)
+        report = derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": plan()})
+        self.assertEqual(report.checks[0].diagnostic, "parser_unknown")
+        trace.proofs[0].records[0].diagnostic = None
+        with self.assertRaisesRegex(ValueError, "target-1/R1/unknown"):
+            derive_report(trace, {"target-1": FIELD_DOCUMENT}, {"target-1": plan()})
+
+    def test_derived_empty_scope_uses_frozen_policy_and_cannot_hide_unknown(self) -> None:
+        trace = AuditTrace.model_validate(
+            {
+                "proofs": [
+                    {
+                        "kind": "semantic",
+                        "audit_id": "target-1",
+                        "rule_id": "R1",
+                        "scope_basis": "候选不触发规则",
+                        "records": [{"record_id": "candidate", "role": "excluded", "exclusion_basis": "不属于该类型", "status": "NA", "reason": "已确认该行不适用。", "evidence": [CITATION]}],
+                    }
+                ]
+            }
+        )
+        for status in ("UNABLE", "PASS", "NA"):
+            with self.subTest(status=status):
+                selected_plan = plan()
+                selected_plan.rules[0].empty_scope_status = status
+                selected_plan.rules[0].empty_scope_basis = "原文对无适用项的明确处理。"
+                report = derive_report(trace, {"target-1": DOCUMENT}, {"target-1": selected_plan})
+                check = report.checks[0]
+                self.assertEqual((check.status, check.total, check.checked, check.unknown), (status, 1, 1, 0))
+                self.assertIn(selected_plan.rules[0].empty_scope_basis, check.reason)
+                self.assertEqual(check.diagnostic, "rule_ambiguity" if status == "UNABLE" else None)
+                self.assertEqual(check.evidence[0].model_dump(), CITATION)
+                validate_report(report, {"target-1": selected_plan}, {"target-1": DOCUMENT})
+                validate_trace(trace, report, {"target-1": DOCUMENT}, {"target-1": selected_plan})
+        trace.proofs[0].records[0].status = "UNABLE"
+        trace.proofs[0].records[0].diagnostic = "unresolved_relation"
+        report = derive_report(trace, {"target-1": DOCUMENT}, {"target-1": selected_plan})
+        self.assertEqual((report.checks[0].status, report.checks[0].unknown, report.checks[0].diagnostic), ("UNABLE", 1, "unresolved_relation"))
+
+    def test_model_trace_rejects_report_envelope_and_missing_coverage(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Extra inputs"):
+            AuditTrace.model_validate({"report": {"checks": []}, "trace": {"proofs": []}})
+        with self.assertRaisesRegex(ValueError, "Every planned target/clause"):
+            derive_report(AuditTrace(proofs=[]), {"target-1": DOCUMENT}, {"target-1": plan()})
+
     def test_compile_review_and_audit_preserve_explicit_else_branch(self) -> None:
         from ppap_deep.semantic.guest import _compile_review_prompt
 
@@ -147,9 +281,10 @@ class SemanticBoundaryTests(unittest.TestCase):
                 self.assertIn("known blank", prompt)
                 self.assertIn("unknown symbol mapping", prompt)
 
-    def test_audit_prompt_requires_decisive_public_and_private_evidence(self) -> None:
+    def test_audit_prompt_requires_trace_only_with_decisive_evidence(self) -> None:
         prompt = audit_prompt({"rule-1": plan()}, {"target-1": "rule-1"})
-        self.assertIn("report.checks[].evidence", prompt)
+        self.assertIn("AuditTrace: bindings and proofs only", prompt)
+        self.assertNotIn("report.checks", prompt)
         self.assertIn("decisive row or field", prompt)
         self.assertIn("trace", prompt)
         self.assertIn("header-only", prompt)
@@ -206,6 +341,16 @@ class SemanticBoundaryTests(unittest.TestCase):
                 self.assertTrue(query["error"])
             self.assertEqual(result["queries"][3]["rows"], [{"row_id": 2}, {"row_id": 3}, {"row_id": 4}])
             self.assertEqual(result["tables"]["cp"]["unknown_cells"], bound["unknown_cells"])
+            selected_plan = plan()
+            selected_plan.rules[0].predicate = QueryProgram.model_validate({"kind": "query", "quantifier": "forall", "predicates": [{"field": "frequency", "op": "not_empty"}]})
+            binding = field_check_request()["binding"]
+            binding.update(source_sha256=observed["source"]["sha256"], table="Sheet", columns={"frequency": "B"})
+            trace = AuditTrace.model_validate({"bindings": [binding], "proofs": [{"kind": "query", "audit_id": "target-1", "rule_id": "R1", "binding_id": "data"}]})
+            report = derive_report(trace, {"target-1": observed}, {"target-1": selected_plan})
+            self.assertEqual((report.checks[0].status, report.checks[0].checked), ("NG", 3))
+            self.assertEqual(report.checks[0].evidence[0].locator.cell, "B4")
+            validate_report(report, {"target-1": selected_plan}, {"target-1": observed})
+            validate_trace(trace, report, {"target-1": observed}, {"target-1": selected_plan})
             self.assertEqual(path.read_bytes(), original)
 
     def test_prerequisite_only_pass_cannot_hide_empty_applicable_scope(self) -> None:
