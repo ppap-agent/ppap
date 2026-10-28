@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>证据待求解项 · 研究演示</title>
+<style>
+  :root { color-scheme:light; --ink:#202c33; --muted:#64717a; --line:#d9e1e3; --accent:#17695e; --wash:#edf5f2; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#fafbf9; color:var(--ink); font:15px/1.65 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  main { max-width:1100px; margin:auto; padding:34px 28px 60px; }
+  h1 { font-size:28px; line-height:1.3; margin:8px 0 12px; font-weight:650; }
+  h2 { font-size:18px; margin:0 0 14px; font-weight:650; }
+  h3 { font-size:15px; margin:18px 0 7px; }
+  p { margin:7px 0; }
+  .eyebrow { color:var(--accent); font-size:12px; letter-spacing:.09em; }
+  .intro { max-width:900px; }
+  .muted, small { color:var(--muted); }
+  .notice { border-left:3px solid var(--accent); padding:9px 14px; background:var(--wash); margin:18px 0 24px; }
+  section { border-top:1px solid var(--line); padding-top:22px; margin-top:24px; }
+  .flow { display:flex; flex-wrap:wrap; gap:12px; color:var(--muted); margin:18px 0; }
+  .flow strong { color:var(--ink); font-weight:550; }
+  .columns { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+  .label { font-size:12px; color:var(--muted); }
+  .value { font-size:16px; }
+  .result { margin-top:18px; padding:14px 0; border-top:1px solid var(--line); }
+  .result strong { font-size:23px; color:var(--accent); }
+  .message { padding:10px 13px; background:var(--wash); min-height:47px; margin:16px 0; }
+  dl { display:grid; grid-template-columns:115px 1fr; gap:8px 12px; margin:10px 0; }
+  dt { color:var(--muted); }
+  dd { margin:0; overflow-wrap:anywhere; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:550; color:var(--muted); }
+  .scroll { overflow-x:auto; }
+  button { font:inherit; color:var(--ink); background:white; border:1px solid #bdcacd; border-radius:5px; padding:7px 12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); background:var(--wash); }
+  button:focus-visible { outline:3px solid #9bcac2; outline-offset:2px; }
+  button[aria-selected="true"],button.current { border-color:var(--accent); color:var(--accent); background:var(--wash); }
+  .actions,.tabs { display:flex; flex-wrap:wrap; gap:8px; }
+  .steps { display:flex; flex-wrap:wrap; gap:9px; margin-top:13px; }
+  .step { display:flex; align-items:center; gap:7px; }
+  .step span { color:var(--muted); }
+  .complete { border-style:dashed; }
+  .tag { font-size:12px; color:var(--accent); }
+  details { margin-top:14px; }
+  summary { cursor:pointer; color:var(--accent); }
+  pre { overflow:auto; font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; background:#f0f3f2; padding:16px; border-radius:4px; }
+  footer { color:var(--muted); font-size:12px; margin-top:30px; }
+  @media(max-width:700px) { main { padding:22px 16px 42px; } .columns { grid-template-columns:1fr; gap:12px; } h1 { font-size:24px; } dl { grid-template-columns:95px 1fr; } }
+</style>
+<main>
+  <header>
+    <div class="eyebrow">THROWAWAY RESEARCH PROTOTYPE · 无网络、无持久化</div>
+    <h1>一个字段没读清，审核应该怎样继续？</h1>
+    <p class="intro">本演示研究一个问题：用简单的「读取 → 绑定 → 判定」流程，能否把字段来源、语义解释、记录覆盖与业务结论分清？点击按钮模拟求解，观察同一条规则在六种情况下的变化。</p>
+    <div class="notice"><strong>所有交互都是模拟。</strong>没有调用模型，也不是客户验收。部分数值来自样本局部读取；字段含义和检查范围由演示情形设定。模拟检查通过不构成训练标签或原件完整审核证明。</div>
+    <div class="flow"><strong>RulePlan · 规则</strong><span>→</span><strong>Binding · 本次字段对应</strong><span>→</span><strong>AuditResult · 结果与原因</strong></div>
+  </header>
+
+  <section aria-labelledby="state-title">
+    <h2 id="state-title">当前状态</h2>
+    <div id="state"></div>
+    <div id="message" class="message" role="status" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="free-title">
+    <h2 id="free-title">自由操作</h2>
+    <p class="muted">可以按任意顺序点击。缺少前提时，演示会说明原因；不会自动补出结果。</p>
+    <div id="actions" class="actions"></div>
+  </section>
+
+  <section aria-labelledby="guide-title">
+    <h2 id="guide-title">情形走查</h2>
+    <div id="tabs" class="tabs" role="tablist" aria-label="研究情形"></div>
+    <div id="guide" role="tabpanel" tabindex="0"></div>
+  </section>
+
+  <section aria-labelledby="record-title">
+    <h2 id="record-title">未来训练记录的预览</h2>
+    <p>只显示任务输入、结构化回答和核验结果。<code>oracle=null</code>、<code>eligible=false</code> 始终保留：模拟求解和模拟检查不产生独立标准答案。页面不保存完整推理过程，也不会写入文件。</p>
+    <details><summary>展开本次状态的结构化记录</summary><pre id="record"></pre></details>
+  </section>
+  <footer>研究范围：第 50 行的数值范围与判定文字。重复值检查是另一条规则，本演示不据此判断；本页的 PASS 也不表示整份文件通过。刷新页面会清空所有操作。</footer>
+</main>
+<script>
+/* Pure prototype logic. No DOM or I/O below this line until the view section. */
+const EvidenceDemo = (() => {
+  const actions = {
+    read:"读取局部原件", propose:"模拟提出字段绑定", source:"核对来源与类型",
+    meaning:"核对字段含义", coverage:"核对记录范围", calculate:"执行规则",
+    absent:"声称证据不存在", invent:"让模型补出政策范围", correct:"改用正确字段", reset:"重置本情形"
+  };
+  const steps = ["read","propose","source","meaning","coverage","calculate"];
+  const scenarios = [
+    {id:"normal",title:"数值符合",description:"规格为 756.9±10mm，实测为 758、757、756、758、756，判定文字为 OK。先核对来源、含义和范围，再计算。本例只证明演示中第 50 行的这一条规则。",steps},
+    {id:"violation",title:"真实违规值",description:"使用样本错误变体的局部数值：L50 为 767，超出 766.9。正确读取后应判 NG，不能为了通过而修复或忽略这个值。",steps},
+    {id:"wrong",title:"坐标真实，字段错",description:"模拟把工具列 F50:G50 混入实测数据。F50 的“卷尺”真实存在，但它不是实测数值。来源检查通过不能证明字段绑定正确。",steps:["read","propose","source","calculate","meaning","correct","source","meaning","coverage","calculate"]},
+    {id:"omitted",title:"遗漏一行",description:"范围反例：声明要检查第 49、50 行，却只读取并绑定第 50 行。第 50 行符合也不能推出全部记录符合。这个范围是演示设定，不是原件完整记录标注。",steps},
+    {id:"image",title:"图片未读取",description:"模拟规格只有图片内容尚未读取。图片未读不能证明资料不存在，也不能从空的原生单元格补造规格。",steps:["read","propose","absent","source","calculate"]},
+    {id:"policy",title:"政策未定义",description:"把要求换成“实测值应处于合理范围”，但没有定义允许区间。文件中的规格只是观察，不能自动变成客户批准的审核政策。",steps:["read","propose","source","meaning","coverage","invent","calculate"]}
+  ];
+  const find = id => scenarios.find(s => s.id === id) || scenarios[0];
+  function initial(id="normal") {
+    return {scenario:find(id).id,read:false,binding:null,source:"未核对",types:"未核对",meaning:"未核对",coverage:"未核对",result:null,walkStep:0,last:"请选择走查步骤，或从自由操作开始。"};
+  }
+  function source(s) {
+    return {D50:s.scenario==="image"?null:"756.9±10mm",E50:null,F50:"卷尺",G50:null,H50:758,I50:757,J50:756,K50:758,L50:s.scenario==="violation"?767:756,M50:"OK"};
+  }
+  function goodBinding(s) { return {spec:["D50","E50"],measured:["H50","I50","J50","K50","L50"],judgment:["M50"],rows:[50]}; }
+  function clearChecks(s) { return {...s,source:"未核对",types:"未核对",meaning:"未核对",coverage:"未核对",result:null}; }
+  function evaluate(s) {
+    if(s.scenario==="policy") return {status:"UNABLE",title:"尚不能判定",reason:"客户政策没有定义允许区间；不能由模型补出阈值。",witness:null};
+    if(s.scenario==="image") return {status:"UNABLE",title:"尚不能判定",reason:"规格图片内容未读取；这是证据未解决，不是已证明不存在。",witness:null};
+    if(!s.read || !s.binding) return {status:"UNABLE",title:"尚不能判定",reason:"原件尚未读取或字段尚未绑定。",witness:null};
+    if(s.source!=="通过" || s.types!=="通过" || s.meaning!=="演示核对通过") return {status:"UNABLE",title:"尚不能判定",reason:"来源、值类型或字段含义尚未全部核对，不能据坐标存在直接出结论。",witness:null};
+    const values=source(s), violations=s.binding.measured.filter(ref => values[ref]<746.9 || values[ref]>766.9);
+    if(violations.length) return {status:"NG",title:"不符合",reason:`${violations.join("、")} 超出允许区间 [746.9, 766.9] mm。已有明确违规证据；检查范围是否完整仍单独记录。`,witness:violations.map(ref=>({at:ref,value:values[ref]}))};
+    if(s.coverage!=="演示范围完整") return {status:"UNABLE",title:"尚不能判定",reason:s.scenario==="omitted"?"第 49 行未检查。已读的第 50 行符合，仍不能证明全部声明记录符合。":"记录范围尚未核对，不能证明 forall（全部记录）通过。",witness:null};
+    return {status:"PASS",title:"本条规则通过",reason:"演示范围内第 50 行的 5 个实测值都在 [746.9, 766.9] mm 内，M50 为 OK。仅适用于本例及这条规则。",witness:s.binding.measured.map(ref=>({at:ref,value:values[ref]}))};
+  }
+  function reduce(state, action) {
+    if(action.type==="scenario") return initial(action.id);
+    if(action.type==="reset") return initial(state.scenario);
+    let s={...state};
+    if(action.type==="read") s={...clearChecks(s),read:true,binding:null,last:s.scenario==="image"?"已读取可用的原生单元格，但图片内容仍未读取。不能声明规格不存在。":"已读取选定局部原件。读取成功还没有证明字段含义与记录范围正确。"};
+    else if(action.type==="propose" || action.type==="correct") {
+      if(!s.read) s.last="操作未执行：请先读取局部原件。";
+      else if(s.scenario==="image") s={...clearChecks(s),binding:null,last:"模拟回答：规格未解决。图片未读取，保留 Unresolved，不生成数值。"};
+      else {
+        const binding=goodBinding(s);
+        if(s.scenario==="wrong" && action.type!=="correct") binding.measured=["F50","G50","H50","I50","J50"];
+        s={...clearChecks(s),binding,last:action.type==="correct"?"已换成 H50:L50；旧检查全部失效，需要重新核对。":"已生成模拟绑定。它是候选解释，不是已验证事实。"};
+      }
+    } else if(action.type==="source") {
+      if(!s.binding) s.last="无法核对：当前没有可检查的字段绑定。";
+      else {
+        const observed=source(s), refs=[...s.binding.spec,...s.binding.measured,...s.binding.judgment];
+        const exists=refs.every(ref=>Object.hasOwn(observed,ref));
+        const numeric=s.binding.measured.every(ref=>typeof observed[ref]==="number");
+        s={...s,source:exists?"通过":"失败",types:numeric?"通过":"失败",result:null,last:numeric?"引用来自演示观测，实测值类型为数字。这仍没有证明选对了实测字段。":"引用坐标存在，但绑定中包含“卷尺”和空值，不符合实测值的数字类型。来源真实不等于绑定正确。"};
+      }
+    } else if(action.type==="meaning") {
+      if(!s.binding) s.last="无法核对：当前没有字段绑定。";
+      else {
+        const right=JSON.stringify(s.binding.measured)===JSON.stringify(goodBinding(s).measured);
+        s={...s,meaning:right?"演示核对通过":"演示核对失败",result:null,last:right?"按本演示给定的对照，H50:L50 对应实测值。该模拟核对不是独立人工标注。":"本演示对照指出 F50:G50 属于工具区域；应修正绑定，不能改写原件或业务标准。"};
+      }
+    } else if(action.type==="coverage") {
+      if(!s.binding) s.last="无法核对：当前没有记录绑定。";
+      else s={...s,coverage:s.scenario==="omitted"?"缺第 49 行":"演示范围完整",result:null,last:s.scenario==="omitted"?"声明范围是第 49、50 行；当前只有第 50 行。覆盖存在缺口。":"本例声明范围只有第 50 行，已核对这行全部 5 个实测值；不外推到整份原件。"};
+    } else if(action.type==="calculate") s={...s,result:evaluate(s),last:"已运行确定性规则；结果与未解决原因在上方显示。"};
+    else if(action.type==="absent") s.last="拒绝该声明：本演示没有完成足以证明不存在的搜索范围。未读取、没找到和确实不存在必须区分。";
+    else if(action.type==="invent") s.last="拒绝该操作：模型不能自行定义客户政策。规则、已指定标准或有权人的决定才能提供判定范围。";
+    if(action.guided) s.walkStep=Math.max(s.walkStep,action.step+1);
+    return s;
+  }
+  function trainingRecord(s) {
+    return {
+      origin:"interactive_simulation_not_model_output",scenario:s.scenario,
+      structured_input:{hole_type:"MeasurementBinding",scope:s.scenario==="omitted"?"rows_49_and_50":"row_50",rule:s.scenario==="policy"?"实测值处于合理范围；政策未定义":"全部实测值处于756.9±10mm，且判定文字为OK或合格",observations:s.read?source(s):null,unobserved:s.scenario==="image"?["embedded_image_contents"]:["outside_selected_region"]},
+      answer:{status:s.binding?"candidate_binding":"unresolved",binding:s.binding},
+      checks:{source_refs:s.source,numeric_values:s.types,semantic_binding:s.meaning,record_coverage:s.coverage,scope:"demonstration_only"},
+      audit_result:s.result,oracle:null,eligible:false,eligibility_reason:"模拟交互；没有独立的字段语义和完整性标签",private_reasoning_collected:false
+    };
+  }
+  return {actions,scenarios,initial,source,reduce,trainingRecord,find};
+})();
+
+/* Thin DOM view. State changes only through the reducer. */
+let state=EvidenceDemo.initial();
+const escape=value=>String(value??"空值").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function dispatch(action) { state=EvidenceDemo.reduce(state,action); render(); }
+function refs(list) { return list?list.map(escape).join("、"):"未绑定"; }
+function cells(list,observed) { return list?list.map(ref=>`${escape(ref)} = ${escape(observed[ref])}`).join("；"):"尚无值"; }
+function render() {
+  const scenario=EvidenceDemo.find(state.scenario), observed=EvidenceDemo.source(state), binding=state.binding;
+  document.getElementById("state").innerHTML=`
+    <div class="columns">
+      <div><div class="label">规则 · RulePlan</div><p class="value">${state.scenario==="policy"?"实测值应处于合理范围。":"全部实测值必须在规格范围内，判定文字须为 OK 或合格。"}</p>
+        <dl><dt>允许区间</dt><dd>${state.scenario==="policy"?"未定义；不能由模型补全":"[746.9, 766.9] mm（含边界）"}</dd><dt>声明记录范围</dt><dd>${state.scenario==="omitted"?"第 49、50 行（范围反例）":"第 50 行（局部演示）"}</dd><dt>原件读取</dt><dd>${state.read?"已读取选定局部":"尚未读取"}</dd><dt>图片内容</dt><dd>${state.scenario==="image"?"未读取；不能判断是否含规格":"不在本例求解范围"}</dd></dl></div>
+      <div><div class="label">已核实与未核实的部分</div><dl><dt>来源引用</dt><dd>${escape(state.source)}</dd><dt>实测值类型</dt><dd>${escape(state.types)}</dd><dt>字段含义</dt><dd>${escape(state.meaning)}</dd><dt>记录覆盖</dt><dd>${escape(state.coverage)}</dd><dt>独立标签</dt><dd>没有；所有核对仅为机制模拟</dd></dl></div>
+    </div>
+    <h3>本次字段对应 · Binding</h3>
+    <div class="scroll"><table><thead><tr><th>所需字段</th><th>位置</th><th>从位置读取的值</th></tr></thead><tbody>
+      <tr><td>规格／公差</td><td>${refs(binding?.spec)}</td><td>${state.scenario==="image"?"未解决：图片尚未读取":cells(binding?.spec,observed)}</td></tr>
+      <tr><td>实测值</td><td>${refs(binding?.measured)}</td><td>${cells(binding?.measured,observed)}</td></tr>
+      <tr><td>判定文字</td><td>${refs(binding?.judgment)}</td><td>${cells(binding?.judgment,observed)}</td></tr>
+    </tbody></table></div>
+    <div class="result"><div class="label">审核结果 · AuditResult</div><strong>${state.result?escape(state.result.status)+" · "+escape(state.result.title):"尚未执行"}</strong><p>${state.result?escape(state.result.reason):"请先读取、提出绑定并核对，再执行规则。"}</p>${state.result?.witness?`<small>判定依据：${state.result.witness.map(x=>escape(x.at)+" = "+escape(x.value)).join("；")}</small>`:""}</div>`;
+  document.getElementById("message").textContent=state.last;
+  document.getElementById("actions").innerHTML=Object.entries(EvidenceDemo.actions).map(([type,label])=>`<button type="button" data-action="${type}">${escape(label)}</button>`).join("");
+  document.getElementById("tabs").innerHTML=EvidenceDemo.scenarios.map(s=>`<button type="button" role="tab" id="tab-${s.id}" aria-controls="guide" aria-selected="${s.id===state.scenario}" data-scenario="${s.id}">${escape(s.title)}</button>`).join("");
+  document.getElementById("guide").setAttribute("aria-labelledby",`tab-${scenario.id}`);
+  document.getElementById("guide").innerHTML=`<p>${escape(scenario.description)}</p><p class="muted">切换情形会重置状态。按顺序点击步骤，也可回到上方自由操作。</p><div class="steps">${scenario.steps.map((type,index)=>`<div class="step"><span>${index+1}.</span><button type="button" class="${index===state.walkStep?"current":index<state.walkStep?"complete":""}" data-step="${index}" data-guide-action="${type}">${escape(EvidenceDemo.actions[type])}${index<state.walkStep?" ✓":""}</button></div>`).join("")}</div>${state.walkStep>=scenario.steps.length?'<p class="tag">本次走查步骤已点完。可以重置，或尝试其他操作顺序。</p>':""}`;
+  document.getElementById("record").textContent=JSON.stringify(EvidenceDemo.trainingRecord(state),null,2);
+}
+document.addEventListener("click",event=>{
+  const button=event.target.closest("button"); if(!button)return;
+  if(button.dataset.scenario) dispatch({type:"scenario",id:button.dataset.scenario});
+  else if(button.dataset.guideAction) dispatch({type:button.dataset.guideAction,guided:true,step:Number(button.dataset.step)});
+  else if(button.dataset.action) dispatch({type:button.dataset.action});
+});
+document.getElementById("tabs").addEventListener("keydown",event=>{
+  if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+  const index=EvidenceDemo.scenarios.findIndex(s=>s.id===state.scenario),length=EvidenceDemo.scenarios.length;
+  const next=event.key==="Home"?0:event.key==="End"?length-1:(index+(event.key==="ArrowRight"?1:-1)+length)%length;
+  event.preventDefault(); dispatch({type:"scenario",id:EvidenceDemo.scenarios[next].id});
+  document.getElementById(`tab-${state.scenario}`).focus();
+});
+render();
+</script>
+</html>
