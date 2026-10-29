@@ -24,7 +24,7 @@ from ppap_deep.semantic import guest
 from ppap_deep.semantic.bindings import BoundCollection, FileCollection, grouping_support
 from ppap_deep.semantic.document_tools import ReadLimits, TableReader
 from ppap_deep.semantic.evidence import EvidenceBudget
-from ppap_deep.semantic.models import All, AnyOf, Not, Related, RulePlan
+from ppap_deep.semantic.models import All, AnyOf, Not, Related, RequireAll, RulePlan, ValueTest
 from ppap_deep.semantic.protocol import ResultBundle, SubmissionSpec
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
@@ -46,6 +46,25 @@ def related_nodes(node):
     if isinstance(node, (All, AnyOf, Not)):
         for child in node.items if isinstance(node, (All, AnyOf)) else [node.item]:
             yield from related_nodes(child)
+
+
+def _mandatory_relation_guards(node, allowed: set[str]) -> set[str] | None:
+    """This oracle permits a relation and only entailed positive AND guards."""
+    if isinstance(node, Not) and isinstance(node.item, Not):
+        return _mandatory_relation_guards(node.item.item, allowed)
+    if isinstance(node, Related):
+        return set()
+    if isinstance(node, All):
+        fields = set()
+        for child in node.items:
+            guards = _mandatory_relation_guards(child, allowed)
+            if guards is None:
+                return None
+            fields.update(guards)
+        return fields
+    if isinstance(node, ValueTest) and node.op == "not_empty" and node.field in allowed:
+        return {node.field}
+    return None
 
 
 def _effective_plans(bundle: ResultBundle, spec: SubmissionSpec):
@@ -228,6 +247,8 @@ def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, A
         return output
     relations = list(related_nodes(program.require))
     concept_errors, binding_errors = [], []
+    if program.precondition is not None:
+        concept_errors.append("undeclared precondition gate")
     if len(relations) != 1:
         concept_errors.append("expected one directed relation")
     else:
@@ -243,6 +264,13 @@ def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, A
         if relation.source_key.normalization != "exact" or relation.target_key.normalization != "exact":
             concept_errors.append("unstated key normalization")
         role_tables = (case.tables[-1], case.tables[0]) if case.key == "attachment-foreign-key" else case.tables
+        required_guards = {comparison.source_field for comparison in relation.comparisons} if case.comparison_nonempty else set()
+        allowed_guards = set() if case.key.startswith("literal-concatenation") else set(relation.source_key.fields) | required_guards
+        guards = _mandatory_relation_guards(program.require, allowed_guards)
+        if guards is None:
+            concept_errors.append("required relation must be a positive mandatory AND obligation")
+        elif not required_guards <= guards:
+            concept_errors.append("explicit nonempty comparison obligation missing")
         concepts = {entity.id: entity for entity in plan.ontology.entities}
         pending_by_entity = {
             name: _pending_identity(case, table, bundle.trace, use, concepts[name], evaluation.clarifications, target, actual)
@@ -325,6 +353,7 @@ class ControlledRunner:
         self.ambiguous = "未规定其含义" in case.rule
         self.strengthen_identity = "共同确定" in case.rule
         self.point_form = "字段名在A列、填写值在B列" in case.rule
+        self.name_nonempty = "名称必须逐字一致并且非空" in case.rule
 
     def __enter__(self):
         self.output.mkdir()
@@ -372,7 +401,7 @@ class ControlledRunner:
             source_key = {"fields": ["attachment"]}
             target_key = {"fields": ["id"]}
         ref = self.spec.rules[0]
-        return RulePlan.model_validate(
+        plan = RulePlan.model_validate(
             {
                 "source_sha256": ref.sha256,
                 "plan_revision": ref.plan_revision,
@@ -417,6 +446,11 @@ class ControlledRunner:
                 ],
             }
         )
+
+        if self.point_form and self.name_nonempty:
+            program = plan.rules[0].program
+            program.require = RequireAll(kind="all", items=[ValueTest(kind="value_test", field="name", op="not_empty"), program.require])
+        return plan
 
     def _trace(self, documents):
         source, target = (self.case.tables[-1], self.case.tables[0]) if self.case.key == "attachment-foreign-key" else self.case.tables
