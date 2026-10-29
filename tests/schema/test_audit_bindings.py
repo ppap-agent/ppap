@@ -1700,6 +1700,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                     rule.rule_id: {
                         "source_sha256": rule.sha256,
                         "plan_revision": rule.plan_revision,
+                        "ontology": {"entities": [{"id": "records", "grain": "每条零件记录", "attributes": {"part_number": "string"}, "identity": ["part_number"]}]},
                         "rules": [
                             {
                                 "id": "1",

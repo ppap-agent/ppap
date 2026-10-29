@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from string import Formatter
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
@@ -189,7 +189,7 @@ class Related(Artifact):
     source_key: Key
     target_key: Key
     match: Literal["any", "all", "one_to_one"]
-    key_match: Literal["exact", "semantic"] = "exact"
+    key_match: Literal["exact", "semantic", "evidence"] = "exact"
     comparisons: list[ValueComparison] = Field(default_factory=list, max_length=32)
     target_when: "LocalExpr | None" = Field(default=None, description="Current target-row membership condition. Use value_test or a local judge, never column existence.")
 
@@ -269,10 +269,101 @@ class PlannedRule(Artifact):
         return self
 
 
+class EntityConcept(Artifact):
+    id: str = Field(min_length=1, max_length=256)
+    grain: str = Field(min_length=1, max_length=1024)
+    attributes: dict[str, Literal["string", "number", "boolean"]] = Field(max_length=64)
+    identity: list[str] = Field(min_length=1, max_length=16)
+
+    @model_validator(mode="after")
+    def declared_identity(self) -> "EntityConcept":
+        if not set(self.identity) <= self.attributes.keys() or len(set(self.identity)) != len(self.identity):
+            raise ValueError("Identity must use distinct declared attributes")
+        return self
+
+
+class RelationshipConcept(Artifact):
+    id: str = Field(min_length=1, max_length=256)
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    meaning: str = Field(min_length=1, max_length=1024)
+
+
+class Ontology(Artifact):
+    entities: list[EntityConcept] = Field(default_factory=list, max_length=64)
+    relationships: list[RelationshipConcept] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="after")
+    def endpoints(self) -> "Ontology":
+        entities = {entity.id for entity in self.entities}
+        if len(entities) != len(self.entities) or len({relation.id for relation in self.relationships}) != len(self.relationships):
+            raise ValueError("Duplicate ontology concept")
+        if any(relation.source not in entities or relation.target not in entities for relation in self.relationships):
+            raise ValueError("Relationship endpoint is not a declared entity")
+        return self
+
+
 class RulePlan(Artifact):
     source_sha256: str
     plan_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     rules: list[PlannedRule] = Field(min_length=1)
+    ontology: Ontology = Field(default_factory=Ontology)
+    # Copied from the frozen effective rule by the host, never inferred from chat.
+    appendix: list[dict[str, Any]] = Field(default_factory=list, max_length=256)
+
+    @model_validator(mode="after")
+    def ontology_programs(self) -> "RulePlan":
+        entities = {entity.id: entity for entity in self.ontology.entities}
+        if not entities:
+            return self  # Existing row programs use their original physical grain.
+
+        def fields(entity: str | None, names: list[str]) -> None:
+            if entity not in entities or not set(names) <= entities[entity].attributes.keys():
+                raise ValueError("Program attribute outside declared ontology")
+
+        def visit(node: Expr | None, current: str | None) -> None:
+            if node is None:
+                return
+            if isinstance(node, ValueTest):
+                fields(current, [node.field])
+            elif isinstance(node, (ColumnExists, CollectionExists)):
+                fields(node.input, [node.field] if isinstance(node, ColumnExists) else [])
+            elif isinstance(node, (All, AnyOf, Not)):
+                for child in node.items if isinstance(node, (All, AnyOf)) else [node.item]:
+                    visit(child, current)
+            elif isinstance(node, Judge):
+                if current is not None:
+                    fields(current, node.fields)
+                for entity in node.inputs:
+                    fields(entity, [])
+            elif isinstance(node, Related):
+                fields(current, node.source_key.fields + [comparison.source_field for comparison in node.comparisons])
+                fields(node.target, node.target_key.fields + [comparison.target_field for comparison in node.comparisons])
+                if not any(relation.source == current and relation.target == node.target for relation in self.ontology.relationships):
+                    raise ValueError("Program relationship direction outside declared ontology")
+                visit(node.target_when, node.target)
+
+        for rule in self.rules:
+            program = rule.program
+            source = program.source if isinstance(program, RecordsProgram) else None
+            if isinstance(program, RecordsProgram):
+                fields(program.source, [])
+                visit(program.when, program.source)
+            visit(program.precondition, None)
+            visit(program.require, source)
+        return self
+
+
+class CompiledOntology(Ontology):
+    """A new compiled plan must state its object grain and identity."""
+
+    entities: list[EntityConcept] = Field(min_length=1, max_length=64)
+
+
+class CompiledRulePlan(RulePlan):
+    # RulePlan remains the common replay model for hand-built unit programs.
+    # The real compiler/cache boundary has no implicit physical-row ontology.
+    ontology: CompiledOntology
 
 
 class Citation(Artifact):

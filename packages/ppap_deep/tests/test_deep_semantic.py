@@ -20,7 +20,7 @@ from ppap_deep.semantic.document_tools import bind, run_queries, snapshot
 from ppap_deep.semantic.evidence import EvidenceBudget
 from ppap_deep.semantic.guest import PlanValidationError, _compile_prompt, audit_prompt, compile_plans, run_audit_stage, validate_plan
 from ppap_deep.semantic.guest_model import GrokRunner, ModelProtocolError, sandbox_profile
-from ppap_deep.semantic.models import AuditReport, RecordsProgram, RulePlan
+from ppap_deep.semantic.models import AuditReport, CompiledRulePlan, RecordsProgram, RulePlan
 from ppap_deep.semantic.protocol import RuleRef
 from ppap_deep.semantic.trace import AuditTrace, derive_report, validate_trace
 from ppap_deep.semantic.validation import validate_report
@@ -58,6 +58,7 @@ def plan(locator_id: str = "R1") -> RulePlan:
         {
             "source_sha256": rule.sha256,
             "plan_revision": REVISION,
+            "ontology": {"entities": [{"id": "document", "grain": "one frozen input document", "attributes": {"id": "string"}, "identity": ["id"]}]},
             "rules": [
                 {
                     "id": "R1",
@@ -384,7 +385,7 @@ assert fresh.stdout == replacement
                 self.assertIsNone(schema)
                 self.assertIn("synthetic", prompt)
                 self.assertNotIn("proof kinds", prompt)
-                self.assertEqual(json.loads((work / "artifact_schema.json").read_text()), RulePlan.model_json_schema())
+                self.assertEqual(json.loads((work / "artifact_schema.json").read_text()), CompiledRulePlan.model_json_schema())
                 (work / "execution.json").write_text(plan().model_dump_json())
                 return {"result": '{"completed":true,"artifact":"execution.json"}'}
 

@@ -69,6 +69,7 @@ class DeepCoverage(BaseModel):
     locator_gap: bool
     rule_items: list[dict[str, Any]] = Field(default_factory=list)
     verification: DeepVerification | None = None
+    clarifications: list[dict[str, Any]] = Field(default_factory=list, max_length=256)
 
 
 class ExecuteResponse(BaseModel):
@@ -81,6 +82,7 @@ class ExecuteResponse(BaseModel):
     coverage: DeepCoverage
     note: str = "deep_audit"
     usage: dict[str, int] = Field(default_factory=dict)
+    usage_source: Literal["unknown", "provider", "controlled"] = "unknown"
 
 
 class DeepProgress(BaseModel):
