@@ -314,6 +314,14 @@ class DeepMcp:
             return complete(operation["result"]["receipt"])
         if task_capable:
             return {"resultType": "task", **self.task(delegation, operation, capabilities)}
+        receipt = self.product.read_rule_change(delegation.session.principal, arguments["round_id"], change["operation_id"])
+        if receipt:
+            return complete(receipt)
+        if datetime.now(timezone.utc) - datetime.fromisoformat(operation["created_at"]) > timedelta(hours=1):
+            return {
+                **complete({"applied": False, "reason": "confirmation_expired", "workspace_url": self.provider.settings.canonical_web_url() + "/audit?round=" + view["current_round_id"]}),
+                "isError": True,
+            }
         question = self.question(operation, view, capabilities)
         if not question:
             return complete({"applied": False, "audit": view, "workspace_url": self.provider.settings.canonical_web_url() + "/audit?round=" + view["current_round_id"]})
