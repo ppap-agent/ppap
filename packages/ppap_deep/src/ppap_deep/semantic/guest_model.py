@@ -15,10 +15,13 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from .models import Artifact
-from .secure_files import read_json, read_regular
+from .secure_files import read_json, read_regular, reject_constant, unique_object
 
 T = TypeVar("T", bound=BaseModel)
-ReasoningEffort = Literal["xhigh", "low"]
+ReasoningEffort = Literal["xhigh", "medium", "low"]
+# CLI aliases select built-ins; Responses function names do not. Isolation and
+# permissions remain separate from this context/capability selection.
+GROK_TOOL_ALIASES = ("Read", "Bash", "Write", "TaskOutput", "TaskStop")
 
 
 class ModelProtocolError(ValueError):
@@ -76,30 +79,30 @@ class GrokRunner:
     def run_artifact(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T:
         """Let the agent finish file work before it emits a small terminal receipt."""
         artifact = "execution.json"
-        full_schema = schema.model_json_schema()
-        (work / "artifact_schema.json").write_text(json.dumps(full_schema))
+        if (work / artifact).exists() or (work / artifact).is_symlink():
+            raise ModelProtocolError("Stage artifact already exists")
+        (work / "artifact_schema.json").write_text(json.dumps(schema.model_json_schema()))
         artifact_prompt = (
             prompt + "\nComplete this stage through file tools before the final response. "
             "Read the supplied inputs and artifact_schema.json, then write the complete output as valid JSON to execution.json. "
-            "Re-open execution.json and verify proof coverage, evidence, observation diagnostics, roles, and proof kinds. Do not add a report or aggregate counts. "
+            "Re-open execution.json and verify its required identities, frozen sources and full schema. Do not add fields outside that schema. "
             'After finishing the work, your final response must be exactly {"completed":true,"artifact":"execution.json"}. '
             "This is only a completion receipt; it must not contain the business output. "
             "A receipt without a complete execution.json fails the stage."
         )
-        # A constant-only provider JSON schema can produce a valid receipt on
-        # the first turn without doing any work. Keep tool work unconstrained;
-        # validate both the final receipt and the on-disk business artifact.
+        # A constant-only provider schema can emit a receipt without doing
+        # the file work. Validate both the receipt and the actual artifact.
         terminal = self._run(work, artifact_prompt, None, deadline, reasoning_effort=reasoning_effort)
         try:
-            receipt = json.loads(terminal.get("result", ""))
+            receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
         except (ValueError, TypeError):
             raise ModelProtocolError("Invalid artifact completion receipt") from None
-        if receipt != {"completed": True, "artifact": artifact}:
+        if not isinstance(receipt, dict) or receipt.get("completed") is not True or receipt != {"completed": True, "artifact": artifact}:
             raise ModelProtocolError("Invalid artifact completion receipt")
         try:
             output = read_json(work, (artifact,), 16 * 1024 * 1024)
         except (OSError, ValueError) as error:
-            raise ModelProtocolError("Missing or invalid audit artifact") from error
+            raise ModelProtocolError("Missing or invalid stage artifact") from error
         return schema.model_validate(output)
 
     def _run(
@@ -146,7 +149,7 @@ class GrokRunner:
             "--agent",
             "grok-build",
             "--tools",
-            "run_terminal_command,read_file,list_dir,grep,write,search_replace,get_command_or_subagent_output,wait_commands_or_subagents,kill_command_or_subagent",
+            ",".join(GROK_TOOL_ALIASES),
             "--cwd",
             str(work),
             "--prompt-file",
@@ -182,6 +185,10 @@ class GrokRunner:
             "SSL_CERT_DIR": "/etc/ssl/certs",
             "GROK_EXTRA_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
         }
+        # The runtime supplies this host-configured package path to the guest.
+        # Preserve it for terminal Python without inheriting the whole environment.
+        if pythonpath := os.environ.get("PYTHONPATH"):
+            env["PYTHONPATH"] = pythonpath
         with (work / "stdout.jsonl").open("xb") as stdout, (work / "stderr.log").open("xb") as stderr:
             separate_session = os.environ.get("PPAP_GUEST_ISOLATION") != "container-only"
             process = subprocess.Popen(command, cwd=work, env=env, stdout=stdout, stderr=stderr, start_new_session=separate_session)
@@ -214,7 +221,7 @@ class GrokRunner:
             raise ModelProtocolError("Invalid model output stream") from None
         for line in output.splitlines():
             try:
-                event = json.loads(line)
+                event = json.loads(line, object_pairs_hook=unique_object, parse_constant=reject_constant)
             except ValueError:
                 raise ModelProtocolError("Invalid model event") from None
             if not isinstance(event, dict):
@@ -248,7 +255,7 @@ class GrokRunner:
             raise ModelProtocolError("Model stage failed")
         actual_turns = terminal.get("num_turns")
         if type(actual_turns) is int and 0 <= actual_turns <= stage_turns:
-            # Grok 1.0.40 reports actual turns on its terminal event. Unused
+            # The Grok terminal event reports actual turns. Unused
             # reservations remain available for the bounded repair stages;
             # the gateway independently caps all paid requests and tokens.
             self.remaining_turns += stage_turns - actual_turns

@@ -52,6 +52,33 @@ def test_word_sources_use_actual_paragraph_and_physical_table_coordinates():
     }
 
 
+def test_deleted_tables_and_nested_tables_preserve_following_source_ids():
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    doc = Document()
+    deleted = doc.add_table(rows=1, cols=1)
+    deleted.cell(0, 0).text = "已删除的表格条款"
+    deleted.cell(0, 0).add_table(rows=1, cols=1).cell(0, 0).text = "已删除表格中的嵌套条款"
+    active = doc.add_table(rows=1, cols=1)
+    active.cell(0, 0).text = "有效条款"
+    deleted_nested = active.cell(0, 0).add_table(rows=1, cols=1)
+    deleted_nested.cell(0, 0).text = "有效表格中已删除的嵌套条款"
+    for revision_id, table in enumerate((deleted, deleted_nested), 1):
+        revision = OxmlElement("w:del")
+        revision.set(qn("w:id"), str(revision_id))
+        table._tbl.addprevious(revision)
+        revision.append(table._tbl)
+    doc.add_table(rows=1, cols=1).cell(0, 0).text = "后续有效条款"
+    out = io.BytesIO()
+    doc.save(out)
+
+    assert rule_sources("rules.docx", out.getvalue()) == [
+        {"id": "docx:3:1:1", "location": "表 3 · 行 1 · 列 1", "excerpt": "有效条款"},
+        {"id": "docx:5:1:1", "location": "表 5 · 行 1 · 列 1", "excerpt": "后续有效条款"},
+    ]
+
+
 def test_excel_json_markdown_and_pdf_sources_are_read_from_bytes():
     workbook = Workbook()
     workbook.active["B4"] = "填写版本"

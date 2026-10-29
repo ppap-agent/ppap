@@ -6,8 +6,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .document_tools import col_number, effective, ref
-from .models import ExcelCell, ExcelRange, Locator, PdfBlock, PublishedClause, WordCell, WordParagraph
+from .document_tools import TableReader, col_number, effective, ref
+from .models import ExcelCell, ExcelRange, Locator, PdfBlock, PdfCell, PublishedClause, WordCell, WordParagraph
+from .pdf_tables import valid_pdf_bbox
+
+
+class EvidenceLimitError(ValueError):
+    """Host work limit; changing a model's evidence claims cannot repair it."""
 
 
 @dataclass
@@ -17,7 +22,7 @@ class EvidenceBudget:
     def consume(self, steps: int) -> None:
         self.remaining -= steps
         if self.remaining < 0:
-            raise ValueError("Evidence resolution budget exceeded")
+            raise EvidenceLimitError("Evidence resolution budget exceeded")
 
 
 @dataclass(frozen=True)
@@ -41,10 +46,23 @@ def _table(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     return dict(matches[0])
 
 
-def _cell(table: dict[str, Any], row: int, column: int) -> tuple[str, bool]:
+def cell_locator(source_format: str, table: str, row: int, column: int) -> ExcelCell | WordCell | PdfCell:
+    """Use the same cell address for query, row claims and local checks."""
+    if source_format in {".xlsx", ".xlsm", ".xls"}:
+        return ExcelCell(kind="xlsx_cell", sheet=table, cell=ref(row, column))
+    if source_format == ".docx" and re.fullmatch(r"table:[1-9][0-9]*", table):
+        return WordCell(kind="docx_cell", table=int(table.removeprefix("table:")), row=row, column=column)
+    if source_format == ".pdf" and re.fullmatch(r"page-[1-9][0-9]*", table):
+        return PdfCell(kind="pdf_cell", page=int(table.removeprefix("page-")), row=row, column=column)
+    raise ValueError("Cell locator requires a supported source table")
+
+
+def read_cell(table: dict[str, Any], row: int, column: int, *, reader: TableReader | None = None) -> dict[str, Any]:
     if not 1 <= row <= table["rows"] or not 1 <= column <= table["cols"]:
         raise ValueError("Evidence cell outside observed bounds")
-    item = effective(table, row, column)
+    if reader is not None and reader.table is not table:
+        raise ValueError("Cell reader belongs to a different source table")
+    item = reader.cell(row, column) if reader is not None else effective(table, row, column)
     # XLSX merged cells inherit only within the declared span. DOCX aliases
     # resolve through an existing anchor instead of trusting a duplicate value.
     anchor = str(item["anchor"])
@@ -55,6 +73,11 @@ def _cell(table: dict[str, Any], row: int, column: int) -> tuple[str, bool]:
         if anchor not in table["cells"]:
             raise ValueError("Missing merged cell anchor")
         item = table["cells"][anchor]
+    return {**item, "anchor": anchor}
+
+
+def _cell(table: dict[str, Any], row: int, column: int) -> tuple[str, bool]:
+    item = read_cell(table, row, column)
     value = item.get("value")
     return "" if value is None else str(value), item.get("state") == "known"
 
@@ -100,6 +123,28 @@ def resolve(snapshot: dict[str, Any], locator: Locator, budget: EvidenceBudget |
         budget.consume(len(table.get("merges", [])) + 1)
         text, known = _cell(table, locator.row, locator.column)
         return Observation(f"table:{locator.table}!{ref(locator.row, locator.column)}", (text,), known)
+    if isinstance(locator, PdfCell):
+        pages = snapshot.get("pages", [])
+        if file_format != ".pdf" or locator.page > len(pages):
+            raise ValueError("Evidence PDF page unavailable")
+        page = pages[locator.page - 1]
+        table = _table(snapshot, f"page-{locator.page}")
+        if type(page.get("page")) is not int or page["page"] != locator.page or type(table.get("page")) is not int or table["page"] != locator.page:
+            raise ValueError("Evidence PDF table page mismatch")
+        if table.get("coordinate_system") != "pdf_points_top_left" or page.get("rotation") != 0 or page.get("crop_origin") != [0.0, 0.0]:
+            raise ValueError("Evidence PDF grid uses an unsupported page transform")
+        budget.consume(len(table.get("merges", [])) + 1)
+        item = read_cell(table, locator.row, locator.column)
+        spans = [span for span in table.get("merges", []) if span[0] <= locator.row <= span[2] and span[1] <= locator.column <= span[3]]
+        expected_anchor = ref(spans[0][0], spans[0][1]) if spans else ref(locator.row, locator.column)
+        if len(spans) > 1 or item["anchor"] != expected_anchor or expected_anchor not in table["cells"]:
+            raise ValueError("Invalid PDF cell anchor")
+        source = item.get("source")
+        bbox = source.get("bbox") if isinstance(source, dict) else None
+        if not isinstance(source, dict) or type(source.get("page")) is not int or source.get("page") != locator.page or not valid_pdf_bbox(bbox, page.get("width"), page.get("height")):
+            raise ValueError("Evidence PDF cell geometry is invalid or outside the page")
+        value = item.get("value")
+        return Observation(f"page:{locator.page}!{ref(locator.row, locator.column)}", ("" if value is None else str(value),), item.get("state") == "known")
     if isinstance(locator, PdfBlock):
         pages = snapshot.get("pages", [])
         if file_format != ".pdf" or locator.page > len(pages):

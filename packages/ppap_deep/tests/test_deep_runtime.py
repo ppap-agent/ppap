@@ -22,7 +22,9 @@ from ppap_deep.isolation.model_gateway import Grants, local_gateway
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.runtime import runtime_from_env
+from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ResultBundle
+from ppap_deep.semantic.trace import AuditTrace, derive_report, evaluate_audit
 from ppap_deep.source import authorize_execution
 
 ENGINE = "a" * 64
@@ -74,7 +76,11 @@ def _spec(*, title: str = "客户规则", tenant: str = "tenant-a", target_bytes
 def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
     rule = submission.rules[0]
     target, reference = spec.files
-    cells = {f"A{index}": {"value": f"observed-{index}", "state": "known"} for index in range(1, 4)}
+    cells = {
+        "A1": {"value": "observed-1", "state": "known"},
+        "A2": {"value": "流程关系说明", "state": "known"},
+        "A3": {"value": "频次", "state": "known"},
+    }
     documents = {
         TARGET: {
             "source": {"file": "document-0.xlsx", "sha256": target.sha256, "format": ".xlsx"},
@@ -99,12 +105,18 @@ def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
         "rules": [
             {
                 "id": clause["id"],
-                "description": clause["rule_to_check"],
                 "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
-                "scope": "本轮资料",
-                "predicate": {"kind": "semantic", "question": clause["rule_to_check"]},
-                "missing_evidence": "UNABLE",
-                "ambiguities": [],
+                "program": (
+                    {
+                        "kind": "records",
+                        "source": "records",
+                        "quantifier": "forall",
+                        "require": {"kind": "judge", "question": clause["rule_to_check"]},
+                        **({"when": {"kind": "judge", "question": "Does the optional clause apply?"}} if clause["id"] == "R4" else {}),
+                    }
+                    if clause["id"] in {"R1", "R4"}
+                    else {"kind": "document", "require": {"kind": "judge", "question": clause["rule_to_check"]}}
+                ),
                 "empty_scope_status": "NA" if clause["id"] == "R4" else "UNABLE",
                 "empty_scope_basis": "附加要求不适用" if clause["id"] == "R4" else "规则未规定空范围通过",
             }
@@ -122,39 +134,45 @@ def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
         ("UNABLE", [], "unresolved_relation", 0, 1),
         ("NA", [cell("A3")], None, 1, 0),
     ]
-    checks, proofs = [], []
-    for clause, (status, evidence, diagnostic, checked, unknown) in zip(target.rule_body["rules"], examples, strict=True):
-        key = {"audit_id": TARGET, "rule_id": clause["id"]}
-        checks.append({**key, "status": status, "reason": "record reviewed", "total": 1, "checked": checked, "unknown": unknown, "evidence": evidence, "diagnostic": diagnostic})
-        proofs.append(
-            {
-                "kind": "semantic",
-                **key,
-                "scope_basis": "one identified record",
-                "records": [
-                    {
-                        "record_id": clause["id"],
-                        "role": "prerequisite" if not evidence else "excluded" if status == "NA" else "applicable",
-                        **({"exclusion_basis": "The optional clause is not triggered"} if status == "NA" else {"applicability_basis": "The clause checks this identified item"} if evidence else {}),
-                        "status": status,
-                        "reason": "record reviewed",
-                        "evidence": evidence,
-                    }
-                ],
-            }
-        )
-    return ResultBundle.model_validate(
+    bindings = [
         {
-            "execution_id": str(submission.execution_id),
-            "semantic_engine_revision": ENGINE,
-            "documents": documents,
-            "rule_sources": {RULE: source},
-            "plans": {RULE: plan},
-            "report": {"checks": checks},
-            "trace": {"bindings": [], "proofs": proofs},
-            "input_tokens": 120,
-            "output_tokens": 30,
+            "id": "frequency",
+            "document_id": TARGET,
+            "source_sha256": target.sha256,
+            "table": "Sheet1",
+            "header_rows": [3],
+            "first_row": 1,
+            "last_row": 1,
+            "columns": {"frequency": "A"},
+            "mapping_basis": "A3 names the frequency field in column A.",
+            "boundary_basis": "A1 is the sole frequency record; A2 is relation metadata and A3 is the header.",
         }
+    ]
+    uses = [
+        {"audit_id": TARGET, "rule_id": clause["id"], "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": "frequency"}]}} if clause["id"] in {"R1", "R4"} else {}}
+        for clause in target.rule_body["rules"]
+    ]
+    trace = AuditTrace.model_validate({"bindings": bindings, "uses": uses})
+    compiled = RulePlan.model_validate(plan)
+    initial = evaluate_audit(trace, documents, {TARGET: compiled})
+    outcomes = {clause["id"]: example for clause, example in zip(target.rule_body["rules"], examples, strict=True)}
+    answers = []
+    for need in initial.needs:
+        status, evidence, diagnostic, _, _ = outcomes[need.rule_id]
+        value = "false" if status in {"NG", "NA"} else "unknown" if status == "UNABLE" else "true"
+        answers.append({"need_id": need.id, "value": value, "reason": "record reviewed", "evidence": evidence, "diagnostic": diagnostic})
+    trace = AuditTrace.model_validate({**trace.model_dump(mode="json"), "answers": answers})
+    report = derive_report(trace, documents, {TARGET: compiled})
+    return ResultBundle(
+        execution_id=submission.execution_id,
+        semantic_engine_revision=ENGINE,
+        documents=documents,
+        rule_sources={RULE: source},
+        plans={RULE: compiled},
+        report=report,
+        trace=trace,
+        input_tokens=120,
+        output_tokens=30,
     )
 
 
@@ -310,16 +328,15 @@ class SemanticProductContractTests(unittest.TestCase):
         payload = _bundle(spec, submission).model_dump(mode="json")
         for check in payload["report"]["checks"]:
             check["evidence"] = []
-        for proof in payload["trace"]["proofs"]:
-            for record in proof["records"]:
-                record["evidence"] = []
+        for record in payload["trace"]["answers"]:
+            record["evidence"] = []
         bundle = ResultBundle.model_validate(payload)
         original = bundle.model_dump_json()
 
         response = product_response(spec, bundle, submission)
 
         self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
-        self.assertEqual([row.suggestions for row in response.findings], ["record reviewed"] * 4)
+        self.assertEqual([row.suggestions for row in response.findings], ["完整声明范围内的适用记录满足规则要求", "record reviewed", "record reviewed", "附加要求不适用"])
         self.assertTrue(response.coverage.locator_gap)
         self.assertIsNone(response.coverage.verification)
         for row in response.findings:
@@ -347,8 +364,8 @@ class SemanticProductContractTests(unittest.TestCase):
                     payload["documents"][TARGET]["tables"][0]["cells"]["A1"].update(value=None, state="unknown_formula_cache")
                 for check in payload["report"]["checks"][:2]:
                     check["evidence"][0]["locator"] = locator
-                for proof in payload["trace"]["proofs"][:2]:
-                    proof["records"][0]["evidence"][0]["locator"] = locator
+                for record in payload["trace"]["answers"][:2]:
+                    record["evidence"][0]["locator"] = locator
                 bundle = ResultBundle.model_validate(payload)
                 original = bundle.model_dump_json()
 
@@ -372,13 +389,12 @@ class SemanticProductContractTests(unittest.TestCase):
                 if omitted == "check_evidence":
                     for check in payload["report"]["checks"]:
                         del check["evidence"]
-                for proof in payload["trace"]["proofs"]:
-                    for record in proof["records"]:
-                        if omitted == "record_evidence":
-                            del record["evidence"]
-                        elif omitted == "locator":
-                            for citation in record["evidence"]:
-                                del citation["locator"]
+                for record in payload["trace"]["answers"]:
+                    if omitted == "record_evidence":
+                        del record["evidence"]
+                    elif omitted == "locator":
+                        for citation in record["evidence"]:
+                            del citation["locator"]
                 if omitted == "locator":
                     for check in payload["report"]["checks"]:
                         for citation in check["evidence"]:
@@ -386,7 +402,7 @@ class SemanticProductContractTests(unittest.TestCase):
                 bundle = ResultBundle.model_validate(payload)
                 response = product_response(spec, bundle, submission)
                 self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
-                self.assertEqual([row.suggestions for row in response.findings], ["record reviewed"] * 4)
+                self.assertEqual([row.suggestions for row in response.findings], ["完整声明范围内的适用记录满足规则要求", "record reviewed", "record reviewed", "附加要求不适用"])
                 self.assertTrue(response.coverage.locator_gap)
                 self.assertIsNone(response.coverage.verification)
 
@@ -394,24 +410,10 @@ class SemanticProductContractTests(unittest.TestCase):
         spec = _spec()
         submission, _ = semantic_inputs(spec, ENGINE)
         payload = _bundle(spec, submission).model_dump(mode="json")
-        payload["plans"][RULE]["rules"][0]["predicate"] = {"kind": "query", "predicates": [{"field": "frequency", "op": "not_empty"}], "quantifier": "forall"}
+        payload["plans"][RULE]["rules"][0]["program"] = {"kind": "records", "source": "records", "require": {"kind": "value_test", "field": "frequency", "op": "not_empty"}, "quantifier": "forall"}
         payload["documents"][TARGET]["tables"][0]["cells"]["A1"]["value"] = None
         payload["report"]["checks"][0].update(status="NG", reason="Frequency is empty", evidence=[])
-        payload["trace"]["proofs"][0] = {"kind": "query", "audit_id": TARGET, "rule_id": "R1", "binding_id": "frequency"}
-        payload["trace"]["bindings"] = [
-            {
-                "id": "frequency",
-                "document_id": TARGET,
-                "source_sha256": spec.files[0].sha256,
-                "table": "Sheet1",
-                "header_rows": [3],
-                "first_row": 1,
-                "last_row": 1,
-                "columns": {"frequency": "A"},
-                "mapping_basis": "Frequency field in column A",
-                "boundary_basis": "One body record",
-            }
-        ]
+        payload["trace"]["answers"].pop(0)
         bundle = ResultBundle.model_validate(payload)
 
         response = product_response(spec, bundle, submission)
@@ -422,8 +424,32 @@ class SemanticProductContractTests(unittest.TestCase):
         self.assertTrue(response.coverage.locator_gap)
         self.assertIsNone(response.coverage.verification)
         bundle.report.checks[0].status = "PASS"
-        with self.assertRaisesRegex(ValueError, "contradicts replayed"):
+        with self.assertRaisesRegex(ValueError, "differs from deterministic replay"):
             product_response(spec, bundle, submission)
+
+    def test_query_product_keeps_frozen_rule_text_and_derived_conclusion(self) -> None:
+        from ppap_deep.semantic.models import RecordsProgram
+        from ppap_deep.semantic.trace import derive_report
+
+        spec = _spec()
+        submission, _ = semantic_inputs(spec, ENGINE)
+        for value, status, conclusion in (("每班", "PASS", "完整声明范围内"), (None, "NG", "字段 frequency")):
+            with self.subTest(status=status):
+                bundle = _bundle(spec, submission)
+                bundle.plans[RULE].rules[0].program = RecordsProgram(kind="records", source="records", require={"kind": "value_test", "field": "frequency", "op": "not_empty"}, quantifier="forall")
+                bundle.documents[TARGET]["tables"][0]["cells"]["A1"]["value"] = value
+                bundle.trace.answers.pop(0)
+                bundle.report = derive_report(bundle.trace, bundle.documents, {TARGET: bundle.plans[RULE]})
+
+                response = product_response(spec, bundle, submission)
+
+                finding = response.findings[0]
+                original = spec.files[0].rule_body["rules"][0]
+                self.assertEqual((finding.status, finding.item, finding.priority), (status, original["rule_to_check"], original["priority"]))
+                self.assertEqual(finding.locator["semantic"]["rule_text"], original["rule_to_check"])
+                self.assertEqual(response.coverage.rule_items[0]["rule_to_check"], original["rule_to_check"])
+                self.assertTrue(finding.suggestions.startswith(conclusion))
+                self.assertEqual(finding.suggestions, bundle.report.checks[0].reason)
 
     def test_optional_evidence_does_not_relax_actual_execution_or_identity_validation(self) -> None:
         spec = _spec()
@@ -445,7 +471,7 @@ class SemanticProductContractTests(unittest.TestCase):
                 elif defect == "quote":
                     check["evidence"][0]["quote"] = "invented text"
                 elif defect == "wrong_document":
-                    payload["trace"]["proofs"][0]["records"][0]["evidence"][0]["document_id"] = "outside-submission"
+                    payload["trace"]["answers"][0]["evidence"][0]["document_id"] = "outside-submission"
                 else:
                     payload["documents"][TARGET]["source"]["sha256"] = "f" * 64
                 with self.assertRaises(ValueError):
@@ -570,7 +596,7 @@ class SemanticCacheContractTests(unittest.TestCase):
         self.assertNotEqual((snapshot, plan), other_tenant)
         other_document = self._keys(_spec(target_bytes=b"changed"), target_bytes=b"changed")
         self.assertNotEqual(snapshot, other_document[0])
-        self.assertNotEqual(plan, other_document[1])
+        self.assertEqual(plan, other_document[1])
         changed = _clauses()
         changed[0] = {**changed[0], "rule_to_check": "每项频次至少每日一次"}
         self.assertNotEqual(plan, self._keys(_spec(clauses=changed))[1])

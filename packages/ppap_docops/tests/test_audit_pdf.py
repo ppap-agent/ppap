@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import pymupdf
+import pytest
 from ppap_docops.audit_pdf import render_audit_pdf
 
 
@@ -58,6 +59,29 @@ def test_optional_evidence_and_scope_can_be_absent_without_losing_the_report_or_
         assert "NG" in text and "必须填写零件号" in text
         assert "原件定位信息不完整" in text
         assert "该位置内容为空" not in text
+
+
+def test_pdf_table_cell_report_keeps_the_original_pdf_page_and_coordinates():
+    source = report_source()
+    source["filename"] = source["originals"]["version-one"] = "尺寸检验报告.pdf"
+    source["audit"]["checks"][0]["evidence"][0]["locator"] = {"kind": "pdf_cell", "page": 3, "row": 12, "column": 4}
+    with pymupdf.open(stream=render_audit_pdf(source), filetype="pdf") as document:
+        text = "".join(page.get_text() for page in document)
+        assert "尺寸检验报告.pdf" in text
+        assert "第 3 页 · 表格行 12 · 列 4" in text
+        assert "NG" in text
+        assert "该位置内容为空" in text
+        assert "Sheet" not in text
+        assert "!A2" not in text
+
+
+@pytest.mark.parametrize("field", ["page", "row", "column"])
+@pytest.mark.parametrize("value", [None, True, "1", 1.5, 0, -1])
+def test_pdf_table_cell_report_rejects_invalid_coordinates(field, value):
+    source = report_source()
+    source["audit"]["checks"][0]["evidence"][0]["locator"] = {"kind": "pdf_cell", "page": 1, "row": 1, "column": 1, field: value}
+    with pytest.raises(ValueError, match="report_locator_unavailable"):
+        render_audit_pdf(source)
 
 
 def test_long_reports_keep_every_clause_and_treat_embedded_markup_as_source_text():

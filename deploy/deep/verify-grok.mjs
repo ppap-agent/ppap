@@ -9,9 +9,9 @@ import { createHash } from 'node:crypto';
 import { brotliDecompressSync } from 'node:zlib';
 
 const require = createRequire(import.meta.url);
-const version = '1.0.40';
+const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url))).dependencies['@xai-official/grok'];
 const name = '@xai-official/grok-linux-x64';
-const expectedSha256 = '92c997dfd109c0672d40d5ae6fbd15835d53ffaf12cf9ea124d22aaef3ff23fc';
+const expectedSha256 = '22d281c5964c5444147328096ba2a221f3f0874c6858e27c825656a80f6e58e9';
 
 if (process.platform !== 'linux' || process.arch !== 'x64') {
   throw new Error('The verified Grok artifact requires linux-x64');

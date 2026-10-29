@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from openpyxl import Workbook
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
+from ppap_core.deep_policy import GROK_VERSION
 from ppap_core.files import ObjectExists, ObjectMissing, ObjectTooLarge
 from ppap_deep.auditor import SemanticRuntime
 from ppap_deep.controller import ExecutionContext
@@ -32,7 +33,7 @@ from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.guest import Manifest, execute
 from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
-from ppap_deep.semantic.trace import AuditTrace
+from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
 COMPLETED_EVENT = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5}}}\n\n'
 
@@ -61,7 +62,7 @@ def request_model(work: Path, *, incomplete_response: bool = False, request_inpu
 
 def make_runtime(root: Path) -> ContainerRuntime:
     grok = root / "grok-version"
-    grok.write_text("#!/bin/sh\necho 'grok 1.0.40 test-only'\n")
+    grok.write_text(f"#!/bin/sh\necho 'grok {GROK_VERSION} test-only'\n")
     grok.chmod(0o700)
     return ContainerRuntime(
         RuntimeConfig(
@@ -429,7 +430,7 @@ class ContainerCacheTests(unittest.TestCase):
                 self.manifest = manifest
 
             def run(self, work, _prompt, schema, _deadline, *, reasoning_effort):
-                owner.assertEqual(reasoning_effort, "xhigh")
+                owner.assertEqual(reasoning_effort, "medium")
                 request_model(work.parent, request_input=schema.__name__)
                 if schema is RulePlan:
                     owner.compile_calls += 1
@@ -441,12 +442,13 @@ class ContainerCacheTests(unittest.TestCase):
                             "rules": [
                                 {
                                     "id": "R1",
-                                    "description": "正文频次非空",
                                     "source_locator": {"kind": "published_clause", "clause_id": "R1"},
-                                    "scope": "正文第 2 行",
-                                    "predicate": {"kind": "semantic", "question": "正文频次非空"},
-                                    "missing_evidence": "UNABLE",
-                                    "ambiguities": [],
+                                    "program": {
+                                        "kind": "records",
+                                        "source": "records",
+                                        "quantifier": "forall",
+                                        "require": {"kind": "judge", "question": "Does this original frequency satisfy the effective rule?", "fields": ["frequency"]},
+                                    },
                                     "empty_scope_status": "UNABLE",
                                     "empty_scope_basis": "未读取到正文时不能判断频次。",
                                 }
@@ -456,24 +458,36 @@ class ContainerCacheTests(unittest.TestCase):
                 owner.assertIs(schema, AuditTrace)
                 documents = json.loads((work / "documents.json").read_text())
                 owner.model_snapshots.append(documents[owner.target])
-                proofs = []
+                bindings, proofs = [], []
                 for target in owner.targets:
-                    address = "A999" if owner.evidence_mode == "unresolved" else "A2"
-                    evidence = [] if owner.evidence_mode == "missing" else [{"document_id": target, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}]
-                    if owner.evidence_mode == "unlocated":
-                        evidence = [{"document_id": target}]
-                    proofs.append(
+                    bindings.append(
                         {
-                            "kind": "semantic",
-                            "audit_id": target,
-                            "rule_id": "R1",
-                            "scope_basis": "正文第 2 行",
-                            "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "正文频次记录", "status": "PASS", "reason": "正文频次为每批。", "evidence": evidence}],
+                            "id": target + ":body",
+                            "document_id": target,
+                            "source_sha256": documents[target]["source"]["sha256"],
+                            "table": "Sheet1",
+                            "header_rows": [1],
+                            "first_row": 2,
+                            "last_row": 2,
+                            "columns": {"frequency": "A"},
+                            "mapping_basis": "第 1 行是频次表头。",
+                            "boundary_basis": "第 2 行是全部正文。",
                         }
                     )
+                    proofs.append({"audit_id": target, "rule_id": "R1", "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": target + ":body"}]}}})
+                trace = AuditTrace.model_validate({"bindings": bindings, "uses": proofs})
+                plans = {identity: RulePlan.model_validate(value) for identity, value in json.loads((work / "plans.json").read_text()).items()}
+                initial = evaluate_audit(trace, documents, {target: plans[self.manifest.spec.targets[target]] for target in owner.targets})
+                answers = []
+                for need in initial.needs:
+                    address = "A999" if owner.evidence_mode == "unresolved" else "A2"
+                    evidence = [] if owner.evidence_mode == "missing" else [{"document_id": need.audit_id, "locator": {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": address}}]
+                    if owner.evidence_mode == "unlocated":
+                        evidence = [{"document_id": need.audit_id}]
+                    answers.append({"need_id": need.id, "value": "true", "reason": "正文频次为每批。", "evidence": evidence})
                     if owner.evidence_mode == "omitted":
-                        del proofs[-1]["records"][0]["evidence"]
-                return AuditTrace.model_validate({"proofs": proofs})
+                        answers[-1].pop("evidence")
+                return AuditTrace.model_validate({**trace.model_dump(mode="json"), "answers": answers})
 
         class Guest:
             pid = 99_999_999

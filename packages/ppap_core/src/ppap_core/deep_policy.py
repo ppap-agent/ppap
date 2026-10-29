@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 
 GUEST_UID = 10001
+GROK_VERSION = "1.0.70"
 
 
 class DeepExecutionPolicy(BaseModel):
@@ -35,6 +36,7 @@ class DeepExecutionPolicy(BaseModel):
             "max_processes": self.max_processes,
             "executor_label": self.executor_label,
             "uid": GUEST_UID,
-            "grok_version": "1.0.40",
+            "grok_version": GROK_VERSION,
+            "semantic_contract": "source-program-evaluator-v2",
         }
         return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

@@ -6,11 +6,13 @@ requires-python = "==3.12.*"
 dependencies = [
     "pydantic>=2.10.6",
     "ppap-core",
+    "ppap-docops",
     "ppap-product-store",
 ]
 
 [tool.uv.sources]
 ppap-core = { workspace = true }
+ppap-docops = { workspace = true }
 ppap-product-store = { workspace = true }
 
 [build-system]

@@ -1,67 +1,40 @@
-# 通用命令
+# 工具命令
 
-在已安装依赖的 Python 中执行。依赖：XLSX 用 `openpyxl`、XLS 用 `xlrd`、Word 用 `python-docx`、PDF 用 `pymupdf`；SQL 使用标准库 `sqlite3`。设置 `TOOL` 为本 Skill 的 `document_tools.py` 路径。命令没有业务判定，也不自动选择表区。
+优先复用已生成的 documents.json。读取工具只提供观察；正式计算及报告使用同一 evaluator。
 
-```bash
-python "$TOOL" inspect inputs/*.xlsx inputs/*.xls rules/*.docx --out-dir scratch/snapshots
-python "$TOOL" view scratch/snapshots/example.xlsx.json --table Sheet1 --rows 1:15
-python "$TOOL" view scratch/snapshots/example.pdf.json --pages 1:2
+```sh
+python -m ppap_deep.semantic.document_tools view documents.json --document DOCUMENT_ID --table Sheet1 --rows 1:15 --columns A:F
+python -m ppap_deep.semantic.document_tools view documents.json --document DOCUMENT_ID --pages 1:2
+python -m ppap_deep.semantic.document_tools inspect inputs/*.xlsx rules/*.docx --out-dir scratch/snapshots
 ```
 
-`inspect` 输出完整快照文件和短清单。`view` 只显示指定原始片段，行列为一基索引。PDF 快照有 `pages[].text` 与 `blocks[].bbox/text`；Word 规则表有 `tables[].cells`，普通段落在 `paragraphs[]`。按规则文件全量读取相关条款，不受 `view` 默认行数限制。
+将 DOCUMENT_ID 换成 document-index.json 中的准确 ID。view 直接选择现有索引中的一份快照；单独快照文件也可使用，此时省略 --document。表格视图只显示请求行列及与该范围相交的合并区域；合并单元格同时显示真实 anchor、值和状态。PDF 指定 --table 时查看网格片段，使用 --pages 查看页面上下文。inspect 保存完整快照并返回短清单。段落、表、页、block 和行列均从 1 开始。规则来源要阅读完整条款和必要上下文，不能用默认预览代替完整规则。
 
-根据本次观察写绑定文件。下面的行列仅演示语法，审核时自行确定：
+## 正式求值
 
-```json
-{
-  "table": "Sheet1",
-  "header_rows": "3:5",
-  "body_rows": "6:90",
-  "exclude_rows": {"50": "已核对的重复表头，字段排列与原表头相同"},
-  "columns": {"operation": "B", "frequency": "K"},
-  "mapping_basis": {"operation": "表头路径和正文编号共同确认", "frequency": "抽样的频率子列"},
-  "boundary_basis": "完整表头以下，修订履历以上"
-}
+```sh
+python -m ppap_deep.semantic.audit_tools evaluate execution.json --out evaluation.json
+python -m ppap_deep.semantic.audit_tools view evaluation.json --offset 0 --limit 8
+python -m ppap_deep.semantic.audit_tools view evaluation.json --need <question-id>
 ```
 
-```bash
-python "$TOOL" bind scratch/snapshots/example.xlsx.json --config bindings/cp.json --out scratch/cp.json
-python "$TOOL" query --table cp=scratch/cp.json --queries queries.json --out query_results.json
+默认从工作目录读取 documents.json、plans.json、targets.json，可用同名参数指定路径。输出完整 report、observations 和 needs。标准输出只含数量及至多 8 个问题 ID；view 显示必要局部上下文。answers 只回答这些 ID，改绑定或版本后须重算。缺回答是未知，协议错误不是零差异。
+
+## 可选探索
+
+```sh
+python -m ppap_deep.semantic.document_tools bind documents.json --binding binding.json --out scratch/bound.json
+python -m ppap_deep.semantic.document_tools query --table records=scratch/bound.json --queries queries.json --out scratch/results.json
 ```
 
-`bind` 输出父子表头路径、每条记录的有效值、原始地址/合并锚点、未知值和选择数量。只读快照，不再读源工作簿。`body_rows` 可为多个明确区段，例如 `6:30,35:90`；范围外或未选择的行也需要在绑定依据中说明。
+Binding 的唯一 schema 见 [执行证书](execution-trace.md)。bind 保留完整物理范围、父子表头路径、原始值、字段状态和 typed citation；排除行与未知行角色属于 use.scopes，不在 Binding 中。
 
-`queries.json` 是 `[{"id":"CP.6.count","sql":"SELECT count(*) AS total, sum(empty(frequency)) AS violations FROM cp"}, ...]`。
+SQL 表包含 row_id、原字段、states_json、evidence_json、scope_state。引用含中文、空格或引号的列时使用 SQL 双引号。SQLite 类型转换、NULL、INNER JOIN 和空集聚合不能替代审核的类型、完整源集合或未知合同。错误、过滤后的零行和未物化的查询都不是完成证据。辅助结果不改变缓存程序，也不成为第二份报告。
 
-SQL 表包含 `row_id`、绑定的业务字段及 `evidence_json`。字段保留原始数值/文本类型；转换数值或比较混合类型时显式处理。自带 `empty(value)`（只判断 NULL 或空白字符串）和 `norm(value)`（折叠空白并忽略大小写，保留 NULL）；仅在规则允许这种规范化时使用。
+## 局部字段观察
 
-查询结果保存完整命中行，stdout 只返回数量与错误。`evidence_json` 可用于回溯命中记录。查询仅允许只读 SQL，有计算预算；语法错误和预算耗尽返回错误，不能视为零违规。工具不验证任意 SQL 是否忠实表示规则，也不自动给 PASS。
-
-批量运行所有可计算规则。结果中的 `unknown_cells` 必须在判定前检查；空缓存公式不能按真实空值直接归因给供应商。需要看图或处理复杂 PDF 网格时，用已有通用库针对相关区域补充观察，保留来源即可。
-
-## 局部字段检查
-
-`checker_tools.py` 在已冻结的 Excel/Word 表快照上重放最终校验所用的表格谓词。先确认目标文档身份、来源 hash、表头、正文边界、排除行和物理列，再写请求。下面仅示范格式，行列和值必须来自当前文件和有效规则：
-
-```json
-{
-  "binding": {
-    "id": "current-table", "document_id": "target-a", "source_sha256": "<快照中的 SHA-256>",
-    "table": "Sheet1", "header_rows": [3, 4], "first_row": 5, "last_row": 90,
-    "columns": {"frequency": "K", "measurement": "L"}, "excluded_rows": [],
-    "mapping_basis": "本次表头路径与正文记录共同确认", "boundary_basis": "本次确认的完整正文区域"
-  },
-  "checks": [
-    {"id": "frequency-present", "kind": "field_nonempty", "field": "frequency"},
-    {"id": "measurement-minimum", "kind": "numeric_at_least", "field": "measurement", "minimum": 0}
-  ]
-}
+```sh
+python -m ppap_deep.semantic.checker_tools documents/target.json --request checks.json --out local_checks.json
 ```
 
-```bash
-python /opt/ppap/semantic/checker_tools.py documents/target-a.json --request checks.json --out local_checks.json
-```
-
-完整结果写入 `local_checks.json`，包含来源 hash、原 binding、每项 `local_condition_status`、总数/已检/未知数、完整违规/未知行号，以及至多 64 个违规和未知样例的 `document_id` + typed cell locator；stdout 只给短计数。按完整行号查看后部差异，不能把样例截断当成完整覆盖。空范围为 `UNABLE`；未知公式缓存保留未知；`numeric_at_least` 只接受 Excel 原生数值，文本数字不被强转，Word 数值检查不支持。
-
-这是局部条件观察。`field_nonempty` 可检查频率字段是否有值，但不检查频率值是否满足客户指定频次。只有确认规则确实要求该条件、该字段映射和完整适用范围后，才把结果用于相应条款的推理；最终 query proof 仍由冻结计划与可信校验代码重放。复杂规则的其他分支继续逐项处理，局部 `PASS` 不是整条规则的 `PASS`。
+checks.json 包含同一 physical binding、checks（field_nonempty 或 numeric_at_least），以及可选的同一 BindingScope。此工具调用同一个 evaluator，返回完整违规/未知行号和至多 64 个样例。文本数字不强转为数值，未知公式缓存保持未知。局部条件通过不等于完整客户规则通过。

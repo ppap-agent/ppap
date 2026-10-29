@@ -5,9 +5,33 @@ from __future__ import annotations
 from typing import Any
 
 from .evidence import EvidenceBudget, resolve, resolve_optional
-from .models import AuditReport, RulePlan
-from .protocol import ResultBundle, SubmissionSpec
+from .models import AuditReport, PlannedRule, RulePlan
+from .protocol import CompileValidationReason, ResultBundle, RuleRef, SubmissionSpec
 from .trace import validate_trace
+
+
+def clause_source_error(rule: RuleRef, planned: PlannedRule, source: dict[str, Any], budget: EvidenceBudget) -> CompileValidationReason | None:
+    """Check clause ownership and readable evidence, not predicate equivalence."""
+    locator = planned.source_locator
+    clause = next((item for index, item in enumerate(rule.clauses, 1) if str(item.get("id") or index) == planned.id), None)
+    if clause is None:
+        return "source_locator_unresolved"
+    if rule.format == ".json":
+        if locator.kind != "published_clause" or locator.clause_id != planned.id:
+            return "source_locator_unresolved"
+    elif locator.model_dump(mode="json") not in clause.get("source_locators", []):
+        return "source_locator_unresolved"
+    try:
+        observed = resolve(source, locator, budget)
+    except ValueError:
+        if budget.remaining < 0:
+            raise
+        return "source_locator_unresolved"
+    if not observed.known:
+        return "source_locator_unresolved"
+    if not any(value.strip() for value in observed.values):
+        return "source_locator_empty"
+    return None
 
 
 def validate_report(report: AuditReport, plans: dict[str, RulePlan], documents: dict[str, dict[str, Any]]) -> set[tuple[str, str]]:
@@ -71,6 +95,7 @@ def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -
     if not isinstance(tables, list) or len(tables) > 256 or len({table["id"] for table in tables}) != len(tables):
         raise ValueError("Invalid snapshot tables")
     cells = 0
+    cell_states = {"known", "unknown_visual_evidence", "unknown_uncovered_grid", "unknown_geometry"} if file_format == ".pdf" else {"known", "unknown_formula_cache", "unknown_excel_error"}
     for table in tables:
         rows, cols = table["rows"], table["cols"]
         if type(rows) is not int or type(cols) is not int or not 0 <= rows <= 100000 or not 0 <= cols <= 16384:
@@ -83,7 +108,7 @@ def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -
         if len(table.get("merges", [])) > 4096:
             raise ValueError("Snapshot merge limit")
         for cell in table["cells"].values():
-            if cell.get("state") not in {"known", "unknown_formula_cache", "unknown_excel_error"} or not isinstance(cell.get("value"), (str, int, float, bool, type(None))):
+            if cell.get("state") not in cell_states or not isinstance(cell.get("value"), (str, int, float, bool, type(None))):
                 raise ValueError("Invalid cell observation")
         for span in table.get("merges", []):
             r1, c1, r2, c2 = span
@@ -95,6 +120,10 @@ def validate_snapshot(snapshot: dict[str, Any], sha256: str, file_format: str) -
     for index, page in enumerate(pages, 1):
         if page["page"] != index or len(page["blocks"]) > 100000 or any(not isinstance(block["text"], str) for block in page["blocks"]):
             raise ValueError("Invalid PDF blocks")
+    if file_format == ".pdf":
+        from .pdf_tables import validate_pdf_tables
+
+        validate_pdf_tables(snapshot)
 
 
 def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str, str]]:
@@ -124,11 +153,8 @@ def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str
         if plan.source_sha256 != rule.sha256 or plan.plan_revision != rule.plan_revision or [item.id for item in plan.rules] != ids:
             raise ValueError("Rule plan version or coverage mismatch")
         for planned in plan.rules:
-            if rule.format == ".json" and (planned.source_locator.kind != "published_clause" or planned.source_locator.clause_id != planned.id):
-                raise ValueError("Published rule plan cites the wrong effective clause")
-            observation = resolve(snapshot, planned.source_locator, source_budget)
-            if not observation.known or not any(text.strip() for text in observation.values):
-                raise ValueError("Rule plan source is empty or unknown")
+            if clause_source_error(rule, planned, snapshot, source_budget) is not None:
+                raise ValueError("Rule plan source does not identify readable text owned by its frozen clause")
     plans = {audit_id: bundle.plans[rule_id] for audit_id, rule_id in spec.targets.items() if rule_id in bundle.plans}
     evidence_gaps = validate_report(bundle.report, plans, bundle.documents)
     evidence_gaps.update(validate_trace(bundle.trace, bundle.report, bundle.documents, plans))

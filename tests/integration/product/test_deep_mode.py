@@ -306,7 +306,7 @@ class DeepModeTests(unittest.TestCase):
                 self.rules = {}
 
             def run(self, work, _prompt, schema, _deadline, *, reasoning_effort):
-                owner.assertEqual(reasoning_effort, "xhigh")
+                owner.assertEqual(reasoning_effort, "medium")
                 self.input_tokens += 10
                 self.output_tokens += 2
                 if schema is RulePlan:
@@ -318,12 +318,18 @@ class DeepModeTests(unittest.TestCase):
                     planned = [
                         {
                             "id": clause["id"],
-                            "description": clause["rule_to_check"],
                             "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
-                            "scope": "数据工作表第 2 行",
-                            "predicate": {"kind": "semantic", "question": clause["rule_to_check"]},
-                            "missing_evidence": "UNABLE",
-                            "ambiguities": [],
+                            "program": {
+                                "kind": "records",
+                                "source": "records",
+                                "quantifier": "forall",
+                                "require": {
+                                    "kind": "value_test",
+                                    "field": "frequency" if clause["id"].endswith("1") else "samples",
+                                    "op": "not_empty" if clause["id"].endswith("1") else "ge",
+                                    "value": None if clause["id"].endswith("1") else 2,
+                                },
+                            },
                             "empty_scope_status": "UNABLE",
                             "empty_scope_basis": "规则未规定空正文的结论。",
                         }
@@ -340,19 +346,21 @@ class DeepModeTests(unittest.TestCase):
                 targets = json.loads((work / "targets.json").read_text())
                 self.audit_targets.append(targets)
                 owner.assertEqual(targets, {good_target: good_rule})
-                proofs = []
-                for clause_id, cell, status, reason in [("G1", "A2", "PASS", "正文频次为每批。"), ("G2", "B2", "NG", "正文样本数为 1，小于 2。")]:
-                    evidence = [{"document_id": good_target, "locator": {"kind": "xlsx_cell", "sheet": "数据", "cell": cell}}]
-                    proofs.append(
-                        {
-                            "kind": "semantic",
-                            "audit_id": good_target,
-                            "rule_id": clause_id,
-                            "scope_basis": "数据工作表仅第 2 行正文",
-                            "records": [{"record_id": "row-2", "role": "applicable", "applicability_basis": "已读取正文记录", "status": status, "reason": reason, "evidence": evidence}],
-                        }
-                    )
-                return AuditTrace.model_validate({"proofs": proofs})
+                documents = json.loads((work / "documents.json").read_text())
+                binding = {
+                    "id": "body",
+                    "document_id": good_target,
+                    "source_sha256": documents[good_target]["source"]["sha256"],
+                    "table": "数据",
+                    "header_rows": [1],
+                    "first_row": 2,
+                    "last_row": 2,
+                    "columns": {"frequency": "A", "samples": "B"},
+                    "mapping_basis": "第 1 行给出频次和样本数表头。",
+                    "boundary_basis": "第 2 行是全部正文。",
+                }
+                uses = [{"audit_id": good_target, "rule_id": clause_id, "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": "body"}]}}} for clause_id in ("G1", "G2")]
+                return AuditTrace.model_validate({"bindings": [binding], "uses": uses})
 
         model = Model()
         frozen_revision = self.settings.deep_execution_revision()

@@ -1703,12 +1703,8 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                         "rules": [
                             {
                                 "id": "1",
-                                "description": "必须填写零件号",
                                 "source_locator": {"kind": "published_clause", "clause_id": "1"},
-                                "scope": "第二行的零件号",
-                                "predicate": {"kind": "query", "quantifier": "forall", "predicates": [{"field": "part_number", "op": "not_empty"}]},
-                                "missing_evidence": "UNABLE",
-                                "ambiguities": [],
+                                "program": {"kind": "records", "source": "records", "quantifier": "forall", "require": {"kind": "value_test", "field": "part_number", "op": "not_empty"}},
                                 "empty_scope_status": "UNABLE",
                                 "empty_scope_basis": "无正文不认定通过",
                             }
@@ -1747,7 +1743,7 @@ class AuditDisplayDatabaseTests(AuditDatabaseCase):
                         }
                         for version in versions
                     ],
-                    "proofs": [{"kind": "query", "audit_id": version.id, "rule_id": "1", "binding_id": "body-" + version.id} for version in versions],
+                    "uses": [{"audit_id": version.id, "rule_id": "1", "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": "body-" + version.id}]}}} for version in versions],
                 },
             }
         )
