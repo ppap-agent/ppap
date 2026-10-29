@@ -36,6 +36,7 @@ class Case:
     relation_kind: str = "same_instance"
     match: str = "one_to_one"
     comparison: bool = False
+    comparison_nonempty: bool = False
     clarification: bool = False
     refinement: bool = False
 
@@ -165,6 +166,7 @@ def cases() -> tuple[Case, ...]:
             ),
             "PASS",
             comparison=True,
+            comparison_nonempty=True,
         ),
         Case(
             "metadata-form-missing-name",
@@ -177,6 +179,7 @@ def cases() -> tuple[Case, ...]:
             ),
             "NG",
             comparison=True,
+            comparison_nonempty=True,
         ),
     )
 

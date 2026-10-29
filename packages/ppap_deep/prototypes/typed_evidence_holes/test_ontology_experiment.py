@@ -95,6 +95,7 @@ def test_changing_oracle_does_not_change_controlled_model_proposal(experiment, t
         status="PASS",
         relation_kind="association",
         match="any",
+        comparison_nonempty=not case.comparison_nonempty,
     )
     bundle, spec = executed(experiment, altered, tmp_path / "case")
     # The controlled proposal follows the rule/source fixture, never expected
@@ -207,7 +208,7 @@ def test_form_properties_in_one_column_keep_distinct_source_points(experiment, t
         case = replace(case, tables=tuple(replace(table, identity_cells=("B2",), comparison_cells=("B3",)) for table in case.tables))
     bundle, spec = executed(experiment, case, tmp_path / "case")
     plan = bundle.plans[next(iter(spec.targets.values()))]
-    relation = plan.rules[0].program.require
+    relation = next(experiment.related_nodes(plan.rules[0].program.require))
     if change == "identity":
         for entity in plan.ontology.entities:
             entity.identity = ["name"]
@@ -318,6 +319,98 @@ def test_only_grounded_target_identity_questions_allow_an_unresolved_mapping(exp
         assert scores["clarifications"] == 1
     else:
         assert scores["concept"]["state"] == "incorrect"
+
+
+@pytest.mark.parametrize("change", ["or_bypass", "double_not", "precondition_gate", "extra_eq", "extra_nonempty", "conditional_or"])
+def test_boolean_obligation_structure_is_checked_independently_of_status(experiment, tmp_path, change):
+    from ppap_deep.semantic.models import ColumnExists, RequireAll, RequireAny, RequireNot, ValueTest
+
+    case = experiment.cases()[8]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target = next(iter(spec.targets))
+    plan = experiment._effective_plans(bundle, spec)[target].model_copy(deep=True)
+    bundle.plans[spec.targets[target]] = plan
+    bundle.trace.plan_refinements = []
+    program = plan.rules[0].program
+    relation = next(experiment.related_nodes(program.require))
+    code = ValueTest(kind="value_test", field="code", op="not_empty")
+    if change == "or_bypass":
+        program.require = RequireAny(kind="any", items=[relation, code])
+    elif change == "double_not":
+        program.require = RequireNot(kind="not", item=RequireNot(kind="not", item=relation))
+    elif change == "precondition_gate":
+        program.precondition = ColumnExists(kind="column_exists", input=program.source, field="code")
+    elif change == "extra_eq":
+        program.require = RequireAll(kind="all", items=[relation, ValueTest(kind="value_test", field="code", op="eq", value="010")])
+    elif change == "extra_nonempty":
+        program.require = RequireAll(kind="all", items=[relation, ValueTest(kind="value_test", field="classification", op="not_empty")])
+    else:
+        program.require = RequireAll(kind="all", items=[relation, RequireAny(kind="any", items=[code, ValueTest(kind="value_test", field="product", op="not_empty")])])
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == ("correct" if change == "double_not" else "incorrect")
+    assert scores["binding"]["state"] == scores["judgment"]["state"] == "correct"
+
+
+def test_positive_allows_only_entailed_and_guards(experiment, tmp_path):
+    from ppap_deep.semantic.models import RequireAll, ValueTest
+
+    case = experiment.cases()[8]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target = next(iter(spec.targets))
+    plan = experiment._effective_plans(bundle, spec)[target].model_copy(deep=True)
+    bundle.plans[spec.targets[target]] = plan
+    bundle.trace.plan_refinements = []
+    program = plan.rules[0].program
+    program.require = RequireAll(
+        kind="all", items=[ValueTest(kind="value_test", field="code", op="not_empty"), RequireAll(kind="all", items=[ValueTest(kind="value_test", field="product", op="not_empty"), program.require])]
+    )
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    assert all(experiment.score(case, bundle, spec)[layer]["state"] == "correct" for layer in ("concept", "binding", "judgment"))
+
+
+def test_literal_projection_does_not_imply_nonempty_components(experiment, tmp_path):
+    from ppap_deep.semantic.models import RequireAll, ValueTest
+
+    case = experiment.cases()[5]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target = next(iter(spec.targets))
+    plan = bundle.plans[spec.targets[target]]
+    program = plan.rules[0].program
+    program.require = RequireAll(kind="all", items=[ValueTest(kind="value_test", field="name", op="not_empty"), program.require])
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == "incorrect"
+    assert scores["judgment"]["state"] == "correct"
+
+
+def test_metadata_nonempty_name_is_mandatory_and_not_taken_from_oracle(experiment, tmp_path):
+    case = replace(experiment.cases()[9], comparison_nonempty=False)
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target = next(iter(spec.targets))
+    plan = bundle.plans[spec.targets[target]]
+    assert any(getattr(item, "field", None) == "name" and getattr(item, "op", None) == "not_empty" for item in plan.rules[0].program.require.items)
+    case = replace(case, comparison_nonempty=True)
+    plan.rules[0].program.require = next(experiment.related_nodes(plan.rules[0].program.require))
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == "incorrect"
+    assert scores["judgment"]["state"] == "correct"
+
+
+def test_two_blank_form_names_cannot_pass_by_equal_values(experiment, tmp_path):
+    source = experiment.cases()[9]
+    tables = tuple(replace(table, rows=tuple((row[0], None) if index == 1 else row for index, row in enumerate(table.rows))) for table in source.tables)
+    case = replace(source, tables=tables, status="NG")
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    assert all(experiment.score(case, bundle, spec)[layer]["state"] == "correct" for layer in ("concept", "binding", "judgment"))
+    target = next(iter(spec.targets))
+    plan = bundle.plans[spec.targets[target]]
+    plan.rules[0].program.require = next(experiment.related_nodes(plan.rules[0].program.require))
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    assert bundle.report.checks[0].status == "PASS"
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == scores["judgment"]["state"] == "incorrect"
 
 
 def test_experiment_records_controlled_usage_as_unknown_not_real_tokens(experiment, tmp_path, monkeypatch):
