@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from ppap_core.deep_policy import GUEST_UID, DeepExecutionPolicy
+from ppap_core.deep_policy import GROK_VERSION, GUEST_UID, DeepExecutionPolicy
 from pydantic import Field
 
 from ppap_deep.limits import MAX_INPUT_FILES, MAX_INPUT_TOTAL
@@ -131,8 +131,8 @@ class ContainerRuntime:
             timeout=10,
             check=False,
         )
-        if version.returncode != 0 or not version.stdout.decode(errors="replace").startswith("grok 1.0.40 "):
-            raise ValueError("Verified Grok 1.0.40 is required")
+        if version.returncode != 0 or not version.stdout.decode(errors="replace").startswith(f"grok {GROK_VERSION} "):
+            raise ValueError(f"Verified Grok {GROK_VERSION} is required")
         self.config = config
         self.config.state.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.config.state.chmod(0o711)
@@ -470,6 +470,19 @@ class ContainerRuntime:
             failure = usage.get("transport_failure")
             if isinstance(failure, dict):
                 payload["transport_failure"] = {key: failure[key] for key in ("phase", "error_type", "response_bytes", "last_event", "provider_status") if type(failure.get(key)) in (int, str)}
+                timing_keys = ("elapsed_ms", "headers_ms", "first_chunk_ms", "last_chunk_ms", "last_chunk_gap_ms", "max_chunk_gap_ms", "chunk_count")
+                payload["transport_failure"].update({key: failure[key] for key in timing_keys if key in failure and (type(failure[key]) is int or failure[key] is None)})
+                if type(failure.get("client_write_failed")) is bool:
+                    payload["transport_failure"]["client_write_failed"] = failure["client_write_failed"]
+                client_request_id = failure.get("client_request_id")
+                if type(client_request_id) is str:
+                    try:
+                        parsed_id = UUID(client_request_id)
+                    except ValueError:
+                        pass
+                    else:
+                        if parsed_id.version == 4 and str(parsed_id) == client_request_id:
+                            payload["transport_failure"]["client_request_id"] = client_request_id
         if outer is not None:
             payload["guest"] = outer
         write_json(destination / "diagnostic.json", payload)

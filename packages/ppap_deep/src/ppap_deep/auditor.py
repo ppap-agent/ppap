@@ -22,7 +22,7 @@ from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, ResultBund
 from ppap_deep.semantic.secure_files import read_json
 from ppap_deep.semantic.validation import validate_bundle
 
-POLICY_REVISION = hashlib.sha256(b"ppap-effective-rules-full-coverage-v3").hexdigest()
+POLICY_REVISION = hashlib.sha256(b"ppap-source-only-program-evaluation-v5").hexdigest()
 FORMATS = {".xlsx", ".xls", ".xlsm", ".docx", ".pdf"}
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
 DIAGNOSTIC_LABELS = {
@@ -104,7 +104,14 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
     evidence_gaps = validate_bundle(bundle, submission)
     files = {item.file_version_id: item for item in spec.files}
     checks = {(check.audit_id, check.rule_id): check for check in bundle.report.checks}
-    proofs = {(proof.audit_id, proof.rule_id): proof.kind for proof in bundle.trace.proofs}
+    from .semantic.trace import program_has_semantics
+
+    proofs = {
+        (audit_id, rule.id): "semantic" if program_has_semantics(rule.program) else "query"
+        for audit_id, rule_file_id in submission.targets.items()
+        if rule_file_id in bundle.plans
+        for rule in bundle.plans[rule_file_id].rules
+    }
     findings, rule_items = [], []
     evidence_budget = EvidenceBudget()
     for target, clause in ((target, clause) for target in spec.files if target.role == "target" for clause in (target.rule_body or {})["rules"]):
@@ -273,9 +280,8 @@ class SemanticRuntime:
         job_key = hashlib.sha256(spec.job_id.encode()).hexdigest()
         artifact_prefix = f"{prefix}/rounds/{spec.round_id}/{job_key}-{spec.attempt}"
         deadline = time.monotonic() + self.timeout
-        # Plans may contain template-specific assumptions. Reuse for exactly the
-        # same document set, never silently promote them to another template.
-        scope = hashlib.sha256(encoded([item.model_dump() for item in submission.documents])).hexdigest()
+        # Programs contain source-rule meaning only; physical bindings and local
+        # answers belong to this execution, never the tenant-scoped plan cache.
         with tempfile.TemporaryDirectory(prefix="ppap-semantic-") as temporary:
             root = Path(temporary)
             inputs, work = root / "inputs", root / "work"
@@ -294,7 +300,7 @@ class SemanticRuntime:
                 (inputs / name).write_bytes(packets[rule.rule_id])
                 rule_names[rule.rule_id] = name
                 cached_name = f"plan-{index}.json"
-                if self._cache(f"{prefix}/plans/{scope}/{rule.plan_revision}.json", inputs / cached_name):
+                if self._cache(f"{prefix}/plans/{rule.plan_revision}.json", inputs / cached_name):
                     cached_plans[rule.rule_id] = cached_name
             manifest = Manifest(spec=submission, documents=names, rules=rule_names, cached_snapshots=cached_snapshots, cached_plans=cached_plans)
             (inputs / "manifest.json").write_bytes(manifest.model_dump_json().encode())
@@ -329,7 +335,7 @@ class SemanticRuntime:
                 self._put(f"{prefix}/snapshots/{doc.sha256}{doc.format}.json", bundle.documents[doc.audit_id])
             for rule in submission.rules:
                 if rule.rule_id in bundle.plans:
-                    self._put(f"{prefix}/plans/{scope}/{rule.plan_revision}.json", bundle.plans[rule.rule_id].model_dump())
+                    self._put(f"{prefix}/plans/{rule.plan_revision}.json", bundle.plans[rule.rule_id].model_dump())
             self._put(artifact_prefix + "/bundle.json", bundle.model_dump(mode="json"))
             self._put(artifact_prefix + "/inputs.json", submission.model_dump(mode="json"))
             return response

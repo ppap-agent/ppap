@@ -46,6 +46,8 @@ def rule_sources(filename: str, content: bytes) -> list[dict[str, str]]:
             add(f"docx:p:{number}", f"段落 {number}", word_paragraph_text(paragraph._p))
         # Physical cells, not python-docx's expanded merged-cell aliases.
         for table_number, table in enumerate(doc.element.body.iter(qn("w:tbl")), 1):
+            if any(ancestor.tag == qn("w:del") for ancestor in table.iterancestors()):
+                continue  # Retain physical numbering without reviving deleted text.
             for row_number, row in enumerate(table.findall(qn("w:tr")), 1):
                 for column, cell in enumerate(row.findall(qn("w:tc")), 1):
                     text = "\n".join(word_paragraph_text(paragraph) for paragraph in cell.findall(qn("w:p")))

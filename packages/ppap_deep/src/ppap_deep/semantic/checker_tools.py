@@ -13,10 +13,11 @@ from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field
 
-from ppap_deep.semantic.document_tools import col_number, effective, ref, save
-from ppap_deep.semantic.evidence import EvidenceBudget
-from ppap_deep.semantic.models import Artifact, Citation, Predicate, QueryProgram, Scalar
-from ppap_deep.semantic.trace import Binding, predicate_result, query_counts
+from ppap_deep.semantic.bindings import Binding, BindingScope
+from ppap_deep.semantic.document_tools import col_number, effective, save
+from ppap_deep.semantic.evidence import cell_locator
+from ppap_deep.semantic.models import Artifact, Citation, RulePlan, Scalar
+from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
 
 class NonEmptyCheck(Artifact):
@@ -38,6 +39,7 @@ FieldCheck = Annotated[NonEmptyCheck | NumericAtLeastCheck, Field(discriminator=
 class CheckRequest(Artifact):
     binding: Binding
     checks: list[FieldCheck] = Field(min_length=1, max_length=16)
+    scope: BindingScope | None = None
 
 
 class CellObservation(Artifact):
@@ -71,20 +73,14 @@ class CheckOutput(Artifact):
 
 
 def _citation(binding: Binding, source_format: str, row: int, column: int) -> Citation:
-    if source_format in {".xlsx", ".xlsm", ".xls"}:
-        locator: dict[str, Any] = {"kind": "xlsx_cell", "sheet": binding.table, "cell": ref(row, column)}
-    elif source_format == ".docx" and binding.table.startswith("table:"):
-        locator = {"kind": "docx_cell", "table": int(binding.table.removeprefix("table:")), "row": row, "column": column}
-    else:
-        raise ValueError("Field checker requires an Excel or Word table snapshot")
-    return Citation.model_validate({"document_id": binding.document_id, "locator": locator})
+    return Citation(document_id=binding.document_id, locator=cell_locator(source_format, binding.table, row, column))
 
 
 def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput:
     """Replay two simple predicates; never infer binding or rule equivalence."""
     binding = request.binding
     source = snapshot.get("source")
-    if not isinstance(source, dict) or source.get("format") not in {".xlsx", ".xlsm", ".xls", ".docx"}:
+    if not isinstance(source, dict) or source.get("format") not in {".xlsx", ".xlsm", ".xls", ".docx", ".pdf"}:
         raise ValueError("Field checker requires a supported table snapshot")
     if source.get("sha256") != binding.source_sha256:
         raise ValueError("Binding source version mismatch")
@@ -95,45 +91,65 @@ def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput
         raise ValueError("Binding table missing")
     results: list[LocalCheckResult] = []
     for check in request.checks:
-        if check.field not in binding.columns:
+        if check.field not in binding.columns and check.field not in binding.field_holes:
             raise ValueError("Checked field is absent from reviewed binding")
         if isinstance(check, NumericAtLeastCheck) and source["format"] == ".docx":
             raise ValueError("Numeric checker requires typed Excel values")
-        predicate = Predicate(field=check.field, op="not_empty") if isinstance(check, NonEmptyCheck) else Predicate(field=check.field, op="ge", value=check.minimum)
-        program = QueryProgram(kind="query", predicates=[predicate], quantifier="forall")
-        status, total, checked, unknown, failures = query_counts(program, binding, snapshot, EvidenceBudget())
-        column = col_number(binding.columns[check.field])
-        excluded = {item.row for item in binding.excluded_rows}
+        predicate = (
+            {"kind": "value_test", "field": check.field, "op": "not_empty"} if isinstance(check, NonEmptyCheck) else {"kind": "value_test", "field": check.field, "op": "ge", "value": check.minimum}
+        )
+        plan = RulePlan.model_validate(
+            {
+                "source_sha256": "local-condition",
+                "plan_revision": "0" * 64,
+                "rules": [
+                    {
+                        "id": check.id,
+                        "source_locator": {"kind": "published_clause", "clause_id": check.id},
+                        "program": {"kind": "records", "source": "records", "quantifier": "forall", "require": predicate},
+                        "empty_scope_status": "UNABLE",
+                        "empty_scope_basis": "A local predicate does not prove an empty business scope.",
+                    }
+                ],
+            }
+        )
+        scope = request.scope or BindingScope(binding_id=binding.id)
+        if scope.binding_id != binding.id:
+            raise ValueError("Local check scope must reference its own binding")
+        trace = AuditTrace.model_validate(
+            {
+                "bindings": [binding.model_dump(mode="json")],
+                "uses": [{"audit_id": binding.document_id, "rule_id": check.id, "inputs": {"records": {"kind": "bound", "scopes": [scope.model_dump(mode="json")]}}}],
+            }
+        )
+        evaluated = evaluate_audit(trace, {binding.document_id: snapshot}, {binding.document_id: plan})
+        aggregate = evaluated.report.checks[0]
+        status, total, checked, unknown = aggregate.status, aggregate.total, aggregate.checked, aggregate.unknown
+        failures = set()
         violations: list[CellObservation] = []
         unknown_examples: list[CellObservation] = []
         unknown_rows: list[int] = []
-        for row in range(binding.first_row, binding.last_row + 1):
-            if row in excluded:
+        column = col_number(binding.columns[check.field]) if check.field in binding.columns else None
+        for fact in evaluated.observations:
+            if fact["role"] == "excluded" or fact["record"] is None:
+                continue
+            row = fact["record"]["row"]
+            if fact["value"] is False:
+                failures.add(row)
+            elif fact["value"] is None:
+                unknown_rows.append(row)
+            if column is None or fact["value"] is True:
                 continue
             item = effective(table, row, column)
-            if row in failures:
-                if len(violations) < 64:
-                    violations.append(
-                        CellObservation(
-                            row=row,
-                            citation=_citation(binding, source["format"], row, column),
-                            value=item["value"],
-                            state=item["state"],
-                        )
-                    )
-            elif item["state"] != "known" or predicate_result(predicate, item["value"]) is None:
-                unknown_rows.append(row)
-                if len(unknown_examples) < 64:
-                    unknown_examples.append(
-                        CellObservation(
-                            row=row,
-                            citation=_citation(binding, source["format"], row, column),
-                            value=item["value"],
-                            state=item["state"],
-                        )
-                    )
-        if len(unknown_rows) != unknown:
-            raise ValueError("Local evidence count disagrees with deterministic replay")
+            observation = CellObservation(
+                row=row,
+                citation=_citation(binding, source["format"], row, column),
+                value=item["value"],
+                state=item["state"] if fact["value"] is False else "unresolved_scope" if row in {entry.row for entry in scope.unresolved_rows} else item["state"],
+            )
+            examples = violations if fact["value"] is False else unknown_examples
+            if len(examples) < 64:
+                examples.append(observation)
         results.append(
             LocalCheckResult(
                 id=check.id,

@@ -54,14 +54,21 @@ def test_terminal_stream_retains_confirmed_usage_without_replaying_inference(ter
                 assert usage == {"completed_requests": 1, "input_tokens": 13, "output_tokens": 7, "uncertain": False, "in_flight": False, "budget_exhausted": False}
                 assert received == (200, event, True)
             else:
-                assert usage == {
+                assert {key: value for key, value in usage.items() if key != "transport_failure"} == {
                     "completed_requests": 0,
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "uncertain": True,
                     "in_flight": False,
                     "budget_exhausted": False,
-                    "transport_failure": {"phase": "provider_event", "error_type": "ValueError", "response_bytes": len(event), "last_event": terminal, "provider_status": 200},
+                }
+                failure = usage["transport_failure"]
+                assert {key: failure[key] for key in ("phase", "error_type", "response_bytes", "last_event", "provider_status")} == {
+                    "phase": "provider_event",
+                    "error_type": "ValueError",
+                    "response_bytes": len(event),
+                    "last_event": terminal,
+                    "provider_status": 200,
                 }
                 assert received == (200, b"", False)
             # A terminal failure is still the provider's original failure. It

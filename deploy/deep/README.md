@@ -1,6 +1,6 @@
 # Deep container runtime
 
-Build this image from the repository root with `--platform linux/amd64 --build-arg PPAP_APP_IMAGE=<verified amd64 app image>` and `-f deploy/deep/Dockerfile`. It adds verified Grok 1.0.40 and `setpriv`/`prlimit` to the existing application image. It does not add a Docker socket or Kubernetes permissions. The Dockerfile copies the current `packages/ppap_deep` and links `/opt/ppap/semantic` to the package's semantic tools and skill; the copied code must match the app revision used by the Controller.
+Build this image from the repository root with `--platform linux/amd64 --build-arg PPAP_APP_IMAGE=<verified amd64 app image>` and `-f deploy/deep/Dockerfile`. It adds verified Grok 1.0.70 and `setpriv`/`prlimit` to the existing application image. It does not add a Docker socket or Kubernetes permissions. The Dockerfile copies the current `packages/ppap_deep` and links `/opt/ppap/semantic` to the package's semantic tools and skill; the copied code must match the app revision used by the Controller.
 
 The trusted Deep Controller runs as root to read authorized product input. `ContainerRuntime` starts each semantic guest as UID/GID 10001 with a fresh environment and closed inherited descriptors. The guest receives only run-local staged inputs, writable work, and a read-only short-lived model grant. The provider key stays in the trusted Controller process, which starts the loopback Responses gateway before accepting model work.
 

@@ -1,46 +1,28 @@
-# 可重放的执行产物
+# 执行证书
 
-返回 AuditTrace 的 `bindings` 和 `proofs`。每个 `(audit_id, rule_id)` 恰好有一个 proof。公开 AuditReport 由可信代码派生，模型只生成执行事实。
+正式输出是 AuditTrace：bindings、uses、answers。宿主拥有计算、观察、计数、来源和最终报告。模型不输出 QueryProof、SemanticProof、逐行 PASS/NG 或汇总报告。
 
-实际执行事实与可选引用分开处理。规则结果缺项、重复、错绑文件、冻结版本不符、真实未完成或报告与执行事实矛盾仍是错误。缺定位、摘录或引用支持关系只作证据信息缺口，保留已有业务判定；不得伪造坐标或将缺引用改判为 UNABLE。仅因可选引用不足不调用模型修复。返回的引用必须属于本次授权冻结文件；无法解析的坐标不作为已验证证据展示。
+1. 首次审核先将 initial-execution.json 复制为 execution.json。宿主已按程序填好全部 use 身份和 unresolved 输入；这只是待补全候选。obligations.json 列出每条规则潜在使用的集合、字段和语义问题，文件级 fields 是搜索提示。该视图不增加审核义务，也不将不同规则的同名集合自动合并。需要逻辑细节时读取 plans.json 和冻结条款；结合 document-index.json 先看 layout 和表头，按需查看正文与视觉区域。修复阶段从 previous-execution.json 保留有效工作，不重置为初始候选。
+2. 定义物理 Binding：原文 document_id、SHA、table、header_rows、完整 first/last_row、原始列映射。field_holes 区分 absent 和 unresolved，已确认缺列必须有可读的完整表头搜索范围。绑定不得增加全局 excluded_rows。
+3. 每条 target/clause 提交一个 use，inputs 把程序中的逻辑集合映射到本轮文档。bound.scopes 引用 binding_id；每个 scope 独立声明 excluded_rows/unresolved_rows，附真实定位和原因。unresolved_scopes 保留尚未绑定的其他范围。已搜索而确认不存在用 absent，说明 searched_documents 和实际依据；未定位用 unresolved。
+4. 每完成一处绑定、范围或答案修改，就保存 execution.json 并求值，未完成集合继续保持 unresolved。不要等全部探索结束才写候选。运行：
 
-## 表格条件
-
-可用的原子条件是 `not_empty / empty / eq / ne / in / gt / ge / lt / le`。同一 proof 的 predicates 按 AND 组合；quantifier 为 forall 或 exists。
-这就是当前 query DSL 的完整组合能力：没有 OR、条件 WHERE、蕴含、聚合、排序、缺列判定或跨表/跨文件 JOIN。`scope` prose 不参与可信重放。完整规则中有任何不可表达分支时，计划必须选择 semantic program。
-
-先建立 binding：source_sha256、document_id、table、header_rows、first_row、last_row、columns、excluded_rows、mapping_basis、boundary_basis。
-行列来自本次文件观察。正文区是闭区间；每个排除行必须包含 row、reason_type、evidence_locator 和 reason。同一个 binding 可供多个规则共用。
-表头必须在表内且不与正文区重叠，可以在正文区之前或之后。
-
-再返回 query proof，例如：
-
-```json
-{"kind":"query","audit_id":"a","rule_id":"1","binding_id":"control-plan"}
+```sh
+python -m ppap_deep.semantic.audit_tools evaluate execution.json --out evaluation.json
+python -m ppap_deep.semantic.audit_tools view evaluation.json --offset 0 --limit 8
 ```
 
-query proof 只能引用 RulePlan 中同一 rule_id 的结构化 predicate，不能再次定义条件。可信代码在已冻结快照上重新执行该 predicate。`total` 是未排除的正文记录数；`unknown` 是无法确认条件的记录数；`checked = total - unknown`。
-QueryProof 只能对应 `predicate.kind=query`；SemanticProof 只能对应 `predicate.kind=semantic`。审核执行和修复都按计划生成相同 kind，不能在运行时切换。`trace.bindings` 只列出被 QueryProof 的 `binding_id` 实际引用的 binding；semantic proof 不需要 binding，未引用 binding 会使完整校验失败。
-forall 的确证反例为 NG；没有反例但有未知为 UNABLE；所有记录成立且非空才 PASS。
-exists 的确定命中可支持条件，但公开 PASS 仍要求 unknown=0。空范围为 UNABLE。
-可信代码从重放结果生成状态、计数和反例行的引用；空白、未知和实际违例仍分别保存。
+同一个 evaluator 读取 documents.json、plans.json、targets.json。完整计算写入 evaluation.json；标准输出只有计数与问题 ID。view 分页只改变展示，不改变计算范围。
 
-空白只包括 null 或空白字符串，0 和 false 都不是空白。eq/ne/in 保留标量类型，不做文本/数值转换；数值大小比较只接受数值。
-合并区域沿真实锚点取值；未知公式缓存保留未知。运行时有累计访问预算。
+5. 只回答宿主产生的 need_id。答案 value 为 true/false/unknown，附简短中文 reason、可用的决定性原文 citation 和实际未知 diagnostic。不要把审核结论写成答案。修改绑定、文件版本或程序后，旧 ID 失效；移除不再属于当前问题的答案。
+6. 再次 evaluate，直到必要的知识问题得到回答或真实未知已明确。影响本条结论的缺回答、未定位集合和遗漏 use 产生 UNABLE，无需重写全部结果。非法来源、错 SHA、重复身份及过期答案是协议错误。初始候选或保存了部分工作不表示审核完成，也不自动提供中断后的恢复能力。
 
-## 语义或当前表达式不支持的条件
+前置条件满足不会补出正文。未知不是空集合。已知违规可支持 NG，同时保留其他未知。缺少可选引用只形成证据提示，不能改变实际判定或单独触发模型修复；可用时引用决定性字段或行，表头只能支持表头事实。
 
-保存 semantic proof：`scope_basis` 说明候选、适用、排除和未知范围，`records` 每项包含唯一 record_id、role、status、reason 和可用的 typed evidence。`role=prerequisite` 是文件、列、边界等前置观察；`role=applicable` 是实际受审对象，需 `applicability_basis`；`role=excluded` 是未纳入适用集合的候选对象，需 `exclusion_basis`，已确认不触发时 status 为 NA，仍不确定时为 UNABLE。尽量引用支持这些事实的来源；引用不完整与实际适用性未知分别表达。单个页眉或文件存在性要求本身也可成为适用对象；不能仅把前置 PASS 重标为 applicable 来绕过空范围检查。
-跨文件关联、复杂 JOIN、图像语义等不能用上述原子条件忠实表达时，使用逐记录语义判断；已确认的 SQL/Python 结果可辅助判断，并在 reason 中明确实际计算与语义解释。
+关联集合的范围未知进入对应叶子的三值结果，再由 all/any/not 组合；不因无关分支未知给已确定的表达式增加义务。被遮蔽的未知仍保存在组件观察中。量化的源总体范围仍须完整，exists 已有命中但源范围未完仍为 UNABLE。
 
-状态与计数从记录列表由可信代码聚合：有 NG 则 NG；否则有 UNABLE 则 UNABLE。没有 applicable 记录时，按计划的 `empty_scope_status` 判定；PASS/NA 只在有效正文明确授权、计划有依据时成立，否则 UNABLE。已排除候选的 NA 状态描述该候选不触发，不覆盖规则对空集合的明确结论；公开证据应支持这一空范围。有效规则本身未说明该情况时，UNABLE 用 `diagnostic=rule_ambiguity`，不要误写为 parser_unknown。存在 applicable 记录且无 NG/UNABLE 时为 PASS。计划与 proof 结构只使判断可审查，不自动证明自然语言解释正确。
-`total` 是观察记录数，不等于业务正文行数；`checked` 是非 UNABLE 观察数，`unknown` 是 UNABLE 观察数。
-每个 UNABLE 观察填写其实际原因的 `diagnostic`（parser_unknown、unresolved_relation、visual_only_evidence、budget_exhausted、unsupported_structure 或 rule_ambiguity）；已知观察不填。多个未知原因分别保留，公开 UNABLE 使用首个未知观察的诊断。每条记录保留清楚的中文理由及可用的已知证据，公开结论直接选用决定性记录的理由和引用。缺引用或支持关系未验证时如实提示，不更改实际结果，也不声称证据已经验证。
-未完成的观察保留为 UNABLE，不能从记录列表中删除后宣称覆盖完整范围。
+宿主读取或局部问题达到资源上限属于 RESOURCE_LIMIT，不能通过删列、删记录或改成未知来修复，也不触发审核结构修复。可选引用仍使用独立软预算。
 
-## 单次执行修复
+标题、合并组行和明细用途不同。同一 physical Binding 可以用于不同集合；只有对应 use 的成员政策生效。原生数值不会因 int/float 实现差异变成不同键；文本编号和布尔值不自动转换。文件名、宽松子串及删标点只可作探索线索。
 
-校验修复输入包含已有 snapshots、当前 plans、先前 schema-valid AuditTrace 和具体校验反馈。复用这些产物并返回一份完整替换 AuditTrace；只修正反馈涉及的问题，仍须满足全部 trace、证据、覆盖和计数规则。proof kind 继续服从计划。调用方只执行一次 repair，失败后不会把新输出再次递归送修。
-
-完成条件：每个目标/规则都有唯一 proof、来源和范围；无法确认的观察保留 UNABLE 及其原因。调用方完成聚合与校验后才产生公开报告。
-类型和计数校验不证明模型选择的字段、正文边界或自然语言解释一定正确，这些仍属于业务准确率验收。
+冻结条款和缓存程序仍可能被错误解释，绑定也可能漏表；宿主完整展开声明范围不等于独立证明业务范围正确。保持这些限制可见，不把自己的说明标记为人工确认或训练金标。

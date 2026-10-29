@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.semantic.secure_files import reject_constant, unique_object
@@ -42,7 +42,7 @@ class Lease:
     uncertain: bool = False
     budget_exhausted: bool = False
     request_hashes: set[str] = field(default_factory=set)
-    transport_failure: dict[str, int | str] | None = None
+    transport_failure: dict[str, int | str | bool | None] | None = None
     upstream: http.client.HTTPConnection | None = field(default=None, repr=False)
     upstream_socket: socket.socket | None = field(default=None, repr=False)
 
@@ -56,15 +56,17 @@ class Grants:
         requests: int = 128,
         input_tokens: int = 4_000_000,
         output_tokens: int = 100_000,
+        per_request_output_tokens: int = 32_768,
         capacity: int = 128,
     ) -> None:
-        if not model or not 1 <= ttl <= 3600 or not 1 <= requests <= 4096 or not 1 <= input_tokens <= 8_000_000 or not 1 <= output_tokens <= 2_000_000 or capacity < 1:
+        if not model or any(type(value) is not int or value < 1 for value in (ttl, requests, input_tokens, output_tokens, per_request_output_tokens, capacity)):
             raise ValueError("Invalid gateway limits")
         self.model = model
         self.ttl = ttl
         self.requests = requests
         self.input_budget = input_tokens
         self.output_budget = output_tokens
+        self.per_request_output_tokens = per_request_output_tokens
         self.capacity = capacity
         self.leases: dict[str, Lease] = {}
         self.lock = threading.Lock()
@@ -99,13 +101,13 @@ class Grants:
             if not isinstance(tools, list) or any(not isinstance(tool, dict) or tool.get("type") not in {"function", "custom"} for tool in tools):
                 raise ValueError("Provider-side tools are disabled")
             remaining_output = lease.output_budget - lease.output_tokens
-            requested = body.get("max_output_tokens", min(32_768, remaining_output))
+            requested = body.get("max_output_tokens", min(self.per_request_output_tokens, remaining_output))
             if type(requested) is not int or requested < 1:
                 raise ValueError("Invalid output token limit")
             if not 0 < request_bytes <= MAX_BODY:
                 raise ValueError("Request byte limit")
             body["store"] = False
-            body["max_output_tokens"] = min(requested, 32_768, remaining_output)
+            body["max_output_tokens"] = min(requested, self.per_request_output_tokens, remaining_output)
             digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
             if digest in lease.request_hashes:
                 raise DuplicateInference("Inference already submitted")
@@ -131,7 +133,7 @@ class Grants:
                 # cannot be counted accurately from request bytes.
                 lease.budget_exhausted = True
 
-    def finish_unknown(self, lease: Lease, failure: dict[str, int | str] | None = None) -> None:
+    def finish_unknown(self, lease: Lease, failure: dict[str, int | str | bool | None] | None = None) -> None:
         with self.lock:
             lease.in_flight = False
             lease.uncertain = True
@@ -244,6 +246,14 @@ class Handler(BaseHTTPRequestHandler):
         self._forward_request()
 
     def _forward_request(self) -> None:
+        started_at = time.monotonic()
+        headers_at: float | None = None
+        first_chunk_at: float | None = None
+        last_chunk_at: float | None = None
+        max_chunk_gap: float | None = None
+        chunk_count = 0
+        client_write_failed = False
+        client_request_id: str | None = None
         upstream: http.client.HTTPSConnection | None = None
         lease: Lease | None = None
         recorded = False
@@ -282,10 +292,19 @@ class Handler(BaseHTTPRequestHandler):
             # The 3.12 typeshed types this port as str. Runtime still needs an int.
             upstream = http.client.HTTPSConnection(str(url.hostname), port=cast(Any, url.port or 443), timeout=min(300, max(1, lease.expires - time.monotonic())))
             self.server.grants.bind_upstream(lease, upstream)
-            upstream.request("POST", url.path.rstrip("/") + "/responses", json.dumps(body), {"Authorization": "Bearer " + self.server.provider_key, "Content-Type": "application/json"})
+            # This local identifier correlates one authorized send attempt;
+            # it is not evidence that the provider received or billed it.
+            client_request_id = str(uuid4())
+            upstream.request(
+                "POST",
+                url.path.rstrip("/") + "/responses",
+                json.dumps(body),
+                {"Authorization": "Bearer " + self.server.provider_key, "Content-Type": "application/json", "X-Client-Request-Id": client_request_id},
+            )
             self.server.grants.bind_upstream(lease, upstream)
             phase = "provider_headers"
             response = upstream.getresponse()
+            headers_at = time.monotonic()
             provider_status = response.status
             if response.status != 200:
                 error_type = "ProviderStatus"
@@ -303,6 +322,13 @@ class Handler(BaseHTTPRequestHandler):
             provider_usage: dict[str, Any] | None = None
             phase = "provider_read"
             while chunk := response.read1(65536):
+                chunk_at = time.monotonic()
+                if first_chunk_at is None:
+                    first_chunk_at = chunk_at
+                if last_chunk_at is not None:
+                    max_chunk_gap = max(max_chunk_gap or 0, chunk_at - last_chunk_at)
+                last_chunk_at = chunk_at
+                chunk_count += 1
                 total += len(chunk)
                 phase = "response_limits"
                 if total > MAX_RESPONSE or not self.server.grants.active(lease):
@@ -352,6 +378,7 @@ class Handler(BaseHTTPRequestHandler):
                         # response to obtain usage, within this grant's deadline.
                         # Explicit cancellation revokes the grant and stops it.
                         client_connected = False
+                        client_write_failed = True
                 phase = "provider_read"
             phase = "provider_usage"
             if not body.get("stream"):
@@ -374,6 +401,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(403, "Execution request rejected")
         finally:
             if lease is not None and not recorded:
+                finished_at = time.monotonic()
                 self.server.grants.finish_unknown(
                     lease,
                     {
@@ -382,6 +410,17 @@ class Handler(BaseHTTPRequestHandler):
                         "response_bytes": total,
                         "last_event": last_event,
                         "provider_status": provider_status,
+                        **({"client_request_id": client_request_id} if client_request_id is not None else {}),
+                        # Offsets use handler entry, including local queue time.
+                        # Gaps observe read1 returns, not provider token timing.
+                        "elapsed_ms": int((finished_at - started_at) * 1000),
+                        "headers_ms": None if headers_at is None else int((headers_at - started_at) * 1000),
+                        "first_chunk_ms": None if first_chunk_at is None else int((first_chunk_at - started_at) * 1000),
+                        "last_chunk_ms": None if last_chunk_at is None else int((last_chunk_at - started_at) * 1000),
+                        "last_chunk_gap_ms": None if last_chunk_at is None else int((finished_at - last_chunk_at) * 1000),
+                        "max_chunk_gap_ms": None if max_chunk_gap is None else int(max_chunk_gap * 1000),
+                        "chunk_count": chunk_count,
+                        "client_write_failed": client_write_failed,
                     },
                 )
             self.close_connection = True

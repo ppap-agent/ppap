@@ -1,8 +1,19 @@
 """The accepted execution revision identifies configuration, not a protocol label."""
 
 import pytest
+from ppap_core import deep_policy
 from ppap_core.audits import ANALYSIS_STANDARD, DEEP_PROTOCOL_REVISION, job_payload
 from ppap_core.settings import Settings
+
+
+def test_pinned_grok_upgrade_changes_the_frozen_execution_revision(monkeypatch):
+    assert deep_policy.GROK_VERSION == "1.0.70"
+    policy = deep_policy.DeepExecutionPolicy(model="test-model", model_revision="0" * 64, app_revision="a" * 40, sandbox_profile="off")
+    current = policy.engine_revision()
+    with monkeypatch.context() as legacy:
+        legacy.setattr(deep_policy, "GROK_VERSION", "1.0.40")
+        assert policy.engine_revision() != current
+    assert policy.engine_revision() == current
 
 
 def test_deep_revision_changes_with_effective_policy_not_provider_credentials(monkeypatch):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import unittest
@@ -13,6 +14,19 @@ IMPORTS = "import ppap_api, ppap_application, ppap_core, ppap_corpus_contracts, 
 
 
 class PackagingTests(unittest.TestCase):
+    def test_deep_toolchain_version_matches_runtime_identity(self):
+        from ppap_core.deep_policy import GROK_VERSION
+
+        package = json.loads((ROOT / "deploy/deep/package.json").read_text())
+        lock = json.loads((ROOT / "deploy/deep/package-lock.json").read_text())
+        name = "@xai-official/grok"
+        self.assertEqual(package["dependencies"][name], GROK_VERSION)
+        self.assertEqual(lock["packages"][""]["dependencies"][name], GROK_VERSION)
+        for key, entry in lock["packages"].items():
+            if key.startswith("node_modules/" + name):
+                with self.subTest(package=key):
+                    self.assertEqual(entry["version"], GROK_VERSION)
+
     def test_imports_and_owner_collection_ignore_cwd(self):
         self.assertTrue(PYTHON.is_file(), PYTHON)
         env = os.environ.copy()

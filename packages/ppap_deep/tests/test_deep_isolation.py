@@ -10,10 +10,13 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from ppap_core.deep_policy import GROK_VERSION
 from ppap_deep.isolation.container import ContainerRuntime, RuntimeConfig
 from ppap_deep.isolation.model_gateway import DuplicateInference, Grants, grant_request, local_gateway
 from ppap_deep.isolation.progress import Progress
@@ -21,6 +24,165 @@ from ppap_deep.semantic.protocol import ControllerFault, ResultBundle, SnapshotS
 
 
 class GatewayGrantTests(unittest.TestCase):
+    def test_real_chunked_stream_distinguishes_termination_from_confirmed_usage(self) -> None:
+        delta = ("data: " + json.dumps({"type": "response.output_text.delta", "delta": "x" * 70_000}) + "\n\n").encode()
+        terminal = b'data: {"type":"response.completed","response":{"usage":{"input_tokens":13,"output_tokens":7}}}\n\n'
+        dispatched: list[str] = []
+        received_ids: list[str] = []
+        spoofed_client_id = "7a597aa9-7349-48aa-936d-1676a534e260"
+        clock = [100.0]
+        release_first, release_second, release_finish = (threading.Event() for _ in range(3))
+        provider_timeouts: list[str] = []
+
+        class Provider(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_args) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                mode = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["input"]
+                dispatched.append(mode)
+                received_ids.append(self.headers.get("X-Client-Request-Id", ""))
+                clock[0] = 102.0
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.send_header("Connection", "close")
+                self.send_header("X-Request-Id", "provider-response-id-must-not-be-retained")
+                self.end_headers()
+                payload = delta + (terminal if mode in {"complete", "after_usage"} else b"")
+                # Split across an SSE line and the gateway's 64 KiB read size.
+                if mode != "before_chunk":
+                    for gate, chunk in ((release_first, payload[:37]), (release_second, payload[37:])):
+                        if not gate.wait(2):
+                            provider_timeouts.append(mode)
+                            return
+                        self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.flush()
+                if not release_finish.wait(2):
+                    provider_timeouts.append(mode)
+                    return
+                if mode in {"complete", "missing_usage"}:
+                    self.wfile.write(b"0\r\n\r\n")
+                # The other cases close without HTTP's required final chunk.
+                self.wfile.flush()
+                self.close_connection = True
+
+        provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+        serving = threading.Thread(target=provider.serve_forever, daemon=True)
+        serving.start()
+
+        def upstream(*_args, **_kwargs):
+            return http.client.HTTPConnection("127.0.0.1", provider.server_address[1], timeout=2)
+
+        modes = ["complete", "before_chunk", "before_usage", "after_usage", "missing_usage"]
+        try:
+            with (
+                tempfile.TemporaryDirectory(prefix="pd-ch-", dir="/tmp") as temporary,
+                patch("ppap_deep.isolation.model_gateway.http.client.HTTPSConnection", upstream),
+                patch("ppap_deep.isolation.model_gateway.time", SimpleNamespace(monotonic=lambda: clock[0])),
+            ):
+                with local_gateway(Path(temporary) / "g.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-only") as gateway:
+                    rejected_id = uuid4()
+                    grant_request(str(gateway.socket_path), "issue", rejected_id)
+                    rejected = http.client.HTTPConnection("127.0.0.1", gateway.http.server_address[1], timeout=2)
+                    try:
+                        rejected.request("POST", "/v1/responses", body=json.dumps({"input": "unauthorized", "stream": True}), headers={"Authorization": "Bearer not-issued"})
+                        response = rejected.getresponse()
+                        self.assertEqual(response.status, 403)
+                        response.read()
+                    finally:
+                        rejected.close()
+                    self.assertEqual(dispatched, [])
+                    self.assertEqual(received_ids, [])
+                    self.assertEqual(
+                        grant_request(str(gateway.socket_path), "usage", rejected_id),
+                        {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "uncertain": False, "in_flight": False, "budget_exhausted": False},
+                    )
+                    for mode in modes:
+                        with self.subTest(mode=mode):
+                            clock[0] = 100.0
+                            for gate in (release_first, release_second, release_finish):
+                                gate.clear()
+                            confirmed = mode in {"complete", "after_usage"}
+                            expected = b"" if mode == "before_chunk" else delta + (terminal if confirmed else b"")
+                            execution_id = uuid4()
+                            token = grant_request(str(gateway.socket_path), "issue", execution_id)["token"]
+                            connection = http.client.HTTPConnection("127.0.0.1", gateway.http.server_address[1], timeout=2)
+                            try:
+                                connection.request(
+                                    "POST",
+                                    "/v1/responses",
+                                    body=json.dumps({"model": "test-model", "input": mode, "stream": True}),
+                                    headers={"Authorization": "Bearer " + token, "X-Client-Request-Id": spoofed_client_id},
+                                )
+                                response = connection.getresponse()
+                                self.assertEqual(response.status, 200)
+                                received = b""
+                                if expected:
+                                    clock[0] = 105.0
+                                    release_first.set()
+                                    received = response.read(37)
+                                    self.assertEqual(received, expected[:37])
+                                    clock[0] = 112.0
+                                    release_second.set()
+                                    received += response.read(len(expected) - 37)
+                                clock[0] = 131.0
+                                release_finish.set()
+                                if mode == "complete":
+                                    received += response.read()
+                                else:
+                                    with self.assertRaises(http.client.IncompleteRead) as failure:
+                                        response.read()
+                                    received += failure.exception.partial
+                            finally:
+                                for gate in (release_first, release_second, release_finish):
+                                    gate.set()
+                                connection.close()
+                            self.assertEqual(received, expected)
+                            usage = grant_request(str(gateway.socket_path), "usage", execution_id)
+                            caller_id = received_ids[-1]
+                            self.assertEqual(str(UUID(caller_id)), caller_id)
+                            self.assertEqual(UUID(caller_id).version, 4)
+                            self.assertNotEqual(caller_id, spoofed_client_id)
+                            self.assertEqual(usage["uncertain"], not confirmed)
+                            self.assertFalse(usage["in_flight"])
+                            self.assertEqual(usage["completed_requests"], int(confirmed))
+                            self.assertEqual((usage["input_tokens"], usage["output_tokens"]), (13, 7) if confirmed else (0, 0))
+                            if confirmed:
+                                self.assertNotIn("transport_failure", usage)
+                            else:
+                                facts = usage["transport_failure"]
+                                self.assertEqual(facts["chunk_count"], 0) if not expected else self.assertGreaterEqual(facts["chunk_count"], 3)
+                                self.assertEqual(
+                                    {key: value for key, value in facts.items() if key != "chunk_count"},
+                                    {
+                                        "phase": "provider_usage" if mode == "missing_usage" else "provider_read",
+                                        "error_type": "ValueError" if mode == "missing_usage" else "IncompleteRead",
+                                        "response_bytes": len(expected),
+                                        "last_event": "other" if expected else "none",
+                                        "provider_status": 200,
+                                        "client_request_id": caller_id,
+                                        "elapsed_ms": 31_000,
+                                        "headers_ms": 2_000,
+                                        "first_chunk_ms": 5_000 if expected else None,
+                                        "last_chunk_ms": 12_000 if expected else None,
+                                        "last_chunk_gap_ms": 19_000 if expected else None,
+                                        "max_chunk_gap_ms": 7_000 if expected else None,
+                                        "client_write_failed": False,
+                                    },
+                                )
+                            for private in (token, "test-only", spoofed_client_id, "provider-response-id-must-not-be-retained"):
+                                self.assertNotIn(private, json.dumps(usage))
+            self.assertEqual(dispatched, modes)  # No hidden inference replay.
+            self.assertEqual(len(set(received_ids)), len(modes))
+            self.assertEqual(provider_timeouts, [])
+        finally:
+            provider.shutdown()
+            provider.server_close()
+            serving.join(timeout=2)
+
     def test_interrupted_provider_stream_retains_safe_failure_facts_without_replay(self) -> None:
         event = b'data: {"type":"response.created","private":"must-not-be-retained"}\n\n'
 
@@ -57,8 +219,9 @@ class GatewayGrantTests(unittest.TestCase):
                 self.assertTrue(usage["uncertain"])
                 self.assertFalse(usage["in_flight"])
                 self.assertEqual(usage["completed_requests"], 0)
+                facts = usage["transport_failure"]
                 self.assertEqual(
-                    usage.get("transport_failure"),
+                    {key: facts[key] for key in ("phase", "error_type", "response_bytes", "last_event", "provider_status")},
                     {
                         "phase": "provider_read",
                         "error_type": "IncompleteRead",
@@ -67,14 +230,23 @@ class GatewayGrantTests(unittest.TestCase):
                         "provider_status": 200,
                     },
                 )
+                self.assertEqual(facts["chunk_count"], 1)
+                self.assertIsNone(facts["max_chunk_gap_ms"])
+                self.assertEqual(facts["first_chunk_ms"], facts["last_chunk_ms"])
+                self.assertGreaterEqual(facts["elapsed_ms"], facts["last_chunk_ms"])
+                self.assertFalse(facts["client_write_failed"])
                 self.assertEqual(upstream.return_value.request.call_count, 1)
+                caller_id = upstream.return_value.request.call_args.args[3]["X-Client-Request-Id"]
+                self.assertEqual(facts["client_request_id"], caller_id)
+                self.assertEqual(UUID(caller_id).version, 4)
                 serialized = json.dumps(usage)
                 for private in (token, "test-provider-key", "private input", "must-not-be-retained"):
                     self.assertNotIn(private, serialized)
                 run = Path(temporary) / "run"
                 (run / "work").mkdir(parents=True)
                 destination = Path(temporary) / "diagnostic"
-                ContainerRuntime._diagnostic(run, destination, "MODEL_PROTOCOL_ERROR", usage=usage)
+                injected = usage | {"transport_failure": facts | {"headers": {"authorization": "test-provider-key"}, "body": "must-not-be-retained", "provider_id": "must-not-be-retained"}}
+                ContainerRuntime._diagnostic(run, destination, "MODEL_PROTOCOL_ERROR", usage=injected)
                 saved = json.loads((destination / "diagnostic.json").read_text())
                 self.assertEqual(saved.get("transport_failure"), usage["transport_failure"])
 
@@ -166,6 +338,9 @@ class GatewayGrantTests(unittest.TestCase):
                 self.assertEqual((first_status, second_status), (200, 200))
                 self.assertEqual((first_body, second_body), tuple(events))
                 self.assertEqual([call["body"]["model"] for call in upstream_calls], ["test-model", "test-model"])
+                caller_ids = [call["headers"]["X-Client-Request-Id"] for call in upstream_calls]
+                self.assertEqual(len(set(caller_ids)), 2)
+                self.assertTrue(all(UUID(caller_id).version == 4 for caller_id in caller_ids))
                 self.assertEqual(
                     grant_request(str(gateway.socket_path), "usage", execution_id),
                     {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "uncertain": False, "in_flight": False, "budget_exhausted": False},
@@ -188,6 +363,23 @@ class GatewayGrantTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             grants.authorize(token, {"model": "test-model", "input": "three", "max_output_tokens": 1}, 1)
         self.assertTrue(grants.usage(execution_id)["budget_exhausted"])
+
+    def test_explicit_output_capacity_preserves_remaining_grant_budget(self) -> None:
+        # Research can grant a larger completion without changing production
+        # defaults or letting one request exceed its remaining execution grant.
+        grants = Grants("test-model", ttl=7200, input_tokens=10_000_000, output_tokens=300_000, per_request_output_tokens=262_144)
+        token = grants.issue(uuid4())
+        first = {"model": "test-model", "input": "first"}
+        lease = grants.authorize(token, first, 100)
+        self.assertEqual(first["max_output_tokens"], 262_144)
+        grants.record_usage(lease, {"input_tokens": 50, "output_tokens": 250_000})
+        second = {"model": "test-model", "input": "second", "max_output_tokens": 500_000}
+        grants.authorize(token, second, 100)
+        self.assertEqual(second["max_output_tokens"], 50_000)
+        production = Grants("test-model")
+        body = {"model": "test-model", "max_output_tokens": 500_000}
+        production.authorize(production.issue(uuid4()), body, 100)
+        self.assertEqual(body["max_output_tokens"], 32_768)
 
     def test_confirmed_input_overrun_closes_grant_without_unknown_usage(self) -> None:
         grants = Grants("test-model", input_tokens=100, output_tokens=30)
@@ -240,6 +432,77 @@ class GatewayGrantTests(unittest.TestCase):
 
 
 class ContainerBoundaryTests(unittest.TestCase):
+    def test_runtime_requires_the_pinned_grok_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "packages"
+            packages.mkdir()
+            executables = {name: root / name for name in ("python", "grok", "setpriv", "prlimit")}
+            for path in executables.values():
+                path.touch()
+            config = RuntimeConfig(
+                state=root / "state",
+                gateway_socket=root / "gateway.sock",
+                gateway_host="127.0.0.1",
+                model="test-model",
+                model_revision="0" * 64,
+                app_revision="0" * 40,
+                sandbox_profile="off",
+                python_executable=executables["python"],
+                pythonpath=packages,
+                grok_executable=executables["grok"],
+                setpriv_executable=executables["setpriv"],
+                prlimit_executable=executables["prlimit"],
+            )
+            versions = [
+                (f"grok {GROK_VERSION} (test-build)\n", 0, True),
+                ("grok 1.0.40 (old-build)\n", 0, False),
+                ("grok 1.0.71 (wrong-build)\n", 0, False),
+                ("grok 1.0.700 (wrong-build)\n", 0, False),
+                (f"grok {GROK_VERSION} (test-build)\n", 1, False),
+            ]
+            with patch("ppap_deep.isolation.container._running_in_container", return_value=True):
+                for output, returncode, accepted in versions:
+                    with (
+                        self.subTest(output=output, returncode=returncode),
+                        patch("ppap_deep.isolation.container.subprocess.run", return_value=SimpleNamespace(stdout=output.encode(), returncode=returncode)) as version,
+                    ):
+                        if accepted:
+                            runtime = ContainerRuntime(config)
+                            self.assertEqual(runtime.engine_revision(), config.engine_revision())
+                        else:
+                            with self.assertRaisesRegex(ValueError, f"Verified Grok {GROK_VERSION} is required"):
+                                ContainerRuntime(config)
+                        self.assertEqual(version.call_args.args[0], [str(executables["grok"]), "--version"])
+
+    def test_diagnostic_only_retains_canonical_local_request_uuid(self) -> None:
+        caller_id = "12345678-1234-4abc-8def-123456789abc"
+        candidates = [
+            caller_id,
+            "private input or provider credential",
+            caller_id.upper(),
+            UUID(caller_id).hex,
+            "urn:uuid:" + caller_id,
+            "12345678-1234-5abc-8def-123456789abc",
+            caller_id + "\nprivate output",
+            {"Authorization": "private credential"},
+            None,
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run = root / "run"
+            (run / "work").mkdir(parents=True)
+            for index, candidate in enumerate(candidates):
+                with self.subTest(candidate=candidate):
+                    failure = {"phase": "provider_read", "client_request_id": candidate, "provider_id": "private provider ID", "body": "private output"}
+                    destination = root / f"diagnostic-{index}"
+                    ContainerRuntime._diagnostic(run, destination, "MODEL_PROTOCOL_ERROR", usage={"transport_failure": failure})
+                    saved = json.loads((destination / "diagnostic.json").read_text())
+                    expected = {"phase": "provider_read"}
+                    if candidate == caller_id:
+                        expected["client_request_id"] = caller_id
+                    self.assertEqual(saved["transport_failure"], expected)
+
     def test_confirmed_final_input_overrun_exports_bundle_for_validation(self) -> None:
         from types import SimpleNamespace
 
@@ -275,15 +538,7 @@ class ContainerBoundaryTests(unittest.TestCase):
                     },
                     "trace": {
                         "bindings": [],
-                        "proofs": [
-                            {
-                                "kind": "semantic",
-                                "audit_id": "file-1",
-                                "rule_id": "R1",
-                                "scope_basis": "one record",
-                                "records": [{"record_id": "row-1", "role": "prerequisite", "status": "UNABLE", "reason": "No reliable evidence", "evidence": []}],
-                            }
-                        ],
+                        "uses": [{"audit_id": "file-1", "rule_id": "R1", "inputs": {"source": {"kind": "unresolved", "reason": "No reliable evidence", "diagnostic": "budget_exhausted"}}}],
                     },
                 }
             )

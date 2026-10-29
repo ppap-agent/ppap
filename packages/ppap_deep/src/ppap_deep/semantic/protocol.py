@@ -7,15 +7,23 @@ import json
 from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from pydantic import Field, model_validator
+from pydantic import Field, TypeAdapter, model_validator
 
-from .models import Artifact, AuditReport, RulePlan
+from .models import Artifact, AuditReport, Locator, RulePlan
 from .trace import AuditTrace
 
 Sha256 = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 FileFormat = Literal[".xlsx", ".xlsm", ".xls", ".docx", ".pdf"]
 RuleFormat = Literal[".xlsx", ".xlsm", ".xls", ".docx", ".pdf", ".json"]
 BusinessId = Annotated[str, Field(min_length=1, max_length=256)]
+_SOURCE_LOCATORS = TypeAdapter(Annotated[list[Locator], Field(min_length=1, max_length=256)])
+_SOURCE_KINDS = {
+    ".xlsx": {"xlsx_cell", "xlsx_range"},
+    ".xlsm": {"xlsx_cell", "xlsx_range"},
+    ".xls": {"xlsx_cell", "xlsx_range"},
+    ".docx": {"docx_paragraph", "docx_cell"},
+    ".pdf": {"pdf_block", "pdf_cell"},
+}
 
 
 class DocumentRef(Artifact):
@@ -32,13 +40,24 @@ class RuleRef(Artifact):
     format: RuleFormat
     rule_version_id: BusinessId | None = None
     plan_revision: Sha256
-    # Navigation from frozen rule ingestion; never an instruction or host capability.
+    # Frozen clause text and, for native files, its allowed typed source locations.
     clauses: list[dict[str, Any]] = Field(min_length=1, max_length=256)
 
     @model_validator(mode="after")
     def published_source_identity(self) -> RuleRef:
-        if self.format == ".json" and self.rule_version_id is None:
-            raise ValueError("Published rule requires a rule version identity")
+        if any(not isinstance(clause.get("rule_to_check"), str) or not clause["rule_to_check"].strip() for clause in self.clauses):
+            raise ValueError("Frozen clause requires nonempty rule_to_check text")
+        if self.format == ".json":
+            if self.rule_version_id is None:
+                raise ValueError("Published rule requires a rule version identity")
+            return self
+        for clause in self.clauses:
+            locators = _SOURCE_LOCATORS.validate_python(clause.get("source_locators"), strict=True)
+            if any(locator.kind not in _SOURCE_KINDS[self.format] for locator in locators):
+                raise ValueError("Native clause source locator format mismatch")
+            if len({locator.model_dump_json() for locator in locators}) != len(locators):
+                raise ValueError("Duplicate native clause source locator")
+            clause["source_locators"] = [locator.model_dump(mode="json") for locator in locators]
         return self
 
 
