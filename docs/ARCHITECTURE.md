@@ -16,7 +16,7 @@ PostgreSQL  object storage
 
 PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入同一套 round / findings / review。
 
-MCP 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。MCP Tasks 扩展关闭；长任务继续使用现有 Task、Round 和 engine job。
+当前 MCP 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。当前 MCP Tasks 扩展关闭；长任务使用现有 Task、Round 和 engine job。Deep 的未来原生 MCP 交互与共享应用边界见下文产品设计；当前调用方式与协议配置不是目标产品原则。
 
 `mcp_gateway` 通过进程内 ASGI 调用同一 Product API 入口，保留路由中的对象授权、来源校验及分享编排。只有该适配器可在 ASGI scope 写入实际 `Delegation` 对象；网络请求头不构成身份。字节传输直接转发 ASGI 流，继续使用文件 owner 的 200 MiB 限制，不额外把整份文件缓存到 MCP JSON 或 HTTP 客户端响应中。
 
@@ -53,6 +53,32 @@ Worker 在一个边界按冻结的 `analysis_mode` 路由：`standard` 走本仓
 Controller 进程是 `python -m ppap_deep`。生产工厂要求显式设置 `PPAP_DEEP_RUNTIME=container-only`，并将 `PPAP_DEEP_SANDBOX_PROFILE` 设为 `off` 或 `ppap`，没有默认 process/checker 后端。`SemanticRuntime` 消费冻结的有效规则和文件版本，通过 `ContainerRuntime` 与可信模型 gateway 执行；guest 命令、模型 endpoint 和 provider key 不来自 Worker RPC。`off` 是降权容器执行，不保证独立文件系统或 egress 隔离，不能称为 gVisor/VM。具体运行与限制见 [Deep 部署说明](../deploy/deep/README.md)；启动或 UDS 可用不证明审核质量或强隔离。
 
 规则检查、模型推断和文档抽取可以替换实现，但不能改变产品输入版本、授权和结果语义。只有真实当前需求证明价值时才新增服务、框架或隔离层。
+
+Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/ppap_deep/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/ppap_deep/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中；RulePlan 中的 ontology 引导生成逻辑文档，用户确认通过更新明确输入进入后续计算。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。现有 PPAP MCP 已允许选择 Deep 模式，但语义澄清、逻辑文档和附录反馈闭环尚未实现。下述内容描述当前运行路径，不将物理 Binding 或布尔问题视为已完成的实体关系模型。
+
+Deep 当前使用一个纯求值入口：模型提交物理 `Binding`、每条缓存程序的集合用途，以及宿主提出的局部语义问题的答案；宿主读取完整声明范围，执行条件、量词、关系和比较，生成观察、计数与公开报告。宿主从已验证程序派生 obligations 的潜在集合／字段需求和 initial-execution 未完成候选；模型逐步补全，求值仍只使用原程序和实际执行证书。初始候选不表示完成或支持故障后恢复。规则程序只读取冻结规则，按租户、规则来源及引擎修订缓存；文档位置、行成员资格和答案不进入规则缓存。编译 schema 区分文件结构前提、当前行适用条件及行值／关系要求；列存在不能作为行值非空的证明。Binding 保留所有物理行，排除和未知行角色随用途确定。同一工序标题可以参与覆盖，同时不属于特性明细。
+
+关系计算按匹配要求取证：any 在目标资格不依赖模型答案且已有原生充分匹配时跳过其余语义配对，all/one_to_one 保留完整候选及重复、共享目标检查。目标范围未知进入对应叶子的三值结果，再参与布尔组合；源总体覆盖仍独立必需。数值 10/10.0 采用同一数值域，文本编号和布尔值保留类型。模型只处理绑定和必要语义缺口，不再抄写 QueryProof/SemanticProof 逐行结果。缺答案或范围产生 UNABLE；已知独立违规仍可 NG。合并布局按行边界建立索引，物理范围仍保留全部声明行列。宿主工作或局部问题超过资源上限时返回 RESOURCE_LIMIT，不触发结构修复；不能通过删列或删行绕过上限。可选引用与计算采用独立预算，缺引用不改业务结果，也不单独触发修复。StageRunner 继续拥有唯一外部模型执行边界，无新增模型客户端、服务或调度。接口见 [执行证书](../packages/ppap_deep/src/ppap_deep/semantic/skill/references/execution-trace.md)。宿主只能证明声明程序和范围的重放，不能独立证明规则理解、关联身份或表头映射正确。
+
+```mermaid
+flowchart LR
+    R[冻结生效规则] --> C[现有 Grok-build 编译与构造反例检查]
+    C --> P[缓存结构、行值和关系程序]
+    P --> W[推导字段需求与未完成候选]
+    W --> B
+    D[冻结文档] --> V[按文件 ID 查看局部布局]
+    V --> B[保留全行的物理绑定]
+    D --> E[统一求值内核]
+    B --> U[按用途声明集合成员]
+    P --> E
+    U --> E
+    E --> Q[局部语义问题]
+    Q --> G[现有 Grok-build StageRunner]
+    G --> A[有来源的局部回答]
+    A --> E
+    E --> T[宿主观察与公开报告]
+    E --> F[资源上限返回执行错误]
+```
 
 Deep 的受理端和执行端以 `ppap_core.deep_policy.DeepExecutionPolicy` 共用实际配置身份，不只比较同名版本标签。它是纯配置值，不启动 Controller、不存密钥、不增加策略 registry；实际 `RuntimeConfig` 继承相同字段及摘要计算。新受理在现有 Round/job 事务固定摘要，执行时由真实 runtime 再核对；旧策略不可用时明确失败，显式新轮次才采用新策略。Standard 不计算 Deep 策略，历史读取也不依赖当前配置。
 
