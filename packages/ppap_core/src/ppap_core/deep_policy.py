@@ -37,6 +37,6 @@ class DeepExecutionPolicy(BaseModel):
             "executor_label": self.executor_label,
             "uid": GUEST_UID,
             "grok_version": GROK_VERSION,
-            "semantic_contract": "rule-logical-document-v6",
+            "semantic_contract": "rule-logical-document-v7",
         }
         return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

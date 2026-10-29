@@ -186,6 +186,7 @@ class Judge(Artifact):
 class Related(Artifact):
     kind: Literal["related"]
     target: str = Field(min_length=1)
+    relationship_id: str | None = Field(default=None, min_length=1, description="Exact ontology relationship used by this expression; required when the plan declares ontology.")
     source_key: Key
     target_key: Key
     match: Literal["any", "all", "one_to_one"]
@@ -284,6 +285,7 @@ class EntityConcept(Artifact):
 
 class RelationshipConcept(Artifact):
     id: str = Field(min_length=1, max_length=256)
+    kind: Literal["same_instance", "association"]
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
     meaning: str = Field(min_length=1, max_length=1024)
@@ -339,8 +341,15 @@ class RulePlan(Artifact):
             elif isinstance(node, Related):
                 fields(current, node.source_key.fields + [comparison.source_field for comparison in node.comparisons])
                 fields(node.target, node.target_key.fields + [comparison.target_field for comparison in node.comparisons])
-                if not any(relation.source == current and relation.target == node.target for relation in self.ontology.relationships):
+                relation = next((relation for relation in self.ontology.relationships if relation.id == node.relationship_id), None)
+                if relation is None:
+                    raise ValueError("Program relationship must reference a declared ontology relationship")
+                if relation.source != current or relation.target != node.target:
                     raise ValueError("Program relationship direction outside declared ontology")
+                if relation.kind == "same_instance" and (entities[relation.source].identity != node.source_key.fields or entities[node.target].identity != node.target_key.fields):
+                    raise ValueError("Same-instance relationship keys must equal the ordered entity identity")
+                if relation.kind == "same_instance" and any(key.separator is not None or key.template is not None for key in (node.source_key, node.target_key)):
+                    raise ValueError("Same-instance identity uses component tuples, not a string projection")
                 visit(node.target_when, node.target)
 
         for rule in self.rules:

@@ -23,7 +23,7 @@ from ppap_deep.semantic.secure_files import read_json
 from ppap_deep.semantic.trace import evaluate_audit
 from ppap_deep.semantic.validation import validate_bundle
 
-POLICY_REVISION = hashlib.sha256(b"ppap-rule-logical-document-evaluation-v6").hexdigest()
+POLICY_REVISION = hashlib.sha256(b"ppap-rule-logical-document-evaluation-v7").hexdigest()
 FORMATS = {".xlsx", ".xls", ".xlsm", ".docx", ".pdf"}
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
 DIAGNOSTIC_LABELS = {

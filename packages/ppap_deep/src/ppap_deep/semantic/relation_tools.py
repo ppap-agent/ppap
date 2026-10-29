@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from typing import Any, Callable
 
 from .evidence import EvidenceBudget
-from .models import All, AnyOf, LocalExpr, Not, Related, ValueComparison, ValueTest
+from .models import All, AnyOf, Key, LocalExpr, Not, Related, ValueComparison, ValueTest
 from .values import could_match, normalized, record_key, scalar_key
 
 
@@ -55,8 +55,38 @@ def _compare(source: dict[str, Any], target: dict[str, Any], comparisons: list[V
     return {"target": _reference(target), "target_key": {}, "state": state, "checks": checks}
 
 
-def match_rows(sources: list[dict[str, Any]], targets: list[dict[str, Any]], request: Related, budget: EvidenceBudget, judge: Callable | None = None) -> dict[str, Any]:
+def match_rows(
+    sources: list[dict[str, Any]],
+    targets: list[dict[str, Any]],
+    request: Related,
+    budget: EvidenceBudget,
+    judge: Callable | None = None,
+    *,
+    identities: tuple[list[str], list[str]] | None = None,
+) -> dict[str, Any]:
     """Use native witnesses for any; retain complete graphs for stronger matches."""
+    if identities is not None:
+
+        def identified(record: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+            missing = [
+                field
+                for field in fields
+                if field in record.get("identity_unresolved_fields", [])
+                or record["states"].get(field) != "known"
+                or record["values"].get(field) is None
+                or (isinstance(record["values"][field], str) and not record["values"][field].strip())
+            ]
+            return record if not missing else {**record, "scope_state": "unresolved", "identity_unresolved_fields": missing}
+
+        sources = [identified(row, identities[0]) for row in sources]
+        targets = [identified(row, identities[1]) for row in targets]
+
+    def compatible(key: tuple, record: dict[str, Any], projection: Key) -> bool:
+        missing = record.get("identity_unresolved_fields", [])
+        if missing:
+            record = {**record, "states": {**record["states"], **{field: "unresolved" for field in missing}}}
+        return could_match(key, record, projection)
+
     source_keys = [record_key(row, request.source_key) for row in sources]
     target_keys = [record_key(row, request.target_key) for row in targets]
     counts = Counter(key for key in source_keys if key is not None)
@@ -77,7 +107,7 @@ def match_rows(sources: list[dict[str, Any]], targets: list[dict[str, Any]], req
             # uniqueness, even though this source cannot itself be confirmed.
             for j, target_key in enumerate(target_keys):
                 budget.consume(1)
-                if semantic or target_key is None or could_match(target_key, source, request.source_key):
+                if semantic or target_key is None or compatible(target_key, source, request.source_key):
                     possible[i].add(j)
             continue
         confirmed[i].extend(target_index.get(key, []))
@@ -93,7 +123,7 @@ def match_rows(sources: list[dict[str, Any]], targets: list[dict[str, Any]], req
             native_witness[i] = any(pair["state"] == "matched" for pair in native_pairs[i].values())
         for j in unknown_targets:
             budget.consume(len(request.target_key.fields) + 1)
-            if semantic or could_match(key, targets[j], request.target_key):
+            if semantic or compatible(key, targets[j], request.target_key):
                 possible[i].add(j)
         if semantic and not native_witness[i]:
             for j, target_key in enumerate(target_keys):
@@ -125,7 +155,7 @@ def match_rows(sources: list[dict[str, Any]], targets: list[dict[str, Any]], req
                 if other_key == key:
                     continue  # Already counted as a confirmed duplicate.
                 if other_key is None:
-                    if semantic or could_match(key, sources[k], request.source_key):
+                    if semantic or compatible(key, sources[k], request.source_key):
                         possible_source_alias[i] = True
                 elif semantic:
                     value = judge("source_key", sources[i], sources[k], 0, None) if judge else None
@@ -135,7 +165,7 @@ def match_rows(sources: list[dict[str, Any]], targets: list[dict[str, Any]], req
                         possible_source_alias[i] = possible_source_alias[k] = True
             # Earlier unknown source rows must also be considered.
             for k in range(i):
-                if source_keys[k] is None and (semantic or could_match(key, sources[k], request.source_key)):
+                if source_keys[k] is None and (semantic or compatible(key, sources[k], request.source_key)):
                     possible_source_alias[i] = True
 
     records = []

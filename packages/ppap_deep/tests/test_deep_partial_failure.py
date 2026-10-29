@@ -466,7 +466,7 @@ def test_structural_audit_repair_keeps_cached_rule_programs(monkeypatch, fault):
     def run(work, prompt, schema, deadline, *, reasoning_effort):
         if work.name == "audit-repair":
             feedback.append(json.loads((work / "validation-feedback.json").read_text()))
-            assert set(json.loads((work / "previous-execution.json").read_text())) == {"bindings", "uses", "answers"}
+            assert set(json.loads((work / "previous-execution.json").read_text())) == {"bindings", "uses", "answers", "plan_refinements"}
         output = original_run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
         if schema is AuditTrace and work.name == "audit":
             if fault == "unknown_binding":

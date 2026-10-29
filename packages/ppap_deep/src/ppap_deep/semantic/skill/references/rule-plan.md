@@ -19,6 +19,8 @@ appendix 由宿主从冻结有效规则复制。编译时完整阅读它，但�
 
 程序只包含逻辑字段、条件、比较和问题。供应商文件名、坐标、观察、答案及审核结论属于本次执行，不能写入可复用程序。字段名保留业务含义和必要的父表头路径。
 
+后续文件证据可以澄清本次对象粒度或加强已声明的身份分量；此类解释由 AuditTrace.plan_refinements 限定到本次目标，并由同一 evaluator 校验和执行。基础 RulePlan 与通用规则缓存不变。该修订不能改变条款、关系含义、量词、适用条件、比较或规范化政策，也不能移除身份分量；规则含义仍有合理歧义时，使用现有解释 Hole 和已确认附录流程。来源可读不证明语义等价，编译和修订都要以完整规则为依据。
+
 ## 编译判定逻辑
 
 不要先把整条规则分成机械或语义两类。一个程序可以组合确定性计算和局部语义判断。
@@ -40,6 +42,8 @@ appendix 由宿主从冻结有效规则复制。编译时完整阅读它，但�
 例如“须有频次列，且该列所有内容非空”：precondition 为 column_exists，records.require 为 value_test(op=not_empty)，source 为该表的逻辑记录集合。即使列存在，一条空单元格仍应 NG。表头中多个名称可能是同一业务字段的别名时，使用一个清楚的逻辑字段，并在执行时根据完整表头定位；不要给每个别名制造独立的值义务。
 
 `related` 从当前 source 行指向完整 target 集合。明确 source_key、target_key、match 和 comparisons。any 要求至少一个对应记录满足；all 要求有对应记录且全部满足；one_to_one 还要求源键唯一及目标恰好一条。单向关系不自动产生反向义务。
+
+每个 related 引用 ontology 中确切的 relationship_id。关系 kind 为 same_instance 或 association，与 key_match 的字面／语义／有依据端点匹配是不同维度。same_instance 的两侧 key.fields 分别严格等于各自实体按语义对应顺序声明的 identity，使用分量元组，不允许 separator 或 template，避免不同身份的字面拼接碰撞。association 可以按外键建立一般关联，也可以表达规则明确要求的字面拼接查询；其键不要求等于实体 identity。
 
 键默认为保留位置和类型的元组。只有原文支持时才使用显式 separator 或 template；separator 是值之间的字面分隔符，如空格，不能包含字段占位符。格式模板如 `【{type}】【{kind}】{desc}：{value}`。两者互斥。产品和过程两种对应要求分别声明 Related，再按原文用 all 或 any 组合。`target_when` 只接受目标行的值条件或局部 Judge；未知目标资格仍是可能候选，不可删除。key_match=semantic 只在原文需要语义身份时使用；固定标识符优先精确匹配。
 

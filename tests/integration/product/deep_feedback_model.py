@@ -49,7 +49,7 @@ class FeedbackModel:
             identity, _ = json.JSONDecoder().raw_decode(supplied)
             clauses = json.loads((work / "clauses.json").read_text())
             assert [(clause["id"], clause["rule_to_check"]) for clause in clauses] == [(clause["id"], clause["rule_to_check"]) for clause in RULES]
-            relation = {"kind": "related", "target": "cp", "source_key": {"fields": ["code"]}, "target_key": {"fields": ["code"]}, "match": "one_to_one"}
+            relation = {"kind": "related", "relationship_id": "corresponds", "target": "cp", "source_key": {"fields": ["code"]}, "target_key": {"fields": ["code"]}, "match": "one_to_one"}
             programs = [
                 relation,
                 {**relation, "comparisons": [{"source_field": "classification", "target_field": "classification", "mode": "exact"}]},
@@ -64,7 +64,7 @@ class FeedbackModel:
                             {"id": entity, "grain": "按明确工序编号标识的一个工序，可跨多行", "attributes": {"code": "string", "classification": "string"}, "identity": ["code"]}
                             for entity in ["pfd", "cp"]
                         ],
-                        "relationships": [{"id": "corresponds", "source": "pfd", "target": "cp", "meaning": "源工序在目标文件中按原始编号一一对应"}],
+                        "relationships": [{"id": "corresponds", "kind": "same_instance", "source": "pfd", "target": "cp", "meaning": "源工序在目标文件中按原始编号一一对应"}],
                     },
                     "rules": [
                         {
@@ -113,5 +113,9 @@ class FeedbackModel:
             bindings.append(binding)
         pfd = {"kind": "bound", "scopes": [{"binding_id": "pfd", "objects": [{"id": "010", "rows": [2]}, {"id": "020", "rows": [3]}]}]}
         cp = {"kind": "bound", "scopes": [{"binding_id": "cp", "objects": [{"id": "010", "rows": [2, 3]}, {"id": "020", "rows": [4]}]}]}
+        for collection, table in [(pfd, "PFD"), (cp, "CP")]:
+            for item in collection["scopes"][0]["objects"]:
+                item["basis"] = "原始工序编号及其后续空白行共同描述一个工序；不同编号分别保留。"
+                item["evidence"] = [{"kind": "xlsx_cell", "sheet": table, "cell": f"A{row}"} for row in item["rows"]]
         uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp} if clause["id"] != "R3" else {})}} for target in targets for clause in RULES]
         return AuditTrace.model_validate({"bindings": bindings, "uses": uses})
