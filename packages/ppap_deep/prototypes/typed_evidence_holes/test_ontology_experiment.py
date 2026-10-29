@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,7 +27,7 @@ def executed(experiment, case, directory):
     return bundle, spec
 
 
-@pytest.mark.parametrize("index", range(9))
+@pytest.mark.parametrize("index", range(11))
 def test_counterexamples_use_real_guest_sources_and_hand_worked_oracle(experiment, tmp_path, index):
     case = experiment.cases()[index]
     bundle, spec = executed(experiment, case, tmp_path / "case")
@@ -144,6 +145,181 @@ def test_grouping_without_member_evidence_is_a_binding_error(experiment, tmp_pat
     assert "lacks readable member evidence" in scores["binding"]["errors"][0]
 
 
+def test_file_candidates_may_include_other_authorized_inputs(experiment, tmp_path):
+    case = experiment.cases()[4]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    files = bundle.trace.uses[0].inputs["target"]
+    files.document_ids.append(case.identity(case.target))
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert all(scores[layer]["state"] == "correct" for layer in ("concept", "binding", "judgment"))
+    files.document_ids = [case.identity(case.target)]
+    scores = experiment.score(case, bundle, spec)
+    assert scores["binding"]["state"] == "incorrect"
+    assert "required file entity is missing" in scores["binding"]["errors"][0]
+    files.document_ids = [case.identity(case.tables[0].filename), "not-an-authorized-input"]
+    with pytest.raises(ValueError, match="outside frozen"):
+        experiment.score(case, bundle, spec)
+    concept = next(entity for entity in plan.ontology.entities if entity.id == "target")
+    _, errors = experiment._collection(case.tables[0], case, bundle.trace, files, concept, "target", bundle.documents)
+    assert any("outside current inputs" in error for error in errors)
+
+
+def test_actual_local_prompt_and_readable_stage_inputs_hide_case_key(experiment, tmp_path, monkeypatch):
+    from local_grok_runner import LocalGrokRunner
+
+    monkeypatch.setattr(experiment, "preserve_code", lambda output: (output / "code").mkdir() or "a" * 64)
+    captured = []
+
+    class Observed(experiment.ControlledRunner):
+        def __init__(self, case, inputs, output):
+            super().__init__(case, inputs, output)
+            self.original_inputs = inputs
+
+        def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+            stage = self.output / ("prompt-" + str(len(captured)))
+            stage.mkdir()
+            local = LocalGrokRunner(SimpleNamespace(llm_api_key="test-key", llm_base_url="http://127.0.0.1"), self.output / "unused", "/usr/bin/false", input_root=self.original_inputs)
+            local.helpers = self.output / "python" / "ppap_deep" / "semantic"
+            actual, _ = local._stage_prompt(work, prompt, stage, artifact=True)
+            readable = actual + (stage / "inputs.json").read_text()
+            readable += "".join(str(path) + path.read_text() for path in work.glob("*.json"))
+            readable += "".join(str(path) for path in self.original_inputs.iterdir())
+            assert self.case.key not in readable
+            assert "expected_status" not in readable
+            assert "identity_columns" not in readable
+            captured.append(schema.__name__)
+            return super().run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
+
+    result = experiment.run((experiment.cases()[6],), tmp_path / "run", Observed, seconds=60, live=False)
+    assert result["runs"][0]["case"] == "literal-concatenation-differs"
+    assert len(captured) == 2
+    directories = [path for path in (tmp_path / "run").iterdir() if path.is_dir() and path.name != "code"]
+    assert len(directories) == 1 and directories[0].name.startswith("unit-")
+    assert result["layers"]["judgment"] == {"correct": 1}
+
+
+@pytest.mark.parametrize("change", ["identity", "comparison", "oracle"])
+def test_form_properties_in_one_column_keep_distinct_source_points(experiment, tmp_path, change):
+    case = experiment.cases()[9]
+    if change == "oracle":
+        case = replace(case, tables=tuple(replace(table, identity_cells=("B2",), comparison_cells=("B3",)) for table in case.tables))
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    relation = plan.rules[0].program.require
+    if change == "identity":
+        for entity in plan.ontology.entities:
+            entity.identity = ["name"]
+        relation.source_key.fields = relation.target_key.fields = ["name"]
+    elif change == "comparison":
+        relation.comparisons[0].source_field = relation.comparisons[0].target_field = "code"
+    # All values are in physical column B; checking just the column would miss
+    # both wrong identities and a comparison of the wrong property.
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == "incorrect"
+    assert scores["binding"]["state"] == scores["judgment"]["state"] == "correct"
+    for scope in bundle.trace.uses[0].inputs["source"].scopes:
+        assert scope.objects[0].fields["code"][0].cell == "B3"
+        assert scope.objects[0].fields["name"][0].cell == "B2"
+
+
+@pytest.mark.parametrize("index", [5, 6])
+@pytest.mark.parametrize("identity", [["code"], ["code", "name"]])
+def test_literal_query_does_not_invent_an_unstated_source_identity(experiment, tmp_path, index, identity):
+    case = experiment.cases()[index]
+    assert case.tables[0].identity_columns is None
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    source = next(entity for entity in plan.ontology.entities if entity.id == plan.rules[0].program.source)
+    source.identity = identity
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert all(scores[layer]["state"] == "correct" for layer in ("concept", "binding", "judgment"))
+
+
+@pytest.mark.parametrize("change", ["projection", "missing_row", "wrong_source"])
+def test_unspecified_literal_identity_still_requires_exact_projection_and_source_binding(experiment, tmp_path, change):
+    case = experiment.cases()[5]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    if change == "projection":
+        plan.rules[0].program.require.source_key.fields = ["name", "code"]
+    elif change == "missing_row":
+        bundle.trace.bindings[0].last_row = 2
+        bundle.trace.uses[0].inputs["source"].scopes[0].objects = bundle.trace.uses[0].inputs["source"].scopes[0].objects[:1]
+    else:
+        source, target = bundle.trace.bindings
+        source.document_id, source.source_sha256, source.table = target.document_id, target.source_sha256, target.table
+        source.columns = {"code": "A", "name": "A"}
+        for item in bundle.trace.uses[0].inputs["source"].scopes[0].objects:
+            for locator in item.evidence:
+                locator.sheet = target.table
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept" if change == "projection" else "binding"]["state"] == "incorrect"
+
+
+def test_nonliteral_association_must_use_the_rules_explicit_identifier_key(experiment, tmp_path):
+    case = replace(
+        experiment.cases()[1],
+        key="identifier-index-association",
+        rule="基准清单每个工序的工序编号必须在控制标签索引的编号列一一对应。标签索引记录不表示工序实体；这是按编号建立的索引关联，分类不能代替编号。每个数据行是独立实例。",
+        relation_kind="association",
+    )
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    plan.ontology.relationships[0].kind = "association"
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    assert all(experiment.score(case, bundle, spec)[layer]["state"] == "correct" for layer in ("concept", "binding", "judgment"))
+    relation = plan.rules[0].program.require
+    relation.source_key.fields = relation.target_key.fields = ["classification"]
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == "incorrect"
+    assert "explicit identifier key" in scores["concept"]["errors"][0]
+    assert scores["binding"]["state"] == scores["judgment"]["state"] == "correct"
+
+
+@pytest.mark.parametrize("change", ["correct", "wrong_column", "no_question", "no_confirmation_requirement", "source_unbound", "not_expected_to_clarify"])
+def test_only_grounded_target_identity_questions_allow_an_unresolved_mapping(experiment, tmp_path, change):
+    from ppap_deep.semantic.bindings import FieldHole
+
+    case = experiment.cases()[7]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    source, target = bundle.trace.bindings
+    target.columns.pop("code")
+    target.field_holes["code"] = FieldHole(state="unresolved", reason="The work-unit meaning remains unconfirmed.")
+    if change == "wrong_column":
+        target.field_holes.pop("code")
+        target.columns["code"] = "B"
+    elif change == "no_question":
+        target.interpretations = []
+    elif change == "no_confirmation_requirement":
+        target.interpretations[0].requires_confirmation = False
+    elif change == "source_unbound":
+        source.columns.pop("code")
+        source.field_holes["code"] = FieldHole(state="unresolved", reason="A missing source identity is not the declared target ambiguity.")
+        question = target.interpretations[0].model_copy(deep=True)
+        question.id = "source-question"
+        question.evidence[0].document_id = source.document_id
+        question.evidence[0].locator.sheet = source.table
+        source.interpretations = [question]
+    elif change == "not_expected_to_clarify":
+        case = replace(case, clarification=False)
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {next(iter(spec.targets)): plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["judgment"]["state"] == scores["binding"]["state"] == "correct"
+    if change == "correct":
+        assert scores["concept"]["state"] == "correct"
+        assert scores["pending_identity_mappings"] == {"target": ["code"]}
+        assert scores["clarifications"] == 1
+    else:
+        assert scores["concept"]["state"] == "incorrect"
+
+
 def test_experiment_records_controlled_usage_as_unknown_not_real_tokens(experiment, tmp_path, monkeypatch):
     monkeypatch.setattr(experiment, "preserve_code", lambda output: (output / "code").mkdir() or "a" * 64)
     result = experiment.run(experiment.cases()[:2], tmp_path / "run", experiment.ControlledRunner, seconds=60, live=False)
@@ -167,7 +343,7 @@ def test_unknown_provider_consumption_stops_before_another_case(experiment, tmp_
             return super().usage | {"uncertain": True}
 
     result = experiment.run(experiment.cases(), tmp_path / "run", Uncertain, seconds=60, live=False)
-    assert len(result["runs"]) == 1 and result["not_executed"] == 8
+    assert len(result["runs"]) == 1 and result["not_executed"] == 10
     assert result["runs"][0]["completed"] is False
     assert result["runs"][0]["error"]["type"] == "ValueError"
     assert result["runs"][0]["error"]["frames"]
