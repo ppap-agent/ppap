@@ -242,6 +242,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-rounds/{round_id}/deep-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read */
+        get: operations["read_audit_rounds__round_id__deep_feedback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/deep-feedback/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export */
+        get: operations["export_audit_rounds__round_id__deep_feedback_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/mcp-rule-changes/{transport_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Proposal */
+        get: operations["proposal_audit_rounds__round_id__mcp_rule_changes__transport_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/rule-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply */
+        post: operations["apply_audit_rounds__round_id__rule_changes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-rounds/{round_id}/rule-changes/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operation */
+        get: operations["operation_audit_rounds__round_id__rule_changes__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-share-targets": {
         parameters: {
             query?: never;
@@ -2745,6 +2830,33 @@ export interface components {
             /** Registration */
             registration?: string;
         };
+        /** ConfirmedAppendix */
+        ConfirmedAppendix: {
+            /** Candidate Id */
+            candidate_id?: string | null;
+            /**
+             * Confirmation Source
+             * @default user
+             * @enum {string}
+             */
+            confirmation_source: "user" | "synthetic";
+            /** Confirmed At */
+            confirmed_at?: string | null;
+            /** Confirmed By */
+            confirmed_by?: string | null;
+            /** Content */
+            content: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "interpretation" | "mapping" | "standard_change";
+            /** Question Id */
+            question_id?: string | null;
+            scope: components["schemas"]["FeedbackScope"];
+        };
         /** Coverage */
         Coverage: {
             /** Checked */
@@ -2759,6 +2871,27 @@ export interface components {
             verification?: {
                 [key: string]: string | number;
             } | null;
+        };
+        /** DeepFeedbackView */
+        DeepFeedbackView: {
+            /** Appendix */
+            appendix: components["schemas"]["ConfirmedAppendix"][];
+            /** Clarifications */
+            clarifications: components["schemas"]["FeedbackQuestion"][];
+            /** Current Round Id */
+            current_round_id: string;
+            /** Input Changed */
+            input_changed: boolean;
+            /** Operations */
+            operations: components["schemas"]["RuleChangeReceipt"][];
+            /** Results */
+            results: components["schemas"]["FeedbackResult"][];
+            /** Revision */
+            revision: number;
+            /** Round Id */
+            round_id: string;
+            /** Workspace Id */
+            workspace_id: string;
         };
         /** DocLink */
         DocLink: {
@@ -2852,6 +2985,10 @@ export interface components {
         };
         /** EngineRuleBody */
         EngineRuleBody: {
+            /** Appendix */
+            appendix?: {
+                [key: string]: unknown;
+            }[];
             /** Customers */
             customers: string[];
             /**
@@ -2881,6 +3018,85 @@ export interface components {
             kind: string;
             /** Locator */
             locator: string;
+        };
+        /** FeedbackCandidate */
+        FeedbackCandidate: {
+            /** Explanation */
+            explanation: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
+        /** FeedbackQuestion */
+        FeedbackQuestion: {
+            /** Candidates */
+            candidates: components["schemas"]["FeedbackCandidate"][];
+            /** Document Ids */
+            document_ids: string[];
+            /** Fingerprint */
+            fingerprint: string;
+            /** Id */
+            id: string;
+            /** Input Id */
+            input_id: string;
+            /** Kind */
+            kind: string;
+            /** Question */
+            question: string;
+            /** Rule Ids */
+            rule_ids: string[];
+            scope: components["schemas"]["FeedbackScope"];
+            /** Sources */
+            sources: components["schemas"]["FeedbackSource"][];
+        };
+        /** FeedbackResult */
+        FeedbackResult: {
+            /** Coverage */
+            coverage: {
+                [key: string]: unknown;
+            };
+            /** Current */
+            current: boolean;
+            /** Execution */
+            execution: string;
+            /** Findings */
+            findings: {
+                [key: string]: unknown;
+            }[];
+            /** Inputs */
+            inputs: {
+                [key: string]: unknown;
+            }[];
+            /** Round Id */
+            round_id: string;
+        };
+        /** FeedbackRuleTarget */
+        FeedbackRuleTarget: {
+            /** Document Id */
+            document_id: string;
+            /** Rule Id */
+            rule_id: string;
+        };
+        /** FeedbackScope */
+        FeedbackScope: {
+            /** Document Ids */
+            document_ids: string[];
+            /** Rule Ids */
+            rule_ids: string[];
+            /** Rule Targets */
+            rule_targets?: components["schemas"]["FeedbackRuleTarget"][] | null;
+        };
+        /** FeedbackSource */
+        FeedbackSource: {
+            /** Document Id */
+            document_id: string;
+            /** Excerpt */
+            excerpt?: string | null;
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            };
         };
         /** FileValidationJob */
         FileValidationJob: {
@@ -3004,6 +3220,12 @@ export interface components {
             rule_version_id: string | null;
             /** Status */
             status: string;
+        };
+        /** McpRuleChangeProposal */
+        McpRuleChangeProposal: {
+            change: components["schemas"]["RuleChangeRequest"];
+            /** Round Id */
+            round_id: string;
         };
         /**
          * Metadata
@@ -3362,6 +3584,62 @@ export interface components {
             source_file_version_id: string;
             /** Title */
             title: string;
+        };
+        /** RuleChangeReceipt */
+        RuleChangeReceipt: {
+            /** Analysis Round Id */
+            analysis_round_id: string | null;
+            /**
+             * Analysis State
+             * @enum {string}
+             */
+            analysis_state: "not_started" | "queued";
+            /** Appendix */
+            appendix: components["schemas"]["ConfirmedAppendix"][];
+            /** Operation Id */
+            operation_id: string;
+            /** Revision */
+            revision: number;
+            /** Source Round Id */
+            source_round_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "saved";
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** RuleChangeRequest */
+        RuleChangeRequest: {
+            /** Candidate Id */
+            candidate_id?: string | null;
+            /**
+             * Confirmation Source
+             * @default user
+             * @enum {string}
+             */
+            confirmation_source: "user" | "synthetic";
+            /** Content */
+            content?: string | null;
+            /** Expected Question Fingerprint */
+            expected_question_fingerprint?: string | null;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "save_only" | "save_and_analyze";
+            /** Kind */
+            kind?: ("interpretation" | "mapping" | "standard_change") | null;
+            /** Operation Id */
+            operation_id: string;
+            /** Question Id */
+            question_id?: string | null;
+            /** Remove Appendix Ids */
+            remove_appendix_ids?: string[];
+            scope?: components["schemas"]["FeedbackScope"] | null;
         };
         /** RuleCoverageItem */
         RuleCoverageItem: {
@@ -4204,6 +4482,167 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_audit_rounds__round_id__deep_feedback_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeepFeedbackView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_audit_rounds__round_id__deep_feedback_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    proposal_audit_rounds__round_id__mcp_rule_changes__transport_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+                transport_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpRuleChangeProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_audit_rounds__round_id__rule_changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleChangeReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    operation_audit_rounds__round_id__rule_changes__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+                round_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleChangeReceipt"] | null;
+                };
             };
             /** @description Validation Error */
             422: {

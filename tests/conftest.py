@@ -6,14 +6,92 @@ import json
 import logging
 import os
 import re
+import shutil
+import socket
+import subprocess
 import sys
+import tempfile
 from collections import deque
 from contextlib import contextmanager
+from pathlib import Path
 from time import monotonic
 from urllib.parse import urlsplit
 
 import httpx
 import pytest
+
+
+def pytest_addoption(parser):
+    parser.addoption("--local-postgres", action="store_true", help="Create a disposable native PostgreSQL cluster for this test process")
+
+
+def pytest_configure(config):
+    if not config.getoption("--local-postgres"):
+        return
+    root = Path(__file__).resolve().parents[1]
+    installed = shutil.which("postgres")
+    bindir = Path(os.environ.get("PPAP_TEST_PG_BIN", str(Path(installed).parent) if installed else "/opt/homebrew/opt/postgresql@17/bin"))
+    for name in ("postgres", "initdb", "pg_ctl", "psql"):
+        if not (bindir / name).is_file():
+            raise pytest.UsageError(f"--local-postgres requires {name}; set PPAP_TEST_PG_BIN")
+    temporary = Path(tempfile.mkdtemp(prefix="ppap-test-pg-"))
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    environment = {
+        "PGHOST": "127.0.0.1",
+        "PGPORT": str(port),
+        "PGUSER": "ppap",
+        "PGPASSWORD": "ppap_isolated_dev",
+        "PPAP_PG_HOST": "127.0.0.1",
+        "PPAP_PG_PORT": str(port),
+        "PPAP_PG_DATABASE": "ppap",
+        "PPAP_PG_BOOTSTRAP_USER": "ppap",
+        "PPAP_PG_BOOTSTRAP_PASSWORD": "ppap_isolated_dev",
+        "PPAP_PG_MIGRATOR_USER": "ppap_migrator",
+        "PPAP_PG_MIGRATOR_PASSWORD": "ppap_isolated_dev",
+        "PPAP_PG_API_USER": "ppap_api",
+        "PPAP_PG_API_PASSWORD": "ppap_isolated_dev",
+        "PPAP_PG_WORKER_USER": "ppap_worker",
+        "PPAP_PG_WORKER_PASSWORD": "ppap_isolated_dev",
+        "PPAP_LOCAL_POSTGRES": str(temporary),
+        "PPAP_TEST_PG_BIN": str(bindir),
+        "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+    }
+    previous = {key: os.environ.get(key) for key in environment}
+    config._ppap_local_postgres = (temporary, bindir, previous)
+    os.environ.update(environment)
+
+    def run(command):
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise pytest.UsageError("Local PostgreSQL setup failed: " + (result.stderr or result.stdout)[-2500:])
+
+    try:
+        run([str(bindir / "initdb"), "-D", str(temporary / "data"), "-U", "ppap", "-A", "trust", "--no-locale", "-E", "UTF8"])
+        run([str(bindir / "pg_ctl"), "-D", str(temporary / "data"), "-l", str(temporary / "postgres.log"), "-o", f"-h 127.0.0.1 -p {port} -k {temporary} -c timezone=UTC", "-w", "start"])
+        run([str(bindir / "psql"), "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-f", str(root / "migrations/bootstrap.sql")])
+        run(["sh", str(root / "migrations/apply.sh")])
+    except BaseException:
+        pytest_unconfigure(config)
+        raise
+
+
+def pytest_unconfigure(config):
+    owned = getattr(config, "_ppap_local_postgres", None)
+    if owned is None:
+        return
+    temporary, bindir, previous = owned
+    del config._ppap_local_postgres
+    try:
+        subprocess.run([str(bindir / "pg_ctl"), "-D", str(temporary / "data"), "-m", "immediate", "-w", "stop"], capture_output=True, timeout=30)
+    finally:
+        shutil.rmtree(temporary)
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @pytest.fixture
@@ -184,3 +262,13 @@ def preview_failure_diagnostics(request, monkeypatch):
     monkeypatch.setattr(Browser, "new_page", observe(Browser.new_page))
     monkeypatch.setattr(BrowserContext, "new_page", observe(BrowserContext.new_page))
     monkeypatch.setattr(request.module, "sync_playwright", observed_playwright)
+
+
+@pytest.fixture
+def deep_feedback_env(tmp_path, monkeypatch, request):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("ppap_deep_feedback_fixture", Path(__file__).with_name("deep_feedback_fixture.py"))
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+    yield from fixture.environment(tmp_path, monkeypatch, request)

@@ -126,6 +126,8 @@ def _attempt_diagnostic(claimed: ClaimedJob, result: dict, findings: list) -> di
     for key in ("failure", "usage"):
         if key in result:
             diagnostic[key] = result[key]
+    if result.get("usage_source") in {"provider", "controlled", "unknown"}:
+        diagnostic["usage_source"] = result["usage_source"]
     return diagnostic
 
 
@@ -368,6 +370,7 @@ class AuthStore:
             """SELECT r.id, r.tenant_id, r.kind, EXISTS (
                     SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
                     WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
+                    OR EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id = r.id)
                 FROM product.resources r WHERE r.id = %s""",
             (parsed,),
         ).fetchone()
@@ -882,7 +885,8 @@ class AuthStore:
                 """SELECT f.id, f.file_id, f.tenant_id, f.original_filename, f.content_type, f.byte_size, f.sha256, f.object_key, f.status,
                     r.id, r.tenant_id, r.kind,
                     EXISTS (SELECT 1 FROM product.audit_rounds a JOIN product.audit_drafts d ON d.id = a.source_draft_id
-                        WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL),
+                        WHERE a.id = r.id AND d.task_fingerprint IS NOT NULL)
+                    OR EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id=r.id),
                     ARRAY(SELECT g.capability FROM product.resource_grants g WHERE g.resource_id = r.id AND g.user_id = %s)
                 FROM product.file_versions f JOIN product.resources r ON r.id = %s
                 WHERE f.file_id = %s AND f.id = %s AND f.tenant_id = %s
@@ -2948,6 +2952,26 @@ class AuthStore:
                     usage_policy=usage_policy,
                 )
 
+    def read_deep_feedback(self, principal: Principal, round_id: str) -> dict:
+        from .deep_feedback import read_feedback
+
+        return read_feedback(self, principal, round_id)
+
+    def apply_rule_change(self, principal: Principal, round_id: str, payload: dict, *, usage_policy=None) -> dict:
+        from .deep_feedback import apply_change
+
+        return apply_change(self, principal, round_id, payload, usage_policy=usage_policy)
+
+    def read_rule_change(self, principal: Principal, round_id: str, operation_id: str) -> dict | None:
+        from .deep_feedback import read_change
+
+        return read_change(self, principal, round_id, operation_id)
+
+    def export_deep_feedback(self, principal: Principal, round_id: str) -> dict:
+        from .deep_feedback import export_feedback
+
+        return export_feedback(self, principal, round_id)
+
     def get_report(self, principal: Principal, round_id: str, fingerprint: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute(
@@ -2999,7 +3023,7 @@ class AuthStore:
                    FROM product.audit_rounds r
                    LEFT JOIN product.audit_drafts d ON d.id = r.source_draft_id
                    WHERE r.tenant_id = %s
-                     AND (d.task_fingerprint IS NULL OR EXISTS (SELECT 1 FROM product.resource_grants g
+                     AND ((d.task_fingerprint IS NULL AND NOT EXISTS (SELECT 1 FROM product.deep_rule_changes c WHERE c.analysis_round_id=r.id)) OR EXISTS (SELECT 1 FROM product.resource_grants g
                          WHERE g.resource_id = r.id AND g.user_id = %s AND g.capability IN ('read', 'review')))
                      AND (%s = '' OR r.execution = %s)
                      AND (NOT %s OR EXISTS (
@@ -3983,10 +4007,12 @@ class AuthStore:
         items: list[dict] | None,
         task_revision: int | None = None,
         usage_policy=None,
+        feedback_inputs: list[dict] | None = None,
     ) -> dict:
         # Serialize one tenant/key before reading existing acceptance, including
         # competing requests from different drafts. Hash collisions only serialize.
-        self._reject_task_predecessor(conn, predecessor_id)
+        if feedback_inputs is None:
+            self._reject_task_predecessor(conn, predecessor_id)
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (principal.tenant_id + ":" + key,))
         existing = conn.execute(
             """
@@ -4079,6 +4105,15 @@ class AuthStore:
         if items is None:
             items = []
         prepared = self._bound_audit_items(conn, principal, items)
+        if feedback_inputs is not None:
+            if analysis_mode != ANALYSIS_DEEP or source_draft_id is not None:
+                raise ValueError("deep_feedback_requires_deep")
+            overrides = {item["file_version_id"]: item for item in feedback_inputs}
+            for item in prepared:
+                if item["role"] == "target":
+                    item["rule_body"] = normalize_rule_body(overrides[item["file_version_id"]]["rule_body"])
+        if analysis_mode == ANALYSIS_STANDARD and any((item.get("rule_body") or {}).get("appendix") for item in prepared):
+            raise ValueError("rule_appendix_requires_deep")
         require_targets(prepared)
         fingerprint = request_fingerprint(prepared)
         if existing:

@@ -4,11 +4,13 @@
 
 ## Deep 接入与协议能力
 
-现有 `prepare_task` 的 `analysis_mode` 接受 `standard` 或 `deep`，之后沿用 `confirm_task` 受理和 `get_task/get_round` 读回。注册 schema 已核对，真实 MCP 客户端到 Deep 模型的完整路径仍需专门验收。现有网页确认使用自定义 `confirmation_required`，尚未调用 MCP Elicitation，也没有语义澄清/规则附录的产品接口。
+现有 `/mcp` 仍由 FastMCP 3.4.0 / MCP SDK 1.30.0 提供兼容入口，`prepare_task.analysis_mode` 支持 Deep。新的 `/mcp/deep` 是固定 MCP 2026-07-28 的窄适配，提供 `read_audit`、`apply_rule_change`、`start_analysis`，直接调用与 Web 相同的反馈应用，不把 2025 SDK 声明成新版实现。
 
-2026-10-29 核对时，仓库锁定 FastMCP 3.4.0、MCP SDK 1.30.0，实际 SDK 的最新协议常量为 2025-11-25。官方 [latest](https://modelcontextprotocol.io/specification/2026-07-28) 已是 2026-07-28；本仓的 `stateless_http=True` 和 `tasks=False` 不能作为实现新版 MRTR 或 Tasks 扩展的证明。依赖、协议适配与具体客户端需整体验证；本文中的现有确认/重放仍描述当前服务行为。
+新入口使用同一 OAuth 委托（resource 仍为 `/mcp`）、租户和对象授权。每次请求包含版本、clientInfo/clientCapabilities，以及匹配的 MCP-Protocol-Version、Mcp-Method、Mcp-Name 头。简单确认使用 form Elicitation/MRTR；支持 Tasks 的客户端通过 tasks/get/update 读回与提交。协议 Task 引用现有 MCP 传输回执，业务输入、保存与入队仍由产品唯一拥有。
 
-Deep 的未来产品反馈、form/URL/Web 选择、长任务适配与 UI 合同见 [PRODUCT.md](../packages/ppap_deep/PRODUCT.md)。目标支持宿主内完整确认和一次明确的“保存并分析”，不将当前网页批准、ASGI 转发或 Tasks 关闭设为设计原则。各入口仍共同校验权限、实际提交内容与范围。本文下述网页批准和重放说明当前服务行为，尚未被目标设计替换。
+URL 模式进入同一个审核工作区，URL 中的 mcpRuleChange 只是提议引用。正常登录并核对后，网页沿用同一业务操作 ID 提交；打开 URL 或协议 accept 本身不保存。客户端读回实际产品回执。无 Elicitation 能力时返回工作区入口；没有 Tasks 时使用 MRTR/应用读回。关闭交互不会默认选择候选或取消已受理审核。
+
+解释确认绑定问题内容指纹、范围、规则修订和操作身份，过期提议必须重新核对。说明可仅保存、保存并分析，或移除后明确重算；机器结果和人工复核分别保留。业务合同见 [Deep 产品设计](../packages/ppap_deep/PRODUCT.md)。本地 wire 与真实 PostgreSQL/Worker/guest 测试只证明上述实现，不代表所有第三方宿主兼容或真实模型准确率。
 
 ## 服务与授权
 

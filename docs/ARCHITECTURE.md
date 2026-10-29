@@ -16,7 +16,7 @@ PostgreSQL  object storage
 
 PC Web 入口在 `apps/web`，只调用 Product API。飞书 docs-addon 进入同一套 round / findings / review。
 
-当前 MCP 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。当前 MCP Tasks 扩展关闭；长任务使用现有 Task、Round 和 engine job。Deep 的未来原生 MCP 交互与共享应用边界见下文产品设计；当前调用方式与协议配置不是目标产品原则。
+兼容入口 `/mcp` 与 Product API 在同一进程运行，由独立 `fastmcp` 包提供工具装饰器、Schema、Resources、Prompts 和 Streamable HTTP。依赖版本由 `uv.lock` 固定；当前 FastMCP 的上游依赖要求 MCP Python SDK `<2`，不能只升级 SDK 主版本而保留未验证的组合。兼容入口的 Tasks 扩展关闭；Deep 的 `/mcp/deep` 适配提供原生 Tasks，仍引用现有 Round、engine job 与 MCP 操作回执。Deep 的未来原生 MCP 交互与共享应用边界见下文产品设计；当前调用方式与协议配置不是目标产品原则。
 
 `mcp_gateway` 通过进程内 ASGI 调用同一 Product API 入口，保留路由中的对象授权、来源校验及分享编排。只有该适配器可在 ASGI scope 写入实际 `Delegation` 对象；网络请求头不构成身份。字节传输直接转发 ASGI 流，继续使用文件 owner 的 200 MiB 限制，不额外把整份文件缓存到 MCP JSON 或 HTTP 客户端响应中。
 
@@ -54,7 +54,9 @@ Controller 进程是 `python -m ppap_deep`。生产工厂要求显式设置 `PPA
 
 规则检查、模型推断和文档抽取可以替换实现，但不能改变产品输入版本、授权和结果语义。只有真实当前需求证明价值时才新增服务、框架或隔离层。
 
-Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/ppap_deep/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/ppap_deep/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中；RulePlan 中的 ontology 引导生成逻辑文档，用户确认通过更新明确输入进入后续计算。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。现有 PPAP MCP 已允许选择 Deep 模式，但语义澄清、逻辑文档和附录反馈闭环尚未实现。下述内容描述当前运行路径，不将物理 Binding 或布尔问题视为已完成的实体关系模型。
+Deep 的核心目标设计见 [规则约束下的文档理解与反馈](../packages/ppap_deep/DESIGN.md)，未来产品架构、UI 与 MCP 见 [Deep 产品设计](../packages/ppap_deep/PRODUCT.md)：业务输入只有 `rules + documents`，已确认附录包含在 rules 中；RulePlan 中的 ontology 引导生成逻辑文档，用户确认通过更新明确输入进入后续计算。目标是持续的审核工作区，Web 与原生 MCP 平等调用同一个 Audit Application；界面、确认方式、协议和部署均可重构，业务事实与审核语义保持单一拥有者。当前已实现基于明确对象粒度、身份属性、逻辑对象及类型化 Hole 的首个反馈闭环。原生 snapshot 保持无损，逻辑物化按规则所需字段读取；跨行或一行多对象必须有明确来源和覆盖。尚不因此宣称任意布局和规则均能被模型正确解释。
+
+反馈应用复用现有审核轮次、队列和结果存储。`product.deep_rule_changes` 只拥有同一工作区内的规则变更操作回执；工作区身份复用根轮次。一个操作按已读修订保存附录，并可在同一事务受理新输入计算；技术 attempt 与新业务计算分开。Web 与 `/mcp/deep` 共用 `read_deep_feedback/apply_rule_change/read_rule_change`，迟到结果仍只属于其原轮次。问题指纹约束实际内容与来源；附录分别记录被解释原件和精确的目标文件／条款配对，同名条款不会隐式扩大范围。客户端会话不构成业务依据。确认记录可导出，默认无人工 gold 和训练资格。
 
 Deep 当前使用一个纯求值入口：模型提交物理 `Binding`、每条缓存程序的集合用途，以及宿主提出的局部语义问题的答案；宿主读取完整声明范围，执行条件、量词、关系和比较，生成观察、计数与公开报告。宿主从已验证程序派生 obligations 的潜在集合／字段需求和 initial-execution 未完成候选；模型逐步补全，求值仍只使用原程序和实际执行证书。初始候选不表示完成或支持故障后恢复。规则程序只读取冻结规则，按租户、规则来源及引擎修订缓存；文档位置、行成员资格和答案不进入规则缓存。编译 schema 区分文件结构前提、当前行适用条件及行值／关系要求；列存在不能作为行值非空的证明。Binding 保留所有物理行，排除和未知行角色随用途确定。同一工序标题可以参与覆盖，同时不属于特性明细。
 

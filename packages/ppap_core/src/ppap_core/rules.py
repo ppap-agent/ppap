@@ -110,7 +110,55 @@ def normalize_rule_body(value: dict) -> dict:
         if not isinstance(values, list) or any(not isinstance(item, str) or not item.strip() for item in values):
             raise ValueError("invalid_rule_metadata")
         metadata[field] = [item.strip() for item in values]
-    return {"kind": "engine", "rule_profile": profile, "type": doc_type.get_type_name(), "rules": rules, **metadata}
+    body = {"kind": "engine", "rule_profile": profile, "type": doc_type.get_type_name(), "rules": rules, **metadata}
+    if "appendix" in value:
+        body["appendix"] = normalize_rule_appendix(value["appendix"], ids)
+    return body
+
+
+def normalize_rule_appendix(value: Any, rule_ids: set[str]) -> list[dict]:
+    """An explicit input, never reconstructed from reviews or past runs."""
+    if not isinstance(value, list) or len(value) > 256:
+        raise ValueError("invalid_rule_appendix")
+    result, seen = [], set()
+    allowed = {"id", "kind", "question_id", "candidate_id", "content", "scope", "confirmed_by", "confirmed_at", "confirmation_source"}
+    for item in value:
+        if not isinstance(item, dict) or set(item) - allowed:
+            raise ValueError("invalid_rule_appendix")
+        for key in ("id", "content"):
+            if not isinstance(item.get(key), str) or not item[key].strip() or len(item[key]) > 8192:
+                raise ValueError("invalid_rule_appendix")
+        if item["id"] in seen or item.get("kind") not in {"interpretation", "mapping", "standard_change"}:
+            raise ValueError("invalid_rule_appendix")
+        seen.add(item["id"])
+        scope = item.get("scope")
+        if not isinstance(scope, dict) or not {"document_ids", "rule_ids"} <= set(scope) or set(scope) - {"document_ids", "rule_ids", "rule_targets"}:
+            raise ValueError("invalid_rule_appendix")
+        for key in ("document_ids", "rule_ids"):
+            ids = scope[key]
+            if not isinstance(ids, list) or not 1 <= len(ids) <= 256 or any(not isinstance(ident, str) or not ident.strip() for ident in ids) or len(set(ids)) != len(ids):
+                raise ValueError("invalid_rule_appendix")
+        if not set(scope["rule_ids"]) <= rule_ids:
+            raise ValueError("invalid_rule_appendix")
+        if "rule_targets" in scope:
+            targets = scope["rule_targets"]
+            if not isinstance(targets, list) or not 1 <= len(targets) <= 16384:
+                raise ValueError("invalid_rule_appendix")
+            pairs = set()
+            for target in targets:
+                if not isinstance(target, dict) or set(target) != {"document_id", "rule_id"} or any(not isinstance(target[key], str) or not target[key].strip() for key in target):
+                    raise ValueError("invalid_rule_appendix")
+                pair = (target["document_id"], target["rule_id"])
+                if pair in pairs or target["rule_id"] not in scope["rule_ids"]:
+                    raise ValueError("invalid_rule_appendix")
+                pairs.add(pair)
+        for key in allowed - {"id", "kind", "content", "scope"}:
+            if key in item and (not isinstance(item[key], str) or not item[key].strip() or len(item[key]) > 1024):
+                raise ValueError("invalid_rule_appendix")
+        if item.get("confirmation_source", "user") not in {"user", "synthetic"}:
+            raise ValueError("invalid_rule_appendix")
+        result.append({**item, "scope": {key: [dict(target) for target in scope[key]] if key == "rule_targets" else list(scope[key]) for key in scope}})
+    return result
 
 
 def rule_title(value) -> str:

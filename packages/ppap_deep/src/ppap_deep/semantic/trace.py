@@ -297,8 +297,7 @@ class _Evaluator:
                     confirmed = any(
                         entry.get("question_id") == requirement.id
                         and entry.get("kind") in {"interpretation", "mapping"}
-                        and binding.document_id in entry.get("scope", {}).get("document_ids", [])
-                        and self.current_rule.id in entry.get("scope", {}).get("rule_ids", [])
+                        and self.confirmation_scope(entry.get("scope"), binding.document_id)
                         and any(entry.get("candidate_id") == candidate.id and entry.get("content") == candidate.explanation for candidate in requirement.candidates)
                         for entry in self.plans[self.audit_id].appendix
                     )
@@ -379,6 +378,18 @@ class _Evaluator:
         self.reached_answers.add(need_id)
         return validate_answer(need, answer, self.documents, budget=self.budget), answer
 
+    def confirmation_scope(self, scope: Any, interpreted_document_id: str) -> bool:
+        if not isinstance(scope, dict) or not isinstance(scope.get("document_ids"), list) or not isinstance(scope.get("rule_ids"), list):
+            return False
+        if interpreted_document_id not in scope["document_ids"] or self.current_rule.id not in scope["rule_ids"]:
+            return False
+        # Legacy direct replay can explicitly broadcast a rule ID. New product
+        # confirmations name the audited target separately from the source file.
+        if "rule_targets" not in scope:
+            return True
+        targets = scope["rule_targets"]
+        return isinstance(targets, list) and {"document_id": self.audit_id, "rule_id": self.current_rule.id} in targets
+
     def _clarification(self, requirement, binding: Binding) -> None:
         identity = _digest(
             {"plans": {key: plan.source_sha256 for key, plan in sorted(self.plans.items())}, "documents": {key: document["source"]["sha256"] for key, document in sorted(self.documents.items())}}
@@ -393,7 +404,7 @@ class _Evaluator:
                 "rule_ids": [],
                 "candidates": [candidate.model_dump(mode="json") for candidate in requirement.candidates],
                 "sources": [citation.model_dump(mode="json") for citation in requirement.evidence],
-                "scope": {"document_ids": [binding.document_id], "rule_ids": []},
+                "scope": {"document_ids": [binding.document_id], "rule_ids": [], "rule_targets": []},
             }
         item = self.clarifications[requirement.id]
         if (
@@ -405,6 +416,9 @@ class _Evaluator:
         if self.current_rule.id not in item["rule_ids"]:
             item["rule_ids"].append(self.current_rule.id)
             item["scope"]["rule_ids"].append(self.current_rule.id)
+        target = {"document_id": self.audit_id, "rule_id": self.current_rule.id}
+        if target not in item["scope"]["rule_targets"]:
+            item["scope"]["rule_targets"].append(target)
 
     def row_context(self, row: dict[str, Any] | None, fields: list[str] | None = None) -> dict[str, Any] | None:
         if row is None:

@@ -45,3 +45,5 @@ interpretation Hole 的 value 是候选 ID。requires_confirmation 默认为 tru
 AuditEvaluation.readings 保留每条规则实际物化的属性、完整行范围和缓存复用。实体属性按程序需求和明确身份读取；原生 snapshot 仍保留完整原件观察。逻辑对象的多源属性和解释来源随观察输出，冲突值不覆盖。
 
 事实引用还必须属于宿主请求的对象行、表和已明确的属性来源；同文件另一对象即使有相同数值，也不能借用其引用。native 答案核对原始标量类型和值，range 引用不把数值显示文本变成原生字符串。结构、关系和语义判断的解释不能标成原生标量。
+
+产品确认的 scope.rule_targets 精确列出 {document_id: 审核目标文件版本, rule_id: 条款ID}。它与 scope.document_ids（正在解释的原件）分开：两个目标都引用同一 CP 且都有 R1 时，仅确认其中一个 pair 不能解除另一个目标的解释 gate。clarifications.scope 聚合实际受影响的 pairs；rule_targets 存在但为空或不匹配时不应用。仅旧版直接重放可省略它，沿用显式 rule_ids 的广播含义；新产品提交应始终带精确 pairs。

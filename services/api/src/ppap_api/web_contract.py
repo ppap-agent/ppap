@@ -145,6 +145,7 @@ class RuleItem(TypedDict):
 
 
 class EngineRuleBody(TypedDict):
+    appendix: NotRequired[list[dict[str, Any]]]
     kind: Literal["engine"]
     type: str
     rule_profile: str
@@ -391,7 +392,7 @@ class PdfBlockLocator(TypedDict):
 
 
 class PdfCellLocator(TypedDict):
-    __pydantic_config__ = ConfigDict(extra="forbid")
+    __pydantic_config__ = ConfigDict(extra="forbid")  # type: ignore[misc]
 
     kind: Literal["pdf_cell"]
     page: Annotated[int, Field(strict=True, ge=1)]

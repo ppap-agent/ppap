@@ -327,6 +327,8 @@ class McpStore:
             "result": row["result"],
             "confirmed_by": str(row["confirmed_by"]) if row["confirmed_by"] else None,
             "confirmed_at": row["confirmed_at"].isoformat() if row["confirmed_at"] else None,
+            "created_at": row["created_at"].isoformat(),
+            "updated_at": row["updated_at"].isoformat(),
         }
 
     def operation(self, delegation: Delegation, request_id: str) -> dict:

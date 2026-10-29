@@ -110,6 +110,14 @@ class SchemaTools:
         return mapped
 
     def psql(self, user: str, password: str, database: str, *args: str) -> subprocess.CompletedProcess[bytes]:
+        if os.environ.get("PPAP_LOCAL_POSTGRES"):
+            return subprocess.run(
+                ["psql", "-d", database, "-v", "ON_ERROR_STOP=1", *args],
+                env={**os.environ, "PGUSER": user, "PGPASSWORD": password},
+                cwd=ROOT,
+                capture_output=True,
+                check=False,
+            )
         command = [
             *self.COMPOSE,
             "exec",
@@ -142,6 +150,15 @@ class SchemaTools:
             return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
 
     def apply(self, database: str, *, migrations_dir: str = "/migrations") -> subprocess.CompletedProcess[bytes]:
+        if os.environ.get("PPAP_LOCAL_POSTGRES"):
+            directory = str(self.MIGRATIONS) if migrations_dir == "/migrations" else migrations_dir
+            return subprocess.run(
+                ["sh", str(self.MIGRATIONS / "apply.sh")],
+                env={**os.environ, "PPAP_PG_DATABASE": database, "MIGRATIONS_DIR": directory},
+                cwd=ROOT,
+                capture_output=True,
+                check=False,
+            )
         command = [
             *self.COMPOSE,
             "exec",
@@ -174,6 +191,8 @@ class SchemaTools:
             return subprocess.CompletedProcess(command, 127, stdout=b"", stderr=str(exc).encode())
 
     def container_sh(self, script: str) -> subprocess.CompletedProcess[bytes]:
+        if os.environ.get("PPAP_LOCAL_POSTGRES"):
+            return subprocess.run(["sh", "-c", script.replace("/migrations", str(self.MIGRATIONS))], cwd=ROOT, capture_output=True, check=False)
         command = [*self.COMPOSE, "exec", "-T", "postgres", "sh", "-c", script]
         try:
             return subprocess.run(

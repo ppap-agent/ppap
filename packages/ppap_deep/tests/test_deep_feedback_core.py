@@ -573,3 +573,46 @@ def test_observation_parameters_are_a_value_not_mutable_parser_configuration(tmp
     observed = snapshot(path, limits=limits)
     observed["reader_parameters"]["cells"] = 1
     assert limits.cells == 100
+
+
+def test_confirmation_scope_separates_same_rule_id_for_two_targets_reading_one_document(tmp_path):
+    other_target = "00000000-0000-4000-8000-000000000040"
+    bundle, _ = run_case(tmp_path / "base")
+    documents = {**bundle.documents, other_target: deepcopy(bundle.documents[CP])}
+    raw_trace = bundle.trace.model_dump(mode="json")
+    raw_trace["uses"] += [{**deepcopy(use), "audit_id": other_target} for use in raw_trace["uses"]]
+    trace = AuditTrace.model_validate(raw_trace)
+    plan = bundle.plans[RULE]
+    pending = evaluate_audit(trace, documents, {CP: plan, other_target: plan})
+    assert [check.status for check in pending.report.checks] == ["UNABLE", "UNABLE", "PASS", "UNABLE", "UNABLE", "PASS"]
+    assert pending.clarifications[0]["scope"]["document_ids"] == [CP]
+    assert pending.clarifications[0]["scope"]["rule_targets"] == [
+        {"document_id": CP, "rule_id": "R1"},
+        {"document_id": CP, "rule_id": "R2"},
+        {"document_id": other_target, "rule_id": "R1"},
+        {"document_id": other_target, "rule_id": "R2"},
+    ]
+    scoped = plan.model_copy(deep=True)
+    scoped.appendix = confirmed({"document_ids": [CP], "rule_ids": ["R1"], "rule_targets": [{"document_id": CP, "rule_id": "R1"}]})
+    result = evaluate_audit(trace, documents, {CP: scoped, other_target: scoped})
+    assert [check.status for check in result.report.checks] == ["PASS", "UNABLE", "PASS", "UNABLE", "UNABLE", "PASS"]
+    assert result.clarifications[0]["scope"]["rule_targets"] == [
+        {"document_id": CP, "rule_id": "R2"},
+        {"document_id": other_target, "rule_id": "R1"},
+        {"document_id": other_target, "rule_id": "R2"},
+    ]
+    # The interpreted document and the audited target are independent identities.
+    scoped.appendix[0]["scope"]["rule_targets"] = [{"document_id": other_target, "rule_id": "R1"}]
+    result = evaluate_audit(trace, documents, {CP: scoped, other_target: scoped})
+    assert [check.status for check in result.report.checks] == ["UNABLE", "UNABLE", "PASS", "PASS", "UNABLE", "PASS"]
+    # Older direct replay fixtures without exact target pairs keep explicit broadcast semantics.
+    del scoped.appendix[0]["scope"]["rule_targets"]
+    legacy = evaluate_audit(trace, documents, {CP: scoped, other_target: scoped})
+    assert [check.status for check in legacy.report.checks] == ["PASS", "UNABLE", "PASS", "PASS", "UNABLE", "PASS"]
+
+
+@pytest.mark.parametrize("rule_targets", [[], None, "R1", [{"document_id": CP, "rule_id": "different"}], [{"document_id": "outside-input", "rule_id": "R1"}]])
+def test_present_but_unmatched_rule_target_scope_never_becomes_broadcast(tmp_path, rule_targets):
+    scope = {"document_ids": [CP], "rule_ids": ["R1", "R2"], "rule_targets": rule_targets}
+    _, result = run_case(tmp_path / "scoped", confirmed(scope))
+    assert [check.status for check in result.report.checks] == ["UNABLE", "UNABLE", "PASS"]
