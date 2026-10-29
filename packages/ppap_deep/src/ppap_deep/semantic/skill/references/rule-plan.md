@@ -64,3 +64,5 @@ appendix 由宿主从冻结有效规则复制。编译时完整阅读它，但�
 完成前核对每个条款的来源、对象、前提、适用条件、必要条件、方向、量词、类型、缺失及空范围。有限表达之外使用明确的局部 Judge；不要新增任意 Python/SQL 程序或改写供应商事实。
 
 原生观察保留 reader_parameters。只有同一原件、格式、解析参数的缓存才可复用；不同参数重新读取，不能借旧缓存绕过较小的读取上限。逻辑对象、属性选择及局部答案不按文件单独缓存：同一文件的另一 ontology/附录/程序仍需重新构建和验证。
+
+An occurrence is one source representation, with its own ID, values and locations; the ontology identity identifies the business object under the rule. Use `same_instance` for occurrences representing that business object, preserving every occurrence, conflict and duplicate count. Different rows or files alone do not imply `association`; use it for distinct business objects or explicit literal links, and keep genuinely unresolved meanings as Holes.

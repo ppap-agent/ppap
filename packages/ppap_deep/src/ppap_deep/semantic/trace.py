@@ -198,6 +198,7 @@ class _Evaluator:
             return self.collection_cache[name]
         use = self.current_use.inputs.get(name) if self.current_use else None
         rows, exclusions, issues = [], [], []
+        unresolved_meanings: set[tuple[str, str]] = set()
         if isinstance(use, BoundCollection):
             ranges: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
             seen: set[str] = set()
@@ -213,7 +214,8 @@ class _Evaluator:
                 concept = next((entity for entity in self.plans[self.audit_id].ontology.entities if entity.id == name), None)
                 if (scope.objects or scope.object_choices) and concept is None:
                     raise ValueError("Logical objects require a rule-declared entity grain and identity")
-                if concept and not set(concept.identity) <= (binding.columns.keys() | binding.field_holes.keys()):
+                point_fields = {field for item in scope.objects for field in item.fields} | {field for choice in scope.object_choices for item in choice.objects for field in item.fields}
+                if concept and not set(concept.identity) <= (binding.columns.keys() | binding.field_holes.keys() | point_fields):
                     raise ValueError("Logical identity attributes have not been bound")
                 if concept and any(not set(item.fields) <= concept.attributes.keys() for item in scope.objects):
                     raise ValueError("Logical attributes outside the rule ontology")
@@ -224,7 +226,12 @@ class _Evaluator:
                     | {field for item in scope.objects for field in item.fields}
                     | {field for choice in scope.object_choices for item in choice.objects for field in item.fields}
                 )
+                if not available:
+                    raise ValueError("A range without row columns requires explicit object fields")
                 selected_fields = required & available or {min(available)}
+                if not binding.columns:
+                    # All declared point attributes establish member-row coverage.
+                    selected_fields |= point_fields
                 active_binding = binding.model_copy(
                     update={
                         "columns": {field: column for field, column in binding.columns.items() if field in selected_fields},
@@ -295,7 +302,7 @@ class _Evaluator:
                 for requirement in binding.interpretations:
                     if requirement.field not in selected_fields:
                         continue
-                    if requirement.field not in binding.columns and requirement.field not in binding.field_holes:
+                    if requirement.field not in available:
                         raise ValueError("Interpretation concerns an undeclared field")
                     for citation in requirement.evidence:
                         if citation.document_id != binding.document_id or citation.locator is None:
@@ -331,6 +338,7 @@ class _Evaluator:
                                     {"id": requirement.id, "candidate_id": recommendation, "origin": answer.origin, "evidence": [citation.model_dump(mode="json") for citation in answer.evidence]},
                                 ]
                     if not confirmed:
+                        unresolved_meanings.add((binding.id, requirement.field))
                         for record in selected:
                             record["states"] = {**record["states"], requirement.field: "unknown_interpretation"}
                         self._clarification(requirement, binding)
@@ -362,6 +370,7 @@ class _Evaluator:
             "exclusions": exclusions,
             "issues": issues,
             "unresolved_records": [_ref(row) for row in rows if row["scope_state"] != "known"],
+            "unresolved_meanings": unresolved_meanings,
             "use": use,
             "diagnostic": use.diagnostic if isinstance(use, UnresolvedCollection) else "unresolved_relation",
         }
@@ -569,8 +578,13 @@ class _Evaluator:
             for scope in use.scopes:
                 binding = self.bindings[scope.binding_id]
                 hole = binding.field_holes.get(node.field)
-                values.append(True if node.field in binding.columns else False if hole and hole.state == "absent" else None)
+                members = [record for record in collection["rows"] if record["binding_id"] == binding.id]
+                meaning_unknown = (binding.id, node.field) in collection["unresolved_meanings"]
+                located = bool(members) and all(record.get("evidence", {}).get(node.field) for record in members)
+                values.append(None if meaning_unknown else True if node.field in binding.columns or located else False if hole and hole.state == "absent" else None)
                 evidence.extend(self.headers(binding))
+                for member in members:
+                    evidence.extend(self.citations(member, [node.field]))
             value = _and(values)
             if value is True and collection["unresolved_records"]:
                 return _fact(None, f"集合 {node.input} 的记录成员资格尚未确定", evidence, "unsupported_structure")

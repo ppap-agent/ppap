@@ -76,7 +76,7 @@ class Binding(Artifact):
     @model_validator(mode="after")
     def distinct_fields(self) -> Binding:
         fields = set(self.columns) | set(self.field_holes)
-        if not fields or len(fields) > 64 or any(not field.strip() for field in fields):
+        if len(fields) > 64 or any(not field.strip() for field in fields):
             raise ValueError("Binding needs bounded named fields")
         if set(self.columns) & set(self.field_holes):
             raise ValueError("A binding field has exactly one state")
@@ -281,10 +281,26 @@ def scoped_records(materialized: dict[str, Any], binding: Binding, scope: Bindin
             budget.consume(len(item.rows))
             members = [indexed[row] for row in item.rows]
             grouping = grouping_support(item, binding, document, budget)
+            if not binding.columns:
+                # A pure point mapping cannot claim extra member rows while
+                # selecting attributes only from the favorable first row.
+                contributed = set()
+                for point_locations in item.fields.values():
+                    for location in point_locations:
+                        row_number = int(re.sub("[A-Z]", "", location.cell)) if isinstance(location, ExcelCell) else location.row
+                        contributed.add(row_number)
+                if not set(item.rows) <= contributed:
+                    grouping = {**grouping, "state": "unresolved"}
             values, states, evidence, observations = {}, {}, {}, {}
             for field in sorted(set(binding.columns) | set(binding.field_holes) | set(item.fields)):
                 seen = []
+                if field in item.fields and field in binding.field_holes and binding.field_holes[field].state == "absent":
+                    raise ValueError("An absent field cannot also have an explicit object source")
                 for row in members:
+                    # A mapping hole is not an unreadable native value. An
+                    # explicit source can resolve it without erasing history.
+                    if field in item.fields and field in binding.field_holes and not row["evidence"].get(field):
+                        continue
                     if field not in row["states"] and field not in row["values"]:
                         continue
                     source = row["evidence"].get(field)
