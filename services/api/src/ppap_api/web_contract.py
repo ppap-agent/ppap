@@ -5,11 +5,11 @@ These types describe HTTP JSON only. UI-only state belongs in apps/web.
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from fastapi import FastAPI
 from ppap_core.standard_policy import StandardExecutionPolicy
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, Field, TypeAdapter
 
 AnalysisMode = Literal["standard", "deep"]
 FindingStatus = Literal["PASS", "NG", "ERR", "UNABLE", "NA"]
@@ -390,6 +390,15 @@ class PdfBlockLocator(TypedDict):
     block: int
 
 
+class PdfCellLocator(TypedDict):
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    kind: Literal["pdf_cell"]
+    page: Annotated[int, Field(strict=True, ge=1)]
+    row: Annotated[int, Field(strict=True, ge=1)]
+    column: Annotated[int, Field(strict=True, ge=1)]
+
+
 class DocxParagraphLocator(TypedDict):
     kind: Literal["docx_paragraph"]
     paragraph: int
@@ -402,7 +411,7 @@ class DocxCellLocator(TypedDict):
     column: int
 
 
-SemanticLocator = XlsxCellLocator | XlsxRangeLocator | PdfBlockLocator | DocxParagraphLocator | DocxCellLocator
+SemanticLocator = XlsxCellLocator | XlsxRangeLocator | PdfBlockLocator | PdfCellLocator | DocxParagraphLocator | DocxCellLocator
 
 
 class SemanticSource(TypedDict):

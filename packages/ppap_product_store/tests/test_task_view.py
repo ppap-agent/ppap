@@ -69,6 +69,40 @@ def verified_round(status="NG"):
 
 
 class TaskRoundViewTests(unittest.TestCase):
+    def test_pdf_cell_is_preserved_in_task_and_historical_evidence(self):
+        for page, row, column in ((1, 1, 1), (3, 12, 4)):
+            with self.subTest(page=page, row=row, column=column):
+                round = verified_round()
+                locator = {"kind": "pdf_cell", "page": page, "row": row, "column": column}
+                round["findings"][0]["locator"]["semantic"]["sources"][0]["locator"] = locator
+                before = deepcopy(round)
+                audit = task_round_view(task_input(), round)["files"][0]["audit"]
+                check = audit["checks"][0]
+                self.assertEqual(check["evidence"][0]["locator"], locator)
+                self.assertIsNone(check["evidence"][0]["location_gap"])
+                self.assertEqual(check["evidence"][0]["rendition"], "original")
+                self.assertTrue(check["evidence_verified"])
+                self.assertEqual((check["finding"]["status"], audit["conclusion"]), ("NG", "NG"))
+                self.assertEqual(round_read_view(round, {"version-a": {"id": "version-a"}})["files"][0]["audit"], audit)
+                self.assertEqual(round, before)
+
+    def test_invalid_pdf_cell_is_a_location_gap_without_changing_the_verdict(self):
+        locator = {"kind": "pdf_cell", "page": 1, "row": 1, "column": 1}
+        invalid = [{**locator, field: value} for field in ("page", "row", "column") for value in (None, True, "1", 1.5, 0, -1)]
+        invalid.extend({key: value for key, value in locator.items() if key != field} for field in ("page", "row", "column"))
+        invalid.extend(({**locator, "table": 1}, {**locator, "bbox": [0, 0, 1, 1]}))
+        for candidate in invalid:
+            with self.subTest(locator=candidate):
+                round = verified_round("PASS")
+                round["findings"][0]["locator"]["semantic"]["sources"][0]["locator"] = candidate
+                audit = task_round_view(task_input(), round)["files"][0]["audit"]
+                check = audit["checks"][0]
+                self.assertIsNone(check["evidence"][0]["locator"])
+                self.assertTrue(check["evidence"][0]["location_gap"])
+                self.assertFalse(check["evidence_verified"])
+                self.assertEqual((check["finding"]["status"], audit["conclusion"], audit["counts"]["pass_count"]), ("PASS", "PASS", 1))
+                self.assertTrue(report_eligible(audit["checks"], False, audit["unmapped_findings"]))
+
     def test_execution_fault_projection_keeps_round_state_and_valid_verdicts_separate(self):
         for coverage in ("unsupported", "executed", "execution_error"):
             for status in (None, "PASS", "NG", "NA", "UNABLE", "ERR"):

@@ -59,12 +59,15 @@ def _typed_locator(locator: object) -> dict | None:
         "xlsx_cell": {"sheet": str, "cell": str},
         "xlsx_range": {"sheet": str, "start": str, "end": str},
         "pdf_block": {"page": int, "block": int},
+        "pdf_cell": {"page": int, "row": int, "column": int},
         "docx_paragraph": {"paragraph": int},
         "docx_cell": {"table": int, "row": int, "column": int},
     }
     kind = locator.get("kind")
     fields = schemas.get(kind) if isinstance(kind, str) else None
     if not fields or any(type(locator.get(key)) is not expected or expected is str and not locator[key].strip() or expected is int and locator[key] < 0 for key, expected in fields.items()):
+        return None
+    if kind == "pdf_cell" and (set(locator) != {"kind", *fields} or any(locator[key] < 1 for key in fields)):
         return None
     return {"kind": locator["kind"], **{key: locator[key] for key in fields}}
 

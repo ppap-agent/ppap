@@ -144,10 +144,13 @@ def _semantic_source_valid(source: dict, inputs: dict[str, dict]) -> bool:
         "docx_paragraph": ("paragraph",),
         "docx_cell": ("table", "row", "column"),
         "pdf_block": ("page", "block"),
+        "pdf_cell": ("page", "row", "column"),
     }
     if not isinstance(locator, dict):
         return False
     kind = locator.get("kind")
+    if kind == "pdf_cell" and (set(locator) != {"kind", *required[kind]} or any(type(locator.get(field)) is not int or locator[field] < 1 for field in required[kind])):
+        return False
     return isinstance(kind, str) and kind in required and all(locator.get(field) is not None for field in required[kind]) and isinstance(source.get("excerpt"), str)
 
 
@@ -308,6 +311,8 @@ def _source_location(locator: dict) -> str:
         return f"{locator['sheet']}!{locator['start']}:{locator['end']}"
     if kind == "pdf_block":
         return f"第 {locator['page']} 页 · 文本块 {locator['block']}"
+    if kind == "pdf_cell":
+        return f"第 {locator['page']} 页 · 表格行 {locator['row']} · 列 {locator['column']}"
     if kind == "docx_paragraph":
         return f"段落 {locator['paragraph']}"
     return f"表格 {locator['table']} · 行 {locator['row']} · 列 {locator['column']}"

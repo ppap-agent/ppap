@@ -1778,7 +1778,7 @@ export interface components {
             /** Location Gap */
             location_gap: string | null;
             /** Locator */
-            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"] | null;
+            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"] | null;
             /**
              * Rendition
              * @enum {string}
@@ -3044,6 +3044,20 @@ export interface components {
             /** Page */
             page: number;
         };
+        /** PdfCellLocator */
+        PdfCellLocator: {
+            /** Column */
+            column: number;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "pdf_cell";
+            /** Page */
+            page: number;
+            /** Row */
+            row: number;
+        };
         /** PresenceRuleBody */
         PresenceRuleBody: {
             /**
@@ -3537,7 +3551,7 @@ export interface components {
             /** Filename */
             filename: string;
             /** Locator */
-            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"];
+            locator: components["schemas"]["XlsxCellLocator"] | components["schemas"]["XlsxRangeLocator"] | components["schemas"]["PdfBlockLocator"] | components["schemas"]["PdfCellLocator"] | components["schemas"]["DocxParagraphLocator"] | components["schemas"]["DocxCellLocator"];
             /**
              * Role
              * @enum {string}
