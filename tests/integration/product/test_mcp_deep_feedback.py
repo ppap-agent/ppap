@@ -2,6 +2,7 @@
 
 from uuid import uuid4
 
+import pytest
 from ppap_api.mcp_deep import PREFIX, TASKS, VERSION
 
 from .conftest import change_payload
@@ -166,6 +167,42 @@ def test_discovered_schema_answers_and_expired_task_have_recoverable_contract(de
     expired = rpc(env, token, "tasks/get", {"taskId": pending["taskId"]}, capabilities=caps)["result"]
     assert expired["status"] == "failed" and expired["error"]["message"] == "confirmation_expired"
     assert "workspace_url" in expired["error"]["data"]
+
+
+@pytest.mark.parametrize("saved_in_web", [False, True])
+def test_expired_plain_mrtr_replay_reads_saved_receipt_or_returns_workspace(deep_feedback_env, saved_in_web):
+    env = deep_feedback_env
+    token = access(env)
+    view = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    change = change_payload(view, env["uploaded"], intent="save_only")
+    args = {"name": "apply_rule_change", "arguments": {"round_id": env["round_id"], "change": change}}
+    pending = rpc(env, token, "tools/call", args)["result"]
+    assert pending["resultType"] == "input_required"
+    receipt = None
+    if saved_in_web:
+        saved = env["client"].post(f"/audit-rounds/{env['round_id']}/rule-changes", json=change)
+        assert saved.status_code == 200, saved.text
+        receipt = saved.json()
+    with env["store"]._conn() as conn:
+        conn.execute("UPDATE product.mcp_operations SET created_at=now()-interval '2 hours' WHERE id=%s AND state='ready'", (pending["requestState"],))
+    for _ in range(2):
+        replay = rpc(env, token, "tools/call", args)["result"]
+        assert replay["resultType"] == "complete"
+        assert "inputRequests" not in replay
+        if receipt:
+            assert replay["isError"] is False
+            assert replay["structuredContent"] == receipt
+        else:
+            assert replay["isError"] is True
+            assert replay["structuredContent"] == {
+                "applied": False,
+                "reason": "confirmation_expired",
+                "workspace_url": env["store"].settings.canonical_web_url() + "/audit?round=" + view["current_round_id"],
+            }
+    after = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    assert after["revision"] == int(saved_in_web)
+    assert len(after["operations"]) == int(saved_in_web)
+    assert len(after["results"]) == 1
 
 
 def test_removing_explanation_displays_its_content_scope_and_effect(deep_feedback_env):
