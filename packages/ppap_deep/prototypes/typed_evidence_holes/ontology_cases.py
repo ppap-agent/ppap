@@ -19,9 +19,12 @@ class Table:
     filename: str
     sheet: str
     rows: tuple[tuple[str | None, ...], ...]
-    identity_columns: tuple[str, ...]
+    # None means the source rule does not prescribe an identity component set.
+    identity_columns: tuple[str, ...] | None
     objects: tuple[tuple[int, ...], ...]
     columns: tuple[tuple[str, str], ...]
+    identity_cells: tuple[str, ...] = ()
+    comparison_cells: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,7 +115,7 @@ def cases() -> tuple[Case, ...]:
             "基准清单每行的工序编号、字面分隔符' / '及工序名称拼接出的完整文字，必须原样出现在标签表的标签列中。"
             "只按明确的字面拼接查找，不把它改成仅按工序编号认定同一实例，不删除空格、斜杠或标点。每行是独立记录。",
             (
-                Table(PROCESS, "Process", (("工序编号", "工序名称"), ("010", "Drill"), ("020", "Cut")), ("A",), ((2,), (3,)), (("code", "A"), ("name", "B"))),
+                Table(PROCESS, "Process", (("工序编号", "工序名称"), ("010", "Drill"), ("020", "Cut")), None, ((2,), (3,)), (("code", "A"), ("name", "B"))),
                 Table("Labels.xlsx", "Labels", (("标签",), ("010 / Drill",), ("020 / Cut",)), ("A",), ((2,), (3,)), (("label", "A"),)),
             ),
             "PASS",
@@ -124,7 +127,7 @@ def cases() -> tuple[Case, ...]:
             "基准清单每行的工序编号、字面分隔符' / '及工序名称拼接出的完整文字，必须原样出现在标签表的标签列中。"
             "只按明确的字面拼接查找，不把它改成仅按工序编号认定同一实例，不删除空格、斜杠或标点。每行是独立记录。",
             (
-                Table(PROCESS, "Process", (("工序编号", "工序名称"), ("010", "Drill"), ("020", "Cut")), ("A",), ((2,), (3,)), (("code", "A"), ("name", "B"))),
+                Table(PROCESS, "Process", (("工序编号", "工序名称"), ("010", "Drill"), ("020", "Cut")), None, ((2,), (3,)), (("code", "A"), ("name", "B"))),
                 Table("Labels.xlsx", "Labels", (("标签",), ("010Drill",), ("020 / Cut",)), ("A",), ((2,), (3,)), (("label", "A"),)),
             ),
             "NG",
@@ -150,6 +153,30 @@ def cases() -> tuple[Case, ...]:
             ),
             "PASS",
             refinement=True,
+        ),
+        Case(
+            "metadata-form-matches",
+            "一张表是一份零件表单，字段名在A列、填写值在B列。零件名称和零件编号位于不同物理行，合起来描述一个零件。"
+            "基准表单中的每个零件须在待审表单中按原始零件编号一一对应，且零件名称必须逐字一致并且非空。"
+            "不得因属性同在B列而互换零件编号与零件名称，也不得将字段标签当作填写值。",
+            (
+                Table("Reference.xlsx", "Reference", (("字段", "填写值"), ("零件名称", "Bracket"), ("零件编号", "P-1")), ("B",), ((2, 3),), (("code", "B"), ("name", "B")), ("B3",), ("B2",)),
+                Table("Form.xlsx", "Form", (("字段", "填写值"), ("零件名称", "Bracket"), ("零件编号", "P-1")), ("B",), ((2, 3),), (("code", "B"), ("name", "B")), ("B3",), ("B2",)),
+            ),
+            "PASS",
+            comparison=True,
+        ),
+        Case(
+            "metadata-form-missing-name",
+            "一张表是一份零件表单，字段名在A列、填写值在B列。零件名称和零件编号位于不同物理行，合起来描述一个零件。"
+            "基准表单中的每个零件须在待审表单中按原始零件编号一一对应，且零件名称必须逐字一致并且非空。"
+            "不得因属性同在B列而互换零件编号与零件名称，也不得将字段标签当作填写值。",
+            (
+                Table("Reference.xlsx", "Reference", (("字段", "填写值"), ("零件名称", "Bracket"), ("零件编号", "P-1")), ("B",), ((2, 3),), (("code", "B"), ("name", "B")), ("B3",), ("B2",)),
+                Table("Form.xlsx", "Form", (("字段", "填写值"), ("零件名称", None), ("零件编号", "P-1")), ("B",), ((2, 3),), (("code", "B"), ("name", "B")), ("B3",), ("B2",)),
+            ),
+            "NG",
+            comparison=True,
         ),
     )
 

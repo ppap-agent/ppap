@@ -55,7 +55,7 @@ def _effective_plans(bundle: ResultBundle, spec: SubmissionSpec):
     return effective_plans(bundle.trace.plan_refinements, bundle.documents, base)
 
 
-def _collection(table: Table, case: Case, trace: AuditTrace, use, concept, source: str, documents) -> tuple[list[str], list[str]]:
+def _collection(table: Table, case: Case, trace: AuditTrace, use, concept, source: str, documents, pending: set[str] | None = None) -> tuple[list[str], list[str]]:
     """Compare declared identity and physical grouping to an independent oracle."""
     concept_errors, binding_errors = [], []
     if isinstance(use, FileCollection):
@@ -63,8 +63,11 @@ def _collection(table: Table, case: Case, trace: AuditTrace, use, concept, sourc
             return [source + ": expected record concept, got file concept"], []
         if concept.identity != ["id"]:
             concept_errors.append(source + ": file identity must use input ID")
-        if use.document_ids != [case.identity(table.filename)]:
-            binding_errors.append(source + ": wrong file entity")
+        selected = set(use.document_ids)
+        if case.identity(table.filename) not in selected:
+            binding_errors.append(source + ": required file entity is missing")
+        if not selected <= documents.keys():
+            binding_errors.append(source + ": file entity outside current inputs")
         return concept_errors, binding_errors
     if not isinstance(use, BoundCollection):
         return [], [source + ": collection not bound"]
@@ -75,7 +78,8 @@ def _collection(table: Table, case: Case, trace: AuditTrace, use, concept, sourc
         if binding.document_id != case.identity(table.filename) or binding.table != table.sheet:
             binding_errors.append(source + ": wrong source document or table")
             continue
-        identity_columns.update(binding.columns.get(field, "?unbound") for field in concept.identity)
+        columns = _columns(trace, BoundCollection(kind="bound", scopes=[scope]), concept.identity)
+        identity_columns.update(columns or ("?unbound",))
         if scope.object_choices:
             binding_errors.append(source + ": object choices require observed resolution")
         elif scope.objects:
@@ -85,13 +89,63 @@ def _collection(table: Table, case: Case, trace: AuditTrace, use, concept, sourc
         else:
             excluded = {item.row for item in scope.excluded_rows}
             actual_groups.extend((row,) for row in range(binding.first_row, binding.last_row + 1) if row not in excluded)
-    if identity_columns != set(table.identity_columns):
+    if table.identity_columns is not None and not _identity_columns_match(identity_columns, table.identity_columns, len(pending or ())):
         concept_errors.append(source + ": identity columns differ")
+    if table.identity_cells and _locations(trace, use, concept.identity) != table.identity_cells:
+        concept_errors.append(source + ": identity source cells differ")
     if Counter(actual_groups) != Counter(table.objects):
         binding_errors.append(source + ": object membership/count differs")
     if use.unresolved_scopes or any(scope.unresolved_rows for scope in use.scopes):
         binding_errors.append(source + ": source coverage unresolved")
     return concept_errors, binding_errors
+
+
+def _identity_columns_match(columns, expected: tuple[str, ...], pending: int = 0) -> bool:
+    observed = set(columns or ())
+    if not pending:
+        return observed == set(expected)
+    known = observed - {"?unbound"}
+    return "?unbound" in observed and known <= set(expected) and len(set(expected) - known) == pending
+
+
+def _pending_identity(case: Case, table: Table, trace: AuditTrace, use, concept, clarifications, audit_id: str, actual: str) -> set[str]:
+    """An expected meaning question may correctly leave the target unmapped."""
+    if not case.clarification or case.status != "UNABLE" or actual != "UNABLE" or table.filename != case.target or not isinstance(use, BoundCollection):
+        return set()
+    bindings = {binding.id: binding for binding in trace.bindings}
+    pending = set()
+    for field in concept.identity:
+        accepted = True
+        for scope in use.scopes:
+            binding = bindings[scope.binding_id]
+            hole = binding.field_holes.get(field)
+            if binding.document_id != case.identity(case.target) or field in binding.columns or any(field in item.fields for item in scope.objects) or hole is None or hole.state != "unresolved":
+                accepted = False
+                break
+            questions = [question for question in binding.interpretations if question.field == field and question.requires_confirmation]
+            grounded = False
+            for question in questions:
+                header_evidence = any(
+                    citation.document_id == binding.document_id
+                    and citation.locator is not None
+                    and citation.locator.kind == "xlsx_cell"
+                    and citation.locator.sheet == table.sheet
+                    and "".join(char for char in citation.locator.cell if char.isalpha()) in (table.identity_columns or ())
+                    and int("".join(char for char in citation.locator.cell if char.isdigit())) in binding.header_rows
+                    for citation in question.evidence
+                )
+                if header_evidence and any(
+                    row["id"] == question.id and binding.document_id in row["document_ids"] and {"document_id": audit_id, "rule_id": "1"} in row["scope"].get("rule_targets", [])
+                    for row in clarifications
+                ):
+                    grounded = True
+                    break
+            if not grounded:
+                accepted = False
+                break
+        if accepted:
+            pending.add(field)
+    return pending
 
 
 def _columns(trace: AuditTrace, use, fields: list[str]) -> tuple[str, ...] | None:
@@ -100,8 +154,47 @@ def _columns(trace: AuditTrace, use, fields: list[str]) -> tuple[str, ...] | Non
     if not isinstance(use, BoundCollection):
         return None
     bindings = {binding.id: binding for binding in trace.bindings}
-    mappings = {tuple(bindings[scope.binding_id].columns.get(field, "?unbound") for field in fields) for scope in use.scopes}
+    mappings = set()
+    for scope in use.scopes:
+        binding = bindings[scope.binding_id]
+        columns = []
+        for field in fields:
+            if scope.objects and all(field in item.fields for item in scope.objects):
+                selected = {"".join(char for char in locator.cell if char.isalpha()) for item in scope.objects for locator in item.fields[field] if locator.kind == "xlsx_cell"}
+                column = next(iter(selected)) if len(selected) == 1 else "?unbound"
+            else:
+                column = binding.columns.get(field, "?unbound")
+            columns.append(column)
+        mappings.add(tuple(columns))
     return next(iter(mappings)) if len(mappings) == 1 else None
+
+
+def _locations(trace: AuditTrace, use, fields: list[str]) -> tuple[str, ...] | None:
+    """Exact source points distinguish properties that share a physical column."""
+    if not isinstance(use, BoundCollection):
+        return None
+    bindings = {binding.id: binding for binding in trace.bindings}
+    result = []
+    for field in fields:
+        points = []
+        for scope in use.scopes:
+            binding = bindings[scope.binding_id]
+            excluded = {item.row for item in scope.excluded_rows}
+            groups = scope.objects
+            if groups:
+                for item in groups:
+                    if field in item.fields:
+                        points.extend(locator.cell for locator in item.fields[field] if locator.kind == "xlsx_cell")
+                    elif field in binding.columns:
+                        points.extend(binding.columns[field] + str(row) for row in item.rows)
+                    else:
+                        return None
+            elif field in binding.columns:
+                points.extend(binding.columns[field] + str(row) for row in range(binding.first_row, binding.last_row + 1) if row not in excluded)
+            else:
+                return None
+        result.extend(dict.fromkeys(points))
+    return tuple(result)
 
 
 def _projection(trace: AuditTrace, use, key) -> str | None:
@@ -150,13 +243,23 @@ def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, A
         if relation.source_key.normalization != "exact" or relation.target_key.normalization != "exact":
             concept_errors.append("unstated key normalization")
         role_tables = (case.tables[-1], case.tables[0]) if case.key == "attachment-foreign-key" else case.tables
+        concepts = {entity.id: entity for entity in plan.ontology.entities}
+        pending_by_entity = {
+            name: _pending_identity(case, table, bundle.trace, use, concepts[name], evaluation.clarifications, target, actual)
+            for name, table, use in zip((program.source, relation.target), role_tables, (source_use, target_use), strict=True)
+            if name in concepts
+        }
+        if any(pending_by_entity.values()):
+            output["pending_identity_mappings"] = {name: sorted(fields) for name, fields in pending_by_entity.items() if fields}
         if case.comparison:
-            expected_columns = tuple(dict(table.columns)["classification"] for table in role_tables)
+            point_comparison = all(table.comparison_cells for table in role_tables)
+            expected = tuple(table.comparison_cells for table in role_tables) if point_comparison else tuple((dict(table.columns)["classification"],) for table in role_tables)
+            locations = _locations if point_comparison else _columns
             actual_comparisons = [
-                (_columns(bundle.trace, source_use, [comparison.source_field]), _columns(bundle.trace, target_use, [comparison.target_field]), comparison.mode, comparison.normalization)
+                (locations(bundle.trace, source_use, [comparison.source_field]), locations(bundle.trace, target_use, [comparison.target_field]), comparison.mode, comparison.normalization)
                 for comparison in relation.comparisons
             ]
-            if actual_comparisons != [((expected_columns[0],), (expected_columns[1],), "exact", "exact")]:
+            if actual_comparisons != [(expected[0], expected[1], "exact", "exact")]:
                 concept_errors.append("required attribute comparison differs")
         elif relation.comparisons:
             concept_errors.append("required attribute comparison differs")
@@ -170,18 +273,32 @@ def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, A
             # Compare the semantic component order, allowing model-chosen field
             # names and an equivalent common order on both sides.
             components = []
-            for table, use, key in zip(role_tables, (source_use, target_use), (relation.source_key, relation.target_key), strict=True):
+            for name, table, use, key in zip((program.source, relation.target), role_tables, (source_use, target_use), (relation.source_key, relation.target_key), strict=True):
                 meanings = {column: field for field, column in table.columns}
                 columns = _columns(bundle.trace, use, key.fields)
-                components.append(tuple(meanings.get(column) for column in columns) if columns else None)
-            if components[0] is None or components[0] != components[1]:
+                if table.identity_columns is not None and not set(table.identity_columns) <= set(columns or ()):
+                    pending_keys = pending_by_entity.get(name, set()) & set(key.fields)
+                    if not pending_keys or not _identity_columns_match(columns, table.identity_columns, len(pending_keys)):
+                        concept_errors.append("explicit identifier key omits required source columns")
+                if table.identity_cells and not set(table.identity_cells) <= set(_locations(bundle.trace, use, key.fields) or ()):
+                    concept_errors.append("explicit identifier key omits required source cells")
+                components.append(
+                    tuple(None if field in pending_by_entity.get(name, set()) and column == "?unbound" else meanings.get(column, "?unknown") for field, column in zip(key.fields, columns, strict=True))
+                    if columns
+                    else None
+                )
+            if (
+                components[0] is None
+                or components[1] is None
+                or len(components[0]) != len(components[1])
+                or any(left != right for left, right in zip(*components, strict=True) if left is not None and right is not None)
+            ):
                 concept_errors.append("identity component correspondence differs")
-        concepts = {entity.id: entity for entity in plan.ontology.entities}
         for entity_id, table in zip((program.source, relation.target), role_tables, strict=True):
             if entity_id not in concepts:
                 concept_errors.append("required entity missing")
                 continue
-            errors, sources = _collection(table, case, bundle.trace, uses[0].inputs.get(entity_id), concepts[entity_id], entity_id, bundle.documents)
+            errors, sources = _collection(table, case, bundle.trace, uses[0].inputs.get(entity_id), concepts[entity_id], entity_id, bundle.documents, pending_by_entity.get(entity_id))
             concept_errors.extend(errors)
             binding_errors.extend(sources)
     if case.clarification and not evaluation.clarifications:
@@ -207,6 +324,7 @@ class ControlledRunner:
         self.literal_relation = "字面分隔符" in case.rule
         self.ambiguous = "未规定其含义" in case.rule
         self.strengthen_identity = "共同确定" in case.rule
+        self.point_form = "字段名在A列、填写值在B列" in case.rule
 
     def __enter__(self):
         self.output.mkdir()
@@ -237,7 +355,7 @@ class ControlledRunner:
             identity = [field for field in ("part", "code", "label") if field in columns]
             return {
                 "id": name,
-                "grain": "one input file" if is_file else "one business object, preserving each independent source occurrence",
+                "grain": "one input file" if is_file else "one form across labeled source rows" if self.point_form else "one business object, preserving each independent source occurrence",
                 "attributes": {"id": "string", "format": "string"} if is_file else dict.fromkeys(columns, "string"),
                 "identity": ["id"] if is_file else identity,
             }
@@ -286,7 +404,11 @@ class ControlledRunner:
                                 "target_key": target_key,
                                 "match": "any" if file_entity or self.literal_relation else "one_to_one",
                                 "key_match": "exact",
-                                "comparisons": [{"source_field": "classification", "target_field": "classification", "mode": "exact"}] if "分类必须一致" in self.case.rule else [],
+                                "comparisons": [{"source_field": "name", "target_field": "name", "mode": "exact"}]
+                                if self.point_form
+                                else [{"source_field": "classification", "target_field": "classification", "mode": "exact"}]
+                                if "分类必须一致" in self.case.rule
+                                else [],
                             },
                         },
                         "empty_scope_status": "UNABLE",
@@ -313,7 +435,7 @@ class ControlledRunner:
                 "header_rows": [1],
                 "first_row": 2,
                 "last_row": observed_table["rows"],
-                "columns": dict(table.columns),
+                "columns": {} if self.point_form else dict(table.columns),
                 "mapping_basis": "Original header fields identify these columns.",
                 "boundary_basis": "All source data rows are included.",
             }
@@ -334,7 +456,7 @@ class ControlledRunner:
             groups = []
             reader = TableReader(observed_table, EvidenceBudget())
             for row in range(2, observed_table["rows"] + 1):
-                if "空工序编号行共同描述" in self.case.rule and name == "target" and reader.cell(row, 1)["value"] in (None, ""):
+                if self.point_form and groups or "空工序编号行共同描述" in self.case.rule and name == "target" and reader.cell(row, 1)["value"] in (None, ""):
                     groups[-1].append(row)
                 else:
                     groups.append([row])
@@ -347,6 +469,13 @@ class ControlledRunner:
                 }
                 for index, rows in enumerate(groups)
             ]
+            if self.point_form:
+                fields = {}
+                for row in range(2, observed_table["rows"] + 1):
+                    field = {"零件名称": "name", "零件编号": "code"}.get(reader.cell(row, 1)["value"])
+                    if field:
+                        fields.setdefault(field, []).append({"kind": "xlsx_cell", "sheet": table.sheet, "cell": "B" + str(row)})
+                objects[0]["fields"] = fields
             inputs[name] = {"kind": "bound", "scopes": [{"binding_id": name, "objects": objects}]}
         raw = {"bindings": bindings, "uses": [{"audit_id": next(iter(self.spec.targets)), "rule_id": "1", "inputs": inputs}]}
         if self.strengthen_identity:
@@ -390,7 +519,7 @@ def run(selected: tuple[Case, ...], output: Path, runner_factory, *, seconds: in
     }
     save(output / "report.json", report)
     for case in selected:
-        directory = output / case.key
+        directory = output / ("unit-" + hashlib.sha256(case.key.encode()).hexdigest()[:16])
         directory.mkdir()
         spec = prepare(case, directory, revision)
         source_hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (directory / "inputs").iterdir()}

@@ -4,6 +4,8 @@
 
 下文的 `output/` 链接指向本地实验记录；这些记录不随源码提交。提交内容包含实验工具、合成测试和结果说明。
 
+本次 ontology 关系、对象粒度和解释修订的反例、真实模型结果及离线重放边界，见 [ontology 实验报告](ontology_experiment_report.md)。
+
 当前设计方向：**复用一个 grok-build core，让模型解决共享证据绑定，让代码读取原件并计算结果。** Typed Evidence Hole 是尚未解决的有类型字段，不需要独立调度器、依赖图或另一套 agent 平台。
 
 ```mermaid
