@@ -6,7 +6,7 @@ import unittest
 
 from ppap_api import app
 from ppap_api import web_contract as wc
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 REQUIRED_ENDPOINTS: dict[tuple[str, str], bool] = {
     ("GET", "/public-config"): False,
@@ -75,6 +75,24 @@ def _request_schema(operation: dict) -> dict | None:
 
 
 class OpenAPIContractTests(unittest.TestCase):
+    def test_pdf_cell_contract_preserves_one_based_original_pdf_coordinates(self):
+        locator = {"kind": "pdf_cell", "page": 3, "row": 12, "column": 4}
+        adapter = TypeAdapter(wc.SemanticLocator)
+        self.assertEqual(adapter.validate_python(locator), locator)
+        schema = app.openapi()["components"]["schemas"]["PdfCellLocator"]
+        self.assertEqual(set(schema["required"]), set(locator))
+        self.assertFalse(schema["additionalProperties"])
+        for field in ("page", "row", "column"):
+            self.assertEqual(schema["properties"][field]["minimum"], 1)
+            for value in (None, True, "1", 1.5, 0, -1):
+                with self.subTest(field=field, value=value), self.assertRaises(ValidationError):
+                    adapter.validate_python({**locator, field: value})
+            with self.subTest(missing=field), self.assertRaises(ValidationError):
+                adapter.validate_python({key: value for key, value in locator.items() if key != field})
+        for extra in ({"table": 1}, {"bbox": [0, 0, 1, 1]}):
+            with self.subTest(extra=extra), self.assertRaises(ValidationError):
+                adapter.validate_python({**locator, **extra})
+
     def test_failed_rule_plans_have_a_public_coverage_state_without_a_fake_verdict(self):
         failed = {
             "id": "B1",

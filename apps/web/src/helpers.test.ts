@@ -75,11 +75,13 @@ test('sourceLocation formats each semantic locator kind', () => {
   const cell: SemanticSource = {...file, locator: {kind: 'xlsx_cell', sheet: '控制计划', cell: 'B12'}, excerpt: 'x'}
   const range: SemanticSource = {...file, locator: {kind: 'xlsx_range', sheet: '控制计划', start: 'A1', end: 'C3'}, excerpt: 'x'}
   const pdf: SemanticSource = {...file, filename: 'a.pdf', locator: {kind: 'pdf_block', page: 2, block: 4}, excerpt: 'x'}
+  const pdfCell: SemanticSource = {...file, filename: 'a.pdf', locator: {kind: 'pdf_cell', page: 3, row: 12, column: 4}, excerpt: 'x'}
   const paragraph: SemanticSource = {...file, filename: 'a.docx', locator: {kind: 'docx_paragraph', paragraph: 7}, excerpt: 'x'}
   const table: SemanticSource = {...file, filename: 'a.docx', locator: {kind: 'docx_cell', table: 1, row: 3, column: 2}, excerpt: 'x'}
   assert.equal(sourceLocation(cell), '控制计划!B12')
   assert.equal(sourceLocation(range), '控制计划!A1:C3')
   assert.equal(sourceLocation(pdf), '第 2 页 · 文本块 4')
+  assert.equal(sourceLocation(pdfCell), '第 3 页 · 表格行 12 · 列 4')
   assert.equal(sourceLocation(paragraph), '段落 7')
   assert.equal(sourceLocation(table), '表格 1 · 行 3 · 列 2')
 })

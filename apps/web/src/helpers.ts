@@ -18,6 +18,7 @@ export function sourceLocation(source: Pick<SemanticSource, 'locator'>) {
   if (place.kind === 'xlsx_cell') return `${place.sheet}!${place.cell}`
   if (place.kind === 'xlsx_range') return `${place.sheet}!${place.start}:${place.end}`
   if (place.kind === 'pdf_block') return `第 ${place.page} 页 · 文本块 ${place.block}`
+  if (place.kind === 'pdf_cell') return `第 ${place.page} 页 · 表格行 ${place.row} · 列 ${place.column}`
   if (place.kind === 'docx_paragraph') return `段落 ${place.paragraph}`
   return `表格 ${place.table} · 行 ${place.row} · 列 ${place.column}`
 }

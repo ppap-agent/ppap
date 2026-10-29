@@ -87,6 +87,30 @@ class ReportBlocksTests(unittest.TestCase):
             with self.assertRaises(FeishuWritebackError):
                 report_blocks(body)
 
+    def test_pdf_cell_report_preserves_original_page_and_table_coordinates(self):
+        body = self.body()
+        body["inputs"][0]["original_filename"] = "audit.pdf"
+        locator = {"kind": "pdf_cell", "page": 3, "row": 12, "column": 4}
+        source = {"file_version_id": "v1", "filename": "audit.pdf", "role": "target", "locator": locator, "excerpt": "缺少签字"}
+        body["findings"][0]["locator"] = {
+            "file_version_id": "v1",
+            "semantic": {"rule_version_id": "rule1", "scope": {"total": 1, "checked": 1, "unknown": 0}, "sources": [source]},
+        }
+        blocks = report_blocks(body)
+        text = "\n".join(part["text_run"]["content"] for block in blocks for value in block.values() if isinstance(value, dict) for part in value["elements"])
+        self.assertIn("audit.pdf（待审；文件版本 v1）", text)
+        self.assertIn("位置：第 3 页 · 表格行 12 · 列 4", text)
+        self.assertIn("原文摘录：缺少签字", text)
+        self.assertNotIn("Sheet", text)
+        self.assertEqual(body["findings"][0]["status"], "NG")
+        invalid = [{**locator, field: value} for field in ("page", "row", "column") for value in (None, True, "1", 1.5, 0, -1)]
+        invalid.extend({key: value for key, value in locator.items() if key != field} for field in ("page", "row", "column"))
+        invalid.extend(({**locator, "table": 1}, {**locator, "bbox": [0, 0, 1, 1]}))
+        for candidate in invalid:
+            with self.subTest(locator=candidate), self.assertRaises(FeishuWritebackError):
+                source["locator"] = candidate
+                report_blocks(body)
+
     def test_uncovered_clause_without_published_body_stays_visible_once(self):
         body = self.body()
         body["coverage"] = {
