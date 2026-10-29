@@ -274,3 +274,9 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 在仓库根目录运行 `PPAP_PREVIEW_URL=http://127.0.0.1:4185 uv run --no-sync pytest tests/e2e/test_audit_preview.py tests/e2e/test_template_links_preview.py tests/e2e/test_support_preview.py tests/e2e/test_usage_preview.py -q`。需安装 `e2e` dependency group。这些测试只证明界面交互；不证明真实上传、OAuth、解析、匹配、审核、收费或持久化。预览服务不代理业务 API，生产入口不包含 fixture adapter；真实产品浏览器测试不因此替换或跳过。
 
 上述预览测试未配置 `PPAP_PREVIEW_URL` 时，可在未安装 Playwright 的环境中收集，并按原条件跳过；显式配置地址时必须安装 `e2e` group，缺少依赖会使收集失败。
+
+### Deep 本机反馈验收
+
+`uv run --no-sync pytest tests/integration/product/test_deep_feedback.py tests/integration/product/test_deep_feedback_contract.py tests/integration/product/test_mcp_deep_feedback.py --local-postgres -q` 使用真实本地 PG、生产迁移、API、Worker、guest 和 parser/evaluator。`uv run --no-sync pytest tests/e2e/test_deep_feedback.py --local-postgres -q` 再启动实际 Web/API 及浏览器。仅外部模型、身份供应商和 S3 边界使用明确测试输入。
+
+`--local-postgres` 创建并清理本次独占的临时 cluster，不接入默认或共享开发数据库。默认寻找 PATH 上的 postgres，macOS 备用为 Homebrew postgresql@17；可用 PPAP_TEST_PG_BIN 指定包含 postgres/initdb/pg_ctl/psql 的完整 server 目录。libpq 只有客户端工具，不足以创建 cluster。无需 Docker；依赖缺失会失败，不以 skip 验收。

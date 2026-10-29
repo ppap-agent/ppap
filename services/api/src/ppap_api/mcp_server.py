@@ -37,7 +37,7 @@ class McpCors:
     def __init__(self, app, provider):
         self.app = app
         options = {
-            "allow_headers": ["Authorization", "Content-Type", "MCP-Protocol-Version", "Mcp-Session-Id", "X-Request-ID"],
+            "allow_headers": ["Authorization", "Content-Type", "MCP-Protocol-Version", "Mcp-Method", "Mcp-Name", "Mcp-Session-Id", "X-Request-ID"],
             "expose_headers": ["WWW-Authenticate", "Mcp-Session-Id", "X-Request-ID", "Content-Disposition", "X-Content-SHA256", "Retry-After"],
         }
         self.oauth = CORSMiddleware(self.without_cookie_cors, allow_origins=["*"], allow_methods=["GET", "POST", "OPTIONS"], **options)
@@ -55,7 +55,7 @@ class McpCors:
         path = scope.get("path", "")
         if scope["type"] == "http" and (path.startswith("/.well-known/oauth-") or path.startswith("/oauth/") and not path.startswith("/oauth/consent/")):
             return await self.oauth(scope, receive, send)
-        if scope["type"] == "http" and (path == "/mcp" or path.startswith("/mcp/transfers/")):
+        if scope["type"] == "http" and (path in {"/mcp", "/mcp/deep"} or path.startswith("/mcp/transfers/")):
             return await self.bearer(scope, receive, send)
         return await self.app(scope, receive, send)
 
@@ -240,6 +240,9 @@ def install_mcp(app, product, http, session_of):
     app.state.mcp_provider = provider
     app.state.mcp_store = store
     app.state.mcp_gateway = gateway
+    from ppap_api.mcp_deep import install_deep_mcp
+
+    install_deep_mcp(app, provider, store, session_of)
     app.add_middleware(McpCors, provider=provider)
     mcp_app = server.http_app(path="/mcp", json_response=True, stateless_http=True, middleware=[Middleware(McpRequestGuard, provider=provider)])
     app.mount("/", mcp_app)

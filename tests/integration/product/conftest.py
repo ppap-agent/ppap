@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from ppap_application import build_product_store
@@ -143,3 +145,31 @@ def mcp_app(auth_store_factory):
 @pytest.fixture
 def seed_usage_event_factory():
     return insert_usage_event
+
+
+# A fixture-only model boundary shared by integration and browser acceptance.
+# Load by location because pytest importlib mode intentionally excludes repo-root imports.
+_feedback_spec = importlib.util.spec_from_file_location("ppap_feedback_test_model", Path(__file__).with_name("deep_feedback_model.py"))
+_feedback_model = importlib.util.module_from_spec(_feedback_spec)
+_feedback_spec.loader.exec_module(_feedback_model)
+CANDIDATE_ID = _feedback_model.CANDIDATE_ID
+EXPLANATION = _feedback_model.EXPLANATION
+QUESTION_ID = _feedback_model.QUESTION_ID
+RULES = _feedback_model.RULES
+FeedbackModel = _feedback_model.FeedbackModel
+source_bytes = _feedback_model.source_bytes
+
+
+def change_payload(view, uploaded, *, intent="save_and_analyze"):
+    return {
+        "operation_id": str(uuid.uuid4()),
+        "expected_revision": view["revision"],
+        "question_id": QUESTION_ID,
+        "expected_question_fingerprint": view["clarifications"][0]["fingerprint"],
+        "candidate_id": CANDIDATE_ID,
+        "kind": "interpretation",
+        "content": EXPLANATION,
+        "scope": {"document_ids": [uploaded["CP"]["id"]], "rule_ids": ["R1", "R2"]},
+        "intent": intent,
+        "confirmation_source": "synthetic",
+    }
