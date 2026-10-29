@@ -20,9 +20,10 @@ from ppap_deep.semantic.evidence import EvidenceBudget, resolve_optional
 from ppap_deep.semantic.guest import Manifest
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, ResultBundle, RuleRef, SubmissionSpec
 from ppap_deep.semantic.secure_files import read_json
+from ppap_deep.semantic.trace import evaluate_audit
 from ppap_deep.semantic.validation import validate_bundle
 
-POLICY_REVISION = hashlib.sha256(b"ppap-source-only-program-evaluation-v5").hexdigest()
+POLICY_REVISION = hashlib.sha256(b"ppap-rule-logical-document-evaluation-v6").hexdigest()
 FORMATS = {".xlsx", ".xls", ".xlsm", ".docx", ".pdf"}
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
 DIAGNOSTIC_LABELS = {
@@ -104,10 +105,14 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
     evidence_gaps = validate_bundle(bundle, submission)
     files = {item.file_version_id: item for item in spec.files}
     checks = {(check.audit_id, check.rule_id): check for check in bundle.report.checks}
+    from .semantic.holes import TypedAnswer
     from .semantic.trace import program_has_semantics
 
+    evaluation = evaluate_audit(bundle.trace, bundle.documents, {audit_id: bundle.plans[rule_id] for audit_id, rule_id in submission.targets.items() if rule_id in bundle.plans})
+    inferred = {answer.need_id for answer in bundle.trace.answers if isinstance(answer, TypedAnswer) and answer.origin == "model"}
+    inferred_rules = {(need.audit_id, need.rule_id) for need in evaluation.needs if need.id in inferred}
     proofs = {
-        (audit_id, rule.id): "semantic" if program_has_semantics(rule.program) else "query"
+        (audit_id, rule.id): "semantic" if program_has_semantics(rule.program) or (audit_id, rule.id) in inferred_rules else "query"
         for audit_id, rule_file_id in submission.targets.items()
         if rule_file_id in bundle.plans
         for rule in bundle.plans[rule_file_id].rules
@@ -196,6 +201,7 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
             "compactions": bundle.compactions,
         },
         coverage=DeepCoverage(
+            clarifications=evaluation.clarifications,
             checked=[item.filename for item in spec.files if item.role == "target" and item.rule_version_id not in bundle.failed_rules],
             unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"]
             + [f"{item.filename}（审核计划生成失败，未执行）" for item in spec.files if item.role == "target" and item.rule_version_id in bundle.failed_rules],
@@ -331,6 +337,8 @@ class SemanticRuntime:
             except OSError as exc:
                 raise DeepError("deep_output_invalid") from exc
             response = product_response(spec, bundle, submission)
+            source = getattr(self.runtime, "usage_source", "unknown")
+            response.usage_source = "controlled" if source == "controlled" else "provider" if source == "provider" else "unknown"
             for doc in submission.documents:
                 self._put(f"{prefix}/snapshots/{doc.sha256}{doc.format}.json", bundle.documents[doc.audit_id])
             for rule in submission.rules:

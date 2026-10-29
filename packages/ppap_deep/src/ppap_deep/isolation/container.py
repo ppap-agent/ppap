@@ -116,6 +116,8 @@ def _drain_stderr(pipe, tail: bytearray, *, max_reads: int | None = 16) -> None:
 
 
 class ContainerRuntime:
+    usage_source = "provider"
+
     def __init__(self, config: RuntimeConfig) -> None:
         if not _running_in_container():
             raise ValueError("ContainerRuntime requires root inside a Linux container")

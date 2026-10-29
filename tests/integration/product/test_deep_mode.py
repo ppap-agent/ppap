@@ -309,7 +309,7 @@ class DeepModeTests(unittest.TestCase):
                 owner.assertEqual(reasoning_effort, "medium")
                 self.input_tokens += 10
                 self.output_tokens += 2
-                if schema is RulePlan:
+                if issubclass(schema, RulePlan):
                     source = json.loads((work / "rule-source.json").read_text())
                     clauses = json.loads((work / "clauses.json").read_text())
                     rule_id = source["rule_version_id"]
@@ -341,7 +341,14 @@ class DeepModeTests(unittest.TestCase):
                             digest = "0" * 64
                         else:
                             planned.pop()
-                    return RulePlan.model_validate({"source_sha256": digest, "plan_revision": rule.plan_revision, "rules": planned})
+                    return RulePlan.model_validate(
+                        {
+                            "source_sha256": digest,
+                            "plan_revision": rule.plan_revision,
+                            "ontology": {"entities": [{"id": "records", "grain": "每条频次记录", "attributes": {"frequency": "string", "samples": "number"}, "identity": ["frequency"]}]},
+                            "rules": planned,
+                        }
+                    )
                 owner.assertIs(schema, AuditTrace)
                 targets = json.loads((work / "targets.json").read_text())
                 self.audit_targets.append(targets)

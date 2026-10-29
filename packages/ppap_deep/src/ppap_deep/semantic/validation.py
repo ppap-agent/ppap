@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .evidence import EvidenceBudget, resolve, resolve_optional
-from .models import AuditReport, PlannedRule, RulePlan
+from .models import AuditReport, CompiledRulePlan, PlannedRule, RulePlan
 from .protocol import CompileValidationReason, ResultBundle, RuleRef, SubmissionSpec
 from .trace import validate_trace
 
@@ -149,6 +149,9 @@ def validate_bundle(bundle: ResultBundle, spec: SubmissionSpec) -> set[tuple[str
                 raise ValueError("Failed clause does not belong to frozen rule")
             continue
         plan = bundle.plans[rule.rule_id]
+        CompiledRulePlan.model_validate(plan.model_dump(mode="json"))
+        if plan.appendix != snapshot.get("rule_body", {}).get("appendix", []):
+            raise ValueError("Plan confirmations differ from frozen rule inputs")
         ids = [str(item.get("id") or index) for index, item in enumerate(rule.clauses, 1)]
         if plan.source_sha256 != rule.sha256 or plan.plan_revision != rule.plan_revision or [item.id for item in plan.rules] != ids:
             raise ValueError("Rule plan version or coverage mismatch")

@@ -55,6 +55,7 @@ def native_case(file_format=".docx"):
         {
             "source_sha256": rule.sha256,
             "plan_revision": rule.plan_revision,
+            "ontology": {"entities": [{"id": "document", "grain": "one frozen input document", "attributes": {"id": "string"}, "identity": ["id"]}]},
             "rules": [
                 {
                     "id": item["id"],

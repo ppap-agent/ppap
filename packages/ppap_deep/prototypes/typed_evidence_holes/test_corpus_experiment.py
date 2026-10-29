@@ -74,7 +74,7 @@ class RecordedModel:
         self.output_tokens += 5
         if self.fail:
             raise ModelProtocolError("private provider body must not enter public error summaries")
-        if schema is RulePlan:
+        if issubclass(schema, RulePlan):
             self.compile_calls += 1
             source = json.loads((work / "rule-source.json").read_text())
             ref = next(rule for rule in self.spec.rules if rule.sha256 == source["source"]["sha256"])
@@ -82,6 +82,7 @@ class RecordedModel:
                 {
                     "source_sha256": ref.sha256,
                     "plan_revision": ref.plan_revision,
+                    "ontology": {"entities": [{"id": "records", "grain": "one independently observed reading", "attributes": {"value": "number"}, "identity": ["value"]}]},
                     "rules": [
                         {
                             "id": "1",

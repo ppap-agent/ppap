@@ -70,7 +70,7 @@ def match_rows(sources: list[dict[str, Any]], targets: list[dict[str, Any]], req
     native_pairs: list[dict[int, dict[str, Any]]] = [{} for _ in sources]
     native_witness = [False for _ in sources]
     stable_targets = _native_membership(request.target_when)
-    semantic = request.key_match == "semantic"
+    semantic = request.key_match != "exact"
     for i, (source, key) in enumerate(zip(sources, source_keys, strict=True)):
         if key is None:
             # Unknown source membership/fields can affect another source's

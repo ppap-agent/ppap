@@ -102,6 +102,7 @@ def _bundle(spec: ExecuteRequest, submission) -> ResultBundle:
     plan = {
         "source_sha256": rule.sha256,
         "plan_revision": rule.plan_revision,
+        "ontology": {"entities": [{"id": "records", "grain": "one frozen frequency record", "attributes": {"frequency": "string"}, "identity": ["frequency"]}]},
         "rules": [
             {
                 "id": clause["id"],
@@ -601,6 +602,30 @@ class SemanticCacheContractTests(unittest.TestCase):
         changed[0] = {**changed[0], "rule_to_check": "每项频次至少每日一次"}
         self.assertNotEqual(plan, self._keys(_spec(clauses=changed))[1])
         self.assertNotEqual(plan, self._keys(_spec(), revision="b" * 64)[1])
+
+    def test_plan_cache_changes_with_explicit_appendix_content_scope_and_rule_identity(self) -> None:
+        initial = _spec()
+        original_snapshot, original_plan = self._keys(initial)
+        confirmed = initial.model_copy(deep=True)
+        confirmed.files[0].rule_body["appendix"] = [
+            {"id": "confirmation", "question_id": "frequency-meaning", "kind": "interpretation", "content": "频次按每日的次数理解", "scope": {"document_ids": [TARGET], "rule_ids": ["R1"]}}
+        ]
+        snapshot, plan = self._keys(confirmed)
+        self.assertEqual(snapshot, original_snapshot)
+        self.assertNotEqual(plan, original_plan)
+        same = confirmed.model_copy(deep=True)
+        same.files[0].rule_title = "仅修改显示标题"
+        self.assertEqual(self._keys(same), (snapshot, plan))
+        changed_content = confirmed.model_copy(deep=True)
+        changed_content.files[0].rule_body["appendix"][0]["content"] = "频次按每批的次数理解"
+        changed_scope = confirmed.model_copy(deep=True)
+        changed_scope.files[0].rule_body["appendix"][0]["scope"]["document_ids"] = [REFERENCE]
+        changed_identity = confirmed.model_copy(deep=True)
+        changed_identity.files[0].rule_version_id = "another-rule-version"
+        for changed in (changed_content, changed_scope, changed_identity):
+            current_snapshot, current_plan = self._keys(changed)
+            self.assertEqual(current_snapshot, snapshot)
+            self.assertNotEqual(current_plan, plan)
 
     def test_oversized_cache_is_a_bounded_miss_before_runtime(self) -> None:
         bodies = []

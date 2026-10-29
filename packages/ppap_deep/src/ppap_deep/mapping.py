@@ -65,6 +65,7 @@ def product_result(response: ExecuteResponse, work: RoundWork) -> dict:
         "coverage": coverage,
         "note": response.note or "deep_audit",
         "usage": response.usage,
+        "usage_source": response.usage_source,
     }
 
 

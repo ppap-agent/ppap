@@ -432,13 +432,14 @@ class ContainerCacheTests(unittest.TestCase):
             def run(self, work, _prompt, schema, _deadline, *, reasoning_effort):
                 owner.assertEqual(reasoning_effort, "medium")
                 request_model(work.parent, request_input=schema.__name__)
-                if schema is RulePlan:
+                if issubclass(schema, RulePlan):
                     owner.compile_calls += 1
                     rule = self.manifest.spec.rules[0]
                     return RulePlan.model_validate(
                         {
                             "source_sha256": rule.sha256,
                             "plan_revision": rule.plan_revision,
+                            "ontology": {"entities": [{"id": "records", "grain": "每条频次记录", "attributes": {"frequency": "string"}, "identity": ["frequency"]}]},
                             "rules": [
                                 {
                                     "id": "R1",

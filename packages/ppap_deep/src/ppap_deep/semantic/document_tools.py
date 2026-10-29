@@ -151,7 +151,7 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
     preflight(path, limits)
     visited_cells = 0
     suffix = path.suffix.lower()
-    result: dict[str, Any] = {"source": {"file": path.name, "sha256": digest(path), "format": suffix}, "tables": [], "limitations": []}
+    result: dict[str, Any] = {"source": {"file": path.name, "sha256": digest(path), "format": suffix}, "reader_parameters": dict(vars(limits)), "tables": [], "limitations": []}
     if suffix == ".json":
         try:
             published = json.loads(path.read_bytes(), object_pairs_hook=_unique_json_object, parse_constant=_reject_json_constant)

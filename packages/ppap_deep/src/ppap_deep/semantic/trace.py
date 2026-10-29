@@ -13,9 +13,10 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from .bindings import AbsentCollection, Binding, BoundCollection, CollectionUse, UnresolvedCollection, scoped_records
+from .bindings import AbsentCollection, Binding, BoundCollection, CollectionUse, FileCollection, UnresolvedCollection, binding_scope, scoped_records
 from .document_tools import bind, ref
 from .evidence import EvidenceBudget, EvidenceLimitError, cell_locator, resolve_optional
+from .holes import EvidenceHole, TypedAnswer, validate_answer
 from .models import (
     All,
     AnyOf,
@@ -66,17 +67,10 @@ class AuditTrace(Artifact):
 
     bindings: list[Binding] = Field(default_factory=list, max_length=256)
     uses: list[ProgramUse] = Field(max_length=16384)
-    answers: list[Judgment] = Field(default_factory=list, max_length=16384)
+    answers: list[Judgment | TypedAnswer] = Field(default_factory=list, max_length=16384)
 
 
-class JudgmentNeed(Artifact):
-    id: str
-    audit_id: str
-    rule_id: str
-    kind: Literal["semantic_predicate", "semantic_key", "semantic_value"]
-    program_path: str
-    question: str
-    context: dict[str, Any]
+JudgmentNeed = EvidenceHole
 
 
 class AuditEvaluation(Artifact):
@@ -84,6 +78,8 @@ class AuditEvaluation(Artifact):
     observations: list[dict[str, Any]]
     needs: list[JudgmentNeed]
     evidence_gaps: list[tuple[str, str]]
+    clarifications: list[dict[str, Any]] = Field(default_factory=list)
+    readings: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _digest(value: Any) -> str:
@@ -117,7 +113,7 @@ def _diagnostic(state: str) -> Diagnostic:
 def program_has_semantics(program: DocumentProgram | RecordsProgram) -> bool:
     def semantic(value: Any) -> bool:
         if isinstance(value, dict):
-            return value.get("kind") == "judge" or value.get("key_match") == "semantic" or value.get("mode") == "semantic" or any(semantic(item) for item in value.values())
+            return value.get("kind") == "judge" or value.get("key_match") in {"semantic", "evidence"} or value.get("mode") == "semantic" or any(semantic(item) for item in value.values())
         return isinstance(value, list) and any(semantic(item) for item in value)
 
     return semantic(program.model_dump(mode="json"))
@@ -138,11 +134,14 @@ class _Evaluator:
         if not plans.keys() <= documents.keys():
             raise ValueError("Target outside frozen submission")
         self.materialized: dict[str, dict[str, Any]] = {}
+        self.read_cache: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
         for binding in trace.bindings:
             if binding.document_id not in documents:
                 raise ValueError("Binding document outside frozen submission")
-            self.materialized[binding.id] = bind(documents[binding.document_id], binding.model_dump(mode="json"), budget=budget)
+            binding_scope(binding, documents[binding.document_id], budget)
+        self.readings: list[dict[str, Any]] = []
         self.questions: dict[str, JudgmentNeed] = {}
+        self.clarifications: dict[str, dict[str, Any]] = {}
         self.reached_answers: set[str] = set()
         self.records: list[dict[str, Any]] = []
         self.evidence_gaps: set[tuple[str, str]] = set()
@@ -153,6 +152,42 @@ class _Evaluator:
         self.current_rule: PlannedRule
         self.audit_id: str
         self.identity: dict[str, Any] = {}
+
+    def required_fields(self, name: str) -> set[str]:
+        """Read fields actually referenced by this rule, plus object identity."""
+        needed: set[str] = set()
+
+        def visit(node: Expr | None, current: str | None) -> None:
+            if node is None:
+                return
+            if isinstance(node, ValueTest) and current == name:
+                needed.add(node.field)
+            elif isinstance(node, Judge) and current == name:
+                needed.update(node.fields)
+            elif isinstance(node, ColumnExists) and node.input == name:
+                needed.add(node.field)
+            elif isinstance(node, (All, AnyOf, Not)):
+                for child in node.items if isinstance(node, (All, AnyOf)) else [node.item]:
+                    visit(child, current)
+            elif isinstance(node, Related):
+                if current == name:
+                    needed.update(node.source_key.fields)
+                    needed.update(comparison.source_field for comparison in node.comparisons)
+                if node.target == name:
+                    needed.update(node.target_key.fields)
+                    needed.update(comparison.target_field for comparison in node.comparisons)
+                visit(node.target_when, node.target)
+
+        program = self.current_rule.program
+        source = program.source if isinstance(program, RecordsProgram) else None
+        visit(program.precondition, None)
+        visit(program.require, source)
+        if isinstance(program, RecordsProgram):
+            visit(program.when, source)
+        for entity in self.plans[self.audit_id].ontology.entities:
+            if entity.id == name:
+                needed.update(entity.identity)
+        return needed
 
     def collection(self, name: str) -> dict[str, Any]:
         if name in self.collection_cache:
@@ -171,10 +206,140 @@ class _Evaluator:
                 if any(binding.first_row <= last and first <= binding.last_row for first, last in previous):
                     raise ValueError("Overlapping collection scopes")
                 previous.append((binding.first_row, binding.last_row))
-                selected, removed = scoped_records(self.materialized[binding.id], binding, scope, self.documents[binding.document_id], self.budget)
+                concept = next((entity for entity in self.plans[self.audit_id].ontology.entities if entity.id == name), None)
+                if (scope.objects or scope.object_choices) and concept is None:
+                    raise ValueError("Logical objects require a rule-declared entity grain and identity")
+                if concept and not set(concept.identity) <= (binding.columns.keys() | binding.field_holes.keys()):
+                    raise ValueError("Logical identity attributes have not been bound")
+                if concept and any(not set(item.fields) <= concept.attributes.keys() for item in scope.objects):
+                    raise ValueError("Logical attributes outside the rule ontology")
+                required = self.required_fields(name)
+                available = (
+                    binding.columns.keys()
+                    | binding.field_holes.keys()
+                    | {field for item in scope.objects for field in item.fields}
+                    | {field for choice in scope.object_choices for item in choice.objects for field in item.fields}
+                )
+                selected_fields = required & available or {min(available)}
+                active_binding = binding.model_copy(
+                    update={
+                        "columns": {field: column for field, column in binding.columns.items() if field in selected_fields},
+                        "field_holes": {field: hole for field, hole in binding.field_holes.items() if field in selected_fields},
+                    }
+                )
+                materialization_key = (binding.id, tuple(sorted(selected_fields)))
+                cached = materialization_key in self.read_cache
+                if not cached:
+                    self.read_cache[materialization_key] = bind(self.documents[binding.document_id], active_binding.model_dump(mode="json"), budget=self.budget)
+                self.materialized[binding.id] = self.read_cache[materialization_key]
+                self.readings.append(
+                    {
+                        "audit_id": self.audit_id,
+                        "rule_id": self.current_rule.id,
+                        "binding_id": binding.id,
+                        "fields": sorted(selected_fields),
+                        "first_row": binding.first_row,
+                        "last_row": binding.last_row,
+                        "reused": cached,
+                    }
+                )
+                selected_scope = scope
+                unresolved_objects = False
+                if scope.object_choices:
+                    if concept and any(not set(item.fields) <= concept.attributes.keys() for choice in scope.object_choices for item in choice.objects):
+                        raise ValueError("Logical candidate attributes outside rule ontology")
+                    # Every offered candidate must itself cover real, authorized source rows.
+                    candidates = {}
+                    for choice in scope.object_choices:
+                        candidate_scope = scope.model_copy(update={"objects": choice.objects, "object_choices": []})
+                        candidates[choice.id] = candidate_scope
+                        scoped_records(self.materialized[binding.id], binding, candidate_scope, self.documents[binding.document_id], self.budget)
+                    selected, _answer = self.request_fact(
+                        "object_scope",
+                        "objects",
+                        f"collection/{name}/{binding.id}",
+                        "请选择符合规则对象粒度的来源组合",
+                        {
+                            "document_ids": [binding.document_id],
+                            "object_choices": [choice.model_dump(mode="json") for choice in scope.object_choices],
+                            "source_scope": {
+                                "document_id": binding.document_id,
+                                "table": binding.table,
+                                "first_row": binding.first_row,
+                                "last_row": binding.last_row,
+                                "header_rows": binding.header_rows,
+                            },
+                        },
+                    )
+                    if selected is None:
+                        unresolved_objects = True
+                        issues.append("逻辑对象范围尚未确定")
+                    else:
+                        selected_scope = candidates[selected]
+                active_scope = selected_scope.model_copy(
+                    update={
+                        "objects": [item.model_copy(update={"fields": {field: locators for field, locators in item.fields.items() if field in selected_fields}}) for item in selected_scope.objects]
+                    }
+                )
+                selected, removed = scoped_records(self.materialized[binding.id], active_binding, active_scope, self.documents[binding.document_id], self.budget)
+                if unresolved_objects:
+                    selected = []
+                for requirement in binding.interpretations:
+                    if requirement.field not in selected_fields:
+                        continue
+                    if requirement.field not in binding.columns and requirement.field not in binding.field_holes:
+                        raise ValueError("Interpretation concerns an undeclared field")
+                    for citation in requirement.evidence:
+                        if citation.document_id != binding.document_id or citation.locator is None:
+                            raise ValueError("Interpretation evidence outside bound document")
+                        if not resolve_optional(self.documents[citation.document_id], citation.locator, self.budget):
+                            raise ValueError("Interpretation requires readable source evidence")
+                    confirmed = any(
+                        entry.get("question_id") == requirement.id
+                        and entry.get("kind") in {"interpretation", "mapping"}
+                        and binding.document_id in entry.get("scope", {}).get("document_ids", [])
+                        and self.current_rule.id in entry.get("scope", {}).get("rule_ids", [])
+                        and any(entry.get("candidate_id") == candidate.id and entry.get("content") == candidate.explanation for candidate in requirement.candidates)
+                        for entry in self.plans[self.audit_id].appendix
+                    )
+                    recommendation = None
+                    if not confirmed:
+                        recommendation, answer = self.request_fact(
+                            "interpretation",
+                            "interpretation",
+                            f"interpretation/{name}/{binding.id}/{requirement.id}",
+                            requirement.question,
+                            {
+                                "document_ids": [binding.document_id],
+                                "candidate_ids": [candidate.id for candidate in requirement.candidates],
+                                "requires_confirmation": requirement.requires_confirmation,
+                                "allowed_evidence": [citation.model_dump(mode="json") for citation in requirement.evidence],
+                            },
+                        )
+                        if recommendation is not None and answer is not None and not requirement.requires_confirmation:
+                            confirmed = True
+                            for record in selected:
+                                record["interpretations"] = [
+                                    *record.get("interpretations", []),
+                                    {"id": requirement.id, "candidate_id": recommendation, "origin": answer.origin, "evidence": [citation.model_dump(mode="json") for citation in answer.evidence]},
+                                ]
+                    if not confirmed:
+                        for record in selected:
+                            record["states"] = {**record["states"], requirement.field: "unknown_interpretation"}
+                        self._clarification(requirement, binding)
+                        if recommendation is not None:
+                            self.clarifications[requirement.id]["recommended_candidate_id"] = recommendation
                 rows.extend(selected)
                 exclusions.extend(removed)
             issues.extend(use.unresolved_scopes)
+            state = "bound"
+        elif isinstance(use, FileCollection):
+            if len(set(use.document_ids)) != len(use.document_ids) or not set(use.document_ids) <= self.documents.keys():
+                raise ValueError("File entity outside frozen input")
+            for document_id in use.document_ids:
+                source = self.documents[document_id]["source"]
+                values = {"id": document_id, "sha256": source["sha256"], "format": source["format"]}
+                rows.append({"binding_id": "file:" + document_id, "row_id": document_id, "values": values, "states": dict.fromkeys(values, "known"), "evidence": {}, "scope_state": "known"})
             state = "bound"
         elif isinstance(use, AbsentCollection):
             if len(set(use.searched_documents)) != len(use.searched_documents) or not set(use.searched_documents) <= self.documents.keys():
@@ -194,6 +359,52 @@ class _Evaluator:
         }
         self.collection_cache[name] = result
         return result
+
+    def request_fact(
+        self, kind: Literal["object_scope", "relationship", "interpretation"], value_type: Literal["objects", "relationship", "interpretation"], path: str, question: str, context: dict[str, Any]
+    ) -> tuple[Any, TypedAnswer | None]:
+        self.budget.consume(1)
+        need_id = _digest({"execution": self.identity, "path": path, "kind": kind, "context": context})
+        need = EvidenceHole(
+            id=need_id, input_id=_digest(self.identity), audit_id=self.audit_id, rule_id=self.current_rule.id, kind=kind, program_path=path, question=question, context=context, value_type=value_type
+        )
+        if need_id not in self.questions and len(self.questions) >= 16384:
+            raise EvidenceLimitError("Local evidence hole limit exceeded")
+        self.questions[need_id] = need
+        answer = self.answers.get(need_id)
+        if answer is None:
+            return None, None
+        if not isinstance(answer, TypedAnswer):
+            raise ValueError("Typed evidence request requires a fact answer")
+        self.reached_answers.add(need_id)
+        return validate_answer(need, answer, self.documents, budget=self.budget), answer
+
+    def _clarification(self, requirement, binding: Binding) -> None:
+        identity = _digest(
+            {"plans": {key: plan.source_sha256 for key, plan in sorted(self.plans.items())}, "documents": {key: document["source"]["sha256"] for key, document in sorted(self.documents.items())}}
+        )
+        if requirement.id not in self.clarifications:
+            self.clarifications[requirement.id] = {
+                "id": requirement.id,
+                "input_id": identity,
+                "kind": "interpretation",
+                "question": requirement.question,
+                "document_ids": [binding.document_id],
+                "rule_ids": [],
+                "candidates": [candidate.model_dump(mode="json") for candidate in requirement.candidates],
+                "sources": [citation.model_dump(mode="json") for citation in requirement.evidence],
+                "scope": {"document_ids": [binding.document_id], "rule_ids": []},
+            }
+        item = self.clarifications[requirement.id]
+        if (
+            item["question"] != requirement.question
+            or item["candidates"] != [candidate.model_dump(mode="json") for candidate in requirement.candidates]
+            or item["document_ids"] != [binding.document_id]
+        ):
+            raise ValueError("Shared interpretation identity has conflicting meaning")
+        if self.current_rule.id not in item["rule_ids"]:
+            item["rule_ids"].append(self.current_rule.id)
+            item["scope"]["rule_ids"].append(self.current_rule.id)
 
     def row_context(self, row: dict[str, Any] | None, fields: list[str] | None = None) -> dict[str, Any] | None:
         if row is None:
@@ -225,7 +436,7 @@ class _Evaluator:
     def ask(self, path: str, question: str, context: dict[str, Any], kind: Literal["semantic_predicate", "semantic_key", "semantic_value"] = "semantic_predicate") -> dict[str, Any]:
         self.budget.consume(1)
         need_id = _digest({"execution": self.identity, "path": path, "kind": kind, "question": question, "context": context})
-        need = JudgmentNeed(id=need_id, audit_id=self.audit_id, rule_id=self.current_rule.id, kind=kind, program_path=path, question=question, context=context)
+        need = JudgmentNeed(id=need_id, input_id=_digest(self.identity), audit_id=self.audit_id, rule_id=self.current_rule.id, kind=kind, program_path=path, question=question, context=context)
         if need_id not in self.questions and len(self.questions) >= 16384:
             raise EvidenceLimitError("Local judgment limit exceeded")
         self.questions[need_id] = need
@@ -233,6 +444,9 @@ class _Evaluator:
         if answer is None:
             return _fact(None, question, diagnostic="unresolved_relation")
         self.reached_answers.add(need_id)
+        if isinstance(answer, TypedAnswer):
+            value = validate_answer(need, answer, self.documents, budget=self.budget)
+            return _fact(value, answer.reason, answer.evidence, "unresolved_relation")
         if not answer.reason.strip():
             raise ValueError("Local answer lacks a reason")
         return _fact({"true": True, "false": False, "unknown": None}[answer.value], answer.reason, answer.evidence, answer.diagnostic or "unresolved_relation")
@@ -260,6 +474,52 @@ class _Evaluator:
                 return _fact(None, "字段检查尚无当前记录", diagnostic="unresolved_relation")
             state = row["states"].get(node.field, "unresolved")
             if state != "known":
+                if state == "unknown_conflicting_values":
+                    return _fact(None, f"对象属性 {node.field} 有相互冲突的原生值", self.citations(row, [node.field]), "unresolved_relation")
+                if state == "unknown_interpretation":
+                    return _fact(None, f"字段 {node.field} 的解释待确认", self.citations(row, [node.field]), "rule_ambiguity")
+                entity = (
+                    next((entity for entity in self.plans[self.audit_id].ontology.entities if entity.id == self.current_rule.program.source), None)
+                    if isinstance(self.current_rule.program, RecordsProgram)
+                    else None
+                )
+                value_type = entity.attributes.get(node.field) if entity else None
+                if value_type:
+                    fact_binding = self.bindings.get(row["binding_id"])
+                    fact_context = {"source": self.row_context(row, [node.field]), "document_ids": [fact_binding.document_id] if fact_binding else list(self.documents), "field": node.field}
+                    if fact_binding:
+                        fact_context["source_scope"] = {"document_id": fact_binding.document_id, "table": fact_binding.table, "rows": row.get("source_rows", [row["row_id"]])}
+                        if node.field in row["evidence"]:
+                            observations = row.get("observations", {}).get(node.field, [])
+                            fact_context["allowed_evidence"] = [observation["evidence"]["citation"] for observation in observations if observation.get("evidence")] or [
+                                row["evidence"][node.field]["citation"]
+                            ]
+                    need_id = _digest({"execution": self.identity, "path": path, "context": fact_context, "kind": "attribute"})
+                    need = EvidenceHole(
+                        id=need_id,
+                        input_id=_digest(self.identity),
+                        audit_id=self.audit_id,
+                        rule_id=self.current_rule.id,
+                        kind="attribute",
+                        program_path=path,
+                        question=f"请提供有来源的字段 {node.field}",
+                        context=fact_context,
+                        value_type=value_type,
+                    )
+                    if need_id not in self.questions and len(self.questions) >= 16384:
+                        raise EvidenceLimitError("Local evidence hole limit exceeded")
+                    self.questions[need_id] = need
+                    answer = self.answers.get(need_id)
+                    if answer is not None:
+                        if not isinstance(answer, TypedAnswer):
+                            raise ValueError("Attribute request requires a typed fact answer")
+                        self.reached_answers.add(need_id)
+                        value = validate_answer(need, answer, self.documents, budget=self.budget)
+                        if answer.state == "provided":
+                            return {
+                                **_fact(predicate_result(node, value), answer.reason, answer.evidence),
+                                "inferred_fact": {"origin": answer.origin, "value": value, "native": self.row_context(row, [node.field])},
+                            }
                 return _fact(None, f"字段 {node.field} 未能读取或绑定", self.citations(row, [node.field]) if row else [], _diagnostic(state))
             value = predicate_result(node, row["values"][node.field])
             return _fact(
@@ -281,6 +541,8 @@ class _Evaluator:
                 return _fact(False, f"集合 {node.input} 已确认不存在")
             values = []
             evidence: list[Citation] = []
+            if isinstance(use, FileCollection):
+                return _fact(all(node.field in record["values"] for record in collection["rows"]), "文件实体属性存在性检查")
             for scope in use.scopes:
                 binding = self.bindings[scope.binding_id]
                 hole = binding.field_holes.get(node.field)
@@ -327,9 +589,9 @@ class _Evaluator:
                 "frozen_documents": {identity: document["source"]["sha256"] for identity, document in sorted(self.documents.items())},
             }
             if row is not None:
-                binding = self.bindings[row["binding_id"]]
-                adjacent = [item for item in self.materialized[binding.id]["records"] if abs(item["row_id"] - row["row_id"]) == 1]
-                context["adjacent"] = [self.row_context({**item, "binding_id": binding.id}, node.fields) for item in adjacent]
+                adjacent_binding = self.bindings.get(row["binding_id"])
+                adjacent = [item for item in self.materialized[adjacent_binding.id]["records"] if type(row["row_id"]) is int and abs(item["row_id"] - row["row_id"]) == 1] if adjacent_binding else []
+                context["adjacent"] = [self.row_context({**item, "binding_id": adjacent_binding.id}, node.fields) for item in adjacent] if adjacent_binding else []
             return self.ask(path, node.question, context)
         if isinstance(node, Related):
             return self.relation(node, row, path)
@@ -350,6 +612,23 @@ class _Evaluator:
                 fields_a = node.source_key.fields if kind in {"key", "source_key"} else [comparison.source_field]
                 fields_b = node.source_key.fields if kind == "source_key" else node.target_key.fields if kind == "key" else [comparison.target_field]
                 question = "两条记录是否表示同一对象？" if kind in {"key", "source_key"} else "两个字段值是否满足规则要求的语义一致性？"
+                if node.key_match == "evidence" and kind == "key":
+                    source_ref = {"binding_id": source["binding_id"], "object_id": str(source["row_id"])}
+                    target_ref = {"binding_id": target["binding_id"], "object_id": str(target["row_id"])}
+                    value, _answer = self.request_fact(
+                        "relationship",
+                        "relationship",
+                        path + f"/{kind}/{index}",
+                        question,
+                        {
+                            "document_ids": sorted({self.bindings[record["binding_id"]].document_id for record in (source, target) if record["binding_id"] in self.bindings}) or sorted(self.documents),
+                            "objects": [source_ref, target_ref],
+                            "relation": {"source": source_ref, "target": target_ref},
+                            "source": self.row_context(source, fields_a),
+                            "target": self.row_context(target, fields_b),
+                        },
+                    )
+                    return value.get("exists", True) if value is not None else None
                 fact = self.ask(
                     path + f"/{kind}/{index}",
                     question,
@@ -389,7 +668,10 @@ class _Evaluator:
         return self.relation_cache[path][_digest(_ref(row))]
 
     def record(self, role: str, row: dict[str, Any] | None, fact: dict[str, Any]) -> dict[str, Any]:
-        return {"audit_id": self.audit_id, "rule_id": self.current_rule.id, "role": role, "record": _ref(row), **fact}
+        logical = {}
+        if row is not None and "source_rows" in row:
+            logical = {"logical_object": {"id": row["row_id"], "source_rows": row["source_rows"], "attributes": row["observations"], "interpretations": row.get("interpretations", [])}}
+        return {"audit_id": self.audit_id, "rule_id": self.current_rule.id, "role": role, "record": _ref(row), **logical, **fact}
 
     def check(self, audit_id: str, planned: PlannedRule) -> Check:
         self.audit_id, self.current_rule = audit_id, planned
@@ -398,6 +680,8 @@ class _Evaluator:
         self.identity = {
             "audit_id": audit_id,
             "rule": planned.model_dump(mode="json"),
+            "ontology": self.plans[audit_id].ontology.model_dump(mode="json"),
+            "appendix": self.plans[audit_id].appendix,
             "rule_source_sha256": self.plans[audit_id].source_sha256,
             "plan_revision": self.plans[audit_id].plan_revision,
             "documents": {key: value["source"]["sha256"] for key, value in sorted(self.documents.items())},
@@ -447,7 +731,7 @@ class _Evaluator:
                                     _fact(
                                         None,
                                         "记录成员资格或规则适用性尚未确定",
-                                        when["evidence"] or self.citations(row, list(row["values"])),
+                                        when["evidence"] or [Citation.model_validate(source) for source in row.get("scope_evidence", [])] or self.citations(row, list(row["values"])),
                                         "unsupported_structure" if row["scope_state"] != "known" else when["diagnostic"] or "unresolved_relation",
                                     ),
                                 ),
@@ -520,7 +804,14 @@ class _Evaluator:
         checks = [self.check(audit_id, rule) for audit_id, plan in self.plans.items() for rule in plan.rules]
         if self.answers.keys() != self.reached_answers:
             raise ValueError("Unknown or stale local judgment answer")
-        return AuditEvaluation(report=AuditReport(checks=checks), observations=self.records, needs=list(self.questions.values()), evidence_gaps=sorted(self.evidence_gaps))
+        return AuditEvaluation(
+            report=AuditReport(checks=checks),
+            observations=self.records,
+            needs=list(self.questions.values()),
+            evidence_gaps=sorted(self.evidence_gaps),
+            clarifications=list(self.clarifications.values()),
+            readings=self.readings,
+        )
 
 
 def evaluate_audit(trace: AuditTrace, documents: dict[str, dict[str, Any]], plans_by_target: dict[str, RulePlan], *, budget: EvidenceBudget | None = None) -> AuditEvaluation:
