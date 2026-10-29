@@ -6,6 +6,7 @@ A binding never removes a physical row. Only a collection use assigns row roles.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, model_validator
@@ -85,6 +86,9 @@ class Binding(Artifact):
 class LogicalObject(Artifact):
     id: str = Field(min_length=1, max_length=256)
     rows: list[Annotated[int, Field(strict=True, ge=1, le=100000)]] = Field(min_length=1, max_length=4096)
+    # A claimed business grouping keeps its public explanation and member sources.
+    basis: ScopeReason | None = None
+    evidence: list[TableRowLocator] = Field(default_factory=list, max_length=4096)
     # Explicit source fields allow more than one business object in a row.
     fields: dict[str, list[TableRowLocator]] = Field(default_factory=dict, max_length=64)
 
@@ -215,6 +219,34 @@ def binding_scope(binding: Binding, document: dict[str, Any], budget: EvidenceBu
     return table
 
 
+def grouping_support(item: LogicalObject, binding: Binding, document: dict[str, Any], budget: EvidenceBudget) -> dict[str, Any]:
+    """Validate source support, without claiming to prove a natural-language grouping."""
+    covered: set[int] = set()
+    citations = []
+    readable = True
+    member_rows = set(item.rows)
+    allowed_rows = member_rows | set(binding.header_rows)
+    for locator in item.evidence:
+        if isinstance(locator, ExcelCell):
+            valid = locator.sheet == binding.table
+            row = int(re.sub("[A-Z]", "", locator.cell))
+        elif isinstance(locator, WordCell):
+            valid = binding.table == f"table:{locator.table}"
+            row = locator.row
+        else:
+            valid = binding.table == f"page-{locator.page}"
+            row = locator.row
+        if not valid or row not in allowed_rows:
+            raise ValueError("Grouping evidence outside claimed object sources")
+        observed = resolve(document, locator, budget)
+        readable = readable and observed.known
+        if row in member_rows:
+            covered.add(row)
+        citations.append({"document_id": binding.document_id, "locator": locator.model_dump(mode="json")})
+    supported = bool(item.basis) and readable and covered == member_rows
+    return {"origin": "model", "basis": item.basis, "evidence": citations, "state": "supported" if supported else "unresolved"}
+
+
 def scoped_records(materialized: dict[str, Any], binding: Binding, scope: BindingScope, document: dict[str, Any], budget: EvidenceBudget) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     table = next(table for table in document["tables"] if table["id"] == binding.table)
     excluded = row_claims(scope.excluded_rows, binding, table, document, budget)
@@ -232,13 +264,34 @@ def scoped_records(materialized: dict[str, Any], binding: Binding, scope: Bindin
         covered = {row for item in scope.objects for row in item.rows}
         if covered != indexed.keys() or any(len(set(item.rows)) != len(item.rows) for item in scope.objects):
             raise ValueError("Logical objects must cover exactly the declared physical records")
+        # Explicit fields can partition one row into several objects. A source
+        # already assigned to another object stays there; an unassigned native
+        # member observation cannot disappear through selective field locators.
+        owners: dict[tuple, set[str]] = defaultdict(set)
+        for item in scope.objects:
+            for field in set(binding.columns) | set(binding.field_holes) | set(item.fields):
+                if field in item.fields:
+                    locations = [locator.model_dump(mode="json") for locator in item.fields[field]]
+                else:
+                    locations = [indexed[row]["evidence"][field]["citation"]["locator"] for row in item.rows if field in indexed[row]["evidence"]]
+                for source_location in locations:
+                    owners[field, tuple(sorted(source_location.items()))].add(item.id)
         logical = []
         for item in scope.objects:
             budget.consume(len(item.rows))
             members = [indexed[row] for row in item.rows]
+            grouping = grouping_support(item, binding, document, budget)
             values, states, evidence, observations = {}, {}, {}, {}
             for field in sorted(set(binding.columns) | set(binding.field_holes) | set(item.fields)):
                 seen = []
+                for row in members:
+                    if field not in row["states"] and field not in row["values"]:
+                        continue
+                    source = row["evidence"].get(field)
+                    assigned = owners.get((field, tuple(sorted(source["citation"]["locator"].items()))), set()) if source else set()
+                    if assigned and item.id not in assigned:
+                        continue
+                    seen.append({"value": row["values"].get(field), "state": row["states"].get(field, "unresolved"), "evidence": source})
                 if field in item.fields:
                     for locator in item.fields[field]:
                         # Explicit object fields stay inside the frozen binding rows/table.
@@ -262,9 +315,15 @@ def scoped_records(materialized: dict[str, Any], binding: Binding, scope: Bindin
                                 "evidence": {"citation": {"document_id": binding.document_id, "locator": locator.model_dump(mode="json")}},
                             }
                         )
-                else:
-                    budget.consume(len(members))
-                    seen = [{"value": row["values"].get(field), "state": row["states"].get(field, "unresolved"), "evidence": row["evidence"].get(field)} for row in members]
+                # A repeated citation is one observation; distinct occurrences
+                # remain distinct even when their values happen to be equal.
+                unique: dict[tuple, dict[str, Any]] = {}
+                for index, observation in enumerate(seen):
+                    source = observation["evidence"]
+                    key = tuple(sorted(source["citation"]["locator"].items())) if source else (index,)
+                    unique.setdefault(key, observation)
+                seen = list(unique.values())
+                budget.consume(len(seen))
                 observations[field] = seen
                 nonblank = [value for value in seen if value["state"] == "known" and value["value"] not in (None, "")]
                 distinct = {scalar_key(value["value"]) for value in nonblank}
@@ -281,9 +340,10 @@ def scoped_records(materialized: dict[str, Any], binding: Binding, scope: Bindin
                     "states": states,
                     "evidence": evidence,
                     "source_rows": item.rows,
-                    "scope_evidence": [source for member in members for source in member.get("scope_evidence", [])],
+                    "grouping": grouping,
+                    "scope_evidence": [*grouping["evidence"], *[source for member in members for source in member.get("scope_evidence", [])]],
                     "observations": observations,
-                    "scope_state": "known" if all(row["scope_state"] == "known" for row in members) else "unresolved",
+                    "scope_state": "known" if grouping["state"] == "supported" and all(row["scope_state"] == "known" for row in members) else "unresolved",
                 }
             )
         records = logical

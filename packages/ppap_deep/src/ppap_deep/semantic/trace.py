@@ -38,6 +38,7 @@ from .models import (
     RulePlan,
     ValueTest,
 )
+from .refinement import PlanRefinement, effective_plans, identity_source_requirements, validate_identity_provenance
 from .relation_tools import match_rows
 from .values import predicate_result
 
@@ -66,6 +67,7 @@ class AuditTrace(Artifact):
     """Small execution certificate; old plans/traces are deliberately rejected."""
 
     bindings: list[Binding] = Field(default_factory=list, max_length=256)
+    plan_refinements: list[PlanRefinement] = Field(default_factory=list, max_length=64)
     uses: list[ProgramUse] = Field(max_length=16384)
     answers: list[Judgment | TypedAnswer] = Field(default_factory=list, max_length=16384)
 
@@ -120,8 +122,9 @@ def program_has_semantics(program: DocumentProgram | RecordsProgram) -> bool:
 
 
 class _Evaluator:
-    def __init__(self, trace: AuditTrace, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan], budget: EvidenceBudget):
+    def __init__(self, trace: AuditTrace, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan], budget: EvidenceBudget, base_plans: dict[str, RulePlan] | None = None):
         self.trace, self.documents, self.plans, self.budget = trace, documents, plans, budget
+        self.base_plans = base_plans if base_plans is not None else plans
         self.citation_budget = EvidenceBudget()
         self.bindings = {binding.id: binding for binding in trace.bindings}
         self.answers = {answer.need_id: answer for answer in trace.answers}
@@ -187,6 +190,7 @@ class _Evaluator:
         for entity in self.plans[self.audit_id].ontology.entities:
             if entity.id == name:
                 needed.update(entity.identity)
+        needed.update(identity_source_requirements(self.base_plans[self.audit_id], self.plans[self.audit_id], name))
         return needed
 
     def collection(self, name: str) -> dict[str, Any]:
@@ -282,6 +286,10 @@ class _Evaluator:
                     }
                 )
                 selected, removed = scoped_records(self.materialized[binding.id], active_binding, active_scope, self.documents[binding.document_id], self.budget)
+                if concept and active_scope.objects:
+                    for record in selected:
+                        if any(record["states"].get(field) == "unknown_conflicting_values" for field in concept.identity):
+                            record["scope_state"] = "unresolved"
                 if unresolved_objects:
                     selected = []
                 for requirement in binding.interpretations:
@@ -347,6 +355,7 @@ class _Evaluator:
         else:
             state = "unresolved"
             issues.append(use.reason if isinstance(use, UnresolvedCollection) else f"尚未绑定集合 {name}")
+        validate_identity_provenance(self.base_plans[self.audit_id], self.plans[self.audit_id], name, rows, self.documents, self.budget)
         result = {
             "state": state,
             "rows": rows,
@@ -615,6 +624,8 @@ class _Evaluator:
         if row is None:
             return _fact(None, "关系检查缺少源记录", diagnostic="unresolved_relation")
         if path not in self.relation_cache:
+            ontology = self.plans[self.audit_id].ontology
+            relationship = next((item for item in ontology.relationships if item.id == node.relationship_id), None)
             collection = self.collection(node.target)
             targets = []
             for target in collection["rows"]:
@@ -625,7 +636,15 @@ class _Evaluator:
             def judge(kind, source, target, index, comparison):
                 fields_a = node.source_key.fields if kind in {"key", "source_key"} else [comparison.source_field]
                 fields_b = node.source_key.fields if kind == "source_key" else node.target_key.fields if kind == "key" else [comparison.target_field]
-                question = "两条记录是否表示同一对象？" if kind in {"key", "source_key"} else "两个字段值是否满足规则要求的语义一致性？"
+                if kind == "value":
+                    question = "两个字段值是否满足规则要求的语义一致性？"
+                elif kind == "source_key":
+                    question = "两条源记录的关系匹配键是否等价？"
+                elif relationship and relationship.kind == "association":
+                    question = "两条记录是否满足所声明的关联：" + relationship.meaning
+                else:
+                    question = "两条记录是否表示同一对象？"
+                relation_context = {"relationship": relationship.model_dump(mode="json")} if relationship else {}
                 if node.key_match == "evidence" and kind == "key":
                     source_ref = {"binding_id": source["binding_id"], "object_id": str(source["row_id"])}
                     target_ref = {"binding_id": target["binding_id"], "object_id": str(target["row_id"])}
@@ -635,6 +654,7 @@ class _Evaluator:
                         path + f"/{kind}/{index}",
                         question,
                         {
+                            **relation_context,
                             "document_ids": sorted({self.bindings[record["binding_id"]].document_id for record in (source, target) if record["binding_id"] in self.bindings}) or sorted(self.documents),
                             "objects": [source_ref, target_ref],
                             "relation": {"source": source_ref, "target": target_ref},
@@ -646,14 +666,20 @@ class _Evaluator:
                 fact = self.ask(
                     path + f"/{kind}/{index}",
                     question,
-                    {"source": self.row_context(source, fields_a), "target": self.row_context(target, fields_b)},
+                    {**relation_context, "source": self.row_context(source, fields_a), "target": self.row_context(target, fields_b)},
                     "semantic_value" if kind == "value" else "semantic_key",
                 )
                 return fact["value"]
 
-            facts = match_rows(self.population, targets, node, self.budget, judge)
+            identities = None
+            if relationship and relationship.kind == "same_instance":
+                concepts = {entity.id: entity for entity in ontology.entities}
+                identities = (concepts[relationship.source].identity, concepts[relationship.target].identity)
+            facts = match_rows(self.population, targets, node, self.budget, judge, identities=identities)
             by_ref = {}
             for fact in facts["records"]:
+                if relationship:
+                    fact.update(relationship_id=relationship.id, relationship_kind=relationship.kind)
                 value = True if fact["state"] == "matched" else False if fact["state"] in {"missing", "conflict"} else None
                 incomplete = collection["state"] == "unresolved" or bool(collection["issues"])
                 scope_unknown = value is True and (incomplete or bool(collection["unresolved_records"]))
@@ -684,7 +710,15 @@ class _Evaluator:
     def record(self, role: str, row: dict[str, Any] | None, fact: dict[str, Any]) -> dict[str, Any]:
         logical = {}
         if row is not None and "source_rows" in row:
-            logical = {"logical_object": {"id": row["row_id"], "source_rows": row["source_rows"], "attributes": row["observations"], "interpretations": row.get("interpretations", [])}}
+            logical = {
+                "logical_object": {
+                    "id": row["row_id"],
+                    "source_rows": row["source_rows"],
+                    "attributes": row["observations"],
+                    "interpretations": row.get("interpretations", []),
+                    "grouping": row.get("grouping"),
+                }
+            }
         return {"audit_id": self.audit_id, "rule_id": self.current_rule.id, "role": role, "record": _ref(row), **logical, **fact}
 
     def check(self, audit_id: str, planned: PlannedRule) -> Check:
@@ -829,7 +863,8 @@ class _Evaluator:
 
 
 def evaluate_audit(trace: AuditTrace, documents: dict[str, dict[str, Any]], plans_by_target: dict[str, RulePlan], *, budget: EvidenceBudget | None = None) -> AuditEvaluation:
-    return _Evaluator(trace, documents, plans_by_target, budget or EvidenceBudget()).run()
+    effective = effective_plans(trace.plan_refinements, documents, plans_by_target)
+    return _Evaluator(trace, documents, effective, budget or EvidenceBudget(), plans_by_target).run()
 
 
 def derive_report(trace: AuditTrace, documents: dict[str, dict[str, Any]], plans_by_target: dict[str, RulePlan], budget: EvidenceBudget | None = None) -> AuditReport:

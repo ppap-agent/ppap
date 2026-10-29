@@ -179,7 +179,7 @@ def test_ontology_rejects_unknown_identity_attributes_and_relationship_endpoints
     with pytest.raises(ValueError, match="Identity"):
         Ontology.model_validate({"entities": [{"id": "process", "grain": "process", "attributes": {"code": "string"}, "identity": ["missing"]}]})
     with pytest.raises(ValueError, match="endpoint"):
-        Ontology.model_validate({"relationships": [{"id": "edge", "source": "missing", "target": "missing", "meaning": "directed"}]})
+        Ontology.model_validate({"relationships": [{"id": "edge", "kind": "association", "source": "missing", "target": "missing", "meaning": "directed"}]})
 
 
 @pytest.mark.parametrize("file_format", ["xlsx", "docx", "pdf"])
@@ -246,8 +246,20 @@ def test_multiple_objects_in_one_native_row_are_counted_by_declared_grain(tmp_pa
     scope = {
         "binding_id": "body",
         "objects": [
-            {"id": "first", "rows": [2], "fields": {"code": [locations[0]], "value": [locations[1]]}},
-            {"id": "second", "rows": [2], "fields": {"code": [locations[2]], "value": [locations[3]]}},
+            {
+                "id": "first",
+                "rows": [2],
+                "basis": "The first pair of source fields describes the first code object",
+                "evidence": [locations[0], locations[1]],
+                "fields": {"code": [locations[0]], "value": [locations[1]]},
+            },
+            {
+                "id": "second",
+                "rows": [2],
+                "basis": "The second pair of source fields describes a distinct code object",
+                "evidence": [locations[2], locations[3]],
+                "fields": {"code": [locations[2]], "value": [locations[3]]},
+            },
         ],
     }
     trace = AuditTrace.model_validate(
@@ -307,7 +319,14 @@ def test_object_scope_typed_answer_rebuilds_business_objects_in_the_same_evaluat
             objects = scope.pop("objects")
             scope["object_choices"] = [
                 {"id": "by-code", "label": "一工序可跨两行", "objects": objects},
-                {"id": "physical-rows", "label": "每物理行一个对象", "objects": [{"id": str(row), "rows": [row]} for row in range(2, 5)]},
+                {
+                    "id": "physical-rows",
+                    "label": "每物理行一个对象",
+                    "objects": [
+                        {"id": str(row), "rows": [row], "basis": "This alternative treats each physical row as a record", "evidence": [{"kind": "xlsx_cell", "sheet": "CP", "cell": f"A{row}"}]}
+                        for row in range(2, 5)
+                    ],
+                },
             ]
     trace = AuditTrace.model_validate(raw)
     initial = evaluate_audit(trace, bundle.documents, {CP: bundle.plans[RULE]})
@@ -420,6 +439,9 @@ def test_cross_region_layout_changes_preserve_business_grain_values_and_conclusi
             sheet.append(["010", first_class])
             sheet.append(["020", "SC"])
             objects = [{"id": "010", "rows": [2]}, {"id": "020", "rows": [3]}]
+        for item in objects:
+            item["basis"] = "The code and classification regions describe the same ordered process objects" if split else "Each labeled row describes a distinct process"
+            item["evidence"] = [{"kind": "xlsx_cell", "sheet": "Processes", "cell": f"A{row}"} for row in item["rows"]]
         path = tmp_path / f"regions-{split}-{first_class}.xlsx"
         workbook.save(path)
         workbook.close()
@@ -474,7 +496,7 @@ def test_cross_region_layout_changes_preserve_business_grain_values_and_conclusi
         observed.append((result.report.checks[0].status, result.report.checks[0].total))
         if split:
             assert result.observations[0]["logical_object"]["source_rows"] == [2, 4]
-            assert result.observations[0]["logical_object"]["attributes"]["classification"][0]["evidence"]["citation"]["locator"]["cell"] == "B4"
+            assert [entry["evidence"]["citation"]["locator"]["cell"] for entry in result.observations[0]["logical_object"]["attributes"]["classification"] if entry["value"]] == ["B4"]
     assert observed == [("NG", 2), ("NG", 2), ("PASS", 2)]
 
 

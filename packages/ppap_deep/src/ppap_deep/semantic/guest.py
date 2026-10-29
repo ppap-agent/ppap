@@ -96,6 +96,14 @@ AUDIT_PROMPT = (
     "A process heading may be needed for process coverage while not being a characteristic record. "
     "Use field_holes to distinguish a known absent field from an unresolved mapping; do not manufacture blank cells. "
     "Late binding selects original coordinates only. It cannot change the cached keys, filters, quantifiers or comparison policy. "
+    "When readable document evidence clarifies an underspecified object grain or additional identity components already supported by the rule, "
+    "use AuditTrace.plan_refinements for that target rather than rewriting plans.json. Each refinement contains audit_id, "
+    "base_plan_id (computed by ppap_deep.semantic.refinement.plan_identity), the complete proposed plan, a short reason, "
+    "the affected rule source locators and current document citations. The host only permits grain clarification, identity strengthening "
+    "and corresponding same_instance key-field expansion; attributes being compared cannot become new identity components. "
+    "All other rule obligations and matching policies must remain identical. "
+    "This is an execution-local interpretation, never a user confirmation or reusable rule cache entry. "
+    "If the rule still admits competing meanings, keep the interpretation Hole instead of selecting a favorable refinement. "
     "Write a candidate execution.json, then run python -m ppap_deep.semantic.audit_tools evaluate execution.json --out evaluation.json. "
     "Read the returned counts and question IDs; use audit_tools view evaluation.json to page through necessary local questions. "
     "For boolean needs use true/false/unknown, or a typed boolean fact. For typed attribute, object_scope, relationship or "
@@ -105,7 +113,7 @@ AUDIT_PROMPT = (
     "Rerun the same evaluator after changes. Missing answers or scopes remain UNABLE; they are not protocol errors. "
     "Do not invent answers, relation aliases, field conversions or a missing-file NG to eliminate an unknown. "
     "Preserve independent known violations alongside actual unknowns. Optional citation gaps do not change business results or require another call. "
-    "A passed prerequisite does not prove body coverage. A source-only plan cannot be rewritten from observed supplier data. " + RULE_BRANCH_PROMPT
+    "A passed prerequisite does not prove body coverage. Supplier data cannot relax a source-only rule obligation. " + RULE_BRANCH_PROMPT
 )
 
 
