@@ -254,7 +254,7 @@ def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, A
     else:
         relation = relations[0]
         declared = next((item for item in plan.ontology.relationships if item.id == relation.relationship_id), None)
-        if declared is None or declared.kind != case.relation_kind:
+        if declared is None or declared.kind not in case.relation_kinds:
             concept_errors.append("relation meaning differs")
         if program.quantifier != "forall" or relation.match != case.match or relation.key_match != "exact":
             concept_errors.append("quantifier or match policy differs")
@@ -304,10 +304,14 @@ def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, A
             for name, table, use, key in zip((program.source, relation.target), role_tables, (source_use, target_use), (relation.source_key, relation.target_key), strict=True):
                 meanings = {column: field for field, column in table.columns}
                 columns = _columns(bundle.trace, use, key.fields)
-                if table.identity_columns is not None and not set(table.identity_columns) <= set(columns or ()):
+                if table.identity_columns is not None:
                     pending_keys = pending_by_entity.get(name, set()) & set(key.fields)
-                    if not pending_keys or not _identity_columns_match(columns, table.identity_columns, len(pending_keys)):
-                        concept_errors.append("explicit identifier key omits required source columns")
+                    # Accepting an association must not relax the identifier
+                    # contract that same_instance enforces through its schema.
+                    if len(columns or ()) != len(table.identity_columns) or not _identity_columns_match(columns, table.identity_columns, len(pending_keys)):
+                        concept_errors.append("explicit identifier key differs from required source columns")
+                    if key.separator is not None or key.template is not None:
+                        concept_errors.append("undeclared identifier projection")
                 if table.identity_cells and not set(table.identity_cells) <= set(_locations(bundle.trace, use, key.fields) or ()):
                     concept_errors.append("explicit identifier key omits required source cells")
                 components.append(

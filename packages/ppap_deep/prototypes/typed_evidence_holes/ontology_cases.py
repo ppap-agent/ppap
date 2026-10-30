@@ -33,7 +33,7 @@ class Case:
     rule: str
     tables: tuple[Table, ...]
     status: str
-    relation_kind: str = "same_instance"
+    relation_kinds: tuple[str, ...] = ("same_instance",)
     match: str = "one_to_one"
     comparison: bool = False
     comparison_nonempty: bool = False
@@ -80,6 +80,8 @@ def cases() -> tuple[Case, ...]:
                 Table(CONTROL, "Control", (("工序编号", "分类"), ("010", "CC"), ("030", "CC")), ("A",), ((2,), (3,)), code),
             ),
             "NG",
+            # Exact one-to-one matching does not assert one ontology kind.
+            relation_kinds=("same_instance", "association"),
         ),
         Case(
             "multirow-preserves-conflict",
@@ -99,6 +101,7 @@ def cases() -> tuple[Case, ...]:
                 Table(CONTROL, "Control", (("工序编号", "分类"), ("010", "CC"), ("010", "CC"), ("020", "SC")), ("A",), ((2,), (3,), (4,)), code),
             ),
             "NG",
+            relation_kinds=("same_instance", "association"),
         ),
         Case(
             "attachment-foreign-key",
@@ -108,7 +111,7 @@ def cases() -> tuple[Case, ...]:
                 Table("Parts.xlsx", "Parts", (("零件编号", "附件引用"), ("P-1", "@Attachment.xlsx")), ("A",), ((2,),), (("part", "A"), ("attachment", "B"))),
             ),
             "PASS",
-            relation_kind="association",
+            relation_kinds=("association",),
             match="any",
         ),
         Case(
@@ -120,7 +123,7 @@ def cases() -> tuple[Case, ...]:
                 Table("Labels.xlsx", "Labels", (("标签",), ("010 / Drill",), ("020 / Cut",)), ("A",), ((2,), (3,)), (("label", "A"),)),
             ),
             "PASS",
-            relation_kind="association",
+            relation_kinds=("association",),
             match="any",
         ),
         Case(
@@ -132,7 +135,7 @@ def cases() -> tuple[Case, ...]:
                 Table("Labels.xlsx", "Labels", (("标签",), ("010Drill",), ("020 / Cut",)), ("A",), ((2,), (3,)), (("label", "A"),)),
             ),
             "NG",
-            relation_kind="association",
+            relation_kinds=("association",),
             match="any",
         ),
         Case(
