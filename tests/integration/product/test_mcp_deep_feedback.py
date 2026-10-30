@@ -648,3 +648,48 @@ def test_first_accepted_response_is_frozen_before_claim_and_cannot_be_overwritte
     assert "error" not in result, result
     saved = env["store"].read_deep_feedback(env["principal"], env["round_id"])
     assert len(saved["operations"]) == 1 and saved["appendix"][0]["content"] == change["content"]
+
+
+def test_task_persists_explicit_application_rejection_after_another_operation_wins(deep_feedback_env, monkeypatch):
+    env = deep_feedback_env
+    token = access(env)
+    caps = {"elicitation": {"form": {}}, "extensions": {TASKS: {}}}
+    view = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    change = change_payload(view, env["uploaded"])
+    args = {"name": "apply_rule_change", "arguments": {"round_id": env["round_id"], "change": change}}
+    pending = rpc(env, token, "tools/call", args, capabilities=caps)["result"]
+    task_id = pending["taskId"]
+    key = next(iter(pending["inputRequests"]))
+    update = {"taskId": task_id, "inputResponses": {key: {"action": "accept", "content": {"content": change["content"]}}}}
+    transport = env["app"].state.mcp_deep_adapter.transport
+    original_claim = transport.claim_operation
+    winner = {**change, "operation_id": str(uuid4()), "intent": "save_only"}
+
+    def let_web_win_after_response_is_frozen(*arguments, **kwargs):
+        claimed = original_claim(*arguments, **kwargs)
+        with env["store"]._conn() as conn:
+            recorded = conn.execute("SELECT result FROM product.mcp_operations WHERE id=%s", (task_id,)).fetchone()[0]
+            assert recorded["input_responses"] == update["inputResponses"] and "receipt" not in recorded
+        # The competing request executes the real shared application over HTTP.
+        saved = env["wire_client"].post(f"/audit-rounds/{env['round_id']}/rule-changes", json=winner)
+        assert saved.status_code == 200, saved.text
+        return claimed
+
+    with monkeypatch.context() as conflict:
+        conflict.setattr(transport, "claim_operation", let_web_win_after_response_is_frozen)
+        rejected = rpc(env, token, "tasks/update", update, capabilities=caps)
+    assert rejected["error"]["message"] == "feedback_revision_conflict"
+    assert env["store"].read_rule_change(env["principal"], env["round_id"], change["operation_id"]) is None
+    env["restart_wire"]()
+    failed = rpc(env, token, "tasks/get", {"taskId": task_id}, capabilities=caps)["result"]
+    assert failed["status"] == "failed" and failed["error"] == {"code": -32602, "message": "feedback_revision_conflict"}
+    assert "result" not in failed and "inputRequests" not in failed
+    replay = rpc(env, token, "tasks/update", update, capabilities=caps)
+    assert replay["error"]["message"] == "feedback_revision_conflict"
+    assert rpc(env, token, "tools/call", args, capabilities=caps)["result"]["status"] == "failed"
+    after = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    assert len(after["operations"]) == 1 and after["operations"][0]["operation_id"] == winner["operation_id"]
+    assert len(after["results"]) == 1
+    with env["store"]._conn() as conn:
+        assert conn.execute("SELECT state FROM product.mcp_operations WHERE id=%s", (task_id,)).fetchone()[0] == "failed"
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE kind='audit'").fetchone()[0] == 1
