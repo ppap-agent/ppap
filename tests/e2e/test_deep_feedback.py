@@ -791,3 +791,98 @@ def test_same_rule_id_on_two_targets_keeps_the_question_evidence_in_its_document
         finally:
             context.close()
             browser.close()
+
+
+def test_real_two_target_results_name_each_file_and_keep_cp2_confirmation_scoped(deep_feedback_env, tmp_path):
+    """Real API/PG/Worker/core results for two targets sharing one rule version."""
+    env, client = deep_feedback_env, deep_feedback_env["client"]
+    cp1 = env["uploaded"]["CP"]
+    raw = env["documents"]["CP"]["bytes"]
+    created = client.post("/files", json={"original_filename": "CP2.xlsx", "content_type": "application/octet-stream", "byte_size": len(raw)})
+    assert created.status_code == 201, created.text
+    cp2 = created.json()
+    path = f"/files/{cp2['file_id']}/versions/{cp2['id']}"
+    assert client.put(path + "/blob", content=raw).status_code == 200
+    assert client.post(path + "/finalize").status_code == 200
+    draft = client.post("/drafts").json()["id"]
+    target_ids = [cp1["id"], cp2["id"]]
+    items = [{"file_version_id": identity, "role": "target", "rule_version_id": env["rule"]["id"]} for identity in target_ids]
+    items.append({"file_version_id": env["uploaded"]["PFD"]["id"], "role": "reference"})
+    assert client.put("/drafts/" + draft, json={"items": items, "analysis_mode": "deep"}).status_code == 200
+    accepted = client.post("/drafts/" + draft + "/accept", json={"idempotency_key": str(uuid4())})
+    assert accepted.status_code == 201, accepted.text
+    round_id = accepted.json()["id"]
+    env["run_jobs"]()
+    initial = client.get("/rounds/" + round_id).json()
+    unresolved = {"R1": "UNABLE", "R2": "UNABLE", "R3": "PASS"}
+    for identity in target_ids:
+        assert {row["locator"]["rule_item_id"]: row["status"] for row in initial["findings"] if row["locator"]["file_version_id"] == identity} == unresolved
+    view = client.get(f"/audit-rounds/{round_id}/deep-feedback").json()
+    assert len(view["clarifications"]) == 2
+    question_index = next(at for at, question in enumerate(view["clarifications"]) if question["document_ids"] == [cp2["id"]])
+    question = view["clarifications"][question_index]
+    with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        local_browser_boundary(context, web)
+        context.add_cookies([{"name": SESSION_COOKIE, "value": env["session_cookie"], "url": web}])
+        page = context.new_page()
+        submitted = []
+
+        def mark(route):
+            payload = {**route.request.post_data_json, "confirmation_source": "synthetic"}
+            submitted.append(payload)
+            route.continue_(post_data=json.dumps(payload, ensure_ascii=False))
+
+        page.route("**/audit-rounds/*/rule-changes", mark)
+        page.goto(f"{web}/audit?round={round_id}")
+        panel = page.get_by_role("region", name="解释与重新分析", exact=True)
+        panel.get_by_role("navigation", name="待确认解释", exact=True).get_by_role("button").nth(question_index).click()
+        comparison = panel.get_by_role("region", name="待确认问题的原件对照", exact=True)
+        expect(comparison.get_by_text("CP2.xlsx", exact=True).first).to_be_visible()
+        expect(comparison.get_by_role("table", name="CP 单元格内容", exact=True)).to_be_visible(timeout=35_000)
+        expect(comparison.get_by_role("table", name="PFD 单元格内容", exact=True)).to_be_visible(timeout=35_000)
+        panel.get_by_role("radio", name="按工序编号理解").click()
+        expect(panel.get_by_role("checkbox", name="CP2.xlsx", exact=True)).to_be_checked()
+        with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/rule-changes")) as saved:
+            panel.get_by_role("button", name="确认解释并继续", exact=True).click()
+        assert saved.value.status == 200, saved.value.text()
+        receipt = saved.value.json()
+        assert len(submitted) == 1
+        assert submitted[0]["question_id"] == question["id"]
+        assert submitted[0]["scope"] == question["scope"]
+        assert submitted[0]["scope"]["document_ids"] == [cp2["id"]]
+        env["run_jobs"]()
+        panel.get_by_role("button", name="读取新分析结果", exact=True).click()
+        current = panel.get_by_role("region", name="当前分析判断", exact=True)
+        expect(current.get_by_text("新输入分析已结束。", exact=True)).to_be_visible(timeout=15_000)
+        expect(current.get_by_role("article")).to_have_count(6)
+        expected = {cp1["id"]: unresolved, cp2["id"]: {"R1": "PASS", "R2": "NG", "R3": "PASS"}}
+        labels = {"PASS": "满足", "NG": "不符合", "UNABLE": "无法判断"}
+        filenames = {cp1["id"]: "CP.xlsx", cp2["id"]: "CP2.xlsx"}
+        for identity, statuses in expected.items():
+            for rule_id, status in statuses.items():
+                name = f"{filenames[identity]} · {rule_id}"
+                finding = current.get_by_role("article", name=name, exact=True)
+                expect(finding.get_by_text(name, exact=True)).to_be_visible()
+                expect(finding.get_by_text(labels[status], exact=True)).to_be_visible()
+                change = f"此前：无法判断 → 当前：{labels[status]}" if identity == cp2["id"] and rule_id != "R3" else f"结论未变：{labels[status]}"
+                expect(finding.get_by_text(change, exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="此前输入的审核结果", exact=True)).to_be_visible()
+        actual = client.get("/rounds/" + receipt["analysis_round_id"]).json()
+        assert {item["rule"]["id"] for item in actual["inputs"] if item["role"] == "target"} == {env["rule"]["id"]}
+        for identity, statuses in expected.items():
+            assert {row["locator"]["rule_item_id"]: row["status"] for row in actual["findings"] if row["locator"]["file_version_id"] == identity} == statuses
+        assert client.get("/rounds/" + round_id).json()["findings"] == initial["findings"]
+        stored = client.get(f"/audit-rounds/{round_id}/deep-feedback").json()
+        assert len(stored["operations"]) == len(stored["appendix"]) == 1 and len(stored["results"]) == 2
+        assert stored["appendix"][0]["scope"]["document_ids"] == [cp2["id"]]
+        with env["store"]._conn() as conn:
+            assert conn.execute("SELECT count(*) FROM engine.jobs WHERE audit_round_id=%s AND kind='audit'", (receipt["analysis_round_id"],)).fetchone()[0] == 1
+        page.screenshot(path=str(tmp_path / "multi-target-results-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        current.screenshot(path=str(tmp_path / "multi-target-results-mobile.png"))
+        assert len(submitted) == 1
+        context.close()
+        browser.close()
