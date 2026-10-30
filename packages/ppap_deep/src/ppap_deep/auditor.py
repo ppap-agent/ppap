@@ -53,6 +53,9 @@ def semantic_inputs(spec: ExecuteRequest, engine_revision: str) -> tuple[Submiss
     documents = []
     rules: dict[str, RuleRef] = {}
     packets: dict[str, bytes] = {}
+    published_bases: dict[str, bytes] = {}
+    variants: dict[str, dict[str, tuple[bytes, list[dict]]]] = {}
+    target_variants: dict[str, tuple[str, str]] = {}
     targets = {}
     for item in spec.files:
         extension = Path(item.filename).suffix.lower()
@@ -75,14 +78,28 @@ def semantic_inputs(spec: ExecuteRequest, engine_revision: str) -> tuple[Submiss
         packet = {"kind": "published_rule", "rule_version_id": item.rule_version_id, "rule_body": body, "clauses": clauses}
         if item.rule_source_file_version_id:
             packet["origin"] = {"file_version_id": item.rule_source_file_version_id}
-        raw = encoded(packet)
-        if item.rule_version_id in packets and packets[item.rule_version_id] != raw:
+        # A confirmed appendix can differ by target while the published rule
+        # remains the same. It cannot silently replace that version's body,
+        # metadata or original-file provenance.
+        base = encoded({**packet, "rule_body": {key: value for key, value in body.items() if key != "appendix"}})
+        if item.rule_version_id in published_bases and published_bases[item.rule_version_id] != base:
             raise DeepError("deep_integrity_mismatch")
+        published_bases[item.rule_version_id] = base
+        raw = encoded(packet)
         digest = hashlib.sha256(raw).hexdigest()
-        revision = hashlib.sha256(encoded([digest, POLICY_REVISION, engine_revision])).hexdigest()
-        rules[item.rule_version_id] = RuleRef(rule_id=item.rule_version_id, rule_version_id=item.rule_version_id, sha256=digest, format=".json", plan_revision=revision, clauses=clauses)
-        packets[item.rule_version_id] = raw
-        targets[item.file_version_id] = item.rule_version_id
+        variants.setdefault(item.rule_version_id, {})[digest] = raw, clauses
+        target_variants[item.file_version_id] = item.rule_version_id, digest
+    variant_ids = {}
+    for version_id, effective in variants.items():
+        for digest, (raw, clauses) in effective.items():
+            rule_id = version_id if len(effective) == 1 else "effective-" + hashlib.sha256(encoded([version_id, digest])).hexdigest()
+            if rule_id in rules or rule_id != version_id and rule_id in published_bases:
+                raise DeepError("deep_integrity_mismatch")
+            revision = hashlib.sha256(encoded([digest, POLICY_REVISION, engine_revision])).hexdigest()
+            rules[rule_id] = RuleRef(rule_id=rule_id, rule_version_id=version_id, sha256=digest, format=".json", plan_revision=revision, clauses=clauses)
+            packets[rule_id] = raw
+            variant_ids[version_id, digest] = rule_id
+    targets = {audit_id: variant_ids[identity] for audit_id, identity in target_variants.items()}
     try:
         submission = SubmissionSpec(
             execution_id=UUID(int=0),
@@ -124,7 +141,7 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
     evidence_budget = EvidenceBudget()
     for target, clause in ((target, clause) for target in spec.files if target.role == "target" for clause in (target.rule_body or {})["rules"]):
         clause_id = clause["id"]
-        failed = target.rule_version_id in bundle.failed_rules
+        failed = submission.targets[target.file_version_id] in bundle.failed_rules
         check = None if failed else checks[target.file_version_id, clause_id]
         status: Literal["PASS", "NG", "ERR", "UNABLE", "NA"] = check.status if check else "ERR"
         reason = check.reason if check else "审核计划生成失败，本项未执行。原文件与已确认规则未变。"
@@ -205,9 +222,9 @@ def product_response(spec: ExecuteRequest, bundle: ResultBundle, submission: Sub
         },
         coverage=DeepCoverage(
             clarifications=evaluation.clarifications,
-            checked=[item.filename for item in spec.files if item.role == "target" and item.rule_version_id not in bundle.failed_rules],
+            checked=[item.filename for item in spec.files if item.role == "target" and submission.targets[item.file_version_id] not in bundle.failed_rules],
             unchecked=[f"{item.filename}（参考资料，不单独作完整审核）" for item in spec.files if item.role == "reference"]
-            + [f"{item.filename}（审核计划生成失败，未执行）" for item in spec.files if item.role == "target" and item.rule_version_id in bundle.failed_rules],
+            + [f"{item.filename}（审核计划生成失败，未执行）" for item in spec.files if item.role == "target" and submission.targets[item.file_version_id] in bundle.failed_rules],
             locator_gap=bool(evidence_gaps) or any(not (row.locator or {})["semantic"]["sources"] for row in findings),
             rule_items=rule_items,
             verification=None

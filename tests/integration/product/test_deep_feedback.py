@@ -122,3 +122,52 @@ def test_reconstructed_api_and_worker_finish_the_same_saved_operation(deep_feedb
     loaded = client.get(path + "/deep-feedback").json()
     assert len(loaded["operations"]) == 1 and len(loaded["results"]) == 2
     assert client.post(path + "/rule-changes", json=payload).json() == receipt
+
+
+def test_shared_published_rule_keeps_target_specific_appendices_through_worker(deep_feedback_env):
+    """Two CP files share one version; confirming CP2 leaves CP1 unresolved."""
+    env = deep_feedback_env
+    client = env["client"]
+    raw = env["documents"]["CP"]["bytes"]
+    created = client.post("/files", json={"original_filename": "CP2.xlsx", "content_type": "application/octet-stream", "byte_size": len(raw)})
+    assert created.status_code == 201, created.text
+    cp2 = created.json()
+    path = f"/files/{cp2['file_id']}/versions/{cp2['id']}"
+    assert client.put(path + "/blob", content=raw).status_code == 200
+    assert client.post(path + "/finalize").status_code == 200
+    draft = client.post("/drafts").json()["id"]
+    target_ids = [env["uploaded"]["CP"]["id"], cp2["id"]]
+    items = [{"file_version_id": identity, "role": "target", "rule_version_id": env["rule"]["id"]} for identity in target_ids]
+    items.append({"file_version_id": env["uploaded"]["PFD"]["id"], "role": "reference"})
+    assert client.put("/drafts/" + draft, json={"items": items, "analysis_mode": "deep"}).status_code == 200
+    accepted = client.post("/drafts/" + draft + "/accept", json={"idempotency_key": str(uuid4())})
+    assert accepted.status_code == 201, accepted.text
+    root = accepted.json()["id"]
+    env["run_jobs"]()
+
+    def statuses(round_value):
+        return {identity: {row["locator"]["rule_item_id"]: row["status"] for row in round_value["findings"] if row["locator"]["file_version_id"] == identity} for identity in target_ids}
+
+    initial = client.get("/rounds/" + root).json()
+    unresolved = {"R1": "UNABLE", "R2": "UNABLE", "R3": "PASS"}
+    assert statuses(initial) == dict.fromkeys(target_ids, unresolved)
+    view = client.get(f"/audit-rounds/{root}/deep-feedback").json()
+    question = next(item for item in view["clarifications"] if item["document_ids"] == [cp2["id"]])
+    payload = {
+        "operation_id": str(uuid4()), "expected_revision": view["revision"], "question_id": question["id"],
+        "expected_question_fingerprint": question["fingerprint"], "candidate_id": question["candidates"][0]["id"],
+        "kind": "interpretation", "content": question["candidates"][0]["explanation"], "scope": question["scope"],
+        "intent": "save_and_analyze", "confirmation_source": "synthetic",
+    }
+    saved = client.post(f"/audit-rounds/{root}/rule-changes", json=payload)
+    assert saved.status_code == 200, saved.text
+    env["run_jobs"]()
+    current = client.get("/rounds/" + saved.json()["analysis_round_id"]).json()
+    assert current["execution"] == "completed"
+    assert statuses(current) == {target_ids[0]: unresolved, cp2["id"]: {"R1": "PASS", "R2": "NG", "R3": "PASS"}}
+    targets = [item for item in current["inputs"] if item["role"] == "target"]
+    assert {item["rule"]["id"] for item in targets} == {env["rule"]["id"]}
+    bodies = {item["file_version_id"]: item["rule"]["body"] for item in targets}
+    assert bodies[target_ids[0]]["appendix"] == []
+    assert bodies[cp2["id"]]["appendix"][0]["scope"]["document_ids"] == [cp2["id"]]
+    assert statuses(client.get("/rounds/" + root).json()) == statuses(initial)

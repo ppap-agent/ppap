@@ -102,7 +102,7 @@ class ModelResponses:
                 expected.update({name: json.loads((work / name).read_text()) for name in ("invalid-plan.json", "validation-feedback.json")})
             assert supplied == expected
             version = source["rule_version_id"]
-            rule = self.rule_refs[version]
+            rule = next(rule for rule in self.rule_refs.values() if rule.rule_version_id == version and rule.sha256 == source["source"]["sha256"])
             self.plan_attempts[version] += 1
             if self.global_fault is not None:
                 raise self.global_fault
@@ -127,7 +127,7 @@ class ModelResponses:
                 for clause in clauses
             ]
             digest = rule.sha256
-            if version in self.failed_plan_versions:
+            if version in self.failed_plan_versions or rule.rule_id in self.failed_plan_versions:
                 if self.invalid_source_locator:
                     planned[0]["source_locator"]["clause_id"] = "not-the-confirmed-clause"
                 elif self.plan_attempts[version] == 1:
@@ -1578,3 +1578,26 @@ def test_host_native_recheck_keeps_original_deadline_and_cancellation(stop):
             SemanticRuntime(RecoveryGuest(case.model), case.objects, timeout=60).execute(case.spec, case.blobs, context=context)
     assert len(parsed) == 1  # The second immutable source must not be parsed.
     assert not any("/snapshots/" in key or key.endswith("/bundle.json") for key in case.objects.values)
+
+
+def test_failed_scoped_variant_only_marks_its_own_target_as_compile_error():
+    from ppap_deep.auditor import semantic_inputs
+
+    case = frozen_case(False)
+    case.spec.files[1].rule_version_id = BAD_RULE
+    case.spec.files[1].rule_body = case.spec.files[0].model_copy(deep=True).rule_body
+    case.spec.files[1].rule_body["appendix"] = [{
+        "id": "second-target-note", "kind": "interpretation", "content": "Test input: this explanation applies only to the second target.",
+        "scope": {"document_ids": [GOOD_TARGET], "rule_ids": ["B1"], "rule_targets": [{"document_id": GOOD_TARGET, "rule_id": "B1"}]},
+    }]
+    submission, _ = semantic_inputs(case.spec, ENGINE)
+    failed_id = submission.targets[GOOD_TARGET]
+    assert failed_id != submission.targets[BAD_TARGET]
+    case.model.failed_plan_versions = {failed_id}
+    response = SemanticRuntime(case.guest, case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    assert [finding.status for finding in response.findings] == ["PASS", "PASS", "ERR", "ERR"]
+    assert response.coverage.checked == ["first.xlsx"]
+    assert response.coverage.unchecked == ["independent.xlsx（审核计划生成失败，未执行）"]
+    assert [row["coverage"] for row in response.coverage.rule_items] == ["executed", "executed", "execution_error", "execution_error"]
+    assert all(row["rule_version_id"] == BAD_RULE for row in response.coverage.rule_items)
+    assert len(case.guest.compilations) == 2 and case.model.audit_targets == [{BAD_TARGET: submission.targets[BAD_TARGET]}]
