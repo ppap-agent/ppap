@@ -144,17 +144,77 @@ class SemanticBoundaryTests(unittest.TestCase):
         ):
             self.assertEqual(prompt.count(guide), 1)
 
-    def test_compilation_operator_example_runs_without_internal_module_reads(self) -> None:
-        from ppap_deep.semantic.guest import COMPILATION_GUIDE
+    def test_host_operator_regression_preserves_and_applicability_and_unknowns(self) -> None:
+        """Fixed engine semantics run once in the owner suite, outside model compilation."""
+        A = {"kind": "value_test", "field": "A", "op": "not_empty"}
+        B = {"kind": "value_test", "field": "B", "op": "not_empty"}
 
-        example = COMPILATION_GUIDE.split("```python\n", 1)[1].split("```", 1)[0]
-        with tempfile.TemporaryDirectory() as directory:
-            execution = Path(directory) / "execution.json"
-            original = plan().model_dump_json()
-            execution.write_text(original)
-            completed = subprocess.run([sys.executable, "-c", example], cwd=directory, capture_output=True, text=True, timeout=30)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(execution.read_text(), original)
+        def status(require, a, b, when=None):
+            def cell(value):
+                return value if isinstance(value, dict) else {"value": value, "state": "known"}
+
+            document = {
+                "source": {"file": "synthetic.xlsx", "format": ".xlsx", "sha256": "synthetic"},
+                "tables": [
+                    {
+                        "id": "Records",
+                        "rows": 2,
+                        "cols": 2,
+                        "merges": [],
+                        "cells": {"A1": cell("A"), "B1": cell("B"), "A2": cell(a), "B2": cell(b)},
+                    }
+                ],
+            }
+            compiled = RulePlan.model_validate(
+                {
+                    "source_sha256": "synthetic",
+                    "plan_revision": "0" * 64,
+                    "rules": [
+                        {
+                            "id": "R1",
+                            "source_locator": {"kind": "published_clause", "clause_id": "R1"},
+                            "program": {"kind": "records", "source": "source", "quantifier": "forall", "require": require, "when": when},
+                            "empty_scope_status": "NA",
+                            "empty_scope_basis": "The constructed rule explicitly permits known zero applicability.",
+                        }
+                    ],
+                }
+            )
+            trace = AuditTrace.model_validate(
+                {
+                    "bindings": [
+                        {
+                            "id": "data",
+                            "document_id": "source",
+                            "source_sha256": "synthetic",
+                            "table": "Records",
+                            "header_rows": [1],
+                            "first_row": 2,
+                            "last_row": 2,
+                            "columns": {"A": "A", "B": "B"},
+                            "mapping_basis": "Observed headers A/B",
+                            "boundary_basis": "Complete one-record fixture",
+                        }
+                    ],
+                    "uses": [{"audit_id": "source", "rule_id": "R1", "inputs": {"source": {"kind": "bound", "scopes": [{"binding_id": "data"}]}}}],
+                }
+            )
+            return derive_report(trace, {"source": document}, {"source": compiled}).checks[0].status
+
+        both = {"kind": "all", "items": [A, B]}
+        unknown = {"value": None, "state": "unknown_formula_cache"}
+        for require, a, b, when, expected in (
+            (both, "x", "y", None, "PASS"),
+            (both, "", "y", None, "NG"),
+            (both, "x", "", None, "NG"),
+            (both, "x", unknown, None, "UNABLE"),
+            (both, "", unknown, None, "NG"),
+            (B, "", "", A, "NA"),
+            (B, "x", "", A, "NG"),
+            (B, unknown, "y", A, "UNABLE"),
+        ):
+            with self.subTest(a=a, b=b, when=when, expected=expected):
+                self.assertEqual(status(require, a, b, when), expected)
 
     def test_stage_guides_are_frozen_until_a_new_process_loads_them(self) -> None:
         from ppap_deep.semantic import guest
@@ -418,17 +478,30 @@ assert fresh.stdout == replacement
 
         rule, _ = published_source()
         spec = SubmissionSpec(
-            execution_id=UUID(int=0), submission_id=UUID(int=1), project_id="tenant",
+            execution_id=UUID(int=0),
+            submission_id=UUID(int=1),
+            project_id="tenant",
             documents=[{"audit_id": "target", "sha256": "b" * 64, "format": ".xlsx", "role": "target"}],
-            rules=[rule], targets={"target": rule.rule_id}, policy_revision="c" * 64, semantic_engine_revision="d" * 64,
+            rules=[rule],
+            targets={"target": rule.rule_id},
+            policy_revision="c" * 64,
+            semantic_engine_revision="d" * 64,
         )
         data = {
-            "spec": spec.model_dump(mode="json"), "documents": {"target": "document.xlsx"}, "rules": {rule.rule_id: "rule.json"},
-            "cached_snapshots": {}, "cached_plans": {}, "precompiled_only": True,
+            "spec": spec.model_dump(mode="json"),
+            "documents": {"target": "document.xlsx"},
+            "rules": {rule.rule_id: "rule.json"},
+            "cached_snapshots": {},
+            "cached_plans": {},
+            "precompiled_only": True,
         }
         failure = {
-            "rule_id": rule.rule_id, "source_sha256": rule.sha256, "plan_revision": rule.plan_revision,
-            "engine_revision": spec.semantic_engine_revision, "stage": "compile_repair_validation", "reason": "coverage_mismatch",
+            "rule_id": rule.rule_id,
+            "source_sha256": rule.sha256,
+            "plan_revision": rule.plan_revision,
+            "engine_revision": spec.semantic_engine_revision,
+            "stage": "compile_repair_validation",
+            "reason": "coverage_mismatch",
         }
         with self.assertRaisesRegex(ValueError, "cover the frozen rule set"):
             Manifest.model_validate(data)
@@ -918,7 +991,6 @@ assert fresh.stdout == replacement
         )
         with self.assertRaisesRegex(ValueError, "证据来源"):
             validate_report(report, {"target-1": plan()}, {"target-1": DOCUMENT})
-
 
 
 if __name__ == "__main__":

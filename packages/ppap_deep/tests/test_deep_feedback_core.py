@@ -359,7 +359,7 @@ def test_bounded_model_tool_responses_and_complete_relevant_coverage(tmp_path):
             result = super().run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
             if issubclass(schema, RulePlan):
                 return result
-            self.probes = [table["probe"] for doc in json.loads((work / "layout-probes.json").read_text()).values() for table in doc["tables"]]
+            self.probes = [table["probe"]["cells"] for doc in json.loads((work / "layout-probes.json").read_text())["documents"].values() for table in doc["tables"]]
             for binding in result.bindings:
                 # The rules cover the two-row PFD body. Rows 4 onward are an
                 # explicitly separate notes region, not additional process data.
@@ -411,7 +411,14 @@ def test_bounded_model_tool_responses_and_complete_relevant_coverage(tmp_path):
         assert [check.total for check in result.report.checks] == [2, 2, 2]
         assert len(model.responses) == 3
         assert all(b"unrelated-notes-" not in response for response in model.responses)
-        bodies.append([[json.loads(line) for line in response.splitlines()[1:]] for response in model.responses[:2]])
+        visible_bodies = []
+        for response in model.responses[:2]:
+            header, *records = [json.loads(line) for line in response.splitlines()]
+            assert header["next_offset"] is None
+            assert any(record.get("kind") == "cell" and record.get("value") == "010" and record.get("state") == "known" for record in records)
+            visible_bodies.append([record for record in records if record["kind"] != "table"])
+        bodies.append(visible_bodies)
+        assert any(cell.get("value") == "010" and cell.get("state") == "known" for cells in model.probes for cell in cells.values())
         probes.append(model.probes)
         coverage = [{key: reading[key] for key in ("rule_id", "binding_id", "fields", "first_row", "last_row")} for reading in result.readings]
         assert all((reading["first_row"], reading["last_row"]) == (2, 3 if reading["binding_id"] == "pfd" else 4) for reading in coverage)
