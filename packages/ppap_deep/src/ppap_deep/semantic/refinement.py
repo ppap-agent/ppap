@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import Field, model_validator
 
-from .document_tools import col_number
+from .document_tools import TableReader, col_number
 from .evidence import EvidenceBudget, read_cell, resolve
 from .models import Artifact, Citation, ExcelCell, Locator, PdfCell, RulePlan, WordCell
 
@@ -175,7 +175,13 @@ def identity_source_requirements(original: RulePlan, refined: RulePlan, entity_n
     return compared
 
 
-def _field_sources(record: dict[str, Any], field: str, documents: dict[str, dict[str, Any]], budget: EvidenceBudget) -> tuple[set[tuple[str, str, str]], bool]:
+def _field_sources(
+    record: dict[str, Any],
+    field: str,
+    documents: dict[str, dict[str, Any]],
+    budget: EvidenceBudget,
+    readers: dict[tuple[str, str], TableReader],
+) -> tuple[set[tuple[str, str, str]], bool]:
     observations = record.get("observations", {}).get(field)
     if observations is None:
         observations = [{"state": record["states"].get(field), "evidence": record.get("evidence", {}).get(field)}]
@@ -204,8 +210,10 @@ def _field_sources(record: dict[str, Any], field: str, documents: dict[str, dict
         table = next((item for item in document.get("tables", []) if item["id"] == table_name), None)
         if table is None:
             raise ValueError("Refinement attribute provenance table unavailable")
-        budget.consume(len(table.get("merges", [])) + 1)
-        cell = read_cell(table, row, column)
+        key = (citation.document_id, table_name)
+        if key not in readers:
+            readers[key] = TableReader(table, budget)
+        cell = read_cell(table, row, column, reader=readers[key])
         # read_cell resolves native merged cells and DOCX aliases to their
         # actual source anchor; two different locator strings are not proof of
         # independent data. Logical fields retain every actual observation.
@@ -225,16 +233,17 @@ def validate_identity_provenance(original: RulePlan, refined: RulePlan, entity_n
         return
     protected: set[tuple[str, str, str]] = set()
     known: list[bool] = []
+    readers: dict[tuple[str, str], TableReader] = {}
     for record in records:
         complete = True
         for field in compared:
-            sources, observed = _field_sources(record, field, documents, budget)
+            sources, observed = _field_sources(record, field, documents, budget, readers)
             protected.update(sources)
             complete = complete and observed
         known.append(complete)
     for record, independent_basis in zip(records, known, strict=True):
         for field in additions:
-            sources, observed = _field_sources(record, field, documents, budget)
+            sources, observed = _field_sources(record, field, documents, budget, readers)
             if sources & protected:
                 raise ValueError("Refinement identity uses original data under comparison")
             if not observed or not independent_basis:

@@ -69,7 +69,7 @@ def read_cell(table: dict[str, Any], row: int, column: int, *, reader: TableRead
     anchor_row, anchor_column = _address(anchor)
     if not 1 <= anchor_row <= table["rows"] or not 1 <= anchor_column <= table["cols"]:
         raise ValueError("Invalid merged cell anchor")
-    if anchor != ref(row, column):
+    if anchor != ref(row, column) and item.get("merge") is None:
         if anchor not in table["cells"]:
             raise ValueError("Missing merged cell anchor")
         item = table["cells"][anchor]
@@ -104,8 +104,9 @@ def resolve(snapshot: dict[str, Any], locator: Locator, budget: EvidenceBudget |
         r2, c2 = _address(end)
         if r2 < r1 or c2 < c1 or (r2 - r1 + 1) * (c2 - c1 + 1) > 4096:
             raise ValueError("Evidence range reversed or too large")
-        budget.consume((r2 - r1 + 1) * (c2 - c1 + 1) * (len(table.get("merges", [])) + 1))
-        cells = [_cell(table, row, column) for row in range(r1, r2 + 1) for column in range(c1, c2 + 1)]
+        reader = TableReader(table, budget)
+        observations = [read_cell(table, row, column, reader=reader) for row in range(r1, r2 + 1) for column in range(c1, c2 + 1)]
+        cells = [("" if item.get("value") is None else str(item["value"]), item.get("state") == "known") for item in observations]
         address = start if start == end else f"{start}:{end}"
         return Observation(f"{locator.sheet}!{address}", tuple(cell[0] for cell in cells), all(cell[1] for cell in cells))
     if isinstance(locator, WordParagraph):

@@ -14,8 +14,8 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import Field
 
 from ppap_deep.semantic.bindings import Binding, BindingScope
-from ppap_deep.semantic.document_tools import col_number, effective, save
-from ppap_deep.semantic.evidence import cell_locator
+from ppap_deep.semantic.document_tools import TableReader, col_number, save
+from ppap_deep.semantic.evidence import EvidenceBudget, cell_locator
 from ppap_deep.semantic.models import Artifact, Citation, RulePlan, Scalar
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
@@ -122,7 +122,8 @@ def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput
                 "uses": [{"audit_id": binding.document_id, "rule_id": check.id, "inputs": {"records": {"kind": "bound", "scopes": [scope.model_dump(mode="json")]}}}],
             }
         )
-        evaluated = evaluate_audit(trace, {binding.document_id: snapshot}, {binding.document_id: plan})
+        budget = EvidenceBudget()
+        evaluated = evaluate_audit(trace, {binding.document_id: snapshot}, {binding.document_id: plan}, budget=budget)
         aggregate = evaluated.report.checks[0]
         status, total, checked, unknown = aggregate.status, aggregate.total, aggregate.checked, aggregate.unknown
         failures = set()
@@ -130,6 +131,8 @@ def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput
         unknown_examples: list[CellObservation] = []
         unknown_rows: list[int] = []
         column = col_number(binding.columns[check.field]) if check.field in binding.columns else None
+        reader: TableReader | None = None
+        unresolved_scope_rows = {entry.row for entry in scope.unresolved_rows}
         for fact in evaluated.observations:
             if fact["role"] == "excluded" or fact["record"] is None:
                 continue
@@ -138,18 +141,19 @@ def check_fields(snapshot: dict[str, Any], request: CheckRequest) -> CheckOutput
                 failures.add(row)
             elif fact["value"] is None:
                 unknown_rows.append(row)
-            if column is None or fact["value"] is True:
+            examples = violations if fact["value"] is False else unknown_examples
+            if column is None or fact["value"] is True or len(examples) >= 64:
                 continue
-            item = effective(table, row, column)
+            if reader is None:
+                reader = TableReader(table, budget)
+            item = reader.cell(row, column)
             observation = CellObservation(
                 row=row,
                 citation=_citation(binding, source["format"], row, column),
                 value=item["value"],
-                state=item["state"] if fact["value"] is False else "unresolved_scope" if row in {entry.row for entry in scope.unresolved_rows} else item["state"],
+                state=item["state"] if fact["value"] is False else "unresolved_scope" if row in unresolved_scope_rows else item["state"],
             )
-            examples = violations if fact["value"] is False else unknown_examples
-            if len(examples) < 64:
-                examples.append(observation)
+            examples.append(observation)
         results.append(
             LocalCheckResult(
                 id=check.id,

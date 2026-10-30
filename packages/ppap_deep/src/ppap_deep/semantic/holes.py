@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .document_tools import col_number
+from .document_tools import TableReader, col_number
 from .evidence import EvidenceBudget, read_cell, resolve
 from .models import Artifact, Citation, ExcelCell, ExcelRange, PdfCell, WordCell
 
@@ -58,6 +58,7 @@ def _inside_object(source: Citation, scope: dict[str, Any]) -> bool:
 
 def validate_answer(hole: EvidenceHole, answer: TypedAnswer, documents: dict[str, dict[str, Any]], *, budget: EvidenceBudget | None = None) -> Any:
     """Validate only the requested fact and its frozen local context."""
+    budget = budget or EvidenceBudget()
     if hole.id != answer.need_id or hole.input_id != answer.input_id:
         raise ValueError("Typed answer belongs to another input or request")
     if answer.state != "provided":
@@ -75,7 +76,7 @@ def validate_answer(hole: EvidenceHole, answer: TypedAnswer, documents: dict[str
             raise ValueError("Typed fact evidence outside requested object")
         if "allowed_evidence" in hole.context and source.model_dump(mode="json") not in hole.context["allowed_evidence"]:
             raise ValueError("Typed fact evidence outside requested source locations")
-        observed = resolve(documents[source.document_id], source.locator, budget or EvidenceBudget())
+        observed = resolve(documents[source.document_id], source.locator, budget)
         if answer.origin == "native" and not observed.known:
             raise ValueError("A native fact requires a known native observation")
         if isinstance(source.locator, ExcelRange):
@@ -83,7 +84,8 @@ def validate_answer(hole: EvidenceHole, answer: TypedAnswer, documents: dict[str
             table = next(table for table in documents[source.document_id]["tables"] if table["id"] == range_locator.sheet)
             row1, row2 = (int(re.sub("[A-Z]", "", address)) for address in (range_locator.start, range_locator.end))
             column1, column2 = (col_number(re.sub("[0-9]", "", address)) for address in (range_locator.start, range_locator.end))
-            observations.extend(read_cell(table, row, column)["value"] for row in range(row1, row2 + 1) for column in range(column1, column2 + 1))
+            reader = TableReader(table, budget)
+            observations.extend(read_cell(table, row, column, reader=reader)["value"] for row in range(row1, row2 + 1) for column in range(column1, column2 + 1))
         elif isinstance(source.locator, (ExcelCell, WordCell, PdfCell)):
             locator = source.locator
             if isinstance(locator, ExcelCell):
@@ -94,7 +96,7 @@ def validate_answer(hole: EvidenceHole, answer: TypedAnswer, documents: dict[str
                 table_id = f"table:{locator.table}" if isinstance(locator, WordCell) else f"page-{locator.page}"
                 row, column = locator.row, locator.column
             table = next(table for table in documents[source.document_id]["tables"] if table["id"] == table_id)
-            observations.append(read_cell(table, row, column)["value"])
+            observations.append(read_cell(table, row, column, reader=TableReader(table, budget))["value"])
         else:
             observations.extend(observed.values)
     value = answer.value
@@ -106,7 +108,9 @@ def validate_answer(hole: EvidenceHole, answer: TypedAnswer, documents: dict[str
     elif kind == "number":
         valid = type(value) is int or type(value) is float and math.isfinite(value)
     elif kind in {"string", "interpretation"}:
-        valid = isinstance(value, str) and 0 < len(value) <= 4096
+        # A sourced attribute can be confirmed empty. An unanswered attribute
+        # still uses state=unknown/value=None; keys and choices stay nonempty.
+        valid = isinstance(value, str) and (kind == "string" and hole.kind == "attribute" or len(value) > 0) and len(value) <= 4096
         if kind == "interpretation":
             valid = valid and value in hole.context.get("candidate_ids", [])
     else:

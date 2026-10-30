@@ -271,6 +271,7 @@ def scoped_records(materialized: dict[str, Any], binding: Binding, scope: Bindin
                 for source_location in locations:
                     owners[field, tuple(sorted(source_location.items()))].add(item.id)
         logical = []
+        reader: TableReader | None = None
         for item in scope.objects:
             budget.consume(len(item.rows))
             members = [indexed[row] for row in item.rows]
@@ -318,9 +319,11 @@ def scoped_records(materialized: dict[str, Any], binding: Binding, scope: Bindin
                         if not valid or source_row not in item.rows:
                             raise ValueError("Logical attribute source outside object")
                         result = resolve(document, locator, budget)
+                        if reader is None:
+                            reader = TableReader(table, budget)
                         seen.append(
                             {
-                                "value": read_cell(table, source_row, column)["value"],
+                                "value": read_cell(table, source_row, column, reader=reader)["value"],
                                 "state": "known" if result.known else "unresolved",
                                 "evidence": {"citation": {"document_id": binding.document_id, "locator": locator.model_dump(mode="json")}},
                             }
