@@ -210,7 +210,7 @@ URL 跳转后，页面可以直接提交同一应用操作并显示真实保存/
 
 主要源码入口：[mcp_tools.py](../../services/api/src/ppap_api/mcp_tools.py)、[mcp_server.py](../../services/api/src/ppap_api/mcp_server.py)、[mcp_gateway.py](../../services/api/src/ppap_api/mcp_gateway.py)、[auditor.py](src/ppap_deep/auditor.py)、[intake.tsx](../../apps/web/src/audit/intake.tsx)、[workspace.tsx](../../apps/web/src/audit/workspace.tsx)、[review-content.tsx](../../apps/web/src/audit/review-content.tsx)。
 
-本次实际读取了 FastMCP 注册 schema，确认 deep 可选。当前 MCP 集成审核用例使用 Standard，Deep 另有受控 API→Worker→Controller 测试；尚未证明真实 MCP 客户端→Deep 模型→用户反馈→新分析全链路。
+当前 `/mcp/deep` 使用窄协议适配，并与 Web 共用规则变更应用操作。回环 HTTP 验收使用独立客户端、真实 OAuth、PostgreSQL、Worker、guest 和求值器；只在模型、身份供应商和对象存储边界使用受控输入。外部宿主兼容及真实模型理解质量分别验证。
 
 迁移可以保留兼容入口，但目标只保留一套业务语义和事实。替换旧路径时一起迁移调用者、权限校验与测试，不让兼容层成为永久的第二套产品。
 
@@ -230,4 +230,4 @@ URL 跳转后，页面可以直接提交同一应用操作并显示真实保存/
 
 体验评估同时看判断质量和用户负担：澄清前后未知比例、需要用户决定的问题数、重复确认次数、找到原文的操作数、完成一次纠正的时间、误应用范围、重试与 token 用量。局部确认不自动成为整轮审核 gold。
 
-本次完成官方协议研究、源码与现有测试内容检查，以及注册 schema 的只读核对；没有升级依赖、实现新界面、运行浏览器验收或付费审核。目标 host 对新版协议、Tasks、Elicitation 与 Apps 的支持必须通过实际操作验证。
+实现与验收沿用现有 owner：`tests/e2e/test_deep_feedback.py` 验证真实浏览器旅程，`tests/integration/product/test_mcp_deep_feedback.py` 验证独立 HTTP 客户端与能力组合。候选提交、实际命令、数量与证据边界记录在 #223–#225；测试回答不作为人工确认或训练金标。外部 host 对协议、Tasks、Elicitation 与 Apps 的支持仍按实际操作验证。

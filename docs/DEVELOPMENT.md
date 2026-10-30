@@ -277,6 +277,6 @@ V3.1 原有“联系我们”浮层通过已登录的 `GET /support` 读取服�
 
 ### Deep 本机反馈验收
 
-`uv run --no-sync pytest tests/integration/product/test_deep_feedback.py tests/integration/product/test_deep_feedback_contract.py tests/integration/product/test_mcp_deep_feedback.py --local-postgres -q` 使用真实本地 PG、生产迁移、API、Worker、guest 和 parser/evaluator。`uv run --no-sync pytest tests/e2e/test_deep_feedback.py --local-postgres -q` 再启动实际 Web/API 及浏览器。仅外部模型、身份供应商和 S3 边界使用明确测试输入。
+`uv run --no-sync pytest tests/integration/product/test_deep_feedback.py tests/integration/product/test_deep_feedback_contract.py tests/integration/product/test_mcp_deep_feedback.py --local-postgres -q` 使用真实本地 PG、生产迁移、API、Worker、guest 和 parser/evaluator。`uv run --no-sync pytest tests/e2e/test_deep_feedback.py --local-postgres -q` 再启动实际 Web/API 及浏览器。MCP 用独立客户端连接真实回环 HTTP，并覆盖重新建立 API、存储连接和客户端后的读回。共享系统 fixture 由根 `tests/conftest.py` 的 pytest 生命周期提供，owner 测试保留自身的受控模型输入。仅外部模型、身份供应商、浏览器身份 SDK 和 S3 边界使用明确测试输入。
 
 `--local-postgres` 创建并清理本次独占的临时 cluster，不接入默认或共享开发数据库。默认寻找 PATH 上的 postgres，macOS 备用为 Homebrew postgresql@17；可用 PPAP_TEST_PG_BIN 指定包含 postgres/initdb/pg_ctl/psql 的完整 server 目录。libpq 只有客户端工具，不足以创建 cluster。无需 Docker；依赖缺失会失败，不以 skip 验收。

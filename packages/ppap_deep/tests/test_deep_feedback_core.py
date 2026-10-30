@@ -2,36 +2,144 @@
 
 import hashlib
 import json
-import runpy
 import time
 from copy import deepcopy
-from pathlib import Path
+from io import BytesIO
 
 import pytest
+from openpyxl import Workbook
 from ppap_deep.auditor import semantic_inputs
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.document_tools import snapshot
-from ppap_deep.semantic.guest import Manifest, execute, layout_probes
+from ppap_deep.semantic.guest import Manifest, execute
 from ppap_deep.semantic.models import Ontology, RulePlan
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
-FIXTURE = runpy.run_path(str(Path(__file__).resolve().parents[3] / "tests/integration/product/deep_feedback_model.py"))
+EXPLANATION = "本控制计划中的作业单元编号表示工序编号；按原始编号逐字对应，不合并不同编号。"
+QUESTION_ID = "cp-operation-code"
+CANDIDATE_ID = "operation-code"
+RULES = [
+    {"id": "R1", "rule_to_check": "流程图中的每个工序编号必须在控制计划中按原始编号一一对应，否则不通过。"},
+    {"id": "R2", "rule_to_check": "对应工序的分类必须在流程图和控制计划中一致，否则不通过。"},
+    {"id": "R3", "rule_to_check": "流程图中的每个工序编号必须非空，否则不通过。"},
+]
+
+
+def source_bytes(kind):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = kind
+    rows = [["工序编号", "分类"], ["010", "CC"], ["020", "SC"]] if kind == "PFD" else [["作业单元编号", "分类"], ["010", "SC"], [None, None], ["020", "SC"]]
+    for row in rows:
+        sheet.append(row)
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
+class FeedbackModel:
+    input_tokens = 0
+    output_tokens = 0
+
+    def __init__(self):
+        self.calls = []
+
+    def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+        self.calls.append(work.name)
+        assert reasoning_effort == "medium"
+        if issubclass(schema, RulePlan):
+            supplied = prompt.split("identity and ordered clause IDs must match exactly: ", 1)[1]
+            identity, _ = json.JSONDecoder().raw_decode(supplied)
+            clauses = json.loads((work / "clauses.json").read_text())
+            assert [(clause["id"], clause["rule_to_check"]) for clause in clauses] == [(clause["id"], clause["rule_to_check"]) for clause in RULES]
+            relation = {"kind": "related", "relationship_id": "corresponds", "target": "cp", "source_key": {"fields": ["code"]}, "target_key": {"fields": ["code"]}, "match": "one_to_one"}
+            programs = [
+                relation,
+                {**relation, "comparisons": [{"source_field": "classification", "target_field": "classification", "mode": "exact"}]},
+                {"kind": "value_test", "field": "code", "op": "not_empty"},
+            ]
+            return RulePlan.model_validate(
+                {
+                    "source_sha256": identity["source_sha256"],
+                    "plan_revision": identity["plan_revision"],
+                    "ontology": {
+                        "entities": [
+                            {"id": entity, "grain": "按明确工序编号标识的一个工序，可跨多行", "attributes": {"code": "string", "classification": "string"}, "identity": ["code"]}
+                            for entity in ["pfd", "cp"]
+                        ],
+                        "relationships": [{"id": "corresponds", "kind": "same_instance", "source": "pfd", "target": "cp", "meaning": "源工序在目标文件中按原始编号一一对应"}],
+                    },
+                    "rules": [
+                        {
+                            "id": clause["id"],
+                            "source_locator": {"kind": "published_clause", "clause_id": clause["id"]},
+                            "program": {"kind": "records", "source": "pfd", "quantifier": "forall", "require": program},
+                            "empty_scope_status": "UNABLE",
+                            "empty_scope_basis": "原文未规定没有工序时的结论。",
+                        }
+                        for clause, program in zip(clauses, programs, strict=True)
+                    ],
+                }
+            )
+        assert schema is AuditTrace
+        documents = json.loads((work / "documents.json").read_text())
+        targets = json.loads((work / "targets.json").read_text())
+        bindings, identities = [], {}
+        for document_id, document in documents.items():
+            table = document["tables"][0]
+            kind = table["id"]
+            assert kind in {"PFD", "CP"}
+            name = kind.lower()
+            identities[name] = document_id
+            binding = {
+                "id": name,
+                "document_id": document_id,
+                "source_sha256": document["source"]["sha256"],
+                "table": kind,
+                "header_rows": [1],
+                "first_row": 2,
+                "last_row": table["rows"],
+                "columns": {"code": "A", "classification": "B"},
+                "mapping_basis": "原件首行字段及明确工序身份",
+                "boundary_basis": "示例表完整正文",
+            }
+            if kind == "CP":
+                binding["interpretations"] = [
+                    {
+                        "id": QUESTION_ID,
+                        "field": "code",
+                        "question": "本控制计划的作业单元编号是否表示工序编号？",
+                        "candidates": [{"id": CANDIDATE_ID, "label": "按工序编号理解", "explanation": EXPLANATION}],
+                        "evidence": [{"document_id": document_id, "locator": {"kind": "xlsx_cell", "sheet": "CP", "cell": "A1"}}],
+                    }
+                ]
+            bindings.append(binding)
+        pfd = {"kind": "bound", "scopes": [{"binding_id": "pfd", "objects": [{"id": "010", "rows": [2]}, {"id": "020", "rows": [3]}]}]}
+        cp = {"kind": "bound", "scopes": [{"binding_id": "cp", "objects": [{"id": "010", "rows": [2, 3]}, {"id": "020", "rows": [4]}]}]}
+        for collection, table in [(pfd, "PFD"), (cp, "CP")]:
+            for item in collection["scopes"][0]["objects"]:
+                item["basis"] = "原始工序编号及其后续空白行共同描述一个工序；不同编号分别保留。"
+                item["evidence"] = [{"kind": "xlsx_cell", "sheet": table, "cell": f"A{row}"} for row in item["rows"]]
+        uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp} if clause["id"] != "R3" else {})}} for target in targets for clause in RULES]
+        return AuditTrace.model_validate({"bindings": bindings, "uses": uses})
+
 PFD = "00000000-0000-4000-8000-000000000010"
 CP = "00000000-0000-4000-8000-000000000020"
 RULE = "00000000-0000-4000-8000-000000000030"
 ENGINE = "a" * 64
 
 
-def run_case(path, appendix=None, *, previous=None, files=None, engine=ENGINE, limits=None, calls=None):
+def run_case(path, appendix=None, *, previous=None, files=None, engine=ENGINE, limits=None, calls=None, rules=None, model=None):
     path.mkdir()
     inputs, work = path / "inputs", path / "work"
     inputs.mkdir()
-    body = {"kind": "engine", "rules": FIXTURE["RULES"]}
+    body = {"kind": "engine", "rules": RULES if rules is None else rules}
     if appendix is not None:
         body["appendix"] = appendix
     refs, names = [], {}
     for identity, kind in [(PFD, "PFD"), (CP, "CP")]:
-        raw = files[identity] if files is not None else FIXTURE["source_bytes"](kind)
+        raw = files[identity] if files is not None else source_bytes(kind)
         (inputs / (kind + ".xlsx")).write_bytes(raw)
         names[identity] = kind + ".xlsx"
         refs.append(
@@ -60,7 +168,7 @@ def run_case(path, appendix=None, *, previous=None, files=None, engine=ENGINE, l
             cached_plans[identity] = filename
     manifest = Manifest(spec=spec, documents=names, rules={identity: identity + ".json" for identity in packets}, cached_snapshots=cached_snapshots, cached_plans=cached_plans)
     (inputs / "manifest.json").write_text(manifest.model_dump_json())
-    model = FIXTURE["FeedbackModel"]()
+    model = model or FeedbackModel()
     result = execute(inputs, work, model, time.monotonic() + 60, **({"limits": limits} if limits else {}))
     if calls is not None:
         calls.extend(model.calls)
@@ -73,9 +181,9 @@ def confirmed(scope=None):
         {
             "id": "synthetic-confirmation",
             "kind": "interpretation",
-            "question_id": FIXTURE["QUESTION_ID"],
-            "candidate_id": FIXTURE["CANDIDATE_ID"],
-            "content": FIXTURE["EXPLANATION"],
+            "question_id": QUESTION_ID,
+            "candidate_id": CANDIDATE_ID,
+            "content": EXPLANATION,
             "scope": scope or {"document_ids": [CP], "rule_ids": ["R1", "R2"]},
         }
     ]
@@ -89,6 +197,7 @@ def test_real_guest_confirmed_scope_removes_ambiguity_but_preserves_conflict(tmp
     assert question["document_ids"] == [CP]
     assert question["rule_ids"] == ["R1", "R2"]
     assert question["sources"][0]["locator"]["cell"] == "A1"
+    assert question["sources"][0]["excerpt"] == "作业单元编号"
     after, result = run_case(tmp_path / "after", confirmed())
     assert [check.status for check in result.report.checks] == ["PASS", "NG", "PASS"]
     assert not result.clarifications
@@ -128,51 +237,133 @@ def test_cross_file_source_values_never_disappear_when_codes_change(tmp_path):
     assert [check.status for check in result.report.checks] == ["NG", "NG", "PASS"]
 
 
-def test_file_entities_and_an_unrelated_new_concept_use_the_same_evaluator(tmp_path):
-    path = tmp_path / "document.xlsx"
-    path.write_bytes(FIXTURE["source_bytes"]("PFD"))
-    document = snapshot(path)
-    plan = RulePlan.model_validate(
-        {
-            "source_sha256": "rule",
-            "plan_revision": "a" * 64,
-            "ontology": {"entities": [{"id": "attachments", "grain": "one physical attachment", "attributes": {"id": "string", "format": "string"}, "identity": ["id"]}]},
-            "rules": [
-                {
-                    "id": "N1",
-                    "source_locator": {"kind": "published_clause", "clause_id": "N1"},
-                    "program": {"kind": "records", "source": "attachments", "quantifier": "forall", "require": {"kind": "value_test", "field": "format", "op": "eq", "value": ".xlsx"}},
-                    "empty_scope_status": "UNABLE",
-                    "empty_scope_basis": "No files is unknown.",
-                }
-            ],
-        }
-    )
-    trace = AuditTrace.model_validate({"uses": [{"audit_id": "file", "rule_id": "N1", "inputs": {"attachments": {"kind": "files", "document_ids": ["file"]}}}]})
-    result = evaluate_audit(trace, {"file": document}, {"file": plan})
-    assert (result.report.checks[0].status, result.report.checks[0].total) == ("PASS", 1)
-    with pytest.raises(ValueError, match="outside frozen"):
-        trace.uses[0].inputs["attachments"].document_ids = ["another-file"]
-        evaluate_audit(trace, {"file": document}, {"file": plan})
+@pytest.mark.parametrize("digest_matches,expected", [(True, "PASS"), (False, "NG")])
+def test_file_relationship_and_new_release_manifest_rule_cross_the_real_guest(tmp_path, digest_matches, expected):
+    """The model returns a plan and bindings; native SHA values decide the result."""
+    reference = source_bytes("PFD")
+    digest = hashlib.sha256(reference).hexdigest()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "ReleaseManifest"
+    sheet.append(["Attachment ID", "Declared SHA256"])
+    sheet.append([PFD, digest if digest_matches else "0" * 64])
+    data = BytesIO()
+    workbook.save(data)
+    workbook.close()
+    clauses = [{"id": "N1", "rule_to_check": "每个发布清单条目的附件ID必须指向本次提交的文件，且声明的SHA256必须等于该文件的SHA256，否则不通过。"}]
+
+    class ReleaseModel:
+        input_tokens = output_tokens = 0
+
+        def __init__(self):
+            self.calls = []
+
+        def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+            self.calls.append(work.name)
+            if issubclass(schema, RulePlan):
+                identity, _ = json.JSONDecoder().raw_decode(prompt.split("identity and ordered clause IDs must match exactly: ", 1)[1])
+                assert json.loads((work / "clauses.json").read_text()) == clauses
+                assert not (work / "documents.json").exists()
+                return schema.model_validate({
+                    "source_sha256": identity["source_sha256"], "plan_revision": identity["plan_revision"],
+                    "ontology": {
+                        "entities": [
+                            {"id": "entries", "grain": "one release manifest entry", "attributes": {"attachment_id": "string", "digest": "string"}, "identity": ["attachment_id"]},
+                            {"id": "files", "grain": "one supplied file", "attributes": {"id": "string", "sha256": "string"}, "identity": ["id"]},
+                        ],
+                        "relationships": [{"id": "describes", "kind": "association", "source": "entries", "target": "files", "meaning": "entry refers to the supplied attachment by its original ID"}],
+                    },
+                    "rules": [{"id": "N1", "source_locator": {"kind": "published_clause", "clause_id": "N1"},
+                               "program": {"kind": "records", "source": "entries", "quantifier": "forall", "require": {
+                                   "kind": "related", "relationship_id": "describes", "target": "files", "match": "one_to_one",
+                                   "source_key": {"fields": ["attachment_id"]}, "target_key": {"fields": ["id"]},
+                                   "comparisons": [{"source_field": "digest", "target_field": "sha256", "mode": "exact"}],
+                               }}, "empty_scope_status": "UNABLE", "empty_scope_basis": "The rule does not define an empty manifest result."}],
+                })
+            documents = json.loads((work / "documents.json").read_text())
+            return schema.model_validate({
+                "bindings": [{"id": "entries", "document_id": CP, "source_sha256": documents[CP]["source"]["sha256"],
+                              "table": "ReleaseManifest", "header_rows": [1], "first_row": 2, "last_row": 2,
+                              "columns": {"attachment_id": "A", "digest": "B"}, "mapping_basis": "Both original column headers", "boundary_basis": "Complete one-entry manifest"}],
+                "uses": [{"audit_id": CP, "rule_id": "N1", "inputs": {
+                    "entries": {"kind": "bound", "scopes": [{"binding_id": "entries"}]},
+                    "files": {"kind": "files", "document_ids": list(documents)},
+                }}],
+            })
+
+    model = ReleaseModel()
+    bundle, result = run_case(tmp_path / "guest", files={PFD: reference, CP: data.getvalue()}, rules=clauses, model=model)
+    assert model.calls == ["compile-0", "audit"]
+    assert [(check.status, check.total) for check in result.report.checks] == [(expected, 1)]
+    assert bundle.documents[PFD]["source"]["sha256"] == digest
+    # An outside file cannot be added even if it would make the foreign key match.
+    trace = bundle.trace.model_copy(deep=True)
+    trace.uses[0].inputs["files"].document_ids.append("outside-file")
+    with pytest.raises(ValueError, match="outside frozen input"):
+        evaluate_audit(trace, bundle.documents, {CP: bundle.plans[RULE]})
 
 
-def test_bounded_layout_probe_does_not_print_unrelated_data(tmp_path):
-    from openpyxl import Workbook
+def test_bounded_model_tool_responses_and_complete_relevant_coverage(tmp_path):
+    """A controlled StageRunner exercises the same public tools as a real agent."""
+    import subprocess
+    import sys
 
-    observations = []
-    for rows in (100, 10000):
+    class ProbeModel(FeedbackModel):
+        def __init__(self):
+            super().__init__()
+            self.responses = []
+            self.probes = []
+
+        def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+            result = super().run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
+            if issubclass(schema, RulePlan):
+                return result
+            self.probes = [table["probe"] for doc in json.loads((work / "layout-probes.json").read_text()).values() for table in doc["tables"]]
+            for binding in result.bindings:
+                # The rules cover the two-row PFD body. Rows 4 onward are an
+                # explicitly separate notes region, not additional process data.
+                if binding.id == "pfd":
+                    binding.last_row = 3
+                    binding.boundary_basis = "Rows 2–3 are the complete process table; later rows belong to the notes region."
+                command = [sys.executable, "-m", "ppap_deep.semantic.document_tools", "view", str(work / "documents.json"),
+                           "--document", binding.document_id, "--table", binding.table, "--rows", f"1:{binding.last_row}", "--columns", "A:B"]
+                response = subprocess.run(command, cwd=work, check=True, capture_output=True).stdout
+                self.responses.append(response)
+            (work / "selected-execution.json").write_text(result.model_dump_json())
+            response = subprocess.run(
+                [sys.executable, "-m", "ppap_deep.semantic.audit_tools", "evaluate", "selected-execution.json", "--out", "bounded-evaluation.json"],
+                cwd=work, check=True, capture_output=True,
+            ).stdout
+            self.responses.append(response)
+            return result
+
+    metrics, bodies, probes = [], [], []
+    for row_count in (100, 10000):
         workbook = Workbook()
         sheet = workbook.active
-        sheet.append(["code"])
-        for index in range(2, rows + 1):
-            sheet.append(["relevant" if index < 13 else "not-for-model-" + str(index)])
-        path = tmp_path / f"{rows}.xlsx"
-        workbook.save(path)
+        sheet.title = "PFD"
+        for row in [["工序编号", "分类"], ["010", "CC"], ["020", "SC"]]:
+            sheet.append(row)
+        for row in range(13, row_count + 1):
+            sheet.cell(row, 1, "unrelated-notes-" + str(row))
+        raw = BytesIO()
+        workbook.save(raw)
         workbook.close()
-        probe = layout_probes({"file": snapshot(path)}, {})["file"]
-        observations.append(probe["tables"][0]["probe"])
-        assert "not-for-model" not in json.dumps(probe)
-    assert observations[0] == observations[1]
+        model = ProbeModel()
+        _, result = run_case(tmp_path / str(row_count), confirmed(), files={PFD: raw.getvalue(), CP: source_bytes("CP")}, model=model)
+        assert [check.status for check in result.report.checks] == ["PASS", "NG", "PASS"]
+        assert [check.total for check in result.report.checks] == [2, 2, 2]
+        assert len(model.responses) == 3
+        assert all(b"unrelated-notes-" not in response for response in model.responses)
+        bodies.append([[json.loads(line) for line in response.splitlines()[1:]] for response in model.responses[:2]])
+        probes.append(model.probes)
+        coverage = [{key: reading[key] for key in ("rule_id", "binding_id", "fields", "first_row", "last_row")} for reading in result.readings]
+        assert all((reading["first_row"], reading["last_row"]) == (2, 3 if reading["binding_id"] == "pfd" else 4) for reading in coverage)
+        assert len(coverage) == 5
+        metrics.append({"physical_rows": row_count, "tool_calls": len(model.responses), "response_bytes": [len(response) for response in model.responses], "program_readings": coverage})
+    assert bodies[0] == bodies[1]
+    assert probes[0] == probes[1]
+    (tmp_path / "bounded-model-io.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
 
 
 def test_ontology_rejects_unknown_identity_attributes_and_relationship_endpoints():
@@ -373,10 +564,10 @@ def test_relationship_typed_answer_keeps_direction_and_host_compares_original_va
 def test_interpretation_typed_answer_recommends_without_bypassing_user_confirmation(tmp_path):
     bundle, initial = run_case(tmp_path / "base")
     assert {need.kind for need in initial.needs} == {"interpretation"}
-    answered = fact_answers(bundle.trace, initial, lambda _need: FIXTURE["CANDIDATE_ID"])
+    answered = fact_answers(bundle.trace, initial, lambda _need: CANDIDATE_ID)
     result = evaluate_audit(answered, bundle.documents, {CP: bundle.plans[RULE]})
     assert [check.status for check in result.report.checks] == ["UNABLE", "UNABLE", "PASS"]
-    assert result.clarifications[0]["recommended_candidate_id"] == FIXTURE["CANDIDATE_ID"]
+    assert result.clarifications[0]["recommended_candidate_id"] == CANDIDATE_ID
     # Ordinary, source-supported model interpretation uses the same fact interface.
     # Its provenance remains model-origin and never becomes a user appendix.
     raw = bundle.trace.model_dump(mode="json")
@@ -385,7 +576,7 @@ def test_interpretation_typed_answer_recommends_without_bypassing_user_confirmat
             interpretation["requires_confirmation"] = False
     ordinary = AuditTrace.model_validate(raw)
     pending = evaluate_audit(ordinary, bundle.documents, {CP: bundle.plans[RULE]})
-    answered = fact_answers(ordinary, pending, lambda _need: FIXTURE["CANDIDATE_ID"])
+    answered = fact_answers(ordinary, pending, lambda _need: CANDIDATE_ID)
     result = evaluate_audit(answered, bundle.documents, {CP: bundle.plans[RULE]})
     assert [check.status for check in result.report.checks] == ["PASS", "NG", "PASS"]
     assert not result.clarifications
@@ -502,7 +693,7 @@ def test_cross_region_layout_changes_preserve_business_grain_values_and_conclusi
 
 @pytest.mark.parametrize("variant", ["identical", "appendix_removed", "content_changed", "scope_changed", "engine_changed", "missing_ontology", "old_revision"])
 def test_real_guest_cached_plan_reuse_obeys_complete_input_identity(tmp_path, variant):
-    files = {PFD: FIXTURE["source_bytes"]("PFD"), CP: FIXTURE["source_bytes"]("CP")}
+    files = {PFD: source_bytes("PFD"), CP: source_bytes("CP")}
     base, _ = run_case(tmp_path / "base", confirmed(), files=files)
     appendix, engine = confirmed(), ENGINE
     previous = base.model_copy(deep=True)
@@ -530,7 +721,7 @@ def test_real_guest_cached_plan_reuse_obeys_complete_input_identity(tmp_path, va
 def test_native_snapshot_cache_cannot_bypass_different_actual_read_parameters(tmp_path):
     from ppap_deep.semantic.document_tools import ParserLimitError, ReadLimits
 
-    files = {PFD: FIXTURE["source_bytes"]("PFD"), CP: FIXTURE["source_bytes"]("CP")}
+    files = {PFD: source_bytes("PFD"), CP: source_bytes("CP")}
     base, _ = run_case(tmp_path / "base", confirmed(), files=files)
     # A native observation may be reused for the same bytes and parser parameters.
     previous = base.model_copy(deep=True)
@@ -543,9 +734,9 @@ def test_native_snapshot_cache_cannot_bypass_different_actual_read_parameters(tm
 
 def test_existing_native_observation_does_not_cache_logical_grain_or_old_fact_answers(tmp_path):
     bundle, initial = run_case(tmp_path / "base")
-    answered = fact_answers(bundle.trace, initial, lambda _need: FIXTURE["CANDIDATE_ID"])
+    answered = fact_answers(bundle.trace, initial, lambda _need: CANDIDATE_ID)
     current = evaluate_audit(answered, bundle.documents, {CP: bundle.plans[RULE]})
-    assert current.clarifications[0]["recommended_candidate_id"] == FIXTURE["CANDIDATE_ID"]
+    assert current.clarifications[0]["recommended_candidate_id"] == CANDIDATE_ID
     changed_plan = bundle.plans[RULE].model_copy(deep=True)
     changed_plan.ontology.entities[1].grain = "a different explicit business grain"
     with pytest.raises(ValueError, match="stale"):
@@ -590,7 +781,7 @@ def test_observation_parameters_are_a_value_not_mutable_parser_configuration(tmp
     from ppap_deep.semantic.document_tools import ReadLimits
 
     path = tmp_path / "source.xlsx"
-    path.write_bytes(FIXTURE["source_bytes"]("PFD"))
+    path.write_bytes(source_bytes("PFD"))
     limits = ReadLimits(cells=100)
     observed = snapshot(path, limits=limits)
     observed["reader_parameters"]["cells"] = 1

@@ -413,6 +413,14 @@ class _Evaluator:
             {"plans": {key: plan.source_sha256 for key, plan in sorted(self.plans.items())}, "documents": {key: document["source"]["sha256"] for key, document in sorted(self.documents.items())}}
         )
         if requirement.id not in self.clarifications:
+            sources = []
+            for citation in requirement.evidence:
+                source = citation.model_dump(mode="json")
+                source.pop("excerpt", None)
+                observed = resolve_optional(self.documents[citation.document_id], citation.locator, self.citation_budget)
+                if observed is not None:
+                    source["excerpt"] = " · ".join(observed.values)[:4000]
+                sources.append(source)
             self.clarifications[requirement.id] = {
                 "id": requirement.id,
                 "input_id": identity,
@@ -421,7 +429,7 @@ class _Evaluator:
                 "document_ids": [binding.document_id],
                 "rule_ids": [],
                 "candidates": [candidate.model_dump(mode="json") for candidate in requirement.candidates],
-                "sources": [citation.model_dump(mode="json") for citation in requirement.evidence],
+                "sources": sources,
                 "scope": {"document_ids": [binding.document_id], "rule_ids": [], "rule_targets": []},
             }
         item = self.clarifications[requirement.id]
