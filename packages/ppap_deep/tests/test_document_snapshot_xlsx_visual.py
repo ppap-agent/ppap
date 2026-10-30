@@ -55,6 +55,58 @@ def workbook(tmp_path, anchors=None, *, cells=None, merge=None):
     return path
 
 
+def image_workbook(tmp_path, *, cells=None, two_cell=False):
+    from base64 import b64decode
+    from io import BytesIO
+
+    from openpyxl.drawing.image import Image
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+
+    path = tmp_path / "image.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Process"
+    sheet["F8"] = "End"
+    for address, value in (cells or {}).items():
+        sheet[address] = value
+    image = Image(BytesIO(b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==")))
+    if two_cell:
+        image.anchor = TwoCellAnchor(_from=AnchorMarker(col=1, row=1), to=AnchorMarker(col=4, row=3))
+        sheet.add_image(image)
+    else:
+        sheet.add_image(image, "B2")
+    book.create_sheet("Other")["F8"] = "End"
+    book.save(path)
+    book.close()
+    return path
+
+
+def linked_image_workbook(tmp_path, *, cached, target="https://example.invalid/image.png", count=1, cells=None):
+    path = image_workbook(tmp_path, cells=cells, two_cell=True)
+    with ZipFile(path) as archive:
+        parts = {item.filename: archive.read(item) for item in archive.infolist()}
+    drawing = ET.fromstring(parts["xl/drawings/drawing1.xml"])
+    source = drawing[0]
+    drawing.remove(source)
+    rels = ET.fromstring(parts["xl/drawings/_rels/drawing1.xml.rels"])
+    if not cached:
+        rels.remove(next(item for item in rels if item.get("Id") == "rId1"))
+        del parts["xl/media/image1.png"]
+    for index in range(count):
+        node = deepcopy(source)
+        blip = next(node.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}blip"))
+        if not cached:
+            del blip.attrib[f"{{{REL}}}embed"]
+        identity = f"linked{index}"
+        blip.set(f"{{{REL}}}link", identity)
+        drawing.append(node)
+        ET.SubElement(rels, f"{{{PKG}}}Relationship", {"Id": identity, "Type": f"{REL}/image", "Target": target, "TargetMode": "External"})
+    parts["xl/drawings/drawing1.xml"] = ET.tostring(drawing)
+    parts["xl/drawings/_rels/drawing1.xml.rels"] = ET.tostring(rels)
+    rewrite(path, parts)
+    return path
+
+
 def rewrite(path, parts):
     with ZipFile(path, "w", ZIP_DEFLATED) as archive:
         for name, content in parts.items():
@@ -155,8 +207,10 @@ def test_visual_metadata_and_queries_use_existing_budgets(tmp_path):
         resolve(observed, ExcelRange(kind="xlsx_range", sheet="Process", start="A4", end="F8"), EvidenceBudget(remaining=20))
 
 
-def test_compact_view_pages_recover_all_visual_source_metadata(tmp_path, capsys):
-    observed = snapshot(workbook(tmp_path, [anchor() for _ in range(24)]))
+@pytest.mark.parametrize("cached", [None, False, True])
+def test_compact_view_pages_recover_all_visual_source_metadata(tmp_path, capsys, cached):
+    path = workbook(tmp_path, [anchor() for _ in range(24)]) if cached is None else linked_image_workbook(tmp_path, cached=cached, count=24)
+    observed = snapshot(path)
     records, fragments, offset = [], {}, 0
     while True:
         args = argparse.Namespace(offset=offset, max_bytes=4096, table="Process", columns="B", rows="2", pages="1", document="target")
@@ -294,20 +348,9 @@ def test_anchor_offsets_outside_native_coordinate_bounds_fail_closed(tmp_path, o
 
 @pytest.mark.parametrize("hyperlink", [None, "hlinkClick", "hlinkHover", "missing_relation", "external_content", "blip_hyperlink", "navigation_content"])
 def test_native_image_and_navigation_relationships_preserve_visual_sources_without_fetch(tmp_path, monkeypatch, hyperlink):
-    from base64 import b64decode
-    from io import BytesIO
-
     from openpyxl import load_workbook
-    from openpyxl.drawing.image import Image
 
-    path = tmp_path / "image.xlsx"
-    book = Workbook()
-    sheet = book.active
-    sheet["D4"] = "End"
-    image = Image(BytesIO(b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==")))
-    sheet.add_image(image, "B2")
-    book.save(path)
-    book.close()
+    path = image_workbook(tmp_path)
     if hyperlink:
         with ZipFile(path) as archive:
             parts = {item.filename: archive.read(item) for item in archive.infolist()}
@@ -352,6 +395,91 @@ def test_native_image_and_navigation_relationships_preserve_visual_sources_witho
     assert visual["content_observed"] is False
     assert effective(observed["tables"][0], 2, 2)["state"] == "unknown_visual_evidence"
     validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("scheme", ["https", "file"])
+def test_linked_images_remain_explicitly_unavailable_without_external_reads(tmp_path, monkeypatch, cached, scheme):
+    import builtins
+
+    external_path = tmp_path / "external-private.png"
+    external_path.write_bytes(b"must not be read")
+    target = "https://example.invalid/image.png" if scheme == "https" else external_path.as_uri()
+    path = linked_image_workbook(tmp_path, cached=cached, target=target, cells={"B2": "native", "C2": 0, "D2": False, "B3": "=1+1"})
+    original = path.read_bytes()
+    calls = []
+    original_open = builtins.open
+
+    def guarded_open(file, *args, **kwargs):
+        if str(file) in {str(external_path), target}:
+            calls.append("file")
+            raise AssertionError("Document inspection must not read an external file")
+        return original_open(file, *args, **kwargs)
+
+    def unexpected_network(*args, **kwargs):
+        calls.append("network")
+        raise AssertionError("Document inspection must not fetch an external image")
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr("socket.socket.connect", unexpected_network)
+    monkeypatch.setattr("socket.socket.connect_ex", unexpected_network)
+    observed = snapshot(path)
+    table = observed["tables"][0]
+    visual = table["visual_evidence"][0]
+    expected = [{"relationship_id": "rId1", "part": "xl/media/image1.png"}] if cached else []
+    assert visual["references"] == [*expected, {"relationship_id": "linked0", "state": "external_unavailable"}]
+    assert visual["source"] == {"part": "xl/drawings/drawing1.xml", "anchor_index": 1}
+    assert visual["content_observed"] is False
+    assert target not in json.dumps(observed)
+    assert effective(table, 3, 3)["state"] == "unknown_visual_evidence"
+    assert effective(table, 6, 5)["state"] == "known"
+    assert all(effective(table, 2, column)["state"] == "known" for column in (2, 3, 4))
+    assert effective(table, 3, 2)["state"] == "unknown_formula_cache"
+    assert effective(observed["tables"][1], 3, 3)["state"] == "known"
+    validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+    assert path.read_bytes() == original
+    assert observed["source"]["sha256"] == hashlib.sha256(original).hexdigest()
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {"relationship_id": "linked0", "state": "known"},
+        {"relationship_id": "linked0", "state": "internal"},
+        {"relationship_id": "linked0", "state": "internal", "part": "xl/media/image1.png"},
+        {"relationship_id": "linked0", "state": "external_unavailable", "part": "xl/media/image1.png"},
+        {"relationship_id": "linked0", "state": "external_unavailable", "target": "file:///private.png"},
+        {"relationship_id": "", "state": "external_unavailable"},
+    ],
+)
+def test_external_visual_reference_state_cannot_be_forged_as_available(tmp_path, reference):
+    observed = snapshot(linked_image_workbook(tmp_path, cached=True))
+    observed["tables"][0]["visual_evidence"][0]["references"][-1] = reference
+    with pytest.raises(ValueError, match="visual reference"):
+        validate_snapshot(observed, observed["source"]["sha256"], ".xlsx")
+
+
+@pytest.mark.parametrize("defect", ["missing_relation", "hyperlink_type", "internal_hyperlink_type", "missing_cache", "invalid_cache_path"])
+def test_linked_image_does_not_hide_invalid_relationships_or_internal_cache(tmp_path, defect):
+    path = linked_image_workbook(tmp_path, cached=True)
+    with ZipFile(path) as archive:
+        parts = {item.filename: archive.read(item) for item in archive.infolist()}
+    rels = ET.fromstring(parts["xl/drawings/_rels/drawing1.xml.rels"])
+    if defect == "missing_relation":
+        rels.remove(next(item for item in rels if item.get("Id") == "linked0"))
+    elif defect == "hyperlink_type":
+        next(item for item in rels if item.get("Id") == "linked0").set("Type", f"{REL}/hyperlink")
+    elif defect == "internal_hyperlink_type":
+        next(item for item in rels if item.get("Id") == "rId1").set("Type", f"{REL}/hyperlink")
+    elif defect == "missing_cache":
+        del parts["xl/media/image1.png"]
+    else:
+        next(item for item in rels if item.get("Id") == "rId1").set("Target", "../../../private.png")
+    parts["xl/drawings/_rels/drawing1.xml.rels"] = ET.tostring(rels)
+    rewrite(path, parts)
+    with pytest.raises(ValueError):
+        snapshot(path)
 
 
 def test_comment_popup_does_not_make_the_worksheet_grid_unresolved(tmp_path):

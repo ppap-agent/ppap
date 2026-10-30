@@ -240,12 +240,26 @@ def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict
                     if attribute.startswith("{" + _XLSX_REL + "}") or attribute == "{urn:schemas-microsoft-com:office:office}relid":
                         relation = rels.get(identity, {})
                         if (
+                            child.tag == "{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+                            and attribute in {f"{{{_XLSX_REL}}}embed", f"{{{_XLSX_REL}}}link"}
+                            and relation.get("Type") != _XLSX_REL + "/image"
+                        ):
+                            raise ValueError("Invalid visual image relationship")
+                        if (
                             attribute == f"{{{_XLSX_REL}}}id"
                             and child.tag in {f"{{http://schemas.openxmlformats.org/drawingml/2006/main}}{name}" for name in ("hlinkClick", "hlinkHover")}
                             and relation.get("Type") == _XLSX_REL + "/hyperlink"
                             and relation.get("TargetMode", "Internal") in {"Internal", "External"}
                         ):
                             continue  # Navigation is not visual content; never open its target.
+                        if (
+                            child.tag == "{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+                            and attribute == f"{{{_XLSX_REL}}}link"
+                            and relation.get("Type") == _XLSX_REL + "/image"
+                            and relation.get("TargetMode") == "External"
+                        ):
+                            references.append({"relationship_id": identity, "state": "external_unavailable"})
+                            continue  # Keep the unavailable source without opening or exposing its target.
                         references.append({"relationship_id": identity, "part": related(part, rels, identity)})
             if references:
                 item["references"] = references
@@ -415,7 +429,8 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
                 result["tables"].append(table)
         result["limitations"] = [
             "Uninterpreted visual sources remain unknown on overlapping empty cells. Only zero-offset two-cell anchors have cell coverage; "
-            "nonzero offsets and unsupported placements affect empty cells on their worksheet. Only integer EMU offsets are supported. Formula caches are not recalculated."
+            "nonzero offsets and unsupported placements affect empty cells on their worksheet. Linked external images are not fetched; local caches remain source references. "
+            "Only integer EMU offsets are supported. Formula caches are not recalculated."
         ]
     elif suffix == ".xls":
         import xlrd
