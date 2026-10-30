@@ -29,6 +29,20 @@ VERSION = "2026-07-28"
 TASKS = "io.modelcontextprotocol/tasks"
 PREFIX = "io.modelcontextprotocol/"
 SERVER_INFO = {"name": "PPAP Deep", "version": "1"}
+# These application checks reject the request inside its save/queue transaction.
+# Transport, database and unclassified failures can still have unknown outcomes.
+REJECTED_CHANGES = frozenset(
+    {
+        "feedback_revision_conflict",
+        "feedback_scope_conflict",
+        "feedback_question_expired",
+        "feedback_question_changed",
+        "feedback_candidate_changed",
+        "invalid_feedback_request",
+        "invalid_rule_appendix",
+        "idempotency_conflict",
+    }
+)
 
 
 def complete(value):
@@ -161,6 +175,8 @@ class DeepMcp:
                 if execution in {"queued", "running"}:
                     return {**task, "status": "working"}
             return {**task, "status": "completed", "result": complete({"receipt": receipt, "audit": view})}
+        if (operation.get("result") or {}).get("error"):
+            return {**task, "status": "failed", "error": operation["result"]["error"]}
         if datetime.now(timezone.utc) - datetime.fromisoformat(operation["created_at"]) > timedelta(hours=1):
             return {
                 **task,
@@ -238,6 +254,8 @@ class DeepMcp:
                     existing = self.product.apply_rule_change(current.session.principal, arguments["round_id"], change)
                     self.settle(current, operation, responses, existing)
                 return complete(existing)
+            if recorded.get("error"):
+                raise McpError(recorded["error"]["message"], 409)
         if datetime.now(timezone.utc) - datetime.fromisoformat(operation["created_at"]) > timedelta(hours=1):
             raise McpError("confirmation_expired", 409)
         question = self.question(operation, view, capabilities)
@@ -272,7 +290,18 @@ class DeepMcp:
                 policy = query_tenant_ai_item(self.provider.http, current.session.access_token, self.product.settings.feishu_ai_item_id)
             except FeishuUsageError:
                 raise McpError("usage_policy_unavailable", 503) from None
-        receipt = self.product.apply_rule_change(current.session.principal, arguments["round_id"], change, usage_policy=policy)
+        try:
+            receipt = self.product.apply_rule_change(current.session.principal, arguments["round_id"], change, usage_policy=policy)
+        except ValueError as error:
+            # Only a known application rejection with no committed receipt is
+            # terminal. A failure after commit must remain recoverable instead.
+            if type(error) is ValueError and str(error) in REJECTED_CHANGES and self.product.read_rule_change(current.session.principal, arguments["round_id"], change["operation_id"]) is None:
+                with self.transport.connection() as conn:
+                    conn.execute(
+                        "UPDATE product.mcp_operations SET state='failed',result=COALESCE(result,'{}'::jsonb)||%s,updated_at=now() WHERE id=%s AND grant_id=%s AND state IN ('running','unknown')",
+                        (Jsonb({"error": {"code": -32602, "message": str(error)}}), operation["id"], current.id),
+                    )
+            raise
         self.settle(current, operation, responses, receipt)
         return complete(receipt)
 
@@ -393,6 +422,8 @@ class DeepMcp:
             return complete(operation["result"]["receipt"])
         if task_capable:
             return {"resultType": "task", **self.task(delegation, operation, capabilities)}
+        if (operation.get("result") or {}).get("error"):
+            raise McpError(operation["result"]["error"]["message"], 409)
         receipt = self.product.read_rule_change(delegation.session.principal, arguments["round_id"], change["operation_id"])
         if receipt:
             return complete(receipt)
