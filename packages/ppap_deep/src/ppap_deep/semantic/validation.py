@@ -120,10 +120,9 @@ def _validate_xlsx_visuals(table: dict[str, Any], budget: EvidenceBudget) -> Non
         for reference in references:
             if (
                 not isinstance(reference, dict)
-                or set(reference) != {"relationship_id", "part"}
-                or not isinstance(reference["relationship_id"], str)
+                or not isinstance(reference.get("relationship_id"), str)
                 or not reference["relationship_id"]
-                or not part(reference["part"])
+                or not (set(reference) == {"relationship_id", "part"} and part(reference["part"]) or set(reference) == {"relationship_id", "state"} and reference["state"] == "external_unavailable")
             ):
                 raise ValueError("Invalid spreadsheet visual reference")
     for address, cell in table["cells"].items():
