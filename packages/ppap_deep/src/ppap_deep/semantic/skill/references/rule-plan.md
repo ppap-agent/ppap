@@ -5,9 +5,56 @@
 ## 编译步骤
 
 1. 核对本条完整原文、对象、条件、否则分支、方向和量词。将已支持的值运算直接写成 value_test，语义缺口才使用 Judge。
-2. 写出完整程序文件，调用 `RulePlan.model_validate_json` 校验。通过后，每条 ID 和来源须与冻结输入一致。
-3. 对关键机械分支构造小型 synthetic 记录，调用同一 `evaluate_audit`，核对从原文得到的预期与实际结果。至少覆盖已知满足、已知违反、未知；有 AND、条件或空范围时，再检查这些分支。特别检查左项 false、右项 true：原文若写“且……否则不通过”，结果应是 NG。构造数据与检查记在 working-state.json，作为未经独立确认的编译记录。
-4. 重读完整文件，确认类型与来源检查通过，反例与原文一致；再提交调用方要求的文件和完成回执。构造检查不替代独立业务复核，也不作为供应商证据或训练 gold。
+2. 将完整 CompiledRulePlan 写入 execution.json。按下方公开方法校验 schema，再核对每条 ID、来源和修订与冻结输入一致。artifact_schema.json 提供完整字段合同；无需读取 trace.py、bindings.py 或 validation.py。
+3. 用下方小型 synthetic 例子检查关键算子逻辑。保留已知满足、已知违反、未知、AND 和适用性反例；按本条原文替换相关表达式、值及预期。有明确空范围政策时补查该政策。自检使用正式的 evaluate_audit，不另写判定逻辑，也不要求为自检建立完整供应商对象模型或绑定全部规则。把本条表达式、构造值、预期和实际状态记在 working-state.json。
+4. 重读完整文件，确认 schema、来源和分支检查通过，再提交文件和完成回执。合成例子只检查算子与编译选择，不能证明整条业务解释正确，不能作为供应商证据、人工确认或训练 gold。
+
+## 公开校验方法
+
+在当前编译工作目录运行以下 Python。schema 校验针对实际 execution.json。算子示例使用独立的两字段单行快照和仅供自检的 RulePlan，不改变实际计划、ontology、冻结来源或供应商文件。示例的 NA 是明确声明的合成零适用对象政策；实际计划仍使用原文政策。按需修改本条关键表达式及构造值，无需读取实现代码。
+
+```python
+from pathlib import Path
+from ppap_deep.semantic.models import CompiledRulePlan, RulePlan
+from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
+
+CompiledRulePlan.model_validate_json(Path("execution.json").read_text())
+A = {"kind": "value_test", "field": "A", "op": "not_empty"}
+B = {"kind": "value_test", "field": "B", "op": "not_empty"}
+AND = {"kind": "all", "items": [A, B]}
+UNKNOWN = {"value": None, "state": "unknown_formula_cache"}
+
+def status(require, a, b, when=None):
+    cell = lambda value: value if isinstance(value, dict) else {"value": value, "state": "known"}
+    document = {
+        "source": {"file": "synthetic.xlsx", "format": ".xlsx", "sha256": "synthetic"},
+        "tables": [{"id": "Records", "rows": 2, "cols": 2, "merges": [], "cells": {
+            "A1": cell("A"), "B1": cell("B"), "A2": cell(a), "B2": cell(b),
+        }}],
+    }
+    program = {"kind": "records", "source": "source", "quantifier": "forall", "require": require, "when": when}
+    plan = RulePlan.model_validate({"source_sha256": "synthetic", "plan_revision": "0" * 64, "rules": [{
+        "id": "R1", "source_locator": {"kind": "published_clause", "clause_id": "R1"}, "program": program,
+        "empty_scope_status": "NA", "empty_scope_basis": "Synthetic unit case: known false applicability means NA.",
+    }]})
+    trace = AuditTrace.model_validate({"bindings": [{
+        "id": "data", "document_id": "source", "source_sha256": "synthetic", "table": "Records", "header_rows": [1],
+        "first_row": 2, "last_row": 2, "columns": {"A": "A", "B": "B"},
+        "mapping_basis": "Synthetic headers A/B", "boundary_basis": "Complete synthetic single row",
+    }], "uses": [{"audit_id": "source", "rule_id": "R1", "inputs": {
+        "source": {"kind": "bound", "scopes": [{"binding_id": "data"}]},
+    }}]})
+    return evaluate_audit(trace, {"source": document}, {"source": plan}).report.checks[0].status
+
+assert status(AND, "x", "y") == "PASS"
+assert status(AND, "", "y") == "NG"
+assert status(AND, "x", "") == "NG"
+assert status(AND, "x", UNKNOWN) == "UNABLE"
+assert status(AND, "", UNKNOWN) == "NG"  # Independent known violation remains.
+assert status(B, "", "", when=A) == "NA"  # Genuine applicability differs from AND.
+assert status(B, "x", "", when=A) == "NG"
+assert status(B, UNKNOWN, "y", when=A) == "UNABLE"
+```
 
 ## 来源和缓存
 
@@ -65,4 +112,4 @@ appendix 由宿主从冻结有效规则复制。编译时完整阅读它，但�
 
 原生观察保留 reader_parameters。只有同一原件、格式、解析参数的缓存才可复用；不同参数重新读取，不能借旧缓存绕过较小的读取上限。逻辑对象、属性选择及局部答案不按文件单独缓存：同一文件的另一 ontology/附录/程序仍需重新构建和验证。
 
-An occurrence is one source representation, with its own ID, values and locations; the ontology identity identifies the business object under the rule. Use `same_instance` for occurrences representing that business object, preserving every occurrence, conflict and duplicate count. Different rows or files alone do not imply `association`; use it for distinct business objects or explicit literal links, and keep genuinely unresolved meanings as Holes.
+occurrence 是一份来源表示，有自己的 ID、值和位置；ontology identity 定义条款下的业务对象。代表同一业务对象的多份表示使用 same_instance，保留每份表示、冲突和重复计数。只有行或文件不同不能证明 association；独立业务对象或原文明示的字面关联才使用它，含义未定时保留 Hole。

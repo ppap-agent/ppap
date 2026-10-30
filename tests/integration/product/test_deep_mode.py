@@ -44,9 +44,10 @@ from ppap_deep.client import DeepClient, DeepError
 from ppap_deep.controller import Controller, ScriptedRuntime, UnixControllerServer
 from ppap_deep.mapping import passing_response, spec_from_work
 from ppap_deep.protocol import ExecuteRequest, RequestEnvelope
-from ppap_deep.semantic.guest import Manifest
+from ppap_deep.semantic.guest import CompileManifest, Manifest, execute_compilation
 from ppap_deep.semantic.guest import execute as execute_guest
 from ppap_deep.semantic.models import RulePlan
+from ppap_deep.semantic.protocol import CompileSpec
 from ppap_deep.semantic.trace import AuditTrace
 from ppap_deep.source import authorize_execution, object_file_source
 from ppap_worker import process_claimed
@@ -379,14 +380,24 @@ class DeepModeTests(unittest.TestCase):
             def engine_revision(self):
                 return frozen_revision
 
-            def run(self, submission, inputs, work, deadline, cancelled, *, on_progress):
+            def run(self, submission, inputs, work, deadline, cancelled, *, on_progress, prior_usage=None):
                 owner.assertFalse(cancelled.is_set())
-                manifest = Manifest.model_validate_json((inputs / "manifest.json").read_bytes())
+                compiling = isinstance(submission, CompileSpec)
+                manifest_type = CompileManifest if compiling else Manifest
+                manifest = manifest_type.model_validate_json((inputs / "manifest.json").read_bytes())
                 owner.assertEqual(manifest.spec, submission)
                 self.calls += 1
-                self.submission = submission.model_dump(mode="json")
                 model.rules = {rule.rule_id: rule for rule in submission.rules}
-                execute_guest(inputs, work, model, deadline)
+                usage_before = {name: getattr(model, name, 0) for name in ("input_tokens", "output_tokens", "model_requests")}
+                if compiling:
+                    bundle = execute_compilation(inputs, work, model, deadline)
+                else:
+                    owner.assertTrue(manifest.precompiled_only)
+                    self.submission = submission.model_dump(mode="json")
+                    bundle = execute_guest(inputs, work, model, deadline)
+                for name, count in usage_before.items():
+                    setattr(bundle, name, getattr(model, name, 0) - count)
+                (work / "result" / "bundle.json").write_text(bundle.model_dump_json())
 
         guest = InProcessGuest()
         self.settings.deep_controller_socket = self._start_controller(runtime=SemanticRuntime(guest, self.store.objects))
@@ -467,7 +478,7 @@ class DeepModeTests(unittest.TestCase):
             self.assertEqual(downloaded.status_code, 200)
             self.assertEqual(downloaded.content, original_bytes[upload["id"]])
             self.assertEqual(self.client.get("/rules/" + published["id"]).json()["body"], published["body"])
-        self.assertEqual(guest.calls, 1)
+        self.assertEqual(guest.calls, 3)
         self.assertEqual(model.plan_calls, {bad_rule: 2, good_rule: 1})
         self.assertEqual(model.audit_targets, [{good_target: good_rule}])
         submission = guest.submission
@@ -476,7 +487,7 @@ class DeepModeTests(unittest.TestCase):
         for _ in range(2):
             self.assertEqual(self.client.get(round_path, params={"read_view": "true"}).json(), loaded)
             self.assertEqual(self.client.get(task_path).json(), current)
-        self.assertEqual(guest.calls, 1)
+        self.assertEqual(guest.calls, 3)
         self.assertEqual(guest.submission, submission)
         self.assertEqual(model.plan_calls, {bad_rule: 2, good_rule: 1})
         self.assertEqual(model.audit_targets, [{good_target: good_rule}])

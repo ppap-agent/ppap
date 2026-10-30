@@ -125,13 +125,13 @@ FIELD_DOCUMENT = {
 
 
 class SemanticBoundaryTests(unittest.TestCase):
-    def test_audit_receives_its_execution_branch_instructions(self) -> None:
-        from ppap_deep.semantic.guest import RULE_BRANCH_PROMPT
+    def test_audit_receives_current_execution_guide_without_a_tool_read(self) -> None:
+        from ppap_deep.semantic.guest import EXECUTION_GUIDE
 
         # This verifies instruction delivery, not the model's interpretation.
         rule, _ = published_source()
         prompt = audit_prompt({"rule-1": plan()}, {"target-1": "rule-1"}, {rule.rule_id: rule.clauses})
-        self.assertEqual(prompt.count(RULE_BRANCH_PROMPT), 1)
+        self.assertEqual(prompt.count(EXECUTION_GUIDE), 1)
 
     def test_compilation_receives_current_guide_without_a_tool_read(self) -> None:
         from ppap_deep.semantic import guest
@@ -144,20 +144,35 @@ class SemanticBoundaryTests(unittest.TestCase):
         ):
             self.assertEqual(prompt.count(guide), 1)
 
-    def test_compilation_guide_is_frozen_until_a_new_process_loads_it(self) -> None:
+    def test_compilation_operator_example_runs_without_internal_module_reads(self) -> None:
+        from ppap_deep.semantic.guest import COMPILATION_GUIDE
+
+        example = COMPILATION_GUIDE.split("```python\n", 1)[1].split("```", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            execution = Path(directory) / "execution.json"
+            original = plan().model_dump_json()
+            execution.write_text(original)
+            completed = subprocess.run([sys.executable, "-c", example], cwd=directory, capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(execution.read_text(), original)
+
+    def test_stage_guides_are_frozen_until_a_new_process_loads_them(self) -> None:
         from ppap_deep.semantic import guest
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            shutil.copytree(Path(guest.__file__).parent, root / "frozen_semantic", ignore=shutil.ignore_patterns("__pycache__"))
-            script = """
+        for name, filename in (("COMPILATION_GUIDE", "rule-plan.md"), ("EXECUTION_GUIDE", "execution-trace.md")):
+            with self.subTest(guide=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                shutil.copytree(Path(guest.__file__).parent, root / "frozen_semantic", ignore=shutil.ignore_patterns("__pycache__"))
+                script = """
 import subprocess
 import sys
 from pathlib import Path
 from frozen_semantic import guest
+from frozen_semantic.models import RulePlan
 from frozen_semantic.protocol import RuleRef
 
 assert Path(guest.__file__).resolve().is_relative_to(Path.cwd())
+name, filename = sys.argv[1:]
 rule = RuleRef(rule_id="rule-1", sha256="a" * 64, format=".docx", plan_revision="b" * 64, clauses=[{
     "id": "R1", "rule_to_check": "Every record has a frequency.", "source_locators": [{"kind": "docx_paragraph", "paragraph": 1}],
 }])
@@ -165,27 +180,27 @@ def prompts():
     return (
         guest._compile_prompt(rule, ["R1"], {}),
         guest._compile_prompt(rule, ["R1"], {}, invalid_plan={}, validation_feedback={"code": "OUTPUT_VALIDATION_ERROR"}),
+        guest.audit_prompt({"rule-1": RulePlan.model_construct(rules=[])}, {"target-1": "rule-1"}, {"rule-1": rule.clauses}),
     )
 before = prompts()
-assert all(prompt.count(guest.COMPILATION_GUIDE) == 1 for prompt in before)
-guide = Path(guest.__file__).parent / "skill" / "references" / "rule-plan.md"
-replacement = "New compilation guide for the next process."
+guide = Path(guest.__file__).parent / "skill" / "references" / filename
+replacement = "New stage guide for the next process."
 guide.write_text(replacement, encoding="utf-8")
 assert prompts() == before
-fresh = subprocess.run([sys.executable, "-c", "from frozen_semantic import guest; print(guest.COMPILATION_GUIDE, end='')"], capture_output=True, text=True, check=True)
+fresh = subprocess.run([sys.executable, "-c", f"from frozen_semantic import guest; print(guest.{name}, end='')"], capture_output=True, text=True, check=True)
 assert fresh.stdout == replacement
 """
-            completed = subprocess.run([sys.executable, "-c", script], cwd=root, capture_output=True, text=True, timeout=30)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+                completed = subprocess.run([sys.executable, "-c", script, name, filename], cwd=root, capture_output=True, text=True, timeout=30)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_audit_prompt_requires_trace_only_with_decisive_evidence(self) -> None:
         rule, _ = published_source()
         prompt = audit_prompt({"rule-1": plan()}, {"target-1": "rule-1"}, {rule.rule_id: rule.clauses})
-        self.assertIn("AuditTrace with physical bindings", prompt)
+        self.assertIn("AuditTrace：bindings、uses、answers", prompt)
         self.assertNotIn("report.checks", prompt)
-        self.assertIn("Optional citation gaps", prompt)
+        self.assertIn("缺少可选引用只形成证据提示", prompt)
         self.assertIn("execution.json", prompt)
-        self.assertIn("local", prompt)
+        self.assertIn("局部", prompt)
 
     def test_audit_receives_frozen_text_for_semantic_and_query_without_a_tool_read(self) -> None:
         rule, _ = published_source()
@@ -373,6 +388,119 @@ assert fresh.stdout == replacement
             self.assertNotIn("private-", json.dumps(feedback))
             self.assertEqual(calls, ["compile-0", "compile-repair-0"])
 
+    def test_precompiled_audit_never_compiles_a_missing_or_invalid_plan(self) -> None:
+        from ppap_deep.semantic.document_tools import ReadLimits
+        from ppap_deep.semantic.guest import InputIntegrityError
+
+        rule, source = published_source()
+        runner = unittest.mock.Mock()
+        for candidate in (None, "missing-file", "{}", plan().model_copy(update={"source_sha256": "0" * 64}).model_dump_json()):
+            with self.subTest(candidate=candidate), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cached = {} if candidate is None else {rule.rule_id: "cached.json"}
+                if candidate not in (None, "missing-file"):
+                    (root / "cached.json").write_text(candidate)
+                with self.assertRaisesRegex(InputIntegrityError, "Precompiled rule plan"):
+                    compile_plans(root, root, [rule], {rule.rule_id: source}, cached, runner, 9999999999.0, ReadLimits(), precompiled_only=True)
+                runner.run.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cached.json").write_text(plan().model_dump_json())
+            result = compile_plans(root, root, [rule], {rule.rule_id: source}, {rule.rule_id: "cached.json"}, runner, 9999999999.0, ReadLimits(), precompiled_only=True)
+            self.assertEqual(result, {rule.rule_id: plan()})
+            runner.run.assert_not_called()
+
+    def test_precompiled_manifest_requires_complete_rules_and_frozen_failure_identity(self) -> None:
+        from uuid import UUID
+
+        from ppap_deep.semantic.guest import Manifest
+        from ppap_deep.semantic.protocol import SubmissionSpec
+
+        rule, _ = published_source()
+        spec = SubmissionSpec(
+            execution_id=UUID(int=0), submission_id=UUID(int=1), project_id="tenant",
+            documents=[{"audit_id": "target", "sha256": "b" * 64, "format": ".xlsx", "role": "target"}],
+            rules=[rule], targets={"target": rule.rule_id}, policy_revision="c" * 64, semantic_engine_revision="d" * 64,
+        )
+        data = {
+            "spec": spec.model_dump(mode="json"), "documents": {"target": "document.xlsx"}, "rules": {rule.rule_id: "rule.json"},
+            "cached_snapshots": {}, "cached_plans": {}, "precompiled_only": True,
+        }
+        failure = {
+            "rule_id": rule.rule_id, "source_sha256": rule.sha256, "plan_revision": rule.plan_revision,
+            "engine_revision": spec.semantic_engine_revision, "stage": "compile_repair_validation", "reason": "coverage_mismatch",
+        }
+        with self.assertRaisesRegex(ValueError, "cover the frozen rule set"):
+            Manifest.model_validate(data)
+        Manifest.model_validate({**data, "cached_plans": {rule.rule_id: "plan.json"}})
+        Manifest.model_validate({**data, "failed_rules": {rule.rule_id: failure}})
+        with self.assertRaisesRegex(ValueError, "cover the frozen rule set"):
+            Manifest.model_validate({**data, "cached_plans": {rule.rule_id: "plan.json"}, "failed_rules": {rule.rule_id: failure}})
+        for changed in ({"source_sha256": "e" * 64}, {"plan_revision": "e" * 64}, {"engine_revision": "e" * 64}, {"clause_id": "outside"}):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "Compile failure"):
+                Manifest.model_validate({**data, "failed_rules": {rule.rule_id: {**failure, **changed}}})
+        with self.assertRaisesRegex(ValueError, "precompiled audit"):
+            Manifest.model_validate({**data, "precompiled_only": False, "failed_rules": {rule.rule_id: failure}})
+
+    def test_model_request_count_is_optional_and_strict_on_both_bundles(self) -> None:
+        from ppap_deep.semantic.protocol import CompileBundle, ResultBundle
+
+        common = {"execution_id": "00000000-0000-0000-0000-000000000001", "semantic_engine_revision": "a" * 64, "rule_sources": {}, "plans": {}}
+        for schema, payload in (
+            (CompileBundle, common),
+            (ResultBundle, {**common, "documents": {}, "trace": {"uses": []}, "report": {"checks": []}}),
+        ):
+            with self.subTest(schema=schema.__name__):
+                self.assertEqual(schema.model_validate(payload).model_requests, 0)
+                self.assertEqual(schema.model_validate({**payload, "model_requests": 2}).model_requests, 2)
+                for invalid in (-1, True, 1.0, "1"):
+                    with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                        schema.model_validate({**payload, "model_requests": invalid})
+
+    def test_compile_bundle_records_deterministic_failure_and_usage(self) -> None:
+        from uuid import UUID
+
+        from ppap_deep.semantic.guest import execute_compilation
+        from ppap_deep.semantic.protocol import CompileSpec
+
+        rule, source = published_source()
+        spec = CompileSpec(execution_id=UUID(int=0), project_id="tenant", rules=[rule], policy_revision="c" * 64, semantic_engine_revision="d" * 64)
+        current_round = spec.model_copy(update={"submission_id": UUID(int=1)})
+        next_round = spec.model_copy(update={"submission_id": UUID(int=2)})
+        self.assertNotEqual(spec.expected_execution_id(), current_round.expected_execution_id())
+        self.assertNotEqual(current_round.expected_execution_id(), next_round.expected_execution_id())
+        self.assertEqual(current_round.rules, next_round.rules)
+        spec = current_round.model_copy(update={"execution_id": current_round.expected_execution_id()})
+
+        class RejectedPlan:
+            input_tokens = 0
+            output_tokens = 0
+            tool_calls = 3
+            completed_tool_calls = 2
+            compactions = 1
+            model_requests = 2
+
+            def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+                self.input_tokens += 10
+                self.output_tokens += 2
+                return schema.model_validate(plan().model_copy(update={"source_sha256": "0" * 64}).model_dump(mode="json"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            raw = json.dumps({key: source[key] for key in ("kind", "rule_version_id", "rule_body", "clauses")}, ensure_ascii=False).encode()
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), rule.sha256)
+            (inputs / "rule.json").write_bytes(raw)
+            manifest = {"operation": "compile", "spec": spec.model_dump(mode="json"), "rules": {rule.rule_id: "rule.json"}, "cached_snapshots": {}, "cached_plans": {}}
+            (inputs / "manifest.json").write_text(json.dumps(manifest))
+            result = execute_compilation(inputs, root / "work", RejectedPlan(), 9999999999.0)
+        self.assertEqual(result.plans, {})
+        self.assertEqual(result.failed_rules[rule.rule_id].reason, "coverage_mismatch")
+        self.assertEqual(result.model_requests, 2)
+        self.assertEqual((result.failed_rules[rule.rule_id].source_sha256, result.failed_rules[rule.rule_id].engine_revision), (rule.sha256, spec.semantic_engine_revision))
+        self.assertEqual((result.input_tokens, result.output_tokens, result.tool_calls, result.completed_tool_calls, result.compactions), (20, 4, 3, 2, 1))
+
     def test_compiler_uses_the_same_file_artifact_boundary_as_the_audit(self) -> None:
         from ppap_deep.semantic.document_tools import ReadLimits
 
@@ -381,8 +509,7 @@ assert fresh.stdout == replacement
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 
-            def finish_file(work, prompt, schema, deadline, **kwargs):
-                self.assertIsNone(schema)
+            def finish_file(work, prompt, deadline, **kwargs):
                 self.assertIn("synthetic", prompt)
                 self.assertNotIn("proof kinds", prompt)
                 self.assertEqual(json.loads((work / "artifact_schema.json").read_text()), CompiledRulePlan.model_json_schema())
@@ -394,15 +521,17 @@ assert fresh.stdout == replacement
             self.assertEqual(compiled[rule.rule_id], plan())
             self.assertEqual(run.call_count, 1)
 
-    def test_structured_trace_is_returned_without_model_file_work(self) -> None:
-        runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
-        trace = {"bindings": [field_check_request()["binding"]], "uses": [{"audit_id": "target-1", "rule_id": "R1", "inputs": {"records": {"kind": "bound", "scopes": [{"binding_id": "data"}]}}}]}
+    def test_stage_accepts_a_small_fake_with_the_single_run_contract(self) -> None:
+        class Fake:
+            input_tokens = 0
+            output_tokens = 0
+
+            def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+                return schema.model_validate({"uses": []})
+
         with tempfile.TemporaryDirectory() as directory:
-            with patch.object(runner, "_run", return_value={"structured_output": trace}) as run:
-                result = runner.run(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
-            self.assertEqual(result, AuditTrace.model_validate(trace))
-            self.assertEqual(run.call_args.args[2], AuditTrace.model_json_schema())
-            self.assertFalse((Path(directory) / "execution.json").exists())
+            result = run_audit_stage(Fake(), Path(directory), "audit", 9999999999.0)
+        self.assertEqual(result, AuditTrace(uses=[]))
 
     def test_artifact_stage_reads_the_actual_large_trace_after_a_small_receipt(self) -> None:
         runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
@@ -420,15 +549,15 @@ assert fresh.stdout == replacement
             self.assertEqual(result, AuditTrace.model_validate(trace))
             self.assertGreater((work / "execution.json").stat().st_size, 100_000)
             self.assertEqual(json.loads((work / "artifact_schema.json").read_text()), AuditTrace.model_json_schema())
-            self.assertIsNone(run.call_args.args[2])
+            self.assertEqual(len(run.call_args.args), 3)
             self.assertEqual(run.call_args.kwargs["reasoning_effort"], "medium")
 
     def test_artifact_receipt_alone_does_not_supply_the_file(self) -> None:
         runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
-        terminal = {"result": '{"completed":true,"artifact":"execution.json"}', "structured_output": {"uses": []}}
+        terminal = {"result": '{"completed":true,"artifact":"execution.json"}'}
         with tempfile.TemporaryDirectory() as directory, patch.object(runner, "_run", return_value=terminal):
             with self.assertRaisesRegex(ModelProtocolError, "Missing or invalid stage artifact"):
-                runner.run_artifact(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
+                runner.run(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
 
     def test_artifact_completion_receipt_is_strict_even_with_a_valid_file(self) -> None:
         runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
@@ -450,7 +579,7 @@ assert fresh.stdout == replacement
 
                 with self.subTest(receipt=receipt), patch.object(runner, "_run", side_effect=finish_file):
                     with self.assertRaisesRegex(ModelProtocolError, "completion receipt"):
-                        runner.run_artifact(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
+                        runner.run(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
 
     def test_artifact_contents_require_strict_json_and_the_full_schema(self) -> None:
         runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
@@ -464,7 +593,7 @@ assert fresh.stdout == replacement
                     return terminal
 
                 with self.subTest(artifact=artifact), patch.object(runner, "_run", side_effect=finish_file), self.assertRaises(ValueError):
-                    runner.run_artifact(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
+                    runner.run(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
 
     def test_artifact_stage_cannot_reuse_a_preexisting_execution(self) -> None:
         runner = GrokRunner({"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10})
@@ -472,7 +601,7 @@ assert fresh.stdout == replacement
             existing = Path(directory) / "execution.json"
             existing.write_text('{"uses":[]}')
             with patch.object(runner, "_run") as run, self.assertRaisesRegex(ModelProtocolError, "already exists"):
-                runner.run_artifact(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
+                runner.run(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
             run.assert_not_called()
             self.assertEqual(existing.read_text(), '{"uses":[]}')
 
@@ -552,12 +681,14 @@ assert fresh.stdout == replacement
                         popen.return_value.poll.return_value = 0
                         popen.return_value.returncode = 0
                         with self.assertRaises(ModelProtocolError):
-                            GrokRunner(grant)._run(Path(directory), "test", None, 9999999999.0, reasoning_effort="medium")
+                            GrokRunner(grant)._run(Path(directory), "test", 9999999999.0, reasoning_effort="medium")
                         command = popen.call_args.args[0]
                         self.assertEqual(command[command.index("--tools") + 1], "Read,Bash,Write,TaskOutput,TaskStop")
                         self.assertEqual(command[command.index("--agent") + 1], "grok-build")
                         self.assertEqual(command[command.index("--deny") + 1], "MCPTool")
                         self.assertIn("--no-subagents", command)
+                        self.assertNotIn("--json-schema", command)
+                        self.assertFalse((Path(directory) / "output_schema.json").exists())
                         self.assertEqual(command[command.index("--sandbox") + 1], "off")
                         child_env = popen.call_args.kwargs["env"]
                         self.assertEqual(child_env.get("PYTHONPATH"), pythonpath or None)
@@ -623,7 +754,7 @@ assert fresh.stdout == replacement
                         for index in range(2):
                             stage = Path(directory) / str(index)
                             stage.mkdir()
-                            runner._run(stage, "test", {"type": "object"}, 9999999999.0, reasoning_effort="low")
+                            runner._run(stage, "test", 9999999999.0, reasoning_effort="low")
                             config = tomllib.loads((stage / "grok-home/config.toml").read_text())
                             self.assertNotIn("session", config)
                             self.assertNotIn("context_window", config["model"]["test"])
@@ -646,17 +777,14 @@ assert fresh.stdout == replacement
                 GrokRunner(grant)
             GrokRunner({**grant, "base_url": "https://example.test/v1"})
 
-    def test_structured_stream_rejects_duplicate_verdicts_and_nonfinite_numbers(self) -> None:
+    def test_model_stream_rejects_duplicate_keys_and_nonfinite_numbers(self) -> None:
         grant = {"base_url": "https://example.invalid/v1", "token": "x" * 32, "model": "test", "max_turns": 2, "wall_seconds": 10}
-        record = {"record_id": "row-1", "role": "applicable", "applicability_basis": "required field", "status": "NG", "reason": "known blank", "evidence": []}
-        candidate = json.dumps({"bindings": [], "uses": [{"kind": "semantic", "audit_id": "target-1", "rule_id": "R1", "scope_basis": "one record", "records": [record]}]})
-        invalid_candidates = (candidate.replace('"status": "NG"', '"status": "NG", "status": "PASS"'), candidate.replace('"bindings": []', '"bindings": [], "extra": NaN'))
-        for encoded in invalid_candidates:
-            with self.subTest(candidate=encoded), tempfile.TemporaryDirectory() as directory:
+        invalid_events = ('{"type":"result","type":"result"}', '{"type":"result","usage":{"input_tokens":NaN}}')
+        for encoded in invalid_events:
+            with self.subTest(event=encoded), tempfile.TemporaryDirectory() as directory:
 
                 def launch(*_args, **kwargs):
-                    event = '{"type":"result","stop_reason":"end_turn","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"structured_output":' + encoded + "}\n"
-                    kwargs["stdout"].write(event.encode())
+                    kwargs["stdout"].write((encoded + "\n").encode())
                     kwargs["stdout"].flush()
                     from unittest.mock import Mock
 
@@ -679,7 +807,7 @@ assert fresh.stdout == replacement
                         popen.return_value.returncode = 0
                         with patch("ppap_deep.semantic.guest_model.os.killpg") as killpg:
                             with self.assertRaises(ModelProtocolError):
-                                runner._run(Path(directory), "test", {"type": "object"}, 9999999999.0, reasoning_effort="low")
+                                runner._run(Path(directory), "test", 9999999999.0, reasoning_effort="low")
                             self.assertFalse(popen.call_args.kwargs["start_new_session"])
                             killpg.assert_not_called()
 
@@ -791,21 +919,6 @@ assert fresh.stdout == replacement
         with self.assertRaisesRegex(ValueError, "证据来源"):
             validate_report(report, {"target-1": plan()}, {"target-1": DOCUMENT})
 
-    def test_receipt_or_stale_file_cannot_substitute_for_structured_trace(self) -> None:
-        runner = GrokRunner(
-            {
-                "base_url": "https://example.invalid",
-                "token": "x" * 32,
-                "model": "test",
-                "max_turns": 2,
-                "wall_seconds": 10,
-            }
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "execution.json").write_text('{"bindings":[],"uses":[]}')
-            for terminal in ({"result": '{"completed":true,"artifact":"execution.json"}'}, {"structured_output": {"completed": True, "artifact": "execution.json"}}):
-                with self.subTest(terminal=terminal), patch.object(runner, "_run", return_value=terminal), self.assertRaises(ValueError):
-                    runner.run(Path(directory), "audit", AuditTrace, 9999999999.0, reasoning_effort="medium")
 
 
 if __name__ == "__main__":

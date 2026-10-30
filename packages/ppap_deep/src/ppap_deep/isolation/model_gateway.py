@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
+from ppap_deep.semantic.guest_model import ModelBudgetError
 from ppap_deep.semantic.secure_files import reject_constant, unique_object
 
 MAX_BODY = 8 * 1024 * 1024
@@ -71,7 +72,23 @@ class Grants:
         self.leases: dict[str, Lease] = {}
         self.lock = threading.Lock()
 
-    def issue(self, execution_id: UUID) -> str:
+    def issue(self, execution_id: UUID, prior_usage: dict[str, Any] | None = None) -> str:
+        # Rule compilation and audit have separate leases but share one budget.
+        prior = {"model_requests": 0, "input_tokens": 0, "output_tokens": 0}
+        if prior_usage is not None:
+            if not isinstance(prior_usage, dict):
+                raise ValueError("Invalid prior usage")
+            prior = dict(prior_usage)
+        limits = {"model_requests": self.requests, "input_tokens": self.input_budget, "output_tokens": self.output_budget}
+        if (
+            any(type(prior.get(key)) is not int or prior[key] < 0 for key in limits)
+            or prior.get("uncertain", False) is not False
+            or prior.get("in_flight", False) is not False
+            or (prior["model_requests"] == 0 and (prior["input_tokens"] or prior["output_tokens"]))
+        ):
+            raise ValueError("Invalid prior usage")
+        if any(prior[key] > limit for key, limit in limits.items()):
+            raise ModelBudgetError("Grant budget exhausted")
         with self.lock:
             now = time.monotonic()
             self.leases = {key: lease for key, lease in self.leases.items() if lease.expires > now and lease.execution_id != execution_id}
@@ -81,9 +98,9 @@ class Grants:
             self.leases[hashlib.sha256(token.encode()).hexdigest()] = Lease(
                 execution_id,
                 now + self.ttl,
-                self.requests,
-                self.input_budget,
-                self.output_budget,
+                self.requests - prior["model_requests"],
+                self.input_budget - prior["input_tokens"],
+                self.output_budget - prior["output_tokens"],
             )
             return token
 
@@ -525,20 +542,26 @@ class GrantHandler(socketserver.StreamRequestHandler):
             if len(line) > 4096 or not line.endswith(b"\n"):
                 raise ValueError("Invalid frame")
             request = json.loads(line, object_pairs_hook=unique_object)
-            if set(request) != {"method", "execution_id"}:
+            if set(request) not in ({"method", "execution_id"}, {"method", "execution_id", "prior_usage"}):
                 raise ValueError("Invalid grant request")
             execution_id = UUID(request["execution_id"])
             grants = self.server.grants
             if request["method"] == "issue":
+                prior = request.get("prior_usage")
+                token = grants.issue(execution_id, prior)
+                prior = prior or {"model_requests": 0, "input_tokens": 0, "output_tokens": 0}
+                remaining_requests = max(1, grants.requests - prior["model_requests"])
                 result: dict[str, Any] = {
                     "base_url": self.server.base_url,
-                    "token": grants.issue(execution_id),
+                    "token": token,
                     "model": grants.model,
-                    "max_turns": 64,
-                    "max_total_turns": grants.requests,
-                    "max_total_tokens": grants.input_budget + grants.output_budget,
+                    "max_turns": min(64, remaining_requests),
+                    "max_total_turns": remaining_requests,
+                    "max_total_tokens": max(1, grants.input_budget + grants.output_budget - prior["input_tokens"] - prior["output_tokens"]),
                     "wall_seconds": grants.ttl,
                 }  # noqa: E501
+            elif "prior_usage" in request:
+                raise ValueError("Prior usage only applies to issue")
             elif request["method"] == "usage":
                 result = grants.usage(execution_id)
             elif request["method"] == "revoke":
@@ -546,21 +569,28 @@ class GrantHandler(socketserver.StreamRequestHandler):
                 result = {"ok": True}
             else:
                 raise ValueError("Unsupported grant method")
+        except ModelBudgetError:
+            result = {"error": "Grant rejected", "code": "RESOURCE_LIMIT"}
         except (ValueError, TypeError, KeyError, OSError):
             result = {"error": "Grant rejected"}
         self.wfile.write(json.dumps(result).encode() + b"\n")
 
 
-def grant_request(path: str, method: str, execution_id: UUID) -> dict[str, Any]:
+def grant_request(path: str, method: str, execution_id: UUID, *, prior_usage: dict[str, Any] | None = None) -> dict[str, Any]:
+    request: dict[str, Any] = {"method": method, "execution_id": str(execution_id)}
+    if prior_usage is not None:
+        request["prior_usage"] = prior_usage
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(5)
         connection.connect(path)
-        connection.sendall(json.dumps({"method": method, "execution_id": str(execution_id)}).encode() + b"\n")
+        connection.sendall(json.dumps(request).encode() + b"\n")
         with connection.makefile("rb") as stream:
             line = stream.readline(16385)
         if len(line) > 16384 or not line.endswith(b"\n"):
             raise ValueError("Invalid grant response")
         result: Any = json.loads(line)
+        if isinstance(result, dict) and "error" in result and result.get("code") == "RESOURCE_LIMIT":
+            raise ModelBudgetError("Grant budget exhausted")
         if not isinstance(result, dict) or "error" in result:
             raise ValueError("Grant unavailable")
         return result

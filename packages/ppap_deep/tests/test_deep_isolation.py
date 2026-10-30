@@ -20,7 +20,8 @@ from ppap_core.deep_policy import GROK_VERSION
 from ppap_deep.isolation.container import ContainerRuntime, RuntimeConfig
 from ppap_deep.isolation.model_gateway import DuplicateInference, Grants, grant_request, local_gateway
 from ppap_deep.isolation.progress import Progress
-from ppap_deep.semantic.protocol import ControllerFault, ResultBundle, SnapshotSpec
+from ppap_deep.semantic.guest_model import ModelBudgetError
+from ppap_deep.semantic.protocol import CompileSpec, ControllerFault, ResultBundle, SnapshotSpec
 
 
 class GatewayGrantTests(unittest.TestCase):
@@ -364,6 +365,65 @@ class GatewayGrantTests(unittest.TestCase):
             grants.authorize(token, {"model": "test-model", "input": "three", "max_output_tokens": 1}, 1)
         self.assertTrue(grants.usage(execution_id)["budget_exhausted"])
 
+    def test_audit_grant_preserves_compile_token_and_request_consumption(self) -> None:
+        grants = Grants("test-model", requests=2, input_tokens=100, output_tokens=30)
+        compile_id = uuid4()
+        compile_token = grants.issue(compile_id)
+        compile_lease = grants.authorize(compile_token, {"model": "test-model", "input": "compile"}, 20)
+        grants.record_usage(compile_lease, {"input_tokens": 60, "output_tokens": 9})
+        compiled = grants.usage(compile_id)
+        prior = {"model_requests": compiled["completed_requests"], "input_tokens": compiled["input_tokens"], "output_tokens": compiled["output_tokens"]}
+
+        audit_id = uuid4()
+        audit_token = grants.issue(audit_id, prior)
+        body = {"model": "test-model", "input": "audit", "max_output_tokens": 30}
+        audit_lease = grants.authorize(audit_token, body, 20)
+        self.assertEqual((audit_lease.requests_left, audit_lease.input_budget, audit_lease.output_budget), (0, 40, 21))
+        self.assertEqual(body["max_output_tokens"], 21)
+        grants.record_usage(audit_lease, {"input_tokens": 30, "output_tokens": 20})
+        # Both token budgets still have room, but compile consumed the first
+        # request. Audit cannot obtain a fresh two-request allowance.
+        with self.assertRaises(ValueError):
+            grants.authorize(audit_token, {"model": "test-model", "input": "extra"}, 20)
+        self.assertEqual(grants.usage(audit_id)["completed_requests"], 1)
+        self.assertEqual(grants.usage(compile_id), compiled)
+
+    def test_invalid_or_unknown_prior_usage_cannot_create_a_grant(self) -> None:
+        grants = Grants("test-model", requests=2, input_tokens=100, output_tokens=30)
+        known = {"model_requests": 1, "input_tokens": 60, "output_tokens": 9}
+        invalid = [{}, [], known | {"uncertain": True}, known | {"in_flight": True}, known | {"model_requests": 0}]
+        for key in known:
+            invalid.extend(known | {key: value} for value in (None, -1, True, "1", 1.5))
+            invalid.append({name: value for name, value in known.items() if name != key})
+        for prior in invalid:
+            with self.subTest(prior=prior), self.assertRaises(ValueError) as failure:
+                grants.issue(uuid4(), prior)
+            self.assertNotIsInstance(failure.exception, ModelBudgetError)
+        self.assertEqual(grants.leases, {})
+
+    def test_confirmed_compile_overrun_rejects_next_grant_as_resource_limit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pd-over-", dir="/tmp") as temporary:
+            root = Path(temporary)
+            with local_gateway(root / "g.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key", requests=8, input_tokens=9, output_tokens=50) as gateway:
+                compile_id = uuid4()
+                token = grant_request(str(gateway.socket_path), "issue", compile_id)["token"]
+                grants = gateway.http.grants
+                lease = grants.authorize(token, {"model": "test-model", "input": "compile"}, 100)
+                grants.record_usage(lease, {"input_tokens": 10, "output_tokens": 2})
+                confirmed = grant_request(str(gateway.socket_path), "usage", compile_id)
+                self.assertTrue(confirmed["budget_exhausted"])
+                self.assertFalse(confirmed["uncertain"])
+                prior = {"input_tokens": confirmed["input_tokens"], "output_tokens": confirmed["output_tokens"], "model_requests": confirmed["completed_requests"]}
+                runtime = object.__new__(ContainerRuntime)
+                runtime.config = SimpleNamespace(gateway_socket=gateway.socket_path)
+                next_id = uuid4()
+                with self.assertRaises(ControllerFault) as failure:
+                    runtime._write_grant(next_id, root / "unused-run", prior)
+                self.assertEqual(failure.exception.code, "RESOURCE_LIMIT")
+                self.assertEqual(grants.usage(compile_id), confirmed)
+                self.assertEqual(len(grants.leases), 1)
+                self.assertFalse((root / "unused-run").exists())
+
     def test_explicit_output_capacity_preserves_remaining_grant_budget(self) -> None:
         # Research can grant a larger completion without changing production
         # defaults or letting one request exceed its remaining execution grant.
@@ -569,6 +629,82 @@ class ContainerBoundaryTests(unittest.TestCase):
             self.assertEqual([call.args[1] for call in request.call_args_list], ["usage", "usage"])
             result = json.loads((root / "work" / "result" / "bundle.json").read_text())
             self.assertEqual((result["input_tokens"], result["output_tokens"]), (5, 9))
+            self.assertEqual(result["model_requests"], 2)
+
+    def test_zero_budget_cache_execution_exports_known_zero_usage(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pd-zero-", dir="/tmp") as temporary:
+            root = Path(temporary)
+            with local_gateway(root / "gateway.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key", requests=2, input_tokens=100, output_tokens=30):
+                runtime = object.__new__(ContainerRuntime)
+                runtime.config = RuntimeConfig(
+                    state=root,
+                    gateway_socket=root / "gateway.sock",
+                    gateway_host="127.0.0.1",
+                    model="test-model",
+                    model_revision="0" * 64,
+                    app_revision="0" * 40,
+                    sandbox_profile="off",
+                )
+                runtime.journal = root / "journal"
+                runtime.attempts = root / "attempts"
+                runtime.journal.mkdir()
+                runtime.attempts.mkdir()
+                runtime.slot = threading.Lock()
+                runtime.degraded = False
+                inputs = root / "inputs"
+                inputs.mkdir()
+                spec = CompileSpec.model_construct(execution_id=uuid4())
+                run = root / "run"
+                (run / "work").mkdir(parents=True)
+                (run / "grant").mkdir()
+
+                def cached_guest(run, *_args):
+                    grant = json.loads((run / "grant" / "model.json").read_text())
+                    self.assertEqual((grant["max_total_turns"], grant["max_total_tokens"]), (1, 1))
+                    (run / "work" / "result").mkdir()
+                    (run / "work" / "result" / "bundle.json").write_text('{"ok":true,"input_tokens":999,"output_tokens":999,"model_requests":999}')
+
+                prior = {"model_requests": 2, "input_tokens": 100, "output_tokens": 30}
+                with patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run), patch.object(runtime, "_execute", side_effect=cached_guest):
+                    runtime.run(spec, inputs, root / "host-work", time.monotonic() + 2, threading.Event(), prior_usage=prior)
+                exported = json.loads((root / "host-work" / "result" / "bundle.json").read_text())
+                self.assertEqual(exported, {"ok": True, "input_tokens": 0, "output_tokens": 0, "model_requests": 0})
+                self.assertEqual(exported, json.loads((runtime.journal / (spec.execution_id.hex + ".json")).read_text()))
+
+    def test_journal_recovery_preserves_original_counts_without_new_grant(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = object.__new__(ContainerRuntime)
+            runtime.journal = root / "journal"
+            runtime.journal.mkdir()
+            runtime.slot = threading.Lock()
+            runtime.degraded = False
+            spec = CompileSpec.model_construct(execution_id=uuid4())
+            original = {"ok": True, "input_tokens": 60, "output_tokens": 9, "model_requests": 1}
+            (runtime.journal / (spec.execution_id.hex + ".json")).write_text(json.dumps(original))
+            with patch.object(runtime, "_write_grant") as issue, patch.object(runtime, "_execute") as execute:
+                runtime.run(spec, root / "unused", root / "host-work", time.monotonic() + 2, threading.Event(), prior_usage={"model_requests": 2, "input_tokens": 100, "output_tokens": 30})
+            self.assertEqual(json.loads((root / "host-work" / "result" / "bundle.json").read_text()), original)
+            issue.assert_not_called()
+            execute.assert_not_called()
+
+    def test_zero_requests_with_tokens_or_unknown_usage_cannot_export(self) -> None:
+        known = {"completed_requests": 0, "input_tokens": 0, "output_tokens": 0, "uncertain": False, "in_flight": False, "budget_exhausted": False}
+        invalid = [known | {key: value} for key, value in (("input_tokens", 1), ("output_tokens", 1), ("uncertain", True), ("uncertain", None), ("in_flight", None), ("completed_requests", True))]
+        for usage in invalid:
+            with self.subTest(usage=usage), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                run = root / "run"
+                (run / "work" / "result").mkdir(parents=True)
+                (run / "work" / "result" / "bundle.json").write_text('{"ok":true}')
+                runtime = object.__new__(ContainerRuntime)
+                runtime.config = SimpleNamespace(gateway_socket=root / "gateway.sock")
+                runtime.journal = root / "journal"
+                with patch("ppap_deep.isolation.container.grant_request", return_value=usage):
+                    with self.assertRaises(ControllerFault) as failure:
+                        runtime._export(run, root / "work", True, uuid4(), time.monotonic() + 2, threading.Event())
+                self.assertEqual(failure.exception.code, "MODEL_PROTOCOL_ERROR")
+                self.assertFalse(runtime.journal.exists())
 
     def test_confirmed_budget_exhaustion_is_not_a_model_protocol_error(self) -> None:
         from types import SimpleNamespace

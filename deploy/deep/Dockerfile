@@ -15,7 +15,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --shell /usr/sbin/nologin audit
 COPY --from=grok /grok /usr/local/bin/grok
-COPY packages/ppap_deep /app/packages/ppap_deep
+COPY packages/ppap_deep/src /app/packages/ppap_deep/src
 RUN mkdir -p /opt/ppap \
  && ln -s /app/packages/ppap_deep/src/ppap_deep/semantic /opt/ppap/semantic
 RUN /usr/local/bin/grok --version \

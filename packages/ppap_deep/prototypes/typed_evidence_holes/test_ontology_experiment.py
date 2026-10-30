@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import time
@@ -183,10 +184,19 @@ def test_actual_local_prompt_and_readable_stage_inputs_hide_case_key(experiment,
             stage.mkdir()
             local = LocalGrokRunner(SimpleNamespace(llm_api_key="test-key", llm_base_url="http://127.0.0.1"), self.output / "unused", "/usr/bin/false", input_root=self.original_inputs)
             local.helpers = self.output / "python" / "ppap_deep" / "semantic"
-            actual, _ = local._stage_prompt(work, prompt, stage, artifact=True)
+            actual, _ = local._stage_prompt(work, prompt, stage)
+            originals = stage / "sources"
+            local._stage_sources(work, originals)
+            if (work / "rule-source.json").exists():
+                files = list(originals.iterdir())
+                assert len(files) == 1 and files[0].name == "rule-0.docx"
+                source = json.loads((work / "rule-source.json").read_text())
+                assert hashlib.sha256(files[0].read_bytes()).hexdigest() == source["source"]["sha256"]
+            else:
+                assert {path.name for path in originals.iterdir()} == {"manifest.json", "document-0.xlsx", "document-1.xlsx", "rule-0.docx"}
             readable = actual + (stage / "inputs.json").read_text()
             readable += "".join(str(path) + path.read_text() for path in work.glob("*.json"))
-            readable += "".join(str(path) for path in self.original_inputs.iterdir())
+            readable += "".join(str(path) for path in originals.iterdir())
             assert self.case.key not in readable
             assert "expected_status" not in readable
             assert "identity_columns" not in readable

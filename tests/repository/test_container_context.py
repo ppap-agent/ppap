@@ -4,17 +4,46 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_production_context_keeps_runtime_files_and_excludes_nested_tests():
+@pytest.mark.parametrize("local_output", [False, True], ids=["clean", "local-research-output"])
+def test_production_context_keeps_runtime_files_and_excludes_research(local_output):
     with tempfile.TemporaryDirectory(prefix="ppap-context-") as directory:
         base = Path(directory)
         context = base / "context"
         context.mkdir()
         (context / ".dockerignore").write_bytes((ROOT / ".dockerignore").read_bytes())
-        kept = ["packages/example/src/module.py", "packages/example/src/skills/SKILL.md", "services/api/src/module.py", ".env.example"]
-        excluded = ["tests/root.py", "packages/example/tests/test_module.py", "services/api/tests/test_api.py", "apps/web/tests/test_web.ts", ".env"]
+        kept = [
+            "packages/example/pyproject.toml",
+            "packages/example/src/module.py",
+            "packages/example/src/test_support.py",
+            "packages/ppap_deep/src/ppap_deep/semantic/document_tools.py",
+            "packages/ppap_deep/src/ppap_deep/semantic/skill/SKILL.md",
+            "packages/ppap_deep/src/ppap_deep/semantic/skill/references/commands.md",
+            "services/api/src/module.py",
+            ".env.example",
+        ]
+        excluded = [
+            "tests/root.py",
+            "packages/example/tests/test_module.py",
+            "services/api/tests/test_api.py",
+            "apps/web/tests/test_web.ts",
+            "packages/ppap_deep/prototypes/typed_evidence_holes/cases.py",
+            "packages/ppap_deep/prototypes/typed_evidence_holes/test_local_grok_runner.py",
+            "packages/ppap_deep/prototypes/typed_evidence_holes/oracle/expected.json",
+            ".env",
+        ]
+        if local_output:
+            excluded.extend(
+                [
+                    "packages/ppap_deep/prototypes/typed_evidence_holes/output/run/model-inputs.jsonl",
+                    "packages/ppap_deep/prototypes/typed_evidence_holes/output/run/inputs/customer.xlsx",
+                    "packages/ppap_deep/prototypes/typed_evidence_holes/output/run/code/guest.py",
+                ]
+            )
         for name in kept + excluded:
             path = context / name
             path.parent.mkdir(parents=True, exist_ok=True)

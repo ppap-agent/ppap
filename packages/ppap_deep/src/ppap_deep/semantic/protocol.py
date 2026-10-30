@@ -95,6 +95,7 @@ class SubmissionSpec(Artifact):
 
 class CompileSpec(Artifact):
     execution_id: UUID
+    submission_id: UUID | None = None
     project_id: BusinessId
     rules: list[RuleRef] = Field(min_length=1, max_length=32)
     policy_revision: Sha256
@@ -207,6 +208,7 @@ class ResultBundle(Artifact):
     trace: AuditTrace
     input_tokens: int = Field(default=0, ge=0, strict=True)
     output_tokens: int = Field(default=0, ge=0, strict=True)
+    model_requests: int = Field(default=0, ge=0, strict=True)
     tool_calls: int = Field(default=0, ge=0, strict=True)
     completed_tool_calls: int = Field(default=0, ge=0, strict=True)
     compactions: int = Field(default=0, ge=0, strict=True)
@@ -217,8 +219,13 @@ class CompileBundle(Artifact):
     semantic_engine_revision: Sha256
     rule_sources: dict[str, dict[str, Any]]
     plans: dict[str, RulePlan]
+    failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
     input_tokens: int = Field(default=0, ge=0, strict=True)
     output_tokens: int = Field(default=0, ge=0, strict=True)
+    model_requests: int = Field(default=0, ge=0, strict=True)
+    tool_calls: int = Field(default=0, ge=0, strict=True)
+    completed_tool_calls: int = Field(default=0, ge=0, strict=True)
+    compactions: int = Field(default=0, ge=0, strict=True)
 
 
 class HealthRequest(Artifact):

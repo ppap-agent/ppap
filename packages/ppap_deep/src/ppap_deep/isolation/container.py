@@ -26,7 +26,7 @@ from ppap_core.deep_policy import GROK_VERSION, GUEST_UID, DeepExecutionPolicy
 from pydantic import Field
 
 from ppap_deep.limits import MAX_INPUT_FILES, MAX_INPUT_TOTAL
-from ppap_deep.semantic.guest_model import ModelGrant
+from ppap_deep.semantic.guest_model import ModelBudgetError, ModelGrant
 from ppap_deep.semantic.protocol import CompileSpec, ControllerFault, GuestFault, SnapshotSpec, SubmissionSpec
 from ppap_deep.semantic.secure_files import read_json, read_regular
 
@@ -196,8 +196,12 @@ class ContainerRuntime:
             raise
         return run
 
-    def _write_grant(self, execution_id: UUID, run: Path) -> None:
-        grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id))
+    def _write_grant(self, execution_id: UUID, run: Path, prior_usage: dict[str, Any] | None = None) -> None:
+        kwargs = {"prior_usage": prior_usage} if prior_usage is not None else {}
+        try:
+            grant = ModelGrant.model_validate(grant_request(str(self.config.gateway_socket), "issue", execution_id, **kwargs))
+        except ModelBudgetError:
+            raise ControllerFault("RESOURCE_LIMIT") from None
         url = urlsplit(grant.base_url)
         if (
             url.scheme != "http"
@@ -347,12 +351,14 @@ class ContainerRuntime:
             if model_operation:
                 if (
                     usage.get("uncertain") is not False
+                    or usage.get("in_flight") is not False
                     or any(type(usage.get(key)) is not int or usage[key] < 0 for key in ("completed_requests", "input_tokens", "output_tokens"))
-                    or usage["completed_requests"] < 1
+                    or (usage["completed_requests"] == 0 and (usage["input_tokens"] or usage["output_tokens"]))
                 ):
                     raise ValueError("Unconfirmed provider usage")
                 decoded["input_tokens"] = usage["input_tokens"]
                 decoded["output_tokens"] = usage["output_tokens"]
+                decoded["model_requests"] = usage["completed_requests"]
                 write_json(self.journal / (execution_id.hex + ".json"), decoded)
             write_json(work / "result" / "bundle.json", decoded)
         except ControllerFault:
@@ -368,6 +374,7 @@ class ContainerRuntime:
         deadline: float,
         cancelled: threading.Event,
         on_progress: Callable[[Progress], None] | None = None,
+        prior_usage: dict[str, Any] | None = None,
     ) -> None:
         while True:
             remaining = deadline - time.monotonic()
@@ -392,7 +399,7 @@ class ContainerRuntime:
             try:
                 if model_operation:
                     write_json(attempt, {})
-                    self._write_grant(spec.execution_id, run)
+                    self._write_grant(spec.execution_id, run, prior_usage)
                 self._execute(run, deadline, cancelled, on_progress, spec.execution_id)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")

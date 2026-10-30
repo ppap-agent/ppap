@@ -30,16 +30,34 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(module.subprocess, "check_output", lambda *args, **kwargs: "grok test-build\n")
     inputs = tmp_path / "inputs"
     inputs.mkdir()
-    (inputs / "manifest.json").write_text('{"original":"frozen"}')
+    original = b'{"rule":"frozen original"}'
+    (inputs / "rule-0.json").write_bytes(original)
+    (inputs / "manifest.json").write_text(json.dumps({"rules": {"r": "rule-0.json"}, "documents": {}}))
     work = tmp_path / "work" / "compile-0"
     work.mkdir(parents=True)
     (work / "clauses.json").write_text('{"rule":"read original"}')
+    (work / "rule-source.json").write_text(json.dumps({"source": {"sha256": hashlib.sha256(original).hexdigest()}}))
     settings = SimpleNamespace(llm_base_url="https://example.invalid/v1", llm_api_key="private-test-provider-credential")
 
     def make(**kwargs):
         return module.LocalGrokRunner(settings, tmp_path / "runner", "/usr/bin/true", input_root=inputs, **kwargs)
 
     return module, make, work, inputs, tmp_path
+
+
+def fresh_work(work, name):
+    destination = work.parent / name
+    shutil.copytree(work, destination, ignore=shutil.ignore_patterns("execution.json", "artifact_schema.json"))
+    return destination
+
+
+def artifact_result(runner, value, *, notes=None):
+    scratch = runner.scratch / f"stage-{runner.stage_number}"
+    scratch.mkdir(exist_ok=True)
+    (scratch / "execution.json").write_text(json.dumps(value))
+    if notes is not None:
+        (scratch / "working-state.json").write_text(json.dumps(notes))
+    return {"result": '{"completed":true,"artifact":"execution.json"}'}
 
 
 def settle(runner, prompt, *, unknown=False):
@@ -57,20 +75,16 @@ def test_compile_and_audit_share_budget_and_force_medium(setup, monkeypatch):
     module, make, work, _, root = setup
     runner = make(max_requests=2)
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         settle(runner, prompt)
-        if schema is None:
-            scratch = runner.scratch / f"stage-{runner.stage_number}"
-            scratch.mkdir()
-            (scratch / "execution.json").write_text('{"value":42}')
-            (scratch / "working-state.json").write_text('{"synthetic_checks":[{"case":"known blank","expected":"NG","actual":"NG"}]}')
-            return {"result": '{"completed":true,"artifact":"execution.json"}'}
-        return {"type": "result", "is_error": False, "structured_output": {"value": 42}}
+        return artifact_result(runner, {"value": 42}, notes={"synthetic_checks": [{"case": "known blank", "expected": "NG", "actual": "NG"}]})
 
     monkeypatch.setattr(runner, "_invoke", invoke)
+    audit = fresh_work(work, "audit")
+    (audit / "rule-source.json").unlink()
     with runner:
         first = runner.run(work, "compile", Answer, time.monotonic() + 30, reasoning_effort="xhigh")
-        second = runner.run_artifact(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="low")
+        second = runner.run(audit, "audit", Answer, time.monotonic() + 30, reasoning_effort="low")
         assert first == second == Answer(value=42)
         with pytest.raises(module.ModelBudgetError):
             runner.run(work, "cannot start", Answer, time.monotonic() + 30, reasoning_effort="low")
@@ -89,15 +103,15 @@ def test_settled_schema_rejection_remains_available_for_guest_single_repair(setu
     _, make, work, _, root = setup
     runner = make()
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         settle(runner, prompt)
-        return {"type": "result", "is_error": False, "structured_output": {"value": "wrong" if runner.stage_number == 1 else 42}}
+        return artifact_result(runner, {"value": "wrong" if runner.stage_number == 1 else 42})
 
     monkeypatch.setattr(runner, "_invoke", invoke)
     with runner:
         with pytest.raises(ValidationError):
             runner.run(work, "compile", Answer, time.monotonic() + 30, reasoning_effort="xhigh")
-        assert runner.run(work, "explicit schema repair", Answer, time.monotonic() + 30, reasoning_effort="xhigh").value == 42
+        assert runner.run(fresh_work(work, "repair"), "explicit schema repair", Answer, time.monotonic() + 30, reasoning_effort="xhigh").value == 42
     rejected = json.loads((root / "runner/stage-001-Answer/summary.json").read_text())
     assert rejected["completed"] is False
     assert rejected["failure_type"] == "ValidationError"
@@ -108,9 +122,9 @@ def test_unknown_consumption_blocks_every_further_stage_without_retry(setup, mon
     module, make, work, _, _ = setup
     runner = make()
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         settle(runner, prompt, unknown=True)
-        return {"type": "result", "is_error": False, "structured_output": {"value": 42}}
+        return artifact_result(runner, {"value": 42})
 
     monkeypatch.setattr(runner, "_invoke", invoke)
     with runner:
@@ -127,10 +141,10 @@ def test_changed_stage_input_is_rejected_after_settled_response(setup, monkeypat
     module, make, work, _, _ = setup
     runner = make()
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         settle(runner, prompt)
         (work / "clauses.json").write_text('{"rule":"changed"}')
-        return {"type": "result", "is_error": False, "structured_output": {"value": 42}}
+        return artifact_result(runner, {"value": 42})
 
     monkeypatch.setattr(runner, "_invoke", invoke)
     with runner, pytest.raises(module.ModelProtocolError, match="source changed"):
@@ -174,7 +188,7 @@ def test_saved_events_remove_credentials_and_private_reasoning(setup):
     assert "reasoning_omitted" in saved
 
 
-@pytest.mark.parametrize("bad_json", ['{"type":"result","is_error":false,"structured_output":{"value":1,"value":2}}', '{"type":"result","is_error":false,"structured_output":{"value":NaN}}'])
+@pytest.mark.parametrize("bad_json", ['{"type":"result","is_error":true,"is_error":false}', '{"type":"result","is_error":false,"value":NaN}'])
 def test_invalid_core_json_cannot_be_followed_by_a_valid_result(setup, monkeypatch, bad_json):
     module, make, work, _, _ = setup
     runner = make()
@@ -182,7 +196,7 @@ def test_invalid_core_json_cannot_be_followed_by_a_valid_result(setup, monkeypat
     class Process:
         pid = 123456
         returncode = 0
-        stdout = io.StringIO(bad_json + '\n{"type":"result","is_error":false,"structured_output":{"value":42}}\n')
+        stdout = io.StringIO(bad_json + '\n{"type":"result","is_error":false,"result":"{\\"completed\\":true,\\"artifact\\":\\"execution.json\\"}"}\n')
         stderr = io.StringIO("")
 
         def poll(self):
@@ -203,7 +217,7 @@ def test_invalid_core_json_cannot_be_followed_by_a_valid_result(setup, monkeypat
 def test_result_without_a_model_request_is_not_a_real_run(setup, monkeypatch):
     module, make, work, _, _ = setup
     runner = make()
-    monkeypatch.setattr(runner, "_invoke", lambda *args: {"is_error": False, "structured_output": {"value": 42}})
+    monkeypatch.setattr(runner, "_invoke", lambda *args: artifact_result(runner, {"value": 42}))
     with runner, pytest.raises(module.ModelProtocolError, match="without an authorized"):
         runner.run(work, "compile", Answer, time.monotonic() + 30, reasoning_effort="xhigh")
 
@@ -212,7 +226,8 @@ def test_result_without_a_model_request_is_not_a_real_run(setup, monkeypatch):
 def test_core_completion_and_log_limits_preserve_matched_tool_counts(setup, monkeypatch, mode):
     module, make, work, _, _ = setup
     runner = make()
-    terminal = {"type": "result", "is_error": False, "stop_reason": "end_turn", "structured_output": {"value": 42}}
+    stopped, waited = [], []
+    terminal = {"type": "result", "is_error": False, "stop_reason": "end_turn", "result": '{"completed":true,"artifact":"execution.json"}'}
     if mode == "incomplete_stop":
         terminal["stop_reason"] = "max_tokens"
     if mode == "errors":
@@ -239,15 +254,17 @@ def test_core_completion_and_log_limits_preserve_matched_tool_counts(setup, monk
             return self.returncode
 
         def wait(self, **kwargs):
+            waited.append(self.pid)
             return self.returncode
 
     with runner:
         monkeypatch.setattr(runner, "_seatbelt", lambda *args: runner.output / "unused.sb")
-        monkeypatch.setattr(module.os, "killpg", lambda *args: None)
+        monkeypatch.setattr(module.os, "killpg", lambda pid, sig: stopped.append((pid, sig)))
         monkeypatch.setattr(module, "CORE_LOG_LIMITS", {"stdout": 1024, "stderr": 1024})
 
         def popen(*args, **kwargs):
             settle(runner, "one model request")
+            (Path(kwargs["cwd"]) / "execution.json").write_text('{"value":42}')
             return Process()
 
         monkeypatch.setattr(module.subprocess, "Popen", popen)
@@ -259,26 +276,73 @@ def test_core_completion_and_log_limits_preserve_matched_tool_counts(setup, monk
             with pytest.raises(module.ModelProtocolError):
                 runner.run(work, "compile", Answer, time.monotonic() + 30, reasoning_effort="xhigh")
         assert runner.usage["completed_requests"] == 1
+        assert stopped and all(call == (123456, module.signal.SIGKILL) for call in stopped)
+        assert waited and all(pid == 123456 for pid in waited)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="The local experiment uses macOS Seatbelt")
-def test_native_boundary_reads_original_and_denies_unit_and_score_roots(setup):
+@pytest.mark.parametrize("phase", ["compile", "audit"])
+def test_native_boundary_exposes_only_stage_originals_and_denies_hidden_inputs(setup, phase):
     module, make, work, inputs, root = setup
+    supplier = inputs / "supplier-sensitive.json"
+    other_rule = inputs / "other-rule-sensitive.json"
+    extra = inputs / "unmapped-secret.json"
+    cached = inputs / "cached-plan-private.json"
+    for path in (supplier, other_rule, extra, cached):
+        path.write_text(json.dumps({"content": path.stem}))
+    manifest = {
+        "rules": {"r": "rule-0.json", "other": other_rule.name},
+        "documents": {"supplier": supplier.name},
+        "cached_plans": {"r": cached.name},
+        "cached_snapshots": {"supplier": extra.name},
+    }
+    (inputs / "manifest.json").write_text(json.dumps(manifest))
+    oracle = root / "report.json"
+    oracle.write_text('{"expected":"PASS"}')
+    history = root / "history.json"
+    history.write_text('{"previous_status":"PASS"}')
+    if phase == "audit":
+        (work / "rule-source.json").unlink()
     runner = make()
     with runner:
         agent_work, home, stage = runner.scratch / "agent", runner.scratch / "home", runner.output / "probe"
         for path in (agent_work, home, stage):
             path.mkdir()
+        originals = runner.scratch / f"sources-{runner.stage_number}"
+        runner._stage_sources(work, originals)
+        (agent_work / "sources").symlink_to(originals, target_is_directory=True)
+        prompt, _ = runner._stage_prompt(work, "Use only the supplied stage files.", stage)
         policy = runner._seatbelt(work, agent_work, home, stage)
         probes = json.loads((stage / "boundary-probe.json").read_text())
         assert probes["denied_returncode"] != 0
         assert probes["original_returncode"] == 0
-        oracle = root / "report.json"
-        oracle.write_text('{"expected":"PASS"}')
-        outcome = module.subprocess.run(["/usr/bin/sandbox-exec", "-f", str(policy), "/bin/cat", str(oracle)], capture_output=True)
-        assert outcome.returncode != 0
-        assert b"PASS" not in outcome.stdout
-        assert str(inputs) in policy.read_text()
+        assert str(inputs) not in prompt
+        assert "(subpath " + json.dumps(str(inputs)) + ")" not in policy.read_text()
+        names = {path.name for path in originals.iterdir()}
+        if phase == "compile":
+            assert names == {"rule-0.json"}
+            # Hidden paths do not occur in the prompt or stage data. Knowing
+            # such a path still cannot grant the compiler read access.
+            readable = prompt + (stage / "inputs.json").read_text() + "".join(path.name + path.read_text() for path in originals.iterdir())
+            assert all(path.name not in readable for path in (supplier, other_rule, extra, cached, oracle, history))
+        else:
+            assert names == {"rule-0.json", supplier.name, other_rule.name, "manifest.json"}
+            visible = json.loads((originals / "manifest.json").read_text())
+            assert visible["rules"] == manifest["rules"] and visible["documents"] == manifest["documents"]
+            assert not visible.get("cached_plans") and not visible.get("cached_snapshots")
+            assert cached.name not in json.dumps(visible) and extra.name not in json.dumps(visible)
+        for path in originals.iterdir():
+            outcome = module.subprocess.run(["/usr/bin/sandbox-exec", "-f", str(policy), "/bin/cat", str(agent_work / "sources" / path.name)], capture_output=True)
+            assert outcome.returncode == 0 and outcome.stdout == path.read_bytes()
+            forbidden_write = module.subprocess.run(["/usr/bin/sandbox-exec", "-f", str(policy), "/bin/sh", "-c", 'printf changed > "$1"', "probe", str(path)], capture_output=True)
+            assert forbidden_write.returncode != 0
+        for path in (*inputs.iterdir(), oracle, history):
+            outcome = module.subprocess.run(
+                ["/usr/bin/sandbox-exec", "-f", str(policy), sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).read_bytes()", str(path)],
+                env=runner._environment(agent_work, home), cwd=agent_work, capture_output=True,
+            )
+            assert outcome.returncode != 0
+            assert b"PermissionError" in outcome.stderr, (path, outcome.stderr)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="The local experiment uses macOS Seatbelt")
@@ -289,6 +353,7 @@ def test_native_python_runs_frozen_checker_without_working_repo_access(setup, fo
 
     module, make, work, inputs, root = setup
     runner = make()
+    (work / "rule-source.json").unlink()
     original = inputs / ("source" + format)
     if format == ".xlsx":
         book = Workbook()
@@ -307,6 +372,9 @@ def test_native_python_runs_frozen_checker_without_working_repo_access(setup, fo
             page.insert_text((30, 45), "Frequency")
             page.insert_text((30, 85), "daily")
             document.save(original)
+    manifest = json.loads((inputs / "manifest.json").read_text())
+    manifest["documents"]["target"] = original.name
+    (inputs / "manifest.json").write_text(json.dumps(manifest))
     source = module.document_tools.snapshot(original)
     request = {
         "binding": {
@@ -333,6 +401,9 @@ def test_native_python_runs_frozen_checker_without_working_repo_access(setup, fo
         agent_work, home, stage = runner.scratch / "agent", runner.scratch / "home", runner.output / "probe"
         for path in (agent_work, home, stage):
             path.mkdir()
+        originals = runner.scratch / f"sources-{runner.stage_number}"
+        runner._stage_sources(work, originals)
+        (agent_work / "sources").symlink_to(originals, target_is_directory=True)
         policy = runner._seatbelt(work, agent_work, home, stage)
         environment = runner._environment(agent_work, home)
         program = (
@@ -344,7 +415,7 @@ def test_native_python_runs_frozen_checker_without_working_repo_access(setup, fo
             "raise SystemExit(checker_tools.main())"
         )
         result = module.subprocess.run(
-            ["/usr/bin/sandbox-exec", "-f", str(policy), "/usr/bin/env", "python", "-c", program, str(original), str(work / "snapshot.json"), str(work / "request.json")],
+            ["/usr/bin/sandbox-exec", "-f", str(policy), "/usr/bin/env", "python", "-c", program, str(agent_work / "sources" / original.name), str(work / "snapshot.json"), str(work / "request.json")],
             cwd=agent_work,
             env=environment,
             capture_output=True,
@@ -364,11 +435,11 @@ def test_native_python_runs_frozen_checker_without_working_repo_access(setup, fo
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or shutil.which("grok") is None, reason="Requires the installed macOS grok core; uses only a local scripted provider")
-@pytest.mark.parametrize("artifact", [False, True])
-def test_real_core_reads_stage_files_before_structured_or_artifact_output(setup, monkeypatch, artifact):
+def test_real_core_reads_stage_files_before_artifact_output(setup, monkeypatch):
     module, _, work, inputs, root = setup
     requests = []
-    source_name = "documents.json" if artifact else "rule-source.json"
+    (work / "rule-source.json").unlink()
+    source_name = "documents.json"
     source = {"value": 42, "source_marker": "stage-source-content-not-in-prompt"}
     source_path = work / source_name
     source_path.write_text(json.dumps(source))
@@ -399,14 +470,14 @@ def test_real_core_reads_stage_files_before_structured_or_artifact_output(setup,
                     "name": "read_file",
                     "arguments": json.dumps({"target_file": source_name}),
                 }
-            elif not artifact or "call_probe" in outputs:
+            elif "call_probe" in outputs:
                 source_outputs.append(outputs["call_source"])
                 item = {
                     "type": "message",
                     "id": "msg_probe",
                     "status": "completed",
                     "role": "assistant",
-                    "content": [{"type": "output_text", "text": '{"completed":true,"artifact":"execution.json"}' if artifact else '{"value":42}', "annotations": []}],
+                    "content": [{"type": "output_text", "text": '{"completed":true,"artifact":"execution.json"}', "annotations": []}],
                 }
             else:
                 item = {
@@ -460,8 +531,7 @@ def test_real_core_reads_stage_files_before_structured_or_artifact_output(setup,
     runner = module.LocalGrokRunner(settings, root / "real-core", shutil.which("grok"), input_root=inputs, seconds=45, max_requests=6)
     try:
         with runner:
-            operation = runner.run_artifact if artifact else runner.run
-            result = operation(work, "Read the frozen stage source and return its required value.", Answer, time.monotonic() + 40, reasoning_effort="medium")
+            result = runner.run(work, "Read the frozen stage source and return its required value.", Answer, time.monotonic() + 40, reasoning_effort="medium")
         assert result.value == 42
         stage = runner.output / "stage-001-Answer"
         prompt = (stage / "prompt.txt").read_text()
@@ -476,13 +546,11 @@ def test_real_core_reads_stage_files_before_structured_or_artifact_output(setup,
         events = (stage / "events.jsonl").read_text()
         outputs = [block for event in map(json.loads, events.splitlines()) for block in event.get("message", {}).get("content", []) if block.get("type") == "tool_result"]
         assert source["source_marker"] in outputs[0]["content"]
-        if artifact:
-            assert "BASH_VERSION=3.2" in events
-            assert "BASH_PATH=/bin/bash" in events
-            assert str(runner.helpers / "checker_tools.py") in events
-            assert json.loads(outputs[1]["content"])["exit_code"] == 0
-        else:
-            assert not (work / "execution.json").exists()
+        assert "BASH_VERSION=3.2" in events
+        assert "BASH_PATH=/bin/bash" in events
+        assert str(runner.helpers / "checker_tools.py") in events
+        assert json.loads(outputs[1]["content"])["exit_code"] == 0
+        assert json.loads((work / "execution.json").read_text()) == {"value": 42}
         names = {tool.get("name") for request in requests for tool in request.get("tools", [])}
         assert {"run_terminal_command", "read_file", "write", "get_command_or_subagent_output", "kill_command_or_subagent"} <= names
         assert runner.usage["completed_requests"] == len(requests)
@@ -500,15 +568,28 @@ def test_original_root_cannot_include_run_outputs(setup):
         module.LocalGrokRunner(settings, root / "runner", "/usr/bin/true", input_root=root)
 
 
+@pytest.mark.parametrize("mode", ["wrong_hash", "unmapped_original"])
+def test_compiler_requires_the_matching_authorized_original_before_model_submission(setup, mode):
+    module, make, work, inputs, _ = setup
+    if mode == "wrong_hash":
+        (work / "rule-source.json").write_text(json.dumps({"source": {"sha256": "0" * 64}}))
+    else:
+        (inputs / "other-rule.json").write_text('{"rule":"different original"}')
+        (inputs / "manifest.json").write_text(json.dumps({"rules": {"other": "other-rule.json"}, "documents": {}}))
+    runner = make()
+    with runner, pytest.raises(module.ModelProtocolError, match="Current rule original is missing"):
+        runner.run(work, "compile", Answer, time.monotonic() + 30, reasoning_effort="medium")
+    assert runner.requests_started == 0
+    assert not (work / "execution.json").exists()
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="The local experiment uses macOS Seatbelt")
-@pytest.mark.parametrize("artifact", [False, True], ids=["structured", "artifact"])
-def test_stage_notes_are_writable_without_mutating_sources_or_opening_tmp(setup, monkeypatch, artifact):
+def test_stage_notes_are_writable_without_mutating_sources_or_opening_tmp(setup, monkeypatch):
     module, make, work, inputs, root = setup
     runner = make()
     original_notes = '{"assumptions":[]}'
     (work / "working-state.json").write_text(original_notes)
-    if not artifact:
-        (work / "artifact_schema.json").write_text(json.dumps(Answer.model_json_schema()))
+    original_manifest = (inputs / "manifest.json").read_text()
     native_popen = module.subprocess.Popen
     outcomes = {}
 
@@ -518,7 +599,7 @@ def test_stage_notes_are_writable_without_mutating_sources_or_opening_tmp(setup,
 
         def __init__(self):
             terminal = {"type": "result", "is_error": False, "stop_reason": "end_turn"}
-            terminal.update({"result": '{"completed":true,"artifact":"execution.json"}'} if artifact else {"structured_output": {"value": 42}})
+            terminal["result"] = '{"completed":true,"artifact":"execution.json"}'
             self.stdout = io.StringIO(json.dumps(terminal) + "\n")
             self.stderr = io.StringIO("")
 
@@ -537,9 +618,7 @@ def test_stage_notes_are_writable_without_mutating_sources_or_opening_tmp(setup,
         assert not (scratch / "working-state.json").is_symlink()
         prompt = (scratch / "prompt.txt").read_text()
         assert "TMPDIR" in prompt and "/tmp is outside the permitted paths" in prompt
-        if not artifact:
-            assert "Do not attempt terminal commands" not in prompt
-            assert json.loads(command[command.index("--json-schema") + 1]) == Answer.model_json_schema()
+        assert "--json-schema" not in command
 
         def shell(label, script, *paths):
             result = module.subprocess.run(
@@ -568,27 +647,26 @@ def test_stage_notes_are_writable_without_mutating_sources_or_opening_tmp(setup,
             forbidden.unlink(missing_ok=True)
         assert json.loads((scratch / "working-state.json").read_text()) == {"assumptions": ["unverified"]}
         assert (work / "working-state.json").read_text() == original_notes
-        if artifact:
-            assert shell("artifact_write", "printf '{\"value\":42}' > execution.json").returncode == 0
+        assert shell("artifact_write", "printf '{\"value\":42}' > execution.json").returncode == 0
         settle(runner, "local path contract probe")
         return Process()
 
     with runner:
         monkeypatch.setattr(module.subprocess, "Popen", core)
         monkeypatch.setattr(module.os, "killpg", lambda *args: None)
-        run = runner.run_artifact if artifact else runner.run
-        assert run(work, "Keep stage notes in working-state.json.", Answer, time.monotonic() + 30, reasoning_effort="medium").value == 42
+        assert runner.run(work, "Keep stage notes in working-state.json.", Answer, time.monotonic() + 30, reasoning_effort="medium").value == 42
         assert (work / "working-state.json").read_text() == original_notes
         assert (work / "clauses.json").read_text() == '{"rule":"read original"}'
         assert json.loads((work / "artifact_schema.json").read_text()) == Answer.model_json_schema()
-        assert (inputs / "manifest.json").read_text() == '{"original":"frozen"}'
-    module.dump(root / "scratch-path-probe.json", {"mode": "artifact" if artifact else "structured", "model_invoked": False, "returncodes": outcomes, "host_inputs_unchanged": True})
+        assert (inputs / "manifest.json").read_text() == original_manifest
+    module.dump(root / "scratch-path-probe.json", {"mode": "artifact", "model_invoked": False, "returncodes": outcomes, "host_inputs_unchanged": True})
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="The local experiment uses macOS Seatbelt")
 def test_artifact_chunks_are_read_back_after_native_boundary_and_settled_usage(setup, monkeypatch):
     module, make, work, inputs, root = setup
     runner = make()
+    original_manifest = (inputs / "manifest.json").read_text()
     native_popen = module.subprocess.Popen
 
     class LargeAnswer(BaseModel):
@@ -599,7 +677,7 @@ def test_artifact_chunks_are_read_back_after_native_boundary_and_settled_usage(s
         returncode = 0
 
         def __init__(self):
-            terminal = {"type": "result", "is_error": False, "stop_reason": "end_turn", "result": '{"completed":true,"artifact":"execution.json"}', "structured_output": {"observations": []}}
+            terminal = {"type": "result", "is_error": False, "stop_reason": "end_turn", "result": '{"completed":true,"artifact":"execution.json"}'}
             self.stdout = io.StringIO(json.dumps(terminal) + "\n")
             self.stderr = io.StringIO("")
 
@@ -636,10 +714,10 @@ def test_artifact_chunks_are_read_back_after_native_boundary_and_settled_usage(s
     with runner:
         monkeypatch.setattr(module.subprocess, "Popen", core)
         monkeypatch.setattr(module.os, "killpg", lambda *args: None)
-        result = runner.run_artifact(work, "audit", LargeAnswer, time.monotonic() + 30, reasoning_effort="low")
+        result = runner.run(work, "audit", LargeAnswer, time.monotonic() + 30, reasoning_effort="low")
         assert len(result.observations) == 1648
         assert json.loads((work / "execution.json").read_text()) == result.model_dump()
-        assert (inputs / "manifest.json").read_text() == '{"original":"frozen"}'
+        assert (inputs / "manifest.json").read_text() == original_manifest
     stage = root / "runner/stage-001-LargeAnswer"
     probes = json.loads((stage / "boundary-probe.json").read_text())
     assert all(code != 0 for code in probes["write_denied_returncodes"].values())
@@ -652,6 +730,8 @@ def test_artifact_chunks_are_read_back_after_native_boundary_and_settled_usage(s
 @pytest.mark.parametrize(
     "receipt",
     [
+        '{"value":42}',
+        "",
         '{"completed":1,"artifact":"execution.json"}',
         '{"completed":false,"completed":true,"artifact":"execution.json"}',
         '{"completed":true,"artifact":"execution.json","extra":NaN}',
@@ -663,13 +743,13 @@ def test_artifact_receipt_cannot_substitute_for_strict_completion(setup, monkeyp
     module, make, work, _, _ = setup
     runner = make()
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         settle(runner, prompt)
-        return {"result": receipt, "structured_output": {"value": 42}}
+        return {"result": receipt}
 
     monkeypatch.setattr(runner, "_invoke", invoke)
     with runner, pytest.raises(module.ModelProtocolError, match="completion receipt"):
-        runner.run_artifact(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
+        runner.run(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
     assert not (work / "execution.json").exists()
 
 
@@ -678,7 +758,7 @@ def test_artifact_readback_rejects_unsafe_or_invalid_content(setup, monkeypatch,
     module, make, work, _, root = setup
     runner = make()
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         scratch = runner.scratch / f"stage-{runner.stage_number}"
         scratch.mkdir()
         artifact = scratch / "execution.json"
@@ -706,7 +786,7 @@ def test_artifact_readback_rejects_unsafe_or_invalid_content(setup, monkeypatch,
     monkeypatch.setattr(runner, "_invoke", invoke)
     error = ValidationError if mode == "schema" else module.ModelProtocolError
     with runner, pytest.raises(error):
-        runner.run_artifact(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
+        runner.run(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
     assert not (work / "execution.json").exists()
     assert runner.usage["completed_requests"] == 1
     for path in runner.output.rglob("*.json"):
@@ -725,7 +805,7 @@ def test_artifact_refuses_existing_output_before_paid_call(setup, symlink):
     else:
         old.write_text('{"value":42}')
     with runner, pytest.raises(module.ModelProtocolError, match="already exists"):
-        runner.run_artifact(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
+        runner.run(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
     assert runner.requests_started == runner.stage_number == 0
 
 
@@ -733,7 +813,7 @@ def test_artifact_unknown_consumption_never_publishes_or_retries(setup, monkeypa
     module, make, work, _, _ = setup
     runner = make()
 
-    def invoke(work, prompt, schema, stage, deadline):
+    def invoke(work, prompt, stage, deadline):
         scratch = runner.scratch / f"stage-{runner.stage_number}"
         scratch.mkdir()
         (scratch / "execution.json").write_text('{"value":42}')
@@ -743,9 +823,9 @@ def test_artifact_unknown_consumption_never_publishes_or_retries(setup, monkeypa
     monkeypatch.setattr(runner, "_invoke", invoke)
     with runner:
         with pytest.raises(module.ModelProtocolError, match="not settled"):
-            runner.run_artifact(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
+            runner.run(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
         with pytest.raises(module.ModelProtocolError, match="unknown consumption"):
-            runner.run_artifact(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
+            runner.run(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
     assert not (work / "execution.json").exists()
     assert runner.stage_number == runner.requests_started == 1
 

@@ -1,7 +1,7 @@
 """Local grok-build StageRunner for research over the real semantic guest.
 
 One execution owns one paid grant. The model sees frozen stage files and returns
-a typed proposal, directly or through a scratch file; the guest validates it. This
+a typed proposal through a scratch file; the guest validates it. This
 does not weaken or impersonate the deployed GrokRunner's isolation boundary.
 """
 
@@ -211,7 +211,7 @@ class LocalGrokRunner:
                 pass
             self._process.wait(timeout=10)
 
-    def _stage_prompt(self, work: Path, prompt: str, stage: Path, *, artifact: bool = False) -> tuple[str, dict[str, str]]:
+    def _stage_prompt(self, work: Path, prompt: str, stage: Path) -> tuple[str, dict[str, str]]:
         sources: dict[str, str] = {}
         inputs: dict[str, Any] = {}
         for path in sorted(work.glob("*.json")):
@@ -222,13 +222,12 @@ class LocalGrokRunner:
         instructions = (
             "Use grok-build's local file and terminal tools to complete the output in your scratch working directory. "
             "Seatbelt enforces the filesystem and network boundaries. "
-            f"Frozen originals are in {self.input_root}; its manifest.json maps document and rule identities to filenames. "
+            "Frozen originals allowed for this stage are in sources/. During compilation only the current rule is available; "
+            "during audit sources/manifest.json maps the authorized original identities to filenames. "
             "Write the complete output as valid JSON to execution.json according to artifact_schema.json. "
             "Re-open the file and verify its required identities, frozen sources and full schema. Do not add fields outside that schema. "
             'Only after the file is complete, return exactly {"completed":true,"artifact":"execution.json"}. '
             "A receipt without a complete valid artifact fails the stage. "
-            if artifact
-            else "Return the supplied structured schema directly. "
         )
         prompt += (
             "\n\nLOCAL RESEARCH EXECUTION: The complete stage JSON inputs are available as files in your working directory: "
@@ -247,8 +246,39 @@ class LocalGrokRunner:
         dump(stage / "source-hashes.json", sources)
         return prompt, sources
 
+    def _stage_sources(self, work: Path, destination: Path) -> None:
+        """Expose only originals needed by this stage, never the input root."""
+        manifest = read_json(self.input_root, ("manifest.json",), ARTIFACT_LIMIT)
+        if not isinstance(manifest, dict):
+            raise ModelProtocolError("Invalid original input mapping")
+        rules = manifest.get("rules", {})
+        documents = manifest.get("documents", {})
+        if not isinstance(rules, dict) or not isinstance(documents, dict):
+            raise ModelProtocolError("Invalid original input mapping")
+        destination.mkdir(mode=0o700)
+        source = work / "rule-source.json"
+        if source.exists():
+            # The compiler already has the verified snapshot; its only raw
+            # original is the rule with that exact source hash.
+            digest = read_json(work, (source.name,), ARTIFACT_LIMIT)["source"]["sha256"]
+            for name in dict.fromkeys(rules.values()):
+                raw = read_regular(self.input_root, (name,), ARTIFACT_LIMIT)
+                if hashlib.sha256(raw).hexdigest() == digest:
+                    (destination / name).write_bytes(raw)
+                    break
+            else:
+                raise ModelProtocolError("Current rule original is missing")
+        else:
+            for name in dict.fromkeys([*rules.values(), *documents.values()]):
+                (destination / name).write_bytes(read_regular(self.input_root, (name,), ARTIFACT_LIMIT))
+            visible = {**manifest, "cached_plans": {}, "cached_snapshots": {}}
+            (destination / "manifest.json").write_text(json.dumps(visible, ensure_ascii=False))
+
     def _seatbelt(self, work: Path, agent_work: Path, home: Path, stage: Path) -> Path:
         assert self.gateway is not None
+        originals = self.scratch / f"sources-{self.stage_number}"
+        if not originals.exists():
+            self._stage_sources(work, originals)
         paths = [
             "/System",
             "/usr",
@@ -262,7 +292,7 @@ class LocalGrokRunner:
             sys.base_prefix,
             str(self.python_root),
             str(work),
-            str(self.input_root),
+            str(originals),
         ]
         policy = "(version 1)\n(deny default)\n(allow process* signal sysctl-read mach-lookup ipc-posix-shm iokit-open)\n"
         policy += '(allow file-read-metadata)\n(allow file-read* (literal "/") (literal "/private") (literal "/private/var"))\n'
@@ -285,7 +315,7 @@ class LocalGrokRunner:
         try:
             denied = subprocess.run(["/usr/bin/sandbox-exec", "-f", str(seatbelt), "/bin/cat", str(canary)], capture_output=True)
             allowed = subprocess.run(["/usr/bin/sandbox-exec", "-f", str(seatbelt), "/bin/cat", str(readable)], capture_output=True)
-            original = next(path for path in self.input_root.iterdir() if path.is_file())
+            original = next(path for path in originals.iterdir() if path.is_file())
             original_read = subprocess.run(["/usr/bin/sandbox-exec", "-f", str(seatbelt), "/usr/bin/head", "-c", "1", str(original)], capture_output=True)
             writes: dict[str, int] = {}
             for label, root in {"original": self.input_root, "source": work, "helpers": self.helpers, "labels": self.output.parent}.items():
@@ -329,7 +359,7 @@ class LocalGrokRunner:
             "PYTHONPATH": str(self.python_root),
         }
 
-    def _invoke(self, work: Path, prompt: str, schema: dict[str, Any] | None, stage: Path, deadline: float) -> dict[str, Any]:
+    def _invoke(self, work: Path, prompt: str, stage: Path, deadline: float) -> dict[str, Any]:
         assert self.gateway is not None
         agent_work, home = self.scratch / f"stage-{self.stage_number}", self.scratch / f"home-{self.stage_number}"
         agent_work.mkdir(mode=0o700)
@@ -339,6 +369,9 @@ class LocalGrokRunner:
                 shutil.copyfile(path, agent_work / path.name)
             else:
                 (agent_work / path.name).symlink_to(path)
+        originals = self.scratch / f"sources-{self.stage_number}"
+        self._stage_sources(work, originals)
+        (agent_work / "sources").symlink_to(originals, target_is_directory=True)
         (agent_work / "references").symlink_to(self.helpers / "skill/references", target_is_directory=True)
         (agent_work / "prompt.txt").write_text(prompt)
         (home / "config.toml").write_text(cli_config(f"http://127.0.0.1:{self.gateway.server_address[1]}/v1", self.token, max_completion_tokens=262_144))
@@ -375,8 +408,6 @@ class LocalGrokRunner:
             "--deny",
             "MCPTool",
         ]
-        if schema is not None:
-            command.extend(["--json-schema", json.dumps(schema)])
         environment = self._environment(agent_work, home)
         # The core starts a login shell; /etc/profile can reorder PATH. Restore
         # this execution's Python after startup without reading user profiles.
@@ -468,14 +499,12 @@ class LocalGrokRunner:
             for thread in pumps:
                 thread.join(timeout=1)
 
+    @property
+    def model_requests(self) -> int:
+        return int(self.usage["completed_requests"])
+
     def run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T:
-        return self._run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort, artifact=False)
-
-    def run_artifact(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T:
-        """Read a new scratch artifact only after the core and paid requests finish."""
-        return self._run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort, artifact=True)
-
-    def _run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort, artifact: bool) -> T:
+        """Execute one stage through the sole file-and-receipt protocol."""
         if not self._entered or self._closed:
             raise RuntimeError("Use LocalGrokRunner as a context manager")
         if self.output.is_relative_to(work.resolve()):
@@ -488,7 +517,7 @@ class LocalGrokRunner:
         deadline = min(deadline, self.deadline)
         if time.monotonic() >= deadline:
             raise TimeoutError("Local execution deadline exceeded")
-        if artifact and os.path.lexists(work / "execution.json"):
+        if os.path.lexists(work / "execution.json"):
             raise ModelProtocolError("Stage artifact already exists")
         self.stage_number += 1
         stage = self.output / f"stage-{self.stage_number:03d}-{schema.__name__}"
@@ -500,18 +529,17 @@ class LocalGrokRunner:
             "requested_reasoning_effort": reasoning_effort,
             "reasoning_effort": REASONING_EFFORT,
             "completed": False,
-            "output_mode": "artifact" if artifact else "structured",
+            "output_mode": "artifact",
         }
         self.summary["stages"].append(status)
         requests_before = self.requests_started
         try:
             contract = schema.model_json_schema()
-            if artifact:
-                with (work / "artifact_schema.json").open("x", encoding="utf-8") as stream:
-                    json.dump(contract, stream, ensure_ascii=False)
-            prompt, source_hashes = self._stage_prompt(work.resolve(), prompt, stage, artifact=artifact)
+            with (work / "artifact_schema.json").open("x", encoding="utf-8") as stream:
+                json.dump(contract, stream, ensure_ascii=False)
+            prompt, source_hashes = self._stage_prompt(work.resolve(), prompt, stage)
             dump(stage / "schema.json", contract)
-            terminal = self._invoke(work.resolve(), prompt, None if artifact else contract, stage, deadline)
+            terminal = self._invoke(work.resolve(), prompt, stage, deadline)
             dump(stage / "terminal.json", self._sanitize(terminal))
             usage = self.usage
             if usage["uncertain"] or usage["in_flight"]:
@@ -525,28 +553,25 @@ class LocalGrokRunner:
             for name, expected in source_hashes.items():
                 if hashlib.sha256(read_regular(work, (name,), ARTIFACT_LIMIT)).hexdigest() != expected:
                     raise ModelProtocolError("Stage source changed during model execution")
-            if artifact:
-                try:
-                    receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
-                except (ValueError, TypeError):
-                    raise ModelProtocolError("Invalid artifact completion receipt") from None
-                if not isinstance(receipt, dict) or receipt.get("completed") is not True or receipt != {"completed": True, "artifact": "execution.json"}:
-                    raise ModelProtocolError("Invalid artifact completion receipt")
-                try:
-                    output = read_json(self.scratch / f"stage-{self.stage_number}", ("execution.json",), ARTIFACT_LIMIT)
-                except (OSError, ValueError) as error:
-                    raise ModelProtocolError("Missing or invalid stage artifact") from error
-                clean = self._sanitize(output)
-                dump(stage / "execution.json", clean)
-                if clean != output:
-                    raise ModelProtocolError("Stage artifact contains protected content")
-                result = schema.model_validate(output)
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Local execution deadline exceeded")
-                with (work / "execution.json").open("x", encoding="utf-8") as stream:
-                    json.dump(result.model_dump(mode="json"), stream, ensure_ascii=False)
-            else:
-                result = schema.model_validate(terminal.get("structured_output"))
+            try:
+                receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
+            except (ValueError, TypeError):
+                raise ModelProtocolError("Invalid artifact completion receipt") from None
+            if not isinstance(receipt, dict) or receipt.get("completed") is not True or receipt != {"completed": True, "artifact": "execution.json"}:
+                raise ModelProtocolError("Invalid artifact completion receipt")
+            try:
+                output = read_json(self.scratch / f"stage-{self.stage_number}", ("execution.json",), ARTIFACT_LIMIT)
+            except (OSError, ValueError) as error:
+                raise ModelProtocolError("Missing or invalid stage artifact") from error
+            clean = self._sanitize(output)
+            dump(stage / "execution.json", clean)
+            if clean != output:
+                raise ModelProtocolError("Stage artifact contains protected content")
+            result = schema.model_validate(output)
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Local execution deadline exceeded")
+            with (work / "execution.json").open("x", encoding="utf-8") as stream:
+                json.dump(result.model_dump(mode="json"), stream, ensure_ascii=False)
             try:
                 notes = read_json(self.scratch / f"stage-{self.stage_number}", ("working-state.json",), ARTIFACT_LIMIT)
             except (OSError, ValueError):
