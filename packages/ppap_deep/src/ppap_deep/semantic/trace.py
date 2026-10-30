@@ -14,7 +14,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .bindings import AbsentCollection, Binding, BoundCollection, CollectionUse, FileCollection, UnresolvedCollection, binding_scope, scoped_records
-from .document_tools import bind, ref
+from .document_tools import bind, col_number, ref
 from .evidence import EvidenceBudget, EvidenceLimitError, cell_locator, resolve_optional
 from .holes import EvidenceHole, TypedAnswer, validate_answer
 from .models import (
@@ -30,6 +30,7 @@ from .models import (
     DocumentProgram,
     ExcelRange,
     Expr,
+    InterpretationCandidate,
     Judge,
     Not,
     PlannedRule,
@@ -124,8 +125,14 @@ def program_has_semantics(program: DocumentProgram | RecordsProgram) -> bool:
 
 class _Evaluator:
     def __init__(
-        self, trace: AuditTrace, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan], budget: EvidenceBudget,
-        base_plans: dict[str, RulePlan] | None = None, *, exhaustive: bool = False,
+        self,
+        trace: AuditTrace,
+        documents: dict[str, dict[str, Any]],
+        plans: dict[str, RulePlan],
+        budget: EvidenceBudget,
+        base_plans: dict[str, RulePlan] | None = None,
+        *,
+        exhaustive: bool = False,
     ):
         self.trace, self.documents, self.plans, self.budget = trace, documents, plans, budget
         self.base_plans = base_plans if base_plans is not None else plans
@@ -309,46 +316,25 @@ class _Evaluator:
                         continue
                     if requirement.field not in available:
                         raise ValueError("Interpretation concerns an undeclared field")
-                    for citation in requirement.evidence:
-                        if citation.document_id != binding.document_id or citation.locator is None:
-                            raise ValueError("Interpretation evidence outside bound document")
-                        if not resolve_optional(self.documents[citation.document_id], citation.locator, self.budget):
-                            raise ValueError("Interpretation requires readable source evidence")
-                    confirmed = any(
-                        entry.get("question_id") == requirement.id
-                        and entry.get("kind") in {"interpretation", "mapping"}
-                        and self.confirmation_scope(entry.get("scope"), binding.document_id)
-                        and any(entry.get("candidate_id") == candidate.id and entry.get("content") == candidate.explanation for candidate in requirement.candidates)
-                        for entry in self.plans[self.audit_id].appendix
+                    confirmed, recommendation, answer, _confirmation = self.interpretation(
+                        requirement.id,
+                        requirement.question,
+                        requirement.candidates,
+                        requirement.evidence,
+                        [binding.document_id],
+                        f"interpretation/{name}/{binding.id}/{requirement.id}",
+                        requires_confirmation=requirement.requires_confirmation,
                     )
-                    recommendation = None
-                    if not confirmed:
-                        recommendation, answer = self.request_fact(
-                            "interpretation",
-                            "interpretation",
-                            f"interpretation/{name}/{binding.id}/{requirement.id}",
-                            requirement.question,
-                            {
-                                "document_ids": [binding.document_id],
-                                "candidate_ids": [candidate.id for candidate in requirement.candidates],
-                                "requires_confirmation": requirement.requires_confirmation,
-                                "allowed_evidence": [citation.model_dump(mode="json") for citation in requirement.evidence],
-                            },
-                        )
-                        if recommendation is not None and answer is not None and not requirement.requires_confirmation:
-                            confirmed = True
-                            for record in selected:
-                                record["interpretations"] = [
-                                    *record.get("interpretations", []),
-                                    {"id": requirement.id, "candidate_id": recommendation, "origin": answer.origin, "evidence": [citation.model_dump(mode="json") for citation in answer.evidence]},
-                                ]
+                    if recommendation is not None and answer is not None and not requirement.requires_confirmation:
+                        for record in selected:
+                            record["interpretations"] = [
+                                *record.get("interpretations", []),
+                                {"id": requirement.id, "candidate_id": recommendation, "origin": answer.origin, "evidence": [citation.model_dump(mode="json") for citation in answer.evidence]},
+                            ]
                     if not confirmed:
                         unresolved_meanings.add((binding.id, requirement.field))
                         for record in selected:
                             record["states"] = {**record["states"], requirement.field: "unknown_interpretation"}
-                        self._clarification(requirement, binding)
-                        if recommendation is not None:
-                            self.clarifications[requirement.id]["recommended_candidate_id"] = recommendation
                 rows.extend(selected)
                 exclusions.extend(removed)
             issues.extend(use.unresolved_scopes)
@@ -368,6 +354,7 @@ class _Evaluator:
         else:
             state = "unresolved"
             issues.append(use.reason if isinstance(use, UnresolvedCollection) else f"尚未绑定集合 {name}")
+        rows = [{**row, "collection": name} for row in rows]
         validate_identity_provenance(self.base_plans[self.audit_id], self.plans[self.audit_id], name, rows, self.documents, self.budget)
         result = {
             "state": state,
@@ -413,36 +400,73 @@ class _Evaluator:
         targets = scope["rule_targets"]
         return isinstance(targets, list) and {"document_id": self.audit_id, "rule_id": self.current_rule.id} in targets
 
-    def _clarification(self, requirement, binding: Binding) -> None:
+    def interpretation(
+        self, question_id: str, question: str, candidates: list[InterpretationCandidate], evidence: list[Citation], document_ids: list[str], path: str, *, requires_confirmation: bool = True
+    ) -> tuple[bool, Any, TypedAnswer | None, dict[str, Any] | None]:
+        for citation in evidence:
+            if citation.document_id not in document_ids or citation.locator is None:
+                raise ValueError("Interpretation evidence outside bound document")
+            if not resolve_optional(self.documents[citation.document_id], citation.locator, self.budget):
+                raise ValueError("Interpretation requires readable source evidence")
+        confirmations = [
+            entry
+            for entry in self.plans[self.audit_id].appendix
+            if entry.get("question_id") == question_id
+            and entry.get("kind") in {"interpretation", "mapping"}
+            and all(self.confirmation_scope(entry.get("scope"), document_id) for document_id in document_ids)
+            and any(entry.get("candidate_id") == candidate.id and entry.get("content") == candidate.explanation for candidate in candidates)
+        ]
+        if len({(entry["candidate_id"], entry["content"]) for entry in confirmations}) > 1:
+            raise ValueError("Conflicting interpretation confirmations")
+        confirmation = confirmations[0] if confirmations else None
+        confirmed = confirmation is not None
+        recommendation, answer = None, None
+        if not confirmed:
+            recommendation, answer = self.request_fact(
+                "interpretation",
+                "interpretation",
+                path,
+                question,
+                {
+                    "document_ids": document_ids,
+                    "candidate_ids": [candidate.id for candidate in candidates],
+                    "requires_confirmation": requires_confirmation,
+                    "allowed_evidence": [citation.model_dump(mode="json") for citation in evidence],
+                },
+            )
+            confirmed = recommendation is not None and not requires_confirmation
+        if not confirmed:
+            self._clarification(question_id, question, candidates, evidence, document_ids)
+            if recommendation is not None:
+                self.clarifications[question_id]["recommended_candidate_id"] = recommendation
+        return confirmed, recommendation, answer, confirmation
+
+    def _clarification(self, question_id: str, question: str, candidates: list[InterpretationCandidate], evidence: list[Citation], document_ids: list[str]) -> None:
         identity = _digest(
             {"plans": {key: plan.source_sha256 for key, plan in sorted(self.plans.items())}, "documents": {key: document["source"]["sha256"] for key, document in sorted(self.documents.items())}}
         )
-        if requirement.id not in self.clarifications:
+        if question_id not in self.clarifications:
             sources = []
-            for citation in requirement.evidence:
+            for citation in evidence:
                 source = citation.model_dump(mode="json")
                 source.pop("excerpt", None)
                 observed = resolve_optional(self.documents[citation.document_id], citation.locator, self.citation_budget)
                 if observed is not None:
                     source["excerpt"] = " · ".join(observed.values)[:4000]
                 sources.append(source)
-            self.clarifications[requirement.id] = {
-                "id": requirement.id,
+            self.clarifications[question_id] = {
+                "id": question_id,
                 "input_id": identity,
                 "kind": "interpretation",
-                "question": requirement.question,
-                "document_ids": [binding.document_id],
+                "question": question,
+                "document_ids": document_ids,
                 "rule_ids": [],
-                "candidates": [candidate.model_dump(mode="json") for candidate in requirement.candidates],
+                "candidates": [candidate.model_dump(mode="json") for candidate in candidates],
                 "sources": sources,
-                "scope": {"document_ids": [binding.document_id], "rule_ids": [], "rule_targets": []},
+                "scope": {"document_ids": document_ids, "rule_ids": [], "rule_targets": []},
             }
-        item = self.clarifications[requirement.id]
-        if (
-            item["question"] != requirement.question
-            or item["candidates"] != [candidate.model_dump(mode="json") for candidate in requirement.candidates]
-            or item["document_ids"] != [binding.document_id]
-        ):
+        item = self.clarifications[question_id]
+        if item["question"] != question or item["candidates"] != [candidate.model_dump(mode="json") for candidate in candidates] or item["document_ids"] != document_ids:
             raise ValueError("Shared interpretation identity has conflicting meaning")
         if self.current_rule.id not in item["rule_ids"]:
             item["rule_ids"].append(self.current_rule.id)
@@ -465,9 +489,17 @@ class _Evaluator:
             return []
         return [Citation.model_validate(row["evidence"][field]["citation"]) for field in dict.fromkeys(fields) if field in row["evidence"]]
 
-    def headers(self, binding: Binding) -> list[Citation]:
+    def headers(self, binding: Binding, fields: list[str] | None = None) -> list[Citation]:
         document = self.documents[binding.document_id]
         table = next(item for item in document["tables"] if item["id"] == binding.table)
+        if fields:
+            columns = dict.fromkeys(binding.columns[field] for field in fields if field in binding.columns)
+            if columns:
+                return [
+                    Citation(document_id=binding.document_id, locator=cell_locator(document["source"]["format"], binding.table, row, col_number(column)))
+                    for row in binding.header_rows
+                    for column in columns
+                ]
         if document["source"]["format"] in {".xlsx", ".xlsm", ".xls"}:
             return [
                 Citation(document_id=binding.document_id, locator=ExcelRange(kind="xlsx_range", sheet=binding.table, start=ref(row, 1), end=ref(row, table["cols"]))) for row in binding.header_rows
@@ -477,6 +509,35 @@ class _Evaluator:
             for row in binding.header_rows
             for column in dict.fromkeys((1, table["cols"]))
         ]
+
+    def judge_interpretation(self, node: Judge, row: dict[str, Any] | None, path: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        names = set(node.inputs)
+        if row is not None and "collection" in row:
+            names.add(row["collection"])
+        evidence: dict[str, Citation] = {}
+        document_ids: set[str] = set()
+        complete = bool(names)
+        for name in sorted(names):
+            self.collection(name)
+            use = self.current_use.inputs.get(name) if self.current_use else None
+            if not isinstance(use, BoundCollection):
+                complete = False
+                continue
+            for scope in use.scopes:
+                binding = self.bindings[scope.binding_id]
+                document_ids.add(binding.document_id)
+                for citation in self.headers(binding, node.fields):
+                    if resolve_optional(self.documents[binding.document_id], citation.locator, self.budget):
+                        evidence[citation.model_dump_json()] = citation
+        sources = list(evidence.values())
+        # Compilation has no submission coordinates. A missing execution
+        # binding cannot become an invented field or a guessed rule source.
+        if not complete or not document_ids or {citation.document_id for citation in sources} != document_ids:
+            return _fact(None, "规则解释所需的原件来源尚未绑定", diagnostic="rule_ambiguity"), None
+        documents = sorted(document_ids)
+        question_id = _digest({"audit_id": self.audit_id, "rule_id": self.current_rule.id, "path": path, "judge": node.model_dump(mode="json"), "document_ids": documents})
+        confirmed, _recommendation, _answer, confirmation = self.interpretation(question_id, node.question, node.candidates, sources, documents, f"interpretation/{question_id}")
+        return (None, confirmation) if confirmed else (_fact(None, "规则解释待确认：" + node.question, sources, "rule_ambiguity"), None)
 
     def ask(self, path: str, question: str, context: dict[str, Any], kind: Literal["semantic_predicate", "semantic_key", "semantic_value"] = "semantic_predicate") -> dict[str, Any]:
         self.budget.consume(1)
@@ -617,6 +678,11 @@ class _Evaluator:
                 "components": children,
             }
         if isinstance(node, Judge):
+            confirmation = None
+            if node.candidates:
+                unresolved, confirmation = self.judge_interpretation(node, row, path)
+                if unresolved is not None:
+                    return unresolved
             missing = next((row["states"].get(field, "unresolved") for field in node.fields if row["states"].get(field) != "known"), None) if row else None
             if missing is not None:
                 return _fact(None, "局部判断所需的原始字段尚未确定", self.citations(row, node.fields), _diagnostic(missing))
@@ -638,6 +704,8 @@ class _Evaluator:
                 "inputs": inputs,
                 "frozen_documents": {identity: document["source"]["sha256"] for identity, document in sorted(self.documents.items())},
             }
+            if confirmation is not None:
+                context["confirmed_interpretation"] = {**confirmation, "confirmation_source": confirmation.get("confirmation_source", "user")}
             if row is not None:
                 adjacent_binding = self.bindings.get(row["binding_id"])
                 adjacent = [item for item in self.materialized[adjacent_binding.id]["records"] if type(row["row_id"]) is int and abs(item["row_id"] - row["row_id"]) == 1] if adjacent_binding else []
@@ -710,7 +778,13 @@ class _Evaluator:
                 concepts = {entity.id: entity for entity in ontology.entities}
                 identities = (concepts[relationship.source].identity, concepts[relationship.target].identity)
             facts = match_rows(
-                self.population, targets, node, self.budget, judge, identities=identities, exhaustive=self.exhaustive,
+                self.population,
+                targets,
+                node,
+                self.budget,
+                judge,
+                identities=identities,
+                exhaustive=self.exhaustive,
                 pending_questions=lambda: len(self.questions.keys() - self.answers.keys()),
                 target_membership=target_membership if lazy_membership else None,
             )
@@ -803,7 +877,8 @@ class _Evaluator:
                     membership.append((row, when))
                 self.population = [
                     {**row, "scope_state": "known" if (when["value"] is True or self.exhaustive) and row["scope_state"] == "known" else "unresolved"}
-                    for row, when in membership if when["value"] is not False or self.exhaustive
+                    for row, when in membership
+                    if when["value"] is not False or self.exhaustive
                 ]
                 self.relation_cache = {}  # require operates on the declared eligible source population.
                 for row, when in membership:

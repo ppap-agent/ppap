@@ -176,11 +176,28 @@ class RequireNot(Not):
     item: "RowExpr"
 
 
+class InterpretationCandidate(Artifact):
+    id: str = Field(min_length=1, max_length=256)
+    label: str = Field(min_length=1, max_length=1024)
+    explanation: str = Field(min_length=1, max_length=4096)
+
+
 class Judge(Artifact):
     kind: Literal["judge"]
     question: str = Field(min_length=1, max_length=4096)
     fields: list[str] = Field(default_factory=list, max_length=64, description="Required native fields in row context; search hints only in document context.")
     inputs: list[str] = Field(default_factory=list, max_length=16)
+    candidates: list[InterpretationCandidate] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Unconfirmed rule meanings. The host asks for interpretation and gates this predicate until a scoped rule appendix confirms a candidate.",
+    )
+
+    @model_validator(mode="after")
+    def distinct_candidates(self) -> Judge:
+        if len({candidate.id for candidate in self.candidates}) != len(self.candidates):
+            raise ValueError("Duplicate interpretation candidate")
+        return self
 
 
 class Related(Artifact):

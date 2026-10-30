@@ -13,7 +13,7 @@ from pydantic import Field, StringConstraints, model_validator
 
 from .document_tools import TableReader, col_number
 from .evidence import EvidenceBudget, cell_locator, read_cell, resolve
-from .models import Artifact, Citation, Diagnostic, ExcelCell, PdfCell, WordCell
+from .models import Artifact, Citation, Diagnostic, ExcelCell, InterpretationCandidate, PdfCell, WordCell
 from .values import scalar_key
 
 TableRowLocator = Annotated[ExcelCell | WordCell | PdfCell, Field(discriminator="kind")]
@@ -36,12 +36,6 @@ class UnresolvedRow(Artifact):
 class FieldHole(Artifact):
     state: Literal["absent", "unresolved"]
     reason: ScopeReason
-
-
-class InterpretationCandidate(Artifact):
-    id: str = Field(min_length=1, max_length=256)
-    label: str = Field(min_length=1, max_length=1024)
-    explanation: str = Field(min_length=1, max_length=4096)
 
 
 class InterpretationRequirement(Artifact):

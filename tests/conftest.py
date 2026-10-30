@@ -38,10 +38,12 @@ from ppap_core.mcp import SCOPES, pkce_challenge
 from ppap_core.settings import ISOLATED_DEV_SECRET, Settings
 from ppap_deep.auditor import SemanticRuntime
 from ppap_deep.controller import Controller, UnixControllerServer
+from ppap_deep.semantic.document_tools import TableReader
+from ppap_deep.semantic.evidence import EvidenceBudget
 from ppap_deep.semantic.guest import CompileManifest, Manifest, execute, execute_compilation
 from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import CompileSpec
-from ppap_deep.semantic.trace import AuditTrace
+from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 from ppap_deep.source import authorize_execution, object_file_source
 from ppap_product_store import AuthStore
 from ppap_worker import process_claimed
@@ -376,6 +378,7 @@ def source_bytes(kind):
 class FeedbackModel:
     input_tokens = 0
     output_tokens = 0
+    rules = RULES
 
     def __init__(self):
         self.calls = []
@@ -387,7 +390,7 @@ class FeedbackModel:
             supplied = prompt.split("identity and ordered clause IDs must match exactly: ", 1)[1]
             identity, _ = json.JSONDecoder().raw_decode(supplied)
             clauses = json.loads((work / "clauses.json").read_text())
-            assert [(clause["id"], clause["rule_to_check"]) for clause in clauses] == [(clause["id"], clause["rule_to_check"]) for clause in RULES]
+            assert [(clause["id"], clause["rule_to_check"]) for clause in clauses] == [(clause["id"], clause["rule_to_check"]) for clause in self.rules]
             relation = {"kind": "related", "relationship_id": "corresponds", "target": "cp", "source_key": {"fields": ["code"]}, "target_key": {"fields": ["code"]}, "match": "one_to_one"}
             programs = [
                 relation,
@@ -458,8 +461,99 @@ class FeedbackModel:
             for item in collection["scopes"][0]["objects"]:
                 item["basis"] = "原始工序编号及其后续空白行共同描述一个工序；不同编号分别保留。"
                 item["evidence"] = [{"kind": "xlsx_cell", "sheet": table, "cell": f"A{row}"} for row in item["rows"]]
-        uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp[target]} if clause["id"] != "R3" else {})}} for target in targets for clause in RULES]
+        uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp[target]} if clause["id"] != "R3" else {})}} for target in targets for clause in self.rules]
         return AuditTrace.model_validate({"bindings": bindings, "uses": uses})
+
+
+STANDARD_CHANGE = "将 R1 明确改为：流程图中的每个工序分类必须等于 SC，否则不通过；不再要求本条执行跨文件编号对应。"
+
+
+class CompiledCandidateModel:
+    """Only the external model response changes; the product executes it."""
+
+    input_tokens = output_tokens = 0
+    standard_change = STANDARD_CHANGE
+
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.rules = delegate.rules = [
+            {**delegate.rules[0], "rule_to_check": delegate.rules[0]["rule_to_check"] + "本条未明确控制计划中的“作业单元编号”是否表示工序编号，需要确认。"},
+            *delegate.rules[1:],
+        ]
+        self.calls = delegate.calls
+        self.compilations = []
+        self.semantic_answers = []
+
+    def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+        result = self.delegate.run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
+        raw = result.model_dump(mode="json")
+        if issubclass(schema, RulePlan):
+            assert not (work / "documents.json").exists()
+            source = json.loads((work / "rule-source.json").read_text())
+            appendix = source["rule_body"].get("appendix", [])
+            changed = [entry for entry in appendix if entry["kind"] == "standard_change" and "R1" in entry["scope"]["rule_ids"]]
+            if changed:
+                # The new policy comes from the actual frozen source packet,
+                # not from a test flag or the original candidate's identity.
+                assert [entry["content"] for entry in changed] == [STANDARD_CHANGE]
+                assert all("candidate_id" not in entry for entry in changed)
+                require = {"kind": "value_test", "field": "classification", "op": "eq", "value": "SC"}
+            else:
+                require = {
+                    "kind": "judge",
+                    "question": "流程图的工序编号是否与控制计划的作业单元编号按原始编号一一对应？请先确认编号含义。",
+                    "fields": ["code"],
+                    "inputs": ["cp"],
+                    "candidates": [
+                        {"id": "literal", "label": "按工序编号逐字对应", "explanation": EXPLANATION},
+                        {"id": "equipment", "label": "改为设备编号标准", "explanation": "将本条标准改为检查设备编号对应；这需要明确修改标准。"},
+                    ],
+                }
+            raw["rules"][0]["program"]["require"] = require
+            self.compilations.append({"appendix": appendix, "require": require})
+            return schema.model_validate(raw)
+        assert schema is AuditTrace
+        for binding in raw["bindings"]:
+            binding.pop("interpretations", None)
+        trace = schema.model_validate(raw)
+        documents = json.loads((work / "documents.json").read_text())
+        targets = json.loads((work / "targets.json").read_text())
+        plans = {identity: RulePlan.model_validate(plan) for identity, plan in json.loads((work / "plans.json").read_text()).items()}
+        pending = evaluate_audit(trace, documents, {target: plans[identity] for target, identity in targets.items()})
+        bindings = {binding.id: binding for binding in trace.bindings}
+        for need in pending.needs:
+            if need.kind != "semantic_predicate":
+                # A proposed meaning is not a Boolean fact or a confirmation.
+                assert need.kind == "interpretation"
+                continue
+            source = need.context["source"]["fields"]["code"]
+            assert source["state"] == "known"
+            candidates, evidence = [], [source["evidence"]["citation"]]
+            for binding_id in need.context["inputs"]["cp"]["binding_ids"]:
+                binding = bindings[binding_id]
+                table = next(item for item in documents[binding.document_id]["tables"] if item["id"] == binding.table)
+                reader = TableReader(table, EvidenceBudget())
+                for row in range(binding.first_row, binding.last_row + 1):
+                    observed = reader.cell(row, 1)["value"]
+                    if observed is not None:
+                        candidates.append(observed)
+                        evidence.append({"document_id": binding.document_id, "locator": {"kind": "xlsx_cell", "sheet": binding.table, "cell": f"A{row}"}})
+            answer = {
+                "need_id": need.id,
+                "value": "true" if candidates.count(source["value"]) == 1 else "false",
+                "reason": "受控模型按原件读取的编号逐字检查唯一对应，未修改原生值。",
+                "evidence": evidence,
+            }
+            raw["answers"].append(answer)
+            self.semantic_answers.append({"audit_id": need.audit_id, "rule_id": need.rule_id, **answer})
+        assert all(not binding.interpretations for binding in trace.bindings)
+        return schema.model_validate(raw)
+
+
+@pytest.fixture
+def compiled_candidate_model():
+    """Share the controlled Judge response across Product and browser owners."""
+    return CompiledCandidateModel
 
 
 PREFIX = "io.modelcontextprotocol/"
@@ -565,20 +659,41 @@ def deep_feedback_env(tmp_path, monkeypatch, request):
 
         def database_sql(statement):
             with psycopg.connect(
-                host="127.0.0.1", port=int(os.environ["PGPORT"]), dbname="postgres",
+                host="127.0.0.1",
+                port=int(os.environ["PGPORT"]),
+                dbname="postgres",
                 user=os.environ.get("PPAP_PG_BOOTSTRAP_USER", "ppap"),
-                password=os.environ.get("PPAP_PG_BOOTSTRAP_PASSWORD", ISOLATED_DEV_SECRET), autocommit=True,
+                password=os.environ.get("PPAP_PG_BOOTSTRAP_PASSWORD", ISOLATED_DEV_SECRET),
+                autocommit=True,
             ) as connection:
                 connection.execute(statement)
 
         database_sql(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(database), sql.Identifier(migrator)))
         request.addfinalizer(lambda: database_sql(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database))))
         result = subprocess.run(
-            ["docker", "compose", "-f", str(Path(__file__).resolve().parents[1] / "deploy/isolated-dev/compose.yaml"),
-             "exec", "-T", "-e", "PGHOST=127.0.0.1", "-e", "PGPORT=5432", "-e", "PPAP_PG_DATABASE=" + database,
-             "-e", "PPAP_PG_MIGRATOR_USER=" + migrator,
-             "-e", "PPAP_PG_MIGRATOR_PASSWORD=" + os.environ.get("PPAP_PG_MIGRATOR_PASSWORD", ISOLATED_DEV_SECRET),
-             "postgres", "sh", "/migrations/apply.sh"], capture_output=True, timeout=60,
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(Path(__file__).resolve().parents[1] / "deploy/isolated-dev/compose.yaml"),
+                "exec",
+                "-T",
+                "-e",
+                "PGHOST=127.0.0.1",
+                "-e",
+                "PGPORT=5432",
+                "-e",
+                "PPAP_PG_DATABASE=" + database,
+                "-e",
+                "PPAP_PG_MIGRATOR_USER=" + migrator,
+                "-e",
+                "PPAP_PG_MIGRATOR_PASSWORD=" + os.environ.get("PPAP_PG_MIGRATOR_PASSWORD", ISOLATED_DEV_SECRET),
+                "postgres",
+                "sh",
+                "/migrations/apply.sh",
+            ],
+            capture_output=True,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr.decode(errors="replace")[-2000:]
         settings.pg_port = int(os.environ["PGPORT"])
@@ -591,6 +706,9 @@ def deep_feedback_env(tmp_path, monkeypatch, request):
     principal = store.principal_for_fixture("alice")
     session_cookie = store.create_session(principal)
     model = FeedbackModel()
+    if hasattr(request, "param"):
+        model_factory = request.getfixturevalue(request.param) if isinstance(request.param, str) else request.param
+        model = model_factory(model)
     revision = settings.deep_execution_revision()
 
     class Guest:
@@ -640,7 +758,7 @@ def deep_feedback_env(tmp_path, monkeypatch, request):
         "customers": ["测试客户"],
         "models": [],
         "parts": [],
-        "rules": [{**r, "category": "跨文件", "priority": "P1", "type_of_rule": "table"} for r in RULES],
+        "rules": [{**r, "category": "跨文件", "priority": "P1", "type_of_rule": "table"} for r in model.rules],
     }
     source = upload(client, "rules.json", json.dumps(body, ensure_ascii=False).encode())
     published = client.post("/rules", json={"title": "跨文件构造合同", "body": body, "source_file_version_id": source["id"]})

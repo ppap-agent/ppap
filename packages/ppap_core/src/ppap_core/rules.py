@@ -120,7 +120,8 @@ def normalize_rule_appendix(value: Any, rule_ids: set[str]) -> list[dict]:
     """An explicit input, never reconstructed from reviews or past runs."""
     if not isinstance(value, list) or len(value) > 256:
         raise ValueError("invalid_rule_appendix")
-    result, seen = [], set()
+    result: list[dict] = []
+    seen: set[str] = set()
     allowed = {"id", "kind", "question_id", "candidate_id", "content", "scope", "confirmed_by", "confirmed_at", "confirmation_source"}
     for item in value:
         if not isinstance(item, dict) or set(item) - allowed:
@@ -157,6 +158,24 @@ def normalize_rule_appendix(value: Any, rule_ids: set[str]) -> list[dict]:
                 raise ValueError("invalid_rule_appendix")
         if item.get("confirmation_source", "user") not in {"user", "synthetic"}:
             raise ValueError("invalid_rule_appendix")
+        if item.get("question_id") and item["kind"] in {"interpretation", "mapping"}:
+            for previous in result:
+                if previous.get("question_id") != item["question_id"] or previous["kind"] not in {"interpretation", "mapping"}:
+                    continue
+                if (previous.get("candidate_id"), previous["content"]) == (item.get("candidate_id"), item["content"]):
+                    continue
+                prior_scope = previous["scope"]
+                common_rules = set(scope["rule_ids"]) & set(prior_scope["rule_ids"])
+                if not common_rules or not set(scope["document_ids"]) & set(prior_scope["document_ids"]):
+                    continue
+                targets, prior_targets = scope.get("rule_targets"), prior_scope.get("rule_targets")
+                if targets is not None and prior_targets is not None:
+                    overlap = bool({(target["document_id"], target["rule_id"]) for target in targets} & {(target["document_id"], target["rule_id"]) for target in prior_targets})
+                else:
+                    explicit_targets = targets if targets is not None else prior_targets
+                    overlap = explicit_targets is None or any(target["rule_id"] in common_rules for target in explicit_targets)
+                if overlap:
+                    raise ValueError("invalid_rule_appendix")
         result.append({**item, "scope": {key: [dict(target) for target in scope[key]] if key == "rule_targets" else list(scope[key]) for key in scope}})
     return result
 
