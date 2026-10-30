@@ -494,7 +494,23 @@ class SemanticProductContractTests(unittest.TestCase):
             product_response(spec, bundle, submission)
 
     def test_renamed_rule_flows_through_semantic_adapter_without_fixed_checker(self) -> None:
-        spec = _spec(title="标题不同但要求未变")
+        import fitz
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Sheet1"
+        for value in ("observed-1", "流程关系说明", "频次"):
+            sheet.append([value])
+        output = io.BytesIO()
+        workbook.save(output)
+        workbook.close()
+        with fitz.open() as pdf:
+            pdf.new_page().insert_text((72, 72), "flow relation")
+            reference = pdf.tobytes()
+        blobs = {TARGET: output.getvalue(), REFERENCE: reference}
+        spec = _spec(title="标题不同但要求未变", target_bytes=blobs[TARGET])
+        spec.files[1].sha256 = hashlib.sha256(reference).hexdigest()
         objects = _MemoryObjects()
         real_import = __import__
 
@@ -504,7 +520,7 @@ class SemanticProductContractTests(unittest.TestCase):
             return real_import(name, *args, **kwargs)
 
         with patch("builtins.__import__", side_effect=guarded_import):
-            response = SemanticRuntime(_BundleRuntime(spec), objects).execute(spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext())
+            response = SemanticRuntime(_BundleRuntime(spec), objects).execute(spec, blobs, context=ExecutionContext())
         self.assertEqual(response.note, "deep_semantic_audit")
         self.assertEqual([row.status for row in response.findings], ["PASS", "NG", "UNABLE", "NA"])
         self.assertTrue(any(key.endswith("/bundle.json") for key in objects.writes))
@@ -542,7 +558,7 @@ class _BundleRuntime:
     def engine_revision(self) -> str:
         return ENGINE
 
-    def run(self, submission, _inputs: Path, work: Path, _deadline: float, _cancelled, *, on_progress, prior_usage=None) -> None:
+    def run(self, submission, inputs: Path, work: Path, _deadline: float, _cancelled, *, on_progress, prior_usage=None) -> None:
         result = work / "result"
         result.mkdir()
         bundle = _bundle(self.spec, submission)
@@ -555,6 +571,11 @@ class _BundleRuntime:
             )
             (result / "bundle.json").write_text(compiled.model_dump_json())
         else:
+            from ppap_deep.semantic.document_tools import snapshot
+
+            manifest = json.loads((inputs / "manifest.json").read_text())
+            bundle.documents = {audit_id: snapshot(inputs / name) for audit_id, name in manifest["documents"].items()}
+            bundle.report = derive_report(bundle.trace, bundle.documents, {TARGET: bundle.plans[RULE]})
             (result / "bundle.json").write_text(bundle.model_dump_json())
 
 

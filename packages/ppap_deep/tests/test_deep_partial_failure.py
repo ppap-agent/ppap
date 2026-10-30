@@ -1424,3 +1424,157 @@ def test_final_grant_seal_owns_receipt_and_fails_closed_before_publication(tmp_p
                     grant_request(str(gateway.socket_path), "revoke_and_usage", submission.execution_id)
                 with pytest.raises(ValueError):
                     gateway.http.grants.authorize(token[0], {"model": "test-model", "input": "test after seal"}, 100)
+
+
+def forged_observation(bundle, defect):
+    document = bundle.documents[GOOD_TARGET]
+    assert document["tables"][0]["cells"]["B2"] == {"value": 1, "state": "known"}
+    if defect == "value":
+        document["tables"][0]["cells"]["B2"]["value"] = 2
+    elif defect == "type":
+        document["tables"][0]["cells"]["B2"]["value"] = True
+    elif defect == "state":
+        document["tables"][0]["cells"]["B2"]["state"] = "unknown_formula_cache"
+    elif defect == "layout":
+        document["tables"][0]["cols"] = 3
+        document["tables"][0]["cells"]["C2"] = {"value": 2, "state": "known"}
+    elif defect == "omission":
+        document["tables"][0]["cells"].pop("B2")
+    elif defect == "reader_limits":
+        document["reader_parameters"]["cells"] *= 100
+    elif defect == "filename":
+        document["source"]["file"] = "different-private-cache-name.xlsx"
+    else:
+        raise AssertionError(defect)
+
+
+@pytest.mark.parametrize("defect", ["value", "type", "state", "layout", "omission", "reader_limits"])
+def test_failure_candidate_with_real_sha_cannot_supply_trusted_document_values(defect):
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    case = frozen_case(False)
+    original_bytes = dict(case.blobs)
+    fail_audit_model(case.model, "complete")
+
+    class ForgedGuest(RecoveryGuest):
+        def run(self, spec, inputs, work, *args, **kwargs):
+            try:
+                super().run(spec, inputs, work, *args, **kwargs)
+            except ControllerFault:
+                candidate = ResultBundle.model_validate_json((work / "candidate.json").read_text())
+                original_sha = candidate.documents[GOOD_TARGET]["source"]["sha256"]
+                forged_observation(candidate, defect)
+                assert candidate.documents[GOOD_TARGET]["source"]["sha256"] == original_sha
+                (work / "candidate.json").write_text(candidate.model_dump_json())
+                raise
+
+    with pytest.raises(DeepError, match="deep_model_protocol"):
+        SemanticRuntime(ForgedGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    recovery = json.loads(next(value for key, value in case.objects.values.items() if key.endswith("/recovery.json")))
+    assert recovery["trace"] is None
+    assert not any("/snapshots/" in key or key.endswith("/bundle.json") for key in case.objects.values)
+    model = ModelResponses(False)
+    guest = RecoveryGuest(model, case.objects)
+    response = SemanticRuntime(guest, case.objects).execute(case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+    assert [finding.status for finding in response.findings] == ["PASS", "PASS", "PASS", "NG"]
+    assert guest.model.plan_attempts == {BAD_RULE: 0, GOOD_RULE: 0}
+    assert model.audit_calls == 1  # Invalid source claims supply no completed trace.
+    assert case.blobs == original_bytes
+    snapshots = [json.loads(value) for key, value in case.objects.values.items() if "/snapshots/" in key]
+    good = next(item for item in snapshots if item["source"]["sha256"] == case.spec.files[1].sha256)
+    assert good["tables"][0]["cells"]["B2"] == {"value": 1, "state": "known"}
+    assert good["tables"][0]["cols"] == 2 and good["reader_parameters"]["cells"] == 1_000_000
+
+
+@pytest.mark.parametrize("defect", ["value", "type", "state", "layout", "omission", "reader_limits"])
+def test_normal_success_with_real_sha_cannot_poison_later_snapshot_cache(defect):
+    case = frozen_case(False)
+    original_bytes = dict(case.blobs)
+
+    class ForgedGuest(RecoveryGuest):
+        def run(self, spec, inputs, work, *args, **kwargs):
+            super().run(spec, inputs, work, *args, **kwargs)
+            if isinstance(spec, CompileSpec):
+                return
+            bundle = ResultBundle.model_validate_json((work / "result/bundle.json").read_text())
+            forged_observation(bundle, defect)
+            # Supply internally consistent forged counts as well. They cannot
+            # replace a host read of the unchanged original sample count (1).
+            bundle.report = evaluate_audit(bundle.trace, bundle.documents, {target: bundle.plans[rule] for target, rule in spec.targets.items()}).report
+            (work / "result/bundle.json").write_text(bundle.model_dump_json())
+
+    with pytest.raises(DeepError, match="deep_output_invalid"):
+        SemanticRuntime(ForgedGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    assert not any("/snapshots/" in key or key.endswith("/bundle.json") for key in case.objects.values)
+    clean = RecoveryGuest(ModelResponses(False))
+    response = SemanticRuntime(clean, case.objects).execute(case.spec.model_copy(update={"attempt": 2}), case.blobs, context=ExecutionContext())
+    assert [finding.status for finding in response.findings] == ["PASS", "PASS", "PASS", "NG"]
+    assert case.blobs == original_bytes
+    snapshots = [json.loads(value) for key, value in case.objects.values.items() if "/snapshots/" in key]
+    good = next(item for item in snapshots if item["source"]["sha256"] == case.spec.files[1].sha256)
+    assert good["tables"][0]["cells"]["B2"] == {"value": 1, "state": "known"}
+
+
+def test_native_recheck_ignores_cache_filename_and_parses_each_frozen_source_once():
+    from unittest.mock import patch
+
+    from ppap_deep.semantic.document_tools import snapshot
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    case = frozen_case(False, shared_bad_rule=True)
+    fail_audit_model(case.model, "complete")
+
+    class RenamedGuest(RecoveryGuest):
+        def run(self, spec, inputs, work, *args, **kwargs):
+            try:
+                super().run(spec, inputs, work, *args, **kwargs)
+            except ControllerFault:
+                candidate = ResultBundle.model_validate_json((work / "candidate.json").read_text())
+                forged_observation(candidate, "filename")
+                (work / "candidate.json").write_text(candidate.model_dump_json())
+                raise
+
+    with patch("ppap_deep.auditor.snapshot", wraps=snapshot) as parser:
+        with pytest.raises(DeepError, match="deep_model_protocol"):
+            SemanticRuntime(RenamedGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+        assert parser.call_count == 2  # Three business refs, two immutable sources.
+    guest = RecoveryGuest(ModelResponses(False), case.objects)
+    with patch("ppap_deep.auditor.snapshot", wraps=snapshot) as parser:
+        response = SemanticRuntime(guest, case.objects).execute(case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+        assert parser.call_count == 2
+        assert all(call.kwargs["limits"].cells == 1_000_000 for call in parser.call_args_list)
+    assert [finding.status for finding in response.findings] == ["PASS", "PASS", "PASS", "PASS", "PASS", "NG"]
+    assert guest.calls == 0
+
+
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+def test_host_native_recheck_keeps_original_deadline_and_cancellation(stop):
+    import time
+    from unittest.mock import patch
+
+    from ppap_deep.semantic.document_tools import snapshot
+
+    case = frozen_case(False)
+    context = ExecutionContext()
+    original_clock = time.monotonic
+    offset = 0
+    parsed = []
+
+    def clock():
+        return original_clock() + offset
+
+    def read(path, **kwargs):
+        nonlocal offset
+        result = snapshot(path, **kwargs)
+        parsed.append(result)
+        if stop == "deadline":
+            offset = 3600
+        else:
+            context.cancelled.set()
+        return result
+
+    with patch("ppap_deep.auditor.time.monotonic", side_effect=clock), patch("ppap_deep.auditor.snapshot", side_effect=read):
+        with pytest.raises(DeepError, match="deep_timeout" if stop == "deadline" else "deep_cancelled"):
+            SemanticRuntime(RecoveryGuest(case.model), case.objects, timeout=60).execute(case.spec, case.blobs, context=context)
+    assert len(parsed) == 1  # The second immutable source must not be parsed.
+    assert not any("/snapshots/" in key or key.endswith("/bundle.json") for key in case.objects.values)
