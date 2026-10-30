@@ -8,7 +8,9 @@ from ppap_deep.semantic.bindings import Binding, BoundCollection
 from ppap_deep.semantic.checker_tools import CheckRequest, check_fields
 from ppap_deep.semantic.document_tools import TableReader, bind
 from ppap_deep.semantic.evidence import EvidenceBudget
+from ppap_deep.semantic.holes import TypedAnswer
 from ppap_deep.semantic.models import Key, RulePlan
+from ppap_deep.semantic.refinement import PlanRefinement, plan_identity
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit, validate_trace
 
 
@@ -134,6 +136,185 @@ def test_missing_semantic_answers_expand_to_complete_unknown_coverage():
     check = result.report.checks[0]
     assert (check.status, check.total, check.checked, check.unknown) == ("UNABLE", 58, 11, 47)
     assert len(result.observations) == 58
+
+
+def test_compiled_rule_candidates_share_one_question_across_scopes_and_require_complete_confirmation():
+    first, first_binding = table()
+    second, second_binding = table("other")
+    trace = certificate([first_binding, second_binding], {"source": {"kind": "bound", "scopes": [{"binding_id": item.id} for item in [first_binding, second_binding]]}})
+    candidates = [
+        {"id": "literal", "label": "保留字面要求", "explanation": "产品与过程字段保持原文各自要求。"},
+        {"id": "changed", "label": "修改为过程要求", "explanation": "将产品字段的要求明确修改为过程字段的要求。"},
+    ]
+    plan = rule({"kind": "judge", "question": "是否保留产品与过程各自的原文要求？", "fields": ["value"], "candidates": candidates})
+    documents = {"source": first, "other": second}
+    initial = evaluate(trace, documents, plan)
+    assert (initial.report.checks[0].status, initial.report.checks[0].unknown) == ("UNABLE", 4)
+    assert len(initial.needs) == len(initial.clarifications) == 1
+    question = initial.clarifications[0]
+    assert question["scope"] == {"document_ids": ["other", "source"], "rule_ids": ["R1"], "rule_targets": [{"document_id": "source", "rule_id": "R1"}]}
+    assert {(source["document_id"], source["locator"]["cell"]) for source in question["sources"]} == {("source", "C1"), ("other", "C1")}
+    revised = evaluate(trace, documents, plan.model_copy(update={"plan_revision": "b" * 64, "source_sha256": "new-rule-packet"}, deep=True))
+    assert revised.clarifications[0]["id"] == question["id"]
+    assert revised.needs[0].input_id != initial.needs[0].input_id
+    changed = plan.model_dump(mode="json")
+    changed["rules"][0]["program"]["require"]["fields"] = ["code"]
+    assert evaluate(trace, documents, RulePlan.model_validate(changed)).clarifications[0]["id"] != question["id"]
+    recommendation = {
+        "kind": "fact",
+        "need_id": initial.needs[0].id,
+        "input_id": initial.needs[0].input_id,
+        "origin": "model",
+        "value": "literal",
+        "reason": "模型给出的候选建议",
+        "evidence": initial.needs[0].context["allowed_evidence"],
+    }
+    for changes in [
+        {"value": "not-offered"},
+        {"origin": "native"},
+        {"evidence": [{"document_id": "source", "locator": {"kind": "xlsx_cell", "sheet": "Records", "cell": "C2"}}]},
+    ]:
+        with pytest.raises(ValueError):
+            evaluate(trace.model_copy(update={"answers": [TypedAnswer.model_validate({**recommendation, **changes})]}), documents, plan)
+    for state in ["unknown", "none_of_candidates"]:
+        unresolved = TypedAnswer.model_validate({**recommendation, "state": state, "value": None})
+        assert evaluate(trace.model_copy(update={"answers": [unresolved]}), documents, plan).report.checks[0].status == "UNABLE"
+    entry = {"kind": "interpretation", "question_id": question["id"], "candidate_id": "literal", "content": candidates[0]["explanation"], "scope": question["scope"]}
+    for changes in [
+        {"content": "不同的解释"},
+        {"candidate_id": "not-offered"},
+        {"kind": "standard_change"},
+        {"scope": {**question["scope"], "document_ids": ["source"]}},
+        {"scope": {**question["scope"], "rule_targets": [{"document_id": "other", "rule_id": "R1"}]}},
+    ]:
+        scoped = plan.model_copy(update={"appendix": [{**entry, **changes}]}, deep=True)
+        result = evaluate(trace, documents, scoped)
+        assert result.report.checks[0].status == "UNABLE"
+        assert result.clarifications[0]["id"] == question["id"]
+        assert result.needs[0].input_id != initial.needs[0].input_id
+    confirmed = plan.model_copy(update={"appendix": [entry]}, deep=True)
+    pending = evaluate(trace, documents, confirmed)
+    assert not pending.clarifications
+    assert len(pending.needs) == 4 and {need.kind for need in pending.needs} == {"semantic_predicate"}
+    for need in pending.needs:
+        assert need.context["confirmed_interpretation"] == {**entry, "confirmation_source": "user"}
+    revised_entry = {**entry, "candidate_id": "changed", "content": candidates[1]["explanation"], "confirmed_by": "test-user", "confirmation_source": "synthetic"}
+    revised_meaning = evaluate(trace, documents, plan.model_copy(update={"appendix": [revised_entry]}, deep=True))
+    assert all(need.context["confirmed_interpretation"] == revised_entry for need in revised_meaning.needs)
+    for entries in [[entry, revised_entry], [revised_entry, entry]]:
+        with pytest.raises(ValueError, match="Conflicting interpretation confirmations"):
+            evaluate(trace, documents, plan.model_copy(update={"appendix": entries}, deep=True))
+    repeated = {**entry, "id": "same-meaning-second-confirmation"}
+    repeated_meaning = evaluate(trace, documents, plan.model_copy(update={"appendix": [entry, repeated]}, deep=True))
+    assert not repeated_meaning.clarifications
+    assert {need.context["confirmed_interpretation"]["candidate_id"] for need in repeated_meaning.needs} == {"literal"}
+    # Confirmation establishes the rule meaning. The model still has to give
+    # the existing per-record factual judgment; confirmation is not a PASS.
+    assert pending.report.checks[0].status == "UNABLE"
+    complete = evaluate(answered(trace, pending), documents, confirmed)
+    assert complete.report.checks[0].status == "PASS"
+    assert evaluate(answered(trace, pending, "false"), documents, confirmed).report.checks[0].status == "NG"
+    stale = trace.model_dump(mode="json")
+    stale["answers"] = [
+        {
+            "kind": "fact",
+            "need_id": initial.needs[0].id,
+            "input_id": initial.needs[0].input_id,
+            "origin": "model",
+            "value": "literal",
+            "reason": "旧输入建议",
+            "evidence": initial.needs[0].context["allowed_evidence"],
+        }
+    ]
+    with pytest.raises(ValueError, match="stale"):
+        evaluate(AuditTrace.model_validate(stale), documents, confirmed)
+
+    # A different source version is a different scoped question even when the
+    # original text and candidate descriptions are unchanged.
+    replacement, replacement_binding = table("replacement")
+    replacement_trace = certificate([first_binding, replacement_binding], {"source": {"kind": "bound", "scopes": [{"binding_id": item.id} for item in [first_binding, replacement_binding]]}})
+    replaced = evaluate(replacement_trace, {"source": first, "replacement": replacement}, confirmed)
+    assert replaced.clarifications[0]["id"] != question["id"]
+    assert replaced.report.checks[0].status == "UNABLE"
+    removed = evaluate(trace, documents, plan)
+    assert removed.clarifications[0]["id"] == question["id"]
+
+
+def test_compiled_rule_candidates_do_not_invent_sources_for_missing_bindings():
+    document, _binding = table()
+    raw = rule().model_dump(mode="json")
+    raw["rules"][0]["program"] = {"kind": "document", "require": {"kind": "judge", "question": "应采用哪项规则要求？", "candidates": [{"id": "one", "label": "字面要求", "explanation": "保留原文。"}]}}
+    plan = RulePlan.model_validate(raw)
+    result = evaluate(certificate([], {}), {"source": document}, plan)
+    assert result.report.checks[0].status == "UNABLE"
+    assert not result.needs and not result.clarifications
+
+
+def test_compiled_rule_candidates_reject_duplicate_candidate_ids():
+    candidate = {"id": "one", "label": "字面要求", "explanation": "保留原文。"}
+    with pytest.raises(ValueError, match="Duplicate interpretation candidate"):
+        rule({"kind": "judge", "question": "应采用哪项规则要求？", "candidates": [candidate, candidate]})
+
+
+def test_compiled_rule_question_uses_its_logical_source_when_another_input_shares_the_binding():
+    first, first_binding = table()
+    second, second_binding = table("other")
+    judge = {"kind": "judge", "question": "应如何理解当前源字段？", "fields": ["value"], "candidates": [{"id": "literal", "label": "字面含义", "explanation": "保留源字段的字面要求。"}]}
+    plan = rule({"kind": "all", "items": [judge, related()]})
+    trace = certificate(
+        [first_binding, second_binding],
+        {"source": bound(first_binding), "target": {"kind": "bound", "scopes": [{"binding_id": item.id} for item in [first_binding, second_binding]]}},
+    )
+    result = evaluate(trace, {"source": first, "other": second}, plan)
+    question = result.clarifications[0]
+    assert question["scope"]["document_ids"] == ["source"]
+    assert {item["document_id"] for item in question["sources"]} == {"source"}
+    entry = {"kind": "interpretation", "question_id": question["id"], "candidate_id": "literal", "content": judge["candidates"][0]["explanation"], "scope": question["scope"]}
+    confirmed = evaluate(trace, {"source": first, "other": second}, plan.model_copy(update={"appendix": [entry]}, deep=True))
+    assert not confirmed.clarifications
+    assert {need.kind for need in confirmed.needs} == {"semantic_predicate"}
+
+
+def test_compiled_rule_question_in_target_when_uses_the_exact_target_collection():
+    documents, bindings = {}, []
+    for identity in ["source", "other", "third"]:
+        document, binding = table(identity)
+        documents[identity] = document
+        bindings.append(binding)
+    judge = {"kind": "judge", "question": "应如何理解目标字段的要求？", "fields": ["value"], "candidates": [{"id": "literal", "label": "字面含义", "explanation": "保留目标字段的字面要求。"}]}
+    plan = rule({"kind": "all", "items": [related(match="all", target_when=judge), related(target="aux")]})
+    trace = certificate(
+        bindings,
+        {
+            "source": bound(bindings[0]),
+            "target": {"kind": "bound", "scopes": [{"binding_id": binding.id} for binding in bindings[:2]]},
+            "aux": {"kind": "bound", "scopes": [{"binding_id": binding.id} for binding in [bindings[0], bindings[2]]]},
+        },
+    )
+    result = evaluate(trace, documents, plan)
+    assert len(result.clarifications) == len(result.needs) == 1
+    assert result.clarifications[0]["scope"]["document_ids"] == ["other", "source"]
+    assert {item["document_id"] for item in result.clarifications[0]["sources"]} == {"source", "other"}
+
+
+def test_model_refinement_cannot_remove_compiled_rule_candidates():
+    document, binding = table()
+    plan = rule({"kind": "judge", "question": "应如何理解当前源字段？", "fields": ["value"], "candidates": [{"id": "literal", "label": "字面含义", "explanation": "保留原文。"}]})
+    changed = plan.model_dump(mode="json")
+    changed["rules"][0]["program"]["require"]["candidates"] = []
+    refinement = PlanRefinement.model_validate(
+        {
+            "audit_id": "source",
+            "base_plan_id": plan_identity(plan),
+            "plan": changed,
+            "reason": "模型试图删除候选直接判定",
+            "rule_evidence": [plan.rules[0].source_locator.model_dump(mode="json")],
+            "document_evidence": [{"document_id": "source", "locator": {"kind": "xlsx_cell", "sheet": "Records", "cell": "C1"}}],
+        }
+    )
+    trace = certificate([binding], {"source": bound(binding)}).model_copy(update={"plan_refinements": [refinement]})
+    with pytest.raises(ValueError, match="cannot change frozen rule obligations"):
+        evaluate(trace, {"source": document}, plan)
 
 
 @pytest.mark.parametrize("empty_status", ["PASS", "NA", "UNABLE"])

@@ -663,7 +663,8 @@ def test_boolean_local_judgments_also_accept_the_shared_typed_fact_contract(tmp_
 
 
 @pytest.mark.parametrize("independent_requirement", [False, True])
-def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_its_clause(tmp_path, independent_requirement):
+@pytest.mark.parametrize("compiled_candidates", [False, True])
+def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_its_clause(tmp_path, independent_requirement, compiled_candidates):
     """Controlled interpretation is supplied; automatic discovery is tested live."""
     from docx import Document
     from ppap_deep.semantic.document_tools import TableReader
@@ -687,6 +688,7 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
         {"id": "product", "label": "修改为产品字段要求", "explanation": "需明确修改前半段标准，将过程特殊特性及过程特性类别两列改为产品字段；这是标准修改，不是字段别名确认。"},
         {"id": "process", "label": "修改为过程字段要求", "explanation": "需明确修改后半段标准，将产品特性类别及产品特殊特性的值要求改为过程字段；这是标准修改，不是字段别名确认。"},
     ]
+    question_text = "本条前后分别指向过程与产品字段。是否保留字面混合要求，或明确修改其中一部分？"
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     source = Document()
@@ -707,6 +709,8 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
     # Process fields are filled, product fields are empty. Choosing one side
     # without confirmation would materially change the ambiguous requirement.
     sheet.append(["010", None, None, "CC", "温度", None])
+    if compiled_candidates:
+        sheet.append(["020", None, None, "SC", "压力", None])
     workbook_path = inputs / "process.xlsx"
     workbook.save(workbook_path)
     workbook.close()
@@ -744,7 +748,13 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
             if issubclass(schema, RulePlan):
                 identity, _ = json.JSONDecoder().raw_decode(prompt.split("identity and ordered clause IDs must match exactly: ", 1)[1])
                 assert json.loads((work / "clauses.json").read_text()) == clauses
-                ambiguous = {"kind": "judge", "question": rule_text, "fields": affected}
+                ambiguous = {"kind": "judge", "question": question_text, "fields": affected}
+                if compiled_candidates:
+                    # Source-only compilation owns the disputed meanings. The
+                    # audit model supplies physical bindings, not a second copy
+                    # of the question or a Boolean decision about rule policy.
+                    assert not (work / "documents.json").exists()
+                    ambiguous["candidates"] = candidates
                 if independent_requirement:
                     ambiguous = {"kind": "all", "items": [ambiguous, {"kind": "value_test", "field": "approval", "op": "not_empty"}]}
                 programs = [
@@ -779,10 +789,10 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
                 "table": sheet.title,
                 "header_rows": [1],
                 "first_row": 2,
-                "last_row": 2,
+                "last_row": sheet.max_row,
                 "columns": columns,
                 "mapping_basis": "六个实际原件表头分别对应原字段",
-                "boundary_basis": "全部一行工序正文",
+                "boundary_basis": "全部工序正文",
             }
             ambiguous_binding = {
                 **binding,
@@ -791,7 +801,7 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
                     {
                         "id": question_id,
                         "field": field,
-                        "question": "本条前后分别指向过程与产品字段。是否保留字面混合要求，或明确修改其中一部分？",
+                        "question": question_text,
                         "candidates": candidates,
                         "evidence": header_evidence,
                     }
@@ -800,14 +810,20 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
             }
             return schema.model_validate(
                 {
-                    "bindings": [binding, ambiguous_binding],
+                    "bindings": [binding] if compiled_candidates else [binding, ambiguous_binding],
                     "uses": [
-                        {"audit_id": CP, "rule_id": rule_id, "inputs": {"rows": {"kind": "bound", "scopes": [{"binding_id": "ambiguous" if rule_id == "R3" else "literal"}]}}} for rule_id in rule_ids
+                        {
+                            "audit_id": CP,
+                            "rule_id": rule_id,
+                            "inputs": {"rows": {"kind": "bound", "scopes": [{"binding_id": "ambiguous" if rule_id == "R3" and not compiled_candidates else "literal"}]}},
+                        }
+                        for rule_id in rule_ids
                     ],
                 }
             )
 
     bundle = execute(inputs, tmp_path / "work", ConflictingRuleModel(), time.monotonic() + 60)
+    assert RULE in bundle.plans, bundle.failed_rules
     plans = {CP: bundle.plans[RULE]}
     evaluated = evaluate_audit(bundle.trace, bundle.documents, plans)
     expected = ["NG", "NG" if independent_requirement else "UNABLE", "PASS"]
@@ -815,11 +831,16 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
     assert len(evaluated.needs) == 1 and evaluated.needs[0].kind == "interpretation"
     assert len(evaluated.clarifications) == 1
     question = evaluated.clarifications[0]
-    assert question["id"] == question_id
+    if not compiled_candidates:
+        assert question["id"] == question_id
     assert question["rule_ids"] == ["R3"]
     assert question["scope"] == {"document_ids": [CP], "rule_ids": ["R3"], "rule_targets": [{"document_id": CP, "rule_id": "R3"}]}
     assert [entry["excerpt"] for entry in question["sources"]] == headers[1:5]
     assert question["candidates"] == candidates
+    assert question["question"] == question_text
+    assert not compiled_candidates or all(not binding.interpretations for binding in bundle.trace.bindings)
+    if compiled_candidates and not independent_requirement:
+        assert (evaluated.report.checks[1].total, evaluated.report.checks[1].unknown) == (2, 2)
     # Preserve native observations; the temporary interpretation gate does not
     # turn an empty value into a guessed native value or erase filled fields.
     native = TableReader(bundle.documents[CP]["tables"][0], EvidenceBudget())
@@ -838,9 +859,14 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
         raw_probe["rules"][1]["program"]["require"] = {"kind": "value_test", "field": field, "op": "not_empty"}
         probe = RulePlan.model_validate(raw_probe)
         leaf = evaluate_audit(bundle.trace, bundle.documents, {CP: probe})
-        assert leaf.report.checks[1].status == "UNABLE"
-        assert leaf.report.checks[1].unknown == 1
-        assert len(leaf.clarifications) == 1 and leaf.clarifications[0]["rule_ids"] == ["R3"]
+        if compiled_candidates:
+            assert leaf.report.checks[1].status == ("NG" if field.startswith("product") else "PASS")
+            assert leaf.report.checks[1].unknown == 0
+            assert not leaf.clarifications
+        else:
+            assert leaf.report.checks[1].status == "UNABLE"
+            assert leaf.report.checks[1].unknown == 1
+            assert len(leaf.clarifications) == 1 and leaf.clarifications[0]["rule_ids"] == ["R3"]
     raw = bundle.trace.model_dump(mode="json")
     need = evaluated.needs[0]
     raw["answers"] = [
@@ -850,6 +876,17 @@ def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_
     assert [check.status for check in recommended.report.checks] == expected
     assert recommended.clarifications[0]["recommended_candidate_id"] == "process"
     assert bundle.plans[RULE].appendix == []
+    if compiled_candidates:
+        # Neither an old Boolean judgment nor a Boolean typed fact can decide
+        # the disputed rule meaning. The offered interpretation is the type.
+        raw["answers"] = [{"need_id": need.id, "value": "false", "reason": "模型直接给出不符合"}]
+        with pytest.raises(ValueError, match="requires a fact answer"):
+            evaluate_audit(AuditTrace.model_validate(raw), bundle.documents, plans)
+        raw["answers"] = [
+            {"kind": "fact", "need_id": need.id, "input_id": need.input_id, "origin": "model", "value": False, "reason": "模型直接给出不符合", "evidence": need.context["allowed_evidence"]}
+        ]
+        with pytest.raises(ValueError, match="requested type"):
+            evaluate_audit(AuditTrace.model_validate(raw), bundle.documents, plans)
 
 
 def test_cross_region_layout_changes_preserve_business_grain_values_and_conclusions(tmp_path):

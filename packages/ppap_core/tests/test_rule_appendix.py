@@ -36,6 +36,38 @@ def test_appendix_target_rule_pair_is_distinct_from_interpreted_source():
     assert raw == original
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("scope_kind", ["same", "wider_documents", "wider_targets", "legacy_broadcast"])
+def test_rule_body_rejects_conflicting_question_confirmations_in_overlapping_scope(reverse, scope_kind):
+    first = entry()
+    first["scope"]["rule_targets"] = [{"document_id": "target", "rule_id": "R1"}]
+    second = {**deepcopy(first), "id": "operation-2", "candidate_id": "candidate-2", "content": "作业单元编号表示设备编号"}
+    if scope_kind == "wider_documents":
+        second["scope"]["document_ids"].append("other-source")
+    elif scope_kind == "wider_targets":
+        second["scope"]["rule_targets"].append({"document_id": "other-target", "rule_id": "R1"})
+    elif scope_kind == "legacy_broadcast":
+        second["scope"].pop("rule_targets")
+    appendix = [second, first] if reverse else [first, second]
+    with pytest.raises(ValueError, match="invalid_rule_appendix"):
+        normalize_rule_body({**body(), "appendix": appendix})
+
+
+@pytest.mark.parametrize("separate_by", ["documents", "targets", "same_meaning"])
+def test_rule_body_keeps_disjoint_confirmations_and_repeated_identical_meaning(separate_by):
+    first = entry()
+    first["scope"]["rule_targets"] = [{"document_id": "target", "rule_id": "R1"}]
+    second = {**deepcopy(first), "id": "operation-2"}
+    if separate_by != "same_meaning":
+        second.update(candidate_id="candidate-2", content="作业单元编号表示设备编号")
+    if separate_by == "documents":
+        second["scope"]["document_ids"] = ["other-source"]
+    elif separate_by == "targets":
+        second["scope"]["rule_targets"] = [{"document_id": "other-target", "rule_id": "R1"}]
+    appendix = [first, second]
+    assert normalize_rule_body({**body(), "appendix": appendix})["appendix"] == appendix
+
+
 @pytest.mark.parametrize(
     "change",
     [

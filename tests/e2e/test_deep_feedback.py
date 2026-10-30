@@ -886,3 +886,114 @@ def test_real_two_target_results_name_each_file_and_keep_cp2_confirmation_scoped
         assert len(submitted) == 1
         context.close()
         browser.close()
+
+
+@pytest.mark.parametrize("deep_feedback_env", ["compiled_candidate_model"], indirect=True)
+def test_compiled_judge_candidate_requires_confirmation_and_explicit_new_analysis(deep_feedback_env, tmp_path):
+    """A compiled Judge question uses the existing real browser feedback path."""
+    env, client = deep_feedback_env, deep_feedback_env["client"]
+    root = env["round_id"]
+    initial = client.get("/rounds/" + root).json()
+    assert [row["status"] for row in initial["findings"]] == ["UNABLE", "NG", "PASS"]
+    question = client.get(f"/audit-rounds/{root}/deep-feedback").json()["clarifications"][0]
+    rule_text = env["rule"]["body"]["rules"][0]["rule_to_check"]
+    assert question["scope"]["rule_targets"] == [{"document_id": env["uploaded"]["CP"]["id"], "rule_id": "R1"}]
+    assert env["model"].semantic_answers == []
+
+    with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        external = local_browser_boundary(context, web)
+        context.add_cookies([{"name": SESSION_COOKIE, "value": env["session_cookie"], "url": web}])
+        page = context.new_page()
+        submitted = []
+
+        def mark(route):
+            payload = {**route.request.post_data_json, "confirmation_source": "synthetic"}
+            submitted.append(payload)
+            route.continue_(post_data=json.dumps(payload, ensure_ascii=False))
+
+        page.route("**/audit-rounds/*/rule-changes", mark)
+        try:
+            page.goto(f"{web}/audit?round={root}")
+            panel = page.get_by_role("region", name="解释与重新分析", exact=True)
+            radios = panel.get_by_role("radiogroup", name="解释候选")
+            expect(radios.get_by_role("radio", checked=True)).to_have_count(0)
+            expect(radios.get_by_role("radio", name="按工序编号逐字对应")).to_be_visible()
+            expect(radios.get_by_role("radio", name="改为设备编号标准")).to_be_visible()
+            expect(panel.get_by_role("textbox", name="拟保存的补充说明")).to_have_value("")
+            expect(panel.get_by_role("button", name="确认解释并继续", exact=True)).to_be_disabled()
+            expect(panel.get_by_text("候选不会自动生效，请先选择或填写解释。", exact=True)).to_be_visible()
+            affected = panel.get_by_role("list", name="受影响的文件与要求")
+            expect(affected.get_by_role("listitem")).to_have_count(1)
+            expect(affected.get_by_text("CP.xlsx · R1", exact=True)).to_be_visible()
+            source_rule = panel.get_by_role("region", name="待确认解释的规则原文", exact=True)
+            expect(source_rule.get_by_text("R1 · " + rule_text, exact=True)).to_be_visible()
+            comparison = panel.get_by_role("region", name="待确认问题的原件对照", exact=True)
+            expect(comparison.get_by_text("CP · A1", exact=True)).to_be_visible()
+            expect(comparison.get_by_text("PFD · A1", exact=True)).to_be_visible()
+            expect(comparison.get_by_role("table", name="CP 单元格内容", exact=True)).to_be_visible(timeout=35_000)
+            expect(comparison.get_by_role("table", name="PFD 单元格内容", exact=True)).to_be_visible(timeout=35_000)
+            expect(comparison.get_by_role("cell", name="A1：作业单元编号", exact=True)).to_be_visible()
+            expect(comparison.get_by_role("cell", name="A1：工序编号", exact=True)).to_be_visible()
+            details = page.get_by_role("region", name="审核详情", exact=True)
+            original_r1 = details.get_by_role("row").filter(has=page.get_by_role("cell", name="R1", exact=True))
+            original_r2 = details.get_by_role("row").filter(has=page.get_by_role("cell", name="R2", exact=True))
+            expect(original_r1.get_by_role("cell", name="无法判断", exact=True)).to_be_visible()
+            expect(original_r2.get_by_role("cell", name="不符合", exact=True)).to_be_visible()
+            assert submitted == [] and env["model"].semantic_answers == []
+            page.screenshot(path=str(tmp_path / "judge-candidate-unconfirmed-desktop.png"), full_page=True)
+
+            radios.get_by_role("radio", name="按工序编号逐字对应").click()
+            expect(panel.get_by_role("checkbox", name="CP.xlsx", exact=True)).to_be_checked()
+            expect(panel.get_by_role("checkbox", name="PFD.xlsx", exact=True)).to_be_checked()
+            page.set_viewport_size({"width": 390, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page.screenshot(path=str(tmp_path / "judge-candidate-selected-mobile.png"), full_page=True)
+            with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/rule-changes")) as saved:
+                panel.get_by_role("button", name="仅保存说明", exact=True).click()
+            assert saved.value.status == 200, saved.value.text()
+            assert saved.value.json()["analysis_round_id"] is None
+            assert len(submitted) == 1
+            assert submitted[0]["candidate_id"] == "literal"
+            assert submitted[0]["scope"] == question["scope"]
+            expect(panel.get_by_text("说明已保存。下方结果使用此前输入，新的依据尚未产生分析结果。", exact=True)).to_be_visible()
+            expect(original_r1.get_by_role("cell", name="无法判断", exact=True)).to_be_visible()
+            assert env["model"].semantic_answers == []
+            assert client.get("/rounds/" + root).json()["findings"] == initial["findings"]
+
+            with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/rule-changes")) as analyzed:
+                panel.get_by_role("button", name="按已保存说明开始分析", exact=True).click()
+            assert analyzed.value.status == 200, analyzed.value.text()
+            receipt = analyzed.value.json()
+            assert receipt["analysis_round_id"] != root
+            env["run_jobs"]()
+            panel.get_by_role("button", name="读取新分析结果", exact=True).click()
+            expect(panel.get_by_text("当前没有待确认解释", exact=True)).to_be_visible()
+            current = panel.get_by_role("region", name="当前分析判断", exact=True)
+            expect(current.get_by_role("article", name="CP.xlsx · R1", exact=True).get_by_text("此前：无法判断 → 当前：满足", exact=True)).to_be_visible()
+            expect(current.get_by_role("article", name="CP.xlsx · R2", exact=True).get_by_text("结论未变：不符合", exact=True)).to_be_visible()
+            expect(current.get_by_role("article", name="CP.xlsx · R3", exact=True).get_by_text("结论未变：满足", exact=True)).to_be_visible()
+            expect(current.get_by_text(submitted[0]["content"], exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="此前输入的审核结果", exact=True)).to_be_visible()
+            actual = client.get("/rounds/" + receipt["analysis_round_id"]).json()
+            assert [row["status"] for row in actual["findings"]] == ["PASS", "NG", "PASS"]
+            assert len(env["model"].semantic_answers) == 2
+            history = client.get("/rounds/" + root).json()
+            assert history["findings"] == initial["findings"] and history["inputs"] == initial["inputs"]
+            stored = client.get(f"/audit-rounds/{root}/deep-feedback").json()
+            assert len(stored["appendix"]) == 1 and len(stored["results"]) == 2
+            assert stored["appendix"][0]["confirmation_source"] == "synthetic"
+            assert len(submitted) == 2 and external == []
+            page.set_viewport_size({"width": 1440, "height": 1000})
+            page.screenshot(path=str(tmp_path / "judge-candidate-confirmed-desktop.png"), full_page=True)
+        except Exception:
+            try:
+                (tmp_path / "judge-candidate-failure-dom.txt").write_text(page.locator("body").aria_snapshot(timeout=5_000))
+                page.screenshot(path=str(tmp_path / "judge-candidate-failure.png"), full_page=True, timeout=10_000)
+            except Exception:
+                pass
+            raise
+        finally:
+            context.close()
+            browser.close()

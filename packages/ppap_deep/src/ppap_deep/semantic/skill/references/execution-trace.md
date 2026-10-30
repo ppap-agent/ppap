@@ -46,15 +46,15 @@ python -m ppap_deep.semantic.audit_tools view evaluation.json --offset 0 --limit
 
 同一个 evaluate 使用修订后的计划，并按新身份重新读取必要属性、重新提出局部问题。旧答案 ID 不再适用时须删除后重答。修订只作用于 audit_id 指向的目标；原 bundle.plans 继续保留规则单独编译的计划，供规则缓存使用。原生快照不改写。
 
-可读来源只能证明引用存在，不能机械证明自然语言解释正确。原规则若仍有多个合理含义，保留 Binding.interpretations 或对象候选，交给既有 Hole 和用户附录流程；不得按预期 PASS 选择解释，也不得将模型修订标成用户确认。
+可读来源只能证明引用存在，不能机械证明自然语言解释正确。原规则中的 Judge.candidates、执行时新发现的 Binding.interpretations 或对象候选均走既有 Hole 和用户附录流程；不得按预期 PASS 选择解释，也不得将模型修订标成用户确认。
 
 ## Typed Evidence Hole 与解释确认
 
 needs 使用同一 EvidenceHole 合同。boolean 保留原 true/false/unknown 答案；attribute 根据 ontology 给出 string/number 类型。事实答案为 kind=fact、need_id、input_id、value、origin=native/model、reason、evidence；未知用 state=unknown 且 value=null。宿主验证实际类型、请求身份及原件引用。模型解释与原生观察分别保存，不接受最终 verdict 或 counts。
 
-Judge 或完整原文仍留有需用户裁定的规则含义时，先在真实受影响字段的 Binding.interpretations 建立候选并 evaluate，确认 clarifications 中出现该问题，再处理其余普通真假问题。当前资料让各候选产生相同结果，不表示规则含义已确定；仍须保留问题供规则附录确认。布尔答案、diagnostic 或对当前结果的证明不能替代候选反馈。含义明确的普通值语义判断照常执行；与该解释无关的明确义务继续求值。
+计划中 Judge.candidates 已携带未定规则含义。实际求值并建立真实原件绑定后，宿主自动生成现有 interpretation need 和 clarification；查看 evaluate 的输出，不要再把编译候选手工复制到 Binding.interpretations。确认前整个 Judge 保持未知，原生字段仍保留已读状态，与该解释无关的明确义务继续求值。当前资料让各候选产生相同结果，不表示规则含义已确定；布尔答案、diagnostic 或当前结果证明不能替代候选反馈，模型选择只能作为推荐。确认后仍须执行原事实判断，确认不等于 PASS；标准修改通过冻结附录重新编译。candidates 为空的普通 Judge 仍处理原真假问题，不强加用户确认。
 
-字段含义或规则的字段选择确实需要用户决定时，在 Binding.interpretations 给出稳定 id、field、question、少量 candidates（id/label/explanation）和真实表头 evidence。同一文件内一个问题影响多个字段时，对每个受影响 field 都给出同一 id、question、candidates 和 evidence，宿主按 id 合并问题；只保护一个字段可能让未选含义的其他字段产生假 NG。只在受影响 use 的 binding 放这些解释；若其他条款共享同一物理范围，使用独立 binding id 引用相同真实坐标，避免让无歧义条款也等待确认。当前仅冻结 appendix 的 question_id、candidate_id、content 与明确 document_ids/rule_ids 范围全部匹配时解除对应 gate；没有确认时保留 unknown_interpretation，宿主产生面向产品的 clarifications。候选、模型答案与历史聊天不能充当用户确认。
+执行时新发现的文档字段含义或映射需要用户决定时，在 Binding.interpretations 给出稳定 id、field、question、少量 candidates（id/label/explanation）和真实表头 evidence。同一文件内一个问题影响多个字段时，对每个受影响 field 都给出同一 id、question、candidates 和 evidence，宿主按 id 合并问题；只保护一个字段可能让未选含义的其他字段产生假 NG。只在受影响 use 的 binding 放这些解释；若其他条款共享同一物理范围，使用独立 binding id 引用相同真实坐标，避免让无歧义条款也等待确认。当前仅冻结 appendix 的 question_id、candidate_id、content 与明确 document_ids/rule_ids 范围全部匹配时解除对应 gate；没有确认时保留 unknown_interpretation，宿主产生面向产品的 clarifications。候选、模型答案与历史聊天不能充当用户确认。
 
 用 document_tools view 查看所需原件范围，命令参数见 /opt/ppap/semantic/skill/references/commands.md。完整相关范围由程序求值，无需将全部 snapshot 打印给模型。
 
@@ -62,7 +62,7 @@ Judge 或完整原文仍留有需用户裁定的规则含义时，先在真实�
 
 Related.key_match=evidence 只在需要有类型关系事实时使用。宿主提供已知 source/target 对象引用及固定方向，提出 relationship Hole；value 为 {source,target,exists}，端点必须属于此次请求。宿主随后比较原始字段，不把关系认定变成相等值，也不反向增加义务。
 
-interpretation Hole 的 value 是候选 ID。requires_confirmation 默认为 true：模型选择只能产生带来源的推荐，不能代替用户确认。原规则已足够支持的普通解释可设为 false，经同一 typed 接口选择后保留 model 来源并参与求值；不能把它写成用户附录。删除或改变 ontology、附录、绑定后，旧 need 身份不再适用。
+interpretation Hole 的 value 是候选 ID。Judge.candidates 的规则候选必须用户确认。Binding.interpretations.requires_confirmation 默认为 true；原规则已足够支持的普通字段解释可设为 false，经同一 typed 接口选择后保留 model 来源并参与求值，不能把它写成用户附录。需要确认时，模型选择只能产生带来源的推荐。删除或改变 ontology、附录、绑定后，旧 need 身份不再适用。
 
 AuditEvaluation.readings 保留每条规则实际物化的属性、完整行范围和缓存复用。实体属性按程序需求和明确身份读取；原生 snapshot 仍保留完整原件观察。逻辑对象的多源属性和解释来源随观察输出，冲突值不覆盖。
 
