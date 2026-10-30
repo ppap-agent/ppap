@@ -754,26 +754,40 @@ def test_same_rule_id_on_two_targets_keeps_the_question_evidence_in_its_document
         context.add_cookies([{"name": SESSION_COOKIE, "value": env["session_cookie"], "url": web}])
         page = context.new_page()
         page.route(f"**/audit-rounds/{round_id}/deep-feedback", lambda route: route.fulfill(json=projection))
-        page.goto(f"{web}/audit?round={round_id}")
-        panel = page.get_by_role("region", name="解释与重新分析", exact=True)
-        comparison = panel.get_by_role("region", name="待确认问题的原件对照", exact=True)
-        evidence = comparison.locator('[aria-label^="解释证据 "]')
-        expect(evidence).to_have_count(2)
-        expect(evidence.nth(0).get_by_text("CP2.xlsx", exact=True).first).to_be_visible()
-        expect(evidence.nth(1).get_by_text("PFD.xlsx", exact=True).first).to_be_visible()
-        expect(evidence.nth(1).get_by_text("PFD · A2", exact=True)).to_be_visible()
-        expect(comparison.get_by_text("CP.xlsx", exact=True)).to_have_count(0)
-        expect(comparison.get_by_text("其他目标文件的依据", exact=True)).to_have_count(0)
-        affected = panel.get_by_role("list", name="受影响的文件与要求")
-        expect(affected.get_by_role("listitem")).to_have_count(1)
-        expect(affected.get_by_text("CP2.xlsx · R1", exact=True)).to_be_visible()
-        expect(evidence.nth(0).get_by_role("table", name="CP 单元格内容", exact=True)).to_be_visible()
-        expect(evidence.nth(1).get_by_role("table", name="PFD 单元格内容", exact=True)).to_be_visible()
-        page.screenshot(path=str(tmp_path / "scope-evidence-desktop.png"), full_page=True)
-        page.set_viewport_size({"width": 390, "height": 844})
-        expect(evidence.nth(1).get_by_text("PFD · A2", exact=True)).to_be_visible()
-        assert evidence.nth(1).bounding_box()["y"] >= evidence.nth(0).bounding_box()["y"] + evidence.nth(0).bounding_box()["height"]
-        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        page.screenshot(path=str(tmp_path / "scope-evidence-mobile.png"), full_page=True)
-        context.close()
-        browser.close()
+        try:
+            page.goto(f"{web}/audit?round={round_id}")
+            panel = page.get_by_role("region", name="解释与重新分析", exact=True)
+            expect(panel).to_be_visible(timeout=15_000)
+            comparison = panel.get_by_role("region", name="待确认问题的原件对照", exact=True)
+            evidence = comparison.locator('[aria-label^="解释证据 "]')
+            expect(evidence).to_have_count(2, timeout=15_000)
+            expect(evidence.nth(0).get_by_text("CP2.xlsx", exact=True).first).to_be_visible()
+            expect(evidence.nth(1).get_by_text("PFD.xlsx", exact=True).first).to_be_visible()
+            expect(evidence.nth(1).get_by_text("PFD · A2", exact=True)).to_be_visible()
+            expect(comparison.get_by_text("CP.xlsx", exact=True)).to_have_count(0)
+            expect(comparison.get_by_text("其他目标文件的依据", exact=True)).to_have_count(0)
+            affected = panel.get_by_role("list", name="受影响的文件与要求")
+            expect(affected.get_by_role("listitem")).to_have_count(1)
+            expect(affected.get_by_text("CP2.xlsx · R1", exact=True)).to_be_visible()
+            # The real workbook parser has a 30-second execution limit. Wait for
+            # its actual table instead of applying Playwright's default 5 seconds.
+            expect(evidence.nth(0).get_by_role("table", name="CP 单元格内容", exact=True)).to_be_visible(timeout=35_000)
+            expect(evidence.nth(1).get_by_role("table", name="PFD 单元格内容", exact=True)).to_be_visible(timeout=35_000)
+            page.screenshot(path=str(tmp_path / "scope-evidence-desktop.png"), full_page=True)
+            page.set_viewport_size({"width": 390, "height": 844})
+            expect(evidence.nth(1).get_by_text("PFD · A2", exact=True)).to_be_visible()
+            assert evidence.nth(1).bounding_box()["y"] >= evidence.nth(0).bounding_box()["y"] + evidence.nth(0).bounding_box()["height"]
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page.screenshot(path=str(tmp_path / "scope-evidence-mobile.png"), full_page=True)
+        except Exception:
+            # Keep the original failure, with secret-free fixture UI evidence.
+            # These reads never resubmit an application operation.
+            try:
+                (tmp_path / "scope-failure-dom.txt").write_text(page.locator("body").aria_snapshot(timeout=5_000))
+                page.screenshot(path=str(tmp_path / "scope-failure.png"), full_page=True, timeout=10_000)
+            except Exception:
+                pass
+            raise
+        finally:
+            context.close()
+            browser.close()
