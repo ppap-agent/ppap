@@ -360,6 +360,60 @@ class TableReader:
         return _effective(self.table, row, column, spans)
 
 
+def table_window(table: dict[str, Any], rows: list[int], columns: list[int], *, budget: EvidenceBudget | None = None) -> dict[str, Any]:
+    """Show a source-addressed window without repeating merged observations.
+
+    Ordinary known null cells use an explicit default within the selection.
+    All other observed metadata stays on the cell; merges or aliases retain
+    each selected position, including anchors outside the requested window.
+    This view never changes the snapshot or the evaluator's reading range.
+    """
+    from .evidence import EvidenceBudget
+
+    rows = list(dict.fromkeys(row for row in rows if 1 <= row <= table["rows"]))
+    columns = list(dict.fromkeys(column for column in columns if 1 <= column <= table["cols"]))
+    reader = TableReader(table, budget if budget is not None else EvidenceBudget())
+    merges = [span for span in table.get("merges", []) if any(span[0] <= row <= span[2] for row in rows) and any(span[1] <= column <= span[3] for column in columns)]
+    cells: dict[str, dict[str, Any]] = {}
+    aliases: dict[str, str] = {}
+    default = {"value": None, "state": "known"}
+    for row in rows:
+        for column in columns:
+            item = reader.cell(row, column)
+            address, anchor, merge = item.pop("cell"), item.pop("anchor"), item.pop("merge")
+            if item == default and address == anchor and merge is None:
+                continue
+            # Python dict equality would collapse False/0 and 1/1.0. Display
+            # deduplication must preserve the native JSON scalar representation.
+            observed_json = json.dumps(item, sort_keys=True)
+            if address != anchor and merge is None:
+                original_anchor = {key: value for key, value in table["cells"].get(anchor, default).items() if key != "anchor"}
+                cells.setdefault(anchor, original_anchor)
+                if observed_json != json.dumps(original_anchor, sort_keys=True):
+                    cells[address] = {**item, "anchor": anchor}
+                    continue
+            if anchor not in cells:
+                cells[anchor] = item
+            elif json.dumps(cells[anchor], sort_keys=True) != observed_json:
+                # Preserve unexpected per-position metadata instead of letting
+                # grouping silently choose one of two different observations.
+                cells[address] = {**item, "anchor": anchor}
+                continue
+            if address != anchor and merge is None:
+                aliases[address] = anchor
+    return {
+        **{key: value for key, value in table.items() if key not in {"id", "rows", "cols", "cells", "merges"}},
+        "table": table["id"],
+        "rows": table["rows"],
+        "cols": table["cols"],
+        "selection": {"rows": rows, "columns": columns},
+        "default_cell": default,
+        "merges": merges,
+        "cells": cells,
+        "aliases": aliases,
+    }
+
+
 def sequence(text: str) -> list[int]:
     values: list[int] = []
     for part in text.split(","):
@@ -474,6 +528,75 @@ def run_queries(tables: dict[str, Any], queries: list[dict[str, Any]]) -> dict[s
     return {"tables": inventory, "queries": results, "warning": "SQL rows are evidence only. Check binding, prerequisites, unknown cells and empty-scope policy before assigning audit status."}
 
 
+def _print_view(data: dict[str, Any], args: argparse.Namespace) -> None:
+    if args.offset < 0 or args.max_bytes < 4096:
+        raise ValueError("View offset must be non-negative and max-bytes at least 4096")
+    records: list[dict[str, Any]] = []
+    if data.get("pages") and args.table is None:
+        pages = sequence(args.pages)
+        records.extend({**page, "kind": "page"} for page in data["pages"] if page["page"] in pages)
+    else:
+        tables = [table for table in data["tables"] if args.table is None or table["id"] == args.table]
+        if args.table is not None and not tables:
+            raise ValueError(f"Table not found: {args.table}")
+        for table in tables:
+            columns = list(range(1, table["cols"] + 1))
+            if args.columns is not None:
+                limits = args.columns.split(":")
+                if len(limits) > 2 or any(not re.fullmatch(r"[A-Za-z]{1,3}", item) for item in limits):
+                    raise ValueError("Choose one column or an inclusive column range")
+                first, last = col_number(limits[0].upper()), col_number(limits[-1].upper())
+                if not 1 <= first <= last <= table["cols"]:
+                    raise ValueError("Column selection is outside the table")
+                columns = list(range(first, last + 1))
+            window = table_window(table, sequence(args.rows), columns)
+            records.append({"kind": "table", **{key: value for key, value in window.items() if key not in {"merges", "cells", "aliases"}}})
+            records.extend({"kind": "merge", "table": table["id"], "range": span} for span in window["merges"])
+            records.extend({"kind": "alias", "table": table["id"], "cell": cell, "anchor": anchor} for cell, anchor in window["aliases"].items())
+            records.extend({"kind": "cell", "table": table["id"], "cell": cell, **item} for cell, item in window["cells"].items())
+
+    # Stable fragments make even one unusually large cell or PDF page readable
+    # within a tool response. Offsets count these display records, never rows.
+    # Joining all parts reconstructs the exact original JSON record.
+    lines: list[str] = []
+    for record_id, record in enumerate(records):
+        line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        if len(line.encode("utf-8")) <= 2048:
+            lines.append(line)
+            continue
+        parts = [line[start : start + 256] for start in range(0, len(line), 256)]
+        lines.extend(
+            json.dumps({"kind": "json_fragment", "record_id": record_id, "part": part, "parts": len(parts), "text": text}, ensure_ascii=False, separators=(",", ":")) for part, text in enumerate(parts)
+        )
+    if args.offset > len(lines):
+        raise ValueError("View offset is outside the selected records")
+    header = {
+        "kind": "view",
+        "document_id": args.document,
+        "source": data["source"],
+        "selection": {"table": args.table, "rows": args.rows, "columns": args.columns, "pages": args.pages},
+        "offset": args.offset,
+        "total_records": len(lines),
+    }
+    used = max(len(json.dumps({**header, "next_offset": end}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1 for end in (None, len(lines)))
+    if used > args.max_bytes:
+        raise ValueError("View metadata exceeds max-bytes; narrow the selection or increase max-bytes")
+    selected = []
+    for line in lines[args.offset :]:
+        size = len(line.encode("utf-8")) + 1
+        if used + size > args.max_bytes:
+            break
+        selected.append(line)
+        used += size
+    if not selected and args.offset < len(lines):
+        raise ValueError("View record exceeds remaining max-bytes; increase max-bytes")
+    end = args.offset + len(selected)
+    header["next_offset"] = end if end < len(lines) else None
+    print(json.dumps(header, ensure_ascii=False, separators=(",", ":")))
+    for line in selected:
+        print(line)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -487,6 +610,8 @@ def main() -> int:
     view.add_argument("--rows", default="1:12")
     view.add_argument("--columns", help="One column or an inclusive column range, such as A or B:F")
     view.add_argument("--pages", default="1")
+    view.add_argument("--offset", type=int, default=0, help="Display record offset from the previous page's next_offset")
+    view.add_argument("--max-bytes", type=int, default=16000, help="Maximum UTF-8 stdout bytes including page metadata (minimum 4096)")
     binding = commands.add_parser("bind", help="Apply a reviewed per-document table binding")
     binding.add_argument("documents", help="Frozen documents.json, keyed by document_id")
     binding.add_argument("--binding", required=True, help="One AuditTrace Binding as JSON")
@@ -524,29 +649,7 @@ def main() -> int:
             data = selected_document
         elif not isinstance(data, dict) or not isinstance(data.get("tables"), list) or not isinstance(data.get("source"), dict):
             raise ValueError("Choose a frozen document_id with --document")
-        if data.get("pages") and args.table is None:
-            for page in data["pages"]:
-                if page["page"] in sequence(args.pages):
-                    print(json.dumps(page, ensure_ascii=False))
-        else:
-            tables = [t for t in data["tables"] if args.table is None or t["id"] == args.table]
-            if args.table is not None and not tables:
-                raise ValueError(f"Table not found: {args.table}")
-            for table in tables:
-                rows = [row for row in sequence(args.rows) if row <= table["rows"]]
-                columns = list(range(1, table["cols"] + 1))
-                if args.columns is not None:
-                    limits = args.columns.split(":")
-                    if len(limits) > 2 or any(not re.fullmatch(r"[A-Za-z]{1,3}", item) for item in limits):
-                        raise ValueError("Choose one column or an inclusive column range")
-                    first, last = col_number(limits[0].upper()), col_number(limits[-1].upper())
-                    if not 1 <= first <= last <= table["cols"]:
-                        raise ValueError("Column selection is outside the table")
-                    columns = list(range(first, last + 1))
-                merges = [span for span in table.get("merges", []) if any(span[0] <= row <= span[2] for row in rows) and any(span[1] <= column <= span[3] for column in columns)]
-                print(json.dumps({"document_id": args.document, "source": data["source"], "table": table["id"], "rows": table["rows"], "cols": table["cols"], "merges": merges}, ensure_ascii=False))
-                for row in rows:
-                    print(json.dumps({"row": row, "cells": {ref(row, column): effective(table, row, column) for column in columns}}, ensure_ascii=False))
+        _print_view(data, args)
     elif args.command == "bind":
         from ppap_deep.semantic.bindings import Binding
 

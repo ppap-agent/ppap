@@ -5,56 +5,9 @@
 ## 编译步骤
 
 1. 逐句核对完整原文的对象、字段、前提、适用条件、要求、否则分支、方向、量词和指代，在 working-state.json 简记它们对应的程序位置。不能跳过中间条件、据标题套模板或静默统一不同指代。已支持的值运算直接写成 value_test。
-2. 将完整 CompiledRulePlan 写入 execution.json。按下方公开方法校验 schema，再核对每条 ID、来源和修订与冻结输入一致。artifact_schema.json 提供完整字段合同；无需读取 trace.py、bindings.py 或 validation.py。
-3. 用下方小型 synthetic 例子检查关键算子逻辑。保留已知满足、已知违反、未知、AND 和适用性反例；按本条原文替换相关表达式、值及预期。有明确空范围政策时补查该政策。自检使用正式的 evaluate_audit，不另写判定逻辑，也不要求为自检建立完整供应商对象模型或绑定全部规则。把本条表达式、构造值、预期和实际状态记在 working-state.json。
-4. 重读完整文件，确认 schema、来源和分支检查通过，再提交文件和完成回执。合成例子只检查算子与编译选择，不能证明整条业务解释正确，不能作为供应商证据、人工确认或训练 gold。
-
-## 公开校验方法
-
-在当前编译工作目录运行以下 Python。schema 校验针对实际 execution.json。算子示例使用独立的两字段单行快照和仅供自检的 RulePlan，不改变实际计划、ontology、冻结来源或供应商文件。示例的 NA 是明确声明的合成零适用对象政策；实际计划仍使用原文政策。按需修改本条关键表达式及构造值，无需读取实现代码。
-
-```python
-from pathlib import Path
-from ppap_deep.semantic.models import CompiledRulePlan, RulePlan
-from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
-
-CompiledRulePlan.model_validate_json(Path("execution.json").read_text())
-A = {"kind": "value_test", "field": "A", "op": "not_empty"}
-B = {"kind": "value_test", "field": "B", "op": "not_empty"}
-AND = {"kind": "all", "items": [A, B]}
-UNKNOWN = {"value": None, "state": "unknown_formula_cache"}
-
-def status(require, a, b, when=None):
-    cell = lambda value: value if isinstance(value, dict) else {"value": value, "state": "known"}
-    document = {
-        "source": {"file": "synthetic.xlsx", "format": ".xlsx", "sha256": "synthetic"},
-        "tables": [{"id": "Records", "rows": 2, "cols": 2, "merges": [], "cells": {
-            "A1": cell("A"), "B1": cell("B"), "A2": cell(a), "B2": cell(b),
-        }}],
-    }
-    program = {"kind": "records", "source": "source", "quantifier": "forall", "require": require, "when": when}
-    plan = RulePlan.model_validate({"source_sha256": "synthetic", "plan_revision": "0" * 64, "rules": [{
-        "id": "R1", "source_locator": {"kind": "published_clause", "clause_id": "R1"}, "program": program,
-        "empty_scope_status": "NA", "empty_scope_basis": "Synthetic unit case: known false applicability means NA.",
-    }]})
-    trace = AuditTrace.model_validate({"bindings": [{
-        "id": "data", "document_id": "source", "source_sha256": "synthetic", "table": "Records", "header_rows": [1],
-        "first_row": 2, "last_row": 2, "columns": {"A": "A", "B": "B"},
-        "mapping_basis": "Synthetic headers A/B", "boundary_basis": "Complete synthetic single row",
-    }], "uses": [{"audit_id": "source", "rule_id": "R1", "inputs": {
-        "source": {"kind": "bound", "scopes": [{"binding_id": "data"}]},
-    }}]})
-    return evaluate_audit(trace, {"source": document}, {"source": plan}).report.checks[0].status
-
-assert status(AND, "x", "y") == "PASS"
-assert status(AND, "", "y") == "NG"
-assert status(AND, "x", "") == "NG"
-assert status(AND, "x", UNKNOWN) == "UNABLE"
-assert status(AND, "", UNKNOWN) == "NG"  # Independent known violation remains.
-assert status(B, "", "", when=A) == "NA"  # Genuine applicability differs from AND.
-assert status(B, "x", "", when=A) == "NG"
-assert status(B, UNKNOWN, "y", when=A) == "UNABLE"
-```
+2. 将完整 CompiledRulePlan 写入 execution.json。artifact_schema.json 是本阶段的公开字段合同，按需要查询相应类型。宿主会校验实际提交的 schema、ID、来源、修订和条款覆盖；无需另建 schema 校验脚本，也无需读取引擎实现来确认这些约束。
+3. 检查本条规则的语义反例。为可能混淆的条件写出简短的构造输入、原文预期及对应程序分支：例如 A 空而 B 非空、已知违反与其他未知并存、未找到基准文件、不同对象编号重复。只检查本规则实际需要的分支；固定算子的真假表及通用 synthetic 快照测试由宿主测试维护，不在每次编译中重建。若仍需执行某个本规则反例，复用现有 evaluator，并保留构造依据；不要建立另一个判定器。
+4. 重读完整原文与已确认附录，逐项核对来源、对象和分支，再提交文件和完成回执。结构校验通过不能证明 AND、否则、身份或政策被忠实解释；模型自检同样不能代替独立核对，也不能作为供应商证据、人工确认或训练 gold。
 
 ## 来源和缓存
 

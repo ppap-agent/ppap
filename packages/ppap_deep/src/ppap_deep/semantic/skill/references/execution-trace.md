@@ -6,7 +6,7 @@
 
 先将每条冻结原文与计划中的对象、字段、条件、否则分支及指代逐项对照。程序遗漏原文时不能用改列映射掩盖；保留相关问题和未知，不把可读来源或既有 NG 当成编译忠实性证明。
 
-1. 首次审核先将 initial-execution.json 复制为 execution.json。宿主已按程序填好全部 use 身份和 unresolved 输入；这只是待补全候选。obligations.json 列出每条规则潜在使用的集合、字段和语义问题，文件级 fields 是搜索提示。该视图不增加审核义务，也不将不同规则的同名集合自动合并。需要逻辑细节时读取 plans.json 和冻结条款；先看 layout-probes.json 的布局窗口及规则属性提示，再按需查看完整相关正文范围或视觉区域。表格边界不清时读 /opt/ppap/semantic/skill/references/table-reading.md，PDF 视觉问题读同目录 pdf-reading.md，复杂跨文件关联读 cross-file.md。修复阶段从 previous-execution.json 保留有效工作，不重置为初始候选。
+1. 首次审核先将 initial-execution.json 复制为 execution.json。宿主已按程序填好全部 use 身份和 unresolved 输入；这只是待补全候选。obligations.json 列出每条规则潜在使用的集合、字段和语义问题，文件级 fields 是搜索提示。该视图不增加审核义务，也不将不同规则的同名集合自动合并。需要逻辑细节时读取 plans.json 和冻结条款；先看 layout-probes.json：requests 按审核目标、条款和逻辑 input 列出所需属性，documents 提供各表的结构 probe、原文属性 text_matches 及邻域 windows。文字命中只帮助导航，不能确认列含义、对象身份或来源绑定；没有命中时仍查看结构和必要的完整表头，不把别名或未探测范围当作缺失。再按需查看相关正文范围或视觉区域。表格边界不清时读 /opt/ppap/semantic/skill/references/table-reading.md，PDF 视觉问题读同目录 pdf-reading.md，复杂跨文件关联读 cross-file.md。修复阶段从 previous-execution.json 保留有效工作，不重置为初始候选。
 2. 覆盖所有相关表和文件的完整正文范围，不能只选最有利单表；尚未定位的其他范围保留 unresolved。定义物理 Binding：原文 document_id、SHA、table、header_rows、完整 first/last_row、原始列映射。field_holes 区分 absent 和 unresolved，已确认缺列必须有可读的完整表头搜索范围。绑定不得增加全局 excluded_rows。
 3. 一个逻辑对象跨行时，在对应 scope.objects 声明 id、完整 rows；需要一行多个对象时给出各对象 fields 的原始定位。每个对象须有非空 basis 和 evidence，evidence 引用每个成员行的已读原件位置；表头可补充解释，不能代替成员行覆盖。未给充分依据或来源仍未知时，保留对象的 scope_state 未确定；越出成员行、表或输入的引用被拒绝。逻辑 input 必须有 RulePlan.ontology 中的 grain、attributes 和 identity。宿主验证全部声明物理行都被对象覆盖；对象冲突值、重复实例和分组依据保留，不能靠挑行或去重消除。同一编号出现在不同产品下时，不能仅按编号合为一个对象。文件实体 input 可用 files/document_ids，宿主只取本次冻结文件的原生 id、format、sha256。
 4. 每条 target/clause 提交一个 use，inputs 把程序中的逻辑集合映射到本轮文档。bound.scopes 引用 binding_id；每个 scope 独立声明 excluded_rows/unresolved_rows，附真实定位和原因。unresolved_scopes 保留尚未绑定的其他范围。已搜索而确认不存在用 absent，说明 searched_documents 和实际依据；未定位用 unresolved。
@@ -56,7 +56,7 @@ needs 使用同一 EvidenceHole 合同。boolean 保留原 true/false/unknown �
 
 执行时新发现的文档字段含义或映射需要用户决定时，在 Binding.interpretations 给出稳定 id、field、question、少量 candidates（id/label/explanation）和真实表头 evidence。同一文件内一个问题影响多个字段时，对每个受影响 field 都给出同一 id、question、candidates 和 evidence，宿主按 id 合并问题；只保护一个字段可能让未选含义的其他字段产生假 NG。只在受影响 use 的 binding 放这些解释；若其他条款共享同一物理范围，使用独立 binding id 引用相同真实坐标，避免让无歧义条款也等待确认。当前仅冻结 appendix 的 question_id、candidate_id、content 与明确 document_ids/rule_ids 范围全部匹配时解除对应 gate；没有确认时保留 unknown_interpretation，宿主产生面向产品的 clarifications。候选、模型答案与历史聊天不能充当用户确认。
 
-用 document_tools view 查看所需原件范围，命令参数见 /opt/ppap/semantic/skill/references/commands.md。完整相关范围由程序求值，无需将全部 snapshot 打印给模型。
+用 document_tools view 查看所需原件范围，命令参数见 /opt/ppap/semantic/skill/references/commands.md。完整相关范围由程序求值。先确认表头、边界和代表性对象，重复版式的全部记录由绑定及同一 evaluator 读取和比较；需要语义判断时只展开相应对象、异常或原件区域。不要为确认覆盖而向模型打印整张表的全部行摘要。
 
 对象范围存在有限候选时，scope.object_choices 声明每套 id/label/objects；不能同时声明已选 objects。宿主先验证每个候选的来源与全行覆盖，再提出 object_scope Hole。kind=fact 的 value 只选择给出的候选 ID，由同一 evaluator 重建逻辑对象；未答、拒绝或未知不会退回按物理行计数。
 
