@@ -696,3 +696,84 @@ def test_custom_explanation_is_saved_exactly_without_a_default_candidate_or_calc
         expect(panel.get_by_text("说明已保存。下方结果使用此前输入，新的依据尚未产生分析结果。", exact=True)).to_be_visible()
         context.close()
         browser.close()
+
+
+@pytest.mark.parametrize("precise_scope", [True, False], ids=["document-rule-target", "legacy-document-rule-scope"])
+def test_same_rule_id_on_two_targets_keeps_the_question_evidence_in_its_document_scope(deep_feedback_env, tmp_path, precise_scope):
+    """Local UI projection regression; the full parser/PG journey is tested above."""
+    env = deep_feedback_env
+    cp1, pfd = env["uploaded"]["CP"], env["uploaded"]["PFD"]
+    data = env["documents"]["CP"]["bytes"]
+    created = env["client"].post("/files", json={"original_filename": "CP2.xlsx", "content_type": "application/octet-stream", "byte_size": len(data)})
+    assert created.status_code == 201
+    cp2 = created.json()
+    path = f"/files/{cp2['file_id']}/versions/{cp2['id']}"
+    assert env["client"].put(path + "/blob", content=data).status_code == 200
+    assert env["client"].post(path + "/finalize").status_code == 200
+    draft = env["client"].post("/drafts").json()["id"]
+    items = [
+        {"file_version_id": cp1["id"], "role": "target", "rule_version_id": env["rule"]["id"]},
+        {"file_version_id": cp2["id"], "role": "target", "rule_version_id": env["rule"]["id"]},
+        {"file_version_id": pfd["id"], "role": "reference"},
+    ]
+    assert env["client"].put(f"/drafts/{draft}", json={"items": items, "analysis_mode": "deep"}).status_code == 200
+    accepted = env["client"].post(f"/drafts/{draft}/accept", json={"idempotency_key": str(uuid4())})
+    assert accepted.status_code == 201
+    round_id = accepted.json()["id"]
+    projection = env["store"].read_deep_feedback(env["principal"], round_id)
+    scope = {"document_ids": [cp2["id"]], "rule_ids": ["R1"]}
+    if precise_scope:
+        scope["rule_targets"] = [{"document_id": cp2["id"], "rule_id": "R1"}]
+    projection["clarifications"] = [
+        {
+            "id": "cp2-question",
+            "input_id": cp2["id"],
+            "fingerprint": "controlled-ui-projection",
+            "kind": "interpretation",
+            "question": "仅确认 CP2 的编号解释",
+            "document_ids": [cp2["id"]],
+            "rule_ids": ["R1"],
+            "candidates": [{"id": "cp2-candidate", "label": "CP2 编号含义", "explanation": "仅用于 CP2。"}],
+            "sources": [{"document_id": cp2["id"], "locator": {"kind": "xlsx_cell", "sheet": "CP", "cell": "A1"}, "excerpt": "作业单元编号"}],
+            "scope": scope,
+        }
+    ]
+    wrong = {"file_version_id": cp1["id"], "filename": "CP.xlsx", "role": "target", "locator": {"kind": "xlsx_cell", "sheet": "CP", "cell": "B2"}, "excerpt": "其他目标文件的依据"}
+    correct = {"file_version_id": pfd["id"], "filename": "PFD.xlsx", "role": "reference", "locator": {"kind": "xlsx_cell", "sheet": "PFD", "cell": "A2"}, "excerpt": "010"}
+    # Both targets use R1. An unassigned R1 also cannot supply sources by
+    # matching the rule alone. The actual target identity is inside locator.
+    projection["results"][0]["findings"] = [
+        {"item_key": f"{cp1['id']}:rule:R1", "locator": {"file_version_id": cp1["id"], "rule_item_id": "R1", "semantic": {"sources": [wrong]}}},
+        {"item_key": "unassigned:R1", "locator": {"rule_item_id": "R1", "semantic": {"sources": [wrong]}}},
+        {"item_key": f"{cp2['id']}:rule:R1", "locator": {"file_version_id": cp2["id"], "rule_item_id": "R1", "semantic": {"sources": [correct]}}},
+    ]
+    with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
+        local_browser_boundary(context, web)
+        context.add_cookies([{"name": SESSION_COOKIE, "value": env["session_cookie"], "url": web}])
+        page = context.new_page()
+        page.route(f"**/audit-rounds/{round_id}/deep-feedback", lambda route: route.fulfill(json=projection))
+        page.goto(f"{web}/audit?round={round_id}")
+        panel = page.get_by_role("region", name="解释与重新分析", exact=True)
+        comparison = panel.get_by_role("region", name="待确认问题的原件对照", exact=True)
+        evidence = comparison.locator('[aria-label^="解释证据 "]')
+        expect(evidence).to_have_count(2)
+        expect(evidence.nth(0).get_by_text("CP2.xlsx", exact=True).first).to_be_visible()
+        expect(evidence.nth(1).get_by_text("PFD.xlsx", exact=True).first).to_be_visible()
+        expect(evidence.nth(1).get_by_text("PFD · A2", exact=True)).to_be_visible()
+        expect(comparison.get_by_text("CP.xlsx", exact=True)).to_have_count(0)
+        expect(comparison.get_by_text("其他目标文件的依据", exact=True)).to_have_count(0)
+        affected = panel.get_by_role("list", name="受影响的文件与要求")
+        expect(affected.get_by_role("listitem")).to_have_count(1)
+        expect(affected.get_by_text("CP2.xlsx · R1", exact=True)).to_be_visible()
+        expect(evidence.nth(0).get_by_role("table", name="CP 单元格内容", exact=True)).to_be_visible()
+        expect(evidence.nth(1).get_by_role("table", name="PFD 单元格内容", exact=True)).to_be_visible()
+        page.screenshot(path=str(tmp_path / "scope-evidence-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(evidence.nth(1).get_by_text("PFD · A2", exact=True)).to_be_visible()
+        assert evidence.nth(1).bounding_box()["y"] >= evidence.nth(0).bounding_box()["y"] + evidence.nth(0).bounding_box()["height"]
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(tmp_path / "scope-evidence-mobile.png"), full_page=True)
+        context.close()
+        browser.close()

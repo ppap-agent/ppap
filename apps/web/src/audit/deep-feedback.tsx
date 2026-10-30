@@ -165,14 +165,17 @@ function DeepQuestion({question, initialChange, results = [], rules, files, anal
   const [expanded, setExpanded] = useState<string[]>(['0', '1'])
   const [visited, setVisited] = useState<string[]>(['0', '1'])
   const candidates = question.candidates
+  const affects = (documentId: string | undefined, ruleId: string | undefined) => Boolean(documentId && ruleId && (scope.rule_targets
+    ? scope.rule_targets.some(target => target.document_id === documentId && target.rule_id === ruleId)
+    : scope.document_ids.includes(documentId) && scope.rule_ids.includes(ruleId)))
   const related = results.filter(result => result.current).flatMap(result => result.findings.flatMap(finding => {
     const locator = finding.locator as components['schemas']['FindingLocator'] | null
-    return locator?.rule_item_id && question.rule_ids.includes(locator.rule_item_id) ? locator.semantic?.sources || [] : []
+    return affects(locator?.file_version_id, locator?.rule_item_id) ? locator?.semantic?.sources || [] : []
   }))
   const located: Question['sources'] = [...question.sources]
   for (const source of related) if (!located.some(row => row.document_id === source.file_version_id)) located.push({document_id: source.file_version_id, locator: source.locator, excerpt: source.excerpt})
-  const evidence = [...located, ...files.filter(file => !located.some(source => source.document_id === file.id)).map(file => ({document_id: file.id, locator: null}))]
-  const affectedRules = rules.filter(item => scope.rule_targets ? scope.rule_targets.some(target => target.document_id === item.documentId && target.rule_id === item.rule.id) : scope.rule_ids.includes(item.rule.id))
+  const evidence = [...located, ...files.filter(file => scope.document_ids.includes(file.id) && !located.some(source => source.document_id === file.id)).map(file => ({document_id: file.id, locator: null}))]
+  const affectedRules = rules.filter(item => affects(item.documentId, item.rule.id))
   const canSubmit = !disabled && candidate !== '__none' && Boolean(candidate && content.trim() && documents.length)
   function choose(id: string) {setCandidate(id); setContent(candidates.find(row => row.id === id)?.explanation || '')}
   function submit(intent: RuleChangeRequest['intent']) {
