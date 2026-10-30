@@ -52,6 +52,8 @@ python -m ppap_deep.semantic.audit_tools view evaluation.json --offset 0 --limit
 
 needs 使用同一 EvidenceHole 合同。boolean 保留原 true/false/unknown 答案；attribute 根据 ontology 给出 string/number 类型。事实答案为 kind=fact、need_id、input_id、value、origin=native/model、reason、evidence；未知用 state=unknown 且 value=null。宿主验证实际类型、请求身份及原件引用。模型解释与原生观察分别保存，不接受最终 verdict 或 counts。
 
+Judge 或完整原文仍留有需用户裁定的规则含义时，先在真实受影响字段的 Binding.interpretations 建立候选并 evaluate，确认 clarifications 中出现该问题，再处理其余普通真假问题。当前资料让各候选产生相同结果，不表示规则含义已确定；仍须保留问题供规则附录确认。布尔答案、diagnostic 或对当前结果的证明不能替代候选反馈。含义明确的普通值语义判断照常执行；与该解释无关的明确义务继续求值。
+
 字段含义或规则的字段选择确实需要用户决定时，在 Binding.interpretations 给出稳定 id、field、question、少量 candidates（id/label/explanation）和真实表头 evidence。同一文件内一个问题影响多个字段时，对每个受影响 field 都给出同一 id、question、candidates 和 evidence，宿主按 id 合并问题；只保护一个字段可能让未选含义的其他字段产生假 NG。只在受影响 use 的 binding 放这些解释；若其他条款共享同一物理范围，使用独立 binding id 引用相同真实坐标，避免让无歧义条款也等待确认。当前仅冻结 appendix 的 question_id、candidate_id、content 与明确 document_ids/rule_ids 范围全部匹配时解除对应 gate；没有确认时保留 unknown_interpretation，宿主产生面向产品的 clarifications。候选、模型答案与历史聊天不能充当用户确认。
 
 用 document_tools view 查看所需原件范围，命令参数见 /opt/ppap/semantic/skill/references/commands.md。完整相关范围由程序求值，无需将全部 snapshot 打印给模型。
