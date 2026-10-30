@@ -461,7 +461,7 @@ def validate_or_repair(bundle: ResultBundle, spec: SubmissionSpec, work: Path, r
 
 
 def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[str, Any]], *, budget: EvidenceBudget | None = None) -> dict[str, Any]:
-    from .document_tools import col_number, table_window
+    from .document_tools import col_number, ref, table_window
 
     budget = budget if budget is not None else EvidenceBudget()
     requests = []
@@ -477,6 +477,7 @@ def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[s
         tables = []
         for table in document.get("tables", []):
             probe_columns = set(range(1, min(8, table["cols"]) + 1))
+            occupied: dict[int, set[int]] = {}
             hits: dict[str, list[str]] = {}
             totals: dict[str, int] = {}
             # Search observed cell text only. IDs, filenames and table metadata
@@ -486,8 +487,11 @@ def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[s
                 if item.get("anchor", address) != address:
                     continue
                 position = re.fullmatch(r"([A-Z]+)([1-9][0-9]*)", address)
-                if position is not None and int(position[2]) <= 12 and (item.get("value") is not None or item.get("state", "known") != "known"):
-                    probe_columns.add(col_number(position[1]))
+                if position is not None and (item.get("value") is not None or item.get("state", "known") != "known"):
+                    point = (int(position[2]), col_number(position[1]))
+                    occupied.setdefault(point[0], set()).add(point[1])
+                    if point[0] <= 12:
+                        probe_columns.add(point[1])
                 if not isinstance(item.get("value"), str):
                     continue
                 text = "".join(item["value"].split()).casefold()
@@ -503,6 +507,21 @@ def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[s
                 if position is None:
                     continue
                 positions.append((int(position[2]), col_number(position[1])))
+            covered = {(row + dr, column + dc) for row, column in positions for dr in (-1, 0, 1) for dc in (-1, 0, 1)}
+            budget.consume(len(positions) * 9)
+            starts = []
+            for row, columns in occupied.items():
+                budget.consume(len(columns) * 3)
+                # These are position candidates, not detected headers, tables
+                # or aliases. Keep later regions visible without copying data.
+                candidates = [column for column in columns if column not in occupied.get(row - 1, ()) and column - 1 not in columns]
+                if candidates and any(not (row <= 12 and column in probe_columns) and (row, column) not in covered for column in columns):
+                    starts.append((row, min(candidates)))
+            starts.sort()
+            unshown = starts[8:]
+            unshown_bounds = (
+                f"{ref(min(row for row, _ in unshown), min(column for _, column in unshown))}:{ref(max(row for row, _ in unshown), max(column for _, column in unshown))}" if unshown else None
+            )
             for row, column in sorted(positions):
                 bounds = (max(1, row - 1), max(1, column - 1), min(table["rows"], row + 1), min(table["cols"], column + 1))
                 if ranges:
@@ -515,6 +534,16 @@ def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[s
                         continue
                 ranges.append(bounds)
             windows = [table_window(table, list(range(first, last + 1)), list(range(left, right + 1)), budget=budget) for first, left, last, right in ranges]
+            unshown_columns = []
+            for row, column in starts[:8]:
+                band = list(range(max(1, row - 1), min(table["rows"], row + 1) + 1))
+                budget.consume(sum(len(occupied.get(index, ())) for index in band))
+                band_columns = sorted({value for index in band for value in occupied.get(index, ())})
+                selected = band_columns[:32] if column in band_columns[:32] else sorted([*band_columns[:31], column])
+                omitted = sorted(set(band_columns) - set(selected))
+                if omitted:
+                    unshown_columns.append({"start": ref(row, column), "rows": band, "columns": [omitted[0], omitted[-1]], "count": len(omitted)})
+                windows.append(table_window(table, band, selected, budget=budget))
             tables.append(
                 {
                     "id": table["id"],
@@ -522,6 +551,10 @@ def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[s
                     "cols": table["cols"],
                     "probe": table_window(table, list(range(1, min(12, table["rows"]) + 1)), sorted(probe_columns), budget=budget),
                     "text_matches": [{"attribute": field, "cells": cells, "total": totals[field]} for field, cells in sorted(hits.items())],
+                    "structure_starts": [ref(row, column) for row, column in starts[:8]],
+                    "structure_start_total": len(starts),
+                    "unshown_structure_bounds": unshown_bounds,
+                    "unshown_structure_columns": unshown_columns,
                     "windows": windows,
                 }
             )
@@ -529,7 +562,10 @@ def layout_probes(documents: dict[str, dict[str, Any]], obligations: list[dict[s
     return {
         "requests": requests,
         "documents": result,
-        "coverage": "navigation_only; at most two text hits per attribute/table; a hit does not prove mapping and no hit does not prove absence; inspect complete relevant ranges",
+        "coverage": (
+            "navigation_only; at most two text hits per attribute/table and eight occupied-start row bands of at most 32 occupied anchor columns; "
+            "these do not prove headers, mapping or absence; inspect complete relevant ranges and unshown structure bounds/columns"
+        ),
     }
 
 

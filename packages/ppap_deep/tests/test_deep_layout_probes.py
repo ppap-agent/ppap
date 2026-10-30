@@ -96,6 +96,110 @@ def test_no_exact_attribute_hit_keeps_structure_and_does_not_decide_absence(tmp_
     assert derive_report(initial, documents, plans).checks[0].status == "UNABLE"
 
 
+def test_offset_alias_region_is_visible_without_claiming_a_field_mapping(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "审核记录"
+    sheet["Q25"] = "作业单元编号"
+    sheet["Q26"] = "010"
+    path = tmp_path / "offset-alias.xlsx"
+    workbook.save(path)
+    documents = {"target": snapshot(path)}
+    original = deepcopy(documents)
+    plans = {"target": rule_plan("identity", "工序编号")}
+    initial, obligations = prepare_audit(plans)
+
+    navigation = layout_probes(documents, obligations)
+
+    table = navigation["documents"]["target"]["tables"][0]
+    assert table["text_matches"] == []
+    assert any(window["cells"].get("Q25", {}).get("value") == "作业单元编号" for window in table["windows"])
+    assert any(window["cells"].get("Q26", {}).get("value") == "010" for window in table["windows"])
+    assert initial.uses[0].inputs["records"].kind == "unresolved"
+    assert derive_report(initial, documents, plans).checks[0].status == "UNABLE"
+    assert documents == original
+
+
+def test_structural_region_previews_are_bounded_and_keep_unshown_locations(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "审核记录"
+    for index in range(12):
+        sheet.cell(25 + index * 4, 17, "=1+1" if index == 0 else f"区段 {index}")
+        sheet.cell(26 + index * 4, 17, "010")
+    path = tmp_path / "separate-regions.xlsx"
+    workbook.save(path)
+    _initial, obligations = prepare_audit({"target": rule_plan("identity", "工序编号")})
+
+    navigation = layout_probes({"target": snapshot(path)}, obligations)
+
+    table = navigation["documents"]["target"]["tables"][0]
+    assert table["text_matches"] == []
+    assert table["structure_starts"] == [f"Q{row}" for row in (25, 29, 33, 37, 41, 45, 49, 53)]
+    assert table["structure_start_total"] == 12
+    assert table["unshown_structure_bounds"] == "Q57:Q69"
+    assert len(table["windows"]) == 8
+    assert table["windows"][0]["cells"]["Q25"]["state"] == "unknown_formula_cache"
+    assert table["windows"][0]["cells"]["Q25"]["formula"] == "=1+1"
+
+
+@pytest.mark.parametrize("known_field", [False, True])
+def test_dense_offset_header_band_shows_a_distant_alias_without_using_its_meaning(tmp_path, known_field):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "审核记录"
+    for column in range(1, 18):
+        sheet.cell(25, column, "作业单元编号" if column == 17 else f"字段 {column}")
+        sheet.cell(26, column, "010")
+    path = tmp_path / "offset-dense-header.xlsx"
+    workbook.save(path)
+    compiled = rule_plan("identity", "工序编号")
+    if known_field:
+        raw = compiled.model_dump(mode="json")
+        raw["ontology"]["entities"][0]["attributes"]["字段 1"] = "string"
+        raw["rules"][0]["program"]["require"] = {
+            "kind": "all",
+            "items": [
+                {"kind": "value_test", "field": "字段 1", "op": "not_empty"},
+                {"kind": "value_test", "field": "工序编号", "op": "not_empty"},
+            ],
+        }
+        compiled = RulePlan.model_validate(raw)
+    plans = {"target": compiled}
+    initial, obligations = prepare_audit(plans)
+    documents = {"target": snapshot(path)}
+
+    navigation = layout_probes(documents, obligations)
+
+    table = navigation["documents"]["target"]["tables"][0]
+    assert [match["attribute"] for match in table["text_matches"]] == (["字段 1"] if known_field else [])
+    assert table["structure_starts"] == ["A25"]
+    assert any(window["cells"].get("Q25", {}).get("value") == "作业单元编号" for window in table["windows"])
+    assert any(window["cells"].get("Q26", {}).get("value") == "010" for window in table["windows"])
+    assert derive_report(initial, documents, plans).checks[0].status == "UNABLE"
+
+
+def test_very_wide_offset_header_band_exposes_its_unshown_columns(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "审核记录"
+    for column in range(1, 41):
+        sheet.cell(25, column, f"字段 {column}")
+        sheet.cell(26, column, "010")
+    path = tmp_path / "offset-wide-header.xlsx"
+    workbook.save(path)
+    _initial, obligations = prepare_audit({"target": rule_plan("identity", "工序编号")})
+
+    navigation = layout_probes({"target": snapshot(path)}, obligations)
+
+    table = navigation["documents"]["target"]["tables"][0]
+    assert table["structure_starts"] == ["A25"]
+    assert len(table["windows"][0]["selection"]["columns"]) == 32
+    assert table["unshown_structure_columns"] == [{"start": "A25", "rows": [24, 25, 26], "columns": [33, 40], "count": 8}]
+    assert table["windows"][0]["cells"]["AF25"]["value"] == "字段 32"
+    assert "AN25" not in table["windows"][0]["cells"]
+
+
 def test_document_judge_search_fields_retain_their_own_target_and_rule():
     raw = rule_plan("approval", "id").model_dump(mode="json")
     raw["rules"][0]["program"] = {"kind": "document", "require": {"kind": "judge", "question": "核对批准日期", "fields": ["批准日期"]}}
