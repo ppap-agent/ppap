@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from ppap_core.audits import DEEP_PROTOCOL_REVISION
 from ppap_core.files import ObjectMissing
 from ppap_core.settings import Settings
@@ -702,3 +703,64 @@ class SemanticCacheContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def scoped_rule_variants():
+    spec = _spec()
+    second = spec.files[0].model_copy(deep=True, update={"file_version_id": "target-two", "file_id": "file-two", "filename": "second.xlsx"})
+    second.rule_body["appendix"] = [{
+        "id": "confirmation-two", "kind": "interpretation", "content": "Test input: this explanation applies only to the second target.",
+        "scope": {"document_ids": [second.file_version_id], "rule_ids": ["R1"], "rule_targets": [{"document_id": second.file_version_id, "rule_id": "R1"}]},
+    }]
+    spec.files.insert(1, second)
+    return spec
+
+
+def test_same_published_version_has_distinct_stable_scoped_packet_identities():
+    single, _ = semantic_inputs(_spec(), ENGINE)
+    spec = scoped_rule_variants()
+    third = spec.files[0].model_copy(deep=True, update={"file_version_id": "target-three", "filename": "third.xlsx"})
+    spec.files.insert(2, third)
+    submission, packets = semantic_inputs(spec, ENGINE)
+    assert len(submission.rules) == len(packets) == 2
+    assert {rule.rule_version_id for rule in submission.rules} == {RULE}
+    assert submission.targets[TARGET] == submission.targets[third.file_version_id]
+    assert submission.targets[TARGET] != submission.targets["target-two"]
+    assert all(rule.rule_id != RULE and len(rule.rule_id) <= 256 and "/" not in rule.rule_id for rule in submission.rules)
+    by_id = {rule.rule_id: rule for rule in submission.rules}
+    assert by_id[submission.targets[TARGET]].plan_revision == single.rules[0].plan_revision
+    assert by_id[submission.targets[TARGET]].plan_revision != by_id[submission.targets["target-two"]].plan_revision
+    assert all(json.loads(raw)["rule_version_id"] == RULE for raw in packets.values())
+    assert "appendix" not in json.loads(packets[submission.targets[TARGET]])["rule_body"]
+    assert json.loads(packets[submission.targets["target-two"]])["rule_body"]["appendix"][0]["scope"]["document_ids"] == ["target-two"]
+    reordered, reordered_packets = semantic_inputs(spec.model_copy(update={"files": list(reversed(spec.files))}), ENGINE)
+    assert reordered.targets == submission.targets and reordered_packets == packets
+    assert {rule.rule_id: rule.plan_revision for rule in reordered.rules} == {rule.rule_id: rule.plan_revision for rule in submission.rules}
+    # Removing an unrelated scope variant restores the ordinary public ID,
+    # while the unchanged effective packet keeps its reusable plan revision.
+    only_confirmed = spec.model_copy(update={"files": [file for file in spec.files if file.role == "reference" or file.file_version_id == "target-two"]})
+    confirmed, _ = semantic_inputs(only_confirmed, ENGINE)
+    assert confirmed.rules[0].rule_id == RULE
+    assert confirmed.rules[0].plan_revision == by_id[submission.targets["target-two"]].plan_revision
+
+
+@pytest.mark.parametrize("defect", ["body", "metadata", "origin"])
+def test_scoped_appendix_variants_do_not_allow_a_published_base_to_change(defect):
+    spec = scoped_rule_variants()
+    if defect == "body":
+        spec.files[1].rule_body["rules"][0]["rule_to_check"] = "A substituted base clause is not an appendix confirmation."
+    elif defect == "metadata":
+        spec.files[1].rule_body["customers"] = ["different customer"]
+    else:
+        spec.files[1].rule_source_file_version_id = "different-published-original"
+    with pytest.raises(DeepError, match="deep_integrity_mismatch"):
+        semantic_inputs(spec, ENGINE)
+
+
+def test_equal_packets_of_one_published_version_still_share_the_original_rule_id():
+    spec = _spec()
+    second = spec.files[0].model_copy(deep=True, update={"file_version_id": "target-two", "filename": "second.xlsx"})
+    spec.files.insert(1, second)
+    submission, packets = semantic_inputs(spec, ENGINE)
+    assert len(submission.rules) == 1 and set(packets) == {RULE}
+    assert submission.targets == {TARGET: RULE, "target-two": RULE}

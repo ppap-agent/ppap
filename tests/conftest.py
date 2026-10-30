@@ -420,13 +420,15 @@ class FeedbackModel:
         assert schema is AuditTrace
         documents = json.loads((work / "documents.json").read_text())
         targets = json.loads((work / "targets.json").read_text())
-        bindings, identities = [], {}
+        bindings, cp_bindings = [], {}
+        multi_target = len(targets) > 1
         for document_id, document in documents.items():
             table = document["tables"][0]
             kind = table["id"]
             assert kind in {"PFD", "CP"}
-            name = kind.lower()
-            identities[name] = document_id
+            name = "cp-" + document_id if kind == "CP" and multi_target else kind.lower()
+            if kind == "CP":
+                cp_bindings[document_id] = name
             binding = {
                 "id": name,
                 "document_id": document_id,
@@ -442,7 +444,7 @@ class FeedbackModel:
             if kind == "CP":
                 binding["interpretations"] = [
                     {
-                        "id": QUESTION_ID,
+                        "id": QUESTION_ID + "-" + document_id if multi_target else QUESTION_ID,
                         "field": "code",
                         "question": "本控制计划的作业单元编号是否表示工序编号？",
                         "candidates": [{"id": CANDIDATE_ID, "label": "按工序编号理解", "explanation": EXPLANATION}],
@@ -451,12 +453,12 @@ class FeedbackModel:
                 ]
             bindings.append(binding)
         pfd = {"kind": "bound", "scopes": [{"binding_id": "pfd", "objects": [{"id": "010", "rows": [2]}, {"id": "020", "rows": [3]}]}]}
-        cp = {"kind": "bound", "scopes": [{"binding_id": "cp", "objects": [{"id": "010", "rows": [2, 3]}, {"id": "020", "rows": [4]}]}]}
-        for collection, table in [(pfd, "PFD"), (cp, "CP")]:
+        cp = {target: {"kind": "bound", "scopes": [{"binding_id": cp_bindings[target], "objects": [{"id": "010", "rows": [2, 3]}, {"id": "020", "rows": [4]}]}]} for target in targets}
+        for collection, table in [(pfd, "PFD"), *((item, "CP") for item in cp.values())]:
             for item in collection["scopes"][0]["objects"]:
                 item["basis"] = "原始工序编号及其后续空白行共同描述一个工序；不同编号分别保留。"
                 item["evidence"] = [{"kind": "xlsx_cell", "sheet": table, "cell": f"A{row}"} for row in item["rows"]]
-        uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp} if clause["id"] != "R3" else {})}} for target in targets for clause in RULES]
+        uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp[target]} if clause["id"] != "R3" else {})}} for target in targets for clause in RULES]
         return AuditTrace.model_validate({"bindings": bindings, "uses": uses})
 
 
