@@ -17,6 +17,7 @@ from ppap_deep.client import DeepError
 from ppap_deep.controller import ExecutionContext
 from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import DeepCoverage, DeepFinding, DeepVerification, ExecuteRequest, ExecuteResponse
+from ppap_deep.semantic.document_tools import ParserLimitError, ReadLimits, snapshot
 from ppap_deep.semantic.evidence import EvidenceBudget, resolve_optional
 from ppap_deep.semantic.guest import CompileManifest, Manifest, validate_plan
 from ppap_deep.semantic.models import AuditReport, RulePlan
@@ -268,13 +269,32 @@ class SemanticRuntime:
             pass
 
     @staticmethod
-    def _candidate(bundle: ResultBundle, submission: SubmissionSpec, plans: dict[str, RulePlan], failed_rules: dict[str, CompileFailureRecord], packets: dict[str, bytes]) -> ResultBundle:
+    def _observation(document: dict) -> dict:
+        # Cache names are host-local metadata. Every source fact, field state,
+        # layout, read parameter and omission remains part of the comparison.
+        source = document.get("source")
+        if not isinstance(source, dict):
+            raise ValueError("Document observation lacks its source")
+        return {**document, "source": {key: value for key, value in source.items() if key != "file"}}
+
+    @classmethod
+    def _checked_documents(cls, supplied: dict[str, dict], trusted: dict[str, dict]) -> dict[str, dict]:
+        if set(supplied) != set(trusted) or any(encoded(cls._observation(supplied[key])) != encoded(cls._observation(value)) for key, value in trusted.items()):
+            raise ValueError("Document observation differs from the frozen original")
+        return trusted
+
+    @staticmethod
+    def _candidate(
+        bundle: ResultBundle, submission: SubmissionSpec, plans: dict[str, RulePlan], failed_rules: dict[str, CompileFailureRecord],
+        packets: dict[str, bytes], documents: dict[str, dict],
+    ) -> ResultBundle:
         if bundle.plans != plans or bundle.failed_rules != failed_rules:
             raise ValueError("Recovery changed the frozen compilation")
         for rule in submission.rules:
             source = bundle.rule_sources[rule.rule_id]
             if any(source.get(key) != value for key, value in json.loads(packets[rule.rule_id]).items()):
                 raise ValueError("Recovery changed the frozen rule source")
+        bundle.documents = SemanticRuntime._checked_documents(bundle.documents, documents)
         targets = {audit_id: plans[rule_id] for audit_id, rule_id in submission.targets.items() if rule_id in plans}
         bundle.report = derive_report(bundle.trace, bundle.documents, targets)
         validate_bundle(bundle, submission)
@@ -289,6 +309,8 @@ class SemanticRuntime:
             raise DeepError(FAULTS.get(exc.code, "deep_execution_failed")) from exc
         except TimeoutError as exc:
             raise DeepError("deep_timeout") from exc
+        except ParserLimitError as exc:
+            raise DeepError("deep_parser_limit") from exc
         except (ValueError, KeyError, TypeError) as exc:
             raise DeepError("deep_output_invalid") from exc
 
@@ -340,6 +362,38 @@ class SemanticRuntime:
             if recovery is not None:
                 usage.update(recovery.usage)
                 failed_rules.update(recovery.failed_rules)
+
+            trusted_documents: dict[str, dict] | None = None
+
+            def native_documents() -> dict[str, dict]:
+                nonlocal trusted_documents
+                if trusted_documents is None:
+                    parsed: dict[tuple[str, str], dict] = {}
+                    documents = {}
+                    limits = ReadLimits()
+                    observation_bytes = 0
+                    for index, doc in enumerate(submission.documents):
+                        context.raise_if_cancelled()
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Deep deadline exceeded")
+                        key = (doc.sha256, doc.format)
+                        if key not in parsed:
+                            original = root / f"native-{index}{doc.format}"
+                            original.write_bytes(files[doc.audit_id])
+                            parsed[key] = snapshot(original, limits=limits)
+                            validate_snapshot(parsed[key], doc.sha256, doc.format)
+                        context.raise_if_cancelled()
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Deep deadline exceeded")
+                        documents[doc.audit_id] = parsed[key]
+                        observation_bytes += len(encoded(parsed[key]))
+                        if observation_bytes > limits.output_bytes:
+                            raise ParserLimitError("Document observations exceed the execution output budget")
+                        context.raise_if_cancelled()
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Deep deadline exceeded")
+                    trusted_documents = documents
+                return trusted_documents
 
             def progress(value):
                 state = {"phase": value.phase}
@@ -468,14 +522,17 @@ class SemanticRuntime:
             (inputs / "manifest.json").write_bytes(manifest.model_dump_json().encode())
             if recovery is not None and recovery.trace is not None:
                 documents = {doc.audit_id: read_json(inputs, (cached_snapshots["document:" + doc.audit_id],), MAX_BUNDLE_BYTES) for doc in submission.documents}
-                if set(recovery.snapshot_digests) != set(documents) or any(recovery.snapshot_digests[key] != hashlib.sha256(encoded(value)).hexdigest() for key, value in documents.items()):
+                self._checked_documents(documents, native_documents())
+                if set(recovery.snapshot_digests) != set(documents) or any(
+                    recovery.snapshot_digests[key] != hashlib.sha256(encoded(self._observation(value))).hexdigest() for key, value in documents.items()
+                ):
                     raise ValueError("Recovery snapshot digest mismatch")
                 sources = {rule.rule_id: {**json.loads(packets[rule.rule_id]), "source": {"sha256": rule.sha256, "format": rule.format}} for rule in submission.rules}
                 candidate = ResultBundle(
                     execution_id=submission.execution_id, semantic_engine_revision=revision, documents=documents,
                     rule_sources=sources, plans=plans, failed_rules=failed_rules, report=AuditReport(checks=[]), trace=recovery.trace,
                 )
-                candidate = self._candidate(candidate, submission, plans, failed_rules, packets)
+                candidate = self._candidate(candidate, submission, plans, failed_rules, packets, native_documents())
                 if all(check.unknown == 0 for check in candidate.report.checks):
                     context.raise_if_cancelled()
                     if time.monotonic() >= deadline:
@@ -507,14 +564,14 @@ class SemanticRuntime:
                     pass
                 try:
                     candidate = ResultBundle.model_validate(read_json(work, ("candidate.json",), MAX_BUNDLE_BYTES))
-                    candidate = self._candidate(candidate, submission, plans, failed_rules, packets)
+                    candidate = self._candidate(candidate, submission, plans, failed_rules, packets, native_documents())
                     trace = candidate.trace
-                    snapshot_digests = {key: hashlib.sha256(encoded(value)).hexdigest() for key, value in candidate.documents.items()}
+                    snapshot_digests = {key: hashlib.sha256(encoded(self._observation(value))).hexdigest() for key, value in candidate.documents.items()}
                     for name in ("tool_calls", "completed_tool_calls", "compactions"):
                         current_usage[name] += getattr(candidate, name)
                     for doc in submission.documents:
                         self._put(f"{prefix}/snapshots/{doc.sha256}{doc.format}.json", candidate.documents[doc.audit_id])
-                except (OSError, ValueError, KeyError, TypeError):
+                except (OSError, ValueError, KeyError, TypeError, TimeoutError, DeepError):
                     pass  # Invalid or incomplete writes never enter trusted caches.
                 saved = RecoveryRecord(
                     spec=submission, job_id=spec.job_id, attempt=spec.attempt, expires_at=expires_at, usage=current_usage,
@@ -532,7 +589,11 @@ class SemanticRuntime:
                 raise ValueError("Audit changed the frozen compilation results")
             for name, count in usage.items():
                 setattr(bundle, name, getattr(bundle, name) + count)
+            bundle.documents = self._checked_documents(bundle.documents, native_documents())
             response = product_response(spec, bundle, submission)
+            context.raise_if_cancelled()
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Deep deadline exceeded")
             source = getattr(self.runtime, "usage_source", "unknown")
             response.usage_source = "controlled" if source == "controlled" else "provider" if source == "provider" else "unknown"
             for doc in submission.documents:
