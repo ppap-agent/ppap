@@ -1,5 +1,7 @@
 """MCP 2026 wire -> real application, native PG and semantic guest."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -523,3 +525,126 @@ async def test_legacy_sdk_endpoint_reads_the_same_deep_round(deep_feedback_env):
     modern = rpc(env, token, "tools/call", {"name": "read_audit", "arguments": {"round_id": env["round_id"]}})["result"]["structuredContent"]
     assert modern["results"][0]["findings"] == record["findings"]
     assert modern["appendix"] == []
+
+
+@pytest.mark.parametrize("phase", ["after_claim", "after_business_commit"])
+@pytest.mark.parametrize("channel", ["mrtr", "task"])
+def test_original_answer_recovers_after_real_commit_before_protocol_receipt(deep_feedback_env, monkeypatch, phase, channel):
+    env = deep_feedback_env
+    token = access(env)
+    caps = {"elicitation": {"form": {}}}
+    if channel == "task":
+        caps["extensions"] = {TASKS: {}}
+    view = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    change = change_payload(view, env["uploaded"])
+    args = {"name": "apply_rule_change", "arguments": {"round_id": env["round_id"], "change": change}}
+    pending = rpc(env, token, "tools/call", args, capabilities=caps)["result"]
+    key = next(iter(pending["inputRequests"]))
+    task_id = pending.get("taskId") or pending["requestState"]
+    answer = {key: {"action": "accept", "content": {"content": change["content"]}}}
+    method = "tasks/update" if channel == "task" else "tools/call"
+    params = {"taskId": task_id, "inputResponses": answer} if channel == "task" else {**args, "requestState": task_id, "inputResponses": answer}
+    adapter = env["app"].state.mcp_deep_adapter
+    original = adapter.transport.claim_operation if phase == "after_claim" else adapter.product.apply_rule_change
+
+    def interrupt_after_commit(*arguments, **kwargs):
+        original(*arguments, **kwargs)
+        # A failure after the real transaction commit leaves the next layer's
+        # receipt unwritten. No parser, evaluator or business result is mocked.
+        raise RuntimeError("synthetic process interruption at " + phase)
+
+    with monkeypatch.context() as fault:
+        owner, name = (adapter.transport, "claim_operation") if phase == "after_claim" else (adapter.product, "apply_rule_change")
+        fault.setattr(owner, name, interrupt_after_commit)
+        response = env["wire_client"].post(
+            "/mcp/deep",
+            headers={
+                "Authorization": "Bearer " + token,
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": VERSION,
+                "Mcp-Method": method,
+                "Mcp-Name": task_id if channel == "task" else "apply_rule_change",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": "interrupted-submit",
+                "method": method,
+                "params": {
+                    **params,
+                    "_meta": {PREFIX + "protocolVersion": VERSION, PREFIX + "clientCapabilities": caps},
+                },
+            },
+        )
+        assert response.status_code == 500
+    with env["store"]._conn() as conn:
+        state, recorded = conn.execute("SELECT state,result FROM product.mcp_operations WHERE id=%s", (task_id,)).fetchone()
+        assert state == "running" and recorded["input_responses"] == answer and "receipt" not in recorded
+    partial = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    assert len(partial["operations"]) == int(phase == "after_business_commit")
+    old_app = env["app"]
+    old_client = env["wire_client"]
+    env["restart_wire"]()
+    assert env["app"] is not old_app and env["wire_client"] is not old_client
+    if phase == "after_claim":
+        if channel == "task":
+            status = rpc(env, token, "tasks/get", {"taskId": task_id}, capabilities=caps)["result"]
+            assert status["status"] == "working" and "inputRequests" not in status and "result" not in status
+        else:
+            again = rpc(env, token, "tools/call", args, capabilities=caps)["result"]
+            assert next(iter(again["inputRequests"])) == key
+    changed_answer = {key: {"action": "accept", "content": {"content": change["content"] + " 不同的测试编辑。"}}}
+    conflict = rpc(env, token, method, {**params, "inputResponses": changed_answer}, capabilities=caps)
+    assert conflict["error"]["message"] == "idempotency_conflict"
+    recovered = rpc(env, token, method, params, capabilities=caps)
+    assert "error" not in recovered, recovered
+    receipt = env["store"].read_rule_change(env["principal"], env["round_id"], change["operation_id"])
+    assert receipt and receipt["operation_id"] == change["operation_id"]
+    if channel == "mrtr":
+        assert recovered["result"]["structuredContent"] == receipt
+    after = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    assert len(after["operations"]) == 1 and len(after["results"]) == 2
+    assert len(after["appendix"]) == 1 and after["appendix"][0]["content"] == change["content"]
+    assert after["current_round_id"] == receipt["analysis_round_id"]
+    assert "error" not in rpc(env, token, method, params, capabilities=caps)
+    env["run_jobs"]()
+    actual = env["client"].get("/rounds/" + receipt["analysis_round_id"]).json()
+    assert [finding["status"] for finding in actual["findings"]] == ["PASS", "NG", "PASS"]
+    with env["store"]._conn() as conn:
+        assert conn.execute("SELECT count(*) FROM engine.jobs WHERE audit_round_id=%s AND kind='audit'", (receipt["analysis_round_id"],)).fetchone()[0] == 1
+        assert conn.execute("SELECT result FROM product.mcp_operations WHERE id=%s", (task_id,)).fetchone()[0]["receipt"] == receipt
+
+
+def test_first_accepted_response_is_frozen_before_claim_and_cannot_be_overwritten(deep_feedback_env, monkeypatch):
+    env = deep_feedback_env
+    token = access(env)
+    view = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    change = change_payload(view, env["uploaded"], intent="save_only")
+    args = {"name": "apply_rule_change", "arguments": {"round_id": env["round_id"], "change": change}}
+    pending = rpc(env, token, "tools/call", args)["result"]
+    key = next(iter(pending["inputRequests"]))
+    first = {**args, "inputResponses": {key: {"action": "accept", "content": {"content": change["content"]}}}}
+    entered, release = threading.Event(), threading.Event()
+    transport = env["app"].state.mcp_deep_adapter.transport
+    original = transport.claim_operation
+
+    def pause_before_claim(*arguments, **kwargs):
+        entered.set()
+        assert release.wait(10), "test did not release the accepted response"
+        return original(*arguments, **kwargs)
+
+    monkeypatch.setattr(transport, "claim_operation", pause_before_claim)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        accepted = pool.submit(rpc, env, token, "tools/call", first, None, "first-response")
+        try:
+            assert entered.wait(10)
+            changed = {key: {"action": "accept", "content": {"content": change["content"] + " 并发的不同编辑。"}}}
+            other = rpc(env, token, "tools/call", {**args, "inputResponses": changed}, rpc_id="different-response")
+            assert other["error"]["message"] == "idempotency_conflict"
+            closed = rpc(env, token, "tools/call", {**args, "inputResponses": {key: {"action": "decline"}}}, rpc_id="concurrent-close")
+            assert closed["error"]["message"] == "idempotency_conflict"
+        finally:
+            release.set()
+        result = accepted.result(timeout=10)
+    assert "error" not in result, result
+    saved = env["store"].read_deep_feedback(env["principal"], env["round_id"])
+    assert len(saved["operations"]) == 1 and saved["appendix"][0]["content"] == change["content"]

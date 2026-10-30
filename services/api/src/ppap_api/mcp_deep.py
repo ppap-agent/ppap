@@ -13,7 +13,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -80,7 +80,11 @@ class DeepMcp:
             return None
         snapshot = next((q for q in view["clarifications"] if q["id"] == payload.get("question_id")), None)
         selected_mode = "url" if "url" in mode and "form" not in mode else "form"
-        key = "confirm_" + hashlib.sha256(json.dumps([operation["id"], operation["updated_at"], arguments["revision"], view["revision"], snapshot, selected_mode], sort_keys=True).encode()).hexdigest()
+        epoch = (operation.get("result") or {}).get("question_epoch")
+        key = (
+            "confirm_"
+            + hashlib.sha256(json.dumps([operation["id"], operation["created_at"], epoch, arguments["revision"], view["revision"], snapshot, selected_mode], sort_keys=True).encode()).hexdigest()
+        )
         if "url" in mode and "form" not in mode:
             params = {
                 "mode": "url",
@@ -146,13 +150,10 @@ class DeepMcp:
         task = {"taskId": operation["id"], "createdAt": operation.get("created_at", now), "lastUpdatedAt": operation.get("updated_at", now), "ttlMs": None, "pollIntervalMs": 1000}
         if operation["state"] == "denied":
             return {**task, "status": "cancelled"}
-        result = operation.get("result")
-        if not result:
+        receipt = (operation.get("result") or {}).get("receipt")
+        if not receipt:
             receipt = self.product.read_rule_change(delegation.session.principal, operation["arguments"]["round_id"], operation["arguments"]["change"]["operation_id"])
-            if receipt:
-                result = {"receipt": receipt}
-        if result:
-            receipt = result["receipt"]
+        if receipt:
             analysis = receipt.get("analysis_round_id")
             if analysis:
                 analysis_view = self.read(delegation, analysis)
@@ -166,20 +167,77 @@ class DeepMcp:
                 "status": "failed",
                 "error": {"code": -32602, "message": "confirmation_expired", "data": {"workspace_url": self.provider.settings.canonical_web_url() + "/audit?round=" + view["current_round_id"]}},
             }
+        if "input_responses" in (operation.get("result") or {}):
+            return {**task, "status": "working", "statusMessage": "已收到本次回答，正在核对保存状态；可恢复原提交或在审核工作区读回。"}
         question = self.question(operation, view, capabilities)
         if question:
             return {**task, "status": "input_required", "inputRequests": {question[0]: question[1]}}
         return {**task, "status": "working", "statusMessage": "请在审核工作区核对并提交解释：" + self.provider.settings.canonical_web_url() + "/audit?round=" + view["current_round_id"]}
 
+    @staticmethod
+    def submitted_change(operation, response):
+        content = response.get("content")
+        change = dict(operation["arguments"]["change"])
+        if change.get("content"):
+            if not isinstance(content, dict) or set(content) != {"content"} or not isinstance(content["content"], str):
+                raise McpError("invalid_input_response")
+            if content["content"] != change["content"]:
+                change.pop("candidate_id", None)
+            change["content"] = content["content"]
+        elif content != {"confirm": True}:
+            raise McpError("invalid_input_response")
+        return change
+
+    def remember_response(self, delegation, operation, responses, *, closed=False):
+        """Bind one accepted response before claim or application can commit."""
+        with self.transport.connection() as conn:
+            conn.execute("SELECT id FROM product.mcp_grants WHERE id=%s FOR UPDATE", (delegation.id,))
+            current = self.transport._delegation(conn, delegation.id)
+            current.require(operation["arguments"]["required_scope"])
+            if operation["arguments"]["change"].get("content") or operation["arguments"]["change"].get("remove_appendix_ids"):
+                current.require("rules:write")
+            row = conn.execute("SELECT * FROM product.mcp_operations WHERE id=%s AND grant_id=%s FOR UPDATE", (operation["id"], delegation.id)).fetchone()
+            if not row or row["state"] == "denied":
+                raise McpError("task_cancelled", 409)
+            recorded = row["result"] or {}
+            if "input_responses" in recorded:
+                if recorded["input_responses"] != responses:
+                    raise McpError("idempotency_conflict", 409)
+                return
+            if recorded.get("question_epoch") != (operation.get("result") or {}).get("question_epoch") or closed and row["state"] != "ready":
+                raise McpError("invalid_input_response", 409)
+            recorded = {"question_epoch": str(uuid4())} if closed else {**recorded, "input_responses": responses}
+            conn.execute("UPDATE product.mcp_operations SET result=%s,updated_at=now() WHERE id=%s", (Jsonb(recorded), operation["id"]))
+
+    def settle(self, delegation, operation, responses, receipt):
+        with self.transport.connection() as conn:
+            conn.execute(
+                "UPDATE product.mcp_operations SET state='succeeded',result=COALESCE(result,'{}'::jsonb)||%s,updated_at=now() WHERE id=%s AND grant_id=%s",
+                (Jsonb({"receipt": receipt, "input_responses": responses}), operation["id"], delegation.id),
+            )
+
     def apply(self, delegation, operation, responses, capabilities, state=None):
         if state is not None and state != operation["id"]:
             raise McpError("invalid_request_state", 409)
         arguments = operation["arguments"]
-        view = self.read(delegation, arguments["round_id"])
-        if operation.get("result"):
-            if responses != operation["result"].get("input_responses"):
+        current = self.transport.delegation(delegation.id)
+        if arguments["change"].get("content") or arguments["change"].get("remove_appendix_ids"):
+            current.require("rules:write")
+        current.require(arguments["required_scope"])
+        view = self.read(current, arguments["round_id"])
+        recorded = operation.get("result") or {}
+        if "input_responses" in recorded:
+            if responses != recorded["input_responses"]:
                 raise McpError("idempotency_conflict", 409)
-            return complete(operation["result"]["receipt"])
+            existing = self.product.read_rule_change(current.session.principal, arguments["round_id"], arguments["change"]["operation_id"])
+            if existing:
+                if "receipt" not in recorded:
+                    # The shared action validates the exact final content and
+                    # returns its durable receipt without another save/queue.
+                    change = self.submitted_change(operation, next(iter(responses.values())))
+                    existing = self.product.apply_rule_change(current.session.principal, arguments["round_id"], change)
+                    self.settle(current, operation, responses, existing)
+                return complete(existing)
         if datetime.now(timezone.utc) - datetime.fromisoformat(operation["created_at"]) > timedelta(hours=1):
             raise McpError("confirmation_expired", 409)
         question = self.question(operation, view, capabilities)
@@ -189,29 +247,16 @@ class DeepMcp:
         if not isinstance(response, dict):
             raise McpError("invalid_input_response")
         if response.get("action") in {"decline", "cancel"}:
-            # Closing an elicitation does not cancel an accepted audit.
-            # A later interaction receives a fresh key, even for the same Hole.
-            with self.transport.connection() as conn:
-                conn.execute("UPDATE product.mcp_operations SET updated_at=now() WHERE id=%s AND state='ready'", (operation["id"],))
+            # Only closing an unanswered interaction renews its key. Claim and
+            # settlement timestamps do not change that interaction's identity.
+            self.remember_response(current, operation, responses, closed=True)
             return complete({"applied": False, "reason": response["action"], "audit": view})
         if response.get("action") != "accept":
             raise McpError("invalid_input_response")
         if question[1]["params"]["mode"] == "url":
             return complete({"applied": False, "audit": view})
-        content = response.get("content")
-        change = dict(arguments["change"])
-        if change.get("content"):
-            if not isinstance(content, dict) or set(content) != {"content"} or not isinstance(content["content"], str):
-                raise McpError("invalid_input_response")
-            if content["content"] != change["content"]:
-                change.pop("candidate_id", None)
-            change["content"] = content["content"]
-        elif content != {"confirm": True}:
-            raise McpError("invalid_input_response")
-        current = self.transport.delegation(delegation.id)
-        if change.get("content") or change.get("remove_appendix_ids"):
-            current.require("rules:write")
-        current.require(operation["arguments"]["required_scope"])
+        change = self.submitted_change(operation, response)
+        self.remember_response(current, operation, responses)
         latest = self.operation(current, operation["id"])
         if latest["state"] == "denied":
             raise McpError("task_cancelled", 409)
@@ -228,11 +273,7 @@ class DeepMcp:
             except FeishuUsageError:
                 raise McpError("usage_policy_unavailable", 503) from None
         receipt = self.product.apply_rule_change(current.session.principal, arguments["round_id"], change, usage_policy=policy)
-        with self.transport.connection() as conn:
-            conn.execute(
-                "UPDATE product.mcp_operations SET state='succeeded',result=%s,updated_at=now() WHERE id=%s AND grant_id=%s",
-                (Jsonb({"receipt": receipt, "input_responses": responses}), operation["id"], delegation.id),
-            )
+        self.settle(current, operation, responses, receipt)
         return complete(receipt)
 
     def dispatch(self, delegation, method, params):
@@ -308,9 +349,12 @@ class DeepMcp:
                 if params.get("inputResponses"):
                     # Unknown or superseded keys cannot answer the current
                     # question. The Tasks extension recommends ignoring them.
-                    question = self.question(operation, self.read(delegation, operation["arguments"]["round_id"]), capabilities)
-                    if operation.get("result") or question and question[0] in params["inputResponses"]:
+                    if "input_responses" in (operation.get("result") or {}):
                         self.apply(delegation, operation, params["inputResponses"], capabilities)
+                    else:
+                        question = self.question(operation, self.read(delegation, operation["arguments"]["round_id"]), capabilities)
+                        if question and question[0] in params["inputResponses"]:
+                            self.apply(delegation, operation, params["inputResponses"], capabilities)
                 return {"resultType": "complete"}
             return {"resultType": "complete", **self.task(delegation, operation, capabilities)}
         if method != "tools/call":
@@ -345,7 +389,7 @@ class DeepMcp:
             raise McpError("task_cancelled", 409)
         if params.get("inputResponses"):
             return self.apply(delegation, operation, params["inputResponses"], capabilities, params.get("requestState"))
-        if operation.get("result"):
+        if "receipt" in (operation.get("result") or {}):
             return complete(operation["result"]["receipt"])
         if task_capable:
             return {"resultType": "task", **self.task(delegation, operation, capabilities)}
