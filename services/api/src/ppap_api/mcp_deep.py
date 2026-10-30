@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ from ppap_api.mcp_auth import OAuthProvider
 VERSION = "2026-07-28"
 TASKS = "io.modelcontextprotocol/tasks"
 PREFIX = "io.modelcontextprotocol/"
+SERVER_INFO = {"name": "PPAP Deep", "version": "1"}
 
 
 def complete(value):
@@ -65,18 +67,20 @@ class DeepMcp:
 
     def read(self, delegation, round_id):
         delegation.require("audits:read")
-        return self.product.read_deep_feedback(delegation.session.principal, round_id)
+        try:
+            return self.product.read_deep_feedback(delegation.session.principal, round_id)
+        except KeyError:
+            raise McpError("access_denied", 403) from None
 
     def question(self, operation, view, capabilities):
         arguments = operation["arguments"]
         payload = arguments["change"]
         mode = capabilities.get("elicitation", {})
-        if "form" not in mode and mode != {}:
-            mode = {"url": {}}
         if "elicitation" not in capabilities:
             return None
         snapshot = next((q for q in view["clarifications"] if q["id"] == payload.get("question_id")), None)
-        key = "confirm_" + hashlib.sha256(json.dumps([operation["id"], arguments["revision"], snapshot], sort_keys=True).encode()).hexdigest()
+        selected_mode = "url" if "url" in mode and "form" not in mode else "form"
+        key = "confirm_" + hashlib.sha256(json.dumps([operation["id"], operation["updated_at"], arguments["revision"], view["revision"], snapshot, selected_mode], sort_keys=True).encode()).hexdigest()
         if "url" in mode and "form" not in mode:
             params = {
                 "mode": "url",
@@ -96,9 +100,18 @@ class DeepMcp:
             requirements = [
                 by_id[item["file_version_id"]] + " · " + rule["id"] + "：" + rule["rule_to_check"]
                 for item in inputs
-                for rule in (item.get("rule_body") or {}).get("rules", [])
+                for rule in (item.get("rule_body") or (item.get("rule") or {}).get("body") or {}).get("rules", [])
                 if (item["file_version_id"], rule["id"]) in pairs or not pairs and rule["id"] in payload.get("scope", {}).get("rule_ids", [])
             ]
+            evidence = []
+            if snapshot:
+                evidence.extend("候选：" + candidate["label"] + "；依据与解释：" + candidate["explanation"] for candidate in snapshot["candidates"])
+                for source in snapshot["sources"]:
+                    locator = source["locator"]
+                    position = " · ".join(str(locator[field]) for field in ("sheet", "table", "cell", "range", "row", "page", "line") if locator.get(field) is not None)
+                    if not position:
+                        position = json.dumps(locator, ensure_ascii=False, sort_keys=True)
+                    evidence.append("原文依据：" + by_id.get(source["document_id"], source["document_id"]) + " · " + position + "；原文：" + (source.get("excerpt") or "请在工作区读取该位置原文"))
             effect = "保存说明，并对本工作区全部待审资料重新分析。" if payload["intent"] == "save_and_analyze" else "仅保存说明，不开始新的分析。"
             target_count = sum(item["role"] == "target" for item in inputs)
             cost = f"本次重新分析 {target_count} 份待审资料，标准用量 {audit_usage_points(target_count)} 点；按组织额度受理。" if self.product.settings.usage_charge_enabled else "本次计费关闭。"
@@ -106,6 +119,7 @@ class DeepMcp:
                 [
                     *(q["question"] for q in view["clarifications"] if q["id"] == payload.get("question_id")),
                     "资料：" + "、".join(names),
+                    *evidence,
                     "解释仅作用于：" + "、".join(scope_names) if scope_names else "使用本次已保存的规则与说明。",
                     *requirements,
                     "修改：" + (payload.get("content") or "移除以下已确认说明" if removals else payload.get("content") or "按已保存说明开始分析"),
@@ -155,17 +169,19 @@ class DeepMcp:
         question = self.question(operation, view, capabilities)
         if question:
             return {**task, "status": "input_required", "inputRequests": {question[0]: question[1]}}
-        return {**task, "status": "working", "statusMessage": "请在审核工作区核对并提交解释。"}
+        return {**task, "status": "working", "statusMessage": "请在审核工作区核对并提交解释：" + self.provider.settings.canonical_web_url() + "/audit?round=" + view["current_round_id"]}
 
     def apply(self, delegation, operation, responses, capabilities, state=None):
         if state is not None and state != operation["id"]:
             raise McpError("invalid_request_state", 409)
         arguments = operation["arguments"]
-        if datetime.now(timezone.utc) - datetime.fromisoformat(operation["created_at"]) > timedelta(hours=1):
-            raise McpError("confirmation_expired", 409)
         view = self.read(delegation, arguments["round_id"])
         if operation.get("result"):
+            if responses != operation["result"].get("input_responses"):
+                raise McpError("idempotency_conflict", 409)
             return complete(operation["result"]["receipt"])
+        if datetime.now(timezone.utc) - datetime.fromisoformat(operation["created_at"]) > timedelta(hours=1):
+            raise McpError("confirmation_expired", 409)
         question = self.question(operation, view, capabilities)
         if not question or not isinstance(responses, dict) or set(responses) != {question[0]}:
             raise McpError("invalid_input_response", 409)
@@ -174,6 +190,9 @@ class DeepMcp:
             raise McpError("invalid_input_response")
         if response.get("action") in {"decline", "cancel"}:
             # Closing an elicitation does not cancel an accepted audit.
+            # A later interaction receives a fresh key, even for the same Hole.
+            with self.transport.connection() as conn:
+                conn.execute("UPDATE product.mcp_operations SET updated_at=now() WHERE id=%s AND state='ready'", (operation["id"],))
             return complete({"applied": False, "reason": response["action"], "audit": view})
         if response.get("action") != "accept":
             raise McpError("invalid_input_response")
@@ -212,26 +231,40 @@ class DeepMcp:
         with self.transport.connection() as conn:
             conn.execute(
                 "UPDATE product.mcp_operations SET state='succeeded',result=%s,updated_at=now() WHERE id=%s AND grant_id=%s",
-                (Jsonb({"receipt": receipt}), operation["id"], delegation.id),
+                (Jsonb({"receipt": receipt, "input_responses": responses}), operation["id"], delegation.id),
             )
         return complete(receipt)
 
     def dispatch(self, delegation, method, params):
         meta = params.get("_meta", {})
-        if meta.get(PREFIX + "protocolVersion") != VERSION or not isinstance(meta.get(PREFIX + "clientInfo"), dict):
+        if meta.get(PREFIX + "protocolVersion") != VERSION:
             raise McpError("unsupported_protocol_version")
+        info = meta.get(PREFIX + "clientInfo")
+        if PREFIX + "clientInfo" in meta and (not isinstance(info, dict) or not all(isinstance(info.get(field), str) for field in ("name", "version"))):
+            raise McpError("invalid_client_info")
         capabilities = meta.get(PREFIX + "clientCapabilities")
-        if not isinstance(capabilities, dict) or not isinstance(capabilities.get("extensions", {}), dict) or "elicitation" in capabilities and not isinstance(capabilities["elicitation"], dict):
+        if not isinstance(capabilities, dict) or not isinstance(capabilities.get("extensions", {}), dict) or any(not isinstance(value, dict) for value in capabilities.get("extensions", {}).values()):
             raise McpError("missing_client_capabilities")
+        mode = capabilities.get("elicitation")
+        if "elicitation" in capabilities:
+            if not isinstance(mode, dict) or mode and not ({"form", "url"} & mode.keys()):
+                raise McpError("invalid_elicitation_capability")
+            if any(not isinstance(value, dict) for name, value in mode.items() if name in {"form", "url"}):
+                raise McpError("invalid_elicitation_capability")
         task_capable = TASKS in capabilities.get("extensions", {})
         if method == "server/discover":
-            return {"protocolVersion": VERSION, "serverInfo": {"name": "PPAP Deep", "version": "1"}, "capabilities": {"tools": {}, "extensions": {TASKS: {}}}}
+            return {"resultType": "complete", "supportedVersions": [VERSION], "capabilities": {"tools": {}, "extensions": {TASKS: {}}}, "ttlMs": 0, "cacheScope": "private"}
+        if method == "ping":
+            return {"resultType": "complete"}
         if method == "tools/list":
             from ppap_api.deep_feedback import RuleChangeRequest
 
             change_schema = RuleChangeRequest.model_json_schema()
             definitions = change_schema.pop("$defs", {})
             return {
+                "resultType": "complete",
+                "ttlMs": 0,
+                "cacheScope": "private",
                 "tools": [
                     {"name": name, "description": description, "inputSchema": schema}
                     for name, description, schema in (
@@ -257,7 +290,7 @@ class DeepMcp:
                             },
                         ),
                     )
-                ]
+                ],
             }
         if method in {"tasks/get", "tasks/update", "tasks/cancel"}:
             if not task_capable:
@@ -266,8 +299,6 @@ class DeepMcp:
             if operation["arguments"]["change"].get("content") or operation["arguments"]["change"].get("remove_appendix_ids"):
                 delegation.require("rules:write")
             if method == "tasks/cancel":
-                if operation.get("result"):
-                    raise McpError("task_already_completed", 409)
                 with self.transport.connection() as conn:
                     conn.execute("UPDATE product.mcp_operations SET state='denied',updated_at=now() WHERE id=%s AND state='ready'", (operation["id"],))
                 return {"resultType": "complete"}
@@ -275,7 +306,11 @@ class DeepMcp:
                 if operation["state"] == "denied":
                     raise McpError("task_cancelled", 409)
                 if params.get("inputResponses"):
-                    self.apply(delegation, operation, params["inputResponses"], capabilities)
+                    # Unknown or superseded keys cannot answer the current
+                    # question. The Tasks extension recommends ignoring them.
+                    question = self.question(operation, self.read(delegation, operation["arguments"]["round_id"]), capabilities)
+                    if operation.get("result") or question and question[0] in params["inputResponses"]:
+                        self.apply(delegation, operation, params["inputResponses"], capabilities)
                 return {"resultType": "complete"}
             return {"resultType": "complete", **self.task(delegation, operation, capabilities)}
         if method != "tools/call":
@@ -359,13 +394,18 @@ def install_deep_mcp(app, provider, transport, session_of):
                 if len(chunks) > MAX_MCP_BYTES:
                     raise McpError("request_too_large", 413)
             raw = bytes(chunks)
-            rpc = json.loads(raw)
+            try:
+                rpc = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise McpError("parse_error") from None
             if not isinstance(rpc, dict) or rpc.get("jsonrpc") != "2.0" or type(rpc.get("id")) not in (str, int) or not isinstance(rpc.get("method"), str):
                 raise McpError("invalid_request")
             params = rpc.get("params", {})
             if not isinstance(params, dict) or not isinstance(params.get("_meta"), dict):
-                raise McpError("invalid_params")
+                raise McpError("missing_request_metadata")
             meta = params["_meta"]
+            if PREFIX + "protocolVersion" not in meta or PREFIX + "clientCapabilities" not in meta:
+                raise McpError("missing_request_metadata")
             name = params.get("taskId") if rpc["method"].startswith("tasks/") else params.get("name") if rpc["method"] == "tools/call" else None
             header_name = request.headers.get("mcp-name")
             if header_name and header_name.startswith("=?base64?") and header_name.endswith("?="):
@@ -375,13 +415,21 @@ def install_deep_mcp(app, provider, transport, session_of):
             if meta.get(PREFIX + "protocolVersion") != VERSION:
                 raise McpError("unsupported_protocol_version", 400)
             result = await asyncio.to_thread(adapter.dispatch, delegation, rpc["method"], params)
+            result.setdefault("_meta", {})[PREFIX + "serverInfo"] = SERVER_INFO
             return JSONResponse({"jsonrpc": "2.0", "id": rpc["id"], "result": result}, headers={"Cache-Control": "no-store"})
-        except (McpError, ValueError, KeyError, TypeError) as error:
+        except (McpError, ValueError, KeyError, TypeError, binascii.Error) as error:
             import re
 
             code = error.code if isinstance(error, McpError) else str(error) if type(error) is ValueError and re.fullmatch("[a-z_]+", str(error)) else "invalid_params"
             status = error.status if isinstance(error, McpError) else 400
-            rpc_code = {"header_mismatch": -32020, "unsupported_protocol_version": -32022, "missing_tasks_capability": -32021, "method_not_found": -32601, "invalid_request": -32600}.get(code, -32602)
+            rpc_code = {
+                "header_mismatch": -32020,
+                "unsupported_protocol_version": -32022,
+                "missing_tasks_capability": -32021,
+                "method_not_found": -32601,
+                "invalid_request": -32600,
+                "parse_error": -32700,
+            }.get(code, -32602)
             data: dict | None = (
                 {"supported": [VERSION], "requested": request.headers.get("mcp-protocol-version", "")}
                 if rpc_code == -32022
@@ -397,6 +445,14 @@ def install_deep_mcp(app, provider, transport, session_of):
                 headers["WWW-Authenticate"] = f'Bearer resource_metadata="{metadata}"'
             return JSONResponse(
                 {"jsonrpc": "2.0", "id": rpc.get("id") if isinstance(rpc, dict) else None, "error": error_body},
-                status_code=404 if rpc_code == -32601 else 400 if rpc_code in {-32020, -32021, -32022, -32600} else status if status in {401, 403, 413} else 200,
+                status_code=(
+                    404
+                    if rpc_code == -32601
+                    else 400
+                    if rpc_code in {-32020, -32021, -32022, -32600} or code in {"missing_request_metadata", "missing_client_capabilities", "invalid_client_info", "invalid_elicitation_capability"}
+                    else status
+                    if status in {401, 403, 413}
+                    else 200
+                ),
                 headers=headers,
             )

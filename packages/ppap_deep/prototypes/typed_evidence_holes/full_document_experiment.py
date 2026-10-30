@@ -86,7 +86,6 @@ def repair_context(previous_root: Path, case_id: str, document: Path, rules: Pat
 
 
 def run_case(case_id, args, settings):
-    sys.path.insert(0, str(ROOT / "packages/ppap_deep/src"))
     from ppap_deep.isolation.model_gateway import Gateway, Grants
 
     output = args.output / case_id

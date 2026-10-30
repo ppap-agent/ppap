@@ -27,6 +27,12 @@ FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|sto
 SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
 
 
+def _repository_files() -> set[Path]:
+    """Check repository inputs, including new files, without scanning ignored runs."""
+    names = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT).decode().split("\0")
+    return {ROOT / name for name in names if name and (ROOT / name).is_file()}
+
+
 def _pyproject(path: Path) -> dict:
     return tomllib.loads(path.read_text())
 
@@ -116,7 +122,7 @@ class ArchitectureTests(unittest.TestCase):
         members = {ROOT / path for path in root["tool"]["uv"]["workspace"]["members"]}
         self.assertEqual(members, _member_dirs())
         # One PDF conversion owner; no duplicate OCR adapter distribution.
-        self.assertFalse((ROOT / "packages/ppap_ocr_adapter").exists())
+        self.assertFalse(any(path.relative_to(ROOT).parts[:2] == ("packages", "ppap_ocr_adapter") for path in _repository_files()))
         sources = root["tool"]["uv"]["sources"]
         for member in members:
             project = _pyproject(member / "pyproject.toml")
@@ -202,7 +208,9 @@ class ArchitectureTests(unittest.TestCase):
 
     def test_tests_do_not_import_each_other_or_mutate_sys_path(self):
         offenders = []
-        for path in ROOT.rglob("*.py"):
+        for path in _repository_files():
+            if path.suffix != ".py":
+                continue
             if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
                 continue
             if path.resolve() == Path(__file__).resolve():
@@ -230,7 +238,9 @@ class ArchitectureTests(unittest.TestCase):
     def test_test_support_uses_pytest_native_lifecycle(self):
         forbidden = ("spec_from_file_location", "exec_module(", "request.instance")
         offenders = []
-        for path in ROOT.rglob("conftest.py"):
+        for path in _repository_files():
+            if path.name != "conftest.py":
+                continue
             text = path.read_text()
             for token in forbidden:
                 if token in text:
@@ -299,8 +309,14 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("pip", psw)
         self.assertNotIn("--inexact", psw)
         bootstrap = re.compile(r"(?m)ENV\s+PYTHONPATH|^(?!\s*#).*[\"']PYTHONPATH[\"']\s*:")
-        for path in ROOT.rglob("*"):
-            if not path.is_file():
+        for path in _repository_files():
+            relative = path.relative_to(ROOT)
+            # Production code and deployment configuration own installed
+            # imports. Research runners have separate frozen helper roots and
+            # are excluded from images by the native container-context tests.
+            if relative.parts[0] not in {"deploy", "packages", "services"}:
+                continue
+            if relative.parts[0] in PRODUCTION_ROOTS and "src" not in relative.parts:
                 continue
             if any(part.startswith(".") or part == "__pycache__" or part == "node_modules" for part in path.parts):
                 continue

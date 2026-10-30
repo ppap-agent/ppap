@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 from ppap_application import build_product_store
@@ -147,17 +145,9 @@ def seed_usage_event_factory():
     return insert_usage_event
 
 
-# A fixture-only model boundary shared by integration and browser acceptance.
-# Load by location because pytest importlib mode intentionally excludes repo-root imports.
-_feedback_spec = importlib.util.spec_from_file_location("ppap_feedback_test_model", Path(__file__).with_name("deep_feedback_model.py"))
-_feedback_model = importlib.util.module_from_spec(_feedback_spec)
-_feedback_spec.loader.exec_module(_feedback_model)
-CANDIDATE_ID = _feedback_model.CANDIDATE_ID
-EXPLANATION = _feedback_model.EXPLANATION
-QUESTION_ID = _feedback_model.QUESTION_ID
-RULES = _feedback_model.RULES
-FeedbackModel = _feedback_model.FeedbackModel
-source_bytes = _feedback_model.source_bytes
+EXPLANATION = "本控制计划中的作业单元编号表示工序编号；按原始编号逐字对应，不合并不同编号。"
+QUESTION_ID = "cp-operation-code"
+CANDIDATE_ID = "operation-code"
 
 
 def change_payload(view, uploaded, *, intent="save_and_analyze"):
