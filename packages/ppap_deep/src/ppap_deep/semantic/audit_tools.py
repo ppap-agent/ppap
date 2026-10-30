@@ -95,7 +95,7 @@ def main() -> int:
         result = evaluate_audit(trace, documents, {audit_id: plans[rule_id] for audit_id, rule_id in targets.items()})
         save(args.out, result.model_dump(mode="json"))
         answered = {answer.need_id for answer in trace.answers}
-        pending = [need.id for need in result.needs if need.id not in answered]
+        pending = [need.id for need in result.needs if result.need_states.get(need.id, "answered" if need.id in answered else "needed") == "needed"]
         print(
             json.dumps(
                 {
@@ -104,6 +104,7 @@ def main() -> int:
                     "statuses": dict(Counter(check.status for check in result.report.checks)),
                     "pending_questions": len(pending),
                     "question_examples": pending[:8],
+                    "inactive_answers": sum(state == "answered_inactive" for state in result.need_states.values()),
                     "evidence_gaps": len(result.evidence_gaps),
                 },
                 ensure_ascii=False,
@@ -117,7 +118,10 @@ def main() -> int:
     if args.need is not None and not needs:
         parser.error("unknown local question")
     end = args.offset + args.limit
-    print(json.dumps({"needs": [need.model_dump(mode="json") for need in needs[args.offset : end]], "count": len(needs), "next_offset": end if end < len(needs) else None}, ensure_ascii=False))
+    print(json.dumps({
+                "needs": [{**need.model_dump(mode="json"), "state": result.need_states.get(need.id, "needed")} for need in needs[args.offset : end]],
+                "count": len(needs), "next_offset": end if end < len(needs) else None,
+            }, ensure_ascii=False))
     return 0
 
 

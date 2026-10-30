@@ -38,11 +38,20 @@ class Manifest(Artifact):
     rules: dict[str, str]
     cached_snapshots: dict[str, str]
     cached_plans: dict[str, str]
+    resume_trace: str | None = None
+    runtime_job_id: str | None = Field(default=None, min_length=1, max_length=256)
+    runtime_attempt: int | None = Field(default=None, ge=1, strict=True)
+    runtime_source_attempt: int | None = Field(default=None, ge=1, strict=True)
     precompiled_only: bool = Field(default=False, strict=True)
     failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
 
     @model_validator(mode="after")
     def precompiled_rule_set(self) -> Manifest:
+        if (self.runtime_job_id is None) != (self.runtime_attempt is None):
+            raise InputIntegrityError("Incomplete technical attempt identity")
+        if self.runtime_source_attempt is not None:
+            if self.runtime_attempt is None or self.runtime_source_attempt >= self.runtime_attempt:
+                raise InputIntegrityError("Invalid technical recovery source")
         if not self.precompiled_only:
             if self.failed_rules:
                 raise InputIntegrityError("Compile failures require a precompiled audit")
@@ -521,6 +530,10 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float, *, l
     save(stage / "plans.json", {key: value.model_dump(mode="json") for key, value in plans.items()})
     save(stage / "targets.json", targets)
     initial, obligations = prepare_audit({audit_id: plans[rule_id] for audit_id, rule_id in targets.items()})
+    if manifest.resume_trace is not None:
+        initial = AuditTrace.model_validate(read_json(inputs, (manifest.resume_trace,), limits.output_bytes))
+        evaluate_audit(initial, snapshots, {audit_id: plans[rule_id] for audit_id, rule_id in targets.items()})
+        save(stage / "previous-execution.json", initial.model_dump(mode="json"))
     save(stage / "initial-execution.json", initial.model_dump(mode="json"))
     save(stage / "obligations.json", obligations)
     write_context_index(
@@ -529,7 +542,7 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float, *, l
         obligations=sum(len(plans[rule_id].rules) for rule_id in targets.values()),
     )  # noqa: E501
     write_progress(work, "checking", total=total)
-    execution = run_audit_stage(runner, stage, audit_prompt(plans, targets, clauses), deadline) if targets else AuditTrace(uses=[])
+    execution = initial if targets else AuditTrace(uses=[])
     bundle = ResultBundle(
         execution_id=spec.execution_id,
         semantic_engine_revision=spec.semantic_engine_revision,
@@ -546,6 +559,34 @@ def execute(inputs: Path, work: Path, runner: StageRunner, deadline: float, *, l
         completed_tool_calls=getattr(runner, "completed_tool_calls", 0),
         compactions=getattr(runner, "compactions", 0),
     )
+    from ppap_deep.isolation.storage import write_json
+
+    write_json(work / "candidate.json", bundle.model_dump(mode="json"))
+    try:
+        resumed = evaluate_audit(initial, snapshots, {audit_id: plans[rule_id] for audit_id, rule_id in targets.items()})
+        # A complete saved certificate needs no new model request. Unknown
+        # answers and pending questions remain unfinished.
+        complete = manifest.resume_trace is not None and all(check.unknown == 0 for check in resumed.report.checks)
+        if targets and not complete:
+            prompt = audit_prompt(plans, targets, clauses)
+            if manifest.resume_trace is not None:
+                prompt += " Continue previous-execution.json. Reuse its valid bindings and answers; complete only remaining work."
+            execution = run_audit_stage(runner, stage, prompt, deadline)
+        bundle.trace = execution
+    finally:
+        # Model tools may have written a candidate before the stage failed. A
+        # truncated or invalid file cannot replace the last readable certificate.
+        try:
+            candidate = AuditTrace.model_validate(read_json(stage, ("execution.json",), limits.output_bytes))
+        except (OSError, ValueError):
+            try:
+                candidate = AuditTrace.model_validate(read_json(stage, ("candidate-execution.json",), limits.output_bytes))
+            except (OSError, ValueError):
+                candidate = bundle.trace
+        bundle.trace = candidate
+        for name in ("input_tokens", "output_tokens", "model_requests", "tool_calls", "completed_tool_calls", "compactions"):
+            setattr(bundle, name, getattr(runner, name, 0))
+        write_json(work / "candidate.json", bundle.model_dump(mode="json"))
     write_progress(work, "validating", total=total)
     bundle = validate_or_repair(bundle, spec, work, runner, deadline)
     encoded = bundle.model_dump_json().encode()

@@ -55,7 +55,7 @@ docker compose -f deploy/isolated-dev/compose.yaml config --quiet >/dev/null
 docker compose -f deploy/compose.yaml --env-file deploy/compose.env.example config --quiet >/dev/null
 docker buildx bake --print >/dev/null
 docker buildx bake --check
-uv run --no-sync pytest tests/repository
+uv run --no-sync python -m pytest tests/repository
 ```
 
 Distribution closure：

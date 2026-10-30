@@ -158,25 +158,31 @@ class Grants:
             # Unknown usage closes the lease. Bytes and requested output are
             # not actual token counts and must not be reported as such.
 
+    @staticmethod
+    def _usage(leases: list[Lease]) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "completed_requests": sum(lease.completed_requests for lease in leases),
+            "input_tokens": sum(lease.input_tokens for lease in leases),
+            "output_tokens": sum(lease.output_tokens for lease in leases),
+            "uncertain": any(lease.uncertain or lease.in_flight for lease in leases),
+            "in_flight": any(lease.in_flight for lease in leases),
+            "budget_exhausted": any(lease.budget_exhausted for lease in leases),
+        }
+        for lease in leases:
+            if lease.transport_failure:
+                result["transport_failure"] = dict(lease.transport_failure)
+        return result
+
     def usage(self, execution_id: UUID) -> dict[str, Any]:
         with self.lock:
-            leases = [lease for lease in self.leases.values() if lease.execution_id == execution_id]
-            result: dict[str, Any] = {
-                "completed_requests": sum(lease.completed_requests for lease in leases),
-                "input_tokens": sum(lease.input_tokens for lease in leases),
-                "output_tokens": sum(lease.output_tokens for lease in leases),
-                "uncertain": any(lease.uncertain or lease.in_flight for lease in leases),
-                "in_flight": any(lease.in_flight for lease in leases),
-                "budget_exhausted": any(lease.budget_exhausted for lease in leases),
-            }
-            for lease in leases:
-                if lease.transport_failure:
-                    result["transport_failure"] = dict(lease.transport_failure)
-            return result
+            return self._usage([lease for lease in self.leases.values() if lease.execution_id == execution_id])
 
-    def revoke(self, execution_id: UUID) -> None:
+    def revoke(self, execution_id: UUID, *, require_existing: bool = False) -> dict[str, Any]:
         with self.lock:
             revoked = [lease for lease in self.leases.values() if lease.execution_id == execution_id]
+            if require_existing and not revoked:
+                raise ValueError("Final usage receipt is unavailable")
+            usage = self._usage(revoked)
             self.leases = {key: lease for key, lease in self.leases.items() if lease.execution_id != execution_id}
             connections = [(lease.upstream, lease.upstream_socket) for lease in revoked]
         # A provider need not send another byte after cancellation. Interrupt
@@ -193,6 +199,7 @@ class Grants:
                 except OSError:
                     pass
             upstream.close()
+        return usage
 
     def bind_upstream(self, lease: Lease, upstream: http.client.HTTPConnection) -> None:
         with self.lock:
@@ -567,6 +574,8 @@ class GrantHandler(socketserver.StreamRequestHandler):
             elif request["method"] == "revoke":
                 grants.revoke(execution_id)
                 result = {"ok": True}
+            elif request["method"] == "revoke_and_usage":
+                result = grants.revoke(execution_id, require_existing=True)
             else:
                 raise ValueError("Unsupported grant method")
         except ModelBudgetError:

@@ -533,6 +533,7 @@ class LocalGrokRunner:
         }
         self.summary["stages"].append(status)
         requests_before = self.requests_started
+        source_hashes: dict[str, str] = {}
         try:
             contract = schema.model_json_schema()
             with (work / "artifact_schema.json").open("x", encoding="utf-8") as stream:
@@ -583,6 +584,19 @@ class LocalGrokRunner:
             return result
         except BaseException as error:
             status["failure_type"] = type(error).__name__
+            # Preserve a readable certificate even if the completion receipt
+            # or model transport failed. It stays unverified until host replay.
+            try:
+                candidate = read_json(self.scratch / f"stage-{self.stage_number}", ("execution.json",), ARTIFACT_LIMIT)
+                clean = self._sanitize(candidate)
+                unchanged = all(hashlib.sha256(read_regular(work, (name,), ARTIFACT_LIMIT)).hexdigest() == expected for name, expected in source_hashes.items())
+                if clean == candidate and source_hashes and unchanged:
+                    parsed = schema.model_validate(candidate)
+                    dump(stage / "candidate.json", {"trust": "candidate_unverified", "training_eligible": False, "artifact": parsed.model_dump(mode="json")})
+                    dump(work / "candidate-execution.json", parsed.model_dump(mode="json"))
+                    status["candidate"] = "saved_unverified"
+            except (OSError, ValueError):
+                status["candidate"] = "unavailable"
             raise
         finally:
             self._stop_process()

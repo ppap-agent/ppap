@@ -624,9 +624,9 @@ class ContainerBoundaryTests(unittest.TestCase):
             execution_id = uuid4()
             pending = {"completed_requests": 1, "input_tokens": 3, "output_tokens": 5, "uncertain": True, "in_flight": True, "budget_exhausted": False}
             settled = {"completed_requests": 2, "input_tokens": 5, "output_tokens": 9, "uncertain": False, "in_flight": False, "budget_exhausted": False}
-            with patch("ppap_deep.isolation.container.grant_request", side_effect=[pending, settled]) as request:
+            with patch("ppap_deep.isolation.container.grant_request", side_effect=[pending, settled, settled]) as request:
                 runtime._export(run, root / "work", True, execution_id, time.monotonic() + 2, threading.Event())
-            self.assertEqual([call.args[1] for call in request.call_args_list], ["usage", "usage"])
+            self.assertEqual([call.args[1] for call in request.call_args_list], ["usage", "usage", "revoke_and_usage"])
             result = json.loads((root / "work" / "result" / "bundle.json").read_text())
             self.assertEqual((result["input_tokens"], result["output_tokens"]), (5, 9))
             self.assertEqual(result["model_requests"], 2)

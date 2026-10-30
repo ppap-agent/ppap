@@ -163,7 +163,7 @@ docker buildx bake --check
 node scripts/verify-container-graph.mjs
 deploy/tke/render-current.sh \
   | docker run --rm -i ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary -kubernetes-version 1.28.0 -
-uv run --no-sync pytest tests/repository
+uv run --no-sync python -m pytest tests/repository
 ```
 
 Distribution closure（这是 distribution correctness proof；root `uv sync` 只保留为快速 workspace smoke）：

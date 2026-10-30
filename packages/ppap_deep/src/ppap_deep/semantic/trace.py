@@ -82,6 +82,7 @@ class AuditEvaluation(Artifact):
     evidence_gaps: list[tuple[str, str]]
     clarifications: list[dict[str, Any]] = Field(default_factory=list)
     readings: list[dict[str, Any]] = Field(default_factory=list)
+    need_states: dict[str, Literal["needed", "answered", "answered_inactive"]] = Field(default_factory=dict)
 
 
 def _digest(value: Any) -> str:
@@ -122,9 +123,13 @@ def program_has_semantics(program: DocumentProgram | RecordsProgram) -> bool:
 
 
 class _Evaluator:
-    def __init__(self, trace: AuditTrace, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan], budget: EvidenceBudget, base_plans: dict[str, RulePlan] | None = None):
+    def __init__(
+        self, trace: AuditTrace, documents: dict[str, dict[str, Any]], plans: dict[str, RulePlan], budget: EvidenceBudget,
+        base_plans: dict[str, RulePlan] | None = None, *, exhaustive: bool = False,
+    ):
         self.trace, self.documents, self.plans, self.budget = trace, documents, plans, budget
         self.base_plans = base_plans if base_plans is not None else plans
+        self.exhaustive = exhaustive
         self.citation_budget = EvidenceBudget()
         self.bindings = {binding.id: binding for binding in trace.bindings}
         self.answers = {answer.need_id: answer for answer in trace.answers}
@@ -650,10 +655,17 @@ class _Evaluator:
             relationship = next((item for item in ontology.relationships if item.id == node.relationship_id), None)
             collection = self.collection(node.target)
             targets = []
+            lazy_membership = node.match == "any" and not self.exhaustive and node.target_when is not None
             for target in collection["rows"]:
+                if lazy_membership:
+                    targets.append(target)
+                    continue
                 membership = self.expr(node.target_when, target, path + "/target_when") if node.target_when else _fact(True, "全部目标记录")
-                if membership["value"] is not False:
-                    targets.append({**target, "scope_state": "known" if membership["value"] is True and target["scope_state"] == "known" else "unresolved"})
+                if membership["value"] is not False or self.exhaustive:
+                    targets.append({**target, "scope_state": "known" if (membership["value"] is True or self.exhaustive) and target["scope_state"] == "known" else "unresolved"})
+
+            def target_membership(target):
+                return self.expr(node.target_when, target, path + "/target_when")["value"] if node.target_when else True
 
             def judge(kind, source, target, index, comparison):
                 fields_a = node.source_key.fields if kind in {"key", "source_key"} else [comparison.source_field]
@@ -697,7 +709,11 @@ class _Evaluator:
             if relationship and relationship.kind == "same_instance":
                 concepts = {entity.id: entity for entity in ontology.entities}
                 identities = (concepts[relationship.source].identity, concepts[relationship.target].identity)
-            facts = match_rows(self.population, targets, node, self.budget, judge, identities=identities)
+            facts = match_rows(
+                self.population, targets, node, self.budget, judge, identities=identities, exhaustive=self.exhaustive,
+                pending_questions=lambda: len(self.questions.keys() - self.answers.keys()),
+                target_membership=target_membership if lazy_membership else None,
+            )
             by_ref = {}
             for fact in facts["records"]:
                 if relationship:
@@ -786,10 +802,13 @@ class _Evaluator:
                     when = self.expr(program.when, row, "when") if program.when else _fact(True, "规则适用于此记录")
                     membership.append((row, when))
                 self.population = [
-                    {**row, "scope_state": "known" if when["value"] is True and row["scope_state"] == "known" else "unresolved"} for row, when in membership if when["value"] is not False
+                    {**row, "scope_state": "known" if (when["value"] is True or self.exhaustive) and row["scope_state"] == "known" else "unresolved"}
+                    for row, when in membership if when["value"] is not False or self.exhaustive
                 ]
                 self.relation_cache = {}  # require operates on the declared eligible source population.
                 for row, when in membership:
+                    if self.exhaustive:
+                        self.expr(program.require, row, "require")
                     if when["value"] is False and row["scope_state"] == "known":
                         records.append(self.record("excluded", row, when))
                     elif when["value"] is None or row["scope_state"] != "known":
@@ -872,8 +891,20 @@ class _Evaluator:
 
     def run(self) -> AuditEvaluation:
         checks = [self.check(audit_id, rule) for audit_id, plan in self.plans.items() for rule in plan.rules]
-        if self.answers.keys() != self.reached_answers:
-            raise ValueError("Unknown or stale local judgment answer")
+        inactive = self.answers.keys() - self.reached_answers
+        if inactive:
+            if self.exhaustive:
+                raise ValueError("Unknown or stale local judgment answer")
+            # Rebuild the allowed questions from the complete current inputs.
+            # The complete pass validates old answers but never supplies its
+            # unused questions or counts to the live evaluation.
+            complete = _Evaluator(self.trace, self.documents, self.plans, EvidenceBudget(), self.base_plans, exhaustive=True).run()
+            for need in complete.needs:
+                if need.id in inactive:
+                    self.questions[need.id] = need
+        states: dict[str, Literal["needed", "answered", "answered_inactive"]] = {
+            key: "answered_inactive" if key in inactive else "answered" if key in self.answers else "needed" for key in self.questions
+        }
         return AuditEvaluation(
             report=AuditReport(checks=checks),
             observations=self.records,
@@ -881,6 +912,7 @@ class _Evaluator:
             evidence_gaps=sorted(self.evidence_gaps),
             clarifications=list(self.clarifications.values()),
             readings=self.readings,
+            need_states=states,
         )
 
 
