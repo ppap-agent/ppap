@@ -23,7 +23,7 @@ from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.runtime import runtime_from_env
 from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.protocol import ResultBundle
+from ppap_deep.semantic.protocol import CompileBundle, CompileSpec, ResultBundle
 from ppap_deep.semantic.trace import AuditTrace, derive_report, evaluate_audit
 from ppap_deep.source import authorize_execution
 
@@ -542,10 +542,20 @@ class _BundleRuntime:
     def engine_revision(self) -> str:
         return ENGINE
 
-    def run(self, submission, _inputs: Path, work: Path, _deadline: float, _cancelled, *, on_progress) -> None:
+    def run(self, submission, _inputs: Path, work: Path, _deadline: float, _cancelled, *, on_progress, prior_usage=None) -> None:
         result = work / "result"
         result.mkdir()
-        (result / "bundle.json").write_text(_bundle(self.spec, submission).model_dump_json())
+        bundle = _bundle(self.spec, submission)
+        if isinstance(submission, CompileSpec):
+            compiled = CompileBundle(
+                execution_id=submission.execution_id,
+                semantic_engine_revision=submission.semantic_engine_revision,
+                rule_sources=bundle.rule_sources,
+                plans=bundle.plans,
+            )
+            (result / "bundle.json").write_text(compiled.model_dump_json())
+        else:
+            (result / "bundle.json").write_text(bundle.model_dump_json())
 
 
 class _CacheRuntime:
@@ -555,7 +565,31 @@ class _CacheRuntime:
     def engine_revision(self) -> str:
         return self.revision
 
-    def run(self, *_args, **_kwargs) -> None:
+    def run(self, operation, inputs, work, *_args, **_kwargs) -> None:
+        if isinstance(operation, CompileSpec):
+            rule = operation.rules[0]
+            result = work / "result"
+            result.mkdir()
+            source = json.loads((inputs / "rule.json").read_bytes())
+            source["source"] = {"sha256": rule.sha256, "format": rule.format}
+            compiled = CompileBundle(
+                execution_id=operation.execution_id,
+                semantic_engine_revision=operation.semantic_engine_revision,
+                rule_sources={rule.rule_id: source},
+                plans={},
+                failed_rules={
+                    rule.rule_id: {
+                        "rule_id": rule.rule_id,
+                        "source_sha256": rule.sha256,
+                        "plan_revision": rule.plan_revision,
+                        "engine_revision": operation.semantic_engine_revision,
+                        "stage": "compile_repair_validation",
+                        "reason": "plan_schema_invalid",
+                    }
+                },
+            )
+            (result / "bundle.json").write_text(compiled.model_dump_json())
+            return
         raise _StopAfterCache()
 
 
@@ -639,7 +673,7 @@ class SemanticCacheContractTests(unittest.TestCase):
         runtime = SemanticRuntime(_CacheRuntime(ENGINE), S3Objects(Settings()))
         with patch("ppap_core.storage.s3_client") as client, patch("ppap_deep.auditor.MAX_BUNDLE_BYTES", 8):
             client.return_value.get_object.side_effect = response
-            with self.assertRaises(_StopAfterCache):
+            with patch.object(runtime.runtime, "run", side_effect=_StopAfterCache), self.assertRaises(_StopAfterCache):
                 runtime.execute(spec, {TARGET: b"target", REFERENCE: b"reference"}, context=ExecutionContext())
         self.assertTrue(bodies)
         self.assertTrue(all(body.closed for body in bodies))

@@ -20,10 +20,10 @@ from ppap_deep.auditor import SemanticRuntime, product_response
 from ppap_deep.client import DeepError
 from ppap_deep.controller import Controller, ExecutionContext
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
-from ppap_deep.semantic.guest import Manifest, execute
+from ppap_deep.semantic.guest import CompileManifest, Manifest, execute, execute_compilation
 from ppap_deep.semantic.guest_model import ModelBudgetError, ModelProtocolError
 from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.protocol import ResultBundle, SubmissionSpec
+from ppap_deep.semantic.protocol import CompileSpec, ResultBundle, SubmissionSpec
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
 ENGINE = "a" * 64
@@ -73,6 +73,10 @@ class ModelResponses:
         self.global_fault = None
         self.input_tokens = 0
         self.output_tokens = 0
+        self.tool_calls = 0
+        self.completed_tool_calls = 0
+        self.compactions = 0
+        self.model_requests = 0
         self.plan_attempts = {BAD_RULE: 0, GOOD_RULE: 0}
         self.audit_calls = 0
         self.audit_targets = []
@@ -85,6 +89,10 @@ class ModelResponses:
         assert reasoning_effort == "medium"
         self.input_tokens += 10
         self.output_tokens += 2
+        self.tool_calls += 3
+        self.completed_tool_calls += 2
+        self.compactions += 1
+        self.model_requests += 1
         if issubclass(schema, RulePlan):
             source = json.loads((work / "rule-source.json").read_text())
             clauses = json.loads((work / "clauses.json").read_text())
@@ -179,17 +187,41 @@ class InProcessGuest:
     def __init__(self, model):
         self.model = model
         self.calls = 0
+        self.compilations = []
+        self.audit_manifests = []
+        self.compile_paths = []
+        self.prior_usages = []
 
     def engine_revision(self):
         return ENGINE
 
-    def run(self, submission, inputs, work, deadline, cancelled, *, on_progress):
+    def run(self, submission, inputs, work, deadline, cancelled, *, on_progress, prior_usage=None):
         assert not cancelled.is_set()
-        manifest = Manifest.model_validate_json((inputs / "manifest.json").read_bytes())
+        compiling = isinstance(submission, CompileSpec)
+        manifest_type = CompileManifest if compiling else Manifest
+        manifest = manifest_type.model_validate_json((inputs / "manifest.json").read_bytes())
         assert manifest.spec == submission
         self.calls += 1
+        self.prior_usages.append(prior_usage)
         self.model.rule_refs = {rule.rule_id: rule for rule in submission.rules}
-        execute(inputs, work, self.model, deadline)
+        usage_before = {name: getattr(self.model, name, 0) for name in ("input_tokens", "output_tokens", "tool_calls", "completed_tool_calls", "compactions", "model_requests")}
+        if compiling:
+            assert len(submission.rules) == 1
+            assert not (inputs.parent.parent / "inputs").exists()
+            assert all(not path.exists() for path in self.compile_paths)
+            self.compilations.append({path.name: path.read_bytes() for path in inputs.iterdir()})
+            self.compile_paths.append(inputs.parent)
+            bundle = execute_compilation(inputs, work, self.model, deadline)
+        else:
+            assert manifest.precompiled_only is True
+            assert all(not path.exists() for path in self.compile_paths)
+            self.audit_manifests.append(manifest)
+            bundle = execute(inputs, work, self.model, deadline)
+        # Each production runtime starts a fresh model process. This shared
+        # model fake reports the same per-run usage delta as that boundary.
+        for name, count in usage_before.items():
+            setattr(bundle, name, getattr(self.model, name, 0) - count)
+        (work / "result" / "bundle.json").write_text(bundle.model_dump_json())
 
 
 def frozen_case(broken_first_plan=True, *, shared_bad_rule=False, bad_clause_id="B1"):
@@ -264,6 +296,126 @@ def persisted_bundle(case):
     return ResultBundle.model_validate_json(bundle), SubmissionSpec.model_validate_json(submission)
 
 
+def test_compile_runs_contain_only_one_rule_and_end_before_supplier_files_are_staged():
+    case = frozen_case(broken_first_plan=False)
+
+    result = handle_case(case)
+
+    assert len(case.guest.compilations) == 2
+    for inputs, expected in zip(case.guest.compilations, (BAD_RULE, GOOD_RULE), strict=True):
+        assert set(inputs) == {"rule.json", "manifest.json"}
+        manifest = CompileManifest.model_validate_json(inputs["manifest.json"])
+        assert [rule.rule_id for rule in manifest.spec.rules] == [expected]
+        assert str(manifest.spec.submission_id) == case.spec.round_id
+        assert manifest.rules == {expected: "rule.json"}
+        assert manifest.cached_snapshots == manifest.cached_plans == {}
+        assert json.loads(inputs["rule.json"])["rule_version_id"] == expected
+        assert all(blob not in raw for blob in case.blobs.values() for raw in inputs.values())
+    audit = case.guest.audit_manifests[0]
+    assert audit.precompiled_only is True
+    assert set(audit.cached_plans) == {BAD_RULE, GOOD_RULE}
+    assert audit.failed_rules == {}
+    assert all(not path.exists() for path in case.guest.compile_paths)
+    assert result.usage == {"input_tokens": 30, "output_tokens": 6, "tool_calls": 9, "completed_tool_calls": 6, "compactions": 3}
+    assert case.guest.prior_usages == [None, {"input_tokens": 10, "output_tokens": 2, "model_requests": 1}, {"input_tokens": 20, "output_tokens": 4, "model_requests": 2}]
+    bundle, _ = persisted_bundle(case)
+    assert bundle.model_requests == 3
+
+
+def test_new_round_reuses_source_plan_cache_without_recounting_previous_compile_usage():
+    case = frozen_case(broken_first_plan=False)
+    first = handle_case(case)
+    next_spec = case.spec.model_copy(update={"round_id": "00000000-0000-4000-8000-000000000002", "job_id": "next-job"})
+
+    second = case.controller.runtime.execute(next_spec, case.blobs, context=ExecutionContext())
+
+    assert case.model.plan_attempts == {BAD_RULE: 1, GOOD_RULE: 1}
+    assert case.model.audit_calls == 2
+    assert case.guest.calls == 6
+    assert first.usage == {"input_tokens": 30, "output_tokens": 6, "tool_calls": 9, "completed_tool_calls": 6, "compactions": 3}
+    assert second.usage == {"input_tokens": 10, "output_tokens": 2, "tool_calls": 3, "completed_tool_calls": 2, "compactions": 1}
+    for inputs, previous in zip(case.guest.compilations[2:], case.guest.compilations[:2], strict=True):
+        assert set(inputs) == {"rule.json", "plan.json", "manifest.json"}
+        current_manifest = CompileManifest.model_validate_json(inputs["manifest.json"])
+        previous_manifest = CompileManifest.model_validate_json(previous["manifest.json"])
+        assert current_manifest.spec.execution_id != previous_manifest.spec.execution_id
+        assert current_manifest.spec.rules == previous_manifest.spec.rules
+
+
+@pytest.mark.parametrize("tamper", ["source", "plan", "failure-source", "failure-clause", "partition"])
+def test_host_rejects_compilation_that_does_not_match_its_frozen_rule(tamper):
+    case = frozen_case(broken_first_plan=tamper.startswith("failure"))
+    run = case.guest.run
+
+    def changed(operation, inputs, work, *args, **kwargs):
+        run(operation, inputs, work, *args, **kwargs)
+        path = work / "result" / "bundle.json"
+        result = json.loads(path.read_bytes())
+        if tamper == "source":
+            result["rule_sources"][BAD_RULE]["rule_body"]["appendix"] = [{"content": "invented supplier exception"}]
+        elif tamper == "plan":
+            result["plans"][BAD_RULE]["source_sha256"] = "f" * 64
+        elif tamper == "failure-source":
+            result["failed_rules"][BAD_RULE]["source_sha256"] = "f" * 64
+        elif tamper == "failure-clause":
+            result["failed_rules"][BAD_RULE]["clause_id"] = "outside-the-frozen-rule"
+        else:
+            result["plans"] = {}
+        path.write_text(json.dumps(result))
+
+    case.guest.run = changed
+    with pytest.raises(DeepError) as caught:
+        handle_case(case)
+
+    assert caught.value.code == "deep_output_invalid"
+    assert case.guest.calls == 1
+    assert case.model.audit_calls == 0
+    assert case.objects.values == {}
+
+
+def test_host_rejects_an_audit_that_changes_a_compiled_rule_program():
+    case = frozen_case(broken_first_plan=False)
+    run = case.guest.run
+
+    def changed(operation, inputs, work, *args, **kwargs):
+        run(operation, inputs, work, *args, **kwargs)
+        if not isinstance(operation, CompileSpec):
+            path = work / "result" / "bundle.json"
+            result = json.loads(path.read_bytes())
+            result["plans"][GOOD_RULE]["ontology"]["entities"][0]["grain"] = "supplier-selected grain"
+            path.write_text(json.dumps(result))
+
+    case.guest.run = changed
+    with pytest.raises(DeepError) as caught:
+        handle_case(case)
+
+    assert caught.value.code == "deep_output_invalid"
+    assert case.guest.calls == 3
+    assert case.model.audit_calls == 1
+    assert not any(key.endswith("/bundle.json") for key in case.objects.values)
+
+
+def test_cancellation_after_compilation_stops_before_another_rule_or_supplier_stage():
+    case = frozen_case(broken_first_plan=False)
+    context = ExecutionContext()
+    run = case.guest.run
+
+    def cancelled(*args, **kwargs):
+        run(*args, **kwargs)
+        context.cancelled.set()
+
+    case.guest.run = cancelled
+    with pytest.raises(DeepError) as caught:
+        handle_case(case, context)
+
+    assert caught.value.code == "deep_cancelled"
+    assert case.guest.calls == 1
+    assert case.model.plan_attempts == {BAD_RULE: 1, GOOD_RULE: 0}
+    assert case.model.audit_calls == 0
+    assert all(not path.exists() for path in case.guest.compile_paths)
+    assert case.objects.values == {}
+
+
 @pytest.mark.parametrize("broken_first_plan", [False, True], ids=["valid-control", "independent-target-survives-plan-failure"])
 def test_controller_keeps_all_frozen_clauses_when_one_rule_plan_fails(broken_first_plan):
     case = frozen_case(broken_first_plan)
@@ -273,7 +425,7 @@ def test_controller_keeps_all_frozen_clauses_when_one_rule_plan_fails(broken_fir
 
     assert case.authorized == ["frozen-job"]
     assert case.reads == [BAD_TARGET, GOOD_TARGET]
-    assert case.guest.calls == 1
+    assert case.guest.calls == 3
     assert result.files == spec.files
     assert result.round_id == spec.round_id
     assert model.audit_calls == 1
@@ -317,7 +469,7 @@ def test_malformed_plan_output_is_repaired_within_the_same_frozen_rule(invalid_a
     ]
     assert case.authorized == ["frozen-job"]
     assert case.reads == [BAD_TARGET, GOOD_TARGET]
-    assert case.guest.calls == 1
+    assert case.guest.calls == 3
     assert case.model.plan_attempts == {BAD_RULE: 2, GOOD_RULE: 1}
     assert case.model.audit_calls == 1
     assert case.model.audit_targets == [{BAD_TARGET: BAD_RULE, GOOD_TARGET: GOOD_RULE} if expected_bad == "PASS" else {GOOD_TARGET: GOOD_RULE}]
@@ -351,7 +503,7 @@ def test_shared_failed_rule_marks_both_targets_err_and_caches_only_the_independe
     assert [row["coverage"] for row in result.coverage.rule_items] == ["execution_error"] * 4 + ["executed"] * 2
     assert case.authorized == ["frozen-job"]
     assert case.reads == [BAD_TARGET, "shared-bad-version", GOOD_TARGET]
-    assert case.guest.calls == 1
+    assert case.guest.calls == 3
     assert case.model.plan_attempts == {BAD_RULE: 2, GOOD_RULE: 1}
     assert case.model.audit_calls == 1
     assert (result.usage["input_tokens"], result.usage["output_tokens"]) == (40, 8)
@@ -389,7 +541,7 @@ def test_all_failed_plans_return_every_clause_err_without_calling_the_audit_mode
     assert len(result.coverage.unchecked) == 2
     assert case.model.plan_attempts == {BAD_RULE: 2, GOOD_RULE: 2}
     assert case.model.audit_calls == 0
-    assert case.guest.calls == 1
+    assert case.guest.calls == 3
     assert (result.usage["input_tokens"], result.usage["output_tokens"]) == (40, 8)
     bundle, submission = persisted_bundle(case)
     assert set(bundle.failed_rules) == {BAD_RULE, GOOD_RULE}
@@ -422,20 +574,21 @@ def test_invalid_locator_failure_keeps_the_full_confirmed_clause_id(clause_id):
     assert product_response(case.spec, bundle, submission) == result
 
 
-@pytest.mark.parametrize("file_output", [False, True], ids=["structured-test-runner", "artifact-runner"])
+@pytest.mark.parametrize("file_output", [False, True], ids=["memory-fake", "file-fake"])
 def test_audit_repair_keeps_failed_rules_and_repairs_only_the_independent_target(file_output):
     case = frozen_case()
     case.model.incomplete_audit_once = True
     artifact_stages = []
     if file_output:
+        original_run = case.model.run
 
-        def run_artifact(work, prompt, schema, deadline, *, reasoning_effort):
+        def run(work, prompt, schema, deadline, *, reasoning_effort):
             artifact_stages.append(work.name)
-            result = case.model.run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
+            result = original_run(work, prompt, schema, deadline, reasoning_effort=reasoning_effort)
             (work / "execution.json").write_text(result.model_dump_json())
             return result
 
-        case.model.run_artifact = run_artifact
+        case.model.run = run
 
     result = handle_case(case)
 
@@ -444,11 +597,11 @@ def test_audit_repair_keeps_failed_rules_and_repairs_only_the_independent_target
     assert [row["coverage"] for row in result.coverage.rule_items] == ["execution_error", "execution_error", "executed", "executed"]
     assert case.model.plan_attempts == {BAD_RULE: 2, GOOD_RULE: 1}
     assert case.model.audit_calls == 2
-    assert artifact_stages == (["compile-0", "compile-repair-0", "compile-1", "audit", "audit-repair"] if file_output else [])
+    assert artifact_stages == (["compile-0", "compile-repair-0", "compile-0", "audit", "audit-repair"] if file_output else [])
     assert case.model.audit_targets == [{GOOD_TARGET: GOOD_RULE}, {GOOD_TARGET: GOOD_RULE}]
     frozen_clauses = {GOOD_RULE: case.spec.files[1].rule_body["rules"]}
     assert case.model.audit_clauses == [("audit", frozen_clauses), ("audit-repair", frozen_clauses)]
-    assert case.guest.calls == 1
+    assert case.guest.calls == 3
     assert (result.usage["input_tokens"], result.usage["output_tokens"]) == (50, 10)
     bundle, submission = persisted_bundle(case)
     assert set(bundle.failed_rules) == {BAD_RULE}
@@ -519,7 +672,7 @@ def test_product_response_rejects_tampered_failed_rule_identity_or_result_partit
     assert case.spec.model_dump(mode="json") == case.original
     assert case.blobs == case.original_blobs
     assert case.objects.values == original_artifacts
-    assert case.guest.calls == 1
+    assert case.guest.calls == 3
 
 
 @pytest.mark.parametrize("fault", ["budget", "timeout", "protocol", "unclassified", "cancel"])

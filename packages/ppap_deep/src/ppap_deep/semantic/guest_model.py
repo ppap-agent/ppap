@@ -73,10 +73,6 @@ class GrokRunner:
         self.remaining_turns = self.grant.max_total_turns
 
     def run(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T:
-        terminal = self._run(work, prompt, schema.model_json_schema(), deadline, reasoning_effort=reasoning_effort)
-        return schema.model_validate(terminal.get("structured_output"))
-
-    def run_artifact(self, work: Path, prompt: str, schema: type[T], deadline: float, *, reasoning_effort: ReasoningEffort) -> T:
         """Let the agent finish file work before it emits a small terminal receipt."""
         artifact = "execution.json"
         if (work / artifact).exists() or (work / artifact).is_symlink():
@@ -92,7 +88,7 @@ class GrokRunner:
         )
         # A constant-only provider schema can emit a receipt without doing
         # the file work. Validate both the receipt and the actual artifact.
-        terminal = self._run(work, artifact_prompt, None, deadline, reasoning_effort=reasoning_effort)
+        terminal = self._run(work, artifact_prompt, deadline, reasoning_effort=reasoning_effort)
         try:
             receipt = json.loads(terminal.get("result", ""), object_pairs_hook=unique_object, parse_constant=reject_constant)
         except (ValueError, TypeError):
@@ -109,7 +105,6 @@ class GrokRunner:
         self,
         work: Path,
         prompt: str,
-        output_contract: dict[str, Any] | None,
         deadline: float,
         *,
         reasoning_effort: ReasoningEffort,
@@ -137,9 +132,6 @@ class GrokRunner:
         (home / "sandbox.toml").write_text(
             '[profiles.ppap]\nextends = "strict"\nrestrict_network = false\nread_only = ["/inputs", "/opt/ppap", "/etc/ssl/certs"]\nread_write = ["/work", "/tmp", "/var/tmp"]\n'
         )
-        if output_contract is not None:
-            (work / "output_schema.json").write_text(json.dumps(output_contract))
-            prompt += "\nThe exact output contract is in output_schema.json in this working directory. Read it before constructing the result. "
         (work / "prompt.txt").write_text(
             prompt + "\nUse tool calls to read inputs and finish the work before the final response. "
             "The final response ends this stage: return it only after completing the requested work, never to announce progress or intent."
@@ -172,8 +164,6 @@ class GrokRunner:
             "--deny",
             "MCPTool",
         ]
-        if output_contract is not None:
-            command.extend(["--json-schema", json.dumps(output_contract)])
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "HOME": str(home),

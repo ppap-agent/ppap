@@ -26,7 +26,8 @@ from ppap_core.mcp import SCOPES, pkce_challenge
 from ppap_core.settings import Settings
 from ppap_deep.auditor import SemanticRuntime
 from ppap_deep.controller import Controller, UnixControllerServer
-from ppap_deep.semantic.guest import Manifest, execute
+from ppap_deep.semantic.guest import CompileManifest, Manifest, execute, execute_compilation
+from ppap_deep.semantic.protocol import CompileSpec
 from ppap_deep.source import authorize_execution, object_file_source
 from ppap_worker import process_claimed
 
@@ -152,9 +153,14 @@ def environment(tmp_path, monkeypatch, request):
         def engine_revision(self):
             return revision
 
-        def run(self, submission, inputs, work, deadline, cancelled, *, on_progress):
-            assert Manifest.model_validate_json((inputs / "manifest.json").read_bytes()).spec == submission
-            execute(inputs, work, model, deadline)
+        def run(self, submission, inputs, work, deadline, cancelled, *, on_progress, prior_usage=None):
+            compiling = isinstance(submission, CompileSpec)
+            manifest_type = CompileManifest if compiling else Manifest
+            assert manifest_type.model_validate_json((inputs / "manifest.json").read_bytes()).spec == submission
+            if compiling:
+                execute_compilation(inputs, work, model, deadline)
+            else:
+                execute(inputs, work, model, deadline)
 
     import ppap_core.storage
 

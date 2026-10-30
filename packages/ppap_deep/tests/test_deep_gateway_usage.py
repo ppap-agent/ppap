@@ -13,6 +13,45 @@ from uuid import uuid4
 
 import pytest
 from ppap_deep.isolation.model_gateway import grant_request, local_gateway
+from ppap_deep.semantic.guest_model import ModelGrant
+
+
+@pytest.mark.parametrize(
+    "prior",
+    [
+        {"model_requests": 2, "input_tokens": 60, "output_tokens": 9},
+        {"model_requests": 1, "input_tokens": 100, "output_tokens": 9},
+        {"model_requests": 1, "input_tokens": 60, "output_tokens": 30},
+        {"model_requests": 2, "input_tokens": 100, "output_tokens": 30},
+    ],
+    ids=["requests", "input", "output", "all"],
+)
+def test_prior_stage_exhaustion_rejects_paid_request_before_provider(prior) -> None:
+    with tempfile.TemporaryDirectory(prefix="pd-budget-", dir="/tmp") as temporary, patch("ppap_deep.isolation.model_gateway.http.client.HTTPSConnection") as upstream:
+        with local_gateway(
+            Path(temporary) / "g.sock", upstream="https://provider.example/v1", model="test-model", provider_key="test-provider-key", requests=2, input_tokens=100, output_tokens=30
+        ) as gateway:
+            execution_id = uuid4()
+            grant = ModelGrant.model_validate(grant_request(str(gateway.socket_path), "issue", execution_id, prior_usage=prior))
+            assert grant.max_total_turns == max(1, 2 - prior["model_requests"])
+            assert grant.max_total_tokens == max(1, 130 - prior["input_tokens"] - prior["output_tokens"])
+            connection = http.client.HTTPConnection("127.0.0.1", gateway.http.server_address[1], timeout=2)
+            try:
+                connection.request("POST", "/v1/responses", body=json.dumps({"model": "test-model", "input": "audit"}), headers={"Authorization": "Bearer " + grant.token})
+                response = connection.getresponse()
+                assert response.status == 403
+                response.read()
+            finally:
+                connection.close()
+            upstream.assert_not_called()
+            assert grant_request(str(gateway.socket_path), "usage", execution_id) == {
+                "completed_requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "uncertain": False,
+                "in_flight": False,
+                "budget_exhausted": True,
+            }
 
 
 @pytest.mark.parametrize("terminal", ["response.completed", "response.incomplete", "response.failed"])

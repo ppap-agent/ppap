@@ -30,7 +30,7 @@ from ppap_deep.controller import ExecutionContext
 from ppap_deep.isolation.container import ContainerRuntime, RuntimeConfig
 from ppap_deep.isolation.model_gateway import local_gateway
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
-from ppap_deep.semantic.guest import Manifest, execute
+from ppap_deep.semantic.guest import CompileManifest, Manifest, execute, execute_compilation
 from ppap_deep.semantic.models import RulePlan
 from ppap_deep.semantic.protocol import ControllerFault, DocumentRef, RuleRef, SnapshotSpec, SubmissionSpec
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
@@ -254,7 +254,7 @@ class ContainerJournalTests(unittest.TestCase):
             self.runtime.run(spec, self.inputs, first, time.monotonic() + 10, threading.Event())
             self.runtime.run(spec, self.inputs, second, time.monotonic() + 10, threading.Event())
             self.assertEqual(spawn.call_count, 1)
-        expected = {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5}
+        expected = {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5, "model_requests": 1}
         self.assertEqual(json.loads((first / "result" / "bundle.json").read_text()), expected)
         self.assertEqual(json.loads((second / "result" / "bundle.json").read_text()), expected)
         restarted = make_runtime(self.root)
@@ -293,7 +293,7 @@ class ContainerJournalTests(unittest.TestCase):
                 first.result(timeout=5)
                 second.result(timeout=5)
             self.assertEqual(spawn.call_count, 1)
-        expected = {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5}
+        expected = {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5, "model_requests": 1}
         for work in (first_work, second_work):
             self.assertEqual(json.loads((work / "result" / "bundle.json").read_text()), expected)
         self.provider.request.assert_called_once()
@@ -350,7 +350,7 @@ class ContainerJournalTests(unittest.TestCase):
             restarted.run(new_spec, self.inputs, retried, time.monotonic() + 10, threading.Event())
             spawn.assert_called_once()
         self.assertEqual(self.provider.request.call_count, 2)
-        self.assertEqual(json.loads((retried / "result" / "bundle.json").read_text()), {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5})
+        self.assertEqual(json.loads((retried / "result" / "bundle.json").read_text()), {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5, "model_requests": 1})
         with patch("subprocess.Popen", side_effect=AssertionError("new submission erased the failed execution")) as spawn:
             with self.assertRaises(ControllerFault) as still_failed:
                 restarted.run(spec, self.inputs, self._work("failed-after-new"), time.monotonic() + 10, threading.Event())
@@ -501,9 +501,15 @@ class ContainerCacheTests(unittest.TestCase):
             def poll(self):
                 if self.returncode is None:
                     inputs = self.work.parent / "inputs"
-                    manifest = Manifest.model_validate_json((inputs / "manifest.json").read_bytes())
-                    owner.executions.append(manifest.spec.execution_id)
-                    execute(inputs, self.work, Model(manifest), time.monotonic() + 10)
+                    raw_manifest = json.loads((inputs / "manifest.json").read_bytes())
+                    if raw_manifest.get("operation") == "compile":
+                        manifest = CompileManifest.model_validate(raw_manifest)
+                        execute_compilation(inputs, self.work, Model(manifest), time.monotonic() + 10)
+                    else:
+                        manifest = Manifest.model_validate(raw_manifest)
+                        owner.assertTrue(manifest.precompiled_only)
+                        owner.executions.append(manifest.spec.execution_id)
+                        execute(inputs, self.work, Model(manifest), time.monotonic() + 10)
                     self.returncode = 0
                 return self.returncode
 
