@@ -8,7 +8,7 @@ from io import BytesIO
 
 import pytest
 from openpyxl import Workbook
-from ppap_deep.auditor import semantic_inputs
+from ppap_deep.auditor import product_response, semantic_inputs
 from ppap_deep.protocol import ExecuteRequest, FrozenFile
 from ppap_deep.semantic.document_tools import snapshot
 from ppap_deep.semantic.guest import Manifest, execute
@@ -123,6 +123,7 @@ class FeedbackModel:
                 item["evidence"] = [{"kind": "xlsx_cell", "sheet": table, "cell": f"A{row}"} for row in item["rows"]]
         uses = [{"audit_id": target, "rule_id": clause["id"], "inputs": {"pfd": pfd, **({"cp": cp} if clause["id"] != "R3" else {})}} for target in targets for clause in RULES]
         return AuditTrace.model_validate({"bindings": bindings, "uses": uses})
+
 
 PFD = "00000000-0000-4000-8000-000000000010"
 CP = "00000000-0000-4000-8000-000000000020"
@@ -264,32 +265,72 @@ def test_file_relationship_and_new_release_manifest_rule_cross_the_real_guest(tm
                 identity, _ = json.JSONDecoder().raw_decode(prompt.split("identity and ordered clause IDs must match exactly: ", 1)[1])
                 assert json.loads((work / "clauses.json").read_text()) == clauses
                 assert not (work / "documents.json").exists()
-                return schema.model_validate({
-                    "source_sha256": identity["source_sha256"], "plan_revision": identity["plan_revision"],
-                    "ontology": {
-                        "entities": [
-                            {"id": "entries", "grain": "one release manifest entry", "attributes": {"attachment_id": "string", "digest": "string"}, "identity": ["attachment_id"]},
-                            {"id": "files", "grain": "one supplied file", "attributes": {"id": "string", "sha256": "string"}, "identity": ["id"]},
+                return schema.model_validate(
+                    {
+                        "source_sha256": identity["source_sha256"],
+                        "plan_revision": identity["plan_revision"],
+                        "ontology": {
+                            "entities": [
+                                {"id": "entries", "grain": "one release manifest entry", "attributes": {"attachment_id": "string", "digest": "string"}, "identity": ["attachment_id"]},
+                                {"id": "files", "grain": "one supplied file", "attributes": {"id": "string", "sha256": "string"}, "identity": ["id"]},
+                            ],
+                            "relationships": [
+                                {"id": "describes", "kind": "association", "source": "entries", "target": "files", "meaning": "entry refers to the supplied attachment by its original ID"}
+                            ],
+                        },
+                        "rules": [
+                            {
+                                "id": "N1",
+                                "source_locator": {"kind": "published_clause", "clause_id": "N1"},
+                                "program": {
+                                    "kind": "records",
+                                    "source": "entries",
+                                    "quantifier": "forall",
+                                    "require": {
+                                        "kind": "related",
+                                        "relationship_id": "describes",
+                                        "target": "files",
+                                        "match": "one_to_one",
+                                        "source_key": {"fields": ["attachment_id"]},
+                                        "target_key": {"fields": ["id"]},
+                                        "comparisons": [{"source_field": "digest", "target_field": "sha256", "mode": "exact"}],
+                                    },
+                                },
+                                "empty_scope_status": "UNABLE",
+                                "empty_scope_basis": "The rule does not define an empty manifest result.",
+                            }
                         ],
-                        "relationships": [{"id": "describes", "kind": "association", "source": "entries", "target": "files", "meaning": "entry refers to the supplied attachment by its original ID"}],
-                    },
-                    "rules": [{"id": "N1", "source_locator": {"kind": "published_clause", "clause_id": "N1"},
-                               "program": {"kind": "records", "source": "entries", "quantifier": "forall", "require": {
-                                   "kind": "related", "relationship_id": "describes", "target": "files", "match": "one_to_one",
-                                   "source_key": {"fields": ["attachment_id"]}, "target_key": {"fields": ["id"]},
-                                   "comparisons": [{"source_field": "digest", "target_field": "sha256", "mode": "exact"}],
-                               }}, "empty_scope_status": "UNABLE", "empty_scope_basis": "The rule does not define an empty manifest result."}],
-                })
+                    }
+                )
             documents = json.loads((work / "documents.json").read_text())
-            return schema.model_validate({
-                "bindings": [{"id": "entries", "document_id": CP, "source_sha256": documents[CP]["source"]["sha256"],
-                              "table": "ReleaseManifest", "header_rows": [1], "first_row": 2, "last_row": 2,
-                              "columns": {"attachment_id": "A", "digest": "B"}, "mapping_basis": "Both original column headers", "boundary_basis": "Complete one-entry manifest"}],
-                "uses": [{"audit_id": CP, "rule_id": "N1", "inputs": {
-                    "entries": {"kind": "bound", "scopes": [{"binding_id": "entries"}]},
-                    "files": {"kind": "files", "document_ids": list(documents)},
-                }}],
-            })
+            return schema.model_validate(
+                {
+                    "bindings": [
+                        {
+                            "id": "entries",
+                            "document_id": CP,
+                            "source_sha256": documents[CP]["source"]["sha256"],
+                            "table": "ReleaseManifest",
+                            "header_rows": [1],
+                            "first_row": 2,
+                            "last_row": 2,
+                            "columns": {"attachment_id": "A", "digest": "B"},
+                            "mapping_basis": "Both original column headers",
+                            "boundary_basis": "Complete one-entry manifest",
+                        }
+                    ],
+                    "uses": [
+                        {
+                            "audit_id": CP,
+                            "rule_id": "N1",
+                            "inputs": {
+                                "entries": {"kind": "bound", "scopes": [{"binding_id": "entries"}]},
+                                "files": {"kind": "files", "document_ids": list(documents)},
+                            },
+                        }
+                    ],
+                }
+            )
 
     model = ReleaseModel()
     bundle, result = run_case(tmp_path / "guest", files={PFD: reference, CP: data.getvalue()}, rules=clauses, model=model)
@@ -325,14 +366,29 @@ def test_bounded_model_tool_responses_and_complete_relevant_coverage(tmp_path):
                 if binding.id == "pfd":
                     binding.last_row = 3
                     binding.boundary_basis = "Rows 2–3 are the complete process table; later rows belong to the notes region."
-                command = [sys.executable, "-m", "ppap_deep.semantic.document_tools", "view", str(work / "documents.json"),
-                           "--document", binding.document_id, "--table", binding.table, "--rows", f"1:{binding.last_row}", "--columns", "A:B"]
+                command = [
+                    sys.executable,
+                    "-m",
+                    "ppap_deep.semantic.document_tools",
+                    "view",
+                    str(work / "documents.json"),
+                    "--document",
+                    binding.document_id,
+                    "--table",
+                    binding.table,
+                    "--rows",
+                    f"1:{binding.last_row}",
+                    "--columns",
+                    "A:B",
+                ]
                 response = subprocess.run(command, cwd=work, check=True, capture_output=True).stdout
                 self.responses.append(response)
             (work / "selected-execution.json").write_text(result.model_dump_json())
             response = subprocess.run(
                 [sys.executable, "-m", "ppap_deep.semantic.audit_tools", "evaluate", "selected-execution.json", "--out", "bounded-evaluation.json"],
-                cwd=work, check=True, capture_output=True,
+                cwd=work,
+                check=True,
+                capture_output=True,
             ).stdout
             self.responses.append(response)
             return result
@@ -604,6 +660,196 @@ def test_boolean_local_judgments_also_accept_the_shared_typed_fact_contract(tmp_
     ]
     result = evaluate_audit(AuditTrace.model_validate(raw), bundle.documents, {CP: plan})
     assert [check.status for check in result.report.checks] == ["PASS", "NG", "NG"]
+
+
+@pytest.mark.parametrize("independent_requirement", [False, True])
+def test_rule_field_conflict_uses_one_question_for_all_affected_fields_and_only_its_clause(tmp_path, independent_requirement):
+    """Controlled interpretation is supplied; automatic discovery is tested live."""
+    from docx import Document
+    from ppap_deep.semantic.document_tools import TableReader
+    from ppap_deep.semantic.evidence import EvidenceBudget
+
+    affected = ["product_category", "product_description", "process_category", "process_description"]
+    columns = {"code": "A", **dict(zip(affected, "BCDE", strict=True)), "approval": "F"}
+    headers = ["工序编号", "产品特性类别", "产品特殊特性", "过程特性类别", "过程特殊特性", "批准人"]
+    rule_text = (
+        "识别是否存在‘过程流程图’表，如果存在则继续识别；"
+        "表中是否包含‘过程特殊特性’、‘过程特性类别’两列，如果包含则继续识别；"
+        "当‘产品特性类别’列下内容不为空，且对应行的‘产品特殊特性’列内容不为空则通过，否则不通过。"
+    )
+    if independent_requirement:
+        rule_text += "此外，批准人必须非空，此要求不随上述字段解释改变。"
+    texts = ["产品特性类别和产品特殊特性均须非空，否则不通过。", rule_text, "工序编号必须非空，否则不通过。"]
+    rule_ids = ["R2", "R3", "R4"]
+    question_id = "characteristic-subject"
+    candidates = [
+        {"id": "literal", "label": "保留原文字面混合要求", "explanation": "保留原文：先确认过程特殊特性及过程特性类别两列存在，再检查产品特性类别及产品特殊特性值非空，不将两处对象合并。"},
+        {"id": "product", "label": "修改为产品字段要求", "explanation": "需明确修改前半段标准，将过程特殊特性及过程特性类别两列改为产品字段；这是标准修改，不是字段别名确认。"},
+        {"id": "process", "label": "修改为过程字段要求", "explanation": "需明确修改后半段标准，将产品特性类别及产品特殊特性的值要求改为过程字段；这是标准修改，不是字段别名确认。"},
+    ]
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    source = Document()
+    table = source.add_table(rows=4, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "条款编号", "审核要求"
+    for row, rule_id, text in zip(range(1, 4), rule_ids, texts, strict=True):
+        table.cell(row, 0).text, table.cell(row, 1).text = rule_id, text
+    source_path = inputs / "requirements.docx"
+    source.save(source_path)
+    source_observation = snapshot(source_path)
+    # Effective published text is copied from actual parsed DOCX observations.
+    clauses = [{"id": source_observation["tables"][0]["cells"][f"A{row}"]["value"], "rule_to_check": source_observation["tables"][0]["cells"][f"B{row}"]["value"]} for row in range(2, 5)]
+    assert [clause["rule_to_check"] for clause in clauses] == texts
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "过程流程图"
+    sheet.append(headers)
+    # Process fields are filled, product fields are empty. Choosing one side
+    # without confirmation would materially change the ambiguous requirement.
+    sheet.append(["010", None, None, "CC", "温度", None])
+    workbook_path = inputs / "process.xlsx"
+    workbook.save(workbook_path)
+    workbook.close()
+    request = ExecuteRequest(
+        protocol_revision="ppap-deep-v2",
+        tenant_id="test-tenant",
+        round_id="00000000-0000-4000-8000-000000000001",
+        job_id="00000000-0000-4000-8000-000000000002",
+        executor="ppap-deep",
+        executor_revision=ENGINE,
+        files=[
+            FrozenFile(file_version_id=PFD, role="reference", filename=source_path.name, sha256=hashlib.sha256(source_path.read_bytes()).hexdigest()),
+            FrozenFile(
+                file_version_id=CP,
+                role="target",
+                filename=workbook_path.name,
+                sha256=hashlib.sha256(workbook_path.read_bytes()).hexdigest(),
+                rule_version_id=RULE,
+                rule_source_file_version_id=PFD,
+                rule_body={"kind": "engine", "rules": clauses},
+            ),
+        ],
+    )
+    spec, packets = semantic_inputs(request, ENGINE)
+    for identity, raw in packets.items():
+        (inputs / (identity + ".json")).write_bytes(raw)
+    manifest = Manifest(spec=spec, documents={PFD: source_path.name, CP: workbook_path.name}, rules={identity: identity + ".json" for identity in packets}, cached_snapshots={}, cached_plans={})
+    (inputs / "manifest.json").write_text(manifest.model_dump_json())
+
+    class ConflictingRuleModel:
+        input_tokens = output_tokens = 0
+
+        def run(self, work, prompt, schema, deadline, *, reasoning_effort):
+            assert reasoning_effort == "medium"
+            if issubclass(schema, RulePlan):
+                identity, _ = json.JSONDecoder().raw_decode(prompt.split("identity and ordered clause IDs must match exactly: ", 1)[1])
+                assert json.loads((work / "clauses.json").read_text()) == clauses
+                ambiguous = {"kind": "judge", "question": rule_text, "fields": affected}
+                if independent_requirement:
+                    ambiguous = {"kind": "all", "items": [ambiguous, {"kind": "value_test", "field": "approval", "op": "not_empty"}]}
+                programs = [
+                    {"kind": "all", "items": [{"kind": "value_test", "field": field, "op": "not_empty"} for field in affected[:2]]},
+                    ambiguous,
+                    {"kind": "value_test", "field": "code", "op": "not_empty"},
+                ]
+                return schema.model_validate(
+                    {
+                        "source_sha256": identity["source_sha256"],
+                        "plan_revision": identity["plan_revision"],
+                        "ontology": {"entities": [{"id": "rows", "grain": "one process row", "attributes": dict.fromkeys(columns, "string"), "identity": ["code"]}]},
+                        "rules": [
+                            {
+                                "id": rule_id,
+                                "source_locator": {"kind": "published_clause", "clause_id": rule_id},
+                                "program": {"kind": "records", "source": "rows", "quantifier": "forall", "require": program},
+                                "empty_scope_status": "UNABLE",
+                                "empty_scope_basis": "原文未规定零适用对象的通过政策。",
+                            }
+                            for rule_id, program in zip(rule_ids, programs, strict=True)
+                        ],
+                    }
+                )
+            assert schema is AuditTrace
+            documents = json.loads((work / "documents.json").read_text())
+            header_evidence = [{"document_id": CP, "locator": {"kind": "xlsx_cell", "sheet": sheet.title, "cell": column + "1"}} for column in "BCDE"]
+            binding = {
+                "id": "literal",
+                "document_id": CP,
+                "source_sha256": documents[CP]["source"]["sha256"],
+                "table": sheet.title,
+                "header_rows": [1],
+                "first_row": 2,
+                "last_row": 2,
+                "columns": columns,
+                "mapping_basis": "六个实际原件表头分别对应原字段",
+                "boundary_basis": "全部一行工序正文",
+            }
+            ambiguous_binding = {
+                **binding,
+                "id": "ambiguous",
+                "interpretations": [
+                    {
+                        "id": question_id,
+                        "field": field,
+                        "question": "本条前后分别指向过程与产品字段。是否保留字面混合要求，或明确修改其中一部分？",
+                        "candidates": candidates,
+                        "evidence": header_evidence,
+                    }
+                    for field in affected
+                ],
+            }
+            return schema.model_validate(
+                {
+                    "bindings": [binding, ambiguous_binding],
+                    "uses": [
+                        {"audit_id": CP, "rule_id": rule_id, "inputs": {"rows": {"kind": "bound", "scopes": [{"binding_id": "ambiguous" if rule_id == "R3" else "literal"}]}}} for rule_id in rule_ids
+                    ],
+                }
+            )
+
+    bundle = execute(inputs, tmp_path / "work", ConflictingRuleModel(), time.monotonic() + 60)
+    plans = {CP: bundle.plans[RULE]}
+    evaluated = evaluate_audit(bundle.trace, bundle.documents, plans)
+    expected = ["NG", "NG" if independent_requirement else "UNABLE", "PASS"]
+    assert [check.status for check in evaluated.report.checks] == expected
+    assert len(evaluated.needs) == 1 and evaluated.needs[0].kind == "interpretation"
+    assert len(evaluated.clarifications) == 1
+    question = evaluated.clarifications[0]
+    assert question["id"] == question_id
+    assert question["rule_ids"] == ["R3"]
+    assert question["scope"] == {"document_ids": [CP], "rule_ids": ["R3"], "rule_targets": [{"document_id": CP, "rule_id": "R3"}]}
+    assert [entry["excerpt"] for entry in question["sources"]] == headers[1:5]
+    assert question["candidates"] == candidates
+    # Preserve native observations; the temporary interpretation gate does not
+    # turn an empty value into a guessed native value or erase filled fields.
+    native = TableReader(bundle.documents[CP]["tables"][0], EvidenceBudget())
+    assert (native.cell(2, 2)["value"], native.cell(2, 2)["state"]) == (None, "known")
+    assert (native.cell(2, 4)["value"], native.cell(2, 4)["state"]) == ("CC", "known")
+    response = product_response(request, bundle, spec)
+    assert [finding.status for finding in response.findings] == expected
+    assert response.coverage.clarifications == evaluated.clarifications
+    r3 = next(finding for finding in response.findings if finding.locator["rule_item_id"] == "R3")
+    assert r3.locator["semantic"]["rule_text"] == rule_text
+    assert r3.locator["semantic"]["rule_source_file_version_id"] == PFD
+    # Independently probe each leaf on a read-only plan copy. This checks every
+    # field gate, not a new compilation or meaning for the original clause.
+    for field in affected:
+        raw_probe = bundle.plans[RULE].model_dump(mode="json")
+        raw_probe["rules"][1]["program"]["require"] = {"kind": "value_test", "field": field, "op": "not_empty"}
+        probe = RulePlan.model_validate(raw_probe)
+        leaf = evaluate_audit(bundle.trace, bundle.documents, {CP: probe})
+        assert leaf.report.checks[1].status == "UNABLE"
+        assert leaf.report.checks[1].unknown == 1
+        assert len(leaf.clarifications) == 1 and leaf.clarifications[0]["rule_ids"] == ["R3"]
+    raw = bundle.trace.model_dump(mode="json")
+    need = evaluated.needs[0]
+    raw["answers"] = [
+        {"kind": "fact", "need_id": need.id, "input_id": need.input_id, "origin": "model", "value": "process", "reason": "测试模型推荐不属于用户确认", "evidence": need.context["allowed_evidence"]}
+    ]
+    recommended = evaluate_audit(AuditTrace.model_validate(raw), bundle.documents, plans)
+    assert [check.status for check in recommended.report.checks] == expected
+    assert recommended.clarifications[0]["recommended_candidate_id"] == "process"
+    assert bundle.plans[RULE].appendix == []
 
 
 def test_cross_region_layout_changes_preserve_business_grain_values_and_conclusions(tmp_path):
