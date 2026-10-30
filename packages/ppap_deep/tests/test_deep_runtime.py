@@ -360,7 +360,7 @@ class SemanticProductContractTests(unittest.TestCase):
                 elif defect == "budget":
                     locator = {"kind": "xlsx_range", "sheet": "Sheet1", "start": "A1", "end": "A250"}
                     table = payload["documents"][TARGET]["tables"][0]
-                    table.update(rows=8192, merges=[[row, 1, row + 1, 1] for row in range(1, 8000, 2)])
+                    table.update(rows=8192, cols=4000, merges=[[1, column, 8192, column] for column in range(1, 4001)])
                 else:
                     locator = {"kind": "xlsx_cell", "sheet": "Sheet1", "cell": "A1"}
                     payload["documents"][TARGET]["tables"][0]["cells"]["A1"].update(value=None, state="unknown_formula_cache")
@@ -708,10 +708,14 @@ if __name__ == "__main__":
 def scoped_rule_variants():
     spec = _spec()
     second = spec.files[0].model_copy(deep=True, update={"file_version_id": "target-two", "file_id": "file-two", "filename": "second.xlsx"})
-    second.rule_body["appendix"] = [{
-        "id": "confirmation-two", "kind": "interpretation", "content": "Test input: this explanation applies only to the second target.",
-        "scope": {"document_ids": [second.file_version_id], "rule_ids": ["R1"], "rule_targets": [{"document_id": second.file_version_id, "rule_id": "R1"}]},
-    }]
+    second.rule_body["appendix"] = [
+        {
+            "id": "confirmation-two",
+            "kind": "interpretation",
+            "content": "Test input: this explanation applies only to the second target.",
+            "scope": {"document_ids": [second.file_version_id], "rule_ids": ["R1"], "rule_targets": [{"document_id": second.file_version_id, "rule_id": "R1"}]},
+        }
+    ]
     spec.files.insert(1, second)
     return spec
 

@@ -90,6 +90,30 @@ def test_grounded_multirow_objects_keep_member_sources_and_original_observations
     assert document["tables"][0]["cells"]["A2"]["value"] == "010"
 
 
+def test_logical_object_judgment_keeps_the_next_physical_row_even_if_it_is_not_a_member(tmp_path):
+    document, plan, raw = case(tmp_path)
+    program = plan.model_dump(mode="json")
+    program["rules"][0]["program"]["require"] = {"kind": "judge", "question": "What is in the next physical row?", "fields": ["code"], "inputs": ["processes"]}
+    plan = RulePlan.model_validate(program)
+    scope = raw["uses"][0]["inputs"]["processes"]["scopes"][0]
+    scope["objects"] = [obj("010", [2]), obj("020", [4])]
+    scope["excluded_rows"] = [
+        {
+            "row": 3,
+            "reason_type": "non_record",
+            "reason": "This physical row is outside the business collection, but remains in the source.",
+            "evidence_locator": {"kind": "xlsx_cell", "sheet": "CP", "cell": "B3"},
+        }
+    ]
+    before = deepcopy(document)
+    result = evaluate(document, plan, raw)
+    first = next(need for need in result.needs if need.context["source"]["record"]["row"] == "object:010")
+    assert first.context["source"]["source_rows"] == [2]
+    assert [item["record"]["row"] for item in first.context["adjacent"]] == [3]
+    assert first.context["adjacent"][0]["fields"]["code"]["value"] is None
+    assert document == before
+
+
 @pytest.mark.parametrize("change", ["missing_reason", "missing_evidence", "partial_coverage", "header_only", "unreadable"])
 def test_incomplete_grouping_support_remains_unknown(tmp_path, change):
     document, plan, raw = case(tmp_path)

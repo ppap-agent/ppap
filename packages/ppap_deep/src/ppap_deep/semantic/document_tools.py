@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import re
 import sqlite3
 import sys
@@ -16,8 +17,9 @@ from bisect import bisect_right
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
+from xml.etree import ElementTree as ET
 
 if TYPE_CHECKING:
     from .evidence import EvidenceBudget
@@ -145,6 +147,183 @@ def active_text(element: Any, *, skip_tables: bool = False) -> str:
     return visit(element).strip()
 
 
+_XLSX_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_XLSX_SS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_XLSX_DRAWING = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+# DrawingML ST_Coordinate, integer EMUs (ISO/IEC 29500-1 §20.1.10.16).
+_XLSX_COORDINATE_MIN = -27273042329600
+_XLSX_COORDINATE_MAX = 27273042316900
+
+
+def _archive_target(part: str, target: str) -> str:
+    # Relationship targets are archive names, never filesystem paths or URLs.
+    if not target or any(char in target for char in ("\\", ":", "?", "#", "%", "\x00")):
+        raise ValueError("Invalid visual relationship target")
+    result = posixpath.normpath(posixpath.join(posixpath.dirname(part), target)) if not target.startswith("/") else target.lstrip("/")
+    if result in (".", "..") or result.startswith("../"):
+        raise ValueError("Visual relationship is outside the archive")
+    return result
+
+
+def _xlsx_visual_evidence(path: Path, limits: ReadLimits) -> dict[str, list[dict[str, Any]]]:
+    """Keep uninterpreted OOXML objects; no shape-to-business-value mapping.
+
+    A zero-offset two-cell anchor gives a cell intersection. Other native
+    placements stay explicitly unresolved on their own worksheet.
+    Offsets use integer EMUs; unit-qualified lengths are unsupported.
+    No archive member is extracted and no external relationship is followed.
+    """
+    result: dict[str, list[dict[str, Any]]] = {}
+    count = 0
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+
+        def xml(part: str) -> ET.Element:
+            if part not in names:
+                raise ValueError("Missing visual source part")
+            content = archive.read(part)
+            if b"<!DOCTYPE" in content.upper() or b"<!ENTITY" in content.upper():
+                raise ValueError("Unsupported XML entity in visual source")
+            try:
+                return ET.fromstring(content)
+            except ET.ParseError as exc:
+                raise ValueError("Invalid visual source XML") from exc
+
+        def relationships(part: str) -> dict[str, dict[str, str]]:
+            source = PurePosixPath(part)
+            name = str(source.parent / "_rels" / (source.name + ".rels"))
+            if name not in names:
+                return {}
+            rels = {}
+            for node in xml(name):
+                identity = node.get("Id")
+                if not identity or identity in rels or not node.get("Target") or not node.get("Type"):
+                    raise ValueError("Invalid visual source relationship")
+                rels[identity] = dict(node.attrib)
+            return rels
+
+        def related(part: str, rels: dict[str, dict[str, str]], identity: str | None, kind: str | None = None) -> str:
+            relation = rels.get(identity or "")
+            if relation is None or relation.get("TargetMode", "Internal") != "Internal" or (kind and not relation["Type"].endswith("/" + kind)):
+                raise ValueError("Unresolved visual source relationship")
+            target = _archive_target(part, relation["Target"])
+            if target not in names:
+                raise ValueError("Missing visual source part")
+            return target
+
+        def add(
+            items: list[dict[str, Any]],
+            part: str,
+            index: int,
+            kind: str,
+            node: ET.Element,
+            *,
+            rels: dict[str, dict[str, str]],
+            location: ET.Element | None = None,
+        ) -> None:
+            nonlocal count
+            count += 1
+            within(count, limits.blocks, "visual objects")
+            item: dict[str, Any] = {"source": {"part": part, "anchor_index": index}, "kind": kind, "content_observed": False}
+            location = node if location is None else location
+            first, last = _xlsx_marker(location, "from"), _xlsx_marker(location, "to")
+            if first is not None:
+                item["from"] = first
+            if last is not None:
+                item["to"] = last
+            item["range"] = _xlsx_anchor_range(first, last) if kind == "twoCellAnchor" and first is not None and last is not None else None
+            if item["range"] is None:
+                item["unresolved_reason"] = "unsupported_anchor_geometry"
+            references = []
+            for child in node.iter():
+                for attribute, identity in child.attrib.items():
+                    if attribute.startswith("{" + _XLSX_REL + "}") or attribute == "{urn:schemas-microsoft-com:office:office}relid":
+                        relation = rels.get(identity, {})
+                        if (
+                            attribute == f"{{{_XLSX_REL}}}id"
+                            and child.tag in {f"{{http://schemas.openxmlformats.org/drawingml/2006/main}}{name}" for name in ("hlinkClick", "hlinkHover")}
+                            and relation.get("Type") == _XLSX_REL + "/hyperlink"
+                            and relation.get("TargetMode", "Internal") in {"Internal", "External"}
+                        ):
+                            continue  # Navigation is not visual content; never open its target.
+                        references.append({"relationship_id": identity, "part": related(part, rels, identity)})
+            if references:
+                item["references"] = references
+            items.append(item)
+
+        workbook = "xl/workbook.xml"
+        workbook_rels = relationships(workbook)
+        for sheet in xml(workbook).iter(f"{{{_XLSX_SS}}}sheet"):
+            sheet_part = related(workbook, workbook_rels, sheet.get(f"{{{_XLSX_REL}}}id"))
+            sheet_xml, sheet_rels = xml(sheet_part), relationships(sheet_part)
+            items = result.setdefault(str(sheet.attrib["name"]), [])
+            # Follow the original ZIP relationships even when openpyxl drops
+            # unsupported shapes. Images/charts remain source references only.
+            for drawing in sheet_xml.iter(f"{{{_XLSX_SS}}}drawing"):
+                part = related(sheet_part, sheet_rels, drawing.get(f"{{{_XLSX_REL}}}id"), "drawing")
+                drawing_xml, drawing_rels = xml(part), relationships(part)
+                if drawing_xml.tag != f"{{{_XLSX_DRAWING}}}wsDr":
+                    raise ValueError("Invalid spreadsheet drawing root")
+                within(sum(1 for _ in drawing_xml.iter()), limits.blocks, "visual XML nodes")
+                for index, node in enumerate(drawing_xml, 1):
+                    add(items, part, index, node.tag.rsplit("}", 1)[-1], node, rels=drawing_rels)
+            for index, control in enumerate(sheet_xml.iter(), 1):
+                kind = control.tag.rsplit("}", 1)[-1]
+                if kind not in {"legacyDrawing", "control", "oleObject", "picture"}:
+                    continue
+                control_identity = control.get(f"{{{_XLSX_REL}}}id")
+                if not control_identity:
+                    raise ValueError("Missing worksheet visual relationship")
+                part = related(sheet_part, sheet_rels, control_identity)
+                if kind == "legacyDrawing":
+                    legacy, legacy_rels = xml(part), relationships(part)
+                    if legacy.tag != "xml":
+                        raise ValueError("Invalid spreadsheet VML root")
+                    within(sum(1 for _ in legacy.iter()), limits.blocks, "visual XML nodes")
+                    # Comment popups are annotations, not cell visual content.
+                    kinds = {"shape", "rect", "roundrect", "oval", "arc", "curve", "polyline", "line", "group", "image", "background"}
+                    objects = (node for node in legacy.iter() if node.tag.rsplit("}", 1)[-1] in kinds)
+                    for shape_index, node in enumerate(objects, 1):
+                        if not any(child.get("ObjectType") == "Note" for child in node.iter()):
+                            add(items, part, shape_index, "legacyDrawing", node, rels=legacy_rels)
+                else:
+                    placement = next((node for node in control.iter() if node.tag.rsplit("}", 1)[-1] == "anchor"), control)
+                    add(items, sheet_part, index, kind, control, rels=sheet_rels, location=placement)
+    return result
+
+
+def _xlsx_marker(anchor: ET.Element, name: str) -> dict[str, int] | None:
+    markers = [node for node in anchor if node.tag.rsplit("}", 1)[-1] == name]
+    if not markers:
+        return None
+    if len(markers) != 1:
+        raise ValueError("Duplicate visual anchor marker")
+    marker = markers[0]
+    values = {node.tag.rsplit("}", 1)[-1]: node.text for node in marker}
+    if len(marker) != 4 or set(values) != {"row", "col", "rowOff", "colOff"}:
+        raise ValueError("Incomplete visual anchor marker")
+    try:
+        row, column, row_offset, column_offset = (int(values[key] or "") for key in ("row", "col", "rowOff", "colOff"))
+    except ValueError as exc:
+        raise ValueError("Invalid visual anchor marker") from exc
+    if not (0 <= row < 1048576 and 0 <= column < 16384 and _XLSX_COORDINATE_MIN <= row_offset <= _XLSX_COORDINATE_MAX and _XLSX_COORDINATE_MIN <= column_offset <= _XLSX_COORDINATE_MAX):
+        raise ValueError("Invalid visual anchor marker")
+    return {"row": row + 1, "column": column + 1, "row_offset_emu": row_offset, "column_offset_emu": column_offset}
+
+
+def _xlsx_anchor_range(first: dict[str, int], last: dict[str, int]) -> list[int] | None:
+    # Native offsets can cross cell boundaries. Without layout measurements,
+    # their nominal row/column is only a navigation hint, not a coverage proof.
+    if any(marker[offset] != 0 for marker in (first, last) for offset in ("row_offset_emu", "column_offset_emu")):
+        return None
+    if any(last[name] < first[name] for name in ("row", "column")):
+        raise ValueError("Reversed visual anchor")
+    if any(last[name] == first[name] for name in ("row", "column")):
+        return None  # Native line shapes can have a zero-width or zero-height box.
+    # A zero-offset endpoint is the next cell boundary, not part of that cell.
+    return [first["row"], first["column"], last["row"] - 1, last["column"] - 1]
+
+
 def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str, Any]:
     path = Path(path)
     limits = limits or ReadLimits()
@@ -190,6 +369,7 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
         from openpyxl import load_workbook
         from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
+        visuals = _xlsx_visual_evidence(path, limits)
         with ExitStack() as stack:
             values = stack.enter_context(closing(load_workbook(path, data_only=True)))
             formulas = stack.enter_context(closing(load_workbook(path, data_only=False)))
@@ -222,8 +402,21 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
                 table["merges"] = [[m.min_row, m.min_col, m.max_row, m.max_col] for m in sheet.merged_cells.ranges]
                 table["hidden_rows"] = [r for r, dim in sheet.row_dimensions.items() if dim.hidden]
                 table["hidden_columns"] = [c for c, dim in sheet.column_dimensions.items() if dim.hidden]
+                if visuals.get(sheet.title):
+                    table["visual_evidence"] = visuals[sheet.title]
+                    # A visual can extend beyond the last stored scalar cell.
+                    for visual in table["visual_evidence"]:
+                        if visual["range"] is not None:
+                            table["rows"] = max(table["rows"], visual["range"][2])
+                            table["cols"] = max(table["cols"], visual["range"][3])
+                        elif "from" in visual:
+                            table["rows"] = max(table["rows"], visual["from"]["row"])
+                            table["cols"] = max(table["cols"], visual["from"]["column"])
                 result["tables"].append(table)
-        result["limitations"] = ["Images, drawings and checkbox objects require separate inspection; formula caches are not recalculated."]
+        result["limitations"] = [
+            "Uninterpreted visual sources remain unknown on overlapping empty cells. Only zero-offset two-cell anchors have cell coverage; "
+            "nonzero offsets and unsupported placements affect empty cells on their worksheet. Only integer EMU offsets are supported. Formula caches are not recalculated."
+        ]
     elif suffix == ".xls":
         import xlrd
 
@@ -304,17 +497,30 @@ def snapshot(path: str | Path, *, limits: ReadLimits | None = None) -> dict[str,
     return result
 
 
-def _effective(table: dict[str, Any], row: int, column: int, merges: list) -> dict[str, Any]:
+def _effective(table: dict[str, Any], row: int, column: int, merges: list, visuals: list[tuple[int, dict[str, Any]]] | None = None) -> dict[str, Any]:
     address = ref(row, column)
     anchor = address
     span = None
+    region = [row, column, row, column]
     for r1, c1, r2, c2 in merges:
         if r1 <= row <= r2 and c1 <= column <= c2:
             anchor, span = ref(r1, c1), f"{ref(r1, c1)}:{ref(r2, c2)}"
+            region = [r1, c1, r2, c2]
             break
     item = table["cells"].get(anchor, {"value": None, "state": "known"})
+    value = item.get("value")
+    if item.get("state") == "known" and (value is None or isinstance(value, str) and not value.strip()):
+        visual_sources = [
+            index for index, visual in (visuals if visuals is not None else enumerate(table.get("visual_evidence", []))) if visual["range"] is None or _regions_overlap(region, visual["range"])
+        ]
+        if visual_sources:
+            item = {**item, "state": "unknown_visual_evidence", "source": {"visual_evidence": visual_sources}}
     anchor = item.get("anchor", anchor)
     return {**item, "cell": address, "anchor": anchor, "merge": span}
+
+
+def _regions_overlap(left: list[int], right: list[int]) -> bool:
+    return left[0] <= right[2] and right[0] <= left[2] and left[1] <= right[3] and right[1] <= left[3]
 
 
 def effective(table: dict[str, Any], row: int, column: int) -> dict[str, Any]:
@@ -350,6 +556,25 @@ class TableReader:
             budget.consume(len(active) * (len(active).bit_length() + 1) + 1)
             self.rows.append(row)
             self.merges.append([active[index] for index in sorted(active)])
+        self.visual_rows: list[int] = []
+        self.visuals: list[list[tuple[int, dict[str, Any]]]] = []
+        visual_events: dict[int, list[tuple[int, dict[str, Any] | None]]] = {}
+        budget.consume(2 * len(table.get("visual_evidence", [])))
+        for index, visual in enumerate(table.get("visual_evidence", [])):
+            region = visual["range"]
+            first, last = (region[0], region[2]) if region is not None else (1, table["rows"])
+            visual_events.setdefault(first, []).append((index, visual))
+            visual_events.setdefault(last + 1, []).append((index, None))
+        active_visuals: dict[int, dict[str, Any]] = {}
+        for row in sorted(visual_events):
+            for index, visual in visual_events[row]:
+                if visual is None:
+                    active_visuals.pop(index)
+                else:
+                    active_visuals[index] = visual
+            budget.consume(len(active_visuals) * (len(active_visuals).bit_length() + 1) + 1)
+            self.visual_rows.append(row)
+            self.visuals.append(sorted(active_visuals.items()))
 
     def cell(self, row: int, column: int) -> dict[str, Any]:
         if not 1 <= row <= self.table["rows"] or not 1 <= column <= self.table["cols"]:
@@ -357,7 +582,16 @@ class TableReader:
         index = bisect_right(self.rows, row) - 1
         spans = self.merges[index] if index >= 0 else []
         self.budget.consume(len(spans) + 1)
-        return _effective(self.table, row, column, spans)
+        # Query all visual row segments touched by the effective merged cell.
+        # Each object remains one source; empty grid positions are not stored.
+        region = next((span for span in spans if span[1] <= column <= span[3]), [row, column, row, column])
+        first = bisect_right(self.visual_rows, region[0]) - 1
+        last = bisect_right(self.visual_rows, region[2])
+        candidates: dict[int, dict[str, Any]] = {}
+        for segment in self.visuals[max(0, first) : last]:
+            self.budget.consume(len(segment) + 1)
+            candidates.update(segment)
+        return _effective(self.table, row, column, spans, sorted(candidates.items()))
 
 
 def table_window(table: dict[str, Any], rows: list[int], columns: list[int], *, budget: EvidenceBudget | None = None) -> dict[str, Any]:

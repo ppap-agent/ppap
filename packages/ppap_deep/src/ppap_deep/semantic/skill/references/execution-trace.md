@@ -28,7 +28,7 @@ python -m ppap_deep.semantic.audit_tools view evaluation.json --offset 0 --limit
 
 宿主读取或局部问题达到资源上限属于 RESOURCE_LIMIT，不能通过删列、删记录或改成未知来修复，也不触发审核结构修复。可选引用仍使用独立软预算。
 
-标题、合并组行和明细用途不同。同一 physical Binding 可以用于不同集合；只有对应 use 的成员政策生效。原生数值不会因 int/float 实现差异变成不同键；文本编号和布尔值不自动转换。文件名、宽松子串及删标点只可作探索线索。绑定只选择原始坐标，保留精确标识符、原值和引文；不能改变缓存的键、过滤、量词、比较或转换政策。供应商数据不能放宽仅由规则原文确定的义务。真实未知保留为未知，不能用猜测的映射、关联别名、字段转换或缺文件 NG 消除未知。
+标题、合并组行和明细用途不同。同一 physical Binding 可以用于不同集合；只有对应 use 的成员政策生效。先根据本条款的 grain、身份及相邻结构确认成员，再检查该对象的必填值；“保留物理阅读顺序”不能充当“这是业务明细”的依据。角色不清的行用 unresolved_rows 保留，不因其空字段直接断言违规；真实明细的空字段也不能反过来成为排除依据。排除某用途中的组标题不删除原件行，要求下一物理行时仍读取原坐标，不能跳到下一已选业务对象。原生数值不会因 int/float 实现差异变成不同键；文本编号和布尔值不自动转换。文件名、宽松子串及删标点只可作探索线索。绑定只选择原始坐标，保留精确标识符、原值和引文；不能改变缓存的键、过滤、量词、比较或转换政策。供应商数据不能放宽仅由规则原文确定的义务。真实未知保留为未知，不能用猜测的映射、关联别名、字段转换或缺文件 NG 消除未知。
 
 按生效条款的完整语法执行分支。“A 且 B 则通过，否则不通过”在 A=false/B=true 或 A=true/B=false 且值已知时都是 NG；不能改成仅当 A 时要求 B。原文只有适用条件、没有否则结果时，不能在范围外增加 NG。只有原文确实存在不兼容的义务时才报告规则冲突。区分已知空值、不可读值和未知符号映射；映射不确定不能抹去另一项已知违反。
 
@@ -51,6 +51,8 @@ python -m ppap_deep.semantic.audit_tools view evaluation.json --offset 0 --limit
 ## Typed Evidence Hole 与解释确认
 
 needs 使用同一 EvidenceHole 合同。boolean 保留原 true/false/unknown 答案；attribute 根据 ontology 给出 string/number 类型。事实答案为 kind=fact、need_id、input_id、value、origin=native/model、reason、evidence；未知用 state=unknown 且 value=null。宿主验证实际类型、请求身份及原件引用。模型解释与原生观察分别保存，不接受最终 verdict 或 counts。
+
+原生标量为空不证明图形、符号或控件不存在。unknown_visual_evidence 表示相关原件还有未解释视觉内容：先查看其原件位置、对象锚点或可用的局部图像，不能把对象形状直接映射成业务类别，也不能填入“present”占位值来通过 not_empty。只能在实际证据支持时提供所请求的属性值。已检查且确为空的 string attribute 可回答 state=provided、value=""，并给出依据；无法辨认或无法读取仍回答 unknown/null。读取能力不足属于证据缺口，只有规则或对象含义仍有合理分歧时才向用户询问。
 
 计划中 Judge.candidates 已携带未定规则含义。实际求值并建立真实原件绑定后，宿主自动生成现有 interpretation need 和 clarification；查看 evaluate 的输出，不要再把编译候选手工复制到 Binding.interpretations。确认前整个 Judge 保持未知，原生字段仍保留已读状态，与该解释无关的明确义务继续求值。当前资料让各候选产生相同结果，不表示规则含义已确定；布尔答案、diagnostic 或当前结果证明不能替代候选反馈，模型选择只能作为推荐。确认后仍须执行原事实判断，确认不等于 PASS；标准修改通过冻结附录重新编译。candidates 为空的普通 Judge 仍处理原真假问题，不强加用户确认。
 

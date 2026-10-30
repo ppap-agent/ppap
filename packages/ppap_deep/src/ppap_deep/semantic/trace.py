@@ -481,6 +481,7 @@ class _Evaluator:
         fields = list(row["values"]) if fields is None else fields
         return {
             "record": _ref(row),
+            "source_rows": row.get("source_rows", [row["row_id"]] if type(row["row_id"]) is int else []),
             "fields": {field: {"value": row["values"].get(field), "state": row["states"].get(field, "unresolved"), "evidence": row["evidence"].get(field)} for field in fields},
         }
 
@@ -557,6 +558,46 @@ class _Evaluator:
             raise ValueError("Local answer lacks a reason")
         return _fact({"true": True, "false": False, "unknown": None}[answer.value], answer.reason, answer.evidence, answer.diagnostic or "unresolved_relation")
 
+    def attribute_answer(self, row: dict[str, Any], field: str, path: str) -> TypedAnswer | None:
+        if row["states"].get(field) in {"unknown_conflicting_values", "unknown_interpretation"}:
+            return None
+        source = row.get("collection") or (self.current_rule.program.source if isinstance(self.current_rule.program, RecordsProgram) else None)
+        entity = next((entity for entity in self.plans[self.audit_id].ontology.entities if entity.id == source), None)
+        value_type = entity.attributes.get(field) if entity else None
+        if not value_type:
+            return None
+        self.budget.consume(1)
+        fact_binding = self.bindings.get(row["binding_id"])
+        context = {"source": self.row_context(row, [field]), "document_ids": [fact_binding.document_id] if fact_binding else list(self.documents), "field": field}
+        if fact_binding:
+            context["source_scope"] = {"document_id": fact_binding.document_id, "table": fact_binding.table, "rows": row.get("source_rows", [row["row_id"]])}
+            if field in row["evidence"]:
+                observations = row.get("observations", {}).get(field, [])
+                context["allowed_evidence"] = [observation["evidence"]["citation"] for observation in observations if observation.get("evidence")] or [row["evidence"][field]["citation"]]
+        need_id = _digest({"execution": self.identity, "path": path, "context": context, "kind": "attribute"})
+        need = EvidenceHole(
+            id=need_id,
+            input_id=_digest(self.identity),
+            audit_id=self.audit_id,
+            rule_id=self.current_rule.id,
+            kind="attribute",
+            program_path=path,
+            question=f"请提供有来源的字段 {field}",
+            context=context,
+            value_type=value_type,
+        )
+        if need_id not in self.questions and len(self.questions) >= 16384:
+            raise EvidenceLimitError("Local evidence hole limit exceeded")
+        self.questions[need_id] = need
+        answer = self.answers.get(need_id)
+        if answer is None:
+            return None
+        if not isinstance(answer, TypedAnswer):
+            raise ValueError("Attribute request requires a typed fact answer")
+        self.reached_answers.add(need_id)
+        validate_answer(need, answer, self.documents, budget=self.budget)
+        return answer
+
     def expr(self, node: Expr, row: dict[str, Any] | None, path: str) -> dict[str, Any]:
         fact = self._expr(node, row, path)
         if isinstance(node, (CollectionExists, ColumnExists)):
@@ -584,48 +625,12 @@ class _Evaluator:
                     return _fact(None, f"对象属性 {node.field} 有相互冲突的原生值", self.citations(row, [node.field]), "unresolved_relation")
                 if state == "unknown_interpretation":
                     return _fact(None, f"字段 {node.field} 的解释待确认", self.citations(row, [node.field]), "rule_ambiguity")
-                entity = (
-                    next((entity for entity in self.plans[self.audit_id].ontology.entities if entity.id == self.current_rule.program.source), None)
-                    if isinstance(self.current_rule.program, RecordsProgram)
-                    else None
-                )
-                value_type = entity.attributes.get(node.field) if entity else None
-                if value_type:
-                    fact_binding = self.bindings.get(row["binding_id"])
-                    fact_context = {"source": self.row_context(row, [node.field]), "document_ids": [fact_binding.document_id] if fact_binding else list(self.documents), "field": node.field}
-                    if fact_binding:
-                        fact_context["source_scope"] = {"document_id": fact_binding.document_id, "table": fact_binding.table, "rows": row.get("source_rows", [row["row_id"]])}
-                        if node.field in row["evidence"]:
-                            observations = row.get("observations", {}).get(node.field, [])
-                            fact_context["allowed_evidence"] = [observation["evidence"]["citation"] for observation in observations if observation.get("evidence")] or [
-                                row["evidence"][node.field]["citation"]
-                            ]
-                    need_id = _digest({"execution": self.identity, "path": path, "context": fact_context, "kind": "attribute"})
-                    need = EvidenceHole(
-                        id=need_id,
-                        input_id=_digest(self.identity),
-                        audit_id=self.audit_id,
-                        rule_id=self.current_rule.id,
-                        kind="attribute",
-                        program_path=path,
-                        question=f"请提供有来源的字段 {node.field}",
-                        context=fact_context,
-                        value_type=value_type,
-                    )
-                    if need_id not in self.questions and len(self.questions) >= 16384:
-                        raise EvidenceLimitError("Local evidence hole limit exceeded")
-                    self.questions[need_id] = need
-                    answer = self.answers.get(need_id)
-                    if answer is not None:
-                        if not isinstance(answer, TypedAnswer):
-                            raise ValueError("Attribute request requires a typed fact answer")
-                        self.reached_answers.add(need_id)
-                        value = validate_answer(need, answer, self.documents, budget=self.budget)
-                        if answer.state == "provided":
-                            return {
-                                **_fact(predicate_result(node, value), answer.reason, answer.evidence),
-                                "inferred_fact": {"origin": answer.origin, "value": value, "native": self.row_context(row, [node.field])},
-                            }
+                answer = self.attribute_answer(row, node.field, path)
+                if answer is not None and answer.state == "provided":
+                    return {
+                        **_fact(predicate_result(node, answer.value), answer.reason, answer.evidence),
+                        "inferred_fact": {"origin": answer.origin, "value": answer.value, "native": self.row_context(row, [node.field])},
+                    }
                 return _fact(None, f"字段 {node.field} 未能读取或绑定", self.citations(row, [node.field]) if row else [], _diagnostic(state))
             value = predicate_result(node, row["values"][node.field])
             return _fact(
@@ -683,7 +688,23 @@ class _Evaluator:
                 unresolved, confirmation = self.judge_interpretation(node, row, path)
                 if unresolved is not None:
                     return unresolved
-            missing = next((row["states"].get(field, "unresolved") for field in node.fields if row["states"].get(field) != "known"), None) if row else None
+            provided_attributes = {}
+            missing = None
+            if row is not None:
+                for field in node.fields:
+                    state = row["states"].get(field, "unresolved")
+                    if state == "known":
+                        continue
+                    answer = self.attribute_answer(row, field, f"{path}/attribute/{field}")
+                    if answer is not None and answer.state == "provided":
+                        provided_attributes[field] = {
+                            "value": answer.value,
+                            "origin": answer.origin,
+                            "reason": answer.reason,
+                            "evidence": [citation.model_dump(mode="json") for citation in answer.evidence],
+                        }
+                    else:
+                        missing = missing or state
             if missing is not None:
                 return _fact(None, "局部判断所需的原始字段尚未确定", self.citations(row, node.fields), _diagnostic(missing))
             inputs = {}
@@ -704,11 +725,15 @@ class _Evaluator:
                 "inputs": inputs,
                 "frozen_documents": {identity: document["source"]["sha256"] for identity, document in sorted(self.documents.items())},
             }
+            if provided_attributes:
+                context["provided_attributes"] = provided_attributes
             if confirmation is not None:
                 context["confirmed_interpretation"] = {**confirmation, "confirmation_source": confirmation.get("confirmation_source", "user")}
             if row is not None:
                 adjacent_binding = self.bindings.get(row["binding_id"])
-                adjacent = [item for item in self.materialized[adjacent_binding.id]["records"] if type(row["row_id"]) is int and abs(item["row_id"] - row["row_id"]) == 1] if adjacent_binding else []
+                source_rows = row.get("source_rows", [row["row_id"]] if type(row["row_id"]) is int else [])
+                adjacent_rows = {source_row + offset for source_row in source_rows for offset in (-1, 1)}
+                adjacent = [item for item in self.materialized[adjacent_binding.id]["records"] if item["row_id"] in adjacent_rows] if adjacent_binding else []
                 context["adjacent"] = [self.row_context({**item, "binding_id": adjacent_binding.id}, node.fields) for item in adjacent] if adjacent_binding else []
             return self.ask(path, node.question, context)
         if isinstance(node, Related):
