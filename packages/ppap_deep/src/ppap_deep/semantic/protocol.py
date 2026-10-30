@@ -7,7 +7,7 @@ import json
 from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from pydantic import Field, TypeAdapter, model_validator
+from pydantic import AwareDatetime, Field, TypeAdapter, model_validator
 
 from .models import Artifact, AuditReport, Locator, RulePlan
 from .trace import AuditTrace
@@ -195,6 +195,34 @@ class ControllerFault(RuntimeError):
         self.code = code
         self.diagnostic = diagnostic
         super().__init__(code)
+
+
+class RecoveryRecord(Artifact):
+    """Host-written source for one explicitly resumed technical attempt."""
+
+    spec: SubmissionSpec
+    job_id: BusinessId
+    attempt: int = Field(ge=1, strict=True)
+    expires_at: AwareDatetime
+    usage: dict[str, Annotated[int, Field(ge=0, strict=True)]]
+    uncertain: bool = Field(strict=True)
+    failed_rules: dict[str, CompileFailureRecord] = Field(default_factory=dict, max_length=32)
+    snapshot_digests: dict[str, Sha256] = Field(default_factory=dict, max_length=64)
+    plan_digests: dict[str, Sha256] = Field(default_factory=dict, max_length=32)
+    trace: AuditTrace | None = None
+    trace_sha256: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def exact_usage_and_trace(self) -> RecoveryRecord:
+        if set(self.usage) != {"input_tokens", "output_tokens", "tool_calls", "completed_tool_calls", "compactions", "model_requests"}:
+            raise ValueError("Invalid recovery usage")
+        digest = (
+            hashlib.sha256(json.dumps(self.trace.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            if self.trace is not None else None
+        )
+        if digest != self.trace_sha256:
+            raise ValueError("Recovery candidate digest mismatch")
+        return self
 
 
 class ResultBundle(Artifact):

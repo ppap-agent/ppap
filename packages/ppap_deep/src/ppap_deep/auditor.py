@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast
 from uuid import UUID
@@ -18,13 +19,13 @@ from ppap_deep.limits import DEEP_TOTAL_SECONDS
 from ppap_deep.protocol import DeepCoverage, DeepFinding, DeepVerification, ExecuteRequest, ExecuteResponse
 from ppap_deep.semantic.evidence import EvidenceBudget, resolve_optional
 from ppap_deep.semantic.guest import CompileManifest, Manifest, validate_plan
-from ppap_deep.semantic.models import RulePlan
-from ppap_deep.semantic.protocol import CompileBundle, CompileFailureRecord, CompileSpec, ControllerFault, DocumentRef, ResultBundle, RuleRef, SubmissionSpec
+from ppap_deep.semantic.models import AuditReport, RulePlan
+from ppap_deep.semantic.protocol import CompileBundle, CompileFailureRecord, CompileSpec, ControllerFault, DocumentRef, RecoveryRecord, ResultBundle, RuleRef, SubmissionSpec
 from ppap_deep.semantic.secure_files import read_json
-from ppap_deep.semantic.trace import evaluate_audit
+from ppap_deep.semantic.trace import derive_report, evaluate_audit
 from ppap_deep.semantic.validation import validate_bundle, validate_snapshot
 
-POLICY_REVISION = hashlib.sha256(b"ppap-rule-logical-document-evaluation-v9").hexdigest()
+POLICY_REVISION = hashlib.sha256(b"ppap-rule-logical-document-evaluation-v10").hexdigest()
 FORMATS = {".xlsx", ".xls", ".xlsm", ".docx", ".pdf"}
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
 DIAGNOSTIC_LABELS = {
@@ -266,6 +267,19 @@ class SemanticRuntime:
         except ObjectExists:
             pass
 
+    @staticmethod
+    def _candidate(bundle: ResultBundle, submission: SubmissionSpec, plans: dict[str, RulePlan], failed_rules: dict[str, CompileFailureRecord], packets: dict[str, bytes]) -> ResultBundle:
+        if bundle.plans != plans or bundle.failed_rules != failed_rules:
+            raise ValueError("Recovery changed the frozen compilation")
+        for rule in submission.rules:
+            source = bundle.rule_sources[rule.rule_id]
+            if any(source.get(key) != value for key, value in json.loads(packets[rule.rule_id]).items()):
+                raise ValueError("Recovery changed the frozen rule source")
+        targets = {audit_id: plans[rule_id] for audit_id, rule_id in submission.targets.items() if rule_id in plans}
+        bundle.report = derive_report(bundle.trace, bundle.documents, targets)
+        validate_bundle(bundle, submission)
+        return bundle
+
     def execute(self, spec: ExecuteRequest, files: dict[str, bytes], *, context: ExecutionContext) -> ExecuteResponse:
         try:
             return self._execute(spec, files, context=context)
@@ -283,10 +297,39 @@ class SemanticRuntime:
         if spec.executor_revision != revision:
             raise DeepError("executor_revision_mismatch")
         submission, packets = semantic_inputs(spec, revision)
+        if set(files) != {doc.audit_id for doc in submission.documents} or any(hashlib.sha256(files[doc.audit_id]).hexdigest() != doc.sha256 for doc in submission.documents):
+            raise DeepError("deep_integrity_mismatch")
         prefix = self._prefix(spec, submission)
         job_key = hashlib.sha256(spec.job_id.encode()).hexdigest()
         artifact_prefix = f"{prefix}/rounds/{spec.round_id}/{job_key}-{spec.attempt}"
-        deadline = time.monotonic() + self.timeout
+        expires_at = datetime.fromtimestamp(time.time() + self.timeout, UTC)
+        recovery = None
+        if spec.resume_attempt is not None:
+            if spec.resume_attempt >= spec.attempt:
+                raise ValueError("Recovery requires an earlier attempt")
+            source_key = f"{prefix}/rounds/{spec.round_id}/{job_key}-{spec.resume_attempt}/recovery.json"
+            with tempfile.TemporaryDirectory(prefix="ppap-recovery-") as source_dir:
+                source_root = Path(source_dir)
+                if not self._cache(source_key, source_root / "recovery.json"):
+                    raise ValueError("Recovery source is unavailable")
+                recovery = RecoveryRecord.model_validate(read_json(source_root, ("recovery.json",), MAX_BUNDLE_BYTES))
+            if recovery.spec != submission or recovery.job_id != spec.job_id or recovery.attempt != spec.resume_attempt:
+                raise ValueError("Recovery source differs from the authorized input")
+            # Unknown upstream consumption is a read-back/reconciliation boundary.
+            # An explicit resume never silently creates another model request.
+            if recovery.uncertain:
+                raise DeepError("deep_model_protocol")
+            validator = getattr(self.runtime, "validate_recovery", None)
+            if not callable(validator):
+                raise DeepError("deep_runtime_unavailable")
+            validator(
+                submission, job_id=spec.job_id, source_attempt=spec.resume_attempt, current_attempt=spec.attempt,
+                prior_usage={key: recovery.usage[key] for key in ("model_requests", "input_tokens", "output_tokens")},
+            )
+            expires_at = min(expires_at, recovery.expires_at)
+        deadline = time.monotonic() + max(0, expires_at.timestamp() - time.time())
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Deep deadline exceeded")
         # Programs contain source-rule meaning only; physical bindings and local
         # answers belong to this execution, never the tenant-scoped plan cache.
         with tempfile.TemporaryDirectory(prefix="ppap-semantic-") as temporary:
@@ -294,6 +337,9 @@ class SemanticRuntime:
             plans: dict[str, RulePlan] = {}
             failed_rules: dict[str, CompileFailureRecord] = {}
             usage = dict.fromkeys(("input_tokens", "output_tokens", "tool_calls", "completed_tool_calls", "compactions", "model_requests"), 0)
+            if recovery is not None:
+                usage.update(recovery.usage)
+                failed_rules.update(recovery.failed_rules)
 
             def progress(value):
                 state = {"phase": value.phase}
@@ -344,6 +390,19 @@ class SemanticRuntime:
                         semantic_engine_revision=submission.semantic_engine_revision,
                     )
                     compile_spec = compile_spec.model_copy(update={"execution_id": compile_spec.expected_execution_id()})
+                    if recovery is not None:
+                        if rule.rule_id in failed_rules:
+                            continue
+                        if rule.rule_id not in cached:
+                            raise ValueError("Recovery plan is unavailable")
+                        plan = RulePlan.model_validate(read_json(compile_inputs, ("plan.json",), MAX_BUNDLE_BYTES))
+                        if recovery.plan_digests.get(rule.rule_id) != hashlib.sha256(encoded(plan.model_dump(mode="json"))).hexdigest():
+                            raise ValueError("Recovery plan digest mismatch")
+                        source = json.loads(packets[rule.rule_id])
+                        source["source"] = {"sha256": rule.sha256, "format": rule.format}
+                        validate_plan(plan, rule, source, EvidenceBudget())
+                        plans[rule.rule_id] = plan
+                        continue
                     compile_manifest = CompileManifest(operation="compile", spec=compile_spec, rules={rule.rule_id: "rule.json"}, cached_snapshots={}, cached_plans=cached)
                     (compile_inputs / "manifest.json").write_text(compile_manifest.model_dump_json())
                     run(compile_spec, compile_inputs, compile_work, f"compile-{index}-diagnostic.json")
@@ -397,9 +456,74 @@ class SemanticRuntime:
                     cached_name = f"plan-{index}.json"
                     (inputs / cached_name).write_text(plans[rule.rule_id].model_dump_json())
                     cached_plans[rule.rule_id] = cached_name
-            manifest = Manifest(spec=submission, documents=names, rules=rule_names, cached_snapshots=cached_snapshots, cached_plans=cached_plans, precompiled_only=True, failed_rules=failed_rules)
+            resume_name = None
+            if recovery is not None and recovery.trace is not None:
+                resume_name = "resume-trace.json"
+                (inputs / resume_name).write_text(recovery.trace.model_dump_json())
+            manifest = Manifest(
+                spec=submission, documents=names, rules=rule_names, cached_snapshots=cached_snapshots, cached_plans=cached_plans, resume_trace=resume_name,
+                runtime_job_id=spec.job_id, runtime_attempt=spec.attempt,
+                runtime_source_attempt=spec.resume_attempt, precompiled_only=True, failed_rules=failed_rules,
+            )
             (inputs / "manifest.json").write_bytes(manifest.model_dump_json().encode())
-            run(submission, inputs, work, "diagnostic.json")
+            if recovery is not None and recovery.trace is not None:
+                documents = {doc.audit_id: read_json(inputs, (cached_snapshots["document:" + doc.audit_id],), MAX_BUNDLE_BYTES) for doc in submission.documents}
+                if set(recovery.snapshot_digests) != set(documents) or any(recovery.snapshot_digests[key] != hashlib.sha256(encoded(value)).hexdigest() for key, value in documents.items()):
+                    raise ValueError("Recovery snapshot digest mismatch")
+                sources = {rule.rule_id: {**json.loads(packets[rule.rule_id]), "source": {"sha256": rule.sha256, "format": rule.format}} for rule in submission.rules}
+                candidate = ResultBundle(
+                    execution_id=submission.execution_id, semantic_engine_revision=revision, documents=documents,
+                    rule_sources=sources, plans=plans, failed_rules=failed_rules, report=AuditReport(checks=[]), trace=recovery.trace,
+                )
+                candidate = self._candidate(candidate, submission, plans, failed_rules, packets)
+                if all(check.unknown == 0 for check in candidate.report.checks):
+                    context.raise_if_cancelled()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Deep deadline exceeded")
+                    for name, count in usage.items():
+                        setattr(candidate, name, count)
+                    response = product_response(spec, candidate, submission)
+                    response.usage_source = getattr(self.runtime, "usage_source", "unknown")
+                    self._put(artifact_prefix + "/bundle.json", candidate.model_dump(mode="json"))
+                    self._put(artifact_prefix + "/inputs.json", submission.model_dump(mode="json"))
+                    return response
+            try:
+                run(submission, inputs, work, "diagnostic.json")
+            except (ControllerFault, TimeoutError, DeepError):
+                trace = None
+                snapshot_digests = {}
+                current_usage = dict(usage)
+                uncertain = True
+                try:
+                    diagnostic = read_json(work, ("diagnostic.json",), 256 * 1024)
+                    facts = diagnostic.get("usage", {})
+                    uncertain = facts.get("uncertain") is not False or facts.get("in_flight") is not False
+                    for source, target in (("completed_requests", "model_requests"), ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")):
+                        if type(facts.get(source)) is not int or facts[source] < 0:
+                            uncertain = True
+                        else:
+                            current_usage[target] += facts[source]
+                except (OSError, ValueError, TypeError):
+                    pass
+                try:
+                    candidate = ResultBundle.model_validate(read_json(work, ("candidate.json",), MAX_BUNDLE_BYTES))
+                    candidate = self._candidate(candidate, submission, plans, failed_rules, packets)
+                    trace = candidate.trace
+                    snapshot_digests = {key: hashlib.sha256(encoded(value)).hexdigest() for key, value in candidate.documents.items()}
+                    for name in ("tool_calls", "completed_tool_calls", "compactions"):
+                        current_usage[name] += getattr(candidate, name)
+                    for doc in submission.documents:
+                        self._put(f"{prefix}/snapshots/{doc.sha256}{doc.format}.json", candidate.documents[doc.audit_id])
+                except (OSError, ValueError, KeyError, TypeError):
+                    pass  # Invalid or incomplete writes never enter trusted caches.
+                saved = RecoveryRecord(
+                    spec=submission, job_id=spec.job_id, attempt=spec.attempt, expires_at=expires_at, usage=current_usage,
+                    uncertain=uncertain, failed_rules=failed_rules, snapshot_digests=snapshot_digests,
+                    plan_digests={key: hashlib.sha256(encoded(plan.model_dump(mode="json"))).hexdigest() for key, plan in plans.items()},
+                    trace=trace, trace_sha256=hashlib.sha256(encoded(trace.model_dump(mode="json"))).hexdigest() if trace is not None else None,
+                )
+                self._put(artifact_prefix + "/recovery.json", saved.model_dump(mode="json"))
+                raise
             try:
                 bundle = ResultBundle.model_validate(read_json(work, ("result", "bundle.json"), MAX_BUNDLE_BYTES))
             except OSError as exc:

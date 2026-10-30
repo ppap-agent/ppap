@@ -7,6 +7,7 @@ not promise a separate filesystem or network namespace for terminal tools.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from ppap_core.deep_policy import GROK_VERSION, GUEST_UID, DeepExecutionPolicy
 from pydantic import Field
@@ -315,17 +316,29 @@ class ContainerRuntime:
             if progress is not None and progress != last_progress:
                 on_progress(progress)
 
-    def _export(self, run: Path, work: Path, model_operation: bool, execution_id: UUID, deadline: float, cancelled: threading.Event) -> None:
+    def _seal_usage(self, execution_id: UUID, deadline: float, cancelled: threading.Event, *, drain: bool = True) -> dict[str, Any]:
+        try:
+            if drain:
+                usage = grant_request(str(self.config.gateway_socket), "usage", execution_id)
+                while usage.get("in_flight") is True:
+                    if cancelled.is_set() or time.monotonic() >= deadline:
+                        raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
+                    time.sleep(0.1)
+                    usage = grant_request(str(self.config.gateway_socket), "usage", execution_id)
+            # Removal and the final receipt share the grants lock. A request
+            # racing the earlier read is either in this receipt or denied.
+            return grant_request(str(self.config.gateway_socket), "revoke_and_usage", execution_id)
+        except (OSError, ValueError):
+            self.degraded = True
+            raise ControllerFault("ISOLATION_UNAVAILABLE") from None
+
+    def _export(
+        self, run: Path, work: Path, model_operation: bool, execution_id: UUID, deadline: float, cancelled: threading.Event,
+        *, settled_usage: dict[str, Any] | None = None,
+    ) -> None:
         result = run / "work" / "result"
         try:
-            usage = grant_request(str(self.config.gateway_socket), "usage", execution_id) if model_operation else {}
-            # The CLI may finish before an auxiliary request has drained. Its
-            # pending usage is not a permanent failure. No inference is replayed.
-            while usage.get("in_flight") is True:
-                if cancelled.is_set() or time.monotonic() >= deadline:
-                    raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-                time.sleep(0.1)
-                usage = grant_request(str(self.config.gateway_socket), "usage", execution_id)
+            usage = (settled_usage if settled_usage is not None else self._seal_usage(execution_id, deadline, cancelled)) if model_operation else {}
             if cancelled.is_set() or time.monotonic() >= deadline:
                 raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
             try:
@@ -366,6 +379,27 @@ class ContainerRuntime:
         except (OSError, ValueError, TypeError, KeyError):
             raise ControllerFault("MODEL_PROTOCOL_ERROR") from None
 
+    def validate_recovery(
+        self, spec: SubmissionSpec, *, job_id: str, source_attempt: int, current_attempt: int, prior_usage: dict[str, Any] | None,
+    ) -> None:
+        """The latest durable attempt, not a chosen old source, owns replay."""
+        job_key = hashlib.sha256(job_id.encode()).hexdigest()
+        runtime_id = uuid5(spec.execution_id, f"{job_key}:{current_attempt}")
+        if (self.journal / (runtime_id.hex + ".json")).exists():
+            return  # Repeated completed recovery only reads its saved result.
+        try:
+            previous = read_json(self.attempts, (spec.execution_id.hex + ".json",), 8192)
+            expected_usage = {key: (prior_usage or {}).get(key, 0) for key in ("model_requests", "input_tokens", "output_tokens")}
+            allowed = (
+                source_attempt < current_attempt and previous.get("uncertain") is False
+                and type(previous.get("attempt")) is int and previous["attempt"] == source_attempt
+                and previous.get("job_key") == job_key and previous.get("usage") == expected_usage
+            )
+        except (OSError, ValueError, AttributeError):
+            allowed = False
+        if not allowed:
+            raise ControllerFault("MODEL_PROTOCOL_ERROR")
+
     def run(
         self,
         spec: SubmissionSpec | CompileSpec | SnapshotSpec,
@@ -376,6 +410,20 @@ class ContainerRuntime:
         on_progress: Callable[[Progress], None] | None = None,
         prior_usage: dict[str, Any] | None = None,
     ) -> None:
+        runtime_id = spec.execution_id
+        runtime_attempt, source_attempt, job_key = 1, None, ""
+        if isinstance(spec, SubmissionSpec):
+            from ppap_deep.semantic.guest import Manifest
+
+            manifest = Manifest.model_validate(read_json(inputs, ("manifest.json",), 1024 * 1024))
+            if manifest.spec != spec:
+                raise ControllerFault("INPUT_INTEGRITY_ERROR")
+            if manifest.runtime_attempt is not None and manifest.runtime_job_id is not None:
+                runtime_attempt = manifest.runtime_attempt
+                source_attempt = manifest.runtime_source_attempt
+                job_key = hashlib.sha256(manifest.runtime_job_id.encode()).hexdigest()
+                if source_attempt is not None:
+                    runtime_id = uuid5(spec.execution_id, f"{job_key}:{runtime_attempt}")
         while True:
             remaining = deadline - time.monotonic()
             if cancelled.is_set() or remaining <= 0:
@@ -388,43 +436,95 @@ class ContainerRuntime:
             if cancelled.is_set() or time.monotonic() >= deadline:
                 raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
             model_operation = isinstance(spec, (SubmissionSpec, CompileSpec))
-            saved = self.journal / (spec.execution_id.hex + ".json")
+            saved = self.journal / (runtime_id.hex + ".json")
             if model_operation and saved.exists():
                 write_json(work / "result" / "bundle.json", read_json(self.journal, (saved.name,), MAX_OUTPUT))
                 return
-            attempt = self.attempts / (spec.execution_id.hex + ".json")
+            audit_marker = self.attempts / (spec.execution_id.hex + ".json") if isinstance(spec, SubmissionSpec) else None
+            if isinstance(spec, SubmissionSpec) and source_attempt is not None:
+                self.validate_recovery(spec, job_id=manifest.runtime_job_id or "", source_attempt=source_attempt, current_attempt=runtime_attempt, prior_usage=prior_usage)
+            attempt = self.attempts / (runtime_id.hex + ".json")
             if model_operation and attempt.exists():
                 raise ControllerFault("MODEL_PROTOCOL_ERROR")
-            run = self._new_run_dir(spec.execution_id, inputs)
+            run = self._new_run_dir(runtime_id, inputs)
+            final_usage = None
             try:
                 if model_operation:
                     write_json(attempt, {})
-                    self._write_grant(spec.execution_id, run, prior_usage)
-                self._execute(run, deadline, cancelled, on_progress, spec.execution_id)
+                    if audit_marker is not None:
+                        write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": True, "usage": prior_usage})
+                    self._write_grant(runtime_id, run, prior_usage)
+                self._execute(run, deadline, cancelled, on_progress, runtime_id)
                 if cancelled.is_set() or time.monotonic() >= deadline:
                     raise ControllerFault("CANCELLED" if cancelled.is_set() else "MODEL_TIMEOUT")
-                self._export(run, work, model_operation, spec.execution_id, deadline, cancelled)
+                if model_operation:
+                    final_usage = self._seal_usage(runtime_id, deadline, cancelled)
+                self._export(run, work, model_operation, runtime_id, deadline, cancelled, settled_usage=final_usage)
             except ControllerFault as fault:
                 try:
-                    usage = None
-                    if model_operation:
+                    if model_operation and final_usage is None and not self.degraded:
                         try:
-                            usage = grant_request(str(self.config.gateway_socket), "usage", spec.execution_id)
-                        except (OSError, ValueError):
+                            final_usage = self._seal_usage(runtime_id, deadline, cancelled, drain=False)
+                        except ControllerFault:
                             pass
-                    self._diagnostic(run, work, fault.code, usage=usage)
+                    self._diagnostic(run, work, fault.code, usage=final_usage)
                 except Exception:
                     pass  # Preserve the original fault if private diagnostic I/O fails.
+                self._export_candidate(run, work)
                 raise
             finally:
                 if model_operation:
-                    try:
-                        grant_request(str(self.config.gateway_socket), "revoke", spec.execution_id)
-                    except (OSError, ValueError):
-                        self.degraded = True
+                    if final_usage is None and not self.degraded:
+                        try:
+                            final_usage = self._seal_usage(runtime_id, deadline, cancelled, drain=False)
+                        except ControllerFault:
+                            pass
+                    if audit_marker is not None:
+                        # This existing fence is pessimistic until the gateway
+                        # confirms consumption. A later attempt cannot skip an
+                        # unknown or newer source, or reset accumulated usage.
+                        try:
+                            facts = final_usage or {}
+                            known = facts.get("uncertain") is False and facts.get("in_flight") is False and all(
+                                type(facts.get(key)) is int and facts[key] >= 0 for key in ("completed_requests", "input_tokens", "output_tokens")
+                            )
+                            known = known and (facts["completed_requests"] > 0 or not (facts["input_tokens"] or facts["output_tokens"]))
+                            totals = {key: (prior_usage or {}).get(key, 0) for key in ("model_requests", "input_tokens", "output_tokens")}
+                            if known:
+                                for source, target in (("completed_requests", "model_requests"), ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")):
+                                    totals[target] += facts[source]
+                            write_json(audit_marker, {"attempt": runtime_attempt, "job_key": job_key, "uncertain": not known, "usage": totals})
+                        except (OSError, ValueError, TypeError):
+                            pass  # The pre-send unknown marker remains authoritative.
                 shutil.rmtree(run)
         finally:
             self.slot.release()
+
+    @staticmethod
+    def _export_candidate(run: Path, destination: Path) -> None:
+        """Copy only a bounded certificate; the host must validate it again."""
+        from ppap_deep.semantic.protocol import ResultBundle
+
+        try:
+            value = read_json(run / "work", ("candidate.json",), MAX_OUTPUT)
+            candidate = ResultBundle.model_validate(value)
+            # A killed guest cannot execute its finally block. Recover the
+            # last readable stage certificate before deleting its work root.
+            from ppap_deep.semantic.trace import AuditTrace
+
+            for parts in (("audit-repair", "execution.json"), ("audit", "execution.json"), ("audit", "candidate-execution.json")):
+                try:
+                    trace = AuditTrace.model_validate(read_json(run / "work", parts, MAX_OUTPUT))
+                except (OSError, ValueError):
+                    continue
+                candidate.trace = trace
+                break
+            token = read_json(run / "grant", ("model.json",), 8192).get("token", "")
+            if token and token in candidate.model_dump_json():
+                return
+            write_json(destination / "candidate.json", candidate.model_dump(mode="json"))
+        except (OSError, ValueError, TypeError):
+            pass
 
     @staticmethod
     def _diagnostic(run: Path, destination: Path, code: str, *, usage: dict | None = None) -> None:

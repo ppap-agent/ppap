@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from typing import Any, Callable
 
 from .evidence import EvidenceBudget
-from .models import All, AnyOf, Key, LocalExpr, Not, Related, ValueComparison, ValueTest
+from .models import Key, Related, ValueComparison
 from .values import could_match, normalized, record_key, scalar_key
 
 
@@ -20,17 +20,6 @@ def _reference(record: dict[str, Any]) -> dict[str, Any]:
 
 def _observations(record: dict[str, Any], fields: list[str]) -> dict[str, Any]:
     return {field: {"value": record["values"].get(field), "state": record["states"].get(field, "unresolved"), "evidence": record["evidence"].get(field)} for field in dict.fromkeys(fields)}
-
-
-def _native_membership(condition: LocalExpr | None) -> bool:
-    """Only native target membership is stable while judgment answers change."""
-    if condition is None or isinstance(condition, ValueTest):
-        return True
-    if isinstance(condition, (All, AnyOf)):
-        return all(_native_membership(item) for item in condition.items)
-    if isinstance(condition, Not):
-        return _native_membership(condition.item)
-    return False
 
 
 def _compare(source: dict[str, Any], target: dict[str, Any], comparisons: list[ValueComparison], budget: EvidenceBudget, judge: Callable | None) -> dict[str, Any]:
@@ -63,6 +52,9 @@ def match_rows(
     judge: Callable | None = None,
     *,
     identities: tuple[list[str], list[str]] | None = None,
+    exhaustive: bool = False,
+    pending_questions: Callable[[], int] | None = None,
+    target_membership: Callable[[dict[str, Any]], bool | None] | None = None,
 ) -> dict[str, Any]:
     """Use native witnesses for any; retain complete graphs for stronger matches."""
     if identities is not None:
@@ -99,7 +91,15 @@ def match_rows(
     possible: list[set[int]] = [set() for _ in sources]
     native_pairs: list[dict[int, dict[str, Any]]] = [{} for _ in sources]
     native_witness = [False for _ in sources]
-    stable_targets = _native_membership(request.target_when)
+    searched = [True for _ in sources]
+    waiting_membership = [False for _ in sources]
+    membership_cache: dict[int, bool | None] = {}
+
+    def member(index: int) -> bool | None:
+        if index not in membership_cache:
+            membership_cache[index] = target_membership(targets[index]) if target_membership else True
+        return membership_cache[index]
+
     semantic = request.key_match != "exact"
     for i, (source, key) in enumerate(zip(sources, source_keys, strict=True)):
         if key is None:
@@ -111,21 +111,68 @@ def match_rows(
                     possible[i].add(j)
             continue
         confirmed[i].extend(target_index.get(key, []))
-        if request.match == "any" and stable_targets:
+        if request.match == "any" and not exhaustive:
             # Search every exact-key candidate before asking the model. A later
             # native witness can make an earlier semantic comparison irrelevant.
-            # A target Judge can reveal a new native witness after questions
-            # were issued. Keep the full graph in that case so replay still
-            # reaches those answers instead of rejecting them as stale.
-            for j in confirmed[i]:
+            exact = list(confirmed[i])
+            confirmed[i] = []
+            for position, j in enumerate(exact):
                 budget.consume(1)
-                native_pairs[i][j] = _compare(source, targets[j], request.comparisons, budget, None)
+                pending_before = pending_questions() if pending_questions else 0
+                membership = member(j)
+                if membership is None:
+                    possible[i].add(j)
+                    if pending_questions is None or pending_questions() > pending_before:
+                        waiting_membership[i], searched[i] = True, False
+                        break
+                elif membership is True:
+                    confirmed[i].append(j)
+                    native_pairs[i][j] = _compare(source, targets[j], request.comparisons, budget, None)
+                    if native_pairs[i][j]["state"] == "matched" and target_membership is not None:
+                        searched[i] = position == len(exact) - 1
+                        break
             native_witness[i] = any(pair["state"] == "matched" for pair in native_pairs[i].values())
         for j in unknown_targets:
             budget.consume(len(request.target_key.fields) + 1)
             if semantic or compatible(key, targets[j], request.target_key):
                 possible[i].add(j)
-        if semantic and not native_witness[i]:
+        if request.match == "any" and not exhaustive and not native_witness[i] and not waiting_membership[i]:
+            # One undecided candidate is the next batch. A confirmed witness
+            # ends this search; unexplored targets remain explicitly unsearched.
+            exact = list(confirmed[i])
+            confirmed[i] = []
+            candidates = exact + ([j for j, target_key in enumerate(target_keys) if target_key is not None and target_key != key] if semantic else [])
+            for position, j in enumerate(candidates):
+                budget.consume(1)
+                pending_before = pending_questions() if pending_questions else 0
+                membership = member(j)
+                if membership is False:
+                    continue
+                if membership is None:
+                    possible[i].add(j)
+                    if pending_questions is None or pending_questions() > pending_before:
+                        searched[i] = position == len(candidates) - 1
+                        break
+                    continue
+                value = True if j in exact else judge("key", source, targets[j], 0, None) if judge else None
+                if value is None:
+                    possible[i].add(j)
+                    if pending_questions is None or pending_questions() > pending_before:
+                        searched[i] = position == len(candidates) - 1
+                        break
+                    continue
+                if value is False:
+                    continue
+                confirmed[i].append(j)
+                pair = _compare(source, targets[j], request.comparisons, budget, judge)
+                native_pairs[i][j] = pair
+                pending = pending_questions() > pending_before if pending_questions else any(
+                    check["state"] == "unresolved" and check["source"]["state"] == check["target"]["state"] == "known" for check in pair["checks"]
+                )
+                if pair["state"] == "matched" or pending:
+                    searched[i] = position == len(candidates) - 1
+                    break
+        elif semantic and not native_witness[i] and not waiting_membership[i]:
             for j, target_key in enumerate(target_keys):
                 if target_key is None or target_key == key:
                     continue
@@ -174,7 +221,7 @@ def match_rows(
         pairs = []
         for j in confirmed[i]:
             budget.consume(1)
-            pair = native_pairs[i][j] if native_witness[i] else _compare(source, targets[j], request.comparisons, budget, judge)
+            pair = native_pairs[i][j] if j in native_pairs[i] else _compare(source, targets[j], request.comparisons, budget, judge)
             pair["target_key"] = _observations(targets[j], request.target_key.fields)
             pairs.append(pair)
         uncertain = bool(possible[i])
@@ -203,7 +250,7 @@ def match_rows(
                 "state": state,
                 "reason": reason,
                 "candidates": pairs,
-                "candidate_search_complete": not (semantic and native_witness[i] and len(target_keys) - len(unknown_targets) > len(confirmed[i])),
+                "candidate_search_complete": searched[i] and not (semantic and native_witness[i] and len(target_keys) - len(unknown_targets) > len(confirmed[i])),
                 "possible_targets": [_reference(targets[j]) for j in sorted(possible[i])],
                 "holes": [{"kind": reason, "source": _reference(source), "target_input": request.target}] if state == "unresolved" else [],
             }

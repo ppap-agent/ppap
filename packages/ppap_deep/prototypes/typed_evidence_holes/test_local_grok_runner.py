@@ -833,3 +833,32 @@ def test_artifact_unknown_consumption_never_publishes_or_retries(setup, monkeypa
 def test_legacy_cli_config_preserves_default_completion_limit(setup):
     config = importlib.import_module("grok_support").cli_config("http://localhost/v1", "test-token")
     assert tomllib.loads(config)["model"]["grok-4.7"]["max_completion_tokens"] == 16000
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_failed_stage_preserves_only_clean_readable_candidate_after_scratch_removal(setup, monkeypatch, protected):
+    module, make, work, _, root = setup
+    runner = make()
+
+    def invoke(work, prompt, stage, deadline):
+        settle(runner, prompt)
+        payload = {"value": 42}
+        if protected:
+            payload["thinking"] = "private-test-provider-credential hidden reasoning"
+        artifact_result(runner, payload)
+        raise module.ModelProtocolError("Injected failure after artifact write")
+
+    monkeypatch.setattr(runner, "_invoke", invoke)
+    with runner, pytest.raises(module.ModelProtocolError):
+        runner.run(work, "audit", Answer, time.monotonic() + 30, reasoning_effort="medium")
+    candidate = root / "runner/stage-001-Answer/candidate.json"
+    assert candidate.exists() is (not protected)
+    assert not (work / "execution.json").exists()
+    assert not runner.scratch.exists()
+    if not protected:
+        assert json.loads(candidate.read_text()) == {"trust": "candidate_unverified", "training_eligible": False, "artifact": {"value": 42}}
+        assert json.loads((work / "candidate-execution.json").read_text()) == {"value": 42}
+    assert runner.requests_started == 1
+    saved = "\n".join(path.read_text() for path in (root / "runner").rglob("*.json"))
+    assert "private-test-provider-credential" not in saved
+    assert "hidden reasoning" not in saved

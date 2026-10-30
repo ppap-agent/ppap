@@ -751,3 +751,676 @@ def test_real_guest_supplies_seed_before_model_and_keeps_final_artifact_new(repa
     result = handle_case(case)
     assert stages == (["audit", "audit-repair"] if repair else ["audit"])
     assert {finding.status for finding in result.findings} == {"PASS", "NG"}
+
+
+class RecoveryGuest(InProcessGuest):
+    usage_source = "controlled"
+
+    def __init__(self, model, objects=None):
+        super().__init__(model)
+        self.objects = objects
+
+    def validate_recovery(self, spec, *, job_id, source_attempt, current_attempt, prior_usage):
+        from ppap_deep.semantic.protocol import ControllerFault, RecoveryRecord
+
+        if self.objects is None:
+            raise ControllerFault("ISOLATION_UNAVAILABLE")
+        if isinstance(self.objects, DiskObjects):
+            records = [path.read_bytes() for path in self.objects.root.rglob("recovery.json")]
+        else:
+            records = [value for key, value in self.objects.values.items() if key.endswith("/recovery.json")]
+        matching = [RecoveryRecord.model_validate_json(raw) for raw in records]
+        matching = [record for record in matching if record.spec == spec and record.job_id == job_id]
+        latest = max(matching, key=lambda record: record.attempt) if matching else None
+        if latest is None or latest.uncertain or latest.attempt != source_attempt or source_attempt >= current_attempt:
+            raise ControllerFault("MODEL_PROTOCOL_ERROR")
+        if prior_usage != {key: latest.usage[key] for key in ("model_requests", "input_tokens", "output_tokens")}:
+            raise ControllerFault("MODEL_PROTOCOL_ERROR")
+
+    def run(self, submission, inputs, work, deadline, cancelled, *, on_progress, prior_usage=None):
+        from ppap_deep.isolation.storage import write_json
+        from ppap_deep.semantic.protocol import ControllerFault
+
+        before = {key: getattr(self.model, key) for key in ("input_tokens", "output_tokens", "model_requests")}
+        try:
+            super().run(submission, inputs, work, deadline, cancelled, on_progress=on_progress, prior_usage=prior_usage)
+        except ModelProtocolError:
+            write_json(work / "diagnostic.json", {"code": "MODEL_PROTOCOL_ERROR", "usage": {
+                "input_tokens": self.model.input_tokens - before["input_tokens"],
+                "output_tokens": self.model.output_tokens - before["output_tokens"],
+                "completed_requests": self.model.model_requests - before["model_requests"],
+                "uncertain": getattr(self.model, "uncertain", False), "in_flight": False,
+            }})
+            raise ControllerFault("MODEL_PROTOCOL_ERROR") from None
+
+
+def fail_audit_model(model, moment):
+    original = model.run
+
+    def run(work, prompt, schema, deadline, **kwargs):
+        if schema is not AuditTrace:
+            return original(work, prompt, schema, deadline, **kwargs)
+        if moment == "before":
+            raise ModelProtocolError("Injected before audit")
+        trace = original(work, prompt, schema, deadline, **kwargs)
+        if moment == "writing":
+            (work / "execution.json").write_text('{"uses":[')
+        else:
+            if moment == "partial":
+                trace = trace.model_copy(update={"uses": trace.uses[:2]})
+            (work / "execution.json").write_text(trace.model_dump_json())
+        raise ModelProtocolError("Injected after candidate")
+
+    model.run = run
+
+
+@pytest.mark.parametrize("moment", ["before", "writing", "partial", "complete"])
+def test_failed_guest_artifacts_resume_same_inputs_without_recompiling(moment):
+    case = frozen_case(False)
+    failed = RecoveryGuest(case.model)
+    fail_audit_model(case.model, moment)
+    with pytest.raises(DeepError, match="deep_model_protocol"):
+        SemanticRuntime(failed, case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    key = next(key for key in case.objects.values if key.endswith("/recovery.json"))
+    saved = json.loads(case.objects.values[key])
+    assert saved["attempt"] == 1 and saved["uncertain"] is False
+    assert saved["trace"] is not None
+    assert not any(key.endswith("/bundle.json") for key in case.objects.values)
+    clean = frozen_case(False)
+    expected = handle_case(clean)
+    model = ModelResponses(False)
+    guest = RecoveryGuest(model, case.objects)
+    request = case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1})
+    response = SemanticRuntime(guest, case.objects).execute(request, case.blobs, context=ExecutionContext())
+    assert [(finding.status, finding.item) for finding in response.findings] == [(finding.status, finding.item) for finding in expected.findings]
+    assert model.plan_attempts == {BAD_RULE: 0, GOOD_RULE: 0}
+    assert model.audit_calls == (0 if moment == "complete" else 1)
+    if moment != "complete":
+        assert guest.prior_usages[0] == {key: saved["usage"][key] for key in ("input_tokens", "output_tokens", "model_requests")}
+    if moment == "partial":
+        # The first two native checks are complete; the other two stay unknown.
+        from ppap_deep.auditor import semantic_inputs
+        from ppap_deep.semantic.models import RulePlan
+        from ppap_deep.semantic.trace import evaluate_audit
+        submission, _ = semantic_inputs(case.spec, ENGINE)
+        plans = {rule.rule_id: RulePlan.model_validate_json(case.objects.values[next(key for key in case.objects.values if key.endswith(rule.plan_revision + ".json"))]) for rule in submission.rules}
+        snapshots = {doc.audit_id: json.loads(case.objects.values[next(key for key in case.objects.values if key.endswith(doc.sha256 + doc.format + ".json"))]) for doc in submission.documents}
+        replay = evaluate_audit(AuditTrace.model_validate(saved["trace"]), snapshots, {audit: plans[rule] for audit, rule in submission.targets.items()})
+        assert [check.status for check in replay.report.checks] == ["PASS", "PASS", "UNABLE", "UNABLE"]
+
+
+@pytest.mark.parametrize("defect", ["truncated", "attempt", "tenant", "rules", "document", "engine", "trace", "path", "expired", "uncertain"])
+def test_recovery_rejects_invalid_source_before_new_model_work(defect):
+    from datetime import UTC, datetime, timedelta
+
+    case = frozen_case(False)
+    fail_audit_model(case.model, "complete")
+    with pytest.raises(DeepError):
+        SemanticRuntime(RecoveryGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    key = next(key for key in case.objects.values if key.endswith("/recovery.json"))
+    value = json.loads(case.objects.values[key])
+    if defect == "truncated":
+        case.objects.values[key] = b'{"spec":'
+    else:
+        if defect == "attempt":
+            value["attempt"] = 2
+        elif defect == "tenant":
+            value["spec"]["project_id"] = "other-tenant"
+        elif defect == "rules":
+            value["spec"]["rules"][0]["clauses"][0]["rule_to_check"] = "A different rule"
+        elif defect == "document":
+            value["spec"]["documents"][0]["sha256"] = "f" * 64
+        elif defect == "engine":
+            value["spec"]["semantic_engine_revision"] = "f" * 64
+        elif defect == "trace":
+            value["trace"]["uses"] = []
+        elif defect == "path":
+            value["trace"]["bindings"][0]["document_id"] = "../../outside"
+        elif defect == "expired":
+            value["expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        elif defect == "uncertain":
+            value["uncertain"] = True
+        case.objects.values[key] = json.dumps(value).encode()
+    model = ModelResponses(False)
+    guest = RecoveryGuest(model, case.objects)
+    request = case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1})
+    with pytest.raises(DeepError):
+        SemanticRuntime(guest, case.objects).execute(request, case.blobs, context=ExecutionContext())
+    assert guest.calls == 0 and model.audit_calls == 0
+
+
+def test_recovery_checks_original_bytes_and_keeps_unknown_consumption_fenced():
+    case = frozen_case(False)
+    case.model.uncertain = True
+    fail_audit_model(case.model, "partial")
+    with pytest.raises(DeepError):
+        SemanticRuntime(RecoveryGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    model = ModelResponses(False)
+    guest = RecoveryGuest(model, case.objects)
+    request = case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1})
+    with pytest.raises(DeepError, match="deep_model_protocol"):
+        SemanticRuntime(guest, case.objects).execute(request, case.blobs, context=ExecutionContext())
+    bad = dict(case.blobs)
+    bad[BAD_TARGET] = b"changed bytes under the same file identity"
+    with pytest.raises(DeepError, match="deep_integrity_mismatch"):
+        SemanticRuntime(guest, case.objects).execute(request, bad, context=ExecutionContext())
+    assert guest.calls == model.audit_calls == 0
+
+
+class DiskObjects(MemoryObjects):
+    def __init__(self, root):
+        self.root = root
+
+    def get(self, key, *, max_bytes=None):
+        try:
+            data = (self.root / key).read_bytes()
+        except FileNotFoundError:
+            raise ObjectMissing() from None
+        if max_bytes is not None and len(data) > max_bytes:
+            raise ObjectTooLarge()
+        return data
+
+    def put_exclusive(self, key, body, _content_type):
+        path = self.root / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("xb") as stream:
+                stream.write(body)
+        except FileExistsError:
+            raise ObjectExists() from None
+
+
+def recovery_process(root, outcome, spec, blobs, fail):
+    import os
+
+    model = ModelResponses(False)
+    guest = RecoveryGuest(model, DiskObjects(root))
+    if fail:
+        fail_audit_model(model, "complete")
+    try:
+        response = SemanticRuntime(guest, DiskObjects(root)).execute(spec, blobs, context=ExecutionContext())
+        state = {"statuses": [finding.status for finding in response.findings]}
+    except DeepError as error:
+        state = {"failure": str(error)}
+    state.update(pid=os.getpid(), compiles=sum(model.plan_attempts.values()), audits=model.audit_calls, removed=all(not path.exists() for path in guest.compile_paths))
+    outcome.write_text(json.dumps(state))
+
+
+def test_durable_candidate_survives_runtime_process_exit_and_deleted_temporary_root(tmp_path):
+    import multiprocessing
+
+    case = frozen_case(False)
+    processes = multiprocessing.get_context("fork")
+    root = tmp_path / "objects"
+    first_output, second_output = tmp_path / "first.json", tmp_path / "second.json"
+    first = processes.Process(target=recovery_process, args=(root, first_output, case.spec, case.blobs, True))
+    first.start()
+    first.join(15)
+    assert first.exitcode == 0
+    failed = json.loads(first_output.read_text())
+    assert failed["failure"] == "deep_model_protocol" and failed["compiles"] == 2 and failed["removed"]
+    resumed = case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1})
+    second = processes.Process(target=recovery_process, args=(root, second_output, resumed, case.blobs, False))
+    second.start()
+    second.join(15)
+    assert second.exitcode == 0
+    restored = json.loads(second_output.read_text())
+    assert restored["pid"] != failed["pid"]
+    assert restored["statuses"] == ["PASS", "PASS", "PASS", "NG"]
+    assert restored["compiles"] == restored["audits"] == 0
+
+
+@pytest.mark.parametrize("artifact", ["snapshots", "plans"])
+def test_recovery_rechecks_cached_artifact_digest_before_replay(artifact):
+    case = frozen_case(False)
+    fail_audit_model(case.model, "complete")
+    with pytest.raises(DeepError):
+        SemanticRuntime(RecoveryGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    key = next(key for key in case.objects.values if f"/{artifact}/" in key)
+    value = json.loads(case.objects.values[key])
+    if artifact == "snapshots":
+        value["tables"][0]["cells"]["B2"]["value"] = 999
+    else:
+        value["rules"][1]["program"]["require"]["value"] = 999
+    case.objects.values[key] = json.dumps(value).encode()
+    guest = RecoveryGuest(ModelResponses(False), case.objects)
+    with pytest.raises(DeepError):
+        SemanticRuntime(guest, case.objects).execute(case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+    assert guest.calls == 0
+
+
+def test_explicit_known_recovery_uses_derived_runtime_id_and_preserves_grant_budget(tmp_path):
+    import threading
+    import time
+    from unittest.mock import patch
+    from uuid import uuid5
+
+    from ppap_deep.auditor import semantic_inputs
+    from ppap_deep.isolation.container import ContainerRuntime
+    from ppap_deep.isolation.model_gateway import local_gateway
+    from ppap_deep.isolation.storage import write_json
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    case = frozen_case(False)
+    submission, _ = semantic_inputs(case.spec, ENGINE)
+    inputs, work = tmp_path / "inputs", tmp_path / "host-work"
+    inputs.mkdir()
+    manifest = Manifest(
+        spec=submission, documents={doc.audit_id: f"{i}.xlsx" for i, doc in enumerate(submission.documents)},
+        rules={rule.rule_id: f"{i}.json" for i, rule in enumerate(submission.rules)}, cached_snapshots={}, cached_plans={},
+    )
+    write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
+    runtime = object.__new__(ContainerRuntime)
+    runtime.slot, runtime.degraded = threading.Lock(), False
+    runtime.journal, runtime.attempts = tmp_path / "journal", tmp_path / "attempts"
+    runtime.journal.mkdir()
+    runtime.attempts.mkdir()
+    prior = {"model_requests": 1, "input_tokens": 10, "output_tokens": 2}
+    write_json(runtime.attempts / (submission.execution_id.hex + ".json"), {
+        "attempt": 1, "job_key": hashlib.sha256(case.spec.job_id.encode()).hexdigest(), "uncertain": False, "usage": prior,
+    })
+    with patch.object(runtime, "_write_grant") as issue, pytest.raises(ControllerFault):
+        runtime.run(submission, inputs, work, time.monotonic() + 10, threading.Event(), prior_usage=prior)
+    issue.assert_not_called()
+    manifest.runtime_job_id, manifest.runtime_attempt, manifest.runtime_source_attempt = case.spec.job_id, 2, 1
+    write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
+    run = tmp_path / "run"
+    (run / "work/result").mkdir(parents=True)
+    (run / "grant").mkdir()
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(prefix="pd-resume-", dir="/tmp") as short:
+        socket_path = Path(short) / "g.sock"
+        gateway_context = local_gateway(socket_path, upstream="https://example.invalid/v1", model="test-model", provider_key="private-test-key", requests=3, input_tokens=100, output_tokens=20)
+        with gateway_context as gateway:
+            runtime.config = SimpleNamespace(gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", model="test-model")
+
+            def execute(run, _deadline, _cancelled, _progress, runtime_id):
+                grant = json.loads((run / "grant/model.json").read_text())
+                assert grant["max_total_turns"] == 2 and grant["max_total_tokens"] == 108
+                assert runtime_id == uuid5(submission.execution_id, hashlib.sha256(case.spec.job_id.encode()).hexdigest() + ":2")
+                write_json(run / "work/result/bundle.json", {"execution_id": str(submission.execution_id)})
+
+            with (
+                patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run),
+                patch.object(runtime, "_execute", side_effect=execute), patch.object(runtime, "_write_grant", wraps=runtime._write_grant) as issue,
+            ):
+                runtime.run(submission, inputs, work, time.monotonic() + 10, threading.Event(), prior_usage=prior)
+                runtime.run(submission, inputs, tmp_path / "replayed", time.monotonic() + 10, threading.Event(), prior_usage=prior)
+                assert issue.call_count == 1
+            with pytest.raises(ControllerFault):
+                runtime.validate_recovery(submission, job_id=case.spec.job_id, source_attempt=1, current_attempt=3, prior_usage=prior)
+    assert json.loads((work / "result/bundle.json").read_text())["execution_id"] == str(submission.execution_id)
+    assert len(list(runtime.attempts.iterdir())) == 2
+
+
+def test_unknown_local_provider_consumption_is_persisted_and_resume_sends_zero(tmp_path):
+    import http.client
+    import tempfile
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from ppap_deep.auditor import semantic_inputs
+    from ppap_deep.isolation.model_gateway import grant_request, local_gateway
+    from ppap_deep.isolation.storage import write_json
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    sent = []
+
+    class Provider(BaseHTTPRequestHandler):
+        def do_POST(self):
+            sent.append(self.rfile.read(int(self.headers["Content-Length"])))
+            # The provider completed a request but omitted its usage receipt.
+            payload = b'{"output":[{"text":"fake-private-provider-output"}]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            pass
+
+    case = frozen_case(False)
+    submission, _ = semantic_inputs(case.spec, ENGINE)
+    original = case.model.run
+    provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    thread = threading.Thread(target=provider.serve_forever, daemon=True)
+    thread.start()
+    connection_type = http.client.HTTPConnection
+    try:
+        with tempfile.TemporaryDirectory(prefix="pd-unknown-", dir="/tmp") as short:
+            with patch("ppap_deep.isolation.model_gateway.http.client.HTTPSConnection", side_effect=lambda host, port, timeout: connection_type(host, port, timeout=timeout)):
+                with local_gateway(Path(short) / "g.sock", upstream=f"https://127.0.0.1:{provider.server_port}/v1", model="test-model", provider_key="fake-private-provider-key") as gateway:
+                    token = grant_request(str(gateway.socket_path), "issue", submission.execution_id)["token"]
+
+                    def run(work, prompt, schema, deadline, **kwargs):
+                        trace = original(work, prompt, schema, deadline, **kwargs)
+                        if schema is not AuditTrace:
+                            return trace
+                        connection = connection_type("127.0.0.1", gateway.http.server_address[1], timeout=2)
+                        try:
+                            connection.request("POST", "/v1/responses", body='{"model":"test-model","input":"test input"}', headers={"Authorization": "Bearer " + token})
+                            response = connection.getresponse()
+                            try:
+                                response.read()
+                            except http.client.IncompleteRead:
+                                pass
+                        finally:
+                            connection.close()
+                        (work / "execution.json").write_text(trace.model_dump_json())
+                        raise ModelProtocolError("Missing usage receipt")
+
+                    case.model.run = run
+
+                    class ProviderGuest(RecoveryGuest):
+                        def run(self, spec, inputs, work, *args, **kwargs):
+                            try:
+                                super().run(spec, inputs, work, *args, **kwargs)
+                            except ControllerFault:
+                                facts = grant_request(str(gateway.socket_path), "usage", submission.execution_id)
+                                assert facts["uncertain"] is True
+                                write_json(work / "diagnostic.json", {"code": "MODEL_PROTOCOL_ERROR", "usage": facts})
+                                raise
+
+                    with pytest.raises(DeepError, match="deep_model_protocol"):
+                        SemanticRuntime(ProviderGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+                    assert len(sent) == 1
+                    guest = RecoveryGuest(ModelResponses(False), case.objects)
+                    with pytest.raises(DeepError, match="deep_model_protocol"):
+                        SemanticRuntime(guest, case.objects).execute(case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+                    assert len(sent) == 1 and guest.calls == 0
+                    saved = b"\n".join(case.objects.values.values()).decode()
+                    for private in (token, "fake-private-provider-output", "fake-private-provider-key"):
+                        assert private not in saved
+    finally:
+        provider.shutdown()
+        thread.join(2)
+        provider.server_close()
+
+
+@pytest.mark.parametrize("stage_file", ["readable", "truncated", "symlink", "token"])
+def test_failed_container_exports_last_certificate_before_cleaning_guest_work(tmp_path, stage_file):
+    import shutil
+
+    from ppap_deep.isolation.container import ContainerRuntime
+    from ppap_deep.isolation.storage import write_json
+    from ppap_deep.semantic.audit_tools import prepare_audit
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    case = frozen_case(False)
+    fail_audit_model(case.model, "complete")
+    token = "fake-sensitive-guest-token"
+    destination = tmp_path / "export"
+
+    class CapturingGuest(RecoveryGuest):
+        def run(self, spec, inputs, work, *args, **kwargs):
+            try:
+                super().run(spec, inputs, work, *args, **kwargs)
+            except ControllerFault:
+                run = tmp_path / "run"
+                shutil.copytree(work, run / "work")
+                write_json(run / "grant/model.json", {"token": token})
+                candidate = ResultBundle.model_validate_json((run / "work/candidate.json").read_text())
+                targets = {audit_id: candidate.plans[rule_id] for audit_id, rule_id in spec.targets.items()}
+                candidate.trace = prepare_audit(targets)[0]
+                # Simulate a kill before the guest's finally block copied the
+                # completed stage file back into its initial candidate.
+                write_json(run / "work/candidate.json", candidate.model_dump(mode="json"))
+                stage = run / "work/audit/execution.json"
+                if stage_file == "truncated":
+                    stage.write_text('{"uses":[')
+                elif stage_file == "symlink":
+                    stage.unlink()
+                    outside = tmp_path / "outside.json"
+                    outside.write_text('{"private":"fake-sensitive-guest-token"}')
+                    stage.symlink_to(outside)
+                elif stage_file == "token":
+                    value = json.loads(stage.read_text())
+                    value["bindings"][0]["mapping_basis"] = token
+                    write_json(stage, value)
+                ContainerRuntime._export_candidate(run, destination)
+                shutil.rmtree(run)
+                raise
+
+    with pytest.raises(DeepError, match="deep_model_protocol"):
+        SemanticRuntime(CapturingGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    output = destination / "candidate.json"
+    if stage_file == "token":
+        assert not output.exists()
+    else:
+        exported = ResultBundle.model_validate_json(output.read_text())
+        evaluation = evaluate_audit(exported.trace, exported.documents, {audit_id: exported.plans[rule_id] for audit_id, rule_id in spec_targets(case.spec).items()})
+        assert [check.status for check in evaluation.report.checks] == (["PASS", "PASS", "PASS", "NG"] if stage_file == "readable" else ["UNABLE"] * 4)
+        assert token not in output.read_text()
+
+
+def spec_targets(spec):
+    return {file.file_version_id: file.rule_version_id for file in spec.files if file.role == "target"}
+
+
+def test_recovery_digest_uses_json_meaning_across_dictionary_key_order():
+    case = frozen_case(False)
+    original = case.model.run
+
+    def run(work, prompt, schema, deadline, **kwargs):
+        result = original(work, prompt, schema, deadline, **kwargs)
+        if schema is AuditTrace:
+            for binding in result.bindings:
+                binding.columns = dict(reversed(list(binding.columns.items())))
+            (work / "execution.json").write_text(result.model_dump_json())
+            raise ModelProtocolError("Injected completed candidate")
+        return result
+
+    case.model.run = run
+    with pytest.raises(DeepError):
+        SemanticRuntime(RecoveryGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    guest = RecoveryGuest(ModelResponses(False), case.objects)
+    response = SemanticRuntime(guest, case.objects).execute(case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+    assert [finding.status for finding in response.findings] == ["PASS", "PASS", "PASS", "NG"]
+    assert guest.calls == 0
+
+
+@pytest.mark.parametrize("first_mode", ["ordinary", "resume"])
+def test_latest_unknown_runtime_attempt_blocks_mode_switch_and_older_source(tmp_path, first_mode):
+    import http.client
+    import tempfile
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from ppap_deep.auditor import semantic_inputs
+    from ppap_deep.isolation.container import ContainerRuntime
+    from ppap_deep.isolation.model_gateway import local_gateway
+    from ppap_deep.isolation.storage import write_json
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    sent = []
+
+    class Provider(BaseHTTPRequestHandler):
+        def do_POST(self):
+            sent.append(self.rfile.read(int(self.headers["Content-Length"])))
+            payload = b'{"output":[]}'  # No usage receipt: consumption is unknown.
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            pass
+
+    case = frozen_case(False)
+    submission, _ = semantic_inputs(case.spec, ENGINE)
+    runtime = object.__new__(ContainerRuntime)
+    runtime.slot, runtime.degraded = threading.Lock(), False
+    runtime.journal, runtime.attempts = tmp_path / "journal", tmp_path / "attempts"
+    runtime.journal.mkdir()
+    runtime.attempts.mkdir()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    manifest = Manifest(
+        spec=submission, documents={doc.audit_id: str(i) for i, doc in enumerate(submission.documents)},
+        rules={rule.rule_id: str(i) for i, rule in enumerate(submission.rules)}, cached_snapshots={}, cached_plans={},
+        runtime_job_id=case.spec.job_id, runtime_attempt=2, runtime_source_attempt=1 if first_mode == "resume" else None,
+    )
+    write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
+    prior = {"model_requests": 1, "input_tokens": 10, "output_tokens": 2}
+    marker = runtime.attempts / (submission.execution_id.hex + ".json")
+    if first_mode == "resume":
+        write_json(marker, {"attempt": 1, "job_key": hashlib.sha256(case.spec.job_id.encode()).hexdigest(), "uncertain": False, "usage": prior})
+    run = tmp_path / "run"
+    (run / "work").mkdir(parents=True)
+    (run / "grant").mkdir()
+    provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    thread = threading.Thread(target=provider.serve_forever, daemon=True)
+    thread.start()
+    connection_type = http.client.HTTPConnection
+    try:
+        with tempfile.TemporaryDirectory(prefix="pd-fence-", dir="/tmp") as short:
+            with patch("ppap_deep.isolation.model_gateway.http.client.HTTPSConnection", side_effect=lambda host, port, timeout: connection_type(host, port, timeout=timeout)):
+                with local_gateway(Path(short) / "g.sock", upstream=f"https://127.0.0.1:{provider.server_port}/v1", model="test-model", provider_key="fake-provider-key") as gateway:
+                    runtime.config = SimpleNamespace(gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", model="test-model")
+
+                    def execute(run, *_args):
+                        grant = json.loads((run / "grant/model.json").read_text())
+                        connection = connection_type("127.0.0.1", gateway.http.server_address[1], timeout=2)
+                        try:
+                            connection.request("POST", "/v1/responses", body='{"model":"test-model","input":"test input"}', headers={"Authorization": "Bearer " + grant["token"]})
+                            response = connection.getresponse()
+                            try:
+                                response.read()
+                            except http.client.IncompleteRead:
+                                pass
+                        finally:
+                            connection.close()
+                        raise ControllerFault("MODEL_PROTOCOL_ERROR")
+
+                    with (
+                        patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run),
+                        patch.object(runtime, "_execute", side_effect=execute), patch.object(runtime, "_write_grant", wraps=runtime._write_grant) as issue,
+                    ):
+                        with pytest.raises(ControllerFault):
+                            runtime.run(submission, inputs, tmp_path / "failed", time.monotonic() + 10, threading.Event(), prior_usage=prior)
+                        assert json.loads(marker.read_text())["uncertain"] is True
+                        assert len(sent) == issue.call_count == 1
+                        for current, source in [(2, 1), (3, 1), (2, None), (3, 2)]:
+                            manifest.runtime_attempt, manifest.runtime_source_attempt = current, source
+                            write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
+                            with pytest.raises(ControllerFault):
+                                runtime.run(submission, inputs, tmp_path / f"retry-{current}-{source}", time.monotonic() + 10, threading.Event(), prior_usage=prior)
+                        assert len(sent) == issue.call_count == 1
+    finally:
+        provider.shutdown()
+        thread.join(2)
+        provider.server_close()
+
+
+def test_complete_host_candidate_cannot_skip_newer_unknown_or_missing_runtime_fence():
+    case = frozen_case(False)
+    fail_audit_model(case.model, "complete")
+    with pytest.raises(DeepError):
+        SemanticRuntime(RecoveryGuest(case.model), case.objects).execute(case.spec, case.blobs, context=ExecutionContext())
+    unsupported = InProcessGuest(ModelResponses(False))
+    with pytest.raises(DeepError, match="deep_runtime_unavailable"):
+        SemanticRuntime(unsupported, case.objects).execute(case.spec.model_copy(update={"attempt": 2, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+    assert unsupported.calls == 0
+    newer = ModelResponses(False)
+    newer.uncertain = True
+    fail_audit_model(newer, "partial")
+    with pytest.raises(DeepError):
+        SemanticRuntime(RecoveryGuest(newer), case.objects).execute(case.spec.model_copy(update={"attempt": 2}), case.blobs, context=ExecutionContext())
+    guest = RecoveryGuest(ModelResponses(False), case.objects)
+    with pytest.raises(DeepError, match="deep_model_protocol"):
+        SemanticRuntime(guest, case.objects).execute(case.spec.model_copy(update={"attempt": 3, "resume_attempt": 1}), case.blobs, context=ExecutionContext())
+    assert guest.calls == 0
+
+
+@pytest.mark.parametrize("boundary", ["late_authorize", "seal_failure", "invalid_export"])
+def test_final_grant_seal_owns_receipt_and_fails_closed_before_publication(tmp_path, boundary):
+    import tempfile
+    import threading
+    import time
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from ppap_deep.auditor import semantic_inputs
+    from ppap_deep.isolation.container import ContainerRuntime
+    from ppap_deep.isolation.model_gateway import grant_request, local_gateway
+    from ppap_deep.isolation.storage import write_json
+    from ppap_deep.semantic.protocol import ControllerFault
+
+    case = frozen_case(False)
+    submission, _ = semantic_inputs(case.spec, ENGINE)
+    runtime = object.__new__(ContainerRuntime)
+    runtime.slot, runtime.degraded = threading.Lock(), False
+    runtime.journal, runtime.attempts = tmp_path / "journal", tmp_path / "attempts"
+    runtime.journal.mkdir()
+    runtime.attempts.mkdir()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    manifest = Manifest(
+        spec=submission, documents={doc.audit_id: str(i) for i, doc in enumerate(submission.documents)},
+        rules={rule.rule_id: str(i) for i, rule in enumerate(submission.rules)}, cached_snapshots={}, cached_plans={},
+        runtime_job_id=case.spec.job_id, runtime_attempt=1,
+    )
+    write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
+    run = tmp_path / "run"
+    (run / "work/result").mkdir(parents=True)
+    (run / "grant").mkdir()
+    prior = {"model_requests": 1, "input_tokens": 10, "output_tokens": 2}
+    token, seals, late = [], [], []
+    with tempfile.TemporaryDirectory(prefix="pd-seal-", dir="/tmp") as short:
+        with local_gateway(Path(short) / "g.sock", upstream="https://example.invalid/v1", model="test-model", provider_key="fake-key") as gateway:
+            runtime.config = SimpleNamespace(gateway_socket=gateway.socket_path, gateway_host="127.0.0.1", model="test-model")
+
+            def execute(run, *_args):
+                value = json.loads((run / "grant/model.json").read_text())
+                token.append(value["token"])
+                lease = gateway.http.grants.authorize(token[0], {"model": "test-model", "input": "test original"}, 100)
+                gateway.http.grants.record_usage(lease, {"input_tokens": 3, "output_tokens": 2})
+                write_json(run / "work/result/bundle.json", [] if boundary == "invalid_export" else {"execution_id": str(submission.execution_id)})
+
+            def control(path, method, execution_id, **kwargs):
+                if method == "revoke_and_usage":
+                    seals.append(execution_id)
+                    if boundary == "seal_failure":
+                        raise OSError("Injected lost seal receipt")
+                result = grant_request(path, method, execution_id, **kwargs)
+                if method == "usage" and boundary == "late_authorize" and not late:
+                    # The earlier read was known; another operation gets in
+                    # before the atomic removal/receipt under the grants lock.
+                    late.append(gateway.http.grants.authorize(token[0], {"model": "test-model", "input": "test late request"}, 100))
+                return result
+
+            with (
+                patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run),
+                patch.object(runtime, "_execute", side_effect=execute), patch("ppap_deep.isolation.container.grant_request", side_effect=control),
+            ):
+                with pytest.raises(ControllerFault):
+                    runtime.run(submission, inputs, tmp_path / "host", time.monotonic() + 10, threading.Event(), prior_usage=prior)
+            assert len(seals) == 1
+            assert not list(runtime.journal.iterdir())
+            assert not (tmp_path / "host/result/bundle.json").exists()
+            marker = json.loads((runtime.attempts / (submission.execution_id.hex + ".json")).read_text())
+            if boundary == "invalid_export":
+                # Export failure keeps the one frozen receipt. It must not
+                # re-seal an empty lease and replace 3/2 with a false known zero.
+                assert marker["uncertain"] is False
+                assert marker["usage"] == {"model_requests": 2, "input_tokens": 13, "output_tokens": 4}
+                diagnostic = json.loads((tmp_path / "host/diagnostic.json").read_text())
+                assert diagnostic["usage"]["input_tokens"] == 3
+            else:
+                assert marker["uncertain"] is True
+            if boundary == "seal_failure":
+                assert runtime.degraded is True
+            else:
+                with pytest.raises(ValueError):
+                    grant_request(str(gateway.socket_path), "revoke_and_usage", submission.execution_id)
+                with pytest.raises(ValueError):
+                    gateway.http.grants.authorize(token[0], {"model": "test-model", "input": "test after seal"}, 100)
