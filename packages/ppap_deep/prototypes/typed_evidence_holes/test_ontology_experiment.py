@@ -94,7 +94,7 @@ def test_changing_oracle_does_not_change_controlled_model_proposal(experiment, t
         case,
         tables=tuple(replace(table, identity_columns=("B",), objects=((2, 3),)) for table in case.tables),
         status="PASS",
-        relation_kind="association",
+        relation_kinds=("association",),
         match="any",
         comparison_nonempty=not case.comparison_nonempty,
     )
@@ -277,7 +277,7 @@ def test_nonliteral_association_must_use_the_rules_explicit_identifier_key(exper
         experiment.cases()[1],
         key="identifier-index-association",
         rule="基准清单每个工序的工序编号必须在控制标签索引的编号列一一对应。标签索引记录不表示工序实体；这是按编号建立的索引关联，分类不能代替编号。每个数据行是独立实例。",
-        relation_kind="association",
+        relation_kinds=("association",),
     )
     bundle, spec = executed(experiment, case, tmp_path / "case")
     plan = bundle.plans[next(iter(spec.targets.values()))]
@@ -291,6 +291,75 @@ def test_nonliteral_association_must_use_the_rules_explicit_identifier_key(exper
     assert scores["concept"]["state"] == "incorrect"
     assert "explicit identifier key" in scores["concept"]["errors"][0]
     assert scores["binding"]["state"] == scores["judgment"]["state"] == "correct"
+
+
+@pytest.mark.parametrize("key", ["classification-is-not-identity", "duplicates-remain-instances"])
+@pytest.mark.parametrize("kind", ["association", "same_instance"])
+def test_both_kinds_preserve_the_two_rules_obligations(experiment, tmp_path, key, kind):
+    case = next(case for case in experiment.cases() if case.key == key)
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target, rule = next(iter(spec.targets.items()))
+    plan = bundle.plans[rule]
+    plan.ontology.relationships[0].kind = kind
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"] == {"state": "correct", "errors": []}
+    assert scores["binding"]["state"] == scores["judgment"]["state"] == "correct"
+
+
+@pytest.mark.parametrize("index", [2, 9, 10])
+def test_two_rules_kind_choice_does_not_relax_other_concepts(experiment, tmp_path, index):
+    case = experiment.cases()[index]
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target, rule = next(iter(spec.targets.items()))
+    plan = bundle.plans[rule]
+    plan.ontology.relationships[0].kind = "association"
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"] == {"state": "incorrect", "errors": ["relation meaning differs"]}
+    assert scores["binding"]["state"] == scores["judgment"]["state"] == "correct"
+
+
+@pytest.mark.parametrize("key", ["classification-is-not-identity", "duplicates-remain-instances"])
+@pytest.mark.parametrize("change", ["extra_classification", "classification_instead_of_code", "projection", "match_any", "quantifier_exists", "precondition_gate"])
+def test_association_does_not_relax_the_two_rules_obligations(experiment, tmp_path, key, change):
+    from ppap_deep.semantic.models import ColumnExists
+
+    case = next(case for case in experiment.cases() if case.key == key)
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    target, rule = next(iter(spec.targets.items()))
+    plan = bundle.plans[rule]
+    plan.ontology.relationships[0].kind = "association"
+    program = plan.rules[0].program
+    relation = program.require
+    if change == "extra_classification":
+        relation.source_key.fields = relation.target_key.fields = ["code", "classification"]
+    elif change == "classification_instead_of_code":
+        relation.source_key.fields = relation.target_key.fields = ["classification"]
+    elif change == "projection":
+        relation.source_key.template = relation.target_key.template = "{code}-X"
+    elif change == "match_any":
+        relation.match = "any"
+    elif change == "quantifier_exists":
+        program.quantifier = "exists"
+    else:
+        program.precondition = ColumnExists(kind="column_exists", input=program.source, field="code")
+    bundle.report = experiment.evaluate_audit(bundle.trace, bundle.documents, {target: plan}).report
+    scores = experiment.score(case, bundle, spec)
+    assert scores["concept"]["state"] == "incorrect"
+    assert "relation meaning differs" not in scores["concept"]["errors"]
+    assert scores["binding"]["state"] == "correct"
+
+
+def test_association_cannot_hide_deduplicated_occurrences(experiment, tmp_path):
+    case = next(case for case in experiment.cases() if case.key == "duplicates-remain-instances")
+    bundle, spec = executed(experiment, case, tmp_path / "case")
+    plan = bundle.plans[next(iter(spec.targets.values()))]
+    plan.ontology.relationships[0].kind = "association"
+    scope = bundle.trace.uses[0].inputs["target"].scopes[0]
+    scope.objects = [scope.objects[0], scope.objects[2]]
+    with pytest.raises(ValueError, match="Logical objects must cover exactly"):
+        experiment.score(case, bundle, spec)
 
 
 @pytest.mark.parametrize("change", ["correct", "wrong_column", "no_question", "no_confirmation_requirement", "source_unbound", "not_expected_to_clarify"])
