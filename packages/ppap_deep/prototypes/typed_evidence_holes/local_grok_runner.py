@@ -65,6 +65,15 @@ class RecordedGrants(Grants):
 
 
 class LocalGrokRunner:
+    # Created by the macOS-only context entry; declare their types on Linux
+    # too, where static checking correctly treats that branch as unreachable.
+    started: float
+    deadline: float
+    scratch: Path
+    python_root: Path
+    helpers: Path
+    token: str
+
     def __init__(
         self,
         settings: ModelSettings,
