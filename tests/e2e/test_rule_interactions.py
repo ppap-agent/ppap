@@ -2099,6 +2099,12 @@ class RuleInteractionTests(unittest.TestCase):
             hold_original = True
             with page.expect_request("**/api/rules/parse/" + original):
                 page.get_by_role("button", name="刷新提取状态", exact=True).click()
+            # The request event precedes the route callback under concurrent
+            # browser load. Wait for the callback before releasing its reply.
+            deadline = time.monotonic() + 5
+            while not delayed:
+                self.assertLess(time.monotonic(), deadline, "The original read did not reach its route handler")
+                page.wait_for_timeout(10)
             self.assertEqual(len(delayed), 1)
             page.get_by_role("button", name="重新提取条款", exact=True).click()
             confirmation.get_by_role("button", name="确认重新提取", exact=True).click()
