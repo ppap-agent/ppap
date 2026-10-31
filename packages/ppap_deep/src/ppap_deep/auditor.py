@@ -302,8 +302,12 @@ class SemanticRuntime:
 
     @staticmethod
     def _candidate(
-        bundle: ResultBundle, submission: SubmissionSpec, plans: dict[str, RulePlan], failed_rules: dict[str, CompileFailureRecord],
-        packets: dict[str, bytes], documents: dict[str, dict],
+        bundle: ResultBundle,
+        submission: SubmissionSpec,
+        plans: dict[str, RulePlan],
+        failed_rules: dict[str, CompileFailureRecord],
+        packets: dict[str, bytes],
+        documents: dict[str, dict],
     ) -> ResultBundle:
         if bundle.plans != plans or bundle.failed_rules != failed_rules:
             raise ValueError("Recovery changed the frozen compilation")
@@ -362,7 +366,10 @@ class SemanticRuntime:
             if not callable(validator):
                 raise DeepError("deep_runtime_unavailable")
             validator(
-                submission, job_id=spec.job_id, source_attempt=spec.resume_attempt, current_attempt=spec.attempt,
+                submission,
+                job_id=spec.job_id,
+                source_attempt=spec.resume_attempt,
+                current_attempt=spec.attempt,
                 prior_usage={key: recovery.usage[key] for key in ("model_requests", "input_tokens", "output_tokens")},
             )
             expires_at = min(expires_at, recovery.expires_at)
@@ -532,9 +539,17 @@ class SemanticRuntime:
                 resume_name = "resume-trace.json"
                 (inputs / resume_name).write_text(recovery.trace.model_dump_json())
             manifest = Manifest(
-                spec=submission, documents=names, rules=rule_names, cached_snapshots=cached_snapshots, cached_plans=cached_plans, resume_trace=resume_name,
-                runtime_job_id=spec.job_id, runtime_attempt=spec.attempt,
-                runtime_source_attempt=spec.resume_attempt, precompiled_only=True, failed_rules=failed_rules,
+                spec=submission,
+                documents=names,
+                rules=rule_names,
+                cached_snapshots=cached_snapshots,
+                cached_plans=cached_plans,
+                resume_trace=resume_name,
+                runtime_job_id=spec.job_id,
+                runtime_attempt=spec.attempt,
+                runtime_source_attempt=spec.resume_attempt,
+                precompiled_only=True,
+                failed_rules=failed_rules,
             )
             (inputs / "manifest.json").write_bytes(manifest.model_dump_json().encode())
             if recovery is not None and recovery.trace is not None:
@@ -546,8 +561,14 @@ class SemanticRuntime:
                     raise ValueError("Recovery snapshot digest mismatch")
                 sources = {rule.rule_id: {**json.loads(packets[rule.rule_id]), "source": {"sha256": rule.sha256, "format": rule.format}} for rule in submission.rules}
                 candidate = ResultBundle(
-                    execution_id=submission.execution_id, semantic_engine_revision=revision, documents=documents,
-                    rule_sources=sources, plans=plans, failed_rules=failed_rules, report=AuditReport(checks=[]), trace=recovery.trace,
+                    execution_id=submission.execution_id,
+                    semantic_engine_revision=revision,
+                    documents=documents,
+                    rule_sources=sources,
+                    plans=plans,
+                    failed_rules=failed_rules,
+                    report=AuditReport(checks=[]),
+                    trace=recovery.trace,
                 )
                 candidate = self._candidate(candidate, submission, plans, failed_rules, packets, native_documents())
                 if all(check.unknown == 0 for check in candidate.report.checks):
@@ -591,10 +612,17 @@ class SemanticRuntime:
                 except (OSError, ValueError, KeyError, TypeError, TimeoutError, DeepError):
                     pass  # Invalid or incomplete writes never enter trusted caches.
                 saved = RecoveryRecord(
-                    spec=submission, job_id=spec.job_id, attempt=spec.attempt, expires_at=expires_at, usage=current_usage,
-                    uncertain=uncertain, failed_rules=failed_rules, snapshot_digests=snapshot_digests,
+                    spec=submission,
+                    job_id=spec.job_id,
+                    attempt=spec.attempt,
+                    expires_at=expires_at,
+                    usage=current_usage,
+                    uncertain=uncertain,
+                    failed_rules=failed_rules,
+                    snapshot_digests=snapshot_digests,
                     plan_digests={key: hashlib.sha256(encoded(plan.model_dump(mode="json"))).hexdigest() for key, plan in plans.items()},
-                    trace=trace, trace_sha256=hashlib.sha256(encoded(trace.model_dump(mode="json"))).hexdigest() if trace is not None else None,
+                    trace=trace,
+                    trace_sha256=hashlib.sha256(encoded(trace.model_dump(mode="json"))).hexdigest() if trace is not None else None,
                 )
                 self._put(artifact_prefix + "/recovery.json", saved.model_dump(mode="json"))
                 raise

@@ -333,8 +333,15 @@ class ContainerRuntime:
             raise ControllerFault("ISOLATION_UNAVAILABLE") from None
 
     def _export(
-        self, run: Path, work: Path, model_operation: bool, execution_id: UUID, deadline: float, cancelled: threading.Event,
-        *, settled_usage: dict[str, Any] | None = None,
+        self,
+        run: Path,
+        work: Path,
+        model_operation: bool,
+        execution_id: UUID,
+        deadline: float,
+        cancelled: threading.Event,
+        *,
+        settled_usage: dict[str, Any] | None = None,
     ) -> None:
         result = run / "work" / "result"
         try:
@@ -380,7 +387,13 @@ class ContainerRuntime:
             raise ControllerFault("MODEL_PROTOCOL_ERROR") from None
 
     def validate_recovery(
-        self, spec: SubmissionSpec, *, job_id: str, source_attempt: int, current_attempt: int, prior_usage: dict[str, Any] | None,
+        self,
+        spec: SubmissionSpec,
+        *,
+        job_id: str,
+        source_attempt: int,
+        current_attempt: int,
+        prior_usage: dict[str, Any] | None,
     ) -> None:
         """The latest durable attempt, not a chosen old source, owns replay."""
         job_key = hashlib.sha256(job_id.encode()).hexdigest()
@@ -391,9 +404,12 @@ class ContainerRuntime:
             previous = read_json(self.attempts, (spec.execution_id.hex + ".json",), 8192)
             expected_usage = {key: (prior_usage or {}).get(key, 0) for key in ("model_requests", "input_tokens", "output_tokens")}
             allowed = (
-                source_attempt < current_attempt and previous.get("uncertain") is False
-                and type(previous.get("attempt")) is int and previous["attempt"] == source_attempt
-                and previous.get("job_key") == job_key and previous.get("usage") == expected_usage
+                source_attempt < current_attempt
+                and previous.get("uncertain") is False
+                and type(previous.get("attempt")) is int
+                and previous["attempt"] == source_attempt
+                and previous.get("job_key") == job_key
+                and previous.get("usage") == expected_usage
             )
         except (OSError, ValueError, AttributeError):
             allowed = False
@@ -485,8 +501,10 @@ class ContainerRuntime:
                         # unknown or newer source, or reset accumulated usage.
                         try:
                             facts = final_usage or {}
-                            known = facts.get("uncertain") is False and facts.get("in_flight") is False and all(
-                                type(facts.get(key)) is int and facts[key] >= 0 for key in ("completed_requests", "input_tokens", "output_tokens")
+                            known = (
+                                facts.get("uncertain") is False
+                                and facts.get("in_flight") is False
+                                and all(type(facts.get(key)) is int and facts[key] >= 0 for key in ("completed_requests", "input_tokens", "output_tokens"))
                             )
                             known = known and (facts["completed_requests"] > 0 or not (facts["input_tokens"] or facts["output_tokens"]))
                             totals = {key: (prior_usage or {}).get(key, 0) for key in ("model_requests", "input_tokens", "output_tokens")}

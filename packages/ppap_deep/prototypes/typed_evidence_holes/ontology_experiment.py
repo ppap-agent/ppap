@@ -24,7 +24,7 @@ from ppap_deep.semantic import guest
 from ppap_deep.semantic.bindings import BoundCollection, FileCollection, grouping_support
 from ppap_deep.semantic.document_tools import ReadLimits, TableReader
 from ppap_deep.semantic.evidence import EvidenceBudget
-from ppap_deep.semantic.models import All, AnyOf, Not, Related, RequireAll, RulePlan, ValueTest
+from ppap_deep.semantic.models import Related, RequireAll, RequireAny, RequireNot, RulePlan, ValueTest
 from ppap_deep.semantic.protocol import ResultBundle, SubmissionSpec
 from ppap_deep.semantic.trace import AuditTrace, evaluate_audit
 
@@ -43,18 +43,18 @@ def prepare(case: Case, directory: Path, revision: str) -> SubmissionSpec:
 def related_nodes(node):
     if isinstance(node, Related):
         yield node
-    if isinstance(node, (All, AnyOf, Not)):
-        for child in node.items if isinstance(node, (All, AnyOf)) else [node.item]:
+    if isinstance(node, (RequireAll, RequireAny, RequireNot)):
+        for child in node.items if isinstance(node, (RequireAll, RequireAny)) else [node.item]:
             yield from related_nodes(child)
 
 
 def _mandatory_relation_guards(node, allowed: set[str]) -> set[str] | None:
     """This oracle permits a relation and only entailed positive AND guards."""
-    if isinstance(node, Not) and isinstance(node.item, Not):
+    if isinstance(node, RequireNot) and isinstance(node.item, RequireNot):
         return _mandatory_relation_guards(node.item.item, allowed)
     if isinstance(node, Related):
         return set()
-    if isinstance(node, All):
+    if isinstance(node, RequireAll):
         fields = set()
         for child in node.items:
             guards = _mandatory_relation_guards(child, allowed)
@@ -91,7 +91,8 @@ def _collection(table: Table, case: Case, trace: AuditTrace, use, concept, sourc
     if not isinstance(use, BoundCollection):
         return [], [source + ": collection not bound"]
     bindings = {binding.id: binding for binding in trace.bindings}
-    actual_groups, identity_columns = [], set()
+    actual_groups: list[tuple[int, ...]] = []
+    identity_columns: set[str] = set()
     for scope in use.scopes:
         binding = bindings[scope.binding_id]
         if binding.document_id != case.identity(table.filename) or binding.table != table.sheet:
@@ -193,9 +194,9 @@ def _locations(trace: AuditTrace, use, fields: list[str]) -> tuple[str, ...] | N
     if not isinstance(use, BoundCollection):
         return None
     bindings = {binding.id: binding for binding in trace.bindings}
-    result = []
+    result: list[str] = []
     for field in fields:
-        points = []
+        points: list[str] = []
         for scope in use.scopes:
             binding = bindings[scope.binding_id]
             excluded = {item.row for item in scope.excluded_rows}
@@ -230,7 +231,7 @@ def _projection(trace: AuditTrace, use, key) -> str | None:
 
 def score(case: Case, bundle: ResultBundle, spec: SubmissionSpec) -> dict[str, Any]:
     """Score outputs, never generate expected business facts from the evaluator."""
-    output = {layer: {"state": "unassessable", "errors": []} for layer in ("concept", "binding", "judgment")}
+    output: dict[str, Any] = {layer: {"state": "unassessable", "errors": []} for layer in ("concept", "binding", "judgment")}
     target = next(iter(spec.targets))
     base = bundle.plans.get(spec.targets[target])
     checks = [check for check in bundle.report.checks if check.audit_id == target and check.rule_id == "1"]
@@ -350,7 +351,7 @@ class ControlledRunner:
         self.case, self.output = case, output
         self.spec = guest.Manifest.model_validate_json((inputs / "manifest.json").read_bytes()).spec
         self.input_tokens = self.output_tokens = self.tool_calls = self.completed_tool_calls = self.compactions = 0
-        self.calls = []
+        self.calls: list[str] = []
         self.plan = None
         self.file_relation = "文件实体" in case.rule
         self.literal_relation = "字面分隔符" in case.rule
@@ -544,7 +545,7 @@ def run(selected: tuple[Case, ...], output: Path, runner_factory, *, seconds: in
     for path in (Path(__file__), HERE / "ontology_cases.py"):
         (output / "code" / path.name).write_bytes(path.read_bytes())
     revision = hashlib.sha256(encoded([revision, *(hashlib.sha256(path.read_bytes()).hexdigest() for path in (Path(__file__), HERE / "ontology_cases.py"))])).hexdigest()
-    report = {
+    report: dict[str, Any] = {
         "kind": "local_ontology_counterexamples",
         "live": live,
         "model": "grok-4.7",

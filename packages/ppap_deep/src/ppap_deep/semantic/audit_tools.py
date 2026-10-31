@@ -118,10 +118,16 @@ def main() -> int:
     if args.need is not None and not needs:
         parser.error("unknown local question")
     end = args.offset + args.limit
-    print(json.dumps({
+    print(
+        json.dumps(
+            {
                 "needs": [{**need.model_dump(mode="json"), "state": result.need_states.get(need.id, "needed")} for need in needs[args.offset : end]],
-                "count": len(needs), "next_offset": end if end < len(needs) else None,
-            }, ensure_ascii=False))
+                "count": len(needs),
+                "next_offset": end if end < len(needs) else None,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

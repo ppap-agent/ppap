@@ -277,13 +277,17 @@ def test_semantic_membership_and_key_batches_stop_before_unrelated_targets():
 
 def test_all_keeps_unknown_semantic_member_even_when_native_keys_differ():
     membership = {
-        "kind": "any", "items": [
+        "kind": "any",
+        "items": [
             {"kind": "value_test", "field": "code", "op": "eq", "value": "Incoming"},
             {"kind": "judge", "question": "Does this target belong?", "fields": ["code"]},
         ],
     }
     trace, documents, plans = relation_case(
-        [("Incoming", "CC")], [("Incoming", "CC"), ("收货", "SC")], match="all", target_when=membership,
+        [("Incoming", "CC")],
+        [("Incoming", "CC"), ("收货", "SC")],
+        match="all",
+        target_when=membership,
         comparisons=[{"source_field": "value", "target_field": "value", "mode": "exact"}],
     )
     result = evaluate_audit(trace, documents, plans)

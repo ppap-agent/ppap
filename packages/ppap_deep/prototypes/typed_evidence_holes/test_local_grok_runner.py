@@ -339,7 +339,9 @@ def test_native_boundary_exposes_only_stage_originals_and_denies_hidden_inputs(s
         for path in (*inputs.iterdir(), oracle, history):
             outcome = module.subprocess.run(
                 ["/usr/bin/sandbox-exec", "-f", str(policy), sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).read_bytes()", str(path)],
-                env=runner._environment(agent_work, home), cwd=agent_work, capture_output=True,
+                env=runner._environment(agent_work, home),
+                cwd=agent_work,
+                capture_output=True,
             )
             assert outcome.returncode != 0
             assert b"PermissionError" in outcome.stderr, (path, outcome.stderr)

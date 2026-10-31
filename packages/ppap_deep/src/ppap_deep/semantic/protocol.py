@@ -218,7 +218,8 @@ class RecoveryRecord(Artifact):
             raise ValueError("Invalid recovery usage")
         digest = (
             hashlib.sha256(json.dumps(self.trace.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-            if self.trace is not None else None
+            if self.trace is not None
+            else None
         )
         if digest != self.trace_sha256:
             raise ValueError("Recovery candidate digest mismatch")
