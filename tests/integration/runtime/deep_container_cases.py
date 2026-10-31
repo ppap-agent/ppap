@@ -210,7 +210,11 @@ class ContainerJournalTests(unittest.TestCase):
             policy_revision="0" * 64,
             semantic_engine_revision=self.runtime.engine_revision(),
         )
-        return spec.model_copy(update={"execution_id": spec.expected_execution_id()})
+        spec = spec.model_copy(update={"execution_id": spec.expected_execution_id()})
+        manifest = Manifest(spec=spec, documents={"document-1": "document.xlsx"}, rules={"rule-1": "rule.json"}, cached_snapshots={}, cached_plans={})
+        (self.inputs / "manifest.json").write_text(manifest.model_dump_json())
+        (self.inputs / "rule.json").write_text('{"test": "controlled guest input"}')
+        return spec
 
     def _work(self, name: str) -> Path:
         work = self.root / name
@@ -341,6 +345,7 @@ class ContainerJournalTests(unittest.TestCase):
         # A separately accepted submission is new work, not an automatic
         # retry of the failed or unconfirmed execution above.
         self.provider.getresponse.side_effect = lambda: SimpleNamespace(status=200, read1=io.BytesIO(COMPLETED_EVENT).read1)
+        original_manifest = (self.inputs / "manifest.json").read_bytes()
         new_spec = self._submission()
         self.assertNotEqual(new_spec.execution_id, spec.execution_id)
         self.assertEqual(new_spec.documents, spec.documents)
@@ -351,6 +356,7 @@ class ContainerJournalTests(unittest.TestCase):
             spawn.assert_called_once()
         self.assertEqual(self.provider.request.call_count, 2)
         self.assertEqual(json.loads((retried / "result" / "bundle.json").read_text()), {"external_result": "completed once", "input_tokens": 3, "output_tokens": 5, "model_requests": 1})
+        (self.inputs / "manifest.json").write_bytes(original_manifest)
         with patch("subprocess.Popen", side_effect=AssertionError("new submission erased the failed execution")) as spawn:
             with self.assertRaises(ControllerFault) as still_failed:
                 restarted.run(spec, self.inputs, self._work("failed-after-new"), time.monotonic() + 10, threading.Event())
@@ -533,17 +539,17 @@ class ContainerCacheTests(unittest.TestCase):
         first = self._run(self.spec)
         self.assertEqual(self.compile_calls, 1)
         key, snapshot = self._cached("tables")
-        # An external cache retains parser metadata. Observing this harmless
-        # note at the model boundary distinguishes reuse from a fresh parse.
-        snapshot["limitations"].append("retained parser note")
+        # Host-local filenames can differ without changing observations.
+        # Limitations are source evidence and must never be edited for reuse.
+        snapshot["source"]["file"] = "retained-cache-alias.xlsx"
         self.stored[key] = json.dumps(snapshot).encode()
         new_spec = self.spec.model_copy(update={"round_id": str(uuid4()), "job_id": "job-two"})
         second = self._run(new_spec)
         self.assertEqual(self.compile_calls, 1, "a valid plan was compiled again")
         self.assertEqual(len(self.executions), 2)
         self.assertNotEqual(*self.executions)
-        self.assertNotIn("retained parser note", self.model_snapshots[0]["limitations"])
-        self.assertIn("retained parser note", self.model_snapshots[-1]["limitations"])
+        self.assertNotEqual(self.model_snapshots[0]["source"]["file"], "retained-cache-alias.xlsx")
+        self.assertEqual(self.model_snapshots[-1]["source"]["file"], "retained-cache-alias.xlsx")
         self.assertEqual((first.usage["input_tokens"], first.usage["output_tokens"]), (6, 10))
         self.assertEqual((second.usage["input_tokens"], second.usage["output_tokens"]), (3, 5))
         self.assertEqual(self.provider.request.call_count, 3)
@@ -586,7 +592,7 @@ class ContainerCacheTests(unittest.TestCase):
         self.evidence_mode = mode
         response = self.adapter.execute(self.spec, {target: self.raw for target in self.targets}, context=ExecutionContext())
         self.assertEqual([item.status for item in response.findings], ["PASS", "PASS"])
-        self.assertEqual([item.suggestions for item in response.findings], ["正文频次为每批。"] * 2)
+        self.assertEqual([item.suggestions for item in response.findings], ["完整声明范围内的适用记录满足规则要求"] * 2)
         self.assertTrue(response.coverage.locator_gap)
         self.assertIsNone(response.coverage.verification)
         for item in response.findings:
