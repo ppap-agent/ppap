@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from fastmcp import Client
+from ppap_core.db import connect
 from psycopg.types.json import Jsonb
 
 from .conftest import change_payload
@@ -488,7 +489,9 @@ def test_native_confirmation_rechecks_shared_application_authority(deep_feedback
             coverage["clarifications"][0]["candidates"][0]["explanation"] += " 新内容"
             conn.execute("UPDATE product.audit_rounds SET coverage=%s WHERE id=%s", (Jsonb(coverage), env["round_id"]))
     elif interference == "object_revoked":
-        with env["store"]._conn() as conn:
+        # Revocation is an administrative fixture action. The API role must
+        # retain its production restriction against deleting object grants.
+        with connect(env["settings"], "migrator") as conn:
             conn.execute("DELETE FROM product.resource_grants WHERE resource_id=%s AND user_id=%s", (round_id, env["principal"].user_id))
     elif interference == "delegation_scope_revoked":
         with env["store"]._conn() as conn:
