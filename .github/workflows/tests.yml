@@ -494,6 +494,21 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - name: Use runner-local Corepack cache
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
+        run: echo "COREPACK_HOME=$RUNNER_TEMP/corepack/${GITHUB_RUN_ID}/${GITHUB_JOB}" >> "$GITHUB_ENV"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .ci-checkouts/${{ runner.name }}/.node-version
+          package-manager-cache: false
+      - name: Install frontend dependencies for feedback E2E
+        working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}/apps/web
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: Install Python deps and browser
         working-directory: ${{ github.workspace }}/.ci-checkouts/${{ runner.name }}
         run: |
