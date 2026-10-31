@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 import uvicorn
+from ppap_core.db import connect
 from ppap_core.identity import SESSION_COOKIE
 from psycopg.types.json import Jsonb
 
@@ -580,7 +581,9 @@ def test_changed_question_concurrent_save_and_revoked_access_never_claim_success
             # Another authorized application entry saves the same question.
             assert env["client"].post(f"/audit-rounds/{env['round_id']}/rule-changes", json=payload).status_code == 200
         else:
-            with env["store"]._conn() as conn:
+            # Removing object grants is an administrative fixture action;
+            # the production API role must not gain DELETE permission.
+            with connect(env["settings"], "migrator") if failure == "revoked" else env["store"]._conn() as conn:
                 if failure == "revoked":
                     # Legacy pre-Task fixture roots are tenant-readable. Make
                     # this fault fixture use the actual Task grant boundary.
