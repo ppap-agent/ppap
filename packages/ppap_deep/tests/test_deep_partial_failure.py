@@ -785,12 +785,19 @@ class RecoveryGuest(InProcessGuest):
         try:
             super().run(submission, inputs, work, deadline, cancelled, on_progress=on_progress, prior_usage=prior_usage)
         except ModelProtocolError:
-            write_json(work / "diagnostic.json", {"code": "MODEL_PROTOCOL_ERROR", "usage": {
-                "input_tokens": self.model.input_tokens - before["input_tokens"],
-                "output_tokens": self.model.output_tokens - before["output_tokens"],
-                "completed_requests": self.model.model_requests - before["model_requests"],
-                "uncertain": getattr(self.model, "uncertain", False), "in_flight": False,
-            }})
+            write_json(
+                work / "diagnostic.json",
+                {
+                    "code": "MODEL_PROTOCOL_ERROR",
+                    "usage": {
+                        "input_tokens": self.model.input_tokens - before["input_tokens"],
+                        "output_tokens": self.model.output_tokens - before["output_tokens"],
+                        "completed_requests": self.model.model_requests - before["model_requests"],
+                        "uncertain": getattr(self.model, "uncertain", False),
+                        "in_flight": False,
+                    },
+                },
+            )
             raise ControllerFault("MODEL_PROTOCOL_ERROR") from None
 
 
@@ -842,6 +849,7 @@ def test_failed_guest_artifacts_resume_same_inputs_without_recompiling(moment):
         from ppap_deep.auditor import semantic_inputs
         from ppap_deep.semantic.models import RulePlan
         from ppap_deep.semantic.trace import evaluate_audit
+
         submission, _ = semantic_inputs(case.spec, ENGINE)
         plans = {rule.rule_id: RulePlan.model_validate_json(case.objects.values[next(key for key in case.objects.values if key.endswith(rule.plan_revision + ".json"))]) for rule in submission.rules}
         snapshots = {doc.audit_id: json.loads(case.objects.values[next(key for key in case.objects.values if key.endswith(doc.sha256 + doc.format + ".json"))]) for doc in submission.documents}
@@ -1006,8 +1014,11 @@ def test_explicit_known_recovery_uses_derived_runtime_id_and_preserves_grant_bud
     inputs, work = tmp_path / "inputs", tmp_path / "host-work"
     inputs.mkdir()
     manifest = Manifest(
-        spec=submission, documents={doc.audit_id: f"{i}.xlsx" for i, doc in enumerate(submission.documents)},
-        rules={rule.rule_id: f"{i}.json" for i, rule in enumerate(submission.rules)}, cached_snapshots={}, cached_plans={},
+        spec=submission,
+        documents={doc.audit_id: f"{i}.xlsx" for i, doc in enumerate(submission.documents)},
+        rules={rule.rule_id: f"{i}.json" for i, rule in enumerate(submission.rules)},
+        cached_snapshots={},
+        cached_plans={},
     )
     write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
     runtime = object.__new__(ContainerRuntime)
@@ -1016,9 +1027,15 @@ def test_explicit_known_recovery_uses_derived_runtime_id_and_preserves_grant_bud
     runtime.journal.mkdir()
     runtime.attempts.mkdir()
     prior = {"model_requests": 1, "input_tokens": 10, "output_tokens": 2}
-    write_json(runtime.attempts / (submission.execution_id.hex + ".json"), {
-        "attempt": 1, "job_key": hashlib.sha256(case.spec.job_id.encode()).hexdigest(), "uncertain": False, "usage": prior,
-    })
+    write_json(
+        runtime.attempts / (submission.execution_id.hex + ".json"),
+        {
+            "attempt": 1,
+            "job_key": hashlib.sha256(case.spec.job_id.encode()).hexdigest(),
+            "uncertain": False,
+            "usage": prior,
+        },
+    )
     with patch.object(runtime, "_write_grant") as issue, pytest.raises(ControllerFault):
         runtime.run(submission, inputs, work, time.monotonic() + 10, threading.Event(), prior_usage=prior)
     issue.assert_not_called()
@@ -1043,8 +1060,10 @@ def test_explicit_known_recovery_uses_derived_runtime_id_and_preserves_grant_bud
                 write_json(run / "work/result/bundle.json", {"execution_id": str(submission.execution_id)})
 
             with (
-                patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run),
-                patch.object(runtime, "_execute", side_effect=execute), patch.object(runtime, "_write_grant", wraps=runtime._write_grant) as issue,
+                patch("ppap_deep.isolation.container.os.chown"),
+                patch.object(runtime, "_new_run_dir", return_value=run),
+                patch.object(runtime, "_execute", side_effect=execute),
+                patch.object(runtime, "_write_grant", wraps=runtime._write_grant) as issue,
             ):
                 runtime.run(submission, inputs, work, time.monotonic() + 10, threading.Event(), prior_usage=prior)
                 runtime.run(submission, inputs, tmp_path / "replayed", time.monotonic() + 10, threading.Event(), prior_usage=prior)
@@ -1265,9 +1284,14 @@ def test_latest_unknown_runtime_attempt_blocks_mode_switch_and_older_source(tmp_
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     manifest = Manifest(
-        spec=submission, documents={doc.audit_id: str(i) for i, doc in enumerate(submission.documents)},
-        rules={rule.rule_id: str(i) for i, rule in enumerate(submission.rules)}, cached_snapshots={}, cached_plans={},
-        runtime_job_id=case.spec.job_id, runtime_attempt=2, runtime_source_attempt=1 if first_mode == "resume" else None,
+        spec=submission,
+        documents={doc.audit_id: str(i) for i, doc in enumerate(submission.documents)},
+        rules={rule.rule_id: str(i) for i, rule in enumerate(submission.rules)},
+        cached_snapshots={},
+        cached_plans={},
+        runtime_job_id=case.spec.job_id,
+        runtime_attempt=2,
+        runtime_source_attempt=1 if first_mode == "resume" else None,
     )
     write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
     prior = {"model_requests": 1, "input_tokens": 10, "output_tokens": 2}
@@ -1302,8 +1326,10 @@ def test_latest_unknown_runtime_attempt_blocks_mode_switch_and_older_source(tmp_
                         raise ControllerFault("MODEL_PROTOCOL_ERROR")
 
                     with (
-                        patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run),
-                        patch.object(runtime, "_execute", side_effect=execute), patch.object(runtime, "_write_grant", wraps=runtime._write_grant) as issue,
+                        patch("ppap_deep.isolation.container.os.chown"),
+                        patch.object(runtime, "_new_run_dir", return_value=run),
+                        patch.object(runtime, "_execute", side_effect=execute),
+                        patch.object(runtime, "_write_grant", wraps=runtime._write_grant) as issue,
                     ):
                         with pytest.raises(ControllerFault):
                             runtime.run(submission, inputs, tmp_path / "failed", time.monotonic() + 10, threading.Event(), prior_usage=prior)
@@ -1365,9 +1391,13 @@ def test_final_grant_seal_owns_receipt_and_fails_closed_before_publication(tmp_p
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     manifest = Manifest(
-        spec=submission, documents={doc.audit_id: str(i) for i, doc in enumerate(submission.documents)},
-        rules={rule.rule_id: str(i) for i, rule in enumerate(submission.rules)}, cached_snapshots={}, cached_plans={},
-        runtime_job_id=case.spec.job_id, runtime_attempt=1,
+        spec=submission,
+        documents={doc.audit_id: str(i) for i, doc in enumerate(submission.documents)},
+        rules={rule.rule_id: str(i) for i, rule in enumerate(submission.rules)},
+        cached_snapshots={},
+        cached_plans={},
+        runtime_job_id=case.spec.job_id,
+        runtime_attempt=1,
     )
     write_json(inputs / "manifest.json", manifest.model_dump(mode="json"))
     run = tmp_path / "run"
@@ -1399,8 +1429,10 @@ def test_final_grant_seal_owns_receipt_and_fails_closed_before_publication(tmp_p
                 return result
 
             with (
-                patch("ppap_deep.isolation.container.os.chown"), patch.object(runtime, "_new_run_dir", return_value=run),
-                patch.object(runtime, "_execute", side_effect=execute), patch("ppap_deep.isolation.container.grant_request", side_effect=control),
+                patch("ppap_deep.isolation.container.os.chown"),
+                patch.object(runtime, "_new_run_dir", return_value=run),
+                patch.object(runtime, "_execute", side_effect=execute),
+                patch("ppap_deep.isolation.container.grant_request", side_effect=control),
             ):
                 with pytest.raises(ControllerFault):
                     runtime.run(submission, inputs, tmp_path / "host", time.monotonic() + 10, threading.Event(), prior_usage=prior)
@@ -1586,10 +1618,14 @@ def test_failed_scoped_variant_only_marks_its_own_target_as_compile_error():
     case = frozen_case(False)
     case.spec.files[1].rule_version_id = BAD_RULE
     case.spec.files[1].rule_body = case.spec.files[0].model_copy(deep=True).rule_body
-    case.spec.files[1].rule_body["appendix"] = [{
-        "id": "second-target-note", "kind": "interpretation", "content": "Test input: this explanation applies only to the second target.",
-        "scope": {"document_ids": [GOOD_TARGET], "rule_ids": ["B1"], "rule_targets": [{"document_id": GOOD_TARGET, "rule_id": "B1"}]},
-    }]
+    case.spec.files[1].rule_body["appendix"] = [
+        {
+            "id": "second-target-note",
+            "kind": "interpretation",
+            "content": "Test input: this explanation applies only to the second target.",
+            "scope": {"document_ids": [GOOD_TARGET], "rule_ids": ["B1"], "rule_targets": [{"document_id": GOOD_TARGET, "rule_id": "B1"}]},
+        }
+    ]
     submission, _ = semantic_inputs(case.spec, ENGINE)
     failed_id = submission.targets[GOOD_TARGET]
     assert failed_id != submission.targets[BAD_TARGET]

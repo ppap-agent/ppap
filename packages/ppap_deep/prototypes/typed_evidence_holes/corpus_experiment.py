@@ -94,7 +94,7 @@ def native_rules(path: Path) -> RuleSource:
     physical_tables = list(document.element.body.iter(qn("w:tbl")))
     # Match the snapshot reader's coordinates, including aliases of merged
     # cells. Physical w:tc indices are not necessarily these grid columns.
-    locators_by_cell = {}
+    locators_by_cell: dict[Any, dict[str, Any]] = {}
     for table_number, element in enumerate(physical_tables, 1):
         if any(parent.tag == qn("w:del") for parent in element.iterancestors()):
             continue

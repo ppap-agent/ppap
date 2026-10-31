@@ -166,8 +166,10 @@ def match_rows(
                 confirmed[i].append(j)
                 pair = _compare(source, targets[j], request.comparisons, budget, judge)
                 native_pairs[i][j] = pair
-                pending = pending_questions() > pending_before if pending_questions else any(
-                    check["state"] == "unresolved" and check["source"]["state"] == check["target"]["state"] == "known" for check in pair["checks"]
+                pending = (
+                    pending_questions() > pending_before
+                    if pending_questions
+                    else any(check["state"] == "unresolved" and check["source"]["state"] == check["target"]["state"] == "known" for check in pair["checks"])
                 )
                 if pair["state"] == "matched" or pending:
                     searched[i] = position == len(candidates) - 1

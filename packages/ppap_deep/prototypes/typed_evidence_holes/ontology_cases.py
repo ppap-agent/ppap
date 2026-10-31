@@ -198,8 +198,8 @@ def write_sources(case: Case, directory: Path) -> dict[str, Path]:
         for row in source.rows:
             sheet.append([case.identity(value[1:]) if isinstance(value, str) and value.startswith("@") else value for value in row])
         # Preserve the blank continuation rows as real formatted source rows.
-        for row in range(1, len(source.rows) + 1):
-            sheet.cell(row, 1).number_format = "@"
+        for row_number in range(1, len(source.rows) + 1):
+            sheet.cell(row_number, 1).number_format = "@"
         path = directory / source.filename
         workbook.save(path)
         workbook.close()
@@ -212,6 +212,6 @@ def write_sources(case: Case, directory: Path) -> dict[str, Path]:
     table.cell(1, 0).text = "1"
     table.cell(1, 1).text = case.rule
     path = directory / "Requirements.docx"
-    document.save(path)
+    document.save(str(path))
     result[path.name] = path
     return result

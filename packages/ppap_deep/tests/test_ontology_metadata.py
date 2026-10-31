@@ -169,8 +169,7 @@ def test_empty_record_population_does_not_erase_a_header_meaning_question(tmp_pa
     scope = altered["uses"][0]["inputs"]["form"]["scopes"][0]
     scope["objects"] = []
     scope["excluded_rows"] = [
-        {"row": row, "reason_type": "non_record", "evidence_locator": {"kind": "xlsx_cell", "sheet": "Metadata", "cell": f"J{row}"}, "reason": "Labeled metadata, not body records"}
-        for row in [2, 3]
+        {"row": row, "reason_type": "non_record", "evidence_locator": {"kind": "xlsx_cell", "sheet": "Metadata", "cell": f"J{row}"}, "reason": "Labeled metadata, not body records"} for row in [2, 3]
     ]
     if confirmed:
         raw["appendix"] = [
