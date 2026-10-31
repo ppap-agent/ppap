@@ -17,7 +17,6 @@ from uuid import uuid4
 
 import pytest
 import uvicorn
-from playwright.sync_api import expect, sync_playwright
 from ppap_core.identity import SESSION_COOKIE
 from psycopg.types.json import Jsonb
 
@@ -94,6 +93,8 @@ def local_browser_boundary(context, web):
 
 
 def test_confirm_explanation_recompute_and_reopen_without_erasing_conflict(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     question = env["store"].read_deep_feedback(env["principal"], env["round_id"])["clarifications"][0]
     assert question["scope"]["rule_targets"]
@@ -235,6 +236,8 @@ def test_confirm_explanation_recompute_and_reopen_without_erasing_conflict(deep_
 
 
 def test_save_only_then_explicit_analysis_does_not_save_the_explanation_twice(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -269,6 +272,8 @@ def test_save_only_then_explicit_analysis_does_not_save_the_explanation_twice(de
 
 
 def test_lost_save_reply_refreshes_and_reads_original_operation_without_another_post(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -330,6 +335,8 @@ def test_lost_save_reply_refreshes_and_reads_original_operation_without_another_
 
 
 def test_upload_originals_choose_rules_start_and_complete_feedback_from_product_entry(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     with feedback_web(env["app"], tmp_path, env["settings"]) as web, sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -429,6 +436,8 @@ def test_upload_originals_choose_rules_start_and_complete_feedback_from_product_
 
 
 def test_native_mcp_url_opens_actual_web_confirmation_and_reads_same_operation(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     with feedback_web(env["app"], tmp_path, env["settings"]) as web, sync_playwright() as playwright:
         token = env["mcp_access"]()
@@ -546,6 +555,8 @@ def confirmation_payload(env, *, intent="save_only"):
 
 @pytest.mark.parametrize("failure", ["question_changed", "expired", "concurrent", "revoked"])
 def test_changed_question_concurrent_save_and_revoked_access_never_claim_success(deep_feedback_env, tmp_path, failure):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     payload = confirmation_payload(env)
     with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
@@ -612,6 +623,8 @@ def test_changed_question_concurrent_save_and_revoked_access_never_claim_success
 
 @pytest.mark.parametrize("after_admission", [False, True])
 def test_atomic_save_and_start_failure_keeps_unknown_and_reads_back_no_save(deep_feedback_env, tmp_path, monkeypatch, after_admission):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     original_accept = env["store"]._accept_locked
 
@@ -658,6 +671,8 @@ def test_atomic_save_and_start_failure_keeps_unknown_and_reads_back_no_save(deep
 
 
 def test_custom_explanation_is_saved_exactly_without_a_default_candidate_or_calculation(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     env = deep_feedback_env
     content = "仅确认本次 CP 文件的作业单元编号表示工序编号。其他内容仍须核对。"
     with feedback_web(env["app"], tmp_path) as web, sync_playwright() as playwright:
@@ -700,6 +715,8 @@ def test_custom_explanation_is_saved_exactly_without_a_default_candidate_or_calc
 
 @pytest.mark.parametrize("precise_scope", [True, False], ids=["document-rule-target", "legacy-document-rule-scope"])
 def test_same_rule_id_on_two_targets_keeps_the_question_evidence_in_its_document_scope(deep_feedback_env, tmp_path, precise_scope):
+    from playwright.sync_api import expect, sync_playwright
+
     """Local UI projection regression; the full parser/PG journey is tested above."""
     env = deep_feedback_env
     cp1, pfd = env["uploaded"]["CP"], env["uploaded"]["PFD"]
@@ -794,6 +811,8 @@ def test_same_rule_id_on_two_targets_keeps_the_question_evidence_in_its_document
 
 
 def test_real_two_target_results_name_each_file_and_keep_cp2_confirmation_scoped(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     """Real API/PG/Worker/core results for two targets sharing one rule version."""
     env, client = deep_feedback_env, deep_feedback_env["client"]
     cp1 = env["uploaded"]["CP"]
@@ -890,6 +909,8 @@ def test_real_two_target_results_name_each_file_and_keep_cp2_confirmation_scoped
 
 @pytest.mark.parametrize("deep_feedback_env", ["compiled_candidate_model"], indirect=True)
 def test_compiled_judge_candidate_requires_confirmation_and_explicit_new_analysis(deep_feedback_env, tmp_path):
+    from playwright.sync_api import expect, sync_playwright
+
     """A compiled Judge question uses the existing real browser feedback path."""
     env, client = deep_feedback_env, deep_feedback_env["client"]
     root = env["round_id"]
