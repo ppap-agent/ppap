@@ -12,6 +12,7 @@ from threading import Thread
 from typing import Any
 
 import pytest
+from audit.checkers.v2.psw_excel_agent import PswExcelAgent
 from audit.contracts import (
     AuditInput,
     AuditResultItem,
@@ -19,7 +20,6 @@ from audit.contracts import (
 )
 from audit.engine import run_audit
 from audit.engine.app_runtime import _AppAuditRuntime, run_audit_engine
-from audit.checkers.v2.psw_excel_agent import PswExcelAgent
 from audit.engine.checkers.client import AIClient
 from audit.engine.rule_engine import Table
 from audit.kinds import PpapDocumentType

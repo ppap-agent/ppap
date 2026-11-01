@@ -9,8 +9,8 @@ import shutil
 from pathlib import Path
 
 import bound_document
+from agent.execution.secure_files import reject_constant, unique_object
 from audit.engine.checkers import dimension_measurement_policy
-from audit.secure_files import reject_constant, unique_object
 from bound_document import RULES_SHA256, DocumentBinding, evaluate
 from inspect_original import inspect_original
 from inspect_pdf import inspect_pdf

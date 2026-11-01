@@ -22,8 +22,8 @@ from agent.source import authorize_execution
 from audit.audits import DEEP_PROTOCOL_REVISION
 from audit.models import RulePlan
 from audit.protocol import CompileBundle, CompileSpec, ResultBundle
-from audit.trace import AuditTrace, derive_report, evaluate_audit
 from audit.storage_errors import ObjectMissing, ObjectTooLarge
+from audit.trace import AuditTrace, derive_report, evaluate_audit
 
 ENGINE = "a" * 64
 ROUND = "00000000-0000-4000-8000-000000000099"
@@ -677,6 +677,7 @@ class SemanticCacheContractTests(unittest.TestCase):
             return {"Body": body, "ContentLength": 9}
 
         spec = _spec().model_copy(update={"executor_revision": ENGINE})
+
         class Objects:
             def get(self, key, *, max_bytes=None):
                 body = io.BytesIO(b"oversized")

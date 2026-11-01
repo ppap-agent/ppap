@@ -10,11 +10,6 @@ from urllib.parse import unquote, urlparse
 
 from documents.files import get_file_extension_from_url
 
-from audit.checkers.v3 import (
-    V3_OVERLAY_DOCX_AGENTS,
-    V3_OVERLAY_EXCEL_AGENTS,
-    V3_OVERLAY_PDF_AGENTS,
-)
 from audit.checkers.v2.annual_test_requirements_agent import (
     AnnualTestRequirementsAgent,
 )
@@ -81,6 +76,11 @@ from audit.checkers.v2.tooling_approval_agent import (
 )
 from audit.checkers.v2.xir_assembly_issue_agent import (
     XirAssemblyIssueAgent,
+)
+from audit.checkers.v3 import (
+    V3_OVERLAY_DOCX_AGENTS,
+    V3_OVERLAY_EXCEL_AGENTS,
+    V3_OVERLAY_PDF_AGENTS,
 )
 from audit.kinds import PpapDocumentType
 from audit.rule_profile import RULE_PROFILE_V2, RULE_PROFILE_V3, normalize_rule_profile

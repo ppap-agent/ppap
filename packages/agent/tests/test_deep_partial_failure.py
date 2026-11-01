@@ -22,8 +22,8 @@ from agent.run import Controller, ExecutionContext
 from audit.audits import DEEP_PROTOCOL_REVISION
 from audit.models import RulePlan
 from audit.protocol import CompileSpec, ResultBundle, SubmissionSpec
-from audit.trace import AuditTrace, evaluate_audit
 from audit.storage_errors import ObjectExists, ObjectMissing, ObjectTooLarge
+from audit.trace import AuditTrace, evaluate_audit
 from openpyxl import Workbook
 
 ENGINE = "a" * 64

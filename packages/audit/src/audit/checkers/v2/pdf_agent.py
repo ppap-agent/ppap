@@ -291,6 +291,7 @@ class PDFAgent(BaseAgent):
 
             def _ocr_page_with_ai_client(image_base64: str) -> Optional[str]:
                 from audit.engine.runtime import get_runtime
+
                 runtime = get_runtime()
                 if runtime is not None:
                     return runtime.run_image_prompt(
@@ -510,6 +511,7 @@ class PDFAgent(BaseAgent):
         try:
             file_url = str(self.audit_file.file_url)
             from audit.engine.runtime import get_runtime
+
             runtime = get_runtime()
             if runtime is not None:
                 images = runtime.render_pdf_images(file_url, render_all_pages=True)
@@ -598,6 +600,7 @@ class PDFAgent(BaseAgent):
             return "{}"
 
         from audit.engine.runtime import get_runtime
+
         runtime = get_runtime()
         if runtime is not None:
             response = runtime.run_image_prompt(

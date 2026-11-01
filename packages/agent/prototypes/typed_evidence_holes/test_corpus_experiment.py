@@ -7,10 +7,10 @@ import json
 from pathlib import Path
 
 import pytest
+from agent.execution.guest import Manifest
+from agent.execution.guest_model import ModelProtocolError
 from audit.document_tools import snapshot
 from audit.evidence import resolve
-from agent.execution.guest import Manifest
-from audit.guest_model import ModelProtocolError
 from audit.models import RulePlan, WordCell
 from audit.trace import AuditTrace
 from docx import Document

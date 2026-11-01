@@ -22,7 +22,6 @@ class UnsafeSource(Exception):
     pass
 
 
-
 @dataclass(frozen=True)
 class ImportedFile:
     """Captured source bytes and optional provider provenance, before storage."""

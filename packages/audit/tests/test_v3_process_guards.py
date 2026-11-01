@@ -1,15 +1,15 @@
 from pathlib import Path
 
 import pytest
+from audit.checkers.v3.pfmea_agent import PfmeaAgent
+from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
+from audit.checkers.v3.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
 from audit.contracts import (
     AuditInput,
     AuditResultItem,
     GroupContextInput,
     RuleInput,
 )
-from audit.checkers.v3.pfmea_agent import PfmeaAgent
-from audit.checkers.v3.process_flow_chart_excel_agent import ProcessFlowChartExcelAgent
-from audit.checkers.v3.process_special_characteristic_agent import ProcessSpecialCharacteristicAgent
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 from openpyxl import Workbook

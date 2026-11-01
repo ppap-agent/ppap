@@ -4,13 +4,13 @@ from types import SimpleNamespace
 
 import fitz
 import pytest
+from audit.checkers.v3.cross_file_extractors import extract_rows_from_file
 from audit.contracts import (
     AuditInput,
     GroupContextInput,
     RuleInput,
 )
 from audit.engine.app_runtime import run_audit_engine
-from audit.checkers.v3.cross_file_extractors import extract_rows_from_file
 from audit.engine.runtime import bind_runtime
 from audit.kinds import PpapDocumentType
 from documents.contracts import ConversionArtifact

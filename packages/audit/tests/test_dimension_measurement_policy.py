@@ -1,8 +1,8 @@
 """Shared measurement decisions and their Standard workbook integration."""
 
 import pytest
-from audit.contracts import AuditInput, RuleInput
 from audit.checkers.v2.dimension_measurement_excel_agent import DimensionMeasurementExcelAgent
+from audit.contracts import AuditInput, RuleInput
 from audit.engine.checkers.dimension_measurement_policy import (
     check_duplicates,
     check_qualitative_method,

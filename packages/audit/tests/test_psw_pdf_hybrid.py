@@ -10,13 +10,13 @@ from zipfile import ZipFile
 
 import fitz
 import pytest
+from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
+from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
 from audit.contracts import (
     AuditInput,
     RuleInput,
 )
 from audit.engine.app_runtime import run_audit_engine
-from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
-from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
 from audit.engine.checkers.client import AIClient
 from audit.engine.checkers.psw_pdf_evidence import assess_psw_conversion_evidence
 from audit.engine.runtime import bind_runtime

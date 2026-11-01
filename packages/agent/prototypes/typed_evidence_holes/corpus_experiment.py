@@ -25,10 +25,10 @@ from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import documents
-from agent.isolation import model_gateway
+from agent.execution import gateway as model_gateway
 from agent.execution import guest
-from audit.document_tools import ReadLimits, active_text
 from agent.execution.guest import Manifest
+from audit.document_tools import ReadLimits, active_text
 from audit.models import RulePlan, WordCell
 from audit.protocol import DocumentRef, FileFormat, ResultBundle, RuleFormat, RuleRef, SubmissionSpec
 from corpus_contracts.acceptance_report import write_acceptance_report

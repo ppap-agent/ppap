@@ -8,10 +8,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_qualitative_method, check_tolerance, is_strict_ok_text, split_tokens
 from audit.engine.rule_engine import Row, RuleContext, Table
 from audit.kinds import PpapDocumentType
 
-from audit.engine.checkers.dimension_measurement_policy import check_duplicates, check_qualitative_method, check_tolerance, is_strict_ok_text, split_tokens
 from .excel_agent import ExcelAgent, rule
 
 logger = logging.getLogger(__name__)

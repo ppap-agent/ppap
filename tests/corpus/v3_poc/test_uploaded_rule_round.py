@@ -8,7 +8,8 @@ from audit.audits import RoundInput, RoundWork
 from audit.engine.checkers.rule_declarations import freeze_target_rule_execution
 from corpus_contracts.poc_oracle import POC_SEQ_TO_DOC_TYPE, load_poc_cases
 from corpus_contracts.product_round import compare_file, engine_rule_body, failing_verdicts, format_verdicts
-from product import parse_rule_file, run_round_from_bytes
+from product import run_round_from_bytes
+from worker.intake import parse_rule_file
 from worker.intake.rule_sources import rule_sources
 
 RULE_ROOT = Path(__file__).resolve().parents[3] / "assets" / "poc测试" / "poc规则"

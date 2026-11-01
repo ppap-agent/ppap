@@ -26,10 +26,10 @@ from typing import Any, Protocol, TypeVar
 from uuid import uuid4
 
 import documents
-from agent.isolation.model_gateway import Gateway, Grants, Lease
+from agent.execution.gateway import Gateway, Grants, Lease
+from agent.execution.guest_model import GROK_TOOL_ALIASES, ModelBudgetError, ModelProtocolError, ReasoningEffort
+from agent.execution.secure_files import read_json, read_regular, reject_constant, unique_object
 from audit import document_tools
-from audit.guest_model import GROK_TOOL_ALIASES, ModelBudgetError, ModelProtocolError, ReasoningEffort
-from audit.secure_files import read_json, read_regular, reject_constant, unique_object
 from grok_support import append, cli_config, dump, scrub
 from hole_experiment import MODEL, REASONING_EFFORT
 from pydantic import BaseModel

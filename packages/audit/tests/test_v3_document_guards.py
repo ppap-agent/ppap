@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-from audit.contracts import AuditInput, AuditResultItem, RuleInput
 from audit.checkers.v3.annual_test_requirements_agent import AnnualTestRequirementsAgent
 from audit.checkers.v3.dimension_measurement_excel_agent import DimensionMeasurementExcelAgent
 from audit.checkers.v3.dvp_r_excel_agent import DvpRExcelAgent
@@ -9,6 +8,7 @@ from audit.checkers.v3.equipment_list_agent import EquipmentListAgent
 from audit.checkers.v3.initial_process_capacity_agent import InitialProcessCapacityAgent
 from audit.checkers.v3.sub_supplier_list_excel_agent import SubSupplierListExcelAgent
 from audit.checkers.v3.xir_assembly_issue_agent import XirAssemblyIssueAgent
+from audit.contracts import AuditInput, AuditResultItem, RuleInput
 from openpyxl import Workbook
 
 

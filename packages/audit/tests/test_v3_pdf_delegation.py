@@ -3,12 +3,12 @@ import gc
 from pathlib import Path
 
 import pytest
+from audit.checkers.v3.pdf_excel_delegator_agent import ControlPlanPdfExcelDelegatorAgent
 from audit.contracts import (
     AuditInput,
     GroupContextInput,
     RuleInput,
 )
-from audit.checkers.v3.pdf_excel_delegator_agent import ControlPlanPdfExcelDelegatorAgent
 from audit.engine.runtime import bind_runtime
 from documents.contracts import (
     ConversionArtifact,

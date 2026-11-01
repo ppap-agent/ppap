@@ -10,7 +10,6 @@ from documents.conversion import load_workbook_auto as load_workbook_pipeline
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-
 logger = logging.getLogger(__name__)
 
 _HEADER_SCAN_ROWS = 40
@@ -121,6 +120,7 @@ def filter_pfd_process_rows(
 def _load_workbook_auto(file_url: str) -> Workbook:
     try:
         from audit.engine.runtime import get_runtime
+
         runtime = get_runtime()
         if runtime is not None:
             workbook = runtime.load_workbook_auto(FileRef(location=file_url))

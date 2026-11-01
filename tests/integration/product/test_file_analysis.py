@@ -2,9 +2,9 @@ import io
 import json
 import unittest
 
+from product.rule_matching import RuleMatchingAIService
 from product.rules import latest_rule_versions
 from worker.intake import analyze_file
-from product.rule_matching import RuleMatchingAIService
 
 
 def excel_rule():

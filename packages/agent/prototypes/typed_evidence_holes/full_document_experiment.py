@@ -21,9 +21,9 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+from agent.execution.secure_files import reject_constant, unique_object
 from audit import document_tools
 from audit.engine.checkers import dimension_measurement_policy
-from audit.secure_files import reject_constant, unique_object
 from bound_document import RULES_SHA256, DocumentBinding, compact_observation, evaluate
 from grok_support import append, cli_config, dump, scrub
 from hole_experiment import MODEL, REASONING_EFFORT
@@ -86,7 +86,7 @@ def repair_context(previous_root: Path, case_id: str, document: Path, rules: Pat
 
 
 def run_case(case_id, args, settings):
-    from agent.isolation.model_gateway import Gateway, Grants
+    from agent.execution.gateway import Gateway, Grants
 
     output = args.output / case_id
     output.mkdir(mode=0o700)

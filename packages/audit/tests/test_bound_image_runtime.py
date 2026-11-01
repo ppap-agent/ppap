@@ -8,8 +8,8 @@ from threading import Thread
 
 import fitz
 import pytest
-from audit.contracts import AuditInput, RuleInput
 from audit.checkers.v2.base_agent import BaseAgent
+from audit.contracts import AuditInput, RuleInput
 from audit.engine.checkers.client import AIClient
 from audit.engine.runtime import bind_runtime, get_runtime
 from documents.files import download_file_sync

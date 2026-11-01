@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from audit.contracts import AuditInput
 from audit.checkers.v2.psw_excel_agent import PswExcelAgent
 from audit.checkers.v2.psw_pdf_agent import PswPDFAgent
+from audit.contracts import AuditInput
 from corpus_contracts.baseline_exceptions import ObservedRuleOutcome
 from corpus_contracts.execution_outcome import O
 from corpus_contracts.v2_assets_shared import FileCase, RuleExpectation, make_dummy_rule

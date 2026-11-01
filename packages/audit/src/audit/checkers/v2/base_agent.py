@@ -179,6 +179,7 @@ class BaseAgent(ABC):
             logger.debug(f"提取文件中的图像: {file_url}")
 
             from audit.engine.runtime import get_runtime
+
             runtime = get_runtime()
             if runtime is None:
                 return self._failed_audit_result("图像规则缺少运行时支持")

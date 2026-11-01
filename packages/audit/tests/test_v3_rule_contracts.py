@@ -1,5 +1,4 @@
 import pytest
-from audit.contracts import AuditInput, RuleInput
 from audit.checkers.v3.annual_test_requirements_agent import AnnualTestRequirementsAgent
 from audit.checkers.v3.checking_fixture_approval_excel_agent import CheckingFixtureApprovalExcelAgent
 from audit.checkers.v3.control_plan_agent import ControlPlanAgent
@@ -17,6 +16,7 @@ from audit.checkers.v3.psw_excel_agent import PswExcelAgent
 from audit.checkers.v3.sub_supplier_list_excel_agent import SubSupplierListExcelAgent
 from audit.checkers.v3.tooling_approval_agent import ToolingApprovalAgent
 from audit.checkers.v3.xir_assembly_issue_agent import XirAssemblyIssueAgent
+from audit.contracts import AuditInput, RuleInput
 from audit.engine.engine import run_audit
 from openpyxl import Workbook
 

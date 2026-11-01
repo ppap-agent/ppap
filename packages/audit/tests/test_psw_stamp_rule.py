@@ -1,12 +1,12 @@
 import json
 
 import pytest
+from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
+from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
 from audit.contracts import (
     AuditInput,
     RuleInput,
 )
-from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
-from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact
 

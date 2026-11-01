@@ -165,9 +165,7 @@ def test_audit_cli_returns_counts_and_question_ids_without_echoing_raw_values(tm
     plan, trace = artifacts(documents, bindings, request(key_match="semantic"))
     for name, value in (("documents.json", documents), ("plans.json", {"r": plan.model_dump(mode="json")}), ("targets.json", {"cp": "r"}), ("execution.json", trace.model_dump(mode="json"))):
         (tmp_path / name).write_text(json.dumps(value))
-    completed = subprocess.run(
-        [sys.executable, "-m", "audit.audit_tools", "evaluate", "execution.json", "--out", "evaluation.json"], cwd=tmp_path, capture_output=True, text=True, check=True
-    )
+    completed = subprocess.run([sys.executable, "-m", "audit.audit_tools", "evaluate", "execution.json", "--out", "evaluation.json"], cwd=tmp_path, capture_output=True, text=True, check=True)
     brief = json.loads(completed.stdout)
     saved = json.loads((tmp_path / "evaluation.json").read_text())
     assert brief["pending_questions"] == 1

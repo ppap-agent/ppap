@@ -76,8 +76,8 @@ class RuleParsingTests(unittest.TestCase):
         self.assertIn("控制计划规则：必须填写零件号", ai.requests[-1]["user_prompt"])
 
     def test_json_import_and_parse_failures_do_not_make_empty_professional_rules(self):
-        from worker.intake import parse_rule_file
         from product.rules import RuleParseError
+        from worker.intake import parse_rule_file
 
         ai = FakeRuleAI()
         self.assertEqual(parse_rule_file("rules.json", json.dumps(rule_body()).encode(), ai=ai), rule_body())
@@ -88,8 +88,8 @@ class RuleParsingTests(unittest.TestCase):
                     parse_rule_file("控制计划.md", b"rules", ai=FakeRuleAI(response))
 
     def test_long_input_is_not_silently_truncated(self):
-        from worker.intake import parse_rule_file
         from product.rules import RuleParseError
+        from worker.intake import parse_rule_file
 
         ai = FakeRuleAI()
         with self.assertRaisesRegex(RuleParseError, "rule_document_too_long"):

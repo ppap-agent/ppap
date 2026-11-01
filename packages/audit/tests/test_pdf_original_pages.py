@@ -4,14 +4,14 @@ import json
 
 import fitz
 import pytest
-from audit.contracts import (
-    AuditInput,
-    RuleInput,
-)
 from audit.checkers.v2 import pdf_agent as v2_pdf
 from audit.checkers.v2.psw_pdf_agent import PswPDFAgent as V2PswPDFAgent
 from audit.checkers.v3 import pdf_agent as v3_pdf
 from audit.checkers.v3.psw_pdf_agent import PswPDFAgent as V3PswPDFAgent
+from audit.contracts import (
+    AuditInput,
+    RuleInput,
+)
 from audit.engine.checkers.client import AIClient
 from audit.engine.runtime import bind_runtime
 from documents.contracts import ConversionArtifact

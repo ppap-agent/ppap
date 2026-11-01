@@ -207,6 +207,7 @@ class ExcelAgent(BaseAgent):
             return self._workbook_cache
         file_url = getattr(self.audit_file, "file_url")
         from audit.engine.runtime import get_runtime
+
         runtime = get_runtime()
         if runtime is not None:
             wb = runtime.load_workbook_auto(FileRef(location=str(file_url)))

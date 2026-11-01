@@ -1,11 +1,11 @@
 """Shared numeric regressions through real workbooks and public V2/V3 checks."""
 
 import pytest
-from audit.contracts import AuditInput, RuleInput
 from audit.checkers.v2.plant_capacity_evaluation_agent import PlantCapacityEvaluationAgent as V2CapacityAgent
 from audit.checkers.v2.sub_supplier_list_excel_agent import SubSupplierListExcelAgent as V2SupplierAgent
 from audit.checkers.v3.plant_capacity_evaluation_agent import PlantCapacityEvaluationAgent as V3CapacityAgent
 from audit.checkers.v3.sub_supplier_list_excel_agent import SubSupplierListExcelAgent as V3SupplierAgent
+from audit.contracts import AuditInput, RuleInput
 from openpyxl import Workbook
 
 

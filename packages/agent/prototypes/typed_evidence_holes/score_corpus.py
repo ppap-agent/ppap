@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from audit.secure_files import reject_constant, unique_object
+from agent.execution.secure_files import reject_constant, unique_object
 from corpus_contracts.acceptance_report import write_acceptance_report
 from corpus_contracts.product_round import MATCH, compare_file
 
