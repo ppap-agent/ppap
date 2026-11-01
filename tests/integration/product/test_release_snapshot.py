@@ -35,7 +35,7 @@ def test_release_snapshot_uses_api_role_and_preserves_history(auth_store_factory
                 results.append(cursor.fetchone())
             if not cursor.nextset():
                 break
-    assert results == [(expected,), ("api", "on", "repeatable read")]
+    assert results == [(expected,), ("ppap_api", "on", "repeatable read")]
 
     with psycopg.connect(store.settings.dsn("bootstrap"), dbname=store.settings.pg_database, autocommit=True) as conn:
         with pytest.raises(ReadOnlySqlTransaction):

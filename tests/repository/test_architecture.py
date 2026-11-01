@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = ("packages", "apps")
 ROOT_TEST_GROUPS = {"repository", "schema", "corpus", "integration", "e2e", "live"}
-GUEST_ENV = ROOT / "packages/agent/src/agent/isolation/container.py"
+GUEST_ENV = ROOT / "packages/agent/src/agent/execution/isolation/container.py"
 FORBIDDEN_IMPORT = re.compile(r"^(?:from|import)\s+(?:tests(?:\.|\s|$)|test_|store_fixture\b|sample_rule\b|memory_objects\b|conftest\b)")
 SYS_PATH = re.compile(r"sys\.path\.(?:insert|append|extend)\s*\(")
 
